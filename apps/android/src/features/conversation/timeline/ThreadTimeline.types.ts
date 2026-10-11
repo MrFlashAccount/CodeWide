@@ -1,9 +1,9 @@
 import type { RenderBlock } from "@codewide/renderers";
-import type { ReactNode } from "react";
 import type { View } from "react-native";
 import type { GetTransferAccess } from "../../../data/private-transfer";
 import type { ThreadForkOptions } from "../../../data/thread-fork";
 import type { TimelineTurnDateLabels } from "../../../presentation/conversation/timelineDates";
+import type { EmbeddedRequestPrompt } from "../../requests/ConversationRequestPrompts";
 import type { SearchConversationWindow } from "../../search/search-conversation-window";
 import type { TimelineItem } from "./timelineTypes";
 
@@ -23,7 +23,7 @@ export type UseThreadTimelineProps = {
   onLoadTurnItems: ((turnId: string) => Promise<void>) | undefined;
   onRetryFailedMessage: ((commandId: string) => Promise<void>) | undefined;
   openThreadDocumentLink: (href: string) => boolean;
-  requestPrompt: ReactNode;
+  requestPrompt: EmbeddedRequestPrompt | null;
   scheduleUnreadAgentVisibilityCheck: () => void;
   searchWindow: SearchConversationWindow | null;
   setLatestUnreadAgentNode: (node: View | null) => void;

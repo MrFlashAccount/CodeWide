@@ -34,10 +34,13 @@
     "test:ota": "python3 scripts/test-ota-server.py",
     "security:scan-artifacts": "tsx scripts/scan-release-artifacts.ts",
     "security:scan-secrets": "tsx scripts/scan-secrets.ts",
-    "release:gate": "sh scripts/cargo-target-budget.sh && export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CARGO_INCREMENTAL=0 && pnpm typecheck && pnpm test && pnpm test:companion && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && pnpm build:companion && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
+    "release:gate": "sh scripts/cargo-target-budget.sh && export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CARGO_INCREMENTAL=0 && pnpm typecheck && pnpm format:agents:check && pnpm lint:agents && pnpm test && pnpm test:companion && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && pnpm build:companion && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
     "test:watch": "vitest",
     "protocol:generate": "node scripts/generate-codex-protocol.ts",
-    "validate:android:v1": "pnpm --filter @codewide/android validate:v1"
+    "validate:android:v1": "pnpm --filter @codewide/android validate:v1",
+    "lint:agents": "pnpm --filter @codewide/agent-protocol --filter @codewide/claude-agent-host lint",
+    "format:agents:check": "pnpm --filter @codewide/agent-protocol --filter @codewide/claude-agent-host format:check",
+    "validate:agents": "pnpm format:agents:check && pnpm lint:agents && pnpm --filter @codewide/agent-protocol test && pnpm --filter @codewide/claude-agent-host test"
   },
   "devDependencies": {
     "@nx/expo": "23.2.1",

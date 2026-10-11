@@ -2,6 +2,7 @@ import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RpcClient } from "@codewide/sync-client";
 import { appLogger } from "../observability/logger";
 import { reconcileActiveThreadCommands } from "./command-delivery";
+import { isThreadNotFound, reportMissingThread } from "./missingThread";
 import { recordTiming } from "./operational-metrics";
 import { readPrivateAssetText } from "./private-transfer";
 import {
@@ -206,6 +207,12 @@ export function createThreadSyncRuntime({
             nextCursor: details.historyCursor(connectionId, threadId),
             thread: residentThreadWindow(synchronizedThread),
           };
+        } catch (error) {
+          if (isThreadNotFound(error) && isCurrent()) {
+            await summaries?.removeCatalogEntries(connectionId, [threadId]);
+            reportMissingThread(connectionId, threadId);
+          }
+          throw error;
         } finally {
           finishBackendRefresh();
           finishProjectionSnapshot();

@@ -170,7 +170,7 @@ restore_current_link() {
   if [ -f "$backup_root/current.link" ]; then
     previous_link=$(cat "$backup_root/current.link")
     ln -s "$previous_link" "$install_root/.current-restore"
-    mv -f -- "$install_root/.current-restore" "$install_root/current"
+    mv -fT -- "$install_root/.current-restore" "$install_root/current"
   elif [ -f "$backup_root/current.missing" ]; then
     rm -f -- "$install_root/current"
   fi

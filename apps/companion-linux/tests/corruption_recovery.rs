@@ -1,7 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use codewide_companion::{
-    catalog::SessionCatalog, files::FileService, resources::ResourceService, store::IndexStore,
+    catalog::SessionCatalog, files::FileService, resources::ResourceService,
+    rollout_store::RolloutStore, store::IndexStore,
 };
 
 #[test]
@@ -24,10 +25,11 @@ async fn corrupt_derived_resource_index_is_quarantined_and_rebuilt()
     let path = directory.path().join("resources.redb");
     std::fs::write(&path, b"not a redb database")?;
     let files = Arc::new(FileService::open(HashMap::new(), Vec::new(), None, None).await?);
+    let index = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
     let _service = ResourceService::open(
         &path,
         Arc::new(SessionCatalog::scan(directory.path())),
-        Arc::new(IndexStore::open(directory.path().join("index.redb"))?),
+        Arc::new(RolloutStore::attach(index.database(), index)?),
         files,
     )?;
     assert!(path.is_file());

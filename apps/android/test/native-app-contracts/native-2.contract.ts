@@ -184,7 +184,6 @@ it("preserves native integration contracts — 2", () => {
   for (const manager of [
     "NativeCodeBlockManager",
     "AnimatedNumberManager",
-    "NativeShimmerTextManager",
     "NativeRevealManager",
     "NativeStreamingRevealManager",
     "NativeFluidLayoutManager",

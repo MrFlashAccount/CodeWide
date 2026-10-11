@@ -19,6 +19,7 @@ grep -Fq 'class Codewide < Formula' "$tap_root/Formula/codewide.rb"
 grep -Fq '/v0.4.2/codewide-companion-0.4.2-x86_64-unknown-linux-musl.tar.gz' "$tap_root/Formula/codewide.rb"
 grep -Fq "sha256 \"$linux_sha\"" "$tap_root/Formula/codewide.rb"
 grep -Fq 'brew services start codewide' "$tap_root/Formula/codewide.rb"
+! grep -Fq 'codewide-install-claude-provider' "$tap_root/Formula/codewide.rb"
 grep -Fq 'depends_on arch: :x86_64' "$tap_root/Formula/codewide.rb"
 test "$(cat "$tap_root/formula_renames.json")" = '{"codewide-companion":"codewide"}'
 

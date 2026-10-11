@@ -13,6 +13,10 @@ neither XPC nor a local server is implemented in this crate.
 - conversion from Rust runtime values into FFI-safe records and errors;
 - the static library and binding-generator entrypoint consumed by the macOS
   build.
+- the runtime's log output: `CoreHost::new` installs the shared companion
+  filter once and writes records (including the Claude agent host's stderr)
+  to `~/Library/Logs/CodeWide/companion.log`, rotated at 8 MiB into
+  `companion.log.1`.
 
 The current vertical slice exposes only runtime creation, health, and the
 durable pre-update checkpoint. Device-management APIs should be added only as

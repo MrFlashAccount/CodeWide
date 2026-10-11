@@ -5,8 +5,18 @@ import type {
 } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RpcClient } from "@codewide/sync-client";
 import { loadSkillCatalog } from "./load-skill-catalog";
+import {
+  catalogHasProviderFields,
+  catalogUnavailableProviders,
+  modelRowAgentProvider,
+  permissionRowWithProviders,
+  withUnavailableProviderModels,
+  withUnavailableProviderPermissions,
+} from "./turnControlsAgentProviders";
 import type {
   TurnControlsLoadOptions,
+  TurnControlsModel,
+  TurnControlsModelReasoning,
   TurnControlsRow,
   TurnControlsSection,
   TurnControlsValue,
@@ -15,6 +25,22 @@ import { unknownRecord } from "./unknownRecord";
 import type { WorkspaceResourceDatabase } from "./workspace-resource-database";
 import { turnControlsResourceKey } from "./workspace-resource-keys";
 import type { createWorkspaceSession } from "./workspace-session";
+
+/**
+ * Validates a `model/list` row's reasoning fields. The generated DTO types
+ * `defaultReasoningEffort` as always present, but a provider whose model has no
+ * thinking levels (Claude) sends `null`: such a model offers no levels at all.
+ */
+function modelReasoning(model: ModelListResponse["data"][number]): TurnControlsModelReasoning {
+  const declaredDefault: unknown = model.defaultReasoningEffort;
+  if (typeof declaredDefault !== "string" || declaredDefault.length === 0) {
+    return { defaultEffort: null, efforts: [] };
+  }
+  return {
+    defaultEffort: declaredDefault,
+    efforts: model.supportedReasoningEfforts.map((option) => option.reasoningEffort),
+  };
+}
 
 export type TurnControlsLoaders = {
   [Section in TurnControlsSection]: () => Promise<TurnControlsValue[Section]>;
@@ -34,6 +60,7 @@ export function turnControlsCacheNeedsRepair(
     cached.error !== null ||
     cached.value === null ||
     !persistedDefaultsPresent(cached.value) ||
+    !catalogHasProviderFields(cached.value) ||
     !cached.value.models.every(
       (model) =>
         typeof model.isDefault === "boolean" &&
@@ -78,6 +105,17 @@ export async function loadTurnControlsIncrementally(
   return { errors, loadedSections: sections.length - errors.length, value: current };
 }
 
+function cloneTurnControlsModel(model: TurnControlsModel): TurnControlsModel {
+  const copy = {
+    ...model,
+    isDefault: model.isDefault,
+    serviceTiers: parseModelServiceTiers(model.serviceTiers),
+  };
+  return model.defaultEffort === null
+    ? { ...copy, defaultEffort: null, efforts: [] }
+    : { ...copy, defaultEffort: model.defaultEffort, efforts: [...model.efforts] };
+}
+
 export function cloneTurnControls(value: TurnControlsValue): TurnControlsValue {
   return {
     defaults:
@@ -86,12 +124,7 @@ export function cloneTurnControls(value: TurnControlsValue): TurnControlsValue {
       value.defaults === undefined
         ? { effort: null, model: null, permissions: null, serviceTier: null }
         : { ...value.defaults },
-    models: value.models.map((model) => ({
-      ...model,
-      efforts: [...model.efforts],
-      isDefault: model.isDefault,
-      serviceTiers: parseModelServiceTiers(model.serviceTiers),
-    })),
+    models: value.models.map(cloneTurnControlsModel),
     permissions: value.permissions.map((permission) => ({ ...permission })),
     skills: value.skills.map((skill) => ({ ...skill })),
   };
@@ -183,6 +216,9 @@ export function createTurnControlsLoader({
       throw new Error("Connection is not enabled");
     }
     const operation = (async (): Promise<TurnControlsValue> => {
+      // A merged catalog that lacks a provider (not live, or its catalog failed) is
+      // incomplete: the next load refreshes it again instead of serving the cache.
+      const unavailableProviders = new Set<string>();
       try {
         resources?.putTurnControls({
           connectionId,
@@ -226,17 +262,22 @@ export function createTurnControlsLoader({
                 includeHidden: false,
                 limit: 100,
               });
-              return response.data.map((model) => ({
-                defaultEffort: model.defaultReasoningEffort,
+              const unavailable = catalogUnavailableProviders(response);
+              for (const provider of unavailable) {
+                unavailableProviders.add(provider);
+              }
+              const models = response.data.map((model) => ({
+                ...modelReasoning(model),
                 defaultServiceTier:
                   typeof model.defaultServiceTier === "string" ? model.defaultServiceTier : null,
-                efforts: model.supportedReasoningEfforts.map((option) => option.reasoningEffort),
                 id: model.model,
                 isDefault: model.isDefault,
                 label: model.displayName,
+                provider: modelRowAgentProvider(model),
                 serviceTiers: parseModelServiceTiers(model.serviceTiers),
                 supportsPersonality: model.supportsPersonality,
               }));
+              return withUnavailableProviderModels(models, cachedValue?.models ?? [], unavailable);
             },
             permissions: async () => {
               const response = await rpcAfterAttach<PermissionProfileListResponse>(
@@ -244,7 +285,15 @@ export function createTurnControlsLoader({
                 "permissionProfile/list",
                 { cursor: null, cwd, limit: 100 },
               );
-              return response.data;
+              const unavailable = catalogUnavailableProviders(response);
+              for (const provider of unavailable) {
+                unavailableProviders.add(provider);
+              }
+              return withUnavailableProviderPermissions(
+                response.data.map(permissionRowWithProviders),
+                cachedValue?.permissions ?? [],
+                unavailable,
+              );
             },
             skills: async () =>
               loadSkillCatalog({
@@ -293,7 +342,7 @@ export function createTurnControlsLoader({
           status: "ready",
           value: result.value,
         });
-        if (!forceRefresh && result.errors.length === 0) {
+        if (!forceRefresh && result.errors.length === 0 && unavailableProviders.size === 0) {
           refreshedThisRuntime.add(cacheKey);
         }
         return result.value;

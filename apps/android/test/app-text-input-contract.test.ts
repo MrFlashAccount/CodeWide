@@ -99,7 +99,7 @@ describe("application text input contract", () => {
     expect(
       sourceHasJsxElement(ownerComposerEditor, "ComposerMarkdownInput", [
         "ref={composerInputRef}",
-        'accessibilityLabel="Message Codex"',
+        'accessibilityLabel="Message the agent"',
       ]),
     ).toBe(true);
     expect(composerMarkdownInputWeb).toContain("voiceInput={false}");
@@ -109,7 +109,7 @@ describe("application text input contract", () => {
   });
 
   it("lets the composer inspect a complete paste before applying the message limit", () => {
-    const composerStart = ownerComposerEditor.indexOf('accessibilityLabel="Message Codex"');
+    const composerStart = ownerComposerEditor.indexOf('accessibilityLabel="Message the agent"');
     const composerEnd = ownerComposerEditor.indexOf("/>", composerStart);
     expect(composerStart).toBeGreaterThan(-1);
     expect(ownerComposerEditor.slice(composerStart, composerEnd)).not.toContain("maxLength=");

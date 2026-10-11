@@ -1,0 +1,36 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "companion-host",
+  "projectType": "library",
+  "sourceRoot": "crates/companion-host/src",
+  "tags": ["language:rust", "type:library"],
+  "metadata": {
+    "description": "Host infrastructure contracts shared by Companion core and provider adapters"
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "rustWorkspace"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p companion-host --all-targets --all-features -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test -p companion-host --all-features",
+        "cwd": "."
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo build -p companion-host --release",
+        "cwd": "."
+      }
+    }
+  }
+}

@@ -4,8 +4,13 @@ import { ComposerControlOptions } from "./settings/ComposerControlOptions";
 import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { projectedThreadExecutionSettings } from "@codewide/sync-client";
+import type { Observable } from "@legendapp/state";
+import { useSelector } from "@legendapp/state/react";
+import { useSyncExternalStore } from "react";
 import { View } from "react-native";
 import type { GetTransferAccess } from "../../data/private-transfer";
+import { readThreadAgent } from "../../data/threadAgent";
+import type { StoredComposerPreferences } from "../../data/thread-ui-state-types";
 import type { TurnControlsValue } from "../../data/turn-controls-types";
 import { useTurnControlsRow } from "../../data/use-workspace-resource-row";
 import type { WorkspaceResourceDatabase } from "../../data/workspace-resource-database";
@@ -15,24 +20,45 @@ import { AppSheet } from "../../ui/AppSheet";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ComposerMenu.styles";
 import type { ComposerMenuPage } from "./composerTypes";
-import { composerModelSettings } from "./modelSettings";
 import { EMPTY_TURN_CONTROLS } from "./settings";
+import {
+  existingThreadControlsView,
+  newChatControlsView,
+  type ComposerControlsView,
+} from "./settings/composerControlsView";
+import type { ComposerControlsState } from "./settings/controlsOverlay";
+import { providerScopedControls } from "./settings/providerScopedControls";
 import { SkillsPicker } from "./skills/SkillsPicker";
+
+/** Reads a new chat's persisted local control choices as they change. */
+export type ComposerDraftPreferencesSource = {
+  readonly read: () => StoredComposerPreferences;
+  readonly subscribe: (listener: () => void) => () => void;
+};
 
 export function ResourceComposerMenu({
   controlError,
+  controls$,
   controlsResourceId,
+  draftPreferences,
   newChat,
   resources,
   ...props
-}: Omit<ComposerMenuProps, "controls" | "loading" | "error"> & {
+}: Omit<ComposerMenuProps, "controls" | "loading" | "error" | "view"> & {
   controlError: string | null;
+  /** The settings owner's state: the thread's server settings and pending local choices. */
+  controls$: Observable<ComposerControlsState>;
   controlsResourceId: string | null;
+  draftPreferences: ComposerDraftPreferencesSource;
   newChat: boolean;
   resources: WorkspaceResourceDatabase | null;
 }): ReactNode {
   const controlsResource = useTurnControlsRow(resources, controlsResourceId);
-  const controls = controlsResource?.value ?? EMPTY_TURN_CONTROLS;
+  const controls = providerScopedControls(
+    controlsResource?.value ?? EMPTY_TURN_CONTROLS,
+    newChat,
+    props.thread,
+  );
   const loading =
     props.initialPage === "skills"
       ? controls.skills.length === 0 &&
@@ -40,25 +66,32 @@ export function ResourceComposerMenu({
           controlsResource.status === "loading" ||
           controlsResource.status === "refreshing")
       : controlsResource?.status === "loading" && controlsResource.value === null;
-  const serverExecution =
-    props.thread === null ? null : projectedThreadExecutionSettings(props.thread);
-  const { effort: selectedEffort, model: selectedModel } = composerModelSettings(
-    newChat,
-    serverExecution,
-    { effort: props.selectedEffort, model: props.selectedModel },
-    controls,
+  const state = useSelector(() => controls$.get());
+  const draft = useSyncExternalStore(
+    draftPreferences.subscribe,
+    draftPreferences.read,
+    draftPreferences.read,
   );
-  const selectedPermissions =
-    props.selectedPermissions ?? serverExecution?.permissions ?? controls.defaults.permissions;
+  // The route opened with a snapshot of the thread; the owner's state carries
+  // the server settings the conversation has observed since.
+  const server =
+    state.server ?? (props.thread === null ? null : projectedThreadExecutionSettings(props.thread));
+  const view = newChat
+    ? newChatControlsView(controls, draft)
+    : existingThreadControlsView({
+        activeTurnId: state.activeTurnId,
+        agent: readThreadAgent(props.thread),
+        controls,
+        overlay: state.overlay,
+        server,
+      });
   return (
     <ComposerMenu
       {...props}
       controls={controls}
       error={controlError ?? controlsResource?.error ?? null}
       loading={loading}
-      selectedEffort={selectedEffort}
-      selectedModel={selectedModel}
-      selectedPermissions={selectedPermissions}
+      view={view}
     />
   );
 }
@@ -76,11 +109,9 @@ export function ComposerMenu({
   onSelectModel,
   onSelectPermissions,
   onSelectPersonality,
-  selectedEffort,
-  selectedModel,
-  selectedPermissions,
   selectedPersonality,
   toolPage,
+  view,
   visible,
   voiceScope,
 }: {
@@ -93,15 +124,13 @@ export function ComposerMenu({
   onClose: () => void;
   onInvokeSkill: (skill: { name: string; path: string }) => void;
   onSelectEffort: (effort: string) => void;
-  onSelectModel: (model: string, effort: string) => void;
+  onSelectModel: (model: string, effort: string | null) => void;
   onSelectPermissions: (permissions: string | null) => void;
   onSelectPersonality: (personality: Personality | null) => void;
-  selectedEffort: string | null;
-  selectedModel: string | null;
-  selectedPermissions: string | null;
   selectedPersonality: Personality | null;
   thread: Thread | null;
   toolPage: ReactNode;
+  view: ComposerControlsView;
   visible: boolean;
   voiceScope: string;
 }): ReactNode {
@@ -169,10 +198,8 @@ export function ComposerMenu({
             onSelectPermissions={onSelectPermissions}
             onSelectPersonality={onSelectPersonality}
             page={page}
-            selectedEffort={selectedEffort}
-            selectedModel={selectedModel}
-            selectedPermissions={selectedPermissions}
             selectedPersonality={selectedPersonality}
+            view={view}
           />
         )}
       </View>

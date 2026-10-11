@@ -1,0 +1,9 @@
+{
+  "extends": "@sergeigarin/hygene/tsconfig.library.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "noEmit": true,
+    "emitDeclarationOnly": false
+  },
+  "include": ["src/**/*.ts"]
+}

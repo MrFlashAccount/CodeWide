@@ -499,18 +499,14 @@ pub(crate) fn resolve_terminal_spawn_query(
     {
         metadata
     } else {
-        let catalog = state
+        let source = state
             .services
-            .catalog
+            .thread_metadata
             .as_ref()
             .ok_or(terminal::TerminalError::ThreadNotFound)?;
-        let rollout = catalog.resolve(thread_id).map_err(|error| match error {
-            CatalogError::NotFound(_) => terminal::TerminalError::ThreadNotFound,
-            CatalogError::Poisoned | CatalogError::Authority(_) => terminal::TerminalError::thread_resolution_failed(error),
-        })?;
-        let metadata = read_rollout_metadata(&rollout)
+        let metadata = source
+            .thread_metadata(thread_id)
             .map_err(terminal::TerminalError::thread_resolution_failed)?
-            .filter(|metadata| metadata.id == thread_id)
             .ok_or(terminal::TerminalError::ThreadNotFound)?;
         state
             .store

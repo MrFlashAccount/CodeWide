@@ -2,10 +2,14 @@
 import { listRowPosition } from "../../../ui/AppListRow.types";
 import { AppSheetScrollView } from "../../../ui/AppSheet";
 import { ControlOption } from "../../../ui/ControlOption";
+import { clampModelEffort, modelEffortLevels } from "../../../ui/modelEffort";
+import { modelEffortLabel } from "../../../ui/modelEffortPresentation";
 import { ModelPickerOptions } from "../../../ui/ModelPickerOptions";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "../ComposerMenu.styles";
+import type { PermissionDefaultOption } from "../../../ui/TurnControlMenus.types";
 import { permissionProfileLabel } from "../settings";
+import { selectedPermissionProfile } from "./composerControlsView";
 
 import type { ComposerControlOptionsProps } from "./controlOptionsContract";
 
@@ -16,14 +20,14 @@ export function ComposerControlOptions({
   onSelectPermissions,
   onSelectPersonality,
   page,
-  selectedEffort,
-  selectedModel,
-  selectedPermissions,
   selectedPersonality,
+  view,
 }: ComposerControlOptionsProps) {
-  const model = controls.models.find((candidate) => candidate.id === selectedModel);
-  const reasoningEfforts =
-    model === undefined ? [] : model.efforts.length > 0 ? model.efforts : [model.defaultEffort];
+  const selectedModel = view.model.value;
+  const selectedEffort = view.effort.value;
+  const selectedPermissions = selectedPermissionProfile(view.permissions.value);
+  const model = view.modelEntry;
+  const reasoningEfforts = model === undefined ? [] : modelEffortLevels(model);
 
   return (
     <AppSheetScrollView
@@ -41,17 +45,12 @@ export function ComposerControlOptions({
             <ModelPickerOptions
               models={controls.models}
               onSelect={(candidate) => {
-                const currentEffort =
-                  selectedEffort ?? model?.defaultEffort ?? candidate.defaultEffort;
-                const nextEffort = candidate.efforts.includes(currentEffort)
-                  ? currentEffort
-                  : candidate.defaultEffort;
-                onSelectModel(candidate.id, nextEffort);
+                onSelectModel(candidate.id, clampModelEffort(candidate, selectedEffort));
               }}
               selectedModel={selectedModel}
             />
           )}
-          {model !== undefined && (
+          {reasoningEfforts.length > 0 && (
             <>
               <Text style={styles.controlSectionLabel}>Thinking</Text>
               {reasoningEfforts.map((effort, index) => (
@@ -62,7 +61,7 @@ export function ComposerControlOptions({
                   }}
                   position={listRowPosition(index, reasoningEfforts.length)}
                   selected={effort === selectedEffort}
-                  title={effort}
+                  title={modelEffortLabel(effort)}
                 />
               ))}
             </>
@@ -96,11 +95,18 @@ export function ComposerControlOptions({
       {page === "permissions" && (
         <>
           <ControlOption
+            disabled={view.permissionDefault.kind === "unavailable"}
             onPress={() => {
-              onSelectPermissions(null);
+              const option = view.permissionDefault;
+              if (option.kind === "draft") {
+                onSelectPermissions(null);
+              } else if (option.kind === "reset") {
+                onSelectPermissions(option.resolved);
+              }
             }}
             position={controls.permissions.length === 0 ? "only" : "first"}
-            selected={selectedPermissions === null}
+            selected={view.permissionDefault.kind === "draft" && view.permissionDefault.selected}
+            subtitle={serverDefaultSubtitle(view.permissionDefault)}
             title="Server default"
           />
           {controls.permissions.map((permission, index) => (
@@ -124,4 +130,16 @@ export function ComposerControlOptions({
       )}
     </AppSheetScrollView>
   );
+}
+
+function serverDefaultSubtitle(option: PermissionDefaultOption): string {
+  if (option.kind === "unavailable") {
+    return "The server's default access is unknown";
+  }
+  if (option.kind === "reset") {
+    return `Reset to ${permissionProfileLabel(option.resolved)}`;
+  }
+  return option.resolved === null
+    ? "Use the server's configured access level"
+    : `Use the server's configured access level · ${permissionProfileLabel(option.resolved)}`;
 }

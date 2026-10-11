@@ -77,7 +77,7 @@ export function useAccountLogin(
       markCodeCopied();
       await Linking.openURL(pendingAccountLogin.verificationUrl);
     } catch (error) {
-      setError(error instanceof Error ? error.message : "Could not open Codex sign-in");
+      setError(error instanceof Error ? error.message : "Could not open sign-in");
     }
     setLoginActionBusy(false);
   });

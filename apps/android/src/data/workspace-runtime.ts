@@ -23,6 +23,7 @@ import {
 import { createAccountRateLimitsLoader } from "./account-rate-limits-loader";
 import { createCatalogRuntime } from "./catalog-runtime";
 import { createCommandDelivery, createCommandDeliveryProjection } from "./command-delivery";
+import { nativeCommandSettlements } from "./nativeCommandSettlement";
 import {
   createConnectionProfileDatabase,
   type ConnectionProfileDatabase,
@@ -67,6 +68,10 @@ import {
 } from "./serverRequestDelivery";
 import { readGlobalSupervisorWorkCatalog } from "./globalSupervisorWorkCatalog";
 import { createThreadSyncProjection } from "./thread-sync-projection";
+import {
+  clearConnectionLiveActivity,
+  createThreadLiveActivityProjection,
+} from "./threadLiveActivity";
 import { createThreadSyncReconnect } from "./thread-sync-reconnect";
 import { createThreadSyncRemoteLoader } from "./thread-sync-remote-loader";
 import { createThreadSyncRuntime } from "./thread-sync-runtime";
@@ -92,6 +97,8 @@ import {
   VOICE_ASSISTANT_BACKGROUND_MODEL_PREFERENCE_ID,
 } from "./voiceAssistantBackgroundModel";
 import { createVoiceAssistantModelCatalog } from "./voiceAssistantModelCatalog";
+import { hostDeclaresCapability } from "./agentProviders";
+import { createAgentProvidersResource } from "./agentProvidersResource";
 import {
   createWorkspaceResourceDatabase,
   type WorkspaceResourceDatabase,
@@ -278,6 +285,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       sendSystemText: async (request) => commandDelivery.sendSystemTextWithCommandId(request),
       targetPolicy: globalSupervisor.targetPolicy,
     });
+    const projectCommandDelivery = createCommandDeliveryProjection(details, summaries);
     const nativeSupervisorOptions: ConstructorParameters<typeof NativeEngineSupervisor>[0] = {
       connectionState: {
         setConnectionPath: connectionState.setPath,
@@ -291,7 +299,10 @@ async function startWorkspaceRuntime(): Promise<void> {
       onLiveRealtime: (connectionId, event) => {
         globalSupervisorIngress.publishLive(connectionId, event);
       },
-      onOutboxChange: createCommandDeliveryProjection(details, summaries),
+      onOutboxChange: (delivery) => {
+        projectCommandDelivery(delivery);
+        nativeCommandSettlements.observe(delivery);
+      },
       onPendingRequests: (connectionId, requests) => {
         pendingRequests.replace(connectionId, requests);
         void globalSupervisorAttention
@@ -309,16 +320,19 @@ async function startWorkspaceRuntime(): Promise<void> {
           });
         });
       },
-      projection: createGlobalSupervisorAttentionProjection(
-        createThreadSyncProjection({
-          accountRateLimits,
-          catalog: workspaceCatalog,
-          details,
-          resources,
-          summaries,
-          sync: workspaceThreadSync,
-        }),
-        globalSupervisorAttention,
+      projection: createThreadLiveActivityProjection(
+        createGlobalSupervisorAttentionProjection(
+          createThreadSyncProjection({
+            accountRateLimits,
+            agentProviders,
+            catalog: workspaceCatalog,
+            details,
+            resources,
+            summaries,
+            sync: workspaceThreadSync,
+          }),
+          globalSupervisorAttention,
+        ),
       ),
     };
     const supervisor: WorkspaceSyncSupervisor = new NativeEngineSupervisor(nativeSupervisorOptions);
@@ -369,6 +383,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       readConnection: (connectionId) =>
         connectionState.rows$.peek().find((row) => row.connectionId === connectionId),
       refreshAccountRateLimits,
+      refreshAgentProviders: async (connectionId) => agentProviders.refresh(connectionId),
       sync: workspaceThreadSync,
     });
     const connectionChanges = connectionState.subscribeChanges(reconnect.accept, {
@@ -443,6 +458,7 @@ export async function deleteLocalConnectionData(connectionId: string): Promise<v
   await snapshot.pendingRequests?.deleteConnection(connectionId);
   await snapshot.threadDetails?.deleteConnection(connectionId);
   await snapshot.threadSummaries?.deleteConnection(connectionId);
+  clearConnectionLiveActivity(connectionId);
   await snapshot.threadUiState?.deleteConnection(connectionId);
   await snapshot.accountRateLimits?.deleteConnection(connectionId);
   await snapshot.resources?.deleteConnection(connectionId);
@@ -519,6 +535,8 @@ export const globalSupervisorRuntime = createGlobalSupervisorRuntime({
   ensureStarted: ensureWorkspaceRuntimeStarted,
   getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
   getSupervisor: () => workspaceRuntime.supervisor,
+  hostDeclaresCapability: (connectionId, capability) =>
+    hostDeclaresCapability(agentProviders.state$[connectionId]?.peek(), capability),
   ingress: globalSupervisorIngress,
   isRpcAvailable: (connectionId) =>
     workspaceRuntime.snapshot.connectionState?.rows$
@@ -644,6 +662,12 @@ const loadTurnControls = createTurnControlsLoader({
   rpcAfterAttach,
 });
 
+/** Provider status, sign-in state and host capabilities of every server. */
+export const agentProviders = createAgentProvidersResource({
+  getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+  rpcAfterAttach,
+});
+
 async function voiceAssistantModelConnectionId(): Promise<string> {
   await ensureWorkspaceRuntimeStarted();
   const binding = await workspaceRuntime.globalSupervisorBinding?.read();
@@ -693,21 +717,23 @@ function modelListFromRow(
   return row.value.models;
 }
 
-export const globalVoiceModelCatalog = createVoiceAssistantModelCatalog(async () => {
-  const connectionId = await voiceAssistantModelConnectionId();
-  const cached = latestVoiceAssistantModels(
-    workspaceRuntime.snapshot.resources?.turnControls.toArray,
-    connectionId,
-  );
-  if (cached !== null) {
-    return cached;
-  }
-  const controls = await loadTurnControls(connectionId, "", {
-    mode: "refresh",
-    sections: ["models"],
-  });
-  return controls.models;
-});
+export const globalVoiceModelCatalog = createVoiceAssistantModelCatalog(
+  voiceAssistantModelConnectionId,
+  async (connectionId) => {
+    const cached = latestVoiceAssistantModels(
+      workspaceRuntime.snapshot.resources?.turnControls.toArray,
+      connectionId,
+    );
+    if (cached !== null) {
+      return cached;
+    }
+    const controls = await loadTurnControls(connectionId, "", {
+      mode: "refresh",
+      sections: ["models"],
+    });
+    return controls.models;
+  },
+);
 
 const refreshAccountRateLimits = createAccountRateLimitsLoader({
   getDatabase: () => workspaceRuntime.snapshot.accountRateLimits,

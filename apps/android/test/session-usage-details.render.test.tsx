@@ -4,7 +4,7 @@ import { fireEvent, render } from "@testing-library/react-native";
 import { SessionUsageDetails } from "../src/features/accounts/SessionUsageDetails";
 
 const tokens = { input: 8475604, cached: 8000412, output: 39332, total: 8514936 };
-const cost = { input: 10.45, cached: 0.8, output: 1.97, total: 12.42 };
+const cost = { basis: "apiEquivalent", input: 10.45, cached: 0.8, output: 1.97, total: 12.42 } as const;
 
 describe("session usage details", () => {
   it("pairs compact token counts and costs, preserving exact accessible counts", () => {
@@ -30,6 +30,17 @@ describe("session usage details", () => {
     expect(view.getByText(/Model switches and per-request long-context premiums are not reconstructed/)).toBeTruthy();
     fireEvent.press(view.getByRole("button", { name: "About the cost estimate" }));
     expect(view.queryByText(/Model switches/)).toBeNull();
+  });
+
+  it("shows an agent-reported estimate as a total only, labelled with its price table", () => {
+    const reported = { basis: "providerReported", prices: "managed", total: 3.21 } as const;
+    const view = render(<SessionUsageDetails tokens={tokens} cost={reported} compactionCount={0} />);
+    expect(view.getByLabelText("Input cost unavailable")).toBeTruthy();
+    expect(view.getByLabelText("Output cost unavailable")).toBeTruthy();
+    expect(view.getByLabelText("$3.21")).toBeTruthy();
+    expect(view.getByText("Agent estimate · organization rates")).toBeTruthy();
+    fireEvent.press(view.getByRole("button", { name: "About the cost estimate" }));
+    expect(view.getByText(/not an account charge/)).toBeTruthy();
   });
 
   it("does not present missing prices or history as zero", () => {

@@ -232,6 +232,39 @@ describe("persisted project catalog", () => {
     await reader.close();
   });
 
+  it("orders a thread without its own recency by its update time, as the list comparator does", async () => {
+    const writer = createThreadSummarySqlite();
+    await writer.prepare();
+    writer.begin();
+    for (let i = 0; i < 10; i++)
+      writer.write({ type: "insert", value: summary(`codex-${i}`, { recencyAt: 100 + i, updatedAt: 100 + i }) });
+    // A Claude session started in a terminal: the companion lists it with
+    // `recencyAt: null` and orders it by `updatedAt`.
+    writer.write({ type: "insert", value: summary("terminal", { recencyAt: null, updatedAt: 500 }) });
+    await writer.commit({ durable: true });
+    const page = await writer.loadView({ ...request, recentLimit: 3 });
+    expect(page.recent.map((row) => row.name)).toEqual(["terminal", "codex-9", "codex-8"]);
+    await writer.close();
+  });
+
+  it("repairs an order key a previous version stored as NULL", async () => {
+    const writer = createThreadSummarySqlite();
+    await writer.prepare();
+    writer.begin();
+    writer.write({ type: "insert", value: summary("codex", { recencyAt: 100, updatedAt: 100 }) });
+    writer.write({ type: "insert", value: summary("terminal", { recencyAt: null, updatedAt: 500 }) });
+    await writer.commit({ durable: true });
+    await writer.close();
+    sqlite.native.exec(
+      "UPDATE codewide_thread_summaries SET recency_at = NULL WHERE thread_id = 'terminal'",
+    );
+    const reader = createThreadSummarySqlite();
+    await reader.prepare();
+    const page = await reader.loadView({ ...request, recentLimit: 1 });
+    expect(page.recent.map((row) => row.name)).toEqual(["terminal"]);
+    await reader.close();
+  });
+
   it("project refresh cannot evict another project's rows or discard unread state", async () => {
     const writer = createThreadSummarySqlite();
     await writer.prepare();
@@ -498,4 +531,68 @@ it("retains confirmed pins outside a bounded reconnect snapshot", async () => {
   await database.applyPinSnapshot("server", { cursor: 11, threadIds: [] });
   expect(await database.get("server", "old-pin")).toMatchObject({ pinned: false, pinCursor: 11 });
   database.close();
+});
+
+describe("catalog reads racing live events", () => {
+  const seed = async (...rows: ReturnType<typeof summary>[]): Promise<void> => {
+    const writer = createThreadSummarySqlite();
+    await writer.prepare();
+    writer.begin();
+    for (const value of rows) writer.write({ type: "insert", value });
+    await writer.commit({ durable: true });
+    await writer.close();
+  };
+  const listed = (id: string, recencyAt: number) => ({
+    archived: false,
+    thread: { ...createV1TestThread(id, null, 1, []), cwd: "/repo", recencyAt, status: { type: "notLoaded" as const } },
+  });
+  const turnStarted = (cursor: number, threadId: string) => ({
+    cursor,
+    payload: {
+      method: "turn/started",
+      params: { threadId },
+      codewideThreadPatch: { version: 1, threadId, operation: { kind: "turnStarted", summary: { activity: true } } },
+    },
+  });
+
+  it("keeps a running chat and its order when a lagging page lists it as not loaded", async () => {
+    await seed(summary("running", { recencyAt: 200, status: { type: "active", activeFlags: [] } }));
+    const database = createThreadSummaryDatabase();
+    await database.prepare();
+    const read = database.beginCatalogRead("server");
+    await database.applyCatalogPage("server", [listed("running", 100)], false, new Set(["running"]), read, true, "/repo");
+    read.release();
+    const row = await database.get("server", "running");
+    expect(row).toMatchObject({ recencyAt: 200, status: { type: "active" } });
+    expect(row === null ? null : storedThreadToListItem(row).state).toBe("running");
+    database.close();
+  });
+
+  it("accepts a not-loaded page for an idle chat and evicts only idle rows absent from the head", async () => {
+    await seed(
+      summary("idle", { recencyAt: 50 }),
+      summary("absent-running", { recencyAt: 300, status: { type: "active", activeFlags: [] } }),
+      summary("absent-idle", { recencyAt: 250 }),
+    );
+    const database = createThreadSummaryDatabase();
+    await database.prepare();
+    const read = database.beginCatalogRead("server");
+    await database.applyCatalogPage("server", [listed("idle", 120)], false, new Set(["idle"]), read, true, "/repo");
+    read.release();
+    expect(await database.get("server", "idle")).toMatchObject({ recencyAt: 120, status: { type: "notLoaded" } });
+    expect(await database.get("server", "absent-running")).toMatchObject({ status: { type: "active" } });
+    expect(await database.get("server", "absent-idle")).toBeNull();
+    database.close();
+  });
+
+  it("keeps a turn that starts while the chat is being archived", async () => {
+    await seed(summary("chat", { name: "old" }));
+    const database = createThreadSummaryDatabase();
+    await database.prepare();
+    const archiving = database.updateArchived("server", "chat", true);
+    const started = database.applyEvents("server", [turnStarted(5, "chat")]);
+    await Promise.all([archiving, started]);
+    expect(await database.get("server", "chat")).toMatchObject({ archived: true, status: { type: "active" } });
+    database.close();
+  });
 });

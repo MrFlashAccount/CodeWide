@@ -2,16 +2,15 @@ import { Pressable, View } from "react-native";
 import type { RateLimitResetCredit } from "@codewide/codex-protocol/v0.155.1/v2";
 
 import type { AccountPoolProfile } from "../../data/account-pool";
-import { accountRateLimitResetWindows, relativeResetTime } from "../../data/account-rate-limits";
+import { accountRateLimitResetWindows } from "../../data/account-rate-limits";
 import { formatDeviceDateTime } from "../../data/device-time";
 import { useEvent } from "../../react/useEvent";
 import { useAppDialog } from "../../ui/AppDialog";
-import { percentageDimension } from "../../ui/percentageDimension";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./AccountPoolFeature.styles";
+import { LimitWindowRow } from "./LimitWindowRow";
 import {
   accountBankedResets,
-  accountLimitProgressColor,
   accountResetCreditExpiry,
   accountResetCreditTitle,
   accountResetWindowLabel,
@@ -21,7 +20,6 @@ import {
 const MILLISECONDS_PER_SECOND = 1000;
 const NO_BANKED_RESETS = 0n;
 const SINGLE_BANKED_RESET = 1n;
-const PERCENT_MAX = 100;
 const OTHER_WINDOW_ORDER = 2;
 const FIVE_HOUR_WINDOW_HOURS = 5;
 const HOURS_PER_DAY = 24;
@@ -210,70 +208,14 @@ function AccountResetWindowRow({
   readonly now: number;
   readonly window: ReturnType<typeof accountRateLimitResetWindows>[number];
 }): React.JSX.Element {
-  const remaining = accountResetWindowRemainingPercent(window);
-  const label = `${accountResetWindowLabel(window)} window`;
-  const relative = relativeResetTime(window.resetsAt, now);
-  const resetLabel =
-    relative === "reset due"
-      ? "Reset due"
-      : relative === null
-        ? "Reset time unavailable"
-        : `Resets ${relative}`;
   return (
-    <View style={styles.accountResetWindow}>
-      <View style={styles.accountResetWindowCopy}>
-        <Text style={styles.accountResetWindowLabel}>{label}</Text>
-        <Text style={styles.accountResetWindowTime}>{resetLabel}</Text>
-      </View>
-      <View
-        style={styles.accountResetWindowMeter}
-        testID={`account-reset-window-meter-${window.slot}`}
-      >
-        <AccountResetProgress label={label} remaining={remaining} slot={window.slot} />
-        <Text
-          style={styles.accountResetWindowRemaining}
-          testID={`account-reset-window-remaining-${window.slot}`}
-        >
-          {remaining === null ? "Usage pending" : `${String(remaining)}% left`}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-function AccountResetProgress({
-  label,
-  remaining,
-  slot,
-}: {
-  readonly label: string;
-  readonly remaining: number | null;
-  readonly slot: string;
-}): React.JSX.Element {
-  return (
-    <View
-      accessibilityLabel={`${label} remaining`}
-      accessibilityRole="progressbar"
-      accessibilityValue={
-        remaining === null
-          ? { max: PERCENT_MAX, min: 0, text: "Usage pending" }
-          : { max: PERCENT_MAX, min: 0, now: remaining }
-      }
-      style={styles.accountResetProgressTrack}
-      testID={`account-reset-window-progress-${slot}`}
-    >
-      {remaining === null ? null : (
-        <View
-          style={[
-            styles.accountResetProgressFill,
-            {
-              backgroundColor: accountLimitProgressColor(remaining),
-              width: percentageDimension(remaining),
-            },
-          ]}
-        />
-      )}
-    </View>
+    <LimitWindowRow
+      label={`${accountResetWindowLabel(window)} window`}
+      now={now}
+      remaining={accountResetWindowRemainingPercent(window)}
+      resetsAt={window.resetsAt}
+      testKey={window.slot}
+    />
   );
 }
 

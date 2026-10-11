@@ -183,6 +183,8 @@ describe("command activity presentation", () => {
     }
     expect(cardStyle).toContain("backgroundColor: colors.surfaceContainerLow");
     expect(nestedStyle).toContain('backgroundColor: "transparent"');
+    expect(nestedStyle).toContain("paddingBottom: 0");
+    expect(nestedStyle).toContain("paddingTop: 0");
     // The thinking row's transparent surface is covered by the pending-to-reasoning render test.
     expect(sourceObjectDeclaration(codeBlockStyles, "fallbackViewport")).toContain(
       "backgroundColor: colors.code",
@@ -194,7 +196,10 @@ describe("command activity presentation", () => {
       "backgroundColor: colors.surfaceRaised",
     );
     expect(sourceObjectDeclaration(approvalCardStyles, "approvalCard")).toContain(
-      "backgroundColor: colors.warningContainer",
+      "backgroundColor: colors.surfaceContainerLow",
+    );
+    expect(sourceObjectDeclaration(approvalCardStyles, "approvalInline")).toContain(
+      'backgroundColor: "transparent"',
     );
   });
 
@@ -218,10 +223,27 @@ describe("command activity presentation", () => {
   });
 
   it("shows only server figures and never estimates from command output", () => {
-    const projected = { version: 1, basis: "approxBytesPerToken", bytes: 400, estimatedTokens: 137, estimatedInputCostUsd: 0.125 };
-    expect(commandOutputFootprint({ codewideOutputFootprint: projected, aggregatedOutput: "short preview" })).toEqual(projected);
+    const projected = {
+      version: 1,
+      basis: "approxBytesPerToken",
+      bytes: 400,
+      estimatedTokens: 137,
+      estimatedInputCostUsd: 0.125,
+    };
+    expect(
+      commandOutputFootprint({
+        codewideOutputFootprint: projected,
+        aggregatedOutput: "short preview",
+      }),
+    ).toEqual(projected);
     expect(commandOutputFootprint({ aggregatedOutput: "λa" })).toBeNull();
-    expect(commandOutputFootprint({ codewideOutputFootprint: { ...projected, estimatedTokens: -1 } })).toBeNull();
-    expect(commandOutputFootprint({ codewideOutputFootprint: { ...projected, estimatedInputCostUsd: null } })).toEqual({ ...projected, estimatedInputCostUsd: null });
+    expect(
+      commandOutputFootprint({ codewideOutputFootprint: { ...projected, estimatedTokens: -1 } }),
+    ).toBeNull();
+    expect(
+      commandOutputFootprint({
+        codewideOutputFootprint: { ...projected, estimatedInputCostUsd: null },
+      }),
+    ).toEqual({ ...projected, estimatedInputCostUsd: null });
   });
 });

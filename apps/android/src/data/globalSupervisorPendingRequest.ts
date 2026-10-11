@@ -183,7 +183,7 @@ function userInputQuestion(value: unknown): UserInputQuestion | null {
     allowsOther: row.isOther === true || options.length === 0,
     id,
     options,
-    question: boundedText(question, "Codex needs input."),
+    question: boundedText(question, "The agent needs input."),
     secret: row.isSecret === true,
   };
 }
@@ -361,14 +361,14 @@ export function projectGlobalSupervisorPendingRequest(
     return {
       ...identity,
       response: { decisions: ["accept", "acceptForSession", "decline"], kind: "approval" },
-      summary: boundedText(request.params.reason, "Codex is waiting for approval."),
+      summary: boundedText(request.params.reason, "The agent is waiting for approval."),
     };
   }
   if (request.method === "item/permissions/requestApproval") {
     return {
       ...identity,
       response: { decisions: ["allowTurn", "allowSession", "decline"], kind: "permissions" },
-      summary: boundedText(request.params.reason, "Codex is waiting for permission approval."),
+      summary: boundedText(request.params.reason, "The agent is waiting for permission approval."),
     };
   }
   const questions = userInputQuestions(request);
@@ -381,7 +381,7 @@ export function projectGlobalSupervisorPendingRequest(
       },
       summary: boundedText(
         questions.map((question) => question.question).join(" "),
-        "Codex needs input.",
+        "The agent needs input.",
       ),
     };
   }

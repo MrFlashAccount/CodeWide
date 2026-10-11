@@ -1,0 +1,23 @@
+[package]
+name = "agent-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "JSON-RPC WebSocket and supervised stdio transports to CodeWide agent processes"
+
+[dependencies]
+agent-core = { path = "../agent-core" }
+axum = { version = "0.8.4", features = ["ws"] }
+futures-util = "0.3.31"
+serde_json = "1.0.143"
+thiserror = "2.0.16"
+tokio = { version = "1.47.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = "0.29.0"
+tracing = "0.1.41"
+
+[dev-dependencies]
+tempfile = "3.21.0"
+
+[lints]
+workspace = true

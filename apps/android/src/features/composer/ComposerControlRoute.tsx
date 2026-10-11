@@ -19,7 +19,9 @@ export function ComposerControlRoute({
   return (
     <ResourceComposerMenu
       controlError={request.controlError}
+      controls$={request.controls$}
       controlsResourceId={request.controlsResourceId}
+      draftPreferences={request.draftPreferences}
       hideTitle={false}
       initialPage={request.kind}
       newChat={request.newChat}
@@ -30,9 +32,6 @@ export function ComposerControlRoute({
       onSelectPermissions={request.selectPermissions}
       onSelectPersonality={request.selectPersonality}
       resources={request.resources}
-      selectedEffort={request.selectedEffort}
-      selectedModel={request.selectedModel}
-      selectedPermissions={request.selectedPermissions}
       selectedPersonality={request.selectedPersonality}
       thread={request.thread}
       toolPage={null}

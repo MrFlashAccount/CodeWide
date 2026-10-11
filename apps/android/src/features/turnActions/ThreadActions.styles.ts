@@ -14,6 +14,10 @@ export const styles = StyleSheet.create({
     height: touchTarget,
     width: touchTarget,
   },
+  sheetEmpty: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
   sheetTitle: {
     color: colors.text,
     flexShrink: 1,

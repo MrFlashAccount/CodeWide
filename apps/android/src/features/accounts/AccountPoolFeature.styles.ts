@@ -1,4 +1,6 @@
 import { Platform, StyleSheet } from "react-native";
+
+import { SETTINGS_ROW_LEADING_SIZE } from "../../ui/settingsRowLayout";
 import {
   colors,
   controlSize,
@@ -23,6 +25,10 @@ export const styles = StyleSheet.create({
   },
   accountBankedResetPressed: {
     backgroundColor: colors.surfaceContainerHigh,
+  },
+  accountLeadingSlot: {
+    alignItems: "center",
+    width: SETTINGS_ROW_LEADING_SIZE,
   },
   accountLoginCode: {
     color: colors.text,

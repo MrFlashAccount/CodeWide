@@ -83,7 +83,9 @@ async function refreshPins(
     }
     missing.push({ archived: archived.has(id), thread: response.thread });
   }
-  await summaries.mergeSnapshots(connectionId, missing);
+  // These reads cover no known event cursor: a row that a live event created or changed
+  // after the presence check above is newer and must not be replaced by them.
+  await summaries.mergeSnapshots(connectionId, missing, 0);
   await summaries.applyPinSnapshot(connectionId, snapshot);
 }
 

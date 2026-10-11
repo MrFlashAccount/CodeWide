@@ -29,12 +29,19 @@ export function createThreadSyncReconnect({
   details,
   readConnection,
   refreshAccountRateLimits,
+  refreshAgentProviders,
   sync,
 }: {
   catalog: Pick<ReturnType<typeof createCatalogRuntime>, "refreshThreadCatalog">;
   details: Pick<ThreadDetailDatabase, "invalidateHistoryExhaustion">;
   readConnection: (connectionId: string) => ConnectionStateRow | undefined;
   refreshAccountRateLimits: ReturnType<typeof createAccountRateLimitsLoader>;
+  /**
+   * The server's provider list: its providers' sign-ins and limits and the
+   * account pool's owner, which the accounts menu needs without opening the
+   * server's settings page first.
+   */
+  refreshAgentProviders: (connectionId: string) => Promise<void>;
   sync: Pick<
     ReturnType<typeof createThreadSyncRuntime>,
     "invalidateHistoryReads" | "desiredThreadId" | "readThread"
@@ -61,6 +68,8 @@ export function createThreadSyncReconnect({
       });
     });
     void refreshAccountRateLimits(connectionId, true).catch(() => undefined);
+    // A failure stays in the resource's state; an older Companion reads as unsupported.
+    void refreshAgentProviders(connectionId).catch(() => undefined);
   };
   return {
     accept(row: ConnectionStateRow): void {

@@ -74,16 +74,23 @@ export function deduplicateThreadSummaries(
   return [...byKey.values()];
 }
 
+/** The row's live state: a pending request, a running turn or sub-agent, or a failure. */
+function listItemState(thread: StoredThreadSummary): NonNullable<ThreadListItem["state"]> | null {
+  if (thread.pendingRequestCount > 0) {
+    return "approval";
+  }
+  // A thread whose own turn ended is still in progress while its sub-agents run.
+  if (thread.status.type === "active" || thread.activeSubagents === true) {
+    return "running";
+  }
+  return thread.status.type === "systemError" ? "failed" : null;
+}
+
 export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListItem {
-  const state =
-    thread.pendingRequestCount > 0
-      ? "approval"
-      : thread.status.type === "active"
-        ? "running"
-        : thread.status.type === "systemError"
-          ? "failed"
-          : null;
+  const state = listItemState(thread);
   return {
+    agentBadge: threadAgentBadge(thread),
+    agentProvider: threadAgentBadgeProvider(thread),
     archived: thread.archived,
     id: thread.remoteThreadId,
     needsAttention: threadNeedsAttention(thread),
@@ -95,6 +102,18 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
     unread: thread.unread,
     ...(state === null ? {} : { state }),
   };
+}
+
+/** The thread's declared provider name, used only to label its provider mark. */
+function threadAgentBadge(thread: StoredThreadSummary): string | null {
+  const agent = thread.codewideAgent;
+  return agent === null || agent === undefined ? null : agent.providerName;
+}
+
+/** The thread's declared provider id, for its mark; `null` for legacy or malformed data. */
+function threadAgentBadgeProvider(thread: StoredThreadSummary): string | null {
+  const agent = thread.codewideAgent;
+  return agent === null || agent === undefined ? null : agent.provider;
 }
 
 function threadNeedsAttention(thread: StoredThreadSummary): boolean {

@@ -14,6 +14,7 @@ use codewide_companion::{
     file_uploads::WorkspaceUploadStore,
     files::{FileQuery, FileService},
     history_service::HistoryService,
+    rollout_store::RolloutStore,
     server::{self, CompanionServices},
     store::IndexStore,
     sync::SyncHub,
@@ -108,7 +109,7 @@ async fn file_reads_are_host_wide_while_uploads_remain_resumable()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),
@@ -159,7 +160,7 @@ async fn managed_attachments_are_scoped_by_thread_and_share_cas_blobs()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),
@@ -279,7 +280,7 @@ async fn v1_registry_upload_cannot_publish_after_device_revoke()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),

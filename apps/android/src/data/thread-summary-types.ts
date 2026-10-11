@@ -1,15 +1,27 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
+import { normalizeStoredThreadAgent, type ThreadAgent } from "./threadAgent";
 import { validPinCursor } from "./threadPinState";
 import { unknownRecord } from "./unknownRecord";
 
 type ActiveThreadStatus = Extract<Thread["status"], { type: "active" }>;
 
 export type StoredThreadSummary = {
+  /**
+   * A root thread whose loaded sub-agents are running; absent in older rows
+   * and on child rows. See `threadSummarySubagentActivity.ts`.
+   */
+  activeSubagents?: boolean;
   agentNickname?: string | null;
   agentRole?: string | null;
   archived: boolean;
   /** A terminal turn cannot reopen question attention through late item replay. */
   closedQuestionTurnId?: string | null;
+  /**
+   * Bound agent provider and declared capabilities from `Thread.codewideAgent`.
+   * Absent in rows persisted before this field and `null` for legacy Companions;
+   * both mean a Codex thread with every capability.
+   */
+  codewideAgent?: ThreadAgent | null;
   connectionId: string;
   cwd: string;
   /** Native outbox command hiding this row until delivery or rollback. */
@@ -53,6 +65,7 @@ export type StoredThreadSummary = {
 export function normalizeStoredThreadSummary(row: StoredThreadSummary): StoredThreadSummary {
   return {
     ...row,
+    codewideAgent: normalizeStoredThreadAgent(row.codewideAgent),
     deleteCommandId: row.deleteCommandId ?? null,
     firstUnreadAgentTurnId:
       typeof row.firstUnreadAgentTurnId === "string" && row.firstUnreadAgentTurnId !== ""

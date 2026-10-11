@@ -96,7 +96,7 @@ export function analyzeAdaptiveLayout(listXml: string, conversationXml?: string)
   if (listNodes.length === 0 || conversationNodes.length === 0) throw new Error("UIAutomator returned no nodes");
 
   const menu = requiredDescription(conversationNodes, "Composer menu");
-  const input = requiredDescription(conversationNodes, "Message Codex");
+  const input = requiredDescription(conversationNodes, "Message the agent");
   const voice = conversationNodes.find(({ description }) => description === "Voice input" || description === "Stop voice input");
   if (voice === undefined) throw new Error("Missing accessibility node: Voice input");
   const send = conversationNodes.find(({ description }) =>
@@ -114,8 +114,8 @@ export function analyzeAdaptiveLayout(listXml: string, conversationXml?: string)
   if (compact && newThread === null) throw new Error("Missing accessibility node: New thread");
   if (conversationXml !== undefined) requiredDescription(conversationNodes, "Back to threads");
 
-  assertHorizontalOrder(menu.bounds, input.bounds, "Composer menu", "Message Codex");
-  assertHorizontalOrder(input.bounds, voice.bounds, "Message Codex", "Voice input");
+  assertHorizontalOrder(menu.bounds, input.bounds, "Composer menu", "Message the agent");
+  assertHorizontalOrder(input.bounds, voice.bounds, "Message the agent", "Voice input");
   assertHorizontalOrder(voice.bounds, send.bounds, "Voice input", send.description);
 
   const composerSpan = send.bounds.right - menu.bounds.left;

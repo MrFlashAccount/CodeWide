@@ -17,7 +17,7 @@ export function ThreadAttachmentResourceRow({
   return (
     <AttachmentListRow
       accessibilityLabel={`Open attachment ${attachment.name}`}
-      description={`${attachment.origin === "user" ? "You" : "Codex"} · ${attachment.kind}`}
+      description={`${attachment.origin === "user" ? "You" : "Agent"} · ${attachment.kind}`}
       leading={icon}
       onPress={onPress}
       position={position}

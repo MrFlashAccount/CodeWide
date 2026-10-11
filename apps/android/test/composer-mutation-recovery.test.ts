@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   mergeFailedComposerAttachments,
   mergeFailedComposerText,
-  rollbackOwnedModelSelection,
 } from "../src/features/composer/submissionRecovery";
 
 describe("composer async mutation recovery", () => {
@@ -20,23 +19,5 @@ describe("composer async mutation recovery", () => {
     const recovered = mergeFailedComposerAttachments(current, [{ id: "old" }, { id: "shared" }]);
 
     expect(recovered.map(({ id }) => id)).toEqual(["old", "shared", "new"]);
-  });
-
-  it("rolls back model independently when a newer effort mutation owns effort", () => {
-    expect(rollbackOwnedModelSelection(
-      { model: "m1", effort: "e2" },
-      { model: "m1", effort: "e1" },
-      { model: "m0", effort: "e0" },
-      { model: true, effort: false },
-    )).toEqual({ model: "m0", effort: "e2" });
-  });
-
-  it("does not roll back a field whose value has already changed", () => {
-    expect(rollbackOwnedModelSelection(
-      { model: "m2", effort: "e2" },
-      { model: "m1", effort: "e1" },
-      { model: "m0", effort: "e0" },
-      { model: true, effort: true },
-    )).toEqual({ model: "m2", effort: "e2" });
   });
 });

@@ -23,6 +23,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
         applyModelSettings={props.applyModelSettings}
         closeQuickControlMenu={props.closeQuickControlMenu}
         controlError={props.controlError}
+        controls$={props.controls$}
         controlsResourceId={props.controlsResourceId}
         cwd={props.cwd}
         leadingContextChips={props.leadingContextChips}
@@ -87,6 +88,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
               fileEnabled={props.fileAttachmentEnabled}
               goalEnabled={props.onSetGoal !== undefined}
               onSelect={props.openAccessoryAction}
+              skillsEnabled={props.skillsEnabled}
               terminalEnabled={props.terminalEnabled}
             />
           )}

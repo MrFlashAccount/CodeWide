@@ -138,33 +138,10 @@ describe("subagent projection", () => {
     ]);
   });
 
-  it("removes injected user-role bootstrap content and exposes the stable task name", () => {
-    const child = {
-      ...thread("child", "root", 200, [{
-        ...agentTurn("child-turn", 201, "working"),
-        items: [
-          ...turn("bootstrap", 201, "<AGENTS.md>internal instructions</AGENTS.md>").items,
-          ...agentTurn("answer", 201, "working").items,
-        ],
-      }]),
-      source: {
-        subAgent: {
-          thread_spawn: { agent_path: "/root/research_draft_deep" },
-        },
-      },
-    } as Thread;
-
-    const projection = projectSubagentConversation(child, null);
-
-    expect(projection.taskName).toBe("research draft deep");
-    expect(projection.thread.turns[0]?.items.map((item) => item.type)).toEqual(["agentMessage"]);
-  });
-
   it("preserves a real child input and does not duplicate it with parent metadata", () => {
     const child = thread("child", "root", 200, [{
       ...agentTurn("child-turn", 201, "working"),
       items: [
-        ...turn("bootstrap", 201, "<environment_context>internal</environment_context>").items,
         ...turn("handoff", 201, "Review the native renderer.").items,
         ...agentTurn("answer", 201, "working").items,
       ],

@@ -7,6 +7,8 @@ import type {
   ThreadGoalStatus,
 } from "@codewide/codex-protocol/v0.155.1/v2";
 
+import type { Observable } from "@legendapp/state";
+
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { QueuedPrompt } from "../../data/thread-delivery-state";
 import type {
@@ -15,6 +17,8 @@ import type {
   TunnelValue,
   WorkspaceResourceDatabase,
 } from "../../data/workspace-resource-database";
+import type { ComposerDraftPreferencesSource } from "../../features/composer/ComposerMenu";
+import type { ComposerControlsState } from "../../features/composer/settings/controlsOverlay";
 import { RouteSessionRegistry, ROUTE_SESSION_TTL_MS } from "../routeSessionPolicy";
 import { sameRouteSessionOwner, type V1RouteSessionOwner } from "../threads/threadRouteParams";
 
@@ -22,18 +26,19 @@ const MAX_COMPOSER_TOOL_SESSIONS = 8;
 
 type ControlRouteRequest = {
   readonly controlError: string | null;
+  /** The composer settings owner's state: server settings and pending local choices. */
+  readonly controls$: Observable<ComposerControlsState>;
   readonly controlsResourceId: string | null;
+  /** The new chat's persisted local choices, read as they change. */
+  readonly draftPreferences: ComposerDraftPreferencesSource;
   readonly getTransferAccess?: GetTransferAccess;
   readonly invokeSkill: (skill: { readonly name: string; readonly path: string }) => void;
   readonly kind: "model" | "permissions" | "skills";
   readonly newChat: boolean;
   readonly resources: WorkspaceResourceDatabase | null;
-  readonly selectedEffort: string | null;
-  readonly selectedModel: string | null;
-  readonly selectedPermissions: string | null;
   readonly selectedPersonality: Personality | null;
   readonly selectEffort: (effort: string) => void;
-  readonly selectModel: (model: string, effort: string) => void;
+  readonly selectModel: (model: string, effort: string | null) => void;
   readonly selectPermissions: (permissions: string | null) => void;
   readonly selectPersonality: (personality: Personality | null) => void;
   readonly thread: Thread | null;

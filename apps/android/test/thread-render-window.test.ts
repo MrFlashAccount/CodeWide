@@ -22,6 +22,23 @@ function turn(items: FakeItem[], status: "inProgress" | "completed" = "inProgres
 }
 
 describe("thread render window", () => {
+  it("keeps every item of a turn without a user message in the response, even with stale pre-turn markers", () => {
+    const items: FakeItem[] = [
+      { type: "commandExecution", id: "first", codewidePreTurn: true },
+      { type: "commandExecution", id: "second" },
+      { type: "agentMessage", id: "answer", phase: "final_answer" },
+    ];
+
+    const completed = selectTurnRenderWindow(turn(items, "completed"));
+    expect(completed.preTurnActivityIndexes).toEqual([]);
+    expect(completed.collapsedActivityIndexes).toEqual([0, 1]);
+    expect(completed.latestAgentIndex).toBe(2);
+
+    const active = selectTurnRenderWindow(turn(items, "inProgress"));
+    expect(active.preTurnActivityIndexes).toEqual([]);
+    expect(active.liveActivityIndexes).toEqual([0, 1, 2]);
+  });
+
   it("keeps pre-turn compaction outside the bubble while projecting other pre-turn activity into it", () => {
     const items: FakeItem[] = [
       { type: "contextCompaction", id: "compaction" },
@@ -283,4 +300,37 @@ it("keeps async question messages out of final-response selection and streaming 
   expect(selectTurnRenderWindow(rawTurn).liveActivityIndexes).toEqual([1]);
   expect(isAgentMessageStillStreaming(rawTurn, question.id)).toBe(false);
   expect(selectTurnRenderWindow({ ...rawTurn, status: "completed" }).latestAgentIndex).toBe(1);
+});
+
+describe("provider-initiated (wake) turn without a user message", () => {
+  // A Claude background task can start a turn by itself. Its items arrive with
+  // the projected pre-turn flag because no user boundary ever materializes;
+  // without a user message the whole turn is the response.
+  const wakeItems: FakeItem[] = [
+    { type: "commandExecution", id: "tool", codewidePreTurn: true },
+    { type: "agentMessage", id: "commentary", phase: "commentary", codewidePreTurn: true },
+    { type: "commandExecution", id: "tool-2", codewidePreTurn: true },
+    { type: "agentMessage", id: "answer", phase: "final_answer", codewidePreTurn: true },
+  ];
+
+  it("streams the whole wake turn as the response while it is active", () => {
+    const active = selectTurnRenderWindow(turn(wakeItems));
+    expect(active.userItemIndexes).toEqual([]);
+    expect(active.liveActivityIndexes).toEqual([0, 1, 2, 3]);
+    expect(active.preTurnActivityIndexes).toEqual([]);
+    expect(active.latestAgentIndex).toBe(3);
+  });
+
+  it("renders the final answer exactly once after the wake turn completes", () => {
+    const completed = selectTurnRenderWindow(turn(wakeItems, "completed"));
+    const rendered = [
+      ...completed.preTurnActivityIndexes,
+      ...completed.collapsedActivityIndexes,
+      ...completed.compactionIndexes,
+      completed.latestAgentIndex,
+    ];
+    expect(completed.latestAgentIndex).toBe(3);
+    expect(rendered.toSorted((left, right) => left - right)).toEqual([0, 1, 2, 3]);
+    expect(new Set(rendered).size).toBe(rendered.length);
+  });
 });

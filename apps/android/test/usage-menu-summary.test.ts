@@ -45,6 +45,6 @@ describe("usage menu session summary", () => {
     expect(sessionSummary).toContain('testID="usage-session-cost"');
     expect(sourceObjectDeclaration(usageStyles, "sessionCostText")).toContain("flexShrink: 0");
     expect(sessionSummary).toContain("cached: sessionUsage.cachedInputTokens");
-    expect(sessionSummary).toContain("cached: sessionCost.cachedInputCostUsd");
+    expect(sessionSummary).toContain("cached: cost.cachedInputCostUsd");
   });
 });

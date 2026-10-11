@@ -204,62 +204,6 @@ describe("thread chat timeline projection", () => {
     expect(protocolTimestampMs(null)).toBeNull();
   });
 
-  it("hides Codex environment context without hiding the agent response in the same turn", () => {
-    const contextualTurn = {
-      ...turn("contextual", 2),
-      status: "completed",
-      items: [
-        {
-          type: "userMessage",
-          id: "context",
-          clientId: null,
-          content: [{
-            type: "text",
-            text: "  <ENVIRONMENT_CONTEXT>\n  <cwd>/tmp</cwd>\n</environment_context>  ",
-            text_elements: [],
-          }],
-        },
-        { delivery: null, questions: null, type: "agentMessage", id: "answer", text: "Done", phase: "final_answer", memoryCitation: null },
-      ],
-    } as unknown as Turn;
-
-    const timeline = projectResidentThreadTimeline(
-      [contextualTurn],
-      [],
-      { includesEarliest: true, includesLatest: true },
-    );
-
-    expect(timeline).toHaveLength(1);
-    expect(timeline[0]).toMatchObject({
-      kind: "turn",
-      turn: { items: [{ type: "agentMessage", text: "Done" }] },
-    });
-    expect(contextualTurn.items).toHaveLength(2);
-  });
-
-  it("omits a completed turn that contains only Codex environment context", () => {
-    const contextualTurn = {
-      ...turn("context-only", 2),
-      status: "completed",
-      items: [{
-        type: "userMessage",
-        id: "context",
-        clientId: null,
-        content: [{
-          type: "text",
-          text: "<environment_context>\n  <cwd>/tmp</cwd>\n</environment_context>",
-          text_elements: [],
-        }],
-      }],
-    } as unknown as Turn;
-
-    expect(projectResidentThreadTimeline(
-      [contextualTurn],
-      [],
-      { includesEarliest: true, includesLatest: true },
-    )).toEqual([]);
-  });
-
   it("keeps authored text that quotes or discusses an environment context block", () => {
     const quoted = {
       ...turn("quoted", 2),

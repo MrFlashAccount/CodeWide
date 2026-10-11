@@ -21,7 +21,8 @@ export function formatDeviceDateTime(
   return formatDateTimeForDevice(timestampSeconds, preferences);
 }
 
-function readDeviceTimePreferences(): DeviceTimePreferences {
+/** Reads the device locale and explicit 12/24-hour clock preference. */
+export function readDeviceTimePreferences(): DeviceTimePreferences {
   if (Platform.OS !== "android") {
     return {};
   }
@@ -36,12 +37,6 @@ function readDeviceTimePreferences(): DeviceTimePreferences {
     ...(locale === undefined ? {} : { locale }),
     ...(uses24HourClock === undefined ? {} : { uses24HourClock }),
   };
-}
-
-/** V1 device-time owner, extracted without changing interaction or resource lifetime. */
-
-export function formatThreadTime(timestamp: number): string {
-  return formatDeviceTime(timestamp);
 }
 
 export function formatClockTime(timestamp: number): string {

@@ -1,6 +1,7 @@
 import type { LegendListProps, LegendListRef } from "@legendapp/list/react-native";
 import {
   forwardRef,
+  memo,
   useImperativeHandle,
   useLayoutEffect,
   type ForwardedRef,
@@ -33,6 +34,30 @@ export function setLegendListWithinEndThreshold(withinThreshold: boolean): void 
     listener(withinThreshold);
   }
 }
+
+type MockRowProps = {
+  readonly data: unknown;
+  readonly extraData: unknown;
+  readonly index: number;
+  readonly item: unknown;
+  readonly render: (item: unknown, index: number, extraData: unknown) => ReactElement | null;
+};
+
+/**
+ * Like LegendList (`useMemo(..., [itemKey, data, extraData])` around
+ * `renderItem`), a row re-renders only when its item, the data array or
+ * `extraData` change; a new `renderItem` closure alone keeps the old row.
+ */
+const MockRow = memo(
+  function MockRow({ extraData, index, item, render }: MockRowProps): ReactElement | null {
+    return render(item, index, extraData);
+  },
+  (previous, next) =>
+    previous.item === next.item &&
+    previous.data === next.data &&
+    previous.extraData === next.extraData &&
+    previous.index === next.index,
+);
 
 function KeyboardAwareLegendListInner<ItemT>(
   props: LegendListProps<ItemT>,
@@ -116,7 +141,16 @@ function KeyboardAwareLegendListInner<ItemT>(
         ? empty
         : data.map((item, index) => (
             <View key={props.keyExtractor?.(item, index) ?? String(index)}>
-              {renderItem({ extraData: props.extraData, index, item })}
+              <MockRow
+                data={data}
+                extraData={props.extraData}
+                index={index}
+                item={item}
+                // WHY: rows are stored as unknown in the memoized row; this list only renders its own `data` items.
+                render={(row, rowIndex, extraData) =>
+                  renderItem?.({ extraData, index: rowIndex, item: row as ItemT }) ?? null
+                }
+              />
             </View>
           ))}
       {footer}

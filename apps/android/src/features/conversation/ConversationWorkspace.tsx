@@ -146,19 +146,22 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
         : null;
   const conversationActions = createConversationScopeBindings(
     props.features,
-    scope.newChatDraft !== null
+    props.destination.kind === "draft"
       ? {
-          draft: scope.newChatDraft,
+          draft: props.destination.draft,
           kind: "draft",
           onSend: createNewChatSubmission({
+            catalogModels: () =>
+              props.runtime.resources?.turnControls.get(activeControlsResourceId ?? "")?.value
+                ?.models ?? [],
             closeDraft: props.onDraftAdmitted,
             commands: {
               sendText: props.features.composer.sendText,
               startThread: props.features.projects.startThread,
               startThreadInWorkspace: props.features.projects.startThreadInWorkspace,
             },
-            draftChat: scope.newChatDraft,
-            setActiveThreadId: props.onSelectThread,
+            draftChat: props.destination.draft,
+            setActiveThreadId: props.destination.openAdmittedThread,
           }),
         }
       : scope.activeRemoteThreadId === null

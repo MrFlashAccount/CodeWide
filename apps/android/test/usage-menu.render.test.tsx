@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text } from "react-native";
 import type { AccountPoolProfile } from "../src/data/account-pool";
 import type { AccountUsageSource } from "../src/data/account-usage-presentation";
 import { UsageMenu } from "../src/features/accounts/UsageMenu";
+import { usageAccountRows } from "../src/features/accounts/usageAccounts";
 import { ContentMenu } from "../src/ui/ContentMenu";
 
 const LIMITS: GetAccountRateLimitsResponse = {
@@ -70,7 +71,17 @@ function setup(withAccounts: boolean) {
   const view = render(
     <>
       <UsageMenu
-        {...(withAccounts ? { accountSources: sources, onRefresh } : {})}
+        {...(withAccounts
+          ? {
+              accountRows: usageAccountRows(
+                sources,
+                [{ iconId: "desktop", id: "server", name: "Buddy" }],
+                undefined,
+              ),
+              accountSources: sources,
+              onRefresh,
+            }
+          : {})}
         actions={[
           { id: "projects", label: "Manage Projects", icon: "folder-outline", onPress: onProjects },
           { id: "settings", label: "Settings", icon: "settings-outline", onPress: jest.fn() },
@@ -99,7 +110,7 @@ it("keeps only the account-to-actions divider and removes action arrows", () => 
   expect(test.view.queryByText("chevron-forward")).toBeNull();
   for (const id of ["first", "second"]) {
     expect(
-      StyleSheet.flatten(test.view.getByTestId(`usage-account-${id}`).props.style).borderTopWidth ??
+      StyleSheet.flatten(test.view.getByTestId(`usage-account-server/${id}`).props.style).borderTopWidth ??
         0,
     ).toBe(0);
   }

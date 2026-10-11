@@ -1,5 +1,6 @@
 import { projectCompleteMarkdown } from "@codewide/rendering-core";
 import { markdownDocumentBlocks } from "../../../rendering/markdown-document-blocks";
+import { foldsAnswerIntoHistory, type TurnBubbleGroup } from "../turns/turnBubbleGroup";
 import { projectTurnPresentation } from "../turns/turnProjection";
 import type { VirtualizedTurnPart, VirtualizedTurnPlacement } from "../turns/virtualizedTurnTypes";
 import { timelineItemKey } from "./timelineProjection";
@@ -21,11 +22,16 @@ export type TimelineRow =
       timelineIndex: number;
     }
   | {
+      /** The slice's place in its response bubble; differs from `placement` only in a group. */
+      bubble: VirtualizedTurnPlacement;
       followsLead: boolean;
+      /** The turns drawn as this bubble, or `null` for a turn drawn alone. */
+      group: TurnBubbleGroup | null;
       item: Extract<TimelineItem, { kind: "turn" }>;
       key: string;
       kind: "turnSlice";
       parts: readonly VirtualizedTurnPart[];
+      /** The slice's place within its own turn. */
       placement: VirtualizedTurnPlacement;
       timelineIndex: number;
     };
@@ -65,8 +71,104 @@ export function projectTimelineRows(
       rows.push(...projectTimelineItemRows(item, timelineIndex, options));
     }
   }
-  timelineRowsCache.set(items, { key: cacheKey, rows });
-  return rows;
+  const grouped = groupContinuedResponses(items, rows);
+  timelineRowsCache.set(items, { key: cacheKey, rows: grouped });
+  return grouped;
+}
+
+type TimelineTurnItem = Extract<TimelineItem, { kind: "turn" }>;
+
+/** A head slice whose answer moved into the bubble's history keeps only that history. */
+const FOLDED_PARTS: readonly VirtualizedTurnPart[] = [{ kind: "empty" }];
+
+/**
+ * Draws everything from one user message to the next as one agent bubble:
+ * a turn without a user message (a background task waking the agent)
+ * continues the previous turn's bubble. The bubble reads like one turn: one
+ * collapsed history, then the latest answer. Earlier answers fold into that history once the latest turn has
+ * finished; the head keeps one slice for it. Row keys and per-turn
+ * placement stay as projected, so a live continuation streams into the
+ * existing bubble; rows outside a group keep their cached identity.
+ */
+function groupContinuedResponses(
+  items: readonly TimelineItem[],
+  rows: TimelineRow[],
+): TimelineRow[] {
+  const groups = continuedResponseGroups(items, rows);
+  if (groups.size === 0) {
+    return rows;
+  }
+  const kept = rows.flatMap((row) => {
+    const members = row.kind === "turnSlice" ? groups.get(row.item) : undefined;
+    if (row.kind !== "turnSlice" || members === undefined) {
+      return [row];
+    }
+    if (!foldsAnswerIntoHistory(members, row.item)) {
+      return [row];
+    }
+    return row.item === members[0] && isLeadingSlice(row.placement)
+      ? [{ ...row, parts: FOLDED_PARTS, placement: "single" as const }]
+      : [];
+  });
+  const groupSlices = new Map<readonly TimelineTurnItem[], number>();
+  for (const row of kept) {
+    const members = row.kind === "turnSlice" ? groups.get(row.item) : undefined;
+    if (members !== undefined) {
+      groupSlices.set(members, (groupSlices.get(members) ?? 0) + 1);
+    }
+  }
+  const seen = new Map<readonly TimelineTurnItem[], number>();
+  return kept.map((row) => {
+    const members = row.kind === "turnSlice" ? groups.get(row.item) : undefined;
+    if (row.kind !== "turnSlice" || members === undefined) {
+      return row;
+    }
+    const index = seen.get(members) ?? 0;
+    seen.set(members, index + 1);
+    return {
+      ...row,
+      bubble: slicePlacement(index, groupSlices.get(members) ?? 1),
+      group: { memberIndex: members.indexOf(row.item), members },
+    };
+  });
+}
+
+/** The agent bubble ends only at a user message: a turn without one continues it. */
+function hasUserMessage(item: TimelineTurnItem): boolean {
+  return item.turn.items.some((turnItem) => turnItem.type === "userMessage");
+}
+
+function isLeadingSlice(placement: VirtualizedTurnPlacement): boolean {
+  return placement === "single" || placement === "start";
+}
+
+function continuedResponseGroups(
+  items: readonly TimelineItem[],
+  rows: readonly TimelineRow[],
+): Map<TimelineItem, readonly TimelineTurnItem[]> {
+  const withLead = new Set(rows.flatMap((row) => (row.kind === "turnLead" ? [row.item] : [])));
+  const groups = new Map<TimelineItem, readonly TimelineTurnItem[]>();
+  let current: TimelineTurnItem[] = [];
+  const close = () => {
+    if (current.length > 1) {
+      for (const member of current) {
+        groups.set(member, current);
+      }
+    }
+  };
+  for (const item of items) {
+    if (item.kind !== "turn") {
+      close();
+      current = [];
+    } else if (current.length > 0 && !withLead.has(item) && !hasUserMessage(item)) {
+      current.push(item);
+    } else {
+      close();
+      current = [item];
+    }
+  }
+  close();
+  return groups;
 }
 
 function projectTimelineItemRows(
@@ -105,7 +207,9 @@ function createTimelineItemRows(
       ? [{ item, key: `${baseKey}\u0000lead`, kind: "turnLead" as const, timelineIndex }]
       : []),
     ...slices.map((slice, index) => ({
+      bubble: slicePlacement(index, slices.length),
       followsLead,
+      group: null,
       item,
       key: index === 0 ? baseKey : `${baseKey}\u0000slice:${virtualizedPartKey(slice[0])}`,
       kind: "turnSlice" as const,

@@ -117,6 +117,7 @@ export function MobileThreadsHeader({ props }: { props: MobileThreadsHeaderProps
         <ThreadListMenu
           accountDatabase={remote.accountRateLimitsDatabase}
           accountServers={servers.filter((server) => serverScopeIncludes(serverScope, server.id))}
+          agentProviders={remote.agentProviders}
           archived={mode === "archived"}
           onManageProjects={onManageProjects}
           onManageTerminals={onManageTerminals}

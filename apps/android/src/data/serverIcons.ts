@@ -39,7 +39,7 @@ export const serverIconOptions = [
 export type ServerIconId = (typeof serverIconOptions)[number]["id"];
 type ServerIconOption = (typeof serverIconOptions)[number];
 
-const DEFAULT_SERVER_ICON_ID: ServerIconId = "desktop";
+export const DEFAULT_SERVER_ICON_ID: ServerIconId = "desktop";
 
 /** Narrows untrusted input to an icon id owned by the fixed inventory. */
 export function isServerIconId(value: unknown): value is ServerIconId {

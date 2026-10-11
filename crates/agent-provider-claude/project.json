@@ -1,0 +1,37 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "agent-provider-claude",
+  "projectType": "library",
+  "sourceRoot": "crates/agent-provider-claude/src",
+  "tags": ["language:rust", "type:library"],
+  "implicitDependencies": ["agent-core", "agent-transport", "companion-host", "agent-search", "agent-resources"],
+  "metadata": {
+    "description": "Claude agent provider adapter (Rust; the TypeScript host is its own project)"
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "!{projectRoot}/host/**/*", "rustWorkspace"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p agent-provider-claude --all-targets --all-features -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test -p agent-provider-claude --all-features",
+        "cwd": "."
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo build -p agent-provider-claude --release",
+        "cwd": "."
+      }
+    }
+  }
+}

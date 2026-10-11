@@ -16,7 +16,7 @@ import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 const TABLE = "codewide_thread_summaries";
 const META_TABLE = "__tanstack_db_sqlite_meta";
 const RUNTIME_ID = "thread-summaries-v2";
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const CHECKPOINT_DELAY_MS = 250;
 const CHECKPOINT_ATTEMPTS = 3;
 
@@ -350,7 +350,11 @@ async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabas
     await executor.execute(`UPDATE ${TABLE} SET pinned = 0,
       __payload = json_set(__payload, '$.pinned', json('false'), '$.pinCursor', 0)
       WHERE json_type(__payload, '$.pinCursor') IS NULL`);
-    // v4, v5 and v6 have the same physical schema. The version marks projection
+    // v7: rows written before the order key fell back to `updatedAt` kept a
+    // NULL key and sorted after every other thread; repair them in place.
+    await executor.execute(`UPDATE ${TABLE} SET recency_at = json_extract(__payload, '$.updatedAt')
+      WHERE recency_at IS NULL AND json_type(__payload, '$.updatedAt') IN ('integer', 'real')`);
+    // v4 to v7 have the same physical schema. The version marks projection
     // semantics, not disposable user-visible contents, so upgrading must keep
     // the locally available thread catalog until the repaired snapshot lands.
     await executor.execute(
@@ -376,13 +380,23 @@ async function persistChange(executor: SqliteExecutor, change: ThreadSummaryChan
       JSON.stringify(row),
       row.connectionId,
       row.remoteThreadId,
-      row.recencyAt,
+      sortRecency(row),
       row.pinned ? 1 : 0,
       row.archived ? 1 : 0,
       row.parentThreadId,
       row.deleteCommandId,
     ],
   );
+}
+
+/**
+ * The persisted list order key. Every in-memory comparator orders by
+ * `recencyAt ?? updatedAt`; a thread without its own recency (a Claude session
+ * started in a terminal) must sort by its update time here too, or `NULLS LAST`
+ * pushes it behind every other thread and outside each `LIMIT`ed view.
+ */
+function sortRecency(row: StoredThreadSummary): number {
+  return row.recencyAt ?? row.updatedAt;
 }
 
 async function executeRows(

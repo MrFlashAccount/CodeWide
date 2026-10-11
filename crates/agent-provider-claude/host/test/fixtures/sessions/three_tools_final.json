@@ -1,0 +1,289 @@
+{
+ "description": "A Bash call, an MCP write_note call, a second Bash call and a final answer.",
+ "source": "Agent SDK 0.3.295 getSessionMessages(includeSystemMessages: true) on a local probe session; paths, signatures and usage removed.",
+ "messages": [
+  {
+   "type": "user",
+   "uuid": "c4a630b1-f890-48a3-a37f-fedae12c6bda",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "role": "user",
+    "content": "Do these three steps in order: 1) run the shell command `echo hi` with Bash; 2) call the write_note MCP tool with text 'x'; 3) run the shell command `touch x.txt` with Bash. Then reply DONE."
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:11.766Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "ce7d6e6c-78f7-484a-bdaa-9bc5a09c6088",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfreGHrYgWjxxVNX4BtVA",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:13.673Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "edd33e90-252e-4eb4-bdb3-e8d60ca74887",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfreGHrYgWjxxVNX4BtVA",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_01QXADVZhzXDsiNSzL64Cgxg",
+      "name": "Bash",
+      "input": {
+       "command": "echo hi",
+       "description": "Echo hi"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:13.966Z"
+  },
+  {
+   "type": "user",
+   "uuid": "bebf8264-9af3-491b-843a-d59e7c771971",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_01QXADVZhzXDsiNSzL64Cgxg",
+      "type": "tool_result",
+      "content": "hi",
+      "is_error": false
+     }
+    ]
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:14.035Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "6f573fe9-93af-47eb-9025-f6442db17b3f",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfreGTNo4NTjiS4p1gd2A",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:19.210Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "1f07e2c2-0985-439d-a248-bb9b76f59be4",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfreGTNo4NTjiS4p1gd2A",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_01Fm9WeYZJp4HTZb3MLhy2iA",
+      "name": "mcp__probe__write_note",
+      "input": {
+       "text": "x"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:19.362Z"
+  },
+  {
+   "type": "user",
+   "uuid": "bd240f42-7d06-4b80-889c-64281652c5b9",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_01Fm9WeYZJp4HTZb3MLhy2iA",
+      "type": "tool_result",
+      "content": [
+       {
+        "type": "text",
+        "text": "note written"
+       }
+      ]
+     }
+    ]
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:19.376Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "d83eb38d-eb23-4424-a65d-7f45ecb7a5ce",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfreGrDyTBqnHtmRRhXuQ",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:20.747Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "f12f004b-cb8c-43d4-9e94-39272376ff9a",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfreGrDyTBqnHtmRRhXuQ",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_01876K5rdceA1T8PVBUmPgcz",
+      "name": "Bash",
+      "input": {
+       "command": "touch x.txt",
+       "description": "Create file x.txt"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:21.040Z"
+  },
+  {
+   "type": "user",
+   "uuid": "1c96c2de-7426-4c6d-b480-a100e16d0567",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_01876K5rdceA1T8PVBUmPgcz",
+      "type": "tool_result",
+      "content": "(Bash completed with no output)",
+      "is_error": false
+     }
+    ]
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:21.085Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "cfb5dd19-f53b-4104-aa98-27e2e186beae",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfreGyVHZ5qZkvo6ASgYk",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:22.374Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "21260541-7be3-4920-8c99-f9259bc51deb",
+   "session_id": "5a501bd2-3572-4b52-8537-b26e7278a1b5",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfreGyVHZ5qZkvo6ASgYk",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "DONE"
+     }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T12:13:22.375Z"
+  }
+ ]
+}

@@ -121,8 +121,8 @@ impl WorkspaceUploadStore {
         files: Arc<FileService>,
         limits: WorkspaceUploadLimits,
     ) -> Result<Self, WorkspaceUploadError> {
-        let database =
-            crate::database::open(database_path.as_ref(), "workspace_uploads").map_err(storage)?;
+        let database = companion_host::database::open(database_path.as_ref(), "workspace_uploads")
+            .map_err(storage)?;
         std::fs::set_permissions(
             database_path.as_ref(),
             std::fs::Permissions::from_mode(0o600),

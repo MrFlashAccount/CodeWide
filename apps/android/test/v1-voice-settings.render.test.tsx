@@ -43,6 +43,7 @@ jest.mock("@expo/ui/jetpack-compose", () => {
 
 const BACKGROUND_MODEL_PROPS = {
   backgroundModelCatalog: {
+    connectionId: "server",
     models: [
       {
         defaultEffort: "high",

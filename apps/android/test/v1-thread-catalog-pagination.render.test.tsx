@@ -44,6 +44,7 @@ function ThreadList({
   const [limit, setLimit] = useState(36);
   const remote = {
     accountRateLimitsDatabase: null,
+    agentProviders: null,
     pendingRequests: [],
     threadSummaryDatabase: database,
   };

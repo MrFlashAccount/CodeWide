@@ -104,6 +104,58 @@ describe("GlobalSupervisorRuntime", () => {
     expect(rpcAfterAttach).not.toHaveBeenCalled();
   });
 
+  it("reports Voice Mode unavailable when no agent provider declares realtime voice", async () => {
+    const session = sessionFixture();
+    const rpcAfterAttach = vi.fn(async () => {
+      throw new RpcResponseError(-32_072, "realtimeVoice is not supported by this thread's agent");
+    });
+    const runtime = createGlobalSupervisorRuntime({
+      attention: attentionFixture(),
+      backgroundSettings: async () => ({ status: "serverDefault" as const }),
+      acquireForegroundLease: async () => ({
+        release: vi.fn(async () => undefined),
+        setPlaybackLevel: vi.fn(),
+      }),
+      binding: () => ({
+        bind: vi.fn(async () => HOME),
+        invalidateDeletedConnections: vi.fn(async () => undefined),
+        read: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
+        reconcile: vi.fn(async () => ({ home: HOME, schemaVersion: 1, status: "ready" as const })),
+        reset: vi.fn(async () => undefined),
+        restoreDeletedHome: vi.fn(async () => null),
+      }),
+      enabledConnectionIds: () => ["home"],
+      ensureStarted: async () => undefined,
+      getSession: () => session,
+      getSupervisor: () => null,
+      ingress: createGlobalSupervisorRuntimeIngress(),
+      connectionReadiness: () => ({ read: () => "ready", subscribe: () => () => undefined }),
+      isRpcAvailable: () => true,
+      microphoneLeases: createV1MicrophoneLeaseRegistry(() => "native-token"),
+      now: () => 0,
+      personality: async () => ({ character: "", communicationStyle: "", rules: "" }),
+      preferredVoice: async () => "cove",
+      randomUUID: () => "activation",
+      recordStartupStage: vi.fn(),
+      requestMicrophonePermission: vi.fn(async () => "granted"),
+      rpcAfterAttach,
+      startWebRtc: vi.fn(async () => ({
+        acceptAnswer: vi.fn(async () => undefined),
+        offerSdp: "v=0\r\no=offer",
+        setMicrophoneMuted: vi.fn(async () => undefined),
+        stop: vi.fn(async () => undefined),
+      })),
+    });
+
+    await expect(runtime.prepare(() => undefined)).resolves.toEqual({
+      failure: "capabilityUnavailable",
+      recovery: "retryCapabilityProbe",
+      status: "failed",
+    });
+    expect(runtime.isActive()).toBe(false);
+    expect(rpcAfterAttach).toHaveBeenCalledOnce();
+  });
+
   it("reuses the prior supervisor thread after a server is re-paired", async () => {
     const session = sessionFixture();
     const bind = vi.fn(async () => globalSupervisorQualifiedChatRef("home", "new-thread"));

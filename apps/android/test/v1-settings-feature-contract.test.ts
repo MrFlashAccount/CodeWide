@@ -74,7 +74,7 @@ describe("M1 feature integration contracts", () => {
     expect(source).toContain("One-time code");
     expect(source).toContain('{codeCopied ? "Copied" : "Copy"}');
     expect(source).toMatch(/enableDynamicSizing: true,\s*enableOverDrag: false/u);
-    expect(source).toContain('dismissLabel: "Close Codex account sign-in"');
+    expect(source).toContain("dismissLabel: `Close ${account} sign-in`");
   });
   it("accounts/AccountPoolFeature.tsx retains its migrated UI contract", () => {
     const source = readFileSync(
@@ -82,7 +82,7 @@ describe("M1 feature integration contracts", () => {
       "utf8",
     );
     expect(source).toContain("pendingAccountLogin !== null && (");
-    expect(source).toContain("Manual selection · automatic fallback on limit");
+    expect(source).toContain("How account switching works");
   });
   it("accounts/AccountProfileRow.tsx retains its migrated UI contract", () => {
     const source = readFileSync(
@@ -141,9 +141,11 @@ describe("M1 feature integration contracts", () => {
       new URL("../src/features/connections/ConnectionRowEditor.tsx", import.meta.url),
       "utf8",
     );
+    // "Connection" is the group header; the row's title is the live state.
+    expect(sourceHasJsxElement(source, "SettingsGroupHeader", ['title="Connection"'])).toBe(true);
     expect(
       sourceHasJsxElement(source, "AppListRow", [
-        'title="Connection"',
+        "title={connectionStateLabel(connection.state, connection.enabled, connection.health)}",
         "description={connection.endpoint}",
       ]),
     ).toBe(true);

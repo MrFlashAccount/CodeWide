@@ -14,8 +14,12 @@ import { AppText as Text } from "../../ui/Typography";
 interface SettingsServer {
   readonly content: ReactNode;
   readonly description: string;
+  /** Shown at the right of the detail page's header, e.g. the server's refresh. */
+  readonly headerAction?: ReactNode;
   readonly id: string;
   readonly leading: ReactNode;
+  /** Detail-page open intent, for reads the page shows. */
+  readonly onOpen?: () => void;
   readonly statusIcon: ReactNode;
   readonly title: string;
 }
@@ -81,6 +85,7 @@ export function SettingsSheet(props: SettingsSheetProps) {
     setNavigation({ direction: "forward", page: { kind: "advanced" } });
   });
   const openServer = useEvent((id: string) => {
+    props.servers.find((server) => server.id === id)?.onOpen?.();
     setNavigation({ direction: "forward", page: { id, kind: "server" } });
   });
   const openSecurity = useEvent(() => {
@@ -139,6 +144,7 @@ export function SettingsSheet(props: SettingsSheetProps) {
           <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
             {title}
           </Text>
+          {page.kind === "server" ? selectedServer?.headerAction : null}
         </View>
         <AppSheetScrollView
           contentContainerStyle={styles.content}
@@ -151,7 +157,7 @@ export function SettingsSheet(props: SettingsSheetProps) {
                 {props.servers.length === 0 && <Text style={styles.notice}>No saved servers</Text>}
                 {props.servers.map((server, index) => (
                   <AppListRow
-                    accessibilityHint="Open connection and Codex accounts"
+                    accessibilityHint="Open connection and agent accounts"
                     accessibilityLabel={`Settings for ${server.title}`}
                     description={server.description}
                     descriptionLeading={server.statusIcon}

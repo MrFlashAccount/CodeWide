@@ -22,6 +22,29 @@ pub const HOST_UPDATE_JOURNAL_VERSION: u16 = 1;
 pub const HOST_UPDATE_BOOTSTRAP_VERSION: u16 = 1;
 pub const HOST_UPDATE_RELEASE_SCHEMA_VERSION: u16 = 1;
 pub const HOST_UPDATE_RELEASE_MAX_LIFETIME_SECONDS: u64 = 180 * 24 * 60 * 60;
+/// Capability reason of a build made without the release signing key.
+pub const HOST_UPDATE_UNOFFICIAL_BUILD_REASON: &str = "unofficial_build";
+
+/// Release signing key that admits remote updates. Every Companion platform
+/// embeds it at build time; installers and runtime files never supply it.
+#[derive(Clone, Debug)]
+pub struct ReleaseTrust {
+    pub key_id: String,
+    pub public_key_spki: String,
+}
+
+impl ReleaseTrust {
+    /// The key embedded by `build.rs`, or `None` for a build made without it.
+    #[must_use]
+    pub fn embedded() -> Option<Self> {
+        let key_id = env!("CODEWIDE_HOST_UPDATE_KEY_ID");
+        let public_key_spki = env!("CODEWIDE_HOST_UPDATE_PUBLIC_KEY_SPKI");
+        (!key_id.is_empty() && !public_key_spki.is_empty()).then(|| Self {
+            key_id: key_id.to_owned(),
+            public_key_spki: public_key_spki.to_owned(),
+        })
+    }
+}
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HostPlatform {

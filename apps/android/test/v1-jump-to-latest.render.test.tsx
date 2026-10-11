@@ -123,6 +123,7 @@ function timelineViewportProps(
     persistTimelineAtEnd: () => undefined,
     persistTimelineOffset: () => undefined,
     renderTimelineItem: () => <View />,
+    renderTimelineItemRevision: "",
     reportHistoryViewport: () => undefined,
     schedulePaginationWindowTrim: () => undefined,
     scheduleUnreadAgentVisibilityCheck: () => undefined,
@@ -965,4 +966,25 @@ it("keeps timeline keyboard behavior independent of the docked question editor",
   expect(view.getByTestId("conversation-timeline").props.maintainScrollAtEnd).toBe(true);
   expect(view.getByTestId("conversation-timeline").props.keyboardLiftBehavior).toBe("always");
   expect(view.getByTestId("conversation-timeline").props.maintainVisibleContentPosition).toBe(true);
+});
+
+it("redraws the in-progress turn row when a request prompt arrives without new row data", () => {
+  // An approval request changes only the render closure, not the turn object
+  // (Claude streams the tool item before it asks). Rows are memoized on their
+  // data and `extraData`, so the request revision must reach the list.
+  const { Text } = jest.requireActual<typeof import("react-native")>("react-native");
+  const props = timelineViewportProps(() => undefined);
+  props.displayedTimeline = [responseTurn("inProgress")];
+  props.renderTimelineItem = () => <Text>no request</Text>;
+  const view = render(<TimelineViewport {...props} />);
+  expect(view.getAllByText("no request").length).toBeGreaterThan(0);
+  view.rerender(
+    <TimelineViewport
+      {...props}
+      renderTimelineItem={() => <Text>approve command</Text>}
+      renderTimelineItemRevision="string:cw-claude:perm-1:pending:1"
+    />,
+  );
+  expect(view.getAllByText("approve command").length).toBeGreaterThan(0);
+  expect(view.queryAllByText("no request")).toHaveLength(0);
 });

@@ -13,6 +13,7 @@ import {
   connectionStateLabel,
   type ThreadListServer,
 } from "../connections/connectionPresentation";
+import { ServerIcon } from "../connections/ServerIcon";
 import { styles } from "./ConversationHistoryStatus.styles";
 
 function connectionWarning(server: ThreadListServer | undefined): string | null {
@@ -47,16 +48,32 @@ export function ConversationHistorySubtitle({
     : (connectionWarning(server) ?? (delayed ? "update delayed" : null));
   const displayedText = warning === null ? text : `${text} · ${warning}`;
   return (
-    <Text
-      accessibilityLabel={displayedText}
-      ellipsizeMode="middle"
-      numberOfLines={1}
-      shimmering={pending}
-      style={[styles.conversationSubtitle, { color }]}
-      testID="conversation-subtitle"
-    >
-      {displayedText}
-    </Text>
+    <View style={styles.conversationSubtitleRow}>
+      <SubtitleServerIcon color={color} server={server} />
+      <Text
+        accessibilityLabel={displayedText}
+        ellipsizeMode="middle"
+        numberOfLines={1}
+        shimmering={pending}
+        style={[styles.conversationSubtitle, { color }]}
+        testID="conversation-subtitle"
+      >
+        {displayedText}
+      </Text>
+    </View>
+  );
+}
+
+/** The server's icon leads the subtitle, tinted like the text beside it. */
+function SubtitleServerIcon({
+  color,
+  server,
+}: {
+  readonly color: string;
+  readonly server: ThreadListServer | undefined;
+}) {
+  return server === undefined ? null : (
+    <ServerIcon color={color} iconId={server.iconId} metric="label" />
   );
 }
 

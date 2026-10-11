@@ -13,11 +13,70 @@ export function CostBreakdownContent({
   return (
     <View style={styles.content} testID="turn-cost-breakdown">
       <CostBreakdownHeading model={estimate.model} />
-      <TokenCostRows estimate={estimate} />
-      <Text style={styles.note}>
-        API-equivalent estimate computed by the companion from per-request usage ·{" "}
-        {estimate.pricingVersion}
-      </Text>
+      {estimate.basis === "apiEquivalent" ? (
+        <>
+          <TokenCostRows estimate={estimate} />
+          <Text style={styles.note}>
+            API-equivalent estimate computed by the companion from per-request usage ·{" "}
+            {estimate.pricingVersion}
+          </Text>
+        </>
+      ) : (
+        <>
+          <ReportedCostRows estimate={estimate} />
+          <Text style={styles.note}>
+            Estimate reported by the agent from{" "}
+            {estimate.pricingVersion === "managed"
+              ? "your organization's rates"
+              : "its list prices"}
+            , not an account charge
+          </Text>
+        </>
+      )}
+    </View>
+  );
+}
+
+/** A provider-reported cost: token counts per kind and only the reported total. */
+function ReportedCostRows({
+  estimate,
+}: {
+  readonly estimate: Extract<TokenCostEstimate, { readonly basis: "providerReported" }>;
+}): React.JSX.Element {
+  return (
+    <View style={styles.rows}>
+      <AnimatedBreakdownRow
+        label="Input"
+        prefix={TOKEN_SYMBOL}
+        value={estimate.uncachedInputTokens}
+      />
+      <AnimatedBreakdownRow
+        label="Cached input"
+        prefix={TOKEN_SYMBOL}
+        value={estimate.cachedInputTokens}
+      />
+      {estimate.cacheWriteInputTokens > 0 && (
+        <AnimatedBreakdownRow
+          label="Cache write"
+          prefix={TOKEN_SYMBOL}
+          value={estimate.cacheWriteInputTokens}
+        />
+      )}
+      <AnimatedBreakdownRow label="Output" prefix={TOKEN_SYMBOL} value={estimate.outputTokens} />
+      <EstimatedTotalRow totalCostUsd={estimate.totalCostUsd} />
+    </View>
+  );
+}
+
+function EstimatedTotalRow({ totalCostUsd }: { readonly totalCostUsd: number }): React.JSX.Element {
+  return (
+    <View style={styles.totalRow}>
+      <Text style={styles.totalLabel}>Estimated total</Text>
+      <AnimatedNumber
+        format={usdNumberFormat(totalCostUsd)}
+        style={styles.totalValue}
+        value={totalCostUsd}
+      />
     </View>
   );
 }
@@ -35,7 +94,11 @@ function CostBreakdownHeading({ model }: { readonly model: string }): React.JSX.
   );
 }
 
-function TokenCostRows({ estimate }: { readonly estimate: TokenCostEstimate }): React.JSX.Element {
+function TokenCostRows({
+  estimate,
+}: {
+  readonly estimate: Extract<TokenCostEstimate, { readonly basis: "apiEquivalent" }>;
+}): React.JSX.Element {
   return (
     <View style={styles.rows}>
       <TokenCostRow
@@ -66,14 +129,7 @@ function TokenCostRows({ estimate }: { readonly estimate: TokenCostEstimate }): 
         suffix="%"
         value={estimate.cacheHitPercent}
       />
-      <View style={styles.totalRow}>
-        <Text style={styles.totalLabel}>Estimated total</Text>
-        <AnimatedNumber
-          format={usdNumberFormat(estimate.totalCostUsd)}
-          style={styles.totalValue}
-          value={estimate.totalCostUsd}
-        />
-      </View>
+      <EstimatedTotalRow totalCostUsd={estimate.totalCostUsd} />
     </View>
   );
 }

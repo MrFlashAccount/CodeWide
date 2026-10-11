@@ -42,6 +42,25 @@ describe("renderer registry", () => {
     expect(block.raw).toEqual(expect.objectContaining({ type: "futureThing" }));
   });
 
+  it("titles a dynamic tool call with its primary argument", () => {
+    const block = (tool: string, args: unknown) =>
+      toRenderBlock({
+        key: `server/thread/turn/${tool}`,
+        connectionId: connectionId("server"),
+        threadId: "thread",
+        turnId: "turn",
+        itemId: tool,
+        type: "dynamicToolCall",
+        payload: { type: "dynamicToolCall", id: tool, tool, arguments: args, status: "completed" },
+        unknown: false,
+      });
+    expect(block("Read", { file_path: "src/a.ts", limit: 20 }).title).toBe("Read src/a.ts");
+    expect(block("Grep", { pattern: "TODO", path: "src" }).title).toBe("Grep TODO");
+    expect(block("LS", { path: "/repo" }).title).toBe("LS /repo");
+    expect(block("Agent", { prompt: "summarize" }).title).toBe("Agent");
+    expect(block("Read", "src/a.ts").title).toBe("Read");
+  });
+
   it("projects hook prompt fragments as Markdown instead of JSON", () => {
     const block = toRenderBlock({
       key: "server/thread/turn/hook",

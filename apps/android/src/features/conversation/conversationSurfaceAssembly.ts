@@ -108,6 +108,7 @@ export function createConversationSurfaceAssembly(props: {
     deleteThread: props.toolsBinding.deleteThread,
     draftConnectionId: props.scoped.activation.draftConnectionId,
     draftThreadId: props.scoped.activation.draftThreadId,
+    forkPicker: props.scoped.forkTargetPicker,
     historyActivityModel: props.readInputs.historyActivityModel,
     historyActivityResourceId: props.readInputs.historyActivityResourceId,
     newChat: props.surfaceInputs.newChat,

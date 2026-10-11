@@ -179,16 +179,19 @@ struct GuardianSystemTests {
             deadline: Date().addingTimeInterval(1)
         )
 
-        #expect(calls.contains(where: {
-            $0.first == "/bin/launchctl"
-                && $0.dropFirst().first == "disable"
-                && $0.last?.hasSuffix("/\(RuntimeConstants.runtimeLaunchAgentLabel)") == true
-        }))
-        #expect(calls.contains(where: {
-            $0.first == "/bin/launchctl"
-                && $0.dropFirst().first == "kill"
-                && $0.last?.hasSuffix("/\(RuntimeConstants.runtimeLaunchAgentLabel)") == true
-        }))
+        // Explicit types keep the expectations within the type checker's time limit.
+        let agentSuffix: String = "/\(RuntimeConstants.runtimeLaunchAgentLabel)"
+        func ranLaunchctl(_ verb: String) -> Bool {
+            calls.contains { (call: [String]) -> Bool in
+                guard call.first == "/bin/launchctl", call.dropFirst().first == verb,
+                      let target = call.last else {
+                    return false
+                }
+                return target.hasSuffix(agentSuffix)
+            }
+        }
+        #expect(ranLaunchctl("disable"))
+        #expect(ranLaunchctl("kill"))
     }
 }
 

@@ -1,0 +1,145 @@
+{
+ "description": "One Bash call and a final answer, prompt stored as a text block.",
+ "source": "Agent SDK 0.3.295 getSessionMessages(includeSystemMessages: true) on a local probe session; paths, signatures and usage removed.",
+ "messages": [
+  {
+   "type": "user",
+   "uuid": "41376577-65ba-41b9-87ec-99e89e1d64af",
+   "session_id": "e17ed7b6-e067-40c6-b65e-be77180104b2",
+   "message": {
+    "role": "user",
+    "content": [
+     {
+      "type": "text",
+      "text": "Run the shell command `echo hi && touch b2-marker.txt` using the Bash tool, then reply DONE."
+     }
+    ]
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:39:35.733Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "efc269ac-c1f2-46c8-9cfd-97e45c0a3cdb",
+   "session_id": "e17ed7b6-e067-40c6-b65e-be77180104b2",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrX8KU1UCQb7gVKREttj",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:39:37.819Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "41f8a7cc-1c1c-4839-b827-7c38d7145bfd",
+   "session_id": "e17ed7b6-e067-40c6-b65e-be77180104b2",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrX8KU1UCQb7gVKREttj",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "tool_use",
+      "id": "toolu_012vxHJeogMRxLZmwLpuN4EH",
+      "name": "Bash",
+      "input": {
+       "command": "echo hi && touch b2-marker.txt",
+       "description": "Echo hi and create marker file"
+      }
+     }
+    ],
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:39:38.167Z"
+  },
+  {
+   "type": "user",
+   "uuid": "4a23e495-7a91-4362-8401-a88573aed0e0",
+   "session_id": "e17ed7b6-e067-40c6-b65e-be77180104b2",
+   "message": {
+    "role": "user",
+    "content": [
+     {
+      "tool_use_id": "toolu_012vxHJeogMRxLZmwLpuN4EH",
+      "type": "tool_result",
+      "content": "hi",
+      "is_error": false
+     }
+    ]
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:39:38.253Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "38df652b-4ae3-4845-b9f8-81fd303f6321",
+   "session_id": "e17ed7b6-e067-40c6-b65e-be77180104b2",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrX8Vtp8z2XtLp6MNnmS",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "thinking",
+      "thinking": "",
+      "signature": "signature"
+     }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:39:39.660Z"
+  },
+  {
+   "type": "assistant",
+   "uuid": "de089bf8-9646-44fc-9caf-c8c30e856fd3",
+   "session_id": "e17ed7b6-e067-40c6-b65e-be77180104b2",
+   "message": {
+    "model": "claude-haiku-4-5-20251001",
+    "id": "msg_011CfrX8Vtp8z2XtLp6MNnmS",
+    "type": "message",
+    "role": "assistant",
+    "content": [
+     {
+      "type": "text",
+      "text": "DONE"
+     }
+    ],
+    "stop_reason": "end_turn",
+    "stop_sequence": null,
+    "input_transformations": [],
+    "diagnostics": null
+   },
+   "parent_tool_use_id": null,
+   "parent_agent_id": null,
+   "timestamp": "2026-10-09T10:39:39.663Z"
+  }
+ ]
+}

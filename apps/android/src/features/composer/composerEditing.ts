@@ -15,6 +15,7 @@ export function useComposerEditing({
   onLoadControls,
   onUpdateSettings,
   queuedComposerEdit,
+  remoteThread,
   saveComposerPreferences,
   saveDraft,
   saveDraftAttachments,
@@ -33,6 +34,7 @@ export function useComposerEditing({
   onLoadControls: Parameters<typeof useComposerSuggestions>[0]["onLoadControls"];
   onUpdateSettings: Parameters<typeof useComposerSettings>[0]["onUpdateSettings"];
   queuedComposerEdit: Parameters<typeof useComposerDraftCommands>[0]["queuedComposerEdit"];
+  remoteThread: Parameters<typeof useComposerSettings>[0]["remoteThread"];
   saveComposerPreferences: Parameters<typeof useComposerSettings>[0]["saveComposerPreferences"];
   saveDraft: Parameters<typeof useComposerDraftCommands>[0]["saveDraft"];
   saveDraftAttachments: Parameters<typeof useComposerDraftCommands>[0]["saveDraftAttachments"];
@@ -55,6 +57,7 @@ export function useComposerEditing({
     captureControlsResource,
     capturePreferenceUpdate,
     controlError,
+    controls$,
     currentControlsResource,
     requestControls,
     selectedEffort,
@@ -80,6 +83,7 @@ export function useComposerEditing({
     newChat,
     onLoadControls,
     onUpdateSettings,
+    remoteThread,
     saveComposerPreferences,
     workspaceResources,
   });
@@ -129,6 +133,7 @@ export function useComposerEditing({
     composerSession,
     composerUploadScope,
     controlError,
+    controls$,
     currentControlsResource,
     draft,
     draftSelectionRef,

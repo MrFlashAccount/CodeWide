@@ -32,7 +32,7 @@ it("preserves composer integration contracts", () => {
     ]),
   ).toBe(true);
   expect(ownerComposerControlChips).toContain(
-    "`Model and thinking: ${modelLabel}, ${effectiveEffort ?? \"not specified\"}`",
+    "`Model and thinking: ${modelLabel}, ${view.effort.value ?? \"not specified\"}${nextTurnSuffix(modelNextTurn)}`",
   );
   expect(ownerComposerControlChips).toContain("<ModelThinkingMenu");
   expect(ownerComposerControlChips).toContain("<PermissionsMenu");
@@ -56,7 +56,7 @@ it("preserves composer integration contracts", () => {
   expect(ownerComposerControlOptions).toMatch(
     /<Text style=\{styles\.controlSectionLabel\}>\s*Thinking\s*<\/Text>/u,
   );
-  expect(ownerSettings).toMatch(/onUpdateSettings\(\{(?=[^}]*effort)(?=[^}]*model)[^}]*\}\)/u);
+  expect(ownerSettings).toContain("void onUpdateSettings(threadSettingsUpdate(changes))");
   expect(ownerComposerControlChips).toContain(
     "executionPermissionsLabel(serverExecution, pending)",
   );

@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { KeyboardController } from "react-native-keyboard-controller";
 import { appLogger } from "../../observability/logger";
+import { subscribeMissingThreads } from "../../data/missingThread";
 import { recordTiming } from "../../data/operational-metrics";
 import {
   beginThreadNavigation,
@@ -60,6 +62,8 @@ export type V1ThreadRouter = {
 /** Qualified thread navigation commands consumed by the mounted workspace. */
 export type ThreadNavigationService = ThreadListNavigation & {
   readonly closeActiveThread: () => void;
+  /** Opens a chat created from the new-chat draft unless the user has since opened another chat. */
+  readonly openAdmittedDraftThread: (selectionKey: string) => void;
   readonly openSearchThread: (target: LocatedSearchHit, query: string) => void;
   readonly selectThread: (selectionKey: string | null) => void;
 };
@@ -133,6 +137,13 @@ export function useThreadNavigationService(
     }
   });
 
+  // Creation outlives the draft route, so only this persistent owner sees the live destination.
+  const openAdmittedDraftThread = useEvent((selectionKey: string): void => {
+    if (router.currentThread === null) {
+      selectThread(selectionKey);
+    }
+  });
+
   // Render callback: link props must use this render's route, before layout effects publish handlers.
   const getThreadLink = (thread: { readonly id: string; readonly serverId: string }): ThreadLink =>
     router.link({
@@ -168,5 +179,21 @@ export function useThreadNavigationService(
   const closeActiveThread = useEvent((): void => {
     router.dismissToAll();
   });
-  return { closeActiveThread, getThreadLink, openSearchThread, prepareThreadLink, selectThread };
+
+  // A thread the Companion no longer has cannot stay open: it is unselected.
+  const closeMissingThread = useEvent((connectionId: string, threadId: string): void => {
+    const current = router.currentThread;
+    if (current?.connectionId.value === connectionId && current.threadId.value === threadId) {
+      router.dismissToAll();
+    }
+  });
+  useEffect(() => subscribeMissingThreads(closeMissingThread), [closeMissingThread]);
+  return {
+    closeActiveThread,
+    getThreadLink,
+    openAdmittedDraftThread,
+    openSearchThread,
+    prepareThreadLink,
+    selectThread,
+  };
 }

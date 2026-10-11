@@ -1,4 +1,5 @@
 import type { RemoteDirectoryEntry, RemoteProject } from "../../data/remote-projects";
+import type { AgentProviderId } from "../../data/threadAgent";
 import type { CreatedWorkspace, WorkspaceSupport } from "../../data/workspace-creation";
 /** Qualified projects operations; transport and persisted state stay with their existing lower owners. */
 export type ProjectsWorkspaceCapabilities = {
@@ -21,10 +22,20 @@ export type ProjectsWorkspaceCapabilities = {
     name: string,
     pinned: boolean,
   ) => Promise<RemoteProject>;
-  startThread: (connectionId: string, cwd?: string) => Promise<string>;
+  startThread: (connectionId: string, cwd?: string, agent?: ThreadStartAgent) => Promise<string>;
   startThreadInWorkspace: (
     connectionId: string,
     workspace: string,
-    requestId: string,
+    start: { readonly agent: ThreadStartAgent | null; readonly requestId: string },
   ) => Promise<string>;
+};
+
+/**
+ * Model chosen for a new chat and the provider whose catalog row offered it.
+ * `thread/start` binds the thread to that provider for its whole life; a
+ * `null` provider comes from a legacy catalog and lets the Companion decide.
+ */
+export type ThreadStartAgent = {
+  readonly model: string;
+  readonly provider: AgentProviderId | null;
 };

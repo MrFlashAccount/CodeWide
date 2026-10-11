@@ -111,6 +111,20 @@ export function createCatalogRuntime({
     return operation;
   };
 
+  /** Reads the tree now and again while a just-spawned agent's transcript reaches the index. */
+  const refreshSpawnedSubagents = (connectionId: string, rootThreadId: string): void => {
+    for (const delayMs of SPAWNED_SUBAGENT_REFRESH_DELAYS_MS) {
+      setTimeout(() => {
+        void refreshSubagents(connectionId, rootThreadId, true).catch(() => {
+          appLogger.warn({
+            event: "subagent.spawn_refresh.failed",
+            fields: { connectionId, threadId: rootThreadId },
+          });
+        });
+      }, delayMs);
+    }
+  };
+
   function catalogWindowKey(connectionId: string, archived: boolean, projectCwd?: string): string {
     return `${connectionId}\u0000${archived ? "archived" : "active"}${projectCwd === undefined ? "" : `\u0000${projectCwd}`}`;
   }
@@ -320,6 +334,7 @@ export function createCatalogRuntime({
     readThreadSummary,
     refreshConnectionWindows,
     refreshInvalidatedThread,
+    refreshSpawnedSubagents,
     refreshSubagents,
     refreshThreadCatalog,
     refreshThreadPins,
@@ -327,3 +342,14 @@ export function createCatalogRuntime({
   };
 }
 const THREAD_CATALOG_REPAIR_INTERVAL_MS = 10 * 60 * 1000;
+/** The Companion's watcher debounces a transcript write by 250 ms before it reads the session. */
+const SUBAGENT_INDEX_FIRST_RETRY_MS = 1000;
+/** A large session takes a while to read. */
+const SUBAGENT_INDEX_SLOW_READ_RETRY_MS = 4000;
+const SUBAGENT_INDEX_LAST_RETRY_MS = 10_000;
+const SPAWNED_SUBAGENT_REFRESH_DELAYS_MS = [
+  0,
+  SUBAGENT_INDEX_FIRST_RETRY_MS,
+  SUBAGENT_INDEX_SLOW_READ_RETRY_MS,
+  SUBAGENT_INDEX_LAST_RETRY_MS,
+] as const;

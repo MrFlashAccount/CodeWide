@@ -1,7 +1,7 @@
 import { Pressable } from "react-native";
 
 import { ActionMenu, type ActionMenuItem } from "./ActionMenu";
-import type { PermissionsMenuProps } from "./TurnControlMenus.types";
+import type { PermissionDefaultOption, PermissionsMenuProps } from "./TurnControlMenus.types";
 
 const SERVER_DEFAULT_PERMISSIONS = "permissions:server-default";
 
@@ -16,6 +16,7 @@ export function PermissionsMenu({
   onSelectPermissions,
   permissions,
   selectedPermissions,
+  serverDefault,
   triggerChildren,
   triggerStyle,
 }: PermissionsMenuProps) {
@@ -41,13 +42,7 @@ export function PermissionsMenu({
             section: "Error",
           },
         ]),
-    {
-      description: "Use the server's configured access level",
-      id: SERVER_DEFAULT_PERMISSIONS,
-      label: "Server default",
-      section: "Security permissions",
-      selected: selectedPermissions === null,
-    },
+    serverDefaultAction(serverDefault),
     ...permissions.map((permission) => ({
       id: `permissions:${permission.id}`,
       label: permissionLabel(permission.id),
@@ -73,7 +68,11 @@ export function PermissionsMenu({
       }}
       onSelect={(id) => {
         if (id === SERVER_DEFAULT_PERMISSIONS) {
-          onSelectPermissions(null);
+          if (serverDefault.kind === "draft") {
+            onSelectPermissions(null);
+          } else if (serverDefault.kind === "reset") {
+            onSelectPermissions(serverDefault.resolved);
+          }
         } else if (id.startsWith("permissions:")) {
           onSelectPermissions(id.slice("permissions:".length));
         }
@@ -89,6 +88,30 @@ export function PermissionsMenu({
       </Pressable>
     </ActionMenu>
   );
+}
+
+/** The "Server default" row: the new chat's default, a reset to it, or unknown. */
+function serverDefaultAction(option: PermissionDefaultOption): ActionMenuItem {
+  return {
+    description: serverDefaultDescription(option),
+    disabled: option.kind === "unavailable",
+    id: SERVER_DEFAULT_PERMISSIONS,
+    label: "Server default",
+    section: "Security permissions",
+    selected: option.kind === "draft" && option.selected,
+  };
+}
+
+function serverDefaultDescription(option: PermissionDefaultOption): string {
+  if (option.kind === "unavailable") {
+    return "The server's default access is unknown";
+  }
+  if (option.kind === "reset") {
+    return `Reset to ${permissionLabel(option.resolved)}`;
+  }
+  return option.resolved === null
+    ? "Use the server's configured access level"
+    : `Use the server's configured access level · ${permissionLabel(option.resolved)}`;
 }
 
 function permissionLabel(id: string): string {

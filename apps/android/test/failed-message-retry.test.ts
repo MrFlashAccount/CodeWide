@@ -129,7 +129,7 @@ describe("failed message retry", () => {
 
   it("repairs companion delivery acceptance without blocking live lifecycle projection", () => {
     const repairStart = workspace.indexOf("for (const threadId of deliveredReceiptThreads)");
-    const repairEnd = workspace.indexOf("for (const rootThreadId of subagentRoots)", repairStart);
+    const repairEnd = workspace.indexOf("for (const [rootThreadId, spawning] of subagentRoots)", repairStart);
     const repairSource = workspace.slice(repairStart, repairEnd);
     expect(ownerThreadSyncProjection).toContain("hasAppServerAcceptedPendingDelivery(");
     expect(repairStart).toBeGreaterThanOrEqual(0);

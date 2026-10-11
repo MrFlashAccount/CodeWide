@@ -49,7 +49,7 @@ it("preserves conversation turns integration contracts", () => {
   expect(ownerTurnActivity).toContain("showToggle={!shouldAutoExpand}");
   expect(ownerTurnActivity).toContain("if (props.showToggle === false)");
   expect(ownerTurnActivity).toMatch(
-    /style=\{\[\s*styles\.turnActivityList,\s*!showToggle && styles\.turnActivityListWithoutToggle,?\s*\]\}/u,
+    /style=\{\[\s*styles\.turnActivityList,\s*insideBubbleSurface && styles\.bubbleNestedActivityList,\s*!showToggle && styles\.turnActivityListWithoutToggle,?\s*\]\}/u,
   );
   expect(ownerTurnActivityStyles).toMatch(
     /turnActivityListWithoutToggle: \{\s*paddingLeft: 0,?\s*\}/u,
@@ -60,8 +60,7 @@ it("preserves conversation turns integration contracts", () => {
   expect(ownerTurnProjection).toContain("normalizeThreadItem(");
   expect(ownerTurnProjection).toContain("connectionId(row.connectionId)");
   expect(ownerUserMessageContent).toContain('testID="user-image-gallery"');
-  expect(ownerUserMessageContent).toContain("text={normalized.text}");
-  expect(ownerUserMessageContent).toContain("normalizeUserMessage(part.text)");
+  expect(ownerUserMessageContent).toContain("text={part.text}");
   expect(ownerUserMessageContent).toContain("<RichMarkdown\n          source={text}");
   expect(ownerOptimisticTurn).toContain('testID="optimistic-turn-footer"');
   expect(ownerOptimisticTurn).toContain("const deliveryLabel = failed");

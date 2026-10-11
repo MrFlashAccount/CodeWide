@@ -64,6 +64,7 @@ export function createConversationComposerContent({
         composerTrayVisible={composerStateBinding.composerMenuStateBinding.composerTrayVisible}
         composerUploadScope={composerStateBinding.composerEditingBinding.composerUploadScope}
         controlError={composerStateBinding.composerEditingBinding.controlError}
+        controls$={composerStateBinding.composerEditingBinding.controls$}
         controlsResourceId={composerInputs.controlsResourceId}
         currentTurnId={timelineRead.conversationPresentationBinding.currentTurnId}
         cwd={surfaceInputs.cwd}
@@ -133,6 +134,7 @@ export function createConversationComposerContent({
           composerStateBinding.composerMenuStateBinding.setComposerTrayVisible
         }
         setSelectedPersonality={composerStateBinding.composerEditingBinding.setSelectedPersonality}
+        skillsEnabled={composerDelivery.composerAccessoryActionsBinding.skillsEnabled}
         steerComposer={composerDelivery.composerDeliveryBinding.steerComposer}
         stopAction={composerDelivery.composerDeliveryBinding.stopAction}
         terminalEnabled={composerDelivery.composerAccessoryActionsBinding.terminalEnabled}

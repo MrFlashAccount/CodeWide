@@ -64,7 +64,10 @@ describe("conversation-owned message actions", () => {
     expect(codeWideMenu).not.toContain(">✓</Text>");
     expect(nativeMenu).not.toContain("requestAnimationFrame");
     expect(nativeMenu).not.toContain("Menu.Portal");
-    expect(codeWideMenu).toContain('<Host colorScheme="dark" matchContents');
+    // The Compose host sizes from its RN trigger unless a caller supplies an
+    // explicit trigger size (browser toolbar), which then owns the host bounds.
+    expect(codeWideMenu).toMatch(/<Host\s+colorScheme="dark"\s+matchContents=\{triggerSize === undefined\}/u);
+    expect(codeWideMenu).toContain("style={[style, triggerSize]}");
     expect(codeWideMenu).toContain("<RNHostView matchContents>{trigger}</RNHostView>");
     // The trigger bounds must come from the RN host, not a synthetic Compose anchor.
     const trigger = codeWideMenu.match(

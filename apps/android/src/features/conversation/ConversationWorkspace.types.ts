@@ -27,7 +27,12 @@ export type ActiveWorkspaceConversationProps = {
         readonly searchWindow: SearchConversationWindow | null;
         readonly threadId: string;
       }
-    | { readonly draft: NewThreadDraft; readonly kind: "draft" };
+    | {
+        readonly draft: NewThreadDraft;
+        readonly kind: "draft";
+        /** Reveals the created chat; the owner skips it after the user opened another chat. */
+        readonly openAdmittedThread: (selectionKey: string) => void;
+      };
   features: ConversationWorkspaceFeatures;
   fileTransferController: FileTransferController | null;
   loadedThreadSummaries: StoredThreadSummary[];

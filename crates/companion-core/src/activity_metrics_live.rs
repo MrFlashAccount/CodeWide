@@ -1,11 +1,11 @@
 //! Durable live adapter for activity metrics. It consumes raw output before the
 //! content projector replaces it with private references; no output is stored.
-use crate::{
-    activity_metrics::{ActivityItem, ActivityState},
-    store::{IndexStore, StoreError},
-};
+use agent_core::usage::ModelPricing;
+use companion_host::activity_metrics::{ActivityItem, ActivityState};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+use crate::store::{IndexStore, StoreError};
 
 #[derive(Default, Deserialize, Serialize)]
 struct LiveActivityState {
@@ -18,6 +18,7 @@ pub(crate) fn observe(
     store: &IndexStore,
     payload: &Value,
     usage: Option<&Value>,
+    pricing: &dyn ModelPricing,
 ) -> Result<Option<Value>, StoreError> {
     let Some(method) = payload.get("method").and_then(Value::as_str) else {
         return Ok(None);
@@ -111,7 +112,7 @@ pub(crate) fn observe(
     state.input_price = live
         .model
         .as_deref()
-        .and_then(crate::usage::input_price_for);
+        .and_then(|model| pricing.input_price(model));
     let projection = if live.initialized {
         state.projection()
     } else {
@@ -141,7 +142,7 @@ pub(crate) fn attach(mut payload: Value, metrics: Option<Value>) -> Value {
             .and_then(Value::as_str);
         let footprint = item_id.and_then(|id| metrics["commands"].get(id)).cloned();
         if let Some(item) = params.get_mut("item") {
-            crate::activity_metrics::attach_item_metrics(item, &metrics);
+            companion_host::activity_metrics::attach_item_metrics(item, &metrics);
         }
         if let Some(footprint) = footprint
             && let Some(params) = params.as_object_mut()
@@ -153,7 +154,7 @@ pub(crate) fn attach(mut payload: Value, metrics: Option<Value>) -> Value {
             .and_then(Value::as_array_mut)
         {
             for item in items {
-                crate::activity_metrics::attach_item_metrics(item, &metrics);
+                companion_host::activity_metrics::attach_item_metrics(item, &metrics);
             }
         }
     }
@@ -171,7 +172,7 @@ pub(crate) fn attach(mut payload: Value, metrics: Option<Value>) -> Value {
         .and_then(Value::as_object_mut)
     {
         if turn.get("itemsView").and_then(Value::as_str) == Some("summary") {
-            crate::activity_metrics::compact_summary(&mut metrics);
+            companion_host::activity_metrics::compact_summary(&mut metrics);
         }
         let metadata = turn.entry("codewide").or_insert_with(|| json!({}));
         if let Some(metadata) = metadata.as_object_mut() {
@@ -185,13 +186,14 @@ pub(crate) fn attach(mut payload: Value, metrics: Option<Value>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usage::test_pricing::TestPricing;
     #[test]
     fn joining_mid_turn_does_not_publish_partial_totals() -> Result<(), Box<dyn std::error::Error>>
     {
         let directory = tempfile::tempdir()?;
         let store = IndexStore::open(directory.path().join("index.redb"))?;
         let event = json!({"method":"item/completed","params":{"threadId":"thread","turnId":"turn","item":{"id":"last","type":"commandExecution","aggregatedOutput":"output"}}});
-        let metrics = observe(&store, &event, None)?;
+        let metrics = observe(&store, &event, None, &TestPricing)?;
         assert_eq!(metrics, Some(Value::Null));
         let replay = attach(crate::thread_patch::attach_thread_patch(event), metrics);
         assert!(replay["codewideThreadPatch"]["operation"]["activityMetrics"].is_null());
@@ -207,18 +209,20 @@ mod tests {
             &store,
             &json!({"method":"turn/started","params":{"threadId":"thread","turn":{"id":"turn","status":"inProgress","items":[{"id":"u","type":"userMessage"}]}}}),
             None,
+            &TestPricing,
         )?;
         let delta = json!({"method":"item/commandExecution/outputDelta","params":{"threadId":"thread","turnId":"turn","itemId":"cmd","delta":"λa"}});
-        let first = observe(&store, &delta, None)?.ok_or("missing metrics")?;
+        let first = observe(&store, &delta, None, &TestPricing)?.ok_or("missing metrics")?;
         assert_eq!(first["total"]["outputFootprint"]["bytes"], 3);
         drop(store);
         let store = IndexStore::open(directory.path().join("index.redb"))?;
         let completed = json!({"method":"item/completed","params":{"threadId":"thread","turnId":"turn","item":{"id":"cmd","type":"commandExecution","aggregatedOutput":"λa12345"}}});
-        let priced = json!({"turn":{"cost":{"model":"gpt-6-sol","price":{"input":5.0}}}});
-        let result = observe(&store, &completed, Some(&priced))?.ok_or("missing metrics")?;
+        let priced = json!({"turn":{"cost":{"model":"model-a","price":{"input":5.0}}}});
+        let result =
+            observe(&store, &completed, Some(&priced), &TestPricing)?.ok_or("missing metrics")?;
         assert_eq!(
             result["total"]["outputFootprint"],
-            crate::activity_metrics::footprint(8, 2, Some(2.0))
+            companion_host::activity_metrics::footprint(8, 2, Some(2.0))
         );
         drop(store);
         let store = IndexStore::open(directory.path().join("index.redb"))?;
@@ -226,16 +230,20 @@ mod tests {
         let persisted: Value = store
             .activity_metrics(&key)?
             .ok_or("missing durable activity")?;
-        assert_eq!(persisted["model"], "gpt-6-sol");
+        assert_eq!(persisted["model"], "model-a");
         assert!(persisted["state"].get("input_price").is_none());
-        assert_eq!(observe(&store, &completed, None)?, Some(result.clone()));
+        assert_eq!(
+            observe(&store, &completed, None, &TestPricing)?,
+            Some(result.clone())
+        );
         let without_output = json!({"method":"item/completed","params":{"threadId":"thread","turnId":"turn","item":{"id":"cmd","type":"commandExecution","aggregatedOutput":null}}});
         assert_eq!(
-            observe(&store, &without_output, None)?,
+            observe(&store, &without_output, None, &TestPricing)?,
             Some(result.clone())
         );
         let sparse = json!({"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"turn","status":"completed","items":[]}}});
-        let mut terminal = observe(&store, &sparse, None)?.ok_or("missing terminal")?;
+        let mut terminal =
+            observe(&store, &sparse, None, &TestPricing)?.ok_or("missing terminal")?;
         assert_eq!(terminal["total"], result["total"]);
         let wire = attach(
             crate::thread_patch::attach_thread_patch(sparse),

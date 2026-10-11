@@ -24,14 +24,16 @@ function openControlRoute(
   const editing = scoped.composerStateBinding.composerEditingBinding;
   routeNavigation.openTool({
     controlError: editing.controlError,
+    controls$: editing.controls$,
     controlsResourceId: props.composer.controlsResourceId,
+    draftPreferences: {
+      read: () => editing.composerSession.read().preferences,
+      subscribe: editing.composerSession.subscribe,
+    },
     invokeSkill: editing.insertSkillInvocation,
     kind,
     newChat: props.surface.newChat,
     resources: props.composer.workspaceResources,
-    selectedEffort: editing.selectedEffort,
-    selectedModel: editing.selectedModel,
-    selectedPermissions: editing.selectedPermissions,
     selectedPersonality: editing.selectedPersonality,
     selectEffort: editing.selectEffort,
     selectModel: editing.selectModel,

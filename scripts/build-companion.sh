@@ -17,4 +17,5 @@ cd "$repo_root"
 sh "$repo_root/scripts/cargo-target-budget.sh"
 export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1
 export CARGO_TARGET_DIR="$repo_root/target"
-exec cargo build --release -p codewide-companion --bins "$@"
+# The release binary ships the Claude agent host (built with Bun by build.rs).
+exec cargo build --release -p codewide-companion --bins --features embedded-claude-host "$@"

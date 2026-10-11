@@ -7,6 +7,7 @@ import type {
 } from "../../data/thread-ui-state-types";
 import type { ThreadSettings, TurnControlsLoadOptions } from "../../data/turn-controls-types";
 import type { TurnControlsValue } from "../../data/workspace-resource-database";
+import { nativeCommandSettlements } from "../../data/nativeCommandSettlement";
 import { enqueueNativeCommand } from "../../native/native-transport";
 
 import type { ComposerWorkspaceCapabilities } from "./workspaceCapabilities";
@@ -97,17 +98,26 @@ export function createComposerWorkspaceAdapter({
     );
   };
 
+  // Resolves when the server accepts the change and rejects when it refuses
+  // it. While the durable command waits for a connection it stays pending, so
+  // the composer keeps its optimistic value until the server answers.
   const updateThreadSettings = async (
     connectionId: string,
     threadId: string,
     settings: ThreadSettings,
   ) => {
-    await enqueueNativeCommand(
-      connectionId,
-      `thread-settings-${randomUUID()}`,
-      "thread/settings/update",
-      { threadId, ...settings },
-    );
+    const commandId = `thread-settings-${randomUUID()}`;
+    const settlement = nativeCommandSettlements.register(connectionId, commandId);
+    try {
+      await enqueueNativeCommand(connectionId, commandId, "thread/settings/update", {
+        threadId,
+        ...settings,
+      });
+    } catch (error) {
+      settlement.cancel();
+      throw error;
+    }
+    await settlement.settled;
   };
   return {
     continueTurn: createComposerContinuationAdapter(continuationTransport),

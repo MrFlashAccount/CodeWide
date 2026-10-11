@@ -2,7 +2,6 @@ import { unknownRecord } from "./unknownRecord";
 import { threadSummaryDescendants } from "./thread-summary-descendants";
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 
-import { projectCodexVisibleTurn } from "./codex-contextual-user-message";
 import type { StoredThreadSummary } from "./thread-summary-types";
 
 export type SubagentConversationProjection = {
@@ -123,10 +122,9 @@ export function projectSubagentConversation(
   thread: Thread,
   parentThread: Thread | null,
 ): SubagentConversationProjection {
-  const ownTurns = subagentOwnTurns(thread)
-    .map(projectCodexVisibleTurn)
-    .map(stripInjectedInput)
-    .filter((turn) => turn.items.length > 0 || turn.status === "inProgress");
+  const ownTurns = subagentOwnTurns(thread).filter(
+    (turn) => turn.items.length > 0 || turn.status === "inProgress",
+  );
   const delegationPrompt = delegationPromptFromParent(parentThread, thread.id);
   const taskName = subagentTaskName(thread);
   const turns = materializeParentHandoff(ownTurns, delegationPrompt, thread);
@@ -172,30 +170,6 @@ function delegationPromptFromParent(
   return null;
 }
 
-function stripInjectedInput(turn: Turn): Turn {
-  let changed = false;
-  const items = turn.items.flatMap((item): Turn["items"] => {
-    if (item.type !== "userMessage") {
-      return [item];
-    }
-    const content = item.content.filter((part) => {
-      if (part.type !== "text" || !isInjectedBootstrapText(part.text)) {
-        return true;
-      }
-      changed = true;
-      return false;
-    });
-    if (content.length === 0) {
-      changed = true;
-      return [];
-    }
-    return content.length === item.content.length ? [item] : [{ ...item, content }];
-  });
-  // WHY: The flatMap callback records whether it removed injected content; TypeScript does not propagate callback mutation to this scope.
-  // oxlint-disable-next-line typescript/no-unnecessary-condition
-  return changed ? { ...turn, items } : turn;
-}
-
 /**
  * Subagent bootstrap input is intentionally hidden, but the delegated task is
  * still a real incoming message. Materialize it in the child timeline so the
@@ -234,20 +208,6 @@ function materializeParentHandoff(turns: Turn[], prompt: string | null, thread: 
     return turns;
   }
   return [{ ...first, items: [message, ...first.items] }, ...rest];
-}
-
-function isInjectedBootstrapText(value: string): boolean {
-  const text = value.trimStart();
-  return (
-    text.startsWith("<recommended_plugins>") ||
-    text.startsWith("# AGENTS.md instructions") ||
-    text.startsWith("<AGENTS.md>") ||
-    text.startsWith("<skills_instructions>") ||
-    text.startsWith("<permissions instructions>") ||
-    text.startsWith("<apps_instructions>") ||
-    text.startsWith("<plugins_instructions>") ||
-    text.startsWith("<multi_agent_mode>")
-  );
 }
 
 function uuidV7TimestampMs(value: string): number | null {

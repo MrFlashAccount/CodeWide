@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { sourceHasJsxElement, sourceObjectDeclaration } from "../source-contract";
 import { calmSpinner, waveText, threadTitle, voiceAura } from "./presentation-sources";
-import { reducedMotionStore, nativeShimmerTextHost, screen } from "./platform-sources";
+import { reducedMotionStore, screen } from "./platform-sources";
 import {
   ownerTurnFooter,
   ownerCard,
@@ -10,7 +10,6 @@ import {
 } from "./conversation-turns-sources";
 import {
   nativePackage,
-  nativeShimmerView,
   performanceModule,
   gradle,
   gradleProperties,
@@ -40,17 +39,12 @@ it("keeps running indicators visible, consistent and reduced-motion aware", () =
   expect(calmSpinner).toContain("function CalmSpinner");
   expect(waveText).toContain("function WaveText");
   expect(reducedMotionStore).toContain('AccessibilityInfo.addEventListener("reduceMotionChanged"');
-  expect(waveText).toContain("useReducedMotionPreference()");
   expect(ownerTurnFooter).toMatch(/durationMs=\{3_?000\}/u);
-  const shimmerRegistration = 'requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")';
-  expect(nativeShimmerTextHost).toContain(shimmerRegistration);
-  expect(
-    `${waveText}\n${nativeShimmerTextHost}`.match(
-      /requireNativeComponent<NativeShimmerTextProps>\("CodexShimmerText"\)/gu,
-    ) ?? [],
-  ).toHaveLength(1);
-  expect(waveText).toContain('usePerformanceExperiment("disableTextShimmer")');
-  expect(waveText).toContain("const animated = !reducedMotion && !textShimmerDisabled");
+  // Shimmer is a geometry-neutral decoration on ordinary text (AppText ->
+  // TextShimmer -> CodeWideTextShimmer); there is no separate native view.
+  expect(waveText).toContain("shimmering");
+  expect(waveText).not.toContain("requireNativeComponent");
+  expect(waveText).not.toContain("CodexShimmerText");
   expect(calmSpinner).toContain('borderTopColor: "transparent"');
   expect(calmSpinner).toContain("<ActivityIndicator");
   expect(screen).not.toContain("withRepeat(");
@@ -73,31 +67,9 @@ it("keeps running indicators visible, consistent and reduced-motion aware", () =
   expect(waveText).toContain('testID = "active-text-shimmer"');
   expect(waveText).not.toContain("MaskedView");
   expect(waveText).not.toContain("useSharedValue");
-  expect(waveText).toContain("styles.measure");
-  expect(nativePackage).toContain("NativeShimmerTextManager()");
-  expect(nativePackage.match(/NativeShimmerTextManager\(\)/gu) ?? []).toHaveLength(1);
-  expect(nativeShimmerView).toContain("LinearGradient(");
-  expect(nativeShimmerView).toContain("StaticLayout.Builder.obtain");
-  expect(nativeShimmerView).toContain("setMaxLines(pendingNumberOfLines)");
+  expect(nativePackage).toContain("TextShimmerModule(reactContext)");
+  expect(nativePackage).not.toContain("NativeShimmerTextManager");
   expect(waveText).toContain("numberOfLines={numberOfLines}");
-  expect(nativeShimmerView).toContain(
-    "class NativeShimmerTextView(context: Context) : ViewGroup(context)",
-  );
-  expect(nativeShimmerView).toContain("canvas.clipPath(textPath)");
-  expect(nativeShimmerView).toContain("bandView.animate()");
-  expect(nativeShimmerView).toContain(".translationX(sweep.endX)");
-  const shimmerLayout = nativeShimmerView.slice(
-    nativeShimmerView.indexOf("override fun onLayout("),
-    nativeShimmerView.indexOf("override fun onDraw("),
-  );
-  expect(shimmerLayout).toContain("bandView.measure(");
-  expect(shimmerLayout).toContain("sweepFor(right - left, bottom - top)");
-  expect(nativeShimmerView).toContain("textPath.addPath(linePath)");
-  expect(nativeShimmerView).toMatch(/paint\.getTextPath\([\s\S]*?linePath,\s*\)/u);
-  expect(nativeShimmerView).toContain("SWEEP_DURATION_MS = 2_500L");
-  expect(nativeShimmerView).not.toContain("Choreographer");
-  expect(nativeShimmerView).not.toContain("onShimmerFrame");
-  expect(nativeShimmerView).not.toContain("setLayerType(");
   expect(performanceModule).toContain('memoryStatBytes(memory, "summary.graphics")');
   expect(performanceModule).toContain('putDouble("graphicsPssBytes"');
   const shellStyle = sourceObjectDeclaration(waveText, "shell");

@@ -2,7 +2,6 @@ import { isProtocolRecord } from "./protocolValue";
 /** V1 protocolCopyText owner, extracted without changing interaction or resource lifetime. */
 import type { RenderBlock } from "@codewide/renderers";
 import { boundedJsonStringify } from "../../../rendering/bounded-json";
-import { normalizeUserMessage } from "../../../rendering/user-message-normalizer";
 
 /** Converts a rendered protocol block into the user-visible text copied from it. */
 export function protocolCopyText(block: RenderBlock): string {
@@ -25,7 +24,7 @@ export function protocolCopyText(block: RenderBlock): string {
         }
         const value = part;
         if (typeof value.text === "string") {
-          return normalizeUserMessage(value.text).text;
+          return value.text;
         }
         if (typeof value.path === "string") {
           return value.path;

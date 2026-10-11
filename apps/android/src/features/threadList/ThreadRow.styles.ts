@@ -30,6 +30,13 @@ export const styles = StyleSheet.create({
     minWidth: 0,
     overflow: "hidden",
   },
+  threadAgentBadge: {
+    alignItems: "center",
+    flexShrink: 0,
+    height: iconSize.indicator,
+    justifyContent: "center",
+    width: iconSize.indicator,
+  },
   threadAttentionIcon: {
     alignItems: "center",
     flexShrink: 0,

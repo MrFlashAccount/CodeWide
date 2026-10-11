@@ -107,7 +107,7 @@ function ThreadGoalDialog({
           </View>
 
           <View style={styles.fieldGroup}>
-            <Text style={styles.fieldLabel}>What should Codex work toward?</Text>
+            <Text style={styles.fieldLabel}>What should the agent work toward?</Text>
             <TextInput
               accessibilityLabel="Goal objective"
               autoFocus

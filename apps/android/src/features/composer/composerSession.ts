@@ -97,6 +97,8 @@ export type ComposerSessionOwner = {
 export type ComposerSessionBinding = ComposerSessionOwner & {
   capture: () => ComposerSessionOwner;
   readonly snapshot: ComposerSessionSnapshot;
+  /** Notifies after any session change; `read` then returns the new snapshot. */
+  readonly subscribe: (listener: () => void) => () => void;
 };
 
 /** Reconciles durable projections into the single live composer session. */
@@ -128,6 +130,7 @@ export function useComposerSession(
     capture,
     read,
     snapshot,
+    subscribe: model.subscribe,
     updateAttachments,
     updatePreferences,
     updateText,

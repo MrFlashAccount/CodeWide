@@ -93,7 +93,14 @@ export default function V1NewThreadRoute(): React.JSX.Element {
     openTool,
     openTurnChanges: ignoreRoute,
   };
-  const destination = draft === null ? null : { draft, kind: "draft" as const };
+  const destination =
+    draft === null
+      ? null
+      : {
+          draft,
+          kind: "draft" as const,
+          openAdmittedThread: resources.list.openAdmittedDraftThread,
+        };
   if (draft === null) {
     return (
       <RouteUnavailable

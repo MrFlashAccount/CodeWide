@@ -1,12 +1,22 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { setStringAsync } from "expo-clipboard";
+import { useState } from "react";
 import { View } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
 import { AppButton } from "../../presentation/controls/AppButton";
+import { colors, iconSize } from "../../theme";
 import { useAppDialog } from "../../ui/AppDialog";
 import { AppText as Text } from "../../ui/Typography";
 import { WaveText } from "../../ui/WaveText";
 import { isTerminalHostUpdatePhase } from "./hostUpdateContract";
-import { HostUpdateNotice } from "./HostUpdateNotice";
+import {
+  hostUpdateDescription,
+  hostUpdateGuidance,
+  hostUpdateRowAction,
+  type HostUpdateGuidance,
+  type HostUpdateSubject,
+} from "./hostUpdatePresentation";
 import type { HostUpdateView } from "./hostUpdateSettingsContract";
 import { styles } from "./HostUpdateSettings.styles";
 
@@ -15,8 +25,13 @@ type HostUpdateSettingsProps = {
   readonly connectionName: string;
   readonly onApply: (connectionId: string, targetFingerprint: string) => Promise<void>;
   readonly onCheck: (connectionId: string) => Promise<void>;
-  readonly subject?: "Companion" | "Relay";
+  readonly subject?: HostUpdateSubject;
   readonly update: HostUpdateView;
+};
+
+type HostUpdateActions = {
+  readonly apply: () => void;
+  readonly check: () => void;
 };
 
 /** Renders one server's update projection without owning transport or request state. */
@@ -29,8 +44,7 @@ export function HostUpdateSettings({
   update,
 }: HostUpdateSettingsProps): React.JSX.Element {
   const dialog = useAppDialog();
-  const pending = update.phase !== null && !isTerminalHostUpdatePhase(update.phase);
-  const handlers = useHostUpdateHandlers({
+  const actions = useHostUpdateHandlers({
     connectionId,
     connectionName,
     dialog,
@@ -39,22 +53,27 @@ export function HostUpdateSettings({
     subject,
     update,
   });
-
+  const guidance = hostUpdateGuidance(update, subject);
   return (
     <View
       accessibilityLabel={`${subject} update`}
-      style={styles.body}
+      style={styles.card}
       testID={subject === "Companion" ? "host-update-settings" : "relay-update-settings"}
     >
-      <HostUpdateMetadata pending={pending} subject={subject} update={update} />
-      <HostUpdateNotice subject={subject} update={update} />
-      <HostUpdateActions
-        onApply={handlers.apply}
-        onCheck={handlers.check}
-        pending={pending}
+      <HostUpdateRow
+        actions={actions}
+        failureShown={guidance?.kind === "failure"}
         subject={subject}
         update={update}
       />
+      {guidance !== null && (
+        <HostUpdateCallout
+          actions={actions}
+          guidance={guidance}
+          subject={subject}
+          update={update}
+        />
+      )}
     </View>
   );
 }
@@ -67,10 +86,9 @@ function useHostUpdateHandlers({
   onCheck,
   subject = "Companion",
   update,
-}: HostUpdateSettingsProps & { readonly dialog: ReturnType<typeof useAppDialog> }): {
-  readonly apply: () => void;
-  readonly check: () => void;
-} {
+}: HostUpdateSettingsProps & {
+  readonly dialog: ReturnType<typeof useAppDialog>;
+}): HostUpdateActions {
   const check = useEvent(() => {
     onCheck(connectionId).catch(() => undefined);
   });
@@ -97,94 +115,227 @@ function useHostUpdateHandlers({
   return { apply, check };
 }
 
-function HostUpdateMetadata({
-  pending,
+/** Version title, one-line state and the row's own action. */
+function HostUpdateRow({
+  actions,
+  failureShown,
   subject,
   update,
 }: {
-  readonly pending: boolean;
-  readonly subject: "Companion" | "Relay";
+  readonly actions: HostUpdateActions;
+  readonly failureShown: boolean;
+  readonly subject: HostUpdateSubject;
   readonly update: HostUpdateView;
 }): React.JSX.Element {
-  const currentVersion = update.currentVersion ?? "Unavailable";
+  const pending = update.phase !== null && !isTerminalHostUpdatePhase(update.phase);
+  const description = hostUpdateDescription(update);
   return (
-    <>
-      <View style={styles.row}>
-        <Text style={styles.label}>{subject} version</Text>
-        {pending ? (
-          <WaveText
-            containerStyle={styles.versionShimmer}
-            style={styles.value}
-            testID="host-update-version-shimmer"
-            text={currentVersion}
-          />
-        ) : (
-          <Text style={styles.value}>{currentVersion}</Text>
-        )}
+    <View style={styles.row}>
+      <View style={styles.leadingSlot}>
+        <Ionicons
+          color={colors.textMuted}
+          name={subject === "Relay" ? "git-network-outline" : "cube-outline"}
+          size={iconSize.action}
+        />
       </View>
-      {update.platform !== null && (
-        <View style={styles.row}>
-          <Text style={styles.label}>Platform</Text>
-          <Text style={styles.value}>{platformLabel(update.platform)}</Text>
-        </View>
-      )}
-      {update.latestVersion !== null && update.latestVersion !== update.currentVersion && (
-        <View style={styles.row}>
-          <Text style={styles.label}>Available version</Text>
-          <Text style={styles.value}>{update.latestVersion}</Text>
-        </View>
-      )}
-    </>
+      <View style={styles.text}>
+        <HostUpdateTitle
+          pending={pending}
+          title={`${subject} ${update.currentVersion ?? "version unavailable"}`}
+        />
+        <Text style={[styles.description, toneStyle(description.tone)]}>{description.text}</Text>
+      </View>
+      <HostUpdateRowAction
+        action={hostUpdateRowAction(update, failureShown)}
+        actions={actions}
+        pending={pending}
+        subject={subject}
+      />
+    </View>
   );
 }
 
-function HostUpdateActions({
-  onApply,
-  onCheck,
+/** The real version text; it shimmers in place while an update is pending. */
+function HostUpdateTitle({
   pending,
+  title,
+}: {
+  readonly pending: boolean;
+  readonly title: string;
+}): React.JSX.Element {
+  return pending ? (
+    <WaveText
+      containerStyle={styles.titleShimmer}
+      style={styles.title}
+      testID="host-update-version-shimmer"
+      text={title}
+    />
+  ) : (
+    <Text numberOfLines={1} style={styles.title}>
+      {title}
+    </Text>
+  );
+}
+
+function HostUpdateRowAction({
+  action,
+  actions,
+  pending,
+  subject,
+}: {
+  readonly action: "apply" | "check" | null;
+  readonly actions: HostUpdateActions;
+  readonly pending: boolean;
+  readonly subject: HostUpdateSubject;
+}): React.JSX.Element | null {
+  if (action === "apply") {
+    return (
+      <AppButton
+        accessibilityLabel={`Update ${subject}`}
+        accessibilityState={{ busy: pending }}
+        isDisabled={pending}
+        onPress={actions.apply}
+        size="sm"
+        variant="primary"
+      >
+        Update
+      </AppButton>
+    );
+  }
+  if (action === "check") {
+    return (
+      <AppButton
+        accessibilityLabel={`Check for ${subject} updates`}
+        isIconOnly
+        onPress={actions.check}
+        size="sm"
+        variant="ghost"
+      >
+        <Ionicons color={colors.textMuted} name="refresh-outline" size={iconSize.action} />
+      </AppButton>
+    );
+  }
+  return null;
+}
+
+const CALLOUT_LOOK = {
+  failure: {
+    liveRegion: "assertive",
+    surface: styles.calloutError,
+    text: styles.calloutTextError,
+  },
+  neutral: {
+    liveRegion: "polite",
+    surface: styles.callout,
+    text: styles.calloutText,
+  },
+} as const;
+
+/** Explanation under the row: neutral for progress and setup, error-tinted for failures. */
+function HostUpdateCallout({
+  actions,
+  guidance,
   subject,
   update,
 }: {
-  readonly onApply: () => void;
-  readonly onCheck: () => void;
-  readonly pending: boolean;
-  readonly subject: "Companion" | "Relay";
+  readonly actions: HostUpdateActions;
+  readonly guidance: HostUpdateGuidance;
+  readonly subject: HostUpdateSubject;
   readonly update: HostUpdateView;
 }): React.JSX.Element {
-  const retry = update.canRetry;
-  const showApply = update.canApply && update.targetFingerprint !== null;
-  const showCheck = update.canCheck && !update.canApply;
+  const look = CALLOUT_LOOK[guidance.kind === "failure" ? "failure" : "neutral"];
   return (
-    <View style={styles.actions}>
-      {showApply && (
-        <AppButton
-          accessibilityLabel={retry ? `Retry ${subject} update` : `Update ${subject}`}
-          accessibilityState={{ busy: pending }}
-          isDisabled={pending}
-          onPress={onApply}
-          variant="primary"
-        >
-          {retry ? "Retry update" : `Update ${subject}`}
-        </AppButton>
+    <View style={look.surface}>
+      <Text accessibilityLiveRegion={look.liveRegion} style={look.text}>
+        {guidance.text}
+      </Text>
+      {guidance.kind === "setup" && guidance.command !== null && (
+        <InstallerCommand command={guidance.command} />
       )}
-      {showCheck && (
+      {guidance.kind === "failure" && (
+        <FailureActions actions={actions} subject={subject} update={update} />
+      )}
+    </View>
+  );
+}
+
+function InstallerCommand({ command }: { readonly command: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false);
+  const copy = useEvent(() => {
+    setStringAsync(command).then(
+      () => {
+        setCopied(true);
+      },
+      () => {
+        setCopied(false);
+      },
+    );
+  });
+  return (
+    <View style={styles.command}>
+      <Text ellipsizeMode="middle" numberOfLines={1} selectable style={styles.commandText}>
+        {command}
+      </Text>
+      <AppButton
+        accessibilityLabel={copied ? "Installer command copied" : "Copy installer command"}
+        isIconOnly
+        onPress={copy}
+        size="sm"
+        variant="ghost"
+      >
+        <Ionicons
+          color={copied ? colors.green : colors.textMuted}
+          name={copied ? "checkmark" : "copy-outline"}
+          size={iconSize.action}
+        />
+      </AppButton>
+    </View>
+  );
+}
+
+function FailureActions({
+  actions,
+  subject,
+  update,
+}: {
+  readonly actions: HostUpdateActions;
+  readonly subject: HostUpdateSubject;
+  readonly update: HostUpdateView;
+}): React.JSX.Element | null {
+  const retry = update.canRetry && update.canApply && update.targetFingerprint !== null;
+  const check = update.canCheck && !update.canApply;
+  if (!retry && !check) {
+    return null;
+  }
+  return (
+    <View style={styles.calloutActions}>
+      {retry && (
         <AppButton
-          accessibilityLabel={`Check for ${subject} updates`}
-          onPress={onCheck}
+          accessibilityLabel={`Retry ${subject} update`}
+          onPress={actions.apply}
+          size="sm"
           variant="secondary"
         >
-          Check for updates
+          Retry update
+        </AppButton>
+      )}
+      {check && (
+        <AppButton
+          accessibilityLabel={`Check for ${subject} updates`}
+          onPress={actions.check}
+          size="sm"
+          variant="secondary"
+        >
+          Check again
         </AppButton>
       )}
     </View>
   );
 }
 
-function platformLabel(
-  platform: "linux-x86-64" | "macos-universal" | "relay-linux-x86-64",
-): string {
-  if (platform === "macos-universal") {
-    return "macOS";
+function toneStyle(tone: "error" | "muted" | "success") {
+  if (tone === "error") {
+    return styles.descriptionError;
   }
-  return platform === "relay-linux-x86-64" ? "Relay · Linux" : "Linux";
+  return tone === "success" ? styles.descriptionSuccess : undefined;
 }

@@ -2,7 +2,14 @@
 members = [
     "apps/companion-linux",
     "apps/relay",
+    "crates/agent-core",
+    "crates/agent-provider-claude",
+    "crates/agent-provider-codex",
+    "crates/agent-resources",
+    "crates/agent-search",
+    "crates/agent-transport",
     "crates/companion-core",
+    "crates/companion-host",
     "crates/companion-swift-ffi",
 ]
 exclude = ["openai-codex/codex-rs"]

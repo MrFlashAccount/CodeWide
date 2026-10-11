@@ -2,9 +2,11 @@
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
+use agent_provider_codex::host::RolloutThreadMetadata;
 use codewide_companion::{
     catalog::SessionCatalog,
     history_service::HistoryService,
+    rollout_store::RolloutStore,
     server::{self, CompanionServices},
     store::{IndexStore, IndexedThreadMetadata},
     sync::SyncHub,
@@ -54,7 +56,10 @@ async fn raw_app_server_and_binary_loopback_forward_match_v1_transport()
         client_cwd,
         catalog_cwd,
     } = prepare_thread_terminal_fixtures(directory.path(), &store)?;
-    let history = HistoryService::new(catalog.clone(), store.clone());
+    let history = HistoryService::new(
+        catalog.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
+    );
     let sync = SyncHub::new(upstream, store.clone(), history);
     let app = server::router_with_services(
         store.clone(),
@@ -62,7 +67,7 @@ async fn raw_app_server_and_binary_loopback_forward_match_v1_transport()
         sync,
         CompanionServices {
             app_server_socket_path: Some(socket_path),
-            catalog: Some(catalog),
+            thread_metadata: Some(Arc::new(RolloutThreadMetadata::new(catalog))),
             excluded_ports: HashSet::new(),
             ..CompanionServices::default()
         },
@@ -160,6 +165,7 @@ fn prepare_thread_terminal_fixtures(
         agent_nickname: None,
         agent_role: None,
         archived: false,
+        running: None,
     })?;
     let catalog_cwd = root.join("catalog-cwd");
     std::fs::create_dir_all(&catalog_cwd)?;

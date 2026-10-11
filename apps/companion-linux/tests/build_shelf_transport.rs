@@ -6,6 +6,7 @@ use codewide_companion::{
     build_shelf::BuildShelfProxy,
     catalog::SessionCatalog,
     history_service::HistoryService,
+    rollout_store::RolloutStore,
     server::{self, CompanionServices},
     store::IndexStore,
     sync::SyncHub,
@@ -73,7 +74,7 @@ async fn build_shelf_proxy_preserves_ota_headers_and_rejects_private_paths()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),

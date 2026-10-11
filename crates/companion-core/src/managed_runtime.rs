@@ -11,26 +11,33 @@ use rand::{TryRngCore, rngs::OsRng};
 use tokio::task::JoinHandle;
 use url::Url;
 
-use crate::{
+use agent_provider_codex::{
+    CodexProvider,
     account_pool::AccountPoolService,
-    auth::{DeviceRegistry, DeviceStatus},
     catalog::SessionCatalog,
+    history_service::HistoryService,
+    host::{RolloutThreadMetadata, spawn_catalog_warmup},
+    message_search::MessageSearch,
+    resources::ResourceService,
+    rollout_content::RolloutContentSource,
+    rollout_store::{ROLLOUT_INDEX_SCHEMA, RolloutStore},
+    storage::CodexStorage,
+};
+
+use crate::{
+    auth::{DeviceRegistry, DeviceStatus},
     content::{ContentProjector, PrivateContentService},
     device_tls::{DeviceTlsAcceptor, bootstrap_config, device_bound_config},
     dictation::DictationService,
     files::FileService,
-    history_service::HistoryService,
     host_identity::HostDisplayName,
     host_update::SharedHostUpdateGuardian,
     identity::{CompanionIdentity, TransportIdentity},
     image_previews::ImagePreviewService,
     media::MediaProxyService,
-    message_search::MessageSearch,
     pairing_qr::{PairingLinkInput, RelayPairing, build_link},
     projects::ProjectService,
     relay::{RelayConnectionStatus, RelayPairCommand, RelayRuntime, RelayStatus},
-    resources::ResourceService,
-    rollout::read_rollout_metadata,
     secure_store::SecretStoragePolicy,
     server::{self, CompanionServices},
     store::IndexStore,
@@ -54,6 +61,8 @@ pub struct ManagedRuntimeConfig {
     pub host_display_name: HostDisplayName,
     pub listen_address: SocketAddr,
     pub host_update_guardian: Option<SharedHostUpdateGuardian>,
+    /// The Claude agent host executable inside the application bundle.
+    pub claude_host: Option<PathBuf>,
 }
 
 impl ManagedRuntimeConfig {
@@ -72,6 +81,7 @@ impl ManagedRuntimeConfig {
             host_display_name,
             listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8767)),
             host_update_guardian: None,
+            claude_host: None,
         }
     }
 
@@ -88,6 +98,14 @@ impl ManagedRuntimeConfig {
     }
 
     /// Installs the platform-owned host replacement boundary for private V1 routes.
+    /// The Claude agent host shipped with the application; with it Claude
+    /// runs without a `providers.claude` entry.
+    #[must_use]
+    pub fn with_claude_host(mut self, claude_host: Option<PathBuf>) -> Self {
+        self.claude_host = claude_host;
+        self
+    }
+
     #[must_use]
     pub fn with_host_update_guardian(mut self, guardian: SharedHostUpdateGuardian) -> Self {
         self.host_update_guardian = Some(guardian);
@@ -144,7 +162,11 @@ impl ManagedRuntime {
         .await?;
 
         let upstream = UpstreamHandle::spawn(config.app_server_socket.clone());
-        let store = Arc::new(IndexStore::open(config.state_directory.join("state.redb"))?);
+        let store = Arc::new(IndexStore::open_with(
+            config.state_directory.join("state.redb"),
+            &[&ROLLOUT_INDEX_SCHEMA],
+        )?);
+        let rollout_store = Arc::new(RolloutStore::attach(store.database(), store.clone())?);
         let telemetry = Arc::new(TelemetryStore::open_with_jsonl(
             config.state_directory.join("telemetry.redb"),
             config.state_directory.join("telemetry-jsonl"),
@@ -162,8 +184,8 @@ impl ManagedRuntime {
             None
         };
         let catalog = Arc::new(SessionCatalog::empty(&config.codex_home));
-        start_catalog_warmup(catalog.clone(), store.clone());
-        let history = HistoryService::new(catalog.clone(), store.clone());
+        spawn_catalog_warmup(catalog.clone(), store.clone());
+        let history = HistoryService::new(catalog.clone(), rollout_store.clone());
         let history = match MessageSearch::start(
             &config.state_directory.join("message-search.sqlite"),
             catalog.clone(),
@@ -173,11 +195,6 @@ impl ManagedRuntime {
                 tracing::error!(err = ?error, "message search unavailable; chat service remains available");
                 history
             }
-        };
-        let sync = if config.enable_mutations {
-            SyncHub::with_mutations(upstream.clone(), store.clone(), history.clone())
-        } else {
-            SyncHub::new(upstream.clone(), store.clone(), history.clone())
         };
 
         let attachment_root = config.codex_home.join("attachments/codewide");
@@ -201,7 +218,7 @@ impl ManagedRuntime {
         let content = PrivateContentService::open_indexed(
             config.state_directory.join("content-fallback"),
             Vec::new(),
-            store.clone(),
+            Arc::new(RolloutContentSource::new(rollout_store.clone())),
         );
         let image_previews = Arc::new(ImagePreviewService::new());
         let media = Arc::new(MediaProxyService::new());
@@ -221,21 +238,35 @@ impl ManagedRuntime {
             ResourceService::open(
                 config.state_directory.join("resource-index.redb"),
                 catalog.clone(),
-                store.clone(),
+                rollout_store,
                 files.clone(),
             )?
             .with_vcs(vcs.clone()),
         );
         let workspaces = Arc::new(WorkspaceService::new(
-            vcs,
+            vcs.clone(),
             config.codex_home.join("worktrees"),
         ));
         let projects = ProjectService::open(config.state_directory.join("projects.json")).await?;
-        let mut sync = sync
+        // The Codex storage modules are reached only through the Codex adapter.
+        let codex = CodexProvider::new(upstream.clone())
+            .with_storage(CodexStorage::new(history).with_resources(resources.clone()));
+        let registry = crate::agent::providers::load_registry(
+            &config.state_directory,
+            Arc::new(codex),
+            Some(&crate::agent::providers::ProviderHost {
+                index: store.clone(),
+                state_directory: config.state_directory.clone(),
+                files: files.clone(),
+                vcs: Some(vcs.clone()),
+                claude_host: config.claude_host.clone(),
+            }),
+        )
+        .await;
+        let mut sync = SyncHub::with_registry(registry, store.clone(), config.enable_mutations)
             .with_content_projector(Arc::new(ContentProjector::new(content.clone())))
             .with_dictation(dictation)
             .with_files(files.clone())
-            .with_resources(resources.clone())
             .with_projects(projects.clone())
             .with_workspaces(workspaces.clone());
         if let Some(account_pool) = &account_pool {
@@ -276,7 +307,7 @@ impl ManagedRuntime {
             media: Some(media.clone()),
             tunnels: Some(tunnels),
             telemetry: Some(telemetry),
-            catalog: Some(catalog),
+            thread_metadata: Some(Arc::new(RolloutThreadMetadata::new(catalog))),
             app_server_socket_path: Some(config.app_server_socket),
             excluded_ports: HashSet::from([
                 listen_address.port(),
@@ -559,44 +590,6 @@ fn ephemeral_admin_token() -> RuntimeResult<String> {
         .try_fill_bytes(&mut random)
         .map_err(|_| "secure randomness unavailable")?;
     Ok(URL_SAFE_NO_PAD.encode(random))
-}
-
-fn start_catalog_warmup(catalog: Arc<SessionCatalog>, store: Arc<IndexStore>) {
-    tokio::spawn(async move {
-        let result = tokio::task::spawn_blocking(move || {
-            let catalog_threads = catalog.refresh()?;
-            let mut metadata = Vec::new();
-            let mut failures = 0_usize;
-            for path in catalog.rollout_paths() {
-                match read_rollout_metadata(&path) {
-                    Ok(Some(value)) => metadata.push(value),
-                    Ok(None) => {}
-                    Err(_) => failures += 1,
-                }
-            }
-            let indexed = metadata.len();
-            if store.put_thread_metadata_batch(&metadata).is_err() {
-                failures = failures.saturating_add(indexed);
-                return Ok::<_, crate::catalog::CatalogError>((catalog_threads, 0, failures));
-            }
-            Ok((catalog_threads, indexed, failures))
-        })
-        .await;
-        match result {
-            Ok(Ok((catalog_threads, indexed_metadata, metadata_failures))) => {
-                tracing::info!(threads = catalog_threads, "catalog warmup is ready");
-                tracing::info!(threads = indexed_metadata, "metadata warmup is ready");
-                if metadata_failures > 0 {
-                    tracing::warn!(
-                        failures = metadata_failures,
-                        "some thread metadata headers could not be indexed"
-                    );
-                }
-            }
-            Ok(Err(error)) => tracing::warn!(err = ?error, "catalog warmup failed"),
-            Err(error) => tracing::warn!(err = ?error, "catalog warmup task failed"),
-        }
-    });
 }
 
 fn start_attachment_cleanup(files: Arc<FileService>) {

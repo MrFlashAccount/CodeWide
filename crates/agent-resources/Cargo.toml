@@ -1,0 +1,27 @@
+[package]
+name = "agent-resources"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Thread resource projection and reads shared by CodeWide provider adapters"
+
+[dependencies]
+agent-core = { path = "../agent-core" }
+companion-host = { path = "../companion-host" }
+async-trait = "0.1.89"
+futures-util = "0.3.31"
+hex = "0.4.3"
+percent-encoding = "2.3.1"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.143"
+sha2 = "0.10.9"
+thiserror = "2.0.16"
+tokio = { version = "1.47.1", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1.41"
+
+[dev-dependencies]
+tempfile = "3.21.0"
+
+[lints]
+workspace = true

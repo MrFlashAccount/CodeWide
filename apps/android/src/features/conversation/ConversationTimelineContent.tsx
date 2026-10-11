@@ -84,6 +84,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       persistTimelineAtEnd={props.timelineRead.historyAnchorActionsBinding.persistTimelineAtEnd}
       persistTimelineOffset={props.timelineRead.historyAnchorActionsBinding.persistTimelineOffset}
       renderTimelineItem={props.threadTimelineBinding.renderTimelineItem}
+      renderTimelineItemRevision={props.threadTimelineBinding.renderTimelineItemRevision}
       reportHistoryViewport={
         props.timelineRead.timelineViewportActionsBinding.reportHistoryViewport
       }

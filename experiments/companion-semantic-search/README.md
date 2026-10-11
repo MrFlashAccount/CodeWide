@@ -9,7 +9,7 @@ evaluation uses local files with Hugging Face offline mode enabled.
 ## Predeclared comparison
 
 - `current_fts`: SQLite FTS5 `unicode61`, prefix tokens joined with AND, newest first,
-  matching `crates/companion-core/src/message_search/query.rs`.
+  matching `crates/agent-provider-codex/src/message_search/query.rs`.
 - `lexical_bm25`: the same tokens joined with OR and ranked by SQLite BM25.
 - `dense_e5`: normalized mean-pooled multilingual E5-small embeddings with the
   required `query: ` and `passage: ` prefixes.

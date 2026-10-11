@@ -14,7 +14,6 @@ import {
   projectUserMessageAttachments,
   type UserMessageAttachment,
 } from "../../../rendering/user-message-attachments";
-import { normalizeUserMessage } from "../../../rendering/user-message-normalizer";
 import { occurrenceKey, textFingerprint } from "../../../rendering/listKey";
 import { colors, iconSize } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
@@ -70,13 +69,12 @@ export function UserMessageContent(props: UserMessageContentProps) {
         const type = typeof part.type === "string" ? part.type : "unknown";
         const key = occurrenceKey(bodyPartOccurrences, userMessagePartIdentity(part, type));
         if (type === "text" && typeof part.text === "string") {
-          const normalized = normalizeUserMessage(part.text);
-          return normalized.text === "" ? null : (
+          return part.text.trim() === "" ? null : (
             <CollapsibleUserMessage
               key={key}
               partIndex={index}
               pending={pendingText}
-              text={normalized.text}
+              text={part.text}
             />
           );
         }

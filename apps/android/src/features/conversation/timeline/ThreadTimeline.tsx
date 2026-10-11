@@ -25,6 +25,7 @@ import type { UseThreadTimelineProps } from "./ThreadTimeline.types";
 import { timelineRowItem, type TimelineRow } from "./timelineRows";
 
 export function useThreadTimeline(props: UseThreadTimelineProps) {
+  const requestPrompt = props.requestPrompt?.node ?? null;
   const renderTimelineItem = ({ item: timelineRow }: LegendListRenderItemProps<TimelineRow>) => {
     const item = timelineRowItem(timelineRow);
     const boundaryKey =
@@ -43,7 +44,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
       timelineRow.kind === "turnLead" ||
       (timelineRow.kind === "turnSlice" &&
         !timelineRow.followsLead &&
-        (timelineRow.placement === "start" || timelineRow.placement === "single"));
+        (timelineRow.bubble === "start" || timelineRow.bubble === "single"));
     const dateLabel = startsTurn ? (dateLabels?.before ?? null) : null;
     const virtualizedSearchFocus =
       timelineRow.kind === "turnSlice" &&
@@ -107,7 +108,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                       animateLiveUpdates={props.animateLiveUpdates}
                       compact={props.timelineCompact}
                       forceExpanded={props.threadSearchActive}
-                      requestPrompt={item.turn.status === "inProgress" ? props.requestPrompt : null}
+                      requestPrompt={item.turn.status === "inProgress" ? requestPrompt : null}
                       turn={item}
                       usage={usage}
                       {...(props.getTransferAccess === undefined
@@ -146,14 +147,16 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                     <VirtualizedTurnTimelineItem
                       agentDateLabel={dateLabels?.agent ?? null}
                       animateLiveUpdates={props.animateLiveUpdates}
+                      bubble={timelineRow.bubble}
                       compact={props.timelineCompact}
                       followsLead={timelineRow.followsLead}
                       forceExpanded={props.threadSearchActive}
+                      group={timelineRow.group}
                       parts={timelineRow.parts}
                       placement={timelineRow.placement}
                       presentation={virtualizedPresentation}
                       requestPrompt={
-                        timelineRow.item.turn.status === "inProgress" ? props.requestPrompt : null
+                        timelineRow.item.turn.status === "inProgress" ? requestPrompt : null
                       }
                       turn={timelineRow.item}
                       usage={usage}
@@ -239,7 +242,9 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
       row
     );
   };
-  return { renderTimelineItem };
+  // Inputs of `renderTimelineItem` that no row object carries; the list re-renders rows when it changes.
+  const renderTimelineItemRevision = props.requestPrompt?.revision ?? "";
+  return { renderTimelineItem, renderTimelineItemRevision };
 }
 
 const styles = StyleSheet.create({
@@ -278,7 +283,7 @@ export function useThreadTimelineActions(
     if (onFork === undefined) {
       throw new Error("Thread fork is unavailable");
     }
-    await onFork({ boundary: { kind: "through", turnId }, ephemeral: false });
+    await onFork({ boundary: { kind: "through", turnId }, ephemeral: false, target: null });
   });
   const loadStableTurnItems = useEvent(async (turnId: string) => {
     if (onLoadTurnItems === undefined) {

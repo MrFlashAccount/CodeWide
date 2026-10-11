@@ -1,10 +1,13 @@
 import type { AccountPoolSnapshot, AccountResetCreditConsumption } from "../../data/account-pool";
+import type { AgentProvidersResource } from "../../data/agentProvidersResource";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { ConnectionUpdateInput } from "../../data/connection-validation";
 
 /** Connection row inputs retain separate profile editing and account capabilities. */
 export type ConnectionEditorProps = {
   accountPool: AccountPoolSnapshot | null;
+  /** Provider status of the server; absent where the provider list is not available. */
+  agentProviders?: Pick<AgentProvidersResource, "state$">;
   connection: StoredConnection;
   onActivateAccountProfile?: (
     connectionId: string,

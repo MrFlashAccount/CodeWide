@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { View } from "react-native";
 import type { AccountRateLimitsDatabase } from "../../data/account-rate-limits-database";
+import type { AgentProvidersResource } from "../../data/agentProvidersResource";
 import type { AccountUsageServer } from "../../data/thread-list-account-usage";
 import { serverIconOption } from "../../data/serverIcons";
 import { ThreadListHeaderAction } from "../../presentation/navigation/ThreadListHeader";
@@ -15,6 +16,7 @@ import type { ThreadListMode } from "./threadListModel";
 export function ThreadListMenu({
   accountDatabase,
   accountServers,
+  agentProviders,
   archived,
   onManageProjects,
   onManageTerminals,
@@ -24,6 +26,7 @@ export function ThreadListMenu({
 }: {
   accountDatabase: AccountRateLimitsDatabase | null;
   accountServers: readonly AccountUsageServer[];
+  agentProviders: Pick<AgentProvidersResource, "state$"> | null;
   archived: boolean;
   onManageProjects: () => void;
   onManageTerminals: () => void;
@@ -33,6 +36,7 @@ export function ThreadListMenu({
 }) {
   return (
     <WorkspaceAccountUsageMenu
+      agentProviders={agentProviders}
       database={accountDatabase}
       servers={accountServers}
       {...(onRefreshAccountRateLimits === undefined

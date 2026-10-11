@@ -92,6 +92,8 @@ function responseSurface(
           forceExpanded={false}
           key={row.key}
           parts={row.parts}
+          bubble={row.bubble}
+          group={row.group}
           placement={row.placement}
           presentation={presentation}
           requestPrompt={null}

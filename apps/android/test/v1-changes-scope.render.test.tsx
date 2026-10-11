@@ -7,6 +7,7 @@ import type {
 } from "../src/data/workspace-resource-database";
 import { ThreadResourceContextChips } from "../src/features/changes/ThreadResourceContextChips";
 import type { ChangesPreferences } from "../src/features/changes/changePresentation";
+import { threadAgentActions } from "../src/features/conversation/threadAgentActions";
 import { colors } from "../src/theme";
 import { getAppDialogRequest, resetAppDialog } from "./mocks/AppDialog";
 
@@ -216,4 +217,86 @@ it("keeps a failed Changes chip visible and red without hiding healthy attachmen
     message: "Arc plugin rejected the change scope",
     title: "Changes unavailable",
   });
+});
+
+it("offers the repository scopes in the Changes chip of a Claude thread", async () => {
+  // The Companion's descriptor of a Claude thread with indexed history.
+  const claudeThread = {
+    codewideAgent: {
+      capabilities: { "history.threadResources": true, "threads.crossProviderFork": true },
+      primary: false,
+      provider: "claude",
+      providerName: "Claude",
+    },
+  };
+  const model = createThreadResourcesModel();
+  const calls: Array<ThreadChangeScope | undefined> = [];
+  const loadThreadResources = async (scope?: ThreadChangeScope): Promise<ThreadResourcesValue> => {
+    calls.push(scope);
+    // `companion/threadChanges/read` of a Claude thread whose cwd is a git repository.
+    const value: ThreadResourcesValue = {
+      attachments: [],
+      changeScope: scope ?? "branch",
+      changeScopes: ["session", "uncommitted", "branch"],
+      changes: [
+        {
+          additions: 1,
+          availability: "available",
+          deletions: 1,
+          itemId: "vcs:snapshot:file",
+          kind: "update",
+          path: "/repo/src/lib.rs",
+          turnId: "",
+        },
+      ],
+      revision: "vcs.snapshot.attachments",
+      threadId: "claude-thread",
+    };
+    model.put({
+      connectionId: "server",
+      error: null,
+      id: "server\u0000claude-thread",
+      status: "ready",
+      threadId: "claude-thread",
+      updatedAt: calls.length,
+      value,
+    });
+    return value;
+  };
+  // WHY: the gate reads only the action members it filters; the remaining scope bindings are irrelevant here.
+  const scope = { onLoadThreadResources: loadThreadResources } as unknown as Parameters<
+    typeof threadAgentActions
+  >[1];
+  const load = threadAgentActions(claudeThread, scope, jest.fn()).onLoadThreadResources;
+  if (load === undefined) {
+    throw new Error("a Claude thread with history.threadResources must load its resources");
+  }
+  const onPreferencesChange = jest.fn();
+  const view = render(
+    <ThreadResourceContextChips
+      load={load}
+      model={model}
+      onOpen={jest.fn()}
+      onPreferencesChange={onPreferencesChange}
+      preferences={{ mode: "unified", scope: null, wrapLines: false }}
+      resourceId={"server\u0000claude-thread"}
+      revision="live"
+    />,
+  );
+
+  const chip = await waitFor(() =>
+    view.getByRole("button", {
+      name: "Changes, Branch · 1. Long press to choose changes scope.",
+    }),
+  );
+  fireEvent(chip, "longPress");
+  expect(view.getByLabelText("Choose changes scope: Session")).toBeVisible();
+  expect(view.getByLabelText("Choose changes scope: Branch")).toBeVisible();
+  fireEvent.press(view.getByLabelText("Choose changes scope: Uncommitted"));
+  expect(onPreferencesChange).toHaveBeenCalledWith({
+    mode: "unified",
+    scope: "uncommitted",
+    wrapLines: false,
+  });
+  await waitFor(() => expect(calls).toEqual([undefined, "uncommitted"]));
 });

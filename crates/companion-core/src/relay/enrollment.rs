@@ -254,10 +254,9 @@ mod tests {
         wait_for(&runtime, &attempt.id, "connected").await?;
         let saved = RelayConfig::load(&path)?.ok_or("Missing saved configuration")?;
         assert_eq!(saved.relay_tls_pin_sha256.as_ref(), identity.pin());
-        assert_eq!(
-            runtime.status()?.connection,
-            super::super::RelayConnectionStatus::Online
-        );
+        // The enrollment reports `connected` once the tunnel is admitted; the
+        // runtime publishes `Online` from its own connection task right after.
+        wait_for_online(&runtime).await?;
         assert_eq!(
             registry.summaries()?[0].label.as_deref(),
             Some("Test MacBook")
@@ -275,15 +274,24 @@ mod tests {
                 .route_id,
             saved.route_id
         );
-        assert_eq!(
-            runtime.status()?.connection,
-            super::super::RelayConnectionStatus::Online
-        );
+        // The enrollment reports `connected` once the tunnel is admitted; the
+        // runtime publishes `Online` from its own connection task right after.
+        wait_for_online(&runtime).await?;
         drop(owner);
         runtime.set_enabled(false).await?;
         stop.cancel();
         server.await??;
         Ok(())
+    }
+
+    async fn wait_for_online(runtime: &RelayRuntime) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while runtime.status()?.connection != super::super::RelayConnectionStatus::Online {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Ok(())
+        })
+        .await?
     }
 
     async fn wait_for(

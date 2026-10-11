@@ -9,13 +9,13 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{any, delete, get, post},
 };
+use companion_host::thread_index::ThreadMetadataSource;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
     auth::{AuthError, AuthorizationContext, DeviceRegistry, PairingClaim, SessionProof},
     build_shelf::BuildShelfProxy,
-    catalog::{CatalogError, SessionCatalog},
     content::{ContentQuery, PrivateContentService},
     device_tls::DeviceTlsConnectInfo,
     file_uploads::WorkspaceUploadStore,
@@ -25,7 +25,6 @@ use crate::{
     image_previews::{ImagePreviewError, ImagePreviewQuery, ImagePreviewService, ImageVariant},
     media::MediaProxyService,
     ports,
-    rollout::read_rollout_metadata,
     store::IndexStore,
     sync::SyncHub,
     telemetry::{
@@ -72,7 +71,8 @@ pub struct CompanionServices {
     pub tunnels: Option<Arc<LocalhostTunnelService>>,
     pub telemetry: Option<Arc<TelemetryStore>>,
     pub diagnostics: Option<Arc<crate::diagnostics::DiagnosticStore>>,
-    pub catalog: Option<Arc<SessionCatalog>>,
+    /// Resolves metadata of threads the host index does not know yet.
+    pub thread_metadata: Option<Arc<dyn ThreadMetadataSource>>,
     pub app_server_socket_path: Option<PathBuf>,
     pub excluded_ports: HashSet<u16>,
     pub transport_identity: Option<TransportIdentity>,

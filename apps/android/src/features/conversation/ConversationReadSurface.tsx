@@ -107,6 +107,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       liveStatusVisible={liveStatusVisible}
       newChat={false}
       renderTimelineItem={rows.renderTimelineItem}
+      renderTimelineItemRevision={rows.renderTimelineItemRevision}
       scheduleUnreadAgentVisibilityCheck={read.unreadActions.scheduleUnreadAgentVisibilityCheck}
       searchMessageItemId={null}
       setAwayFromLatest={read.anchor.setAwayFromLatest}

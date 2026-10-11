@@ -1,0 +1,37 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "agent-provider-codex",
+  "projectType": "library",
+  "sourceRoot": "crates/agent-provider-codex/src",
+  "tags": ["language:rust", "type:library"],
+  "implicitDependencies": ["agent-core", "agent-transport", "companion-host", "agent-search", "agent-resources"],
+  "metadata": {
+    "description": "Codex agent provider adapter and Codex-owned storage"
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "rustWorkspace"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p agent-provider-codex --all-targets --all-features -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test -p agent-provider-codex --all-features",
+        "cwd": "."
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo build -p agent-provider-codex --release",
+        "cwd": "."
+      }
+    }
+  }
+}

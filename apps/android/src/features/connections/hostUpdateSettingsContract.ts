@@ -6,6 +6,7 @@ type HostUpdateAvailability =
   | "ready"
   | "unsupported"
   | "manualBootstrap"
+  | "unofficialBuild"
   | "manualUpdate"
   | "error";
 

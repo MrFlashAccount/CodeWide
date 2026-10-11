@@ -44,6 +44,18 @@ describe("thread event projection", () => {
     expect(next.name).toBe("Companion name");
   });
 
+  it("locks and releases direct input from companion status changes", () => {
+    const status = (params: Record<string, unknown>) => ({
+      method: "thread/status/changed",
+      params: { threadId: "thread", status: { type: "idle" }, ...params },
+      codewideThreadPatch: { version: 1, threadId: "thread", operation: { kind: "threadStatus" } },
+    });
+    const locked = applyThreadEventsImmutable(thread(), [status({ canAcceptDirectInput: false })]);
+    expect(locked.canAcceptDirectInput).toBe(false);
+    expect(applyThreadEventsImmutable(locked, [status({})]).canAcceptDirectInput).toBe(false);
+    expect(applyThreadEventsImmutable(locked, [status({ canAcceptDirectInput: true })]).canAcceptDirectInput).toBe(true);
+  });
+
   it("does not report a missing delta prerequisite as projected", () => {
     const value = thread();
     const beforeUpdatedAt = value.updatedAt;

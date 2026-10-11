@@ -10,6 +10,7 @@ use codewide_companion::{
     files::FileService,
     history_service::HistoryService,
     image_previews::ImagePreviewService,
+    rollout_store::RolloutStore,
     server::{self, CompanionServices},
     store::IndexStore,
     sync::SyncHub,
@@ -52,7 +53,7 @@ async fn v1_serves_gzipped_text_and_progressive_webp_variants()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),

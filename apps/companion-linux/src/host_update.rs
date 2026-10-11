@@ -22,10 +22,11 @@ use async_trait::async_trait;
 use companion_core::host_update::{
     ApplyHostUpdateAccepted, ApplyHostUpdateCommand, AvailableHostUpdate, GuardianError,
     GuardianErrorCode, HOST_UPDATE_API_VERSION, HOST_UPDATE_BOOTSTRAP_VERSION,
-    HOST_UPDATE_GUARDIAN_CONTRACT_VERSION, HOST_UPDATE_JOURNAL_VERSION, HostPlatform,
-    HostUpdateCapability, HostUpdateDeadlines, HostUpdateGuardian, HostUpdateJournalV1,
-    HostUpdateOperation, HostUpdatePhase, HostUpdateRelayState, HostUpdateStatus, ReconnectReceipt,
-    ReleaseAdmission, ReleaseAdmissionError, ReleaseTargetV1, SignedReleaseDescriptor,
+    HOST_UPDATE_GUARDIAN_CONTRACT_VERSION, HOST_UPDATE_JOURNAL_VERSION,
+    HOST_UPDATE_UNOFFICIAL_BUILD_REASON, HostPlatform, HostUpdateCapability, HostUpdateDeadlines,
+    HostUpdateGuardian, HostUpdateJournalV1, HostUpdateOperation, HostUpdatePhase,
+    HostUpdateRelayState, HostUpdateStatus, ReconnectReceipt, ReleaseAdmission,
+    ReleaseAdmissionError, ReleaseTargetV1, ReleaseTrust, SignedReleaseDescriptor,
     admit_signed_release, verify_signed_release_descriptor,
 };
 use serde::{Deserialize, Serialize};
@@ -35,16 +36,6 @@ const DEFAULT_MANIFEST_URL: &str =
     "https://github.com/MrFlashAccount/CodeWide/releases/latest/download/release-manifest.json";
 const MINIMUM_FREE_BYTES: u64 = 512 * 1024 * 1024;
 const RETAIN_TERMINAL_OPERATIONS: usize = 32;
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BootstrapConfigV1 {
-    pub schema_version: u16,
-    pub key_id: String,
-    pub public_key_spki: String,
-    #[serde(default = "default_manifest_url")]
-    pub manifest_url: String,
-}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -87,6 +78,7 @@ struct GuardianInner {
     identity_pin: String,
     identity_manifest: PathBuf,
     relay_probe: Arc<dyn Fn() -> HostUpdateRelayState + Send + Sync>,
+    trust: Option<ReleaseTrust>,
     in_process: Mutex<()>,
 }
 
@@ -104,6 +96,7 @@ impl LinuxHostUpdateGuardian {
             identity_pin,
             default_identity_manifest(),
             Arc::new(move || relay.clone()),
+            ReleaseTrust::embedded(),
         )
     }
 
@@ -137,6 +130,28 @@ impl LinuxHostUpdateGuardian {
                     },
                 )
             }),
+            ReleaseTrust::embedded(),
+        )
+    }
+
+    /// A guardian with explicit trust, for tests that cannot rely on build-time embedding.
+    #[cfg(test)]
+    pub(crate) fn with_trust(
+        root: PathBuf,
+        state_root: PathBuf,
+        trust: Option<ReleaseTrust>,
+    ) -> Self {
+        Self::with_relay_probe(
+            root,
+            state_root,
+            "pin".to_owned(),
+            default_identity_manifest(),
+            Arc::new(|| HostUpdateRelayState {
+                configured: false,
+                enabled: false,
+                upstream_live: false,
+            }),
+            trust,
         )
     }
 
@@ -146,6 +161,7 @@ impl LinuxHostUpdateGuardian {
         identity_pin: String,
         identity_manifest: PathBuf,
         relay_probe: Arc<dyn Fn() -> HostUpdateRelayState + Send + Sync>,
+        trust: Option<ReleaseTrust>,
     ) -> Self {
         Self {
             inner: Arc::new(GuardianInner {
@@ -154,6 +170,7 @@ impl LinuxHostUpdateGuardian {
                 identity_pin,
                 identity_manifest,
                 relay_probe,
+                trust,
                 in_process: Mutex::new(()),
             }),
         }
@@ -185,22 +202,19 @@ impl LinuxHostUpdateGuardian {
         )
     }
 
-    fn bootstrap(&self) -> Result<BootstrapConfigV1, GuardianError> {
+    /// The embedded release key, once the stable guardian it hands updates to is installed.
+    fn bootstrap(&self) -> Result<ReleaseTrust, GuardianError> {
+        let Some(trust) = self.inner.trust.clone() else {
+            return Err(manual(HOST_UPDATE_UNOFFICIAL_BUILD_REASON));
+        };
         let bootstrap_root = self.inner.root.join("bootstrap");
-        let config_path = bootstrap_root.join("config.json");
         let guardian_path = bootstrap_root.join("codewide-companion-update-guardian");
         let directory = fs::symlink_metadata(&bootstrap_root)
             .map_err(|_| manual("manual_bootstrap_required"))?;
-        let config_metadata =
-            fs::symlink_metadata(&config_path).map_err(|_| manual("manual_bootstrap_required"))?;
         let guardian_metadata = fs::symlink_metadata(&guardian_path)
             .map_err(|_| manual("manual_bootstrap_required"))?;
         if !directory.is_dir()
             || directory.mode() & 0o077 != 0
-            || !config_metadata.is_file()
-            || config_metadata.file_type().is_symlink()
-            || config_metadata.mode() & 0o077 != 0
-            || config_metadata.uid() != directory.uid()
             || !guardian_metadata.is_file()
             || guardian_metadata.file_type().is_symlink()
             || guardian_metadata.mode() & 0o111 == 0
@@ -209,16 +223,7 @@ impl LinuxHostUpdateGuardian {
         {
             return Err(manual("manual_bootstrap_required"));
         }
-        let config: BootstrapConfigV1 =
-            store::read_json(&config_path).map_err(|_| manual("manual_bootstrap_required"))?;
-        if config.schema_version != HOST_UPDATE_BOOTSTRAP_VERSION
-            || config.manifest_url != DEFAULT_MANIFEST_URL
-            || config.key_id.is_empty()
-            || config.public_key_spki.is_empty()
-        {
-            return Err(manual("manual_bootstrap_required"));
-        }
-        Ok(config)
+        Ok(trust)
     }
 
     fn current(&self) -> Result<GenerationMetadataV1, GuardianError> {
@@ -320,8 +325,8 @@ impl LinuxHostUpdateGuardian {
 #[async_trait]
 impl HostUpdateGuardian for LinuxHostUpdateGuardian {
     fn capability(&self) -> HostUpdateCapability {
-        if self.bootstrap().is_err() || self.current().is_err() {
-            return HostUpdateCapability::disabled("manual_bootstrap_required");
+        if let Err(error) = self.bootstrap().and_then(|_| self.current()) {
+            return HostUpdateCapability::disabled(error.message);
         }
         HostUpdateCapability {
             api_version: HOST_UPDATE_API_VERSION,
@@ -346,7 +351,7 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
             .redirect(reqwest::redirect::Policy::limited(3))
             .build()
             .map_err(internal)?
-            .get(&bootstrap.manifest_url)
+            .get(DEFAULT_MANIFEST_URL)
             .send()
             .await
             .map_err(|_| precondition("release_manifest_unavailable"))?
@@ -708,10 +713,6 @@ pub(super) fn unix_millis() -> u64 {
 
 fn free_bytes(path: &Path) -> std::io::Result<u64> {
     fs2::available_space(path)
-}
-
-fn default_manifest_url() -> String {
-    DEFAULT_MANIFEST_URL.to_owned()
 }
 
 fn default_identity_manifest() -> PathBuf {

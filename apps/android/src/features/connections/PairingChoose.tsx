@@ -20,7 +20,7 @@ export function PairingChoose({
         <Ionicons color={colors.primary} name="link" size={iconSize.illustration} />
       </View>
       <Text style={styles.pairingLead}>
-        Connect this phone to Codex running on another machine.
+        Connect this phone to a CodeWide Companion running on another machine.
       </Text>
       <Text style={styles.pairingHint}>
         Follow the setup instructions for your computer's OS, then scan its pairing QR code or paste

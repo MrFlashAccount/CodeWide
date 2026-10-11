@@ -1,8 +1,11 @@
 import type { AccountPoolSnapshot, AccountResetCreditConsumption } from "../../data/account-pool";
+import type { AgentProvidersResource } from "../../data/agentProvidersResource";
 
 /** Account interaction capabilities; persistence and session state remain lower-owned. */
 export type AccountPoolProps = {
   accountPool: AccountPoolSnapshot | null;
+  /** The server's provider list; names and marks the pool owner in multi-provider mode. */
+  agentProviders?: Pick<AgentProvidersResource, "state$">;
   connectionId: string;
   onActivate: (connectionId: string, profileId: string) => Promise<AccountPoolSnapshot>;
   onCancelLogin: (connectionId: string, loginId: string) => Promise<void>;
@@ -11,7 +14,6 @@ export type AccountPoolProps = {
     profileId: string,
     creditId: string | null,
   ) => Promise<AccountResetCreditConsumption>;
-  onRefresh: (connectionId: string) => Promise<AccountPoolSnapshot>;
   onRemove: (connectionId: string, profileId: string) => Promise<AccountPoolSnapshot>;
   onStartLogin: (
     connectionId: string,

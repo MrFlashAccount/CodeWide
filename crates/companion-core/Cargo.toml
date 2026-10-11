@@ -10,6 +10,11 @@ description = "Shared CodeWide Companion runtime and domain owners"
 default = []
 
 [dependencies]
+agent-core = { path = "../agent-core" }
+agent-provider-claude = { path = "../agent-provider-claude" }
+agent-provider-codex = { path = "../agent-provider-codex" }
+agent-transport = { path = "../agent-transport" }
+companion-host = { path = "../companion-host" }
 codewide-relay = { path = "../../apps/relay", default-features = false }
 async-trait = "0.1.89"
 axum = { version = "0.8.4", features = ["ws"] }

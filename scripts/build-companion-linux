@@ -49,6 +49,12 @@ command -v docker >/dev/null 2>&1 || {
   printf '%s\n' 'Docker is required to build the portable Linux Companion bundle.' >&2
   exit 2
 }
+for tool in pnpm "${CODEWIDE_BUN:-bun}"; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    printf '%s is required to build the Claude agent host.\n' "$tool" >&2
+    exit 2
+  }
+done
 
 if [ -n "${CODEWIDE_COMPANION_CACHE_ROOT:-}" ]; then
   case "$CODEWIDE_COMPANION_CACHE_ROOT" in
@@ -86,21 +92,30 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 mkdir -p "$bundle_root/bin" "$bundle_root/bootstrap" "$bundle_root/libexec" "$bundle_root/systemd/user"
+# The Claude agent host is built with Bun outside the container and shipped
+# inside the companion binary (feature embedded-claude-host). glibc Bun
+# executables run on the glibc distributions the bundle targets.
+claude_host_dir="$build_root/claude-agent-host"
+"$repo_root/scripts/build-claude-agent-host" bun-linux-x64 "$claude_host_dir/claude-agent-host"
 docker run --rm \
   --volume "$repo_root:/workspace:ro" \
   --volume "$build_root:/output" \
   --volume "$registry_volume:/usr/local/cargo/registry" \
   --volume "$git_volume:/usr/local/cargo/git" \
   --volume "$target_volume:/build-target" \
+  --volume "$claude_host_dir:/claude-agent-host:ro" \
   --workdir /workspace \
   --env CARGO_TARGET_DIR=/build-target \
+  --env CODEWIDE_CLAUDE_HOST_BINARY=/claude-agent-host/claude-agent-host \
   --env CODEWIDE_CACHE_OWNER="$cache_owner" \
   --env CODEWIDE_COMPANION_VERSION \
   --env CODEWIDE_CORE_VERSION \
+  --env CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID="$host_update_key_id" \
+  --env CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI="$host_update_public_key" \
   "$build_image" \
   sh -eu -c '
     apk add --no-cache build-base cmake perl pkgconfig
-    cargo build --locked --release -p codewide-companion --bins --target x86_64-unknown-linux-musl
+    cargo build --locked --release -p codewide-companion --bins --features embedded-claude-host --target x86_64-unknown-linux-musl
     install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-companion /output/codewide-companion-x86_64-unknown-linux-musl/bin/codewide-companion
     install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-vcs-git /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-vcs-git
     install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-companion-update-guardian /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-companion-update-guardian

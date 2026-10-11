@@ -114,6 +114,11 @@ cp "$repo_root/brand/macos/CodeWideMenuBarTemplate.png" "$resources_dir/CodeWide
 cp "$repo_root/brand/macos/CodeWideMenuBarTemplate@2x.png" "$resources_dir/CodeWideMenuBarTemplate@2x.png"
 cp "$repo_root/brand/codewide-menubar-template-64.png" "$resources_dir/CodeWideBrandMark.png"
 
+# The Claude agent host as one Bun-compiled executable. The runtime finds it
+# here and runs Claude without any setup; the Claude Agent SDK is not
+# bundled: the runtime downloads the pinned package from npm on first start.
+"$repo_root/scripts/build-claude-agent-host" bun-darwin-arm64 "$resources_dir/claude-agent-host"
+
 icon_dir=$(mktemp -d "${TMPDIR:-/tmp}/codewide-icon.XXXXXX")
 trap 'rm -rf -- "$icon_dir"' EXIT HUP INT TERM
 cp -R "$repo_root/brand/macos/AppIcon.iconset" "$icon_dir/CodeWide.iconset"
@@ -208,6 +213,8 @@ chmod 600 "$updater_bootstrap_dir/trust.json"
 codesign --force --sign - --identifier "$guardian_identifier" \
   "$updater_bootstrap_dir/CodeWideUpdateGuardian"
 codesign --force --sign - --identifier "$runtime_identifier" "$macos_dir/CodeWideRuntime"
+codesign --force --sign - --identifier dev.codewide.claude-agent-host \
+  "$resources_dir/claude-agent-host"
 if [ "$e2e_namespace" = 1 ]; then
   chmod 755 "$e2e_unregister_helper"
   codesign --force --sign - --identifier dev.codewide.e2e-unregister \

@@ -23,7 +23,7 @@ import {
 import type { TurnControlsValue } from "../../data/workspace-resource-database";
 import type { WorkspaceSyncSession, createWorkspaceSession } from "../../data/workspace-session";
 
-import type { ProjectsWorkspaceCapabilities } from "./workspaceCapabilities";
+import type { ProjectsWorkspaceCapabilities, ThreadStartAgent } from "./workspaceCapabilities";
 import { forgetRemoteProjectCatalogConnection } from "./useRemoteProjectCatalog";
 /** Converts projects intents using retained lower authorities. */
 export function createProjectsWorkspaceAdapter({
@@ -124,16 +124,20 @@ export function createProjectsWorkspaceAdapter({
   const startThreadInWorkspace = async (
     connectionId: string,
     workspace: string,
-    requestId: string,
+    start: { readonly agent: ThreadStartAgent | null; readonly requestId: string },
   ): Promise<string> => {
     const started = await startThreadInCreatedWorkspace({
-      createWorkspace: async () => createWorkspace(connectionId, workspace, requestId),
-      startThread: async (cwd) => startThread(connectionId, cwd),
+      createWorkspace: async () => createWorkspace(connectionId, workspace, start.requestId),
+      startThread: async (cwd) => startThread(connectionId, cwd, start.agent ?? undefined),
     });
     return started.threadId;
   };
 
-  const startThread = async (connectionId: string, cwd?: string): Promise<string> => {
+  const startThread = async (
+    connectionId: string,
+    cwd?: string,
+    agent?: ThreadStartAgent,
+  ): Promise<string> => {
     const session = getSession(connectionId);
     if (session === undefined) {
       throw new Error("Connection is not enabled");
@@ -141,7 +145,7 @@ export function createProjectsWorkspaceAdapter({
     const response = await rpcAfterAttach<ThreadStartResponse>(
       session,
       "thread/start",
-      cwd === undefined ? {} : { cwd },
+      threadStartParams(cwd, agent),
     );
     // thread/start already returns the authoritative execution settings.
     // Preserve them on the empty shell so a new conversation can paint its
@@ -173,5 +177,23 @@ export function createProjectsWorkspaceAdapter({
     setProjectPinned,
     startThread,
     startThreadInWorkspace,
+  };
+}
+
+/**
+ * `thread/start` names the chosen model and its provider so the Companion binds the
+ * thread. Absent choices are omitted, so a chat without a model choice sends the same
+ * request as before provider binding existed.
+ */
+function threadStartParams(
+  cwd: string | undefined,
+  agent: ThreadStartAgent | undefined,
+): { codewideAgentProvider?: string; cwd?: string; model?: string } {
+  return {
+    ...(cwd === undefined ? {} : { cwd }),
+    ...(agent === undefined ? {} : { model: agent.model }),
+    ...(agent === undefined || agent.provider === null
+      ? {}
+      : { codewideAgentProvider: agent.provider }),
   };
 }

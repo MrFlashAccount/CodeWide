@@ -8,7 +8,9 @@ require IPC between a host and the core.
 
 - Companion domain services and durable state;
 - device identity, pairing, authorization, and secure storage;
-- session indexing, history, content, files, terminal, VCS, media, and sync;
+- the agent provider layer (registry, bindings, client-wire projection) and
+  the wiring of the provider adapter crates;
+- the host index, content, files, terminal, VCS, media, and sync;
 - V1 and V2 device protocol implementations and their machine-readable
   contracts under `contract/`;
 - runtime state locking, migration, health, and update checkpoints used by
@@ -23,6 +25,13 @@ runtime ownership here; it does not yet mean a transport-free domain library.
 
 ## Does not own
 
+- the neutral agent model and provider contract (`crates/agent-core`), the
+  agent transports (`crates/agent-transport`) and the host contracts handed to
+  adapters (`crates/companion-host`);
+- provider adapters and their storage: Codex rollout indexing, history,
+  catalog, message search, thread resources, account pool and prices
+  (`crates/agent-provider-codex`), and the Claude adapter
+  (`crates/agent-provider-claude`);
 - Linux CLI parsing, systemd units, or package installation;
 - macOS menu UI, LaunchAgent registration, XPC, Sparkle, or code signing;
 - UniFFI-compatible DTOs and generated Swift bindings;

@@ -20,6 +20,7 @@ import { ThinkingStatus } from "../protocol/ThinkingStatus";
 import { CollapsedTurnActivity, CompletedTurnHistory } from "./CompletedTurnHistory";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
 import { TurnActivitySegment } from "./TurnActivity";
+import type { TurnBubbleGroup } from "./turnBubbleGroup";
 import type { projectTurnPresentation } from "./turnProjection";
 import { styles } from "./TurnTimelineItem.styles";
 import type { TurnTimelineItemProps } from "./TurnTimelineItem.types";
@@ -31,6 +32,8 @@ type VirtualizedAgentTurnBodyProps = {
   compact: boolean;
   forceExpanded: boolean;
   getTransferAccess: TurnTimelineItemProps["getTransferAccess"];
+  /** The turns sharing this bubble, or `null` for a turn drawn alone. */
+  group: TurnBubbleGroup | null;
   onFixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
   onLoadItems: TurnTimelineItemProps["onLoadItems"];
   parts: readonly VirtualizedTurnPart[];
@@ -52,7 +55,12 @@ export function VirtualizedAgentTurnBody(props: VirtualizedAgentTurnBodyProps): 
   );
 }
 
-function VirtualizedTurnLead(props: VirtualizedAgentTurnBodyProps): ReactElement {
+function VirtualizedTurnLead(props: VirtualizedAgentTurnBodyProps): ReactElement | null {
+  // A continuation's activity is part of the group's one history at the top
+  // of the bubble.
+  if (props.group !== null && props.group.memberIndex > 0) {
+    return null;
+  }
   const preTurn =
     props.presentation.preTurnBlocks.length === 0 ? null : (
       <PreTurnLifecycleRows
@@ -67,26 +75,32 @@ function VirtualizedTurnLead(props: VirtualizedAgentTurnBodyProps): ReactElement
           : { onFixUnsupportedBlock: props.onFixUnsupportedBlock })}
       />
     );
-  const history =
-    props.presentation.rawTurn.status === "inProgress" ? null : (
-      <CompletedTurnHistory
-        compact={props.compact}
-        forceExpanded={props.forceExpanded}
-        item={props.turn}
-        {...(props.getTransferAccess === undefined
-          ? {}
-          : { getTransferAccess: props.getTransferAccess })}
-        {...(props.onFixUnsupportedBlock === undefined
-          ? {}
-          : { onFixUnsupportedBlock: props.onFixUnsupportedBlock })}
-        {...(props.onLoadItems === undefined ? {} : { onLoadItems: props.onLoadItems })}
-      />
-    );
   return (
     <>
       {preTurn}
-      {history}
+      {props.presentation.rawTurn.status === "inProgress" ? null : (
+        <VirtualizedTurnHistory {...props} />
+      )}
     </>
+  );
+}
+
+/** The finished turn's collapsed activity, joined by its bubble's continuations. */
+function VirtualizedTurnHistory(props: VirtualizedAgentTurnBodyProps): ReactElement {
+  return (
+    <CompletedTurnHistory
+      compact={props.compact}
+      forceExpanded={props.forceExpanded}
+      item={props.turn}
+      {...(props.group === null ? {} : { bubbleTurns: props.group.members })}
+      {...(props.getTransferAccess === undefined
+        ? {}
+        : { getTransferAccess: props.getTransferAccess })}
+      {...(props.onFixUnsupportedBlock === undefined
+        ? {}
+        : { onFixUnsupportedBlock: props.onFixUnsupportedBlock })}
+      {...(props.onLoadItems === undefined ? {} : { onLoadItems: props.onLoadItems })}
+    />
   );
 }
 

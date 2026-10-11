@@ -59,11 +59,33 @@ impl ThreadPinImportRequest {
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ThreadPinSnapshot {
-    pub cursor: u64,
-    pub thread_ids: Vec<String>,
+/// Attaches durable Companion pin metadata to thread shells and catalog
+/// pages of every provider; pins are companion state, not agent storage.
+///
+/// # Errors
+/// Returns the store error when a pin cannot be read.
+pub(crate) fn annotate_result(
+    store: &crate::store::IndexStore,
+    method: &str,
+    result: &mut Value,
+) -> Result<(), crate::store::StoreError> {
+    if let Some(thread) = result.get_mut("thread")
+        && let Some(id) = thread.get("id").and_then(Value::as_str)
+    {
+        let pin = store.thread_pin(id)?;
+        annotate(thread, pin);
+    }
+    if matches!(method, "thread/list" | "companion/supervisor/threadList")
+        && let Some(threads) = result.get_mut("data").and_then(Value::as_array_mut)
+    {
+        for thread in threads {
+            if let Some(id) = thread.get("id").and_then(Value::as_str) {
+                let pin = store.thread_pin(id)?;
+                annotate(thread, pin);
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn annotate(thread: &mut Value, pin: ThreadPin) {

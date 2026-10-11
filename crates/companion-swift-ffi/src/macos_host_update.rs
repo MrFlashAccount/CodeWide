@@ -17,8 +17,9 @@ use async_trait::async_trait;
 use companion_core::host_update::{
     ApplyHostUpdateAccepted, ApplyHostUpdateCommand, GuardianError, GuardianErrorCode,
     HOST_UPDATE_API_VERSION, HOST_UPDATE_BOOTSTRAP_VERSION, HOST_UPDATE_GUARDIAN_CONTRACT_VERSION,
-    HOST_UPDATE_JOURNAL_VERSION, HostUpdateCapability, HostUpdateGuardian, HostUpdateOperation,
-    HostUpdateStatus, ReconnectReceipt, SharedHostUpdateGuardian,
+    HOST_UPDATE_JOURNAL_VERSION, HOST_UPDATE_UNOFFICIAL_BUILD_REASON, HostUpdateCapability,
+    HostUpdateGuardian, HostUpdateOperation, HostUpdateStatus, ReconnectReceipt, ReleaseTrust,
+    SharedHostUpdateGuardian,
 };
 use rand::TryRngCore;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -32,6 +33,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 pub(crate) struct MacOsHostUpdateGuardian {
     updater_root: PathBuf,
     timeout: Duration,
+    /// Whether this build embeds the release signing key. The Swift guardian
+    /// verifies releases with the bundle's copy; a build without it never applies.
+    official_build: bool,
 }
 
 impl MacOsHostUpdateGuardian {
@@ -39,6 +43,7 @@ impl MacOsHostUpdateGuardian {
         Arc::new(Self {
             updater_root,
             timeout: REQUEST_TIMEOUT,
+            official_build: ReleaseTrust::embedded().is_some(),
         })
     }
 
@@ -87,6 +92,12 @@ impl MacOsHostUpdateGuardian {
         body: GuardianRequestBody,
         timeout: Duration,
     ) -> Result<T, GuardianError> {
+        if !self.official_build {
+            return Err(GuardianError::new(
+                GuardianErrorCode::ManualUpdateRequired,
+                HOST_UPDATE_UNOFFICIAL_BUILD_REASON,
+            ));
+        }
         if !self.bootstrap_available() {
             return Err(GuardianError::new(
                 GuardianErrorCode::ManualUpdateRequired,
@@ -106,7 +117,9 @@ impl MacOsHostUpdateGuardian {
 #[async_trait]
 impl HostUpdateGuardian for MacOsHostUpdateGuardian {
     fn capability(&self) -> HostUpdateCapability {
-        if self.apply_ready() {
+        if !self.official_build {
+            HostUpdateCapability::disabled(HOST_UPDATE_UNOFFICIAL_BUILD_REASON)
+        } else if self.apply_ready() {
             HostUpdateCapability {
                 api_version: HOST_UPDATE_API_VERSION,
                 guardian_contract_version: HOST_UPDATE_GUARDIAN_CONTRACT_VERSION,
@@ -358,12 +371,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn build_without_embedded_trust_reports_an_unofficial_build()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let guardian = MacOsHostUpdateGuardian {
+            updater_root: root.path().to_owned(),
+            timeout: Duration::from_millis(20),
+            official_build: false,
+        };
+        let capability = guardian.capability();
+        assert!(!capability.apply_supported);
+        assert_eq!(
+            capability.unavailable_reason.as_deref(),
+            Some(HOST_UPDATE_UNOFFICIAL_BUILD_REASON)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn capability_stays_disabled_without_an_immutable_bootstrap()
     -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let guardian = MacOsHostUpdateGuardian {
             updater_root: root.path().to_owned(),
             timeout: Duration::from_millis(20),
+            official_build: true,
         };
         let capability = guardian.capability();
         assert!(!capability.apply_supported);
@@ -394,6 +426,7 @@ mod tests {
         let guardian = MacOsHostUpdateGuardian {
             updater_root: root.path().to_owned(),
             timeout: Duration::from_millis(20),
+            official_build: true,
         };
         assert!(!guardian.capability().apply_supported);
         Ok(())
@@ -419,6 +452,7 @@ mod tests {
         let guardian = MacOsHostUpdateGuardian {
             updater_root: root.path().to_owned(),
             timeout: Duration::from_millis(20),
+            official_build: true,
         };
         assert!(!guardian.capability().apply_supported);
         Ok(())
@@ -447,6 +481,7 @@ mod tests {
         let guardian = MacOsHostUpdateGuardian {
             updater_root: root.path().to_owned(),
             timeout: Duration::from_millis(20),
+            official_build: true,
         };
         assert!(guardian.capability().apply_supported);
         Ok(())

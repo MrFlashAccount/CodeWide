@@ -59,7 +59,16 @@ export function AccountProfileRow({
     profile.exhaustedUntil !== null ||
     profile.exhaustedIndefinitely ||
     weekly?.remainingPercent === 0;
-  const accountStatus = exhausted ? "exhausted" : profile.active ? "active" : "inactive";
+  // The server cannot use the account (its last refresh failed): saved limits
+  // are not shown as current and the row says so without being expanded.
+  const unavailable = profile.enabled && profile.rateLimitsError !== null;
+  const accountStatus = unavailable
+    ? "unavailable"
+    : exhausted
+      ? "exhausted"
+      : profile.active
+        ? "active"
+        : "inactive";
   const position = listRowPosition(index, count + ADD_ACCOUNT_ROW_COUNT);
   const rowPosition =
     expanded && position === "only"
@@ -72,9 +81,10 @@ export function AccountProfileRow({
   const planLabel = accountPlanLabel(
     selectAccountRateLimitPlanType(profile.rateLimits) ?? profile.planType,
   );
-  const description = `${planLabel} · ${priorityLabel}${profile.enabled ? "" : " · disabled"}${bankedResetSummary === null ? "" : ` · ${bankedResetSummary}`}`;
-  const limitLabel =
-    weeklyRemainingPercent === null
+  const description = `${unavailable ? "Unavailable · " : ""}${planLabel} · ${priorityLabel}${profile.enabled ? "" : " · disabled"}${bankedResetSummary === null ? "" : ` · ${bankedResetSummary}`}`;
+  const limitLabel = unavailable
+    ? "Limits unavailable"
+    : weeklyRemainingPercent === null
       ? "Weekly usage pending"
       : `Weekly ${String(weeklyRemainingPercent)}% left`;
   const actions: ActionMenuItem[] = [
@@ -145,17 +155,26 @@ export function AccountProfileRow({
         accessibilityHint={expanded ? "Collapse reset details" : "Expand reset details"}
         accessibilityLabel={`${label}. Account ${accountStatus}. ${description}. ${limitLabel}`}
         description={description}
+        {...(unavailable
+          ? {
+              descriptionIcon: {
+                color: colors.red,
+                name: "alert-circle",
+                size: iconSize.indicator,
+              },
+            }
+          : {})}
         expanded={expanded}
         fixedHeight={listRowHeight.double}
         leading={
           <AccountLimitRings
             fiveHour={
-              fiveHourWindow === undefined
+              fiveHourWindow === undefined || unavailable
                 ? { kind: "absent" }
                 : { kind: "present", remainingPercent: fiveHourRemainingPercent }
             }
             testID={`account-limit-rings-${profile.id}`}
-            weeklyRemainingPercent={weeklyRemainingPercent}
+            weeklyRemainingPercent={unavailable ? null : weeklyRemainingPercent}
           />
         }
         onPress={toggleExpanded}
@@ -210,11 +229,11 @@ export function AccountProfileRow({
   );
 }
 
-function accountStatusColor(status: "active" | "exhausted" | "inactive"): string {
+function accountStatusColor(status: "active" | "exhausted" | "inactive" | "unavailable"): string {
   if (status === "active") {
     return colors.green;
   }
-  return status === "exhausted" ? colors.red : colors.textDim;
+  return status === "exhausted" || status === "unavailable" ? colors.red : colors.textDim;
 }
 
 const ACCOUNT_STATUS_DOT_SIZE = 12;

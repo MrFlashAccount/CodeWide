@@ -6,6 +6,7 @@ import { ComposerControlChips } from "./settings/ComposerControlChips";
 type Props = Pick<
   ComposerFeatureProps,
   | "applyModelSettings"
+  | "controls$"
   | "newChat"
   | "workspaceResources"
   | "controlsResourceId"
@@ -30,6 +31,7 @@ export function ComposerContextStrip({
   applyModelSettings,
   closeQuickControlMenu,
   controlError,
+  controls$,
   controlsResourceId,
   cwd,
   leadingContextChips,
@@ -58,6 +60,7 @@ export function ComposerContextStrip({
     >
       {leadingContextChips}
       <ComposerControlChips
+        controls$={controls$}
         cwd={cwd}
         error={controlError}
         newChat={newChat}

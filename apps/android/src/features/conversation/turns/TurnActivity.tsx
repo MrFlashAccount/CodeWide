@@ -4,6 +4,7 @@ import type { RenderBlock } from "@codewide/renderers";
 import type { ActivityFootprint } from "@codewide/sync-client";
 import { useContext, useState, type ReactElement } from "react";
 import { Pressable, View } from "react-native";
+import { useInsideBubbleSurface } from "../../../rendering/Bubble";
 import { TimelineMotionContext } from "../../../rendering/FluidLayoutFrame";
 import { NativeRevealSurface } from "../../../rendering/NativeRevealSurface";
 import type { TurnSequencePart } from "../../../rendering/turn-sequence";
@@ -160,8 +161,12 @@ function ThinkingActivityBlock({
 
 function AgentNavigationActivitySegment(props: ActivitySegmentProps): ReactElement {
   const motionAllowed = useContext(TimelineMotionContext);
+  const insideBubbleSurface = useInsideBubbleSurface();
   return (
-    <View style={styles.turnActivityList} testID="subagent-activity-navigation">
+    <View
+      style={[styles.turnActivityList, insideBubbleSurface && styles.bubbleNestedActivityList]}
+      testID="subagent-activity-navigation"
+    >
       {props.part.blocks.map((block) => (
         <RevealedActivityBlock
           animate={props.animateNew && motionAllowed && props.turnStatus === "inProgress"}
@@ -289,10 +294,12 @@ export interface TurnActivityProps {
 
 export function TurnActivity(props: TurnActivityProps): ReactElement {
   const compactHeader = props.compactHeader ?? false;
+  const insideBubbleSurface = useInsideBubbleSurface();
   return (
     <View
       style={[
         styles.turnActivity,
+        insideBubbleSurface && styles.bubbleNestedActivity,
         compactHeader && styles.turnActivityCompact,
         props.expanded && styles.turnActivityExpanded,
       ]}
@@ -397,9 +404,14 @@ function ExpandedActivityContent({
   forceExpandCards: boolean;
   showToggle: boolean;
 }): ReactElement {
+  const insideBubbleSurface = useInsideBubbleSurface();
   const content = (
     <View
-      style={[styles.turnActivityList, !showToggle && styles.turnActivityListWithoutToggle]}
+      style={[
+        styles.turnActivityList,
+        insideBubbleSurface && styles.bubbleNestedActivityList,
+        !showToggle && styles.turnActivityListWithoutToggle,
+      ]}
       testID="turn-activity-list"
     >
       {children}

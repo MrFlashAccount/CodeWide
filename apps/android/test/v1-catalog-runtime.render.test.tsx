@@ -64,3 +64,45 @@ it("refreshes the archive only while an archive view requests it", async () => {
   expect(rpc).toHaveBeenCalledTimes(2);
   expect(release).toHaveBeenCalledTimes(2);
 });
+
+it("keeps reading a spawning thread's subagents until the index lists the new agent", async () => {
+  jest.useFakeTimers();
+  try {
+    const indexed: { threads: Array<Record<string, unknown>> } = { threads: [] };
+    const reads = jest.fn(async () => indexed);
+    // WHY: RpcClient has a caller-selected generic result; this fixture answers only the
+    // descendant-index read with its validated wire shape.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const session = { rpc: async (method: string) => (method === "companion/threadSubagents/read" ? reads() : { data: [], nextCursor: null }) } as unknown as RpcClient;
+    const replaced: string[][] = [];
+    // WHY: The catalog runtime consumes this established database port, while this behavior
+    // test supplies only the subagent-catalog method it exercises.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const summaries = {
+      replaceSubagentCatalog: jest.fn(async (_connectionId: string, _root: string, threads: Array<{ thread: { id: string } }>) => {
+        replaced.push(threads.map(({ thread }) => thread.id));
+      }),
+    } as unknown as ThreadSummaryDatabase;
+    const runtime = createCatalogRuntime({
+      desiredThreadId: () => undefined,
+      enabledConnectionIds: () => ["server"],
+      getSession: () => session,
+      getSummaries: () => summaries,
+      readThread: async () => null,
+    });
+
+    runtime.refreshSpawnedSubagents("server", "root");
+    await jest.advanceTimersByTimeAsync(0);
+    expect(replaced.at(-1)).toEqual([]);
+    indexed.threads = [{
+      agentNickname: null, agentRole: "Explore", archived: false, cliVersion: "claude", createdAt: 1,
+      cwd: "/repo", id: "root:agent:a1", modelProvider: "anthropic", parentThreadId: "root",
+      source: "appServer", updatedAt: 2,
+    }];
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(replaced.at(-1)).toEqual(["root:agent:a1"]);
+    expect(reads.mock.calls.length).toBeGreaterThan(1);
+  } finally {
+    jest.useRealTimers();
+  }
+});

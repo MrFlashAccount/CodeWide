@@ -1,0 +1,52 @@
+{
+  "description": "rateLimits.updated: a provider reports its full merged subscription limit snapshot (Claude: from SDK rate_limit_event frames); percentages are integers 0-100, times Unix seconds",
+  "messages": [
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "rateLimits.updated",
+        "params": {
+          "rateLimits": {
+            "updatedAt": 1760000000,
+            "windows": [
+              {
+                "id": "five_hour",
+                "kind": "session",
+                "label": "Session",
+                "resetsAt": 1760010000,
+                "status": "allowed",
+                "usedPercent": 42,
+                "windowDurationMins": 300
+              },
+              {
+                "id": "seven_day",
+                "kind": "weekly",
+                "label": "Weekly",
+                "resetsAt": null,
+                "status": "warning",
+                "usedPercent": null,
+                "windowDurationMins": 10080
+              },
+              {
+                "id": "overage",
+                "kind": "other",
+                "label": "Extra usage",
+                "resetsAt": null,
+                "status": "rejected",
+                "usedPercent": null,
+                "windowDurationMins": null
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "rateLimits.updated",
+        "params": { "rateLimits": { "updatedAt": 1760000100, "windows": [] } }
+      }
+    }
+  ]
+}

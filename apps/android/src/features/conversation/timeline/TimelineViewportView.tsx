@@ -255,7 +255,7 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
         contentInsetAdjustmentBehavior="never"
         data={timelineRows}
         diagnostics={diagnostics}
-        extraData={`${props.threadSearch}:${String(props.threadSearchMatch)}:${props.windowLayout.measurementRevision}:${String(rowPremeasurementEnabled)}`}
+        extraData={`${props.threadSearch}:${String(props.threadSearchMatch)}:${props.windowLayout.measurementRevision}:${String(rowPremeasurementEnabled)}:${props.renderTimelineItemRevision}`}
         initialScrollAtEnd={initialScrollAtEnd}
         initialScrollIndex={
           props.timelinePositioned
@@ -341,14 +341,14 @@ function responsePositioningIsEnabled(props: TimelineViewportProps): boolean {
 }
 
 function timelineRowStartsAgentResponse(row: TimelineRow): boolean {
-  return row.kind === "turnSlice" && isLeadingTimelinePlacement(row.placement);
+  return row.kind === "turnSlice" && isLeadingTimelinePlacement(row.bubble);
 }
 
 function timelineRowStartsTurn(row: TimelineRow): boolean {
   if (row.kind === "turnLead") {
     return true;
   }
-  return row.kind === "turnSlice" && !row.followsLead && isLeadingTimelinePlacement(row.placement);
+  return row.kind === "turnSlice" && !row.followsLead && isLeadingTimelinePlacement(row.bubble);
 }
 
 function isLeadingTimelinePlacement(placement: "end" | "middle" | "single" | "start"): boolean {

@@ -17,6 +17,7 @@ use codewide_companion::{
     content::{ContentProjector, PrivateContentService},
     files::FileService,
     history_service::HistoryService,
+    rollout_store::RolloutStore,
     server,
     store::{IndexStore, OutboxClaimOutcome, OutboxClaimResolution, OutboxState},
     sync::SyncHub,
@@ -70,7 +71,7 @@ async fn opted_in_inventory_arrives_before_chat_snapshot_acknowledgement()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -135,7 +136,7 @@ async fn idle_sync_session_emits_transport_keepalive() -> Result<(), Box<dyn std
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -175,7 +176,7 @@ async fn arbitrary_rpcs_and_upstream_errors_pass_through_the_v1_transport()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -250,7 +251,7 @@ async fn passive_sync_never_executes_rpc_regardless_of_method()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::new(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -299,7 +300,7 @@ async fn read_only_rpcs_complete_out_of_order_without_head_of_line_blocking()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -346,7 +347,7 @@ async fn mutations_on_different_threads_do_not_share_a_lane()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -410,7 +411,7 @@ async fn unloaded_subagent_sync_reads_history_without_resuming_its_parent()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -467,7 +468,7 @@ async fn thread_sync_does_not_hide_unrelated_resume_errors()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -509,7 +510,7 @@ async fn unified_sync_uses_the_observer_attachment_as_the_thread_shell()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -578,7 +579,7 @@ async fn sync_reads_a_bounded_active_turn_checkpoint_from_app_server()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -659,7 +660,7 @@ async fn sync_keeps_every_active_turn_item_in_the_cursor_fenced_checkpoint()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -772,7 +773,7 @@ async fn cold_sync_serves_completed_history_from_the_index()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -845,7 +846,7 @@ async fn thread_sync_attaches_observer_and_returns_indexed_history()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -914,7 +915,7 @@ async fn forward_history_page_does_not_resume_the_thread() -> Result<(), Box<dyn
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -1000,7 +1001,10 @@ async fn sync_auth_rpc_replay_and_forwarding() -> Result<(), Box<dyn std::error:
     wait_for_live(&upstream).await?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let catalog = SessionCatalog::scan(directory.path());
-    let history = HistoryService::new(Arc::new(catalog), store.clone());
+    let history = HistoryService::new(
+        Arc::new(catalog),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
+    );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), sync).await?;
     let url = format!("ws://{address}/v1/sync");
@@ -1113,7 +1117,7 @@ async fn large_command_output_is_bounded_before_replay_and_rpc_reach_the_sync_cl
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let content = PrivateContentService::open(directory.path().join("content"));
     let projector = Arc::new(ContentProjector::new(content));
@@ -1215,7 +1219,7 @@ async fn user_messages_from_an_active_turn_and_another_desktop_thread_survive_re
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), sync).await?;
@@ -1328,7 +1332,7 @@ async fn completed_turn_replays_after_the_phone_was_offline()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), sync).await?;
@@ -1451,7 +1455,7 @@ async fn active_sync_forwards_mutations_and_pumps_durable_queue()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), sync).await?;
@@ -1546,7 +1550,7 @@ async fn first_message_materializes_an_empty_new_thread() -> Result<(), Box<dyn 
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), sync).await?;
@@ -1631,7 +1635,7 @@ async fn queued_messages_reach_app_server_in_order_after_lifecycle_checks()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -1728,7 +1732,7 @@ async fn assert_explicit_queue_recovers(
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -1808,7 +1812,7 @@ async fn queued_message_rehydrates_missing_thread_before_one_safe_retry()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), sync).await?;
@@ -1905,7 +1909,7 @@ async fn durable_queue_prepares_remote_files_and_broadcasts_delivery()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let files = Arc::new(
         FileService::open(
@@ -2027,7 +2031,7 @@ async fn direct_turn_retry_returns_the_existing_turn_without_duplicate_send()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -2085,7 +2089,7 @@ async fn ambiguous_turn_delivery_never_reads_or_repeats_upstream()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), sync).await?;
@@ -2187,7 +2191,7 @@ async fn resolved_steer_reconciles_against_full_upstream_history()
     )?;
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let _sync = SyncHub::with_mutations(upstream, store.clone(), history);
 
@@ -3166,7 +3170,7 @@ async fn catalog_visibility_and_reconciliation_are_server_owned_over_rpc()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::empty(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
@@ -3260,7 +3264,7 @@ async fn companion_pins_are_confirmed_durably_and_shared_by_connected_devices()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::empty(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let hub = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), hub).await?;

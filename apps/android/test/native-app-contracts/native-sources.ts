@@ -192,13 +192,6 @@ export const diagramPreviewModule = readFileSync(
   ),
   "utf8",
 );
-export const nativeShimmerView = readFileSync(
-  new URL(
-    "../../android/app/src/main/java/dev/codewide/app/rendering/NativeShimmerTextView.kt",
-    import.meta.url,
-  ),
-  "utf8",
-);
 export const performanceModule = readFileSync(
   new URL(
     "../../android/app/src/main/java/dev/codewide/app/performance/CodexPerformanceModule.kt",

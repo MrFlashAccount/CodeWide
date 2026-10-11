@@ -1,4 +1,5 @@
 import type { TurnControlsValue } from "./turn-controls-types";
+import { primaryProviderModels } from "./turnControlsAgentProviders";
 import { unknownRecord } from "./unknownRecord";
 
 export const VOICE_ASSISTANT_BACKGROUND_MODEL_PREFERENCE_ID = "voice-assistant-background-model";
@@ -120,7 +121,7 @@ export function encodeVoiceAssistantBackgroundModelPreference(
 
 type AvailableModel = Pick<
   TurnControlsValue["models"][number],
-  "defaultEffort" | "efforts" | "id" | "isDefault"
+  "defaultEffort" | "efforts" | "id" | "isDefault" | "provider"
 >;
 
 function validatedAvailableModel(model: AvailableModel): {
@@ -186,11 +187,12 @@ export function resolveVoiceAssistantBackgroundModel(
   if (preference.status === "serverDefault") {
     return { status: "serverDefault" };
   }
-  const selected = selectedAvailableModel(preference, models);
+  const supervisorModels = primaryProviderModels(models);
+  const selected = selectedAvailableModel(preference, supervisorModels);
   if (selected !== null) {
     return selected;
   }
-  const fallback = defaultAvailableModel(models);
+  const fallback = defaultAvailableModel(supervisorModels);
   return fallback === null ? { status: "serverDefault" } : { ...fallback, status: "fallback" };
 }
 

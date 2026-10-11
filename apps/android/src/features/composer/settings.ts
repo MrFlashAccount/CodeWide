@@ -1,5 +1,5 @@
 /** V1 settings owner, extracted without changing interaction or resource lifetime. */
-import type { projectedThreadExecutionSettings } from "@codewide/sync-client";
+import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import type { TurnControlsSection, TurnControlsValue } from "../../data/turn-controls-types";
 
 export function executionPermissionsLabel(
@@ -56,14 +56,34 @@ export const EMPTY_TURN_CONTROLS: TurnControlsValue = {
 };
 
 import type { Personality } from "@codewide/codex-protocol/v0.155.1";
+import { observable } from "@legendapp/state";
+import { useEffect } from "react";
+import { activeTurnId } from "../../data/thread-lifecycle";
+import { readThreadAgent } from "../../data/threadAgent";
 import type { StoredComposerPreferences } from "../../data/thread-ui-state-types";
 import type { TurnControlsRow } from "../../data/workspace-resource-database";
 import { useEvent } from "../../react/useEvent";
+import { clampModelEffort } from "../../ui/modelEffort";
 import { retainedServiceTier } from "../../ui/modelServiceTier";
 import type { ModelSettingsChoice } from "../../ui/TurnControlMenus.types";
 import { useConversationRef, useConversationState } from "../../ui/use-conversation-scope";
+import {
+  controlBaseline,
+  EMPTY_CONTROLS_OVERLAY,
+  overlayAccepted,
+  overlayOwnsMutation,
+  overlayRejected,
+  overlayWithChanges,
+  reconcileControlsState,
+  threadSettingsUpdate,
+  type ComposerControlChanges,
+  type ComposerControlsState,
+} from "./settings/controlsOverlay";
+import {
+  resolvedDefaultPermissions,
+  threadPermissionDefaultScope,
+} from "./settings/permissionDefault";
 import type { ComposerSettingsCapabilities } from "./settingsCapabilities";
-import { rollbackOwnedModelSelection } from "./submissionRecovery";
 export function useComposerSettings({
   composerPreferences,
   composerScope,
@@ -76,6 +96,7 @@ export function useComposerSettings({
   newChat,
   onLoadControls,
   onUpdateSettings,
+  remoteThread,
   saveComposerPreferences,
   workspaceResources,
 }: ComposerSettingsCapabilities) {
@@ -111,8 +132,9 @@ export function useComposerSettings({
     updatePreferences(composerSession, apply);
   };
 
-  // Existing threads are configured via thread/settings/update. Re-sending a
-  // persisted local choice would undo model changes made on another device.
+  // Existing threads are configured via thread/settings/update and show the
+  // server's settings. Re-sending a persisted local choice with a message would
+  // undo a change made on another device, so only a new chat sends its choices.
   const selectedModel = newChat ? composerPreferences.model : null;
 
   const selectedEffort = newChat ? composerPreferences.effort : null;
@@ -120,13 +142,10 @@ export function useComposerSettings({
 
   const selectedPersonality = composerPreferences.personality;
 
-  const selectedPermissions = composerPreferences.permissions;
+  const selectedPermissions = newChat ? composerPreferences.permissions : null;
 
   const setSelectedModel = (apply: (current: string | null) => string | null) => {
     updateCurrentPreferences((current) => ({ ...current, model: apply(current.model) }));
-  };
-  const setSelectedEffort = (value: string | null) => {
-    updateCurrentPreferences((current) => ({ ...current, effort: value }));
   };
   const updateSelectedEffort = (apply: (current: string | null) => string | null) => {
     updateCurrentPreferences((current) => ({ ...current, effort: apply(current.effort) }));
@@ -134,22 +153,68 @@ export function useComposerSettings({
   const setSelectedPersonality = useEvent((value: Personality | null) => {
     updateCurrentPreferences((current) => ({ ...current, personality: value }));
   });
-  const setSelectedPermissions = (value: string | null) => {
-    updateCurrentPreferences((current) => ({ ...current, permissions: value }));
-  };
-  const updateSelectedPermissions = (apply: (current: string | null) => string | null) => {
-    updateCurrentPreferences((current) => ({
-      ...current,
-      permissions: apply(current.permissions),
-    }));
-  };
 
-  const settingsMutationRef = useConversationRef(composerScope, () => ({
-    effort: 0,
-    model: 0,
-    permissions: 0,
-    serviceTier: 0,
-  }));
+  const [controls$] = useConversationState(composerScope, () =>
+    observable<ComposerControlsState>({
+      activeTurnId: null,
+      overlay: EMPTY_CONTROLS_OVERLAY,
+      server: null,
+    }),
+  );
+  const mutationRef = useConversationRef(composerScope, () => 0);
+  const server =
+    remoteThread === null || remoteThread === undefined
+      ? null
+      : projectedThreadExecutionSettings(remoteThread);
+  const currentTurnId = activeTurnId(remoteThread);
+  // Publishes the server's settings to the route-owned control sheet and
+  // retires local choices the server has echoed or replaced since.
+  useEffect(() => {
+    const current = controls$.peek();
+    const next = reconcileControlsState(current, server, currentTurnId);
+    if (next !== current) {
+      controls$.set(next);
+    }
+  }, [controls$, currentTurnId, server]);
+  const readThread = useEvent(() => remoteThread ?? null);
+  const remoteSettings = !newChat && onUpdateSettings !== undefined;
+
+  /**
+   * Sends one existing-thread change and shows it over the server value until
+   * the server answers: an echo confirms it, a rejection removes it and shows
+   * the server's error. A queued command keeps it pending while offline.
+   */
+  const sendThreadChanges = (changes: ComposerControlChanges, failure: string) => {
+    if (onUpdateSettings === undefined) {
+      return;
+    }
+    const thread = readThread();
+    const mutation = ++mutationRef.current;
+    controls$.set((state) => ({
+      ...state,
+      overlay: overlayWithChanges(state.overlay, {
+        baseline: controlBaseline(
+          thread === null ? null : projectedThreadExecutionSettings(thread),
+          activeTurnId(thread),
+        ),
+        changes,
+        mutation,
+      }),
+    }));
+    setControlError(null);
+    void onUpdateSettings(threadSettingsUpdate(changes)).then(
+      () => {
+        controls$.set((state) => ({ ...state, overlay: overlayAccepted(state.overlay, mutation) }));
+      },
+      (error: unknown) => {
+        const owned = overlayOwnsMutation(controls$.peek().overlay, mutation);
+        controls$.set((state) => ({ ...state, overlay: overlayRejected(state.overlay, mutation) }));
+        if (owned && conversationOwner.isCurrent()) {
+          setControlError(error instanceof Error ? error.message : failure);
+        }
+      },
+    );
+  };
 
   const requestControls = useEvent((sections: readonly TurnControlsSection[]) => {
     const current = currentControlsResource();
@@ -168,7 +233,8 @@ export function useComposerSettings({
             : current,
         );
         updateSelectedEffort((current) =>
-          current !== null && !next.models.some((candidate) => candidate.efforts.includes(current))
+          current !== null &&
+          !next.models.some((candidate) => clampModelEffort(candidate, current) === current)
             ? null
             : current,
         );
@@ -182,6 +248,20 @@ export function useComposerSettings({
   });
 
   const applyModelSettings = useEvent((choice: ModelSettingsChoice) => {
+    if (remoteSettings) {
+      updateCurrentPreferences((current) => ({ ...current, personality: choice.personality }));
+      if (choice.executionChanged) {
+        sendThreadChanges(
+          {
+            ...(choice.effort === null ? {} : { effort: choice.effort }),
+            model: choice.model,
+            serviceTier: choice.serviceTier ?? null,
+          },
+          "Could not update model settings",
+        );
+      }
+      return;
+    }
     updateCurrentPreferences((current) =>
       choice.executionChanged
         ? {
@@ -193,133 +273,68 @@ export function useComposerSettings({
           }
         : { ...current, personality: choice.personality },
     );
-    if (!choice.executionChanged) {
-      return;
-    }
-    ++settingsMutationRef.current.model;
-    ++settingsMutationRef.current.effort;
-    ++settingsMutationRef.current.serviceTier;
-    if (onUpdateSettings === undefined) {
-      return;
-    }
-    setControlError(null);
-    void onUpdateSettings({
-      effort: choice.effort,
-      model: choice.model,
-      serviceTier: choice.serviceTier ?? null,
-    }).catch((error: unknown) => {
-      if (conversationOwner.isCurrent()) {
-        setControlError(error instanceof Error ? error.message : "Could not update model settings");
-      }
-    });
   });
 
-  const selectModel = useEvent((model: string, effort: string) => {
-    const modelMutation = ++settingsMutationRef.current.model;
-    const effortMutation = ++settingsMutationRef.current.effort;
-    const previousModel = selectedModel;
-    const previousEffort = selectedEffort;
+  const selectModel = useEvent((model: string, effort: string | null) => {
     const modelTiers = currentControlsResource()?.value?.models.find(
       (item) => item.id === model,
     )?.serviceTiers;
-    const serviceTier = retainedServiceTier(selectedServiceTier, modelTiers);
-    const previousServiceTier = selectedServiceTier;
-    const tierMutation = ++settingsMutationRef.current.serviceTier;
-    updateCurrentPreferences((current) => ({ ...current, effort, model, serviceTier }));
-    if (onUpdateSettings === undefined) {
+    if (remoteSettings) {
+      const tier = retainedServiceTier(
+        controls$.peek().server?.serviceTier ?? undefined,
+        modelTiers,
+      );
+      sendThreadChanges(
+        {
+          ...(effort === null ? {} : { effort }),
+          model,
+          serviceTier: tier ?? null,
+        },
+        "Could not update model settings",
+      );
       return;
     }
-    setControlError(null);
-    void onUpdateSettings({ effort, model, serviceTier: serviceTier ?? null }).catch(
-      (error: unknown) => {
-        const ownsModel = settingsMutationRef.current.model === modelMutation;
-        const ownsEffort = settingsMutationRef.current.effort === effortMutation;
-        const ownsTier = settingsMutationRef.current.serviceTier === tierMutation;
-        if (
-          (ownsModel || ownsEffort) &&
-          (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())
-        ) {
-          updateCurrentPreferences((current) => ({
-            ...current,
-            ...rollbackOwnedModelSelection(
-              current,
-              { effort, model },
-              { effort: previousEffort, model: previousModel },
-              { effort: ownsEffort, model: ownsModel },
-            ),
-            ...(ownsTier && current.serviceTier === serviceTier
-              ? { serviceTier: previousServiceTier }
-              : {}),
-          }));
-        }
-        if ((ownsModel || ownsEffort) && conversationOwner.isCurrent()) {
-          setControlError(
-            error instanceof Error ? error.message : "Could not update model settings",
-          );
-        }
-      },
-    );
+    const serviceTier = retainedServiceTier(selectedServiceTier, modelTiers);
+    updateCurrentPreferences((current) => ({ ...current, effort, model, serviceTier }));
   });
 
   const selectEffort = useEvent((effort: string) => {
-    const mutation = ++settingsMutationRef.current.effort;
-    const previous = selectedEffort;
-    setSelectedEffort(effort);
-    if (onUpdateSettings === undefined) {
+    if (remoteSettings) {
+      sendThreadChanges({ effort }, "Could not update thinking effort");
       return;
     }
-    setControlError(null);
-    void onUpdateSettings({ effort }).catch((error: unknown) => {
-      const ownsMutation = settingsMutationRef.current.effort === mutation;
-      if (ownsMutation && (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())) {
-        updateSelectedEffort((current) => (current === effort ? previous : current));
-      }
-      if (ownsMutation && conversationOwner.isCurrent()) {
-        setControlError(
-          error instanceof Error ? error.message : "Could not update thinking effort",
-        );
-      }
-    });
+    updateCurrentPreferences((current) => ({ ...current, effort }));
   });
 
   const selectServiceTier = useEvent((serviceTier: string) => {
-    const mutation = ++settingsMutationRef.current.serviceTier;
-    const previous = selectedServiceTier;
-    updateCurrentPreferences((current) => ({ ...current, serviceTier }));
-    if (onUpdateSettings === undefined) {
+    if (remoteSettings) {
+      sendThreadChanges({ serviceTier }, "Could not update Fast mode");
       return;
     }
-    setControlError(null);
-    void onUpdateSettings({ serviceTier }).catch((error: unknown) => {
-      const ownsMutation = settingsMutationRef.current.serviceTier === mutation;
-      if (ownsMutation && (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())) {
-        updateCurrentPreferences((current) =>
-          current.serviceTier === serviceTier ? { ...current, serviceTier: previous } : current,
-        );
-      }
-      if (ownsMutation && conversationOwner.isCurrent()) {
-        setControlError(error instanceof Error ? error.message : "Could not update Fast mode");
-      }
-    });
+    updateCurrentPreferences((current) => ({ ...current, serviceTier }));
   });
 
+  /**
+   * `null` is "Server default": a new chat names no profile and the provider
+   * applies its default; an existing thread sends that default explicitly,
+   * because an absent profile means "unchanged" on the wire.
+   */
   const selectPermissions = useEvent((permissions: string | null) => {
-    const mutation = ++settingsMutationRef.current.permissions;
-    const previous = selectedPermissions;
-    setSelectedPermissions(permissions);
-    if (onUpdateSettings === undefined) {
+    if (!remoteSettings) {
+      updateCurrentPreferences((current) => ({ ...current, permissions }));
       return;
     }
-    setControlError(null);
-    void onUpdateSettings({ permissions }).catch((error: unknown) => {
-      const ownsMutation = settingsMutationRef.current.permissions === mutation;
-      if (ownsMutation && (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())) {
-        updateSelectedPermissions((current) => (current === permissions ? previous : current));
-      }
-      if (ownsMutation && conversationOwner.isCurrent()) {
-        setControlError(error instanceof Error ? error.message : "Could not update permissions");
-      }
-    });
+    const profile =
+      permissions ??
+      resolvedDefaultPermissions(
+        currentControlsResource()?.value ?? EMPTY_TURN_CONTROLS,
+        threadPermissionDefaultScope(readThreadAgent(readThread())),
+      );
+    if (profile === null) {
+      setControlError("The server's default access is unknown");
+      return;
+    }
+    sendThreadChanges({ permissions: profile }, "Could not update permissions");
   });
   const updateComposerPreferences = useEvent(updateCurrentPreferences);
   const capturePreferenceUpdate = useEvent(() => {
@@ -333,6 +348,7 @@ export function useComposerSettings({
     captureControlsResource,
     capturePreferenceUpdate,
     controlError,
+    controls$,
     currentControlsResource,
     requestControls,
     selectedEffort,

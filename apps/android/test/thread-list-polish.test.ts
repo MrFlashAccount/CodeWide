@@ -43,9 +43,9 @@ const costMenu = readFileSync(
 );
 
 describe("thread list visual contract", () => {
-  it("keeps the unread marker with the timestamp instead of the title", () => {
+  it("keeps provider position stable next to time when the unread marker changes", () => {
     expect(rowContent).toMatch(
-      /<View style=\{styles\.threadMeta\}>[\s\S]*styles\.unreadSlot[\s\S]*testID="thread-time"[\s\S]*<\/View>/u,
+      /<View style=\{styles\.threadMeta\}>[\s\S]*styles\.unreadSlot[\s\S]*<ThreadProviderSlot[\s\S]*testID="thread-time"[\s\S]*<\/View>/u,
     );
   });
 

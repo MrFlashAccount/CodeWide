@@ -13,6 +13,7 @@ use codewide_companion::{
     auth::{DeviceRegistry, PairingClaim, SessionProof, pairing_claim_message},
     catalog::SessionCatalog,
     history_service::HistoryService,
+    rollout_store::RolloutStore,
     server::{self, CompanionServices},
     store::IndexStore,
     sync::SyncHub,
@@ -53,7 +54,7 @@ async fn localhost_tunnel_proxies_http_cookie_websocket_and_revoke()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),
@@ -182,7 +183,7 @@ async fn v1_tunnel_is_owned_by_the_creating_device()
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
         Arc::new(SessionCatalog::scan(directory.path())),
-        store.clone(),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),

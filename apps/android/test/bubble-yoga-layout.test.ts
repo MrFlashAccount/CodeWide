@@ -110,13 +110,13 @@ describe("Yoga-owned bubble layout", () => {
     expect(bubble).toContain('alignSelf: "flex-end"');
   });
 
-  it("keeps the bubble bottom inset equal to its horizontal inset", () => {
+  it("keeps a shared compact vertical inset and wider horizontal inset", () => {
     for (const surface of ["agentSurface", "userSurface"]) {
       const style = sourceObjectDeclaration(compactSource(bubble), surface);
       const bottomInset = style.match(/paddingBottom: (spacing\.\w+)/u)?.[1];
       const horizontalInset = style.match(/paddingHorizontal: (spacing\.\w+)/u)?.[1];
-      expect(bottomInset).toBeTruthy();
-      expect(bottomInset).toBe(horizontalInset);
+      expect(bottomInset).toBe("spacing.sm");
+      expect(horizontalInset).toBe("spacing.md");
     }
     expect(ownerUserMessageContentStyles).not.toContain("userMessageAttachmentContent");
   });

@@ -13,10 +13,13 @@ use serde_json::{Value, json};
 use tracing::warn;
 
 use crate::{
+    agent::provider::{AgentProvider, ProviderError, ProviderStatus},
     global_supervisor_limits::GLOBAL_SUPERVISOR_LIMITS_V1,
     sync_live::{PendingRequestClass, classify_pending_request_method},
-    upstream::{ConnectionStatus, UpstreamError, UpstreamHandle},
 };
+
+/// Whether a pending request (by its client-wire id) belongs to one provider.
+pub(crate) type RequestOwnership = Arc<dyn Fn(&Value) -> bool + Send + Sync>;
 
 const MAX_PENDING_SERVER_REQUESTS: usize = 1_024;
 const MAX_PENDING_SERVER_REQUEST_BYTES: usize = 4 * 1024 * 1024;
@@ -142,14 +145,18 @@ async fn retain_dynamic_tool_rejection(
 
 /// Retries compact oversized-input failures without retaining or forwarding
 /// the rejected tool payload. A response leaves the bounded state only after
-/// the App Server transport confirms that it accepted the write.
+/// the owning provider's transport confirms that it accepted the write.
+/// `owner` is the provider declaring `requests.dynamicToolCall`.
 pub(crate) async fn retry_oversized_dynamic_tool_rejections(
-    upstream: UpstreamHandle,
+    owner: Arc<dyn AgentProvider>,
     state: Arc<tokio::sync::Mutex<PendingServerRequests>>,
 ) {
-    let mut status = upstream.subscribe_status();
+    let Some(_) = owner.native_surface() else {
+        return;
+    };
+    let mut status = owner.subscribe_status();
     loop {
-        while *status.borrow() != ConnectionStatus::Live {
+        while *status.borrow() != ProviderStatus::Live {
             if status.changed().await.is_err() {
                 return;
             }
@@ -176,7 +183,11 @@ pub(crate) async fn retry_oversized_dynamic_tool_rejections(
             notified.await;
             continue;
         };
-        match upstream.respond(response).await {
+        let delivered = match owner.native_surface() {
+            Some(native) => native.respond(response).await,
+            None => return,
+        };
+        match delivered {
             Ok(()) => remove_dynamic_tool_rejection(&state, &key).await,
             Err(error) => {
                 warn!(
@@ -277,13 +288,16 @@ pub(crate) async fn observe_server_requests(
     Ok(())
 }
 
+/// Resolves the pending user-interaction requests of one provider when that
+/// provider reconnects; other providers' requests stay pending.
 pub(crate) async fn clear_user_requests_on_disconnect(
-    mut status: tokio::sync::watch::Receiver<ConnectionStatus>,
+    mut status: tokio::sync::watch::Receiver<ProviderStatus>,
     state: Arc<tokio::sync::Mutex<PendingServerRequests>>,
     local_events: tokio::sync::mpsc::Sender<Value>,
+    owned: RequestOwnership,
 ) {
     while status.changed().await.is_ok() {
-        if *status.borrow() != ConnectionStatus::Reconnecting {
+        if *status.borrow() != ProviderStatus::Reconnecting {
             continue;
         }
         let ids = {
@@ -294,7 +308,8 @@ pub(crate) async fn clear_user_requests_on_disconnect(
                 .filter_map(|(key, request)| {
                     let method = request.get("method").and_then(Value::as_str)?;
                     (classify_pending_request_method(method)
-                        == Some(PendingRequestClass::UserInteraction))
+                        == Some(PendingRequestClass::UserInteraction)
+                        && request.get("id").is_some_and(|id| owned(id)))
                     .then(|| (key.clone(), request.get("id").cloned()))
                 })
                 .collect::<Vec<_>>();
@@ -367,12 +382,12 @@ fn remove_server_request_locked(state: &mut PendingServerRequests, key: &str) {
     state.resolving.remove(key);
 }
 
-fn upstream_failure_kind(error: &UpstreamError) -> &'static str {
+fn upstream_failure_kind(error: &ProviderError) -> &'static str {
     match error {
-        UpstreamError::Backpressure => "backpressure",
-        UpstreamError::Reconnecting => "reconnecting",
-        UpstreamError::Disconnected => "disconnected",
-        UpstreamError::Protocol(_) => "protocol",
+        ProviderError::Backpressure(_) => "backpressure",
+        ProviderError::Reconnecting(_) => "reconnecting",
+        ProviderError::Disconnected(_) => "disconnected",
+        ProviderError::Protocol(_) | ProviderError::Rejected(_) => "protocol",
     }
 }
 
@@ -569,9 +584,9 @@ mod tests {
                 .is_empty()
         );
 
-        let upstream = UpstreamHandle::spawn(socket_path.clone());
+        let upstream = crate::upstream::UpstreamHandle::spawn(socket_path.clone());
         let retry_task = tokio::spawn(retry_oversized_dynamic_tool_rejections(
-            upstream,
+            std::sync::Arc::new(crate::agent::providers::codex::CodexProvider::new(upstream)),
             state.clone(),
         ));
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -691,14 +706,15 @@ mod tests {
         )
         .await
         .map_err(|()| "requests should fit")?;
-        let (status_sender, status) = tokio::sync::watch::channel(ConnectionStatus::Live);
+        let (status_sender, status) = tokio::sync::watch::channel(ProviderStatus::Live);
         let (event_sender, mut events) = tokio::sync::mpsc::channel(2);
         let task = tokio::spawn(clear_user_requests_on_disconnect(
             status,
             state.clone(),
             event_sender,
+            Arc::new(|_: &Value| true),
         ));
-        status_sender.send(ConnectionStatus::Reconnecting)?;
+        status_sender.send(ProviderStatus::Reconnecting)?;
         let resolved = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
             .await?
             .ok_or("resolution event should exist")?;
@@ -711,6 +727,44 @@ mod tests {
                 .values()
                 .any(|request| request["id"] == "system")
         );
+        task.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn disconnect_resolves_only_the_reconnecting_providers_requests()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let state = Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default()));
+        observe_server_requests(
+            &state,
+            &[
+                json!({"id": 7, "method": "item/tool/requestUserInput", "params": {"threadId": "codex"}}),
+                json!({"id": "cw-claude:\"perm-1\"", "method": "item/tool/requestUserInput", "params": {"threadId": "claude"}}),
+            ],
+        )
+        .await
+        .map_err(|()| "requests should fit")?;
+        let (status_sender, status) = tokio::sync::watch::channel(ProviderStatus::Live);
+        let (event_sender, mut events) = tokio::sync::mpsc::channel(4);
+        let task = tokio::spawn(clear_user_requests_on_disconnect(
+            status,
+            state.clone(),
+            event_sender,
+            Arc::new(|id: &Value| id.as_str().is_some_and(|id| id.starts_with("cw-claude:"))),
+        ));
+        status_sender.send(ProviderStatus::Reconnecting)?;
+        let resolved = tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+            .await?
+            .ok_or("resolution event should exist")?;
+        assert_eq!(resolved["params"]["requestId"], "cw-claude:\"perm-1\"");
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), events.recv())
+                .await
+                .is_err()
+        );
+        let pending = state.lock().await;
+        assert_eq!(pending.requests.len(), 1);
+        assert!(pending.requests.contains_key("number:7"));
         task.abort();
         Ok(())
     }

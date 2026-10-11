@@ -108,6 +108,27 @@ key and its stable key id. Rotating that key requires shipping a new trust
 anchor through a manual baseline first; a downloaded descriptor cannot rotate
 its own trust anchor.
 
+## Embedded release trust
+
+Every Companion platform embeds the release signing key id and P-256 public
+key at build time: `companion-core/build.rs` reads
+`CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID` and
+`CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI` and exposes them as
+`ReleaseTrust::embedded()`, the same way Relay embeds its updater key. No
+installer-written file supplies trust, so an install path cannot silently
+disable updates by omitting it.
+
+A build made without the key reports `unofficial_build` and never admits a
+remote update; Android shows it as an unofficial build without installer advice.
+An official build still needs its installed guardian, otherwise it reports
+`manual_bootstrap_required`:
+
+- Linux: the bootstrap guardian and a signed generation layout under the install
+  root. `bootstrap/config.json` is no longer read for trust.
+- macOS: the Swift guardian and the `trust.json` copied from the signed app
+  bundle. The release workflow passes the key to the Rust FFI build and to its
+  Nx cache inputs, so a cached archive cannot lose it.
+
 ## Baseline and activation gate
 
 The first signed host-update release has no signed predecessor digest and is a

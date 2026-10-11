@@ -1,4 +1,10 @@
 import {
+  reportedSubagentStatesOfBatch,
+  rootsWithChangedSubagentActivity,
+  withActiveSubagents,
+  withReportedStatus,
+} from "./threadSummarySubagentActivity";
+import {
   isQuestionAnswerDelivery,
   projectQuestionAnswerDelivery,
 } from "./questionAnswerProjection";
@@ -24,7 +30,9 @@ import {
 } from "./thread-summary-types";
 import {
   projectThreadSummaryEvent,
+  catalogHeadEvictable,
   projectThreadSummarySnapshot,
+  retainLiveCatalogState,
   retainThreadSummaryMissingFromSnapshot,
   threadSummaryDescendantKeys,
   threadSummaryKey,
@@ -37,6 +45,7 @@ import { ThreadCatalogReads } from "./thread-catalog-read";
 import { THREAD_CATALOG_PAGE_SIZE } from "./thread-catalog-loader";
 import { ProjectUnreadModel } from "./project-unread-model";
 import { isCatalogExcluded } from "./threadCatalogMembership";
+import { sameThreadAgent } from "./threadAgent";
 
 export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
   const catalogReads = new ThreadCatalogReads();
@@ -102,22 +111,44 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     }
   };
 
-  const publish = async (row: StoredThreadSummary): Promise<void> => {
+  /** Reads and rewrites one row inside the write queue, so a concurrent live event is never lost. */
+  const rewrite = async (
+    connectionId: string,
+    threadId: string,
+    next: (previous: StoredThreadSummary | undefined) => StoredThreadSummary | null,
+  ): Promise<void> => {
     await writes.run(async () => {
       if (disposed) {
         return;
       }
+      const previous = await loadRow(connectionId, threadId);
+      const row = next(previous);
+      if (row === null) {
+        return;
+      }
       const normalized = normalizeStoredThreadSummary(row);
-      const previous = await loadRow(normalized.connectionId, normalized.remoteThreadId);
+      const type = previous === undefined ? "insert" : "update";
       storage.begin();
-      storage.write({ type: previous === undefined ? "insert" : "update", value: normalized });
+      storage.write({ type, value: normalized });
       const checkpoint = storage.commit({ durable: true });
       publishModelChanges(
-        [{ type: previous === undefined ? "insert" : "update", value: normalized }],
+        [{ type, value: normalized }],
         previous !== undefined && summaryViewMembershipChanged(previous, normalized),
       );
       await checkpoint;
     });
+  };
+
+  const clearDeleteCommand = async (
+    connectionId: string,
+    threadId: string,
+    commandId: string,
+  ): Promise<void> => {
+    await rewrite(connectionId, threadId, (previous) =>
+      previous === undefined || previous.deleteCommandId !== commandId
+        ? null
+        : { ...previous, deleteCommandId: null },
+    );
   };
 
   const setReadState = async (
@@ -173,7 +204,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       return;
     }
     if (delivery.state === "failed") {
-      await publish({ ...row, deleteCommandId: null });
+      await clearDeleteCommand(delivery.connectionId, delivery.threadId, delivery.commandId);
     } else if (delivery.state === "delivered") {
       await remove(key);
     }
@@ -204,11 +235,40 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     });
   };
 
+  /** Recomputes one root's `activeSubagents` from its loaded descendants. */
+  const refreshActiveSubagents = async (connectionId: string, rootThreadId: string) => {
+    await writes.run(async () => {
+      if (disposed) {
+        return;
+      }
+      const rows = await loadConnectionRows(connectionId);
+      const root = rows.find((row) => row.remoteThreadId === rootThreadId);
+      if (root === undefined) {
+        return;
+      }
+      const next = withActiveSubagents(root, rows);
+      if (next === root) {
+        return;
+      }
+      const change = { type: "update" as const, value: next };
+      storage.begin();
+      storage.write(change);
+      const checkpoint = storage.commit({ durable: true });
+      publishModelChanges([change], false);
+      await checkpoint;
+    });
+  };
+
   const replaceSnapshotRows = async (
     connectionId: string,
     snapshots: SyncSnapshotThread[],
     options: {
       missingScope: (current: readonly StoredThreadSummary[]) => ReadonlySet<string>;
+      /**
+       * An index read that does not know live status (a sub-agent row without
+       * `running`) keeps a live `active` and newer recency, as catalog pages do.
+       */
+      retainLiveState: boolean;
       throughCursor: number | undefined;
     },
   ): Promise<void> => {
@@ -237,12 +297,16 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
           excludedKeys.add(key);
           continue;
         }
-        const row = projectThreadSummarySnapshot(
+        const projected = projectThreadSummarySnapshot(
           connectionId,
           snapshot.thread,
           snapshot.archived,
           previous,
         );
+        const row =
+          options.retainLiveState && previous !== undefined
+            ? retainLiveCatalogState(projected, previous)
+            : projected;
         row.projectionCursor = Math.max(
           threadSummaryProjectionCursor(row),
           options.throughCursor ?? 0,
@@ -288,6 +352,89 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       );
       await checkpoint;
     });
+  };
+
+  /**
+   * Adds to `changed` the root rows whose sub-agents started or stopped
+   * running with this batch. Only a child's status change reads the
+   * connection's rows; streamed content does not.
+   */
+  const applySubagentActivity = async (
+    connectionId: string,
+    current: ReadonlyMap<string, StoredThreadSummary>,
+    changed: Map<string, StoredThreadSummary | null>,
+  ): Promise<void> => {
+    const children = [...changed].flatMap(([key, row]) =>
+      row !== null &&
+      row.parentThreadId !== null &&
+      current.get(key)?.status.type !== row.status.type
+        ? [row]
+        : [],
+    );
+    if (children.length === 0) {
+      return;
+    }
+    const rows = new Map(
+      (await loadConnectionRows(connectionId)).map((row) => [
+        threadSummaryKey(row.connectionId, row.remoteThreadId),
+        row,
+      ]),
+    );
+    for (const [key, row] of changed) {
+      if (row === null) {
+        rows.delete(key);
+      } else {
+        rows.set(key, row);
+      }
+    }
+    for (const root of rootsWithChangedSubagentActivity(children, [...rows.values()])) {
+      changed.set(threadSummaryKey(root.connectionId, root.remoteThreadId), root);
+    }
+  };
+
+  /**
+   * Sets the status of a non-primary provider's sub-agents from their
+   * parent's `collabAgentToolCall` (see `reportedSubagentStates`); their child
+   * rows have no live events of their own.
+   */
+  const applyReportedSubagentStates = async (batch: {
+    readonly changed: Map<string, StoredThreadSummary | null>;
+    readonly connectionId: string;
+    readonly current: Map<string, StoredThreadSummary>;
+    readonly events: readonly SyncEvent[];
+  }): Promise<void> => {
+    const { changed, connectionId, current } = batch;
+    const rowOf = (threadId: string) => {
+      const key = threadSummaryKey(connectionId, threadId);
+      return changed.get(key) ?? current.get(key);
+    };
+    const reported = reportedSubagentStatesOfBatch(
+      batch.events.map((event) => ({
+        parentThreadId: threadIdFromEvent(event.payload),
+        payload: event.payload,
+      })),
+      rowOf,
+    );
+    if (reported.size === 0) {
+      return;
+    }
+    for (const child of await loadRows(connectionId, [...reported.keys()])) {
+      const key = threadSummaryKey(child.connectionId, child.remoteThreadId);
+      const pending = changed.get(key);
+      if (pending === null) {
+        continue;
+      }
+      if (!current.has(key)) {
+        current.set(key, child);
+      }
+      const next = withReportedStatus(
+        pending ?? child,
+        reported.get(child.remoteThreadId) === true,
+      );
+      if (next !== null) {
+        changed.set(key, next);
+      }
+    }
   };
 
   const applyEventBatch = async (
@@ -345,9 +492,11 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
           changed.set(mutation.key, mutation.value);
         }
       }
+      await applyReportedSubagentStates({ changed, connectionId, current, events });
       if (changed.size === 0) {
         return;
       }
+      await applySubagentActivity(connectionId, current, changed);
       storage.begin();
       for (const [key, row] of changed) {
         if (row === null) {
@@ -422,6 +571,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
             !row.pinned &&
             row.unread === 0 &&
             row.deleteCommandId === null &&
+            catalogHeadEvictable(row) &&
             !read.changed.has(row.remoteThreadId)
           ) {
             // Evict only this stale cached prefix; absence is not a server
@@ -444,12 +594,13 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
             continue;
           }
           const previous = current.get(snapshot.thread.id);
-          const row = projectThreadSummarySnapshot(
+          const page = projectThreadSummarySnapshot(
             connectionId,
             snapshot.thread,
             archived,
             previous,
           );
+          const row = previous === undefined ? page : retainLiveCatalogState(page, previous);
           if (previous === undefined || !sameThreadSummary(previous, row)) {
             changes.push({ type: previous === undefined ? "insert" : "update", value: row });
           }
@@ -514,16 +665,16 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
               .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
               .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
           ),
+        // An authoritative snapshot replaces the rows it lists as they are.
+        retainLiveState: false,
         throughCursor: cursor,
       });
     },
     beginCatalogRead: (connectionId) => catalogReads.begin(connectionId),
     async beginDelete(connectionId, threadId, commandId) {
-      const row = await loadRow(connectionId, threadId);
-      if (row === undefined) {
-        return;
-      }
-      await publish({ ...row, deleteCommandId: commandId });
+      await rewrite(connectionId, threadId, (previous) =>
+        previous === undefined ? null : { ...previous, deleteCommandId: commandId },
+      );
     },
     close() {
       disposed = true;
@@ -564,23 +715,24 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         await remove(threadSummaryKey(connectionId, thread.id));
         return;
       }
-      const previous = await loadRow(connectionId, thread.id);
-      const mutation = projectThreadSummaryEvent(
+      await rewrite(
         connectionId,
-        {
-          codewideThreadPatch: {
-            operation: { kind: "threadStarted", thread },
-            threadId: thread.id,
-            version: 1,
-          },
-          method: "thread/started",
-          params: { thread },
-        },
-        () => previous,
+        thread.id,
+        (previous) =>
+          projectThreadSummaryEvent(
+            connectionId,
+            {
+              codewideThreadPatch: {
+                operation: { kind: "threadStarted", thread },
+                threadId: thread.id,
+                version: 1,
+              },
+              method: "thread/started",
+              params: { thread },
+            },
+            () => previous,
+          )?.value ?? null,
       );
-      if (mutation?.value !== null && mutation?.value !== undefined) {
-        await publish(mutation.value);
-      }
     },
     loadPendingPinMigration: storage.loadPendingPinMigration,
     loadView,
@@ -708,7 +860,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         }
         const delivery = byId.get(`${row.connectionId}\u0000${row.deleteCommandId}`);
         if (delivery === undefined || delivery.state === "failed") {
-          await publish({ ...row, deleteCommandId: null });
+          await clearDeleteCommand(row.connectionId, row.remoteThreadId, row.deleteCommandId);
         } else if (delivery.state === "delivered") {
           await applyDeleteDelivery(delivery);
         }
@@ -750,6 +902,8 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
               .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
               .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
           ),
+        // An authoritative snapshot replaces the rows it lists as they are.
+        retainLiveState: false,
         throughCursor: undefined,
       });
     },
@@ -757,15 +911,13 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       const projected = snapshots.filter(({ thread }) => thread.parentThreadId !== null);
       await replaceSnapshotRows(connectionId, projected, {
         missingScope: (current) => threadSummaryDescendantKeys(current, rootThreadId),
+        retainLiveState: true,
         throughCursor: undefined,
       });
+      await refreshActiveSubagents(connectionId, rootThreadId);
     },
     async rollbackDelete(connectionId, threadId, commandId) {
-      const row = await loadRow(connectionId, threadId);
-      if (row === undefined || row.deleteCommandId !== commandId) {
-        return;
-      }
-      await publish({ ...row, deleteCommandId: null });
+      await clearDeleteCommand(connectionId, threadId, commandId);
     },
     async search(query, connectionId = null) {
       const needle = query.trim().toLocaleLowerCase();
@@ -813,20 +965,18 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       });
     },
     async updateArchived(connectionId, threadId, archived) {
-      const row = await loadRow(connectionId, threadId);
-      if (row !== undefined) {
-        await publish({ ...row, archived });
-      }
+      await rewrite(connectionId, threadId, (previous) =>
+        previous === undefined ? null : { ...previous, archived },
+      );
     },
     async updateName(connectionId, threadId, name) {
       if (renameHandler === null) {
         throw new Error("Thread rename transport is not ready");
       }
       await renameHandler(connectionId, threadId, name);
-      const row = await loadRow(connectionId, threadId);
-      if (row !== undefined) {
-        await publish({ ...row, name });
-      }
+      await rewrite(connectionId, threadId, (previous) =>
+        previous === undefined ? null : { ...previous, name },
+      );
     },
     viewResource(request) {
       return model.resource(request, async () => {
@@ -874,9 +1024,11 @@ function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary
     left.preview === right.preview &&
     left.cwd === right.cwd &&
     (left.gitOriginUrl ?? null) === (right.gitOriginUrl ?? null) &&
+    sameThreadAgent(left.codewideAgent ?? null, right.codewideAgent ?? null) &&
     left.updatedAt === right.updatedAt &&
     left.recencyAt === right.recencyAt &&
     left.status.type === right.status.type &&
+    (left.activeSubagents ?? false) === (right.activeSubagents ?? false) &&
     left.pinned === right.pinned &&
     left.pinCursor === right.pinCursor &&
     left.archived === right.archived &&

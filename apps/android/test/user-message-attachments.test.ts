@@ -33,19 +33,6 @@ describe("projectUserMessageAttachments", () => {
     ]);
   });
 
-  it("reconstructs legacy session attachments from raw user content", () => {
-    expect(projectUserMessageAttachments([
-      { type: "localImage", path: "/srv/codex/shot.png" },
-      {
-        type: "text",
-        text: "# Files mentioned by the user:\n\n## plan.md: /srv/codex/plan.md\n\n## My request for Codex:\n\nReview it.",
-      },
-    ])).toEqual([
-      { kind: "image", name: "shot.png", source: { type: "path", path: "/srv/codex/shot.png" } },
-      { kind: "file", name: "plan.md", source: { type: "path", path: "/srv/codex/plan.md" } },
-    ]);
-  });
-
   it("uses scoped outbox references only before the session item arrives", () => {
     expect(projectUserMessageAttachments([], undefined, [{
       id: "upload",

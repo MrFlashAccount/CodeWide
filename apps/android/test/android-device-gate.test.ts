@@ -20,7 +20,7 @@ const validUi = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
   <node text="" content-desc="Settings" bounds="[0,700][56,756]" />
   <node text="" content-desc="Search threads" bounds="[72,90][350,138]" />
   <node text="" content-desc="Composer menu" bounds="[380,700][475,746]" />
-  <node text="" content-desc="Message Codex" bounds="[483,700][1030,746]" />
+  <node text="" content-desc="Message the agent" bounds="[483,700][1030,746]" />
   <node text="" content-desc="Voice input" bounds="[1030,700][1076,746]" />
   <node text="" content-desc="Send message" bounds="[1076,700][1122,746]" />
 </hierarchy>`;
@@ -117,7 +117,7 @@ describe("Android device evidence parser", () => {
     const compactConversation = `<hierarchy>
       <node text="" content-desc="Back to threads" clickable="true" bounds="[0,20][60,70]" />
       <node text="" content-desc="Composer menu" clickable="true" bounds="[20,700][90,750]" />
-      <node text="" content-desc="Message Codex" bounds="[100,700][760,750]" />
+      <node text="" content-desc="Message the agent" bounds="[100,700][760,750]" />
       <node text="" content-desc="Voice input" clickable="true" bounds="[760,700][820,750]" />
       <node text="" content-desc="Send message" clickable="true" bounds="[820,700][900,750]" />
     </hierarchy>`;

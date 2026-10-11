@@ -48,6 +48,51 @@ it("maps the Relay Updater contract into the shared update resource", () => {
   expect(parsed.availableTarget?.target.version).toBe("1.1.0");
 });
 
+it("keeps a Relay without Relay Updater visible as a manual setup state", async () => {
+  // Relay reports this exact shape before its updater installs a signed release.
+  const parsed = parseRelayUpdateStatus({
+    activeOperation: null,
+    availableTarget: null,
+    capability: {
+      apiVersion: 1,
+      applySupported: false,
+      bootstrapVersion: 0,
+      journalVersion: 0,
+      unavailableReason: "manual_bootstrap_required",
+      updaterContractVersion: 0,
+    },
+    currentBuild: "000000000000",
+    currentDigest: "",
+    currentSourceRevision: "0".repeat(40),
+    currentVersion: "0.4.2",
+  });
+  const harness = createHarness();
+  harness.statuses.set("server", parsed);
+  harness.resource.observe("server", true);
+  await settle();
+  expect(harness.view("server")).toMatchObject({
+    availability: "manualBootstrap",
+    canApply: false,
+    currentVersion: "0.4.2",
+  });
+});
+
+it("reports a build without embedded release trust as unofficial, not as missing setup", async () => {
+  const harness = createHarness();
+  const official = status("linux-x86-64", null);
+  harness.statuses.set("server", {
+    ...official,
+    capability: { ...official.capability, applySupported: false, unavailableReason: "unofficial_build" },
+  });
+  harness.resource.observe("server", true);
+  await settle();
+  expect(harness.view("server")).toMatchObject({
+    availability: "unofficialBuild",
+    canApply: false,
+    currentVersion: "1.0.0",
+  });
+});
+
 describe("Companion host update resource", () => {
   it("sanitizes guardian terminal errors before publishing them", () => {
     expect(
@@ -249,6 +294,7 @@ describe("Companion host update resource", () => {
         availability,
         canRetry: false,
         errorCode: code === "precondition_failed" ? "stale_target" : code,
+        errorMessage: availability === "error" ? message : null,
         phase: null,
       });
     },
