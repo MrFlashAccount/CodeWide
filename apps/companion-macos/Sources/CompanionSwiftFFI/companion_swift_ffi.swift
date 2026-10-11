@@ -586,14 +586,14 @@ fileprivate struct FfiConverterString: FfiConverter {
 public protocol CoreHostProtocol: AnyObject, Sendable {
 
     /**
-     * Returns the provider status and subscription presentation used by the
-     * local macOS menu. The JSON shape is the existing validated client-wire
-     * contract and contains no credentials.
+     * Returns the provider connection snapshot used by the local macOS UI.
+     * The JSON shape is the existing validated client-wire contract and
+     * contains no credentials.
      *
      * # Errors
      * Returns an adapter error if the presentation cannot be serialized.
      */
-    func agentProvidersJson() throws  -> String
+    func agentProviderConnectionsJson() throws  -> String
 
     func appServerConnection()  -> FfiAppServerConnection
 
@@ -804,17 +804,17 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
 
 
     /**
-     * Returns the provider status and subscription presentation used by the
-     * local macOS menu. The JSON shape is the existing validated client-wire
-     * contract and contains no credentials.
+     * Returns the provider connection snapshot used by the local macOS UI.
+     * The JSON shape is the existing validated client-wire contract and
+     * contains no credentials.
      *
      * # Errors
      * Returns an adapter error if the presentation cannot be serialized.
      */
-open func agentProvidersJson()throws  -> String  {
+open func agentProviderConnectionsJson()throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
-    uniffi_companion_swift_ffi_fn_method_corehost_agent_providers_json(
+    uniffi_companion_swift_ffi_fn_method_corehost_agent_provider_connections_json(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -2322,7 +2322,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_func_verify_host_update_release() != 7360) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_method_corehost_agent_providers_json() != 37155) {
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_agent_provider_connections_json() != 16670) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_app_server_connection() != 62371) {

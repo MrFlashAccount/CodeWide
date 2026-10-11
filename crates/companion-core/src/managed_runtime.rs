@@ -401,12 +401,10 @@ impl ManagedRuntime {
         }
     }
 
-    /// Returns the same provider presentation exposed to authenticated clients.
-    /// The platform host uses it for local status UI; credentials are never part
-    /// of this snapshot.
+    /// Returns the data-minimized provider connection state for local host UI.
     #[must_use]
-    pub fn agent_providers(&self) -> serde_json::Value {
-        crate::agent::provider_status::snapshot(&self.agent_registry)
+    pub fn agent_provider_connections(&self) -> serde_json::Value {
+        crate::agent::provider_status::connection_snapshot(&self.agent_registry)
     }
 
     #[must_use]

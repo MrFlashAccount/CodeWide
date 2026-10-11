@@ -109,11 +109,11 @@ final class RuntimeConnection: ObservableObject {
             let providers: [CompanionAgentProvider]?
             let providerFailure: String?
             do {
-                providers = try await requestAgentProviders()
+                providers = try await requestAgentProviderConnections()
                 providerFailure = nil
             } catch {
                 providers = nil
-                providerFailure = "Agent subscriptions couldn't refresh: \(error.localizedDescription)"
+                providerFailure = "Agent connections couldn't refresh: \(error.localizedDescription)"
             }
             guard revision == stateRevision, !Task.isCancelled else { return }
             appServer = server
@@ -601,13 +601,13 @@ final class RuntimeConnection: ObservableObject {
         }
     }
 
-    private func requestAgentProviders() async throws -> [CompanionAgentProvider] {
+    private func requestAgentProviderConnections() async throws -> [CompanionAgentProvider] {
         let json: String = try await XPCReplyGate.perform { gate in
             guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
                 gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
                 return
             }
-            proxy.agentProviders { payload, error in
+            proxy.agentProviderConnections { payload, error in
                 gate.resume(with: Self.result(payload: payload, error: error))
             }
         }

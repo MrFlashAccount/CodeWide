@@ -78,16 +78,14 @@ struct SetupView: View {
     }
 
     @ViewBuilder private var macPage: some View {
-        pageTitle(snapshot.profileToConnect == nil ? snapshot.macState.title : "Connect Codex",
-                  subtitle: snapshot.profileToConnect == nil ? snapshot.macState.explanation
-                    : "CodeWide found Codex on this Mac. Connect it to use Codex from your phone.")
+        pageTitle(snapshot.macState.title, subtitle: snapshot.macState.explanation)
+
+        providerConnections
 
         if snapshot.showsProfilePicker {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("Codex profile").font(.subheadline.weight(.medium))
-                    Spacer()
-                    scanButton
                 }.foregroundStyle(.secondary)
                 Picker("Codex profile", selection: profileSelection) {
                     ForEach(snapshot.profiles, id: \.id) { profile in
@@ -106,9 +104,7 @@ struct SetupView: View {
                 .disabled(snapshot.isWorking || ![.ready, .chooseProfile].contains(snapshot.macState))
                 .padding(.vertical, 8)
             }
-        } else if snapshot.macState == .ready {
-            codexConnection
-        } else {
+        } else if snapshot.macState != .ready && snapshot.macState != .checking {
             statusContent
         }
 
@@ -123,33 +119,63 @@ struct SetupView: View {
 
     }
 
-    private var codexConnection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .accessibilityHidden(true)
-                Text("Connected to Codex").font(.subheadline.weight(.medium))
+    private var providerConnections: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Agent providers").font(.subheadline.weight(.medium))
                 Spacer()
                 scanButton
             }
-            if let profile = snapshot.profiles.first(where: \.selected) {
-                if let version = profile.state.version {
-                    LabeledContent("Codex version", value: version)
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                }
-                DisclosureGroup("Connection details") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        LabeledContent("Profile", value: profile.displayName)
-                        Text(profile.codexHome).textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
+            .foregroundStyle(.secondary)
+            if snapshot.visibleAgentProviders.isEmpty {
+                HStack(spacing: 10) {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 20, weight: .light))
+                        .frame(width: 30)
+                    if snapshot.isDiscovering || snapshot.macState == .checking {
+                        ShimmerText("Looking for providers")
+                    } else {
+                        Text("No providers found")
                     }
-                    .padding(.top, 8)
                 }
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 8)
+            } else {
+                ForEach(snapshot.visibleAgentProviders) { provider in
+                    providerConnection(provider)
+                }
             }
         }
-        .padding(.vertical, 8)
+    }
+
+    private func providerConnection(_ provider: CompanionAgentProvider) -> some View {
+        HStack(spacing: 12) {
+            AgentProviderIcon(providerID: provider.id, size: 30)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(provider.name).font(.system(size: 13, weight: .semibold))
+                Text(providerConnectionSummary(provider))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: provider.status == .live ? "circle.fill"
+                : provider.status == .reconnecting ? "circle.dotted" : "exclamationmark.circle.fill")
+                .font(.system(size: provider.status == .live ? 7 : 12))
+                .foregroundStyle(provider.status == .live ? Color.green
+                    : provider.status == .reconnecting ? Color.orange : Color.secondary)
+                .accessibilityHidden(true)
+        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(provider.name), \(provider.connectionSummary)")
+    }
+
+    private func providerConnectionSummary(_ provider: CompanionAgentProvider) -> String {
+        guard provider.id == "codex",
+              let profile = snapshot.profiles.first(where: \.selected),
+              profile.state.isAvailable else { return provider.connectionSummary }
+        return "\(provider.connectionSummary) · \(profile.displayName)"
     }
 
     private var profileSelection: Binding<String?> {
@@ -177,9 +203,6 @@ struct SetupView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            if snapshot.macState != .permissionRequired && snapshot.macState != .helperUnavailable {
-                scanButton
-            }
         }
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -201,7 +224,7 @@ struct SetupView: View {
 
     @ViewBuilder private var phonePage: some View {
         if snapshot.macState != .ready {
-            pageTitle("Reconnect to Codex", subtitle: "The Codex connection changed. Go back to the Codex step to reconnect before adding your phone.")
+            pageTitle("Reconnect CodeWide", subtitle: "A required provider connection changed. Go back to the CodeWide step before adding your phone.")
             Image(systemName: "desktopcomputer.trianglebadge.exclamationmark")
                 .font(.system(size: 48, weight: .light)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, minHeight: 160)
@@ -429,7 +452,7 @@ struct SetupView: View {
         if snapshot.step == .mac {
             return snapshot.profileToConnect != nil ? "Connect Codex" : snapshot.macState.primaryTitle
         }
-        if snapshot.macState != .ready { return "Back to Codex" }
+        if snapshot.macState != .ready { return "Back to CodeWide" }
         if snapshot.step == .relay {
             if snapshot.relayIsReady { return "Continue" }
             return relayIsDisabled ? "Enable Relay" : "Set Up Relay…"
@@ -486,7 +509,7 @@ struct SetupView: View {
         switch snapshot.macState {
         case .permissionRequired: "System Settings → General → Login Items"
         case .helperUnavailable: "Your profiles and devices are preserved."
-        case .checking: "Looking for Codex on this Mac."
+        case .checking: "Looking for agent providers on this Mac."
         case .startCodex: "Start Codex to make it available to CodeWide."
         case .chooseProfile: "Ready to connect on this Mac."
         default: "Scan again after installing or starting Codex."

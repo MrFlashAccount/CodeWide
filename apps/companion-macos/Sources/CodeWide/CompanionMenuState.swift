@@ -173,7 +173,7 @@ struct CompanionMenuSnapshot {
     }
 
     var visibleAgentProviders: [CompanionAgentProvider] {
-        agentProviders.filter(\.isVisibleInMenu)
+        agentProviders.filter(\.isEnabled)
     }
 
     var devicesSummary: String {

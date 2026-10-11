@@ -50,7 +50,7 @@ def main() -> None:
     binary = evidence / "menu-panel-harness"
     sources = [source / name for name in [
         "MenuBarPanel.swift", "CompanionMenuView.swift", "CompanionMenuState.swift",
-        "CompanionAgentProvider.swift",
+        "CompanionAgentProvider.swift", "AgentProviderIcon.swift",
         "CodeWideBrand.swift", "ShimmerText.swift",
     ]]
     subprocess.run([

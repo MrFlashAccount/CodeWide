@@ -32,23 +32,28 @@ struct CompanionMenuView<MoreActions: View>: View {
         self.actionsIdentity = actionsIdentity
         self.moreActions = moreActions
         _showsDetails = State(initialValue: initiallyShowsDetails)
+        _expandedProviderID = State(
+            initialValue: initiallyShowsDetails ? snapshot.visibleAgentProviders.first?.id : nil
+        )
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(.bottom, 18)
-            connection
-            if showsDetails {
-                connectionDetails
-                    .padding(.top, 14)
-            }
-            ForEach(snapshot.visibleAgentProviders) { provider in
-                providerRow(provider)
-                    .padding(.top, 8)
-                if expandedProviderID == provider.id {
-                    providerDetails(provider)
-                        .padding(.top, 10)
+            if snapshot.visibleAgentProviders.isEmpty {
+                connection
+                if showsDetails {
+                    connectionDetails
+                        .padding(.top, 14)
+                }
+            } else {
+                ForEach(snapshot.visibleAgentProviders) { provider in
+                    providerRow(provider)
+                    if expandedProviderID == provider.id {
+                        providerConnectionDetails(provider)
+                            .padding(.top, 10)
+                    }
                 }
             }
             Divider().padding(.vertical, 18)
@@ -171,10 +176,7 @@ struct CompanionMenuView<MoreActions: View>: View {
             }
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: providerSymbol(provider))
-                    .font(.system(size: 23, weight: .regular))
-                    .foregroundStyle(.primary)
-                    .frame(width: 34)
+                AgentProviderIcon(providerID: provider.id, size: 34)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(provider.name)
                         .font(.system(size: 13, weight: .semibold))
@@ -183,7 +185,7 @@ struct CompanionMenuView<MoreActions: View>: View {
                             .font(.system(size: provider.status == .live ? 6 : 10))
                             .foregroundStyle(providerStatusColor(provider))
                             .accessibilityHidden(true)
-                        Text(provider.summary)
+                        Text(provider.connectionSummary)
                             .lineLimit(1)
                     }
                     .font(.system(size: 12))
@@ -200,24 +202,22 @@ struct CompanionMenuView<MoreActions: View>: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 6)
-        .help("Show \(provider.name) subscription details")
-        .accessibilityLabel("\(provider.name), \(provider.summary). Subscription details")
+        .help("Show \(provider.name) connection details")
+        .accessibilityLabel("\(provider.name), \(provider.connectionSummary). Connection details")
         .accessibilityValue(expandedProviderID == provider.id ? "Expanded" : "Collapsed")
     }
 
-    @ViewBuilder private func providerDetails(_ provider: CompanionAgentProvider) -> some View {
+    private func providerConnectionDetails(_ provider: CompanionAgentProvider) -> some View {
         VStack(spacing: 9) {
-            if let account = provider.accountLabel {
-                detail("Account", value: account)
+            detail("Connection", value: provider.connectionSummary)
+            if provider.primary {
+                detail("Role", value: "Primary provider")
             }
-            if let plan = provider.planTitle {
-                detail("Subscription", value: plan)
-            }
-            ForEach(provider.limitWindows) { window in
-                detail(window.label, value: providerLimitValue(window))
-            }
-            if provider.limitWindows.isEmpty {
-                detail("Usage", value: "Unavailable")
+            if provider.id == "codex" {
+                detail("Profile", value: snapshot.profileName)
+                if let version = snapshot.serverVersion {
+                    detail("Codex", value: version)
+                }
             }
         }
         .padding(.horizontal, 6)
@@ -426,10 +426,11 @@ struct CompanionMenuView<MoreActions: View>: View {
     }
 
     private func providerStatusColor(_ provider: CompanionAgentProvider) -> Color {
-        if provider.status == .live, provider.authentication == .authenticated {
-            return successColor
+        switch provider.status {
+        case .live: successColor
+        case .reconnecting: .orange
+        case .disabled, .unavailable: secondaryText
         }
-        return provider.status == .reconnecting ? Color.orange : secondaryText
     }
 
     private func providerStatusSymbol(_ provider: CompanionAgentProvider) -> String {
@@ -438,19 +439,6 @@ struct CompanionMenuView<MoreActions: View>: View {
         case .reconnecting: "circle.dotted"
         case .disabled, .unavailable: "exclamationmark.circle.fill"
         }
-    }
-
-    private func providerSymbol(_ provider: CompanionAgentProvider) -> String {
-        provider.id == "claude" ? "sparkles" : "cpu"
-    }
-
-    private func providerLimitValue(_ window: CompanionAgentProvider.LimitWindow) -> String {
-        let allowance = window.remainingPercent.map { "\($0)% left" } ?? "Usage unknown"
-        guard let resetsAt = window.resetsAt else { return allowance }
-        let reset = Date(timeIntervalSince1970: TimeInterval(resetsAt)).formatted(
-            .relative(presentation: .numeric, unitsStyle: .abbreviated)
-        )
-        return "\(allowance) · resets \(reset)"
     }
 
     private var secondaryText: Color {

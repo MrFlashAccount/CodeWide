@@ -216,7 +216,7 @@ struct HarnessMenu: View {
         let providers: [CompanionAgentProvider]
         do {
             providers = try CompanionAgentProvider.decodeList(#"""
-            {"providers":[{"id":"claude","name":"Claude","status":"live","auth":"authenticated","planLabel":"max","accountLabel":"dev@example.com","rateLimits":{"updatedAt":1800000000,"windows":[{"id":"seven_day","kind":"weekly","label":"Weekly","resetsAt":1800300000,"status":"allowed","usedPercent":60,"windowDurationMins":10080}]}}]}
+            {"providers":[{"id":"codex","name":"Codex","primary":true,"status":"live"},{"id":"claude","name":"Claude","primary":false,"status":"reconnecting"}]}
             """#)
         } catch {
             preconditionFailure("Invalid provider fixture: \(error)")

@@ -113,6 +113,8 @@ cp "$mac_root/Resources/dev.codewide.runtime.plist" "$runtime_plist"
 cp "$repo_root/brand/macos/CodeWideMenuBarTemplate.png" "$resources_dir/CodeWideMenuBarTemplate.png"
 cp "$repo_root/brand/macos/CodeWideMenuBarTemplate@2x.png" "$resources_dir/CodeWideMenuBarTemplate@2x.png"
 cp "$repo_root/brand/codewide-menubar-template-64.png" "$resources_dir/CodeWideBrandMark.png"
+cp "$mac_root/Sources/CodeWide/Resources/AgentProviders/AgentProviderCodex.svg" "$resources_dir/AgentProviderCodex.svg"
+cp "$mac_root/Sources/CodeWide/Resources/AgentProviders/AgentProviderClaude.svg" "$resources_dir/AgentProviderClaude.svg"
 
 # The Claude agent host as one Bun-compiled executable. The runtime finds it
 # here and runs Claude without any setup; the Claude Agent SDK is not

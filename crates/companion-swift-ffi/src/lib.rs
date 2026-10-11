@@ -335,14 +335,15 @@ impl CoreHost {
         }
     }
 
-    /// Returns the provider status and subscription presentation used by the
-    /// local macOS menu. The JSON shape is the existing validated client-wire
-    /// contract and contains no credentials.
+    /// Returns the data-minimized provider connection snapshot used by the
+    /// local macOS UI. Account, subscription, capability and credential data
+    /// are not part of this contract.
     ///
     /// # Errors
     /// Returns an adapter error if the presentation cannot be serialized.
-    pub fn agent_providers_json(&self) -> Result<String, CompanionFfiError> {
-        serde_json::to_string(&self.companion.agent_providers()).map_err(CompanionFfiError::runtime)
+    pub fn agent_provider_connections_json(&self) -> Result<String, CompanionFfiError> {
+        serde_json::to_string(&self.companion.agent_provider_connections())
+            .map_err(CompanionFfiError::runtime)
     }
 
     /// Finds local Codex homes with a reachable App Server endpoint.

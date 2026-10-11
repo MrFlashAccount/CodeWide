@@ -64,11 +64,11 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         reply(currentAppServerPayload(), nil)
     }
 
-    func agentProviders(
+    func agentProviderConnections(
         withReply reply: @escaping @Sendable (String?, NSError?) -> Void
     ) {
         do {
-            reply(try core.agentProvidersJson(), nil)
+            reply(try core.agentProviderConnectionsJson(), nil)
         } catch {
             reply(nil, Self.xpcError(error))
         }

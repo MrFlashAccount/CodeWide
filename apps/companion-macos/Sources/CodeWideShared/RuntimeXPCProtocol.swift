@@ -20,7 +20,7 @@ import Foundation
         withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
     )
 
-    func agentProviders(
+    func agentProviderConnections(
         withReply reply: @escaping @Sendable (String?, NSError?) -> Void
     )
 

@@ -108,34 +108,31 @@ struct CompanionMenuStateTests {
         #expect(snapshot.devicesSummary == "1 of 1 connected")
     }
 
-    @Test func claudeSubscriptionIsProjectedBesideCodex() throws {
+    @Test func providerConnectionsAreProjectedBesideEachOther() throws {
         let providers = try CompanionAgentProvider.decodeList("""
         {"providers":[
-          {"id":"codex","name":"Codex","status":"live","auth":"unknown","planLabel":null},
-          {"id":"claude","name":"Claude","status":"live","auth":"authenticated","planLabel":"max","accountLabel":"dev@example.com","rateLimits":{"updatedAt":1800000000,"windows":[
-            {"id":"five_hour","kind":"session","label":"Session","resetsAt":1800010000,"status":"allowed","usedPercent":25,"windowDurationMins":300},
-            {"id":"seven_day","kind":"weekly","label":"Weekly","resetsAt":1800300000,"status":"allowed","usedPercent":60,"windowDurationMins":10080}
-          ]}}
+          {"id":"codex","name":"Codex","primary":true,"status":"live"},
+          {"id":"claude","name":"Claude","primary":false,"status":"reconnecting"}
         ]}
         """)
         var snapshot = CompanionMenuSnapshot(connection: .connected)
         snapshot.agentProviders = providers
 
-        let claude = try #require(snapshot.visibleAgentProviders.first)
-        #expect(snapshot.visibleAgentProviders.count == 1)
-        #expect(claude.id == "claude")
-        #expect(claude.summary == "Max · 40% weekly left")
-        #expect(claude.limitWindows.map(\.kind) == [.weekly, .session])
-        #expect(claude.accountLabel == "dev@example.com")
+        #expect(snapshot.visibleAgentProviders.map(\.id) == ["codex", "claude"])
+        #expect(snapshot.visibleAgentProviders.map(\.connectionSummary) == ["Connected", "Reconnecting"])
+        #expect(snapshot.visibleAgentProviders.first?.primary == true)
     }
 
-    @Test func signedOutClaudeRemainsVisibleWithoutFakeUsage() throws {
+    @Test func disabledProvidersAreNotPresentedAsConnections() throws {
         let providers = try CompanionAgentProvider.decodeList("""
-        {"providers":[{"id":"claude","name":"Claude","status":"live","auth":"unauthenticated","planLabel":null,"rateLimits":null}]}
+        {"providers":[
+          {"id":"codex","name":"Codex","primary":true,"status":"unavailable"},
+          {"id":"claude","name":"Claude","primary":false,"status":"disabled"}
+        ]}
         """)
-        let claude = try #require(providers.first)
-        #expect(claude.summary == "Not signed in")
-        #expect(claude.limitWindows.isEmpty)
-        #expect(claude.isVisibleInMenu)
+        var snapshot = CompanionMenuSnapshot()
+        snapshot.agentProviders = providers
+        #expect(snapshot.visibleAgentProviders.map(\.id) == ["codex"])
+        #expect(snapshot.visibleAgentProviders.first?.connectionSummary == "Not connected")
     }
 }
