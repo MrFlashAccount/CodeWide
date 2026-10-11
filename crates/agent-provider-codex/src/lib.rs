@@ -37,7 +37,7 @@ pub mod storage;
 mod test_support;
 pub mod user_text;
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, Weak};
 
 use agent_core::{
     model::{
@@ -653,7 +653,7 @@ impl AgentProvider for CodexProvider {
         }
     }
 
-    fn install_client_tools(&self, host: Arc<dyn ClientToolHost>) {
+    fn install_client_tools(&self, host: Weak<dyn ClientToolHost>) {
         self.client_tools.install(host);
     }
 

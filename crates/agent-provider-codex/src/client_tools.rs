@@ -12,7 +12,7 @@
 
 use std::{
     collections::{HashSet, VecDeque},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 use agent_core::{
@@ -35,20 +35,22 @@ const MAX_ANSWERED_REQUESTS: usize = 256;
 /// The installed client tools and the requests this adapter answered.
 #[derive(Default)]
 pub(crate) struct CodexClientTools {
-    host: OnceLock<Arc<dyn ClientToolHost>>,
+    /// Weak: the companion owns the host (see `AgentProvider::install_client_tools`).
+    host: OnceLock<Weak<dyn ClientToolHost>>,
     answered: Mutex<VecDeque<String>>,
 }
 
 impl CodexClientTools {
     /// Installs the host once; a second installation is ignored.
-    pub(crate) fn install(&self, host: Arc<dyn ClientToolHost>) {
+    pub(crate) fn install(&self, host: Weak<dyn ClientToolHost>) {
         if self.host.set(host).is_err() {
             warn!("client tools are already installed on the Codex adapter");
         }
     }
 
-    fn host(&self) -> Option<&Arc<dyn ClientToolHost>> {
-        self.host.get()
+    /// The installed host while the companion that owns it runs.
+    fn host(&self) -> Option<Arc<dyn ClientToolHost>> {
+        self.host.get().and_then(Weak::upgrade)
     }
 
     /// Adds the installed tools as `dynamicTools` to a `thread/start`
@@ -93,7 +95,6 @@ impl CodexClientTools {
                     return false;
                 };
                 self.remember(&id);
-                let host = host.clone();
                 let upstream = upstream.clone();
                 let provider = provider.clone();
                 tokio::spawn(async move {
@@ -230,19 +231,21 @@ mod tests {
         }
     }
 
-    fn installed() -> Arc<CodexClientTools> {
+    /// The adapter's tools and the host they reach; the caller keeps the host alive.
+    fn installed() -> (Arc<CodexClientTools>, Arc<dyn ClientToolHost>) {
         let tools = Arc::new(CodexClientTools::default());
-        tools.install(Arc::new(Echo(vec![ClientToolSpec {
+        let host: Arc<dyn ClientToolHost> = Arc::new(Echo(vec![ClientToolSpec {
             name: "codewide_list_agents".into(),
             description: "List".into(),
             input_schema: json!({"type": "object"}),
-        }])));
-        tools
+        }]));
+        tools.install(Arc::downgrade(&host));
+        (tools, host)
     }
 
     #[test]
     fn thread_start_gains_function_dynamic_tools_once() {
-        let tools = installed();
+        let (tools, _host) = installed();
         let mut request = json!({"id": 1, "method": "thread/start", "params": {"cwd": "/w"}});
         tools.declare_on_thread_start(&mut request);
         tools.declare_on_thread_start(&mut request);

@@ -825,6 +825,33 @@ mod tests {
         Ok(())
     }
 
+    /// A stopped core releases its state: the next launch (an update restart)
+    /// opens the same directory in the same process.
+    #[test]
+    fn a_dropped_core_releases_its_state_for_the_next_launch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::Builder::new().prefix("cw-").tempdir_in("/tmp")?;
+        let state = root.path().join("state");
+        let codex = root.path().join(".codex");
+        std::fs::create_dir_all(&codex)?;
+        let open = |version: &str| {
+            CoreHost::new(
+                state.display().to_string(),
+                codex.display().to_string(),
+                version.into(),
+                version.into(),
+                "Restart test".into(),
+                "127.0.0.1:0".into(),
+            )
+        };
+        let core = open("98.0.0")?;
+        assert!(open("98.0.0").is_err());
+        drop(core);
+        let restarted = open("98.0.1")?;
+        assert_eq!(restarted.health()?.phase, "running");
+        Ok(())
+    }
+
     #[test]
     fn display_name_distinguishes_default_and_named_profiles() {
         assert_eq!(

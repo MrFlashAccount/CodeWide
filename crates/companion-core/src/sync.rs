@@ -495,7 +495,8 @@ impl SyncHub {
             let service =
                 OrchestrationService::new(gateway.clone(), store.clone(), local_events.clone());
             for provider in registry.enabled() {
-                provider.install_client_tools(service.clone());
+                let host: Arc<dyn agent_core::provider::ClientToolHost> = service.clone();
+                provider.install_client_tools(Arc::downgrade(&host));
             }
             service
         });

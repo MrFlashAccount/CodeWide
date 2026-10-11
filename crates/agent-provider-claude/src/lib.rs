@@ -32,7 +32,7 @@ pub mod watcher;
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 
 use agent_core::{
     model::{
@@ -124,7 +124,8 @@ pub struct ClaudeProvider {
     negotiation: watch::Receiver<Negotiation>,
     id: ProviderId,
     storage: Option<Arc<ClaudeStorage>>,
-    client_tools: Arc<OnceLock<Arc<dyn ClientToolHost>>>,
+    /// Weak: the companion owns the host (see `AgentProvider::install_client_tools`).
+    client_tools: Arc<OnceLock<Weak<dyn ClientToolHost>>>,
     /// Health and sign-in state: written by the negotiation tracker and by
     /// the host's `account.updated` notifications.
     health: Arc<watch::Sender<ProviderHealth>>,
@@ -226,7 +227,7 @@ impl ClaudeProvider {
     /// The client tools to declare to the host: the installed set, when the
     /// host declares `orchestration.tools`.
     fn declared_tools(&self) -> Option<Vec<agent_core::model::ClientToolSpec>> {
-        let host = self.client_tools.get()?;
+        let host = self.client_tools.get()?.upgrade()?;
         self.capabilities()
             .orchestration_tools
             .then(|| host.specs().to_vec())
@@ -634,7 +635,7 @@ fn stamp_event(event: &mut AgentEvent, provider: &ProviderId) {
 /// Answers the host's `tool.call` provider requests through the installed
 /// client tools, on the same stdio channel.
 struct ToolCalls {
-    host: Arc<OnceLock<Arc<dyn ClientToolHost>>>,
+    host: Arc<OnceLock<Weak<dyn ClientToolHost>>>,
     transport: UpstreamHandle,
     provider: ProviderId,
 }
@@ -648,7 +649,7 @@ impl ToolCalls {
             .get("params")
             .cloned()
             .map(serde_json::from_value::<ToolCallParams>);
-        let host = self.host.get().cloned();
+        let host = self.host.get().and_then(Weak::upgrade);
         let transport = self.transport.clone();
         let provider = self.provider.clone();
         tokio::spawn(async move {
@@ -992,7 +993,7 @@ impl AgentProvider for ClaudeProvider {
         started
     }
 
-    fn install_client_tools(&self, host: Arc<dyn ClientToolHost>) {
+    fn install_client_tools(&self, host: Weak<dyn ClientToolHost>) {
         if self.client_tools.set(host).is_err() {
             warn!("client tools are already installed on the Claude adapter");
         }
@@ -1223,7 +1224,8 @@ sleep 5
             description: "List".into(),
             input_schema: json!({"type": "object"}),
         };
-        provider.install_client_tools(Arc::new(EchoTools(vec![spec])));
+        let tools: Arc<dyn ClientToolHost> = Arc::new(EchoTools(vec![spec]));
+        provider.install_client_tools(Arc::downgrade(&tools));
         let _events = provider.take_events();
         wait_live(&provider).await?;
         let response = tokio::time::timeout(Duration::from_secs(5), async {

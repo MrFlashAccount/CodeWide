@@ -14,7 +14,11 @@
 mod native_storage;
 mod stored_search;
 
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Weak},
+};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -294,7 +298,11 @@ pub trait AgentProvider: Send + Sync {
     /// `orchestration.tools` declares them to its model on threads and turns
     /// it starts afterwards and routes their calls to `host`; other providers
     /// ignore it. Called at most once, before any thread is started.
-    fn install_client_tools(&self, host: Arc<dyn ClientToolHost>) {
+    ///
+    /// The companion owns the host, and the host reaches the providers, so a
+    /// provider keeps it weakly: a strong reference would keep the host, the
+    /// providers and every store they hold alive after the companion stops.
+    fn install_client_tools(&self, host: Weak<dyn ClientToolHost>) {
         let _ = host;
     }
 

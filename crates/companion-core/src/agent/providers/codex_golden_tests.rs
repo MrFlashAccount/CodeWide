@@ -86,8 +86,9 @@ async fn replay_with(
         Ok(())
     });
     let provider = CodexProvider::new(UpstreamHandle::spawn(socket_path));
-    if let Some(tools) = tools {
-        provider.install_client_tools(tools);
+    // `tools` stays bound for the whole run: the provider keeps it weakly.
+    if let Some(tools) = &tools {
+        provider.install_client_tools(std::sync::Arc::downgrade(tools));
     }
     let mut events = provider.take_events();
     let mut projector = EventProjector::new(WireProvider {

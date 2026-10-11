@@ -87,6 +87,8 @@ struct Connected {
     projected: mpsc::UnboundedReceiver<Value>,
     received: mpsc::UnboundedReceiver<Value>,
     calls: mpsc::UnboundedReceiver<(ProviderId, ToolCallParams)>,
+    /// The tool host the provider reaches weakly, kept alive like the companion does.
+    _host: Arc<dyn crate::agent::provider::ClientToolHost>,
     _directory: tempfile::TempDir,
 }
 
@@ -98,10 +100,11 @@ fn connect(frames: Vec<Value>) -> Result<Connected, Box<dyn std::error::Error>> 
     tokio::spawn(fake_app_server(listener, frames, received_tx));
     let provider = Arc::new(CodexProvider::new(UpstreamHandle::spawn(socket_path)));
     let (calls_tx, calls) = mpsc::unbounded_channel();
-    provider.install_client_tools(Arc::new(RecordingHost {
+    let host: Arc<dyn crate::agent::provider::ClientToolHost> = Arc::new(RecordingHost {
         specs: crate::agent::orchestration::tools::specs(),
         calls: calls_tx,
-    }));
+    });
+    provider.install_client_tools(Arc::downgrade(&host));
     let mut events = provider.take_events();
     let mut projector = EventProjector::new(WireProvider {
         descriptor: provider.descriptor(),
@@ -124,6 +127,7 @@ fn connect(frames: Vec<Value>) -> Result<Connected, Box<dyn std::error::Error>> 
         projected,
         received,
         calls,
+        _host: host,
         _directory: directory,
     })
 }
