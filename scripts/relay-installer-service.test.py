@@ -48,6 +48,8 @@ def manager_tool(tool, args):
     root = Path(os.environ["CODEWIDE_RELAY_INSTALL_TEST_ROOT"])
     if tool == "sudo":
         (root / "sudo-used").touch()
+        if args == ["-v"]:
+            return 0
         return subprocess.call(args[1:] if args[0] == "--" else args)
     if tool == "loginctl":
         marker = root / "linger"
@@ -93,20 +95,34 @@ def manager_tool(tool, args):
         return 0 if enabled.exists() else 1
     elif command == "enable":
         enabled.touch()
-    elif command == "disable":
-        enabled.unlink(missing_ok=True)
-    elif command in ("stop", "restart"):
-        stop(pid)
-        pid_path.unlink(missing_ok=True)
-        if command == "restart":
+        if "--now" in args and unit_name == "codewide-relay.service":
+            stop(pid)
+            pid_path.unlink(missing_ok=True)
             line = next(line for line in unit.read_text().splitlines() if line.startswith("ExecStart="))
             invocation = shlex.split(line.removeprefix("ExecStart=").replace("%%", "%").replace("$$", "$"))
-            # Isolate each real Relay on a free port; the generated unit uses 8780.
             if "--port" not in invocation:
                 invocation += ["--port", os.environ["CODEWIDE_RELAY_INSTALL_TEST_PORT"]]
             with (root / f"{scope}.log").open("ab") as log:
                 process = subprocess.Popen(invocation, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
             pid_path.write_text(str(process.pid))
+    elif command == "disable":
+        enabled.unlink(missing_ok=True)
+        if "--now" in args and unit_name == "codewide-relay.service":
+            stop(pid)
+            pid_path.unlink(missing_ok=True)
+    elif command in ("stop", "restart"):
+        if unit_name == "codewide-relay.service":
+            stop(pid)
+            pid_path.unlink(missing_ok=True)
+            if command == "restart":
+                line = next(line for line in unit.read_text().splitlines() if line.startswith("ExecStart="))
+                invocation = shlex.split(line.removeprefix("ExecStart=").replace("%%", "%").replace("$$", "$"))
+                # Isolate each real Relay on a free port; the generated unit uses 8780.
+                if "--port" not in invocation:
+                    invocation += ["--port", os.environ["CODEWIDE_RELAY_INSTALL_TEST_PORT"]]
+                with (root / f"{scope}.log").open("ab") as log:
+                    process = subprocess.Popen(invocation, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+                pid_path.write_text(str(process.pid))
     elif command == "show-environment":
         delayed = root / "manager-delayed"
         if delayed.exists():
@@ -327,6 +343,59 @@ class InstallerServiceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assert_ready()
 
+    def legacy_system_migration_fixture(self):
+        home = self.root / "home"
+        user_bin = home / ".local/bin"
+        user_bin.mkdir(parents=True)
+        system_binary = self.root / "system-bin/codewide-relay"
+        system_binary.parent.mkdir()
+        shutil.copyfile(self.payload, system_binary)
+        system_binary.chmod(0o755)
+        system_updater = system_binary.parent / "codewide-relay-updater"
+        shutil.copyfile(self.updater_payload, system_updater)
+        system_updater.chmod(0o755)
+        self.bin = system_binary.parent
+        self.state = self.root / "system-state"
+        system_unit = self.root / "system.service"
+        executable = str(system_binary).replace("%", "%%").replace("$", "$$").replace('"', '\\"')
+        system_unit.write_text(
+            f'[Service]\nExecStart=/usr/bin/env -- "{executable}" serve --state "{self.state}" --port {self.port}\nRestart=on-failure\nUMask=0077\nNoNewPrivileges=yes\n\n[Install]\nWantedBy=multi-user.target\n'
+        )
+        system_update_service = self.root / "codewide-relay-update.service"
+        system_update_path = self.root / "codewide-relay-update.path"
+        system_update_service.write_text("[Service]\nType=oneshot\n")
+        system_update_path.write_text("[Path]\nPathExists=/unused\n")
+        start = subprocess.run(
+            ["systemctl", "restart", "codewide-relay.service"],
+            env=self.env,
+            capture_output=True,
+        )
+        self.assertEqual(start.returncode, 0, start.stderr.decode())
+        self.assert_ready()
+        stale_user_state = Path(self.env["XDG_STATE_HOME"]) / "codewide/relay"
+        stale_user_state.mkdir(parents=True)
+        (stale_user_state / "preexisting-marker").write_text("preserve me")
+        env = {
+            **self.env,
+            "HOME": str(home),
+            "PATH": f"{user_bin}:{self.root / 'tools'}:{os.environ['PATH']}",
+            "CODEWIDE_RELAY_MIGRATION_SYSTEM_BINARY": str(system_binary),
+            "CODEWIDE_RELAY_MIGRATION_SYSTEM_STATE_ROOT": str(self.state),
+            "CODEWIDE_RELAY_MIGRATION_SYSTEM_UNIT": str(system_unit),
+            "CODEWIDE_RELAY_MIGRATION_SYSTEM_DROPINS": str(self.root / "system.service.d"),
+        }
+        env.pop("CODEWIDE_RELAY_INSTALL_DIR")
+        return {
+            "env": env,
+            "system_binary": system_binary,
+            "system_unit": system_unit,
+            "system_updater": system_updater,
+            "system_update_service": system_update_service,
+            "system_update_path": system_update_path,
+            "user_bin": user_bin,
+            "user_state": stale_user_state,
+        }
+
     def test_upgrade_preserves_custom_unit_port_and_identity(self):
         self.state = self.root / "custom-state"
         self.custom_unit(self.unit)
@@ -399,6 +468,93 @@ class InstallerServiceTests(unittest.TestCase):
             json.loads((self.state / "update/config.json").read_text())["serviceScope"],
             "system",
         )
+        self.assert_ready()
+
+    def test_system_service_migrates_to_user_scope_without_losing_identity_or_routes(self):
+        fixture = self.legacy_system_migration_fixture()
+        computer = self.paired_computer()
+        identity = self.identity()
+        env = {
+            **fixture["env"],
+            "CODEWIDE_RELAY_MIGRATION_INSTALLER_URL": (ROOT / "install/relay").as_uri(),
+        }
+
+        result = subprocess.run(
+            ["sh", str(ROOT / "install/relay-migrate-user"), "--version", self.version],
+            env=env,
+            capture_output=True,
+            timeout=60,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn(b"Future installer runs", result.stdout)
+        self.assertTrue((self.root / "sudo-used").exists())
+        self.assertFalse(fixture["system_binary"].exists())
+        self.assertFalse(fixture["system_unit"].exists())
+        self.assertFalse(fixture["system_updater"].exists())
+        self.assertFalse(fixture["system_update_service"].exists())
+        self.assertFalse(fixture["system_update_path"].exists())
+        backup = self.state / "system-to-user-v1"
+        self.assertTrue((backup / "codewide-relay").is_file())
+        self.assertTrue((backup / "codewide-relay.service").is_file())
+        self.assertTrue((backup / "codewide-relay-updater").is_file())
+        self.assertTrue((backup / "codewide-relay-update.service").is_file())
+        self.assertTrue((backup / "codewide-relay-update.path").is_file())
+        user_state_backup = Path(self.env["XDG_STATE_HOME"]) / "codewide/relay-before-system-migration"
+        self.assertEqual((user_state_backup / "preexisting-marker").read_text(), "preserve me")
+        self.bin = fixture["user_bin"]
+        self.state = fixture["user_state"]
+        self.unit = self.root / "config/systemd/user/codewide-relay.service"
+        self.assertEqual(self.identity(), identity)
+        self.assert_authorized(computer)
+        self.assert_ready()
+        resolved = subprocess.check_output(
+            ["sh", "-c", "command -v codewide-relay"], env=env, text=True
+        ).strip()
+        self.assertEqual(resolved, str(fixture["user_bin"] / "codewide-relay"))
+
+    def test_failed_system_to_user_migration_restores_the_system_service(self):
+        fixture = self.legacy_system_migration_fixture()
+        enable = subprocess.run(
+            ["systemctl", "enable", "codewide-relay.service"],
+            env=self.env,
+            capture_output=True,
+        )
+        self.assertEqual(enable.returncode, 0, enable.stderr.decode())
+        enable_update = subprocess.run(
+            ["systemctl", "enable", "codewide-relay-update.path"],
+            env=self.env,
+            capture_output=True,
+        )
+        self.assertEqual(enable_update.returncode, 0, enable_update.stderr.decode())
+        identity = self.identity()
+        failing_installer = self.root / "failing-installer"
+        failing_installer.write_text("#!/bin/sh\nexit 17\n")
+        env = {
+            **fixture["env"],
+            "CODEWIDE_RELAY_MIGRATION_INSTALLER_URL": failing_installer.as_uri(),
+        }
+
+        result = subprocess.run(
+            ["sh", str(ROOT / "install/relay-migrate-user")],
+            env=env,
+            capture_output=True,
+            timeout=60,
+        )
+
+        self.assertEqual(result.returncode, 17, result.stderr.decode())
+        self.assertIn(b"restoring the legacy system deployment", result.stderr)
+        self.assertTrue(fixture["system_binary"].is_file())
+        self.assertTrue(fixture["system_unit"].is_file())
+        self.assertTrue(fixture["system_updater"].is_file())
+        self.assertTrue(fixture["system_update_service"].is_file())
+        self.assertTrue(fixture["system_update_path"].is_file())
+        self.assertTrue((self.root / "system.enabled").exists())
+        self.assertTrue((self.root / "system.update.enabled").exists())
+        self.assertFalse((self.state / "system-to-user-v1").exists())
+        self.assertEqual((fixture["user_state"] / "preexisting-marker").read_text(), "preserve me")
+        self.assertFalse((self.root / "config/systemd/user/codewide-relay.service").exists())
+        self.assertEqual(self.identity(), identity)
         self.assert_ready()
 
     def test_non_systemd_requires_explicit_binary_only_install(self):

@@ -1,0 +1,262 @@
+#!/bin/sh
+set -eu
+
+version=
+installer_url=${CODEWIDE_RELAY_MIGRATION_INSTALLER_URL:-https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay}
+allow_insecure_download=${CODEWIDE_RELAY_ALLOW_INSECURE_DOWNLOAD:-0}
+tmp_root=${TMPDIR:-/tmp}
+system_binary=${CODEWIDE_RELAY_MIGRATION_SYSTEM_BINARY:-/usr/local/bin/codewide-relay}
+system_state_root=${CODEWIDE_RELAY_MIGRATION_SYSTEM_STATE_ROOT:-/var/lib/codewide-relay}
+system_unit=${CODEWIDE_RELAY_MIGRATION_SYSTEM_UNIT:-/etc/systemd/system/codewide-relay.service}
+system_dropins=${CODEWIDE_RELAY_MIGRATION_SYSTEM_DROPINS:-/etc/systemd/system/codewide-relay.service.d}
+system_updater=$(dirname -- "$system_binary")/codewide-relay-updater
+system_update_service=$(dirname -- "$system_unit")/codewide-relay-update.service
+system_update_path=$(dirname -- "$system_unit")/codewide-relay-update.path
+user_bin=$HOME/.local/bin
+user_state_root=${XDG_STATE_HOME:-$HOME/.local/state}/codewide/relay
+user_state_backup=${XDG_STATE_HOME:-$HOME/.local/state}/codewide/relay-before-system-migration
+user_unit_root=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
+system_backup_root=$system_state_root/system-to-user-v1
+cutover_started=0
+user_state_installed=0
+previous_user_state_moved=0
+migration_complete=0
+system_was_enabled=0
+system_update_was_enabled=0
+
+usage() {
+  printf '%s\n' 'Usage: migrate-relay-to-user [--version VERSION]'
+  printf '%s\n' 'Migrates the legacy system Relay to a rootless user service while preserving its identity and routes.'
+  printf '%s\n' 'Administrator access is required once to stop and archive the legacy system deployment.'
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --version)
+      [ "$#" -ge 2 ] || { usage >&2; exit 2; }
+      version=$2
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+  printf '%s\n' 'Relay user migration currently supports x86_64 Linux only.' >&2
+  exit 2
+fi
+for dependency in curl grep loginctl sed sha256sum sort sudo systemctl tar timeout; do
+  command -v "$dependency" >/dev/null 2>&1 || {
+    printf '%s is required to migrate Relay.\n' "$dependency" >&2
+    exit 2
+  }
+done
+case "$system_binary:$system_state_root:$system_unit:$system_dropins:$user_bin:$user_state_root:$user_state_backup" in
+  *[![:print:]]*) printf '%s\n' 'Relay migration paths contain control characters.' >&2; exit 2 ;;
+esac
+for path in "$system_binary" "$system_state_root" "$system_unit" "$system_dropins" "$user_bin" "$user_state_root" "$user_state_backup"; do
+  case "$path" in /*) ;; *) printf '%s\n' 'Relay migration paths must be absolute.' >&2; exit 2 ;; esac
+done
+[ "$user_state_root" != "$user_state_backup" ] || {
+  printf '%s\n' 'Relay migration state and backup paths must differ.' >&2
+  exit 2
+}
+
+system_fragment=$(systemctl show codewide-relay.service --property=FragmentPath --value 2>/dev/null || :)
+user_fragment=$(systemctl --user show codewide-relay.service --property=FragmentPath --value 2>/dev/null || :)
+if [ "$system_fragment" != "$system_unit" ]; then
+  printf 'Expected the legacy Relay unit at %s, found: %s\n' "$system_unit" "$system_fragment" >&2
+  exit 2
+fi
+if [ -n "$user_fragment" ] || [ -e "$user_unit_root/codewide-relay.service" ]; then
+  printf '%s\n' 'A Relay user service already exists. Nothing was migrated.' >&2
+  exit 2
+fi
+systemctl is-active --quiet codewide-relay.service || {
+  printf '%s\n' 'The legacy system Relay must be running before migration.' >&2
+  exit 2
+}
+[ -e "$system_binary" ] || { printf '%s\n' 'The legacy Relay binary is missing.' >&2; exit 2; }
+[ -d "$system_state_root" ] || { printf '%s\n' 'The legacy Relay state directory is missing.' >&2; exit 2; }
+[ ! -e "$system_backup_root" ] || {
+  printf 'A previous migration backup already exists: %s\n' "$system_backup_root" >&2
+  exit 2
+}
+[ ! -e "$user_state_backup" ] || {
+  printf 'The user-state backup destination already exists: %s\n' "$user_state_backup" >&2
+  exit 2
+}
+
+mkdir -p "$user_bin" "$(dirname -- "$user_state_root")" "$user_unit_root"
+case ":${PATH:-}:" in
+  *":$user_bin:"*) login_path=$PATH ;;
+  *) login_path=$("${SHELL:-/bin/sh}" -lc "printf %s \"\$PATH\"" 2>/dev/null || :) ;;
+esac
+case ":$login_path:" in
+  *":$user_bin:"*) ;;
+  *)
+    printf 'The login shell does not expose %s through PATH. Nothing was migrated.\n' "$user_bin" >&2
+    printf '%s\n' 'Add ~/.local/bin to PATH, open a new login shell, and run the migration again.' >&2
+    exit 2
+    ;;
+esac
+PATH="$user_bin:$PATH"
+export PATH
+
+temporary_root=$(mktemp -d "$tmp_root/codewide-relay-user-migration.XXXXXX")
+state_stage=$temporary_root/state
+installer=$temporary_root/install-relay
+mkdir -p "$state_stage"
+
+cleanup() {
+  case "$temporary_root" in
+    "$tmp_root"/codewide-relay-user-migration.*) rm -rf -- "$temporary_root" ;;
+    *) printf 'Refusing to remove unexpected directory: %s\n' "$temporary_root" >&2 ;;
+  esac
+}
+
+rollback() {
+  printf '%s\n' 'Relay migration failed; restoring the legacy system deployment.' >&2
+  systemctl --user disable --now codewide-relay-update.path >/dev/null 2>&1 || :
+  systemctl --user disable --now codewide-relay.service >/dev/null 2>&1 || :
+  rm -f -- \
+    "$user_unit_root/codewide-relay.service" \
+    "$user_unit_root/codewide-relay-update.service" \
+    "$user_unit_root/codewide-relay-update.path" \
+    "$user_bin/codewide-relay" \
+    "$user_bin/codewide-relay-updater"
+  systemctl --user daemon-reload >/dev/null 2>&1 || :
+  if [ "$user_state_installed" = 1 ]; then rm -rf -- "$user_state_root"; fi
+  if [ "$previous_user_state_moved" = 1 ] && [ -e "$user_state_backup" ]; then
+    mv -- "$user_state_backup" "$user_state_root"
+  fi
+  if sudo test -e "$system_backup_root/codewide-relay"; then
+    sudo mv -- "$system_backup_root/codewide-relay" "$system_binary"
+  fi
+  if sudo test -e "$system_backup_root/codewide-relay.service"; then
+    sudo mv -- "$system_backup_root/codewide-relay.service" "$system_unit"
+  fi
+  if sudo test -e "$system_backup_root/codewide-relay.service.d"; then
+    sudo mv -- "$system_backup_root/codewide-relay.service.d" "$system_dropins"
+  fi
+  if sudo test -e "$system_backup_root/codewide-relay-update.service"; then
+    sudo mv -- "$system_backup_root/codewide-relay-update.service" "$system_update_service"
+  fi
+  if sudo test -e "$system_backup_root/codewide-relay-update.path"; then
+    sudo mv -- "$system_backup_root/codewide-relay-update.path" "$system_update_path"
+  fi
+  if sudo test -e "$system_backup_root/codewide-relay-updater"; then
+    sudo mv -- "$system_backup_root/codewide-relay-updater" "$system_updater"
+  fi
+  sudo rmdir "$system_backup_root" 2>/dev/null || :
+  sudo systemctl daemon-reload || :
+  if [ "$system_was_enabled" = 1 ]; then
+    sudo systemctl enable --now codewide-relay.service || :
+  else
+    sudo systemctl restart codewide-relay.service || :
+  fi
+  if [ "$system_update_was_enabled" = 1 ]; then
+    sudo systemctl enable --now codewide-relay-update.path || :
+  fi
+}
+
+finish() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$status" -ne 0 ] && [ "$cutover_started" = 1 ] && [ "$migration_complete" = 0 ]; then
+    rollback
+  fi
+  cleanup
+  exit "$status"
+}
+trap finish EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+case "$installer_url" in
+  https://*) curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 --output "$installer" "$installer_url" ;;
+  http://*|file://*)
+    [ "$allow_insecure_download" = 1 ] || { printf '%s\n' 'Refusing an insecure installer URL.' >&2; exit 2; }
+    curl --fail --silent --show-error --location --retry 3 --output "$installer" "$installer_url"
+    ;;
+  *) printf '%s\n' 'Unsupported Relay installer URL.' >&2; exit 2 ;;
+esac
+sh -n "$installer"
+
+printf '%s\n' 'The legacy system Relay will stop briefly while its identity and routes move to the user service.'
+sudo -v
+if systemctl is-enabled --quiet codewide-relay.service; then system_was_enabled=1; fi
+if systemctl is-enabled --quiet codewide-relay-update.path; then system_update_was_enabled=1; fi
+before_status=$(sudo -- "$system_binary" --state "$system_state_root" status --json)
+before_port=$(printf '%s\n' "$before_status" | sed -n 's/.*"port":\([0-9][0-9]*\).*/\1/p')
+before_routes=$(printf '%s\n' "$before_status" | grep -o '"routeId":"[^"]*"' | sort || :)
+before_cert=$(sudo sha256sum "$system_state_root/transport-cert.der" | sed 's/[[:space:]].*//')
+[ -n "$before_port" ] || { printf '%s\n' 'The legacy Relay reported an invalid port.' >&2; exit 1; }
+
+cutover_started=1
+sudo systemctl disable --now codewide-relay-update.path >/dev/null 2>&1 || :
+sudo systemctl stop codewide-relay-update.service >/dev/null 2>&1 || :
+sudo systemctl disable --now codewide-relay.service
+sudo tar -C "$(dirname -- "$system_state_root")" -cf - "$(basename -- "$system_state_root")" | tar -C "$state_stage" -xf -
+migrated_state=$state_stage/$(basename -- "$system_state_root")
+if [ ! -s "$migrated_state/transport-cert.der" ] || [ ! -s "$migrated_state/transport-key.der" ]; then
+  printf '%s\n' 'The copied Relay identity is incomplete.' >&2
+  exit 1
+fi
+rm -f -- "$migrated_state/control.sock"
+if [ -e "$user_state_root" ]; then
+  mv -- "$user_state_root" "$user_state_backup"
+  previous_user_state_moved=1
+fi
+mv -- "$migrated_state" "$user_state_root"
+chmod 0700 "$user_state_root"
+user_state_installed=1
+
+sudo mkdir -p -- "$system_backup_root"
+sudo chmod 0700 "$system_backup_root"
+sudo mv -- "$system_unit" "$system_backup_root/codewide-relay.service"
+if sudo test -e "$system_dropins"; then
+  sudo mv -- "$system_dropins" "$system_backup_root/codewide-relay.service.d"
+fi
+if sudo test -e "$system_update_service"; then
+  sudo mv -- "$system_update_service" "$system_backup_root/codewide-relay-update.service"
+fi
+if sudo test -e "$system_update_path"; then
+  sudo mv -- "$system_update_path" "$system_backup_root/codewide-relay-update.path"
+fi
+if sudo test -e "$system_updater"; then
+  sudo mv -- "$system_updater" "$system_backup_root/codewide-relay-updater"
+fi
+sudo mv -- "$system_binary" "$system_backup_root/codewide-relay"
+sudo systemctl daemon-reload
+
+if [ -n "$version" ]; then
+  sh "$installer" --version "$version" --install-dir "$user_bin"
+else
+  sh "$installer" --install-dir "$user_bin"
+fi
+
+after_status=$(codewide-relay --state "$user_state_root" status --json)
+after_port=$(printf '%s\n' "$after_status" | sed -n 's/.*"port":\([0-9][0-9]*\).*/\1/p')
+after_routes=$(printf '%s\n' "$after_status" | grep -o '"routeId":"[^"]*"' | sort || :)
+after_cert=$(sha256sum "$user_state_root/transport-cert.der" | sed 's/[[:space:]].*//')
+[ "$after_port" = "$before_port" ] || { printf '%s\n' 'Relay port changed during migration.' >&2; exit 1; }
+[ "$after_routes" = "$before_routes" ] || { printf '%s\n' 'Relay routes changed during migration.' >&2; exit 1; }
+[ "$after_cert" = "$before_cert" ] || { printf '%s\n' 'Relay identity changed during migration.' >&2; exit 1; }
+login_command=$(PATH="$login_path" sh -c 'command -v codewide-relay' 2>/dev/null || :)
+[ "$login_command" = "$user_bin/codewide-relay" ] || {
+  printf '%s\n' 'A new login shell cannot resolve the migrated codewide-relay command.' >&2
+  exit 1
+}
+
+migration_complete=1
+printf 'Migrated Relay to %s with its identity and %s route(s) preserved.\n' "$login_command" "$(printf '%s\n' "$after_routes" | grep -c . || :)"
+printf '%s\n' 'Future installer runs and signed Relay updates no longer require sudo.'
