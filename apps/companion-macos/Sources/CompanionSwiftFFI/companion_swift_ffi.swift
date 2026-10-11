@@ -586,9 +586,9 @@ fileprivate struct FfiConverterString: FfiConverter {
 public protocol CoreHostProtocol: AnyObject, Sendable {
 
     /**
-     * Returns the provider connection snapshot used by the local macOS UI.
-     * The JSON shape is the existing validated client-wire contract and
-     * contains no credentials.
+     * Returns the data-minimized provider connection snapshot used by the
+     * local macOS UI. Account, subscription, capability and credential data
+     * are not part of this contract.
      *
      * # Errors
      * Returns an adapter error if the presentation cannot be serialized.
@@ -804,9 +804,9 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
 
 
     /**
-     * Returns the provider connection snapshot used by the local macOS UI.
-     * The JSON shape is the existing validated client-wire contract and
-     * contains no credentials.
+     * Returns the data-minimized provider connection snapshot used by the
+     * local macOS UI. Account, subscription, capability and credential data
+     * are not part of this contract.
      *
      * # Errors
      * Returns an adapter error if the presentation cannot be serialized.
@@ -2322,7 +2322,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_func_verify_host_update_release() != 7360) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_method_corehost_agent_provider_connections_json() != 16670) {
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_agent_provider_connections_json() != 6547) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_app_server_connection() != 62371) {
