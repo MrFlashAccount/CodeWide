@@ -50,8 +50,6 @@ export type ComposerControlChipsProps = {
   onApplySettings: (choice: ModelSettingsChoice) => void;
   onClose: (scope: "model-menu" | "permissions-menu") => void;
   onFallback: (page: "model" | "permissions") => void;
-  /** Opens the thread's "Fork into" picker; absent when the thread cannot fork. */
-  onForkIntoAgent?: () => void;
   onQuickOpen: (scope: "model-menu" | "permissions-menu") => void;
   onSelectPermissions: (permissions: string | null) => void;
   readOnly: boolean;
@@ -176,12 +174,7 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
               ? "Loading model"
               : `Model and thinking: ${modelLabel}, ${view.effort.value ?? "not specified"}${nextTurnSuffix(modelNextTurn)}`
           }
-          agentScope={modelAgentScope({
-            catalog,
-            forkIntoAgent: props.onForkIntoAgent,
-            newChat,
-            thread: remoteThread,
-          })}
+          agentScope={modelAgentScope(catalog, newChat)}
           error={effectiveError}
           loading={initialLoading}
           models={controls.models}

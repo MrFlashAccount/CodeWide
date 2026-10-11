@@ -81,25 +81,8 @@ function openPicker(
   return view;
 }
 
-const claudeThread = {
-  codewideAgent: {
-    capabilities: { "threads.crossProviderFork": true },
-    primary: false,
-    provider: "claude",
-    providerName: "Claude",
-  },
-};
-const codexThread = {
-  codewideAgent: { capabilities: {}, primary: true, provider: "codex", providerName: "Codex" },
-};
-
 it("groups a new chat's models by provider and says the agent is final", () => {
-  const scope = modelAgentScope({
-    catalog: multiProvider,
-    forkIntoAgent: undefined,
-    newChat: true,
-    thread: null,
-  });
+  const scope = modelAgentScope(multiProvider, true);
   expect(scope).toEqual({ kind: "newChat" });
   const view = openPicker(scope);
   expect(view.getByTestId("model-agent-note")).toHaveTextContent(
@@ -113,44 +96,13 @@ it("groups a new chat's models by provider and says the agent is final", () => {
   expect(view.getByRole("button", { name: "Opus" })).toBeTruthy();
 });
 
-it("names the agent of an existing thread and opens the fork picker from the hint", () => {
-  const forkIntoAgent = jest.fn();
-  const onClose = jest.fn();
-  const claudeScope = modelAgentScope({
-    catalog: multiProvider,
-    forkIntoAgent,
-    newChat: false,
-    thread: claudeThread,
-  });
-  const claudeView = openPicker(claudeScope, multiProvider.models.slice(1), { onClose });
-  expect(claudeView.getByTestId("model-agent-note")).toHaveTextContent(
-    "This chat uses Claude. Fork it to switch agents.",
-  );
-  expect(claudeView.queryAllByRole("header")).toHaveLength(0);
-  fireEvent.press(claudeView.getByRole("button", { name: "Fork into another agent" }));
-  expect(onClose).toHaveBeenCalledTimes(1);
-  expect(forkIntoAgent).toHaveBeenCalledTimes(1);
-  expect(claudeView.queryByTestId("model-agent-note")).toBeNull();
-
-  const codexView = openPicker(
-    modelAgentScope({ catalog: multiProvider, forkIntoAgent, newChat: false, thread: codexThread }),
-  );
-  expect(codexView.getByTestId("model-agent-note")).toHaveTextContent("This chat uses Codex.");
-  expect(codexView.queryByRole("button", { name: "Fork into another agent" })).toBeNull();
-});
-
-it("offers no fork action when the conversation cannot open the picker", () => {
-  const view = openPicker(
-    modelAgentScope({
-      catalog: multiProvider,
-      forkIntoAgent: undefined,
-      newChat: false,
-      thread: claudeThread,
-    }),
-    multiProvider.models.slice(1),
-  );
-  expect(view.getByTestId("model-agent-note")).toHaveTextContent("This chat uses Claude.");
+it("shows only the models for an existing chat", () => {
+  expect(modelAgentScope(multiProvider, false)).toBeNull();
+  const view = openPicker(modelAgentScope(multiProvider, false), multiProvider.models.slice(1));
+  expect(view.queryByTestId("model-agent-note")).toBeNull();
   expect(view.queryByRole("button", { name: "Fork into another agent" })).toBeNull();
+  expect(view.queryAllByRole("header")).toHaveLength(0);
+  expect(view.getByRole("button", { name: "Sonnet" })).toBeTruthy();
 });
 
 it("hides thinking for a model without levels and applies it without an effort", () => {
@@ -174,17 +126,7 @@ it("keeps a single-provider or legacy picker unchanged", () => {
     ...EMPTY_TURN_CONTROLS,
     models: [row("gpt-5.5", "GPT-5.5", null), row("gpt-5.4", "GPT-5.4", null)],
   };
-  expect(
-    modelAgentScope({ catalog: legacy, forkIntoAgent: undefined, newChat: true, thread: null }),
-  ).toBeNull();
-  expect(
-    modelAgentScope({
-      catalog: legacy,
-      forkIntoAgent: jest.fn(),
-      newChat: false,
-      thread: { id: "legacy-thread" },
-    }),
-  ).toBeNull();
+  expect(modelAgentScope(legacy, true)).toBeNull();
   const view = openPicker(null, legacy.models);
   expect(view.queryByTestId("model-agent-note")).toBeNull();
   expect(view.queryAllByRole("header")).toHaveLength(0);

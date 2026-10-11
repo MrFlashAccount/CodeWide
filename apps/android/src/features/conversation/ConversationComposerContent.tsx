@@ -25,7 +25,6 @@ export function createConversationComposerContent({
   getStableTransferAccess,
   goalContent,
   goalInputs,
-  onForkIntoAgent,
   overlayScrollOwnershipBinding,
   readInputs,
   surfaceInputs,
@@ -41,8 +40,6 @@ export function createConversationComposerContent({
   getStableTransferAccess: ReturnType<typeof useDocumentTransferAccess>;
   goalContent: ReactNode;
   goalInputs: ConversationCompositionCapabilities["goal"];
-  /** Opens the thread's "Fork into" picker; absent when the thread cannot fork. */
-  onForkIntoAgent: (() => void) | undefined;
   overlayScrollOwnershipBinding: ReturnType<typeof useOverlayScrollOwnership>;
   readInputs: MainThreadReadCapabilities;
   surfaceInputs: ConversationSurfaceCapabilities;
@@ -102,7 +99,6 @@ export function createConversationComposerContent({
         newChat={surfaceInputs.newChat}
         onLoadControls={composerInputs.onLoadControls}
         onSetGoal={goalInputs.onSetGoal}
-        {...(onForkIntoAgent === undefined ? {} : { onForkIntoAgent })}
         openAccessoryAction={composerDelivery.composerAccessoryActionsBinding.openAccessoryAction}
         openControls={composerCommands.composerControlActionsBinding.openControls}
         openQuickControlMenu={composerCommands.composerControlActionsBinding.openQuickControlMenu}

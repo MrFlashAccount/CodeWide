@@ -68,8 +68,6 @@ export type ComposerFeatureProps = {
   microphoneAccess: { allowCapture: () => boolean; granted: boolean };
   microphoneButtonRef: RefObject<View | null>;
   newChat: boolean;
-  /** Opens the thread's "Fork into" picker; absent when the thread cannot fork into another agent. */
-  onForkIntoAgent?: () => void;
   onLoadControls: LoadTurnControls | undefined;
   onSetGoal: GoalDialogProps["onSet"] | undefined;
   openAccessoryAction: (action: ComposerAccessoryAction) => void;

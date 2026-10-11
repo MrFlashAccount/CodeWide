@@ -163,10 +163,6 @@ export function ModelThinkingSheet(props: ModelThinkingMenuProps): ReactNode {
     setState({ status: "closed" });
     props.onClose();
   });
-  const close = useEvent(() => {
-    setState({ status: "closed" });
-    props.onClose();
-  });
   const trigger = createElement(
     Pressable,
     {
@@ -187,7 +183,6 @@ export function ModelThinkingSheet(props: ModelThinkingMenuProps): ReactNode {
       {state.status === "open" && (
         <ModelMenuContent
           apply={apply}
-          close={close}
           draft={state.draft}
           initial={state.initial}
           modelsExpanded={state.modelsExpanded}
@@ -205,7 +200,6 @@ export function ModelThinkingSheet(props: ModelThinkingMenuProps): ReactNode {
 
 function ModelMenuContent({
   apply,
-  close,
   draft,
   initial,
   modelsExpanded,
@@ -217,7 +211,6 @@ function ModelMenuContent({
   props,
 }: {
   apply: () => void;
-  close: () => void;
   draft: ModelDraft;
   initial: ModelDraft;
   modelsExpanded: boolean;
@@ -234,7 +227,7 @@ function ModelMenuContent({
   return (
     <View style={styles.content}>
       <Text style={styles.title}>Model & Thinking</Text>
-      <ModelAgentNote onFork={close} scope={props.agentScope} />
+      <ModelAgentNote scope={props.agentScope} />
       <MenuNotices error={props.error} loading={props.loading && props.models.length === 0} />
       <ModelControls
         model={model}

@@ -29,7 +29,6 @@ export function ComposerFeature(props: ComposerFeatureProps) {
         leadingContextChips={props.leadingContextChips}
         newChat={props.newChat}
         onLoadControls={props.onLoadControls}
-        {...(props.onForkIntoAgent === undefined ? {} : { onForkIntoAgent: props.onForkIntoAgent })}
         openControls={props.openControls}
         openQuickControlMenu={props.openQuickControlMenu}
         readOnly={props.readOnly}

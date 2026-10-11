@@ -39,16 +39,9 @@ type TriggerProps = {
 /**
  * How the model picker explains the agent a conversation runs on, in
  * multi-provider mode only: a new chat groups models by provider and says the
- * agent is fixed once the chat starts; an existing thread names its agent.
+ * agent is fixed once the chat starts.
  */
-export type ModelAgentScope =
-  | { readonly kind: "newChat" }
-  | {
-      /** Opens the "Fork into" picker; absent when the thread cannot fork into another agent. */
-      readonly forkIntoAgent: (() => void) | null;
-      readonly kind: "thread";
-      readonly providerName: string;
-    };
+export type ModelAgentScope = { readonly kind: "newChat" };
 
 export type ModelThinkingMenuProps = TriggerProps & {
   /** Absent on a single-provider or legacy server: the picker looks as before. */
