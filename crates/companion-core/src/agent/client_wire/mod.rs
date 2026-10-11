@@ -19,6 +19,7 @@ pub mod gateway;
 pub mod history;
 pub mod items;
 pub mod list;
+pub mod model_scope;
 pub mod observe;
 pub mod results;
 pub mod settings;

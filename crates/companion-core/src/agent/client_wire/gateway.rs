@@ -16,7 +16,9 @@ use rand::Rng;
 use serde_json::{Value, json};
 use tracing::warn;
 
-use super::{PROVIDER_FIELD, WireProvider, request_ids, results, settings};
+use super::{
+    PROVIDER_FIELD, WireProvider, model_scope::ModelScope, request_ids, results, settings,
+};
 use crate::agent::{
     bindings::{BindOutcome, BindingOrigin, BindingStore, ThreadRoute},
     model::{
@@ -140,12 +142,33 @@ pub enum ThreadStartRoute {
 pub struct ClientWireGateway {
     registry: Arc<ProviderRegistry>,
     bindings: Arc<BindingStore>,
+    model_scope: ModelScope,
 }
 
 impl ClientWireGateway {
     #[must_use]
     pub fn new(registry: Arc<ProviderRegistry>, bindings: Arc<BindingStore>) -> Self {
-        Self { registry, bindings }
+        Self {
+            registry,
+            bindings,
+            model_scope: ModelScope::default(),
+        }
+    }
+
+    /// Rejects a thread-scoped `method` whose `model` only another provider
+    /// offers: switching agents is a fork (`model_scope`).
+    ///
+    /// # Errors
+    /// Returns `-32602` naming the provider that offers the model.
+    pub async fn check_model_scope(
+        &self,
+        target: &Target,
+        method: &str,
+        params: &Value,
+    ) -> Result<(), RpcFailure> {
+        self.model_scope
+            .check(&self.registry, target, method, params)
+            .await
     }
 
     #[must_use]

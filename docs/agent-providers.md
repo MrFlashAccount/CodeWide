@@ -253,6 +253,7 @@ While a turn runs, the thread list shows what the agent is doing now instead of 
 - `-32600 "native session not found: <id>"` — `nativeSession.read` of a session the provider's store does not have.
 - `-32601` — `nativeSession.list` / `nativeSession.read` on a provider without a native session store.
 - `-32073 "thread not found: <id>"` — `companion/thread/sync` of a thread the companion does not know or its provider no longer has (for example deleted elsewhere). The client removes the thread locally and closes it if it is open.
+- `-32602 "<model> is a <Provider> model; this thread runs on <Provider>. Fork the thread to switch agents."` — `turn/start`, `thread/settings/update` or `turn/settings/update` of an existing thread names a model that only another enabled provider lists (multi-provider mode; catalogs cached for 5 minutes, re-read once for an unknown model). A model no catalog lists stays with the thread's provider. A queued turn fails once with the same message.
 - `-32071` is not used: there is no session cap.
 
 ## Compatibility surfaces

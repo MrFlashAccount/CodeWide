@@ -1484,6 +1484,13 @@ impl SyncHub {
                 Err(failure) => return send_rpc_failure(socket, id, &failure).await,
             },
         };
+        if let Err(failure) = self
+            .gateway
+            .check_model_scope(&target, &method, &params)
+            .await
+        {
+            return send_rpc_failure(socket, id, &failure).await;
+        }
         if method == "turn/start" && self.recent_turn_starts.lock().await.seen_or_insert(&params) {
             match reconcile_direct_turn_start(&target, &params).await {
                 Ok(Some(turn)) => {

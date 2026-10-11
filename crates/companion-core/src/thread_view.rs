@@ -182,6 +182,9 @@ impl ThreadViewService {
             .as_object_mut()
             .ok_or(ThreadViewError::InvalidStatus)?
             .insert("turns".into(), Value::Array(Vec::new()));
+        // The thread's agent, as on every other projected thread: the client
+        // offers only its provider's models, so a switch goes through a fork.
+        target.wire.attach_extension(&mut thread);
         let (mut active_turn, fence) = if active {
             let (active_turn, active_fence) = Self::read_active_turn(native, thread_id).await?;
             (active_turn, active_fence)
