@@ -44,6 +44,22 @@ struct GuardianSystem: @unchecked Sendable {
         return InstalledAppMetadata(version: version, build: build, sourceRevision: revision)
     }
 
+    /// The GitHub release tag the app was published under (`CodeWideReleaseTag`,
+    /// written by the release build); `nil` for builds that predate it.
+    func releaseTag(app: URL) -> String? {
+        guard let data = try? Data(contentsOf: app.appending(path: "Contents/Info.plist")),
+              let info = try? PropertyListSerialization.propertyList(from: data, format: nil)
+                as? [String: Any],
+              let tag = info["CodeWideReleaseTag"] as? String,
+              tag.range(
+                  of: #"^(v[0-9]+\.[0-9]+\.[0-9]+|release-[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+)$"#,
+                  options: .regularExpression
+              ) != nil else {
+            return nil
+        }
+        return tag
+    }
+
     func verifyCodeSignature(app: URL) throws {
         let result = try runProcess(
             URL(fileURLWithPath: "/usr/bin/codesign"),

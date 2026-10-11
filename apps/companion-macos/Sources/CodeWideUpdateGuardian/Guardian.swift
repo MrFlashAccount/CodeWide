@@ -18,17 +18,19 @@ enum GuardianManifestURLs {
         #endif
     }
 
+    /// The manifest of the release tagged `tag`: `release-YYYY-MM-DD.N` since
+    /// 0.4.2, `v<version>` before.
     static func baseline(
-        version: String,
+        tag: String,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws -> URL {
         #if CODEWIDE_E2E_NAMESPACE
         try e2eBase(environment: environment).appending(
-            path: "releases/download/v\(version)/release-manifest.json"
+            path: "releases/download/\(tag)/release-manifest.json"
         )
         #else
         URL(
-            string: "https://github.com/MrFlashAccount/CodeWide/releases/download/v\(version)/release-manifest.json"
+            string: "https://github.com/MrFlashAccount/CodeWide/releases/download/\(tag)/release-manifest.json"
         )!
         #endif
     }
@@ -167,8 +169,11 @@ actor Guardian {
             validReceipt = nil
             try storage.revokeCapability()
         }
+        // A finished operation is not active: it stays readable by id, but a
+        // later status must not keep reporting an old failure or rollback.
         let operation: HostUpdateOperationPayload?
-        if let journal = try storage.loadJournal() {
+        if let journal = try storage.loadJournal(),
+           try storage.loadTerminal(journal.operationId) == nil {
             operation = try self.operation(journal.operationId)
         } else {
             operation = nil
@@ -192,14 +197,15 @@ actor Guardian {
         let app = URL(fileURLWithPath: installation.canonicalAppPath, isDirectory: true)
         try storage.probeAtomicSiblingRename(canonicalApp: app)
         let metadata = try system.metadata(app: app)
+        let manifest = try await downloadManifest(try GuardianManifestURLs.latest())
         let receipt = try await establishOrVerifyReceipt(
             existing: state.receipt,
             app: app,
-            metadata: metadata
+            metadata: metadata,
+            latestManifest: manifest
         )
         let trust = try storage.trust()
-        let manifest = try await downloadManifest(try GuardianManifestURLs.latest())
-        let admitted = try admitMacosHostUpdateRelease(
+        let admission = try admitMacosHostUpdateRelease(
             envelopeJson: manifest,
             publicKeySpki: trust.publicKeySPKI,
             nowUnixSeconds: now() / 1_000,
@@ -209,14 +215,19 @@ actor Guardian {
             highestSequence: receipt.highestSequence,
             stateEpoch: receipt.stateEpoch
         )
-        let target = payload(admitted.target)
         state.receipt = receipt
-        state.available = AvailableHostUpdatePayload(
-            target: target,
-            targetFingerprint: admitted.targetFingerprint,
-            releaseSequence: admitted.sequence,
-            expiresAt: admitted.expiresAt
-        )
+        switch admission {
+        case .available(let admitted):
+            state.available = AvailableHostUpdatePayload(
+                target: payload(admitted.target),
+                targetFingerprint: admitted.targetFingerprint,
+                releaseSequence: admitted.sequence,
+                expiresAt: admitted.expiresAt
+            )
+        case .current:
+            // The installed app is the latest release: up to date, not a failure.
+            state.available = nil
+        }
         try storage.saveState(state)
         try storage.publishCapability(receipt)
         return try status()
@@ -225,7 +236,8 @@ actor Guardian {
     private func establishOrVerifyReceipt(
         existing: GuardianBootstrapReceipt?,
         app: URL,
-        metadata: InstalledAppMetadata
+        metadata: InstalledAppMetadata,
+        latestManifest: String
     ) async throws -> GuardianBootstrapReceipt {
         let treeDigest = try storage.bundleTreeDigest(app)
         do {
@@ -243,20 +255,20 @@ actor Guardian {
             return existing
         }
         let trust = try storage.trust()
-        let manifestURL = try GuardianManifestURLs.baseline(version: metadata.version)
-        let manifest = try await downloadManifest(manifestURL)
-        let verified = try verifyHostUpdateRelease(
-            envelopeJson: manifest,
-            publicKeySpki: trust.publicKeySPKI,
-            nowUnixSeconds: now() / 1_000,
-            trustedKeyId: trust.keyId
-        )
-        guard let ffiTarget = verified.targets.first(where: {
-            $0.platform == "macos-universal" && $0.version == metadata.version
-                && $0.build == metadata.build && $0.sourceRevision == metadata.sourceRevision
-        }) else {
-            throw GuardianFailure.manual("baseline_release_metadata_mismatch")
+        let baseline: (verified: FfiVerifiedHostUpdateRelease, target: FfiHostUpdateTarget)
+        if let latest = try baselineTarget(manifest: latestManifest, metadata: metadata, trust: trust) {
+            // The installed app is the latest release: its manifest is already here.
+            baseline = latest
+        } else {
+            let tag = system.releaseTag(app: app) ?? "v\(metadata.version)"
+            let manifest = try await downloadManifest(try GuardianManifestURLs.baseline(tag: tag))
+            guard let tagged = try baselineTarget(manifest: manifest, metadata: metadata, trust: trust) else {
+                throw GuardianFailure.manual("baseline_release_metadata_mismatch")
+            }
+            baseline = tagged
         }
+        let verified = baseline.verified
+        let ffiTarget = baseline.target
         let target = payload(ffiTarget)
         guard target.stateEpoch == stateEpoch,
               target.bootstrapVersion == HostUpdateIPC.bootstrapVersion,
@@ -296,6 +308,28 @@ actor Guardian {
         state.receipt = receipt
         try storage.saveState(state)
         return receipt
+    }
+
+    /// The installed app's target in a signed manifest, or `nil` when the
+    /// manifest does not list it.
+    private func baselineTarget(
+        manifest: String,
+        metadata: InstalledAppMetadata,
+        trust: GuardianBootstrapTrust
+    ) throws -> (verified: FfiVerifiedHostUpdateRelease, target: FfiHostUpdateTarget)? {
+        let verified = try verifyHostUpdateRelease(
+            envelopeJson: manifest,
+            publicKeySpki: trust.publicKeySPKI,
+            nowUnixSeconds: now() / 1_000,
+            trustedKeyId: trust.keyId
+        )
+        guard let target = verified.targets.first(where: {
+            $0.platform == "macos-universal" && $0.version == metadata.version
+                && $0.build == metadata.build && $0.sourceRevision == metadata.sourceRevision
+        }) else {
+            return nil
+        }
+        return (verified, target)
     }
 
     private func apply(_ command: ApplyHostUpdateCommandPayload) throws

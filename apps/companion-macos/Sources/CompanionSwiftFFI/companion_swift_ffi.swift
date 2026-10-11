@@ -2106,6 +2106,85 @@ public func FfiConverterTypeFfiCodexInstallation_lower(_ value: FfiCodexInstalla
 }
 
 
+
+/**
+ * What a signed release means for the installed macOS app.
+ */
+
+public enum FfiHostUpdateAdmission: Equatable, Hashable {
+
+    /**
+     * The release upgrades the installed version.
+     */
+    case available(update: FfiAdmittedHostUpdate
+    )
+    /**
+     * The release is the installed version (or older), or one already
+     * accepted: there is nothing to update, which is not a failure.
+     */
+    case current
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiHostUpdateAdmission: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiHostUpdateAdmission: FfiConverterRustBuffer {
+    typealias SwiftType = FfiHostUpdateAdmission
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHostUpdateAdmission {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .available(update: try FfiConverterTypeFfiAdmittedHostUpdate.read(from: &buf)
+        )
+
+        case 2: return .current
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiHostUpdateAdmission, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .available(update):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeFfiAdmittedHostUpdate.write(update, into: &buf)
+
+
+        case .current:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiHostUpdateAdmission_lift(_ buf: RustBuffer) throws -> FfiHostUpdateAdmission {
+    return try FfiConverterTypeFfiHostUpdateAdmission.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiHostUpdateAdmission_lower(_ value: FfiHostUpdateAdmission) -> RustBuffer {
+    return FfiConverterTypeFfiHostUpdateAdmission.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -2230,15 +2309,17 @@ fileprivate struct FfiConverterSequenceTypeFfiHostUpdateTarget: FfiConverterRust
     }
 }
 /**
- * Applies the complete shared admission policy to one macOS target.
+ * Applies the complete shared admission policy to one macOS target. A
+ * release that would not upgrade the installed version, or one whose
+ * sequence was already accepted, is [`FfiHostUpdateAdmission::Current`].
  *
  * # Errors
  *
- * Returns an error when signature verification or any target, predecessor,
- * sequence, compatibility, or state-epoch admission rule fails.
+ * Returns an error when signature verification or any other target,
+ * predecessor, compatibility, or state-epoch admission rule fails.
  */
-public func admitMacosHostUpdateRelease(envelopeJson: String, publicKeySpki: String, nowUnixSeconds: UInt64, trustedKeyId: String, currentVersion: String, currentDigest: String, highestSequence: UInt64, stateEpoch: UInt32)throws  -> FfiAdmittedHostUpdate  {
-    return try  FfiConverterTypeFfiAdmittedHostUpdate_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+public func admitMacosHostUpdateRelease(envelopeJson: String, publicKeySpki: String, nowUnixSeconds: UInt64, trustedKeyId: String, currentVersion: String, currentDigest: String, highestSequence: UInt64, stateEpoch: UInt32)throws  -> FfiHostUpdateAdmission  {
+    return try  FfiConverterTypeFfiHostUpdateAdmission_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
     uniffi_companion_swift_ffi_fn_func_admit_macos_host_update_release(
         FfiConverterString.lower(envelopeJson),
@@ -2289,7 +2370,7 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_func_admit_macos_host_update_release() != 27860) {
+    if (uniffi_companion_swift_ffi_checksum_func_admit_macos_host_update_release() != 31687) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_func_verify_host_update_release() != 7360) {

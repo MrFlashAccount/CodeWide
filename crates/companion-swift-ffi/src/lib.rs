@@ -13,7 +13,8 @@ use companion_core::{
     host_identity::HostDisplayName,
     host_update::{
         HOST_UPDATE_BOOTSTRAP_VERSION, HOST_UPDATE_JOURNAL_VERSION, HostPlatform, ReleaseAdmission,
-        SignedReleaseDescriptor, admit_signed_release, verify_signed_release_descriptor,
+        ReleaseAdmissionError, SignedReleaseDescriptor, admit_signed_release,
+        verify_signed_release_descriptor,
     },
     managed_runtime::{
         AppServerConnection, ManagedRuntime, ManagedRuntimeConfig, PairingPresentation,
@@ -128,6 +129,22 @@ pub struct FfiVerifiedHostUpdateRelease {
     pub targets: Vec<FfiHostUpdateTarget>,
 }
 
+/// What a signed release means for the installed macOS app.
+// WHY: UniFFI enum fields cannot be `Box`ed, and this value is returned once
+// per check, so its size never matters.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "UniFFI cannot lift a boxed record across the FFI"
+)]
+#[derive(Clone, Debug, uniffi::Enum)]
+pub enum FfiHostUpdateAdmission {
+    /// The release upgrades the installed version.
+    Available { update: FfiAdmittedHostUpdate },
+    /// The release is the installed version (or older), or one already
+    /// accepted: there is nothing to update, which is not a failure.
+    Current,
+}
+
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct FfiAdmittedHostUpdate {
     pub sequence: u64,
@@ -172,12 +189,14 @@ pub fn verify_host_update_release(
     })
 }
 
-/// Applies the complete shared admission policy to one macOS target.
+/// Applies the complete shared admission policy to one macOS target. A
+/// release that would not upgrade the installed version, or one whose
+/// sequence was already accepted, is [`FfiHostUpdateAdmission::Current`].
 ///
 /// # Errors
 ///
-/// Returns an error when signature verification or any target, predecessor,
-/// sequence, compatibility, or state-epoch admission rule fails.
+/// Returns an error when signature verification or any other target,
+/// predecessor, compatibility, or state-epoch admission rule fails.
 #[uniffi::export]
 #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 pub fn admit_macos_host_update_release(
@@ -189,7 +208,7 @@ pub fn admit_macos_host_update_release(
     current_digest: String,
     highest_sequence: u64,
     state_epoch: u32,
-) -> Result<FfiAdmittedHostUpdate, CompanionFfiError> {
+) -> Result<FfiHostUpdateAdmission, CompanionFfiError> {
     let envelope: SignedReleaseDescriptor =
         serde_json::from_str(&envelope_json).map_err(CompanionFfiError::runtime)?;
     let admission = ReleaseAdmission {
@@ -203,13 +222,20 @@ pub fn admit_macos_host_update_release(
         journal_version: HOST_UPDATE_JOURNAL_VERSION,
     };
     let (descriptor, target, target_fingerprint) =
-        admit_signed_release(&envelope, &public_key_spki, now_unix_seconds, &admission)
-            .map_err(CompanionFfiError::runtime)?;
-    Ok(FfiAdmittedHostUpdate {
-        sequence: descriptor.sequence,
-        expires_at: descriptor.expires_at,
-        target_fingerprint,
-        target: ffi_host_update_target(target),
+        match admit_signed_release(&envelope, &public_key_spki, now_unix_seconds, &admission) {
+            Ok(admitted) => admitted,
+            Err(ReleaseAdmissionError::Downgrade | ReleaseAdmissionError::Replay) => {
+                return Ok(FfiHostUpdateAdmission::Current);
+            }
+            Err(error) => return Err(CompanionFfiError::runtime(error)),
+        };
+    Ok(FfiHostUpdateAdmission::Available {
+        update: FfiAdmittedHostUpdate {
+            sequence: descriptor.sequence,
+            expires_at: descriptor.expires_at,
+            target_fingerprint,
+            target: ffi_host_update_target(target),
+        },
     })
 }
 

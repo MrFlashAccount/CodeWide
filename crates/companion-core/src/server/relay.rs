@@ -55,8 +55,8 @@ async fn relay_enabled(
 }
 
 async fn relay_update_status(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if headers.get("origin").is_some() || !authorize_admin(&state.authorization, &headers).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    if !authorize_relay_update(&state.authorization, &headers).await {
+        return json_error(StatusCode::UNAUTHORIZED, "relay_update_authorization_required");
     }
     let Some(runtime) = state.services.relay.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
@@ -71,8 +71,8 @@ async fn relay_update_status(State(state): State<AppState>, headers: HeaderMap) 
 }
 
 async fn relay_update_check(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if headers.get("origin").is_some() || !authorize_admin(&state.authorization, &headers).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    if !authorize_relay_update(&state.authorization, &headers).await {
+        return json_error(StatusCode::UNAUTHORIZED, "relay_update_authorization_required");
     }
     let Some(runtime) = state.services.relay.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
@@ -91,8 +91,8 @@ async fn relay_update_apply(
     headers: HeaderMap,
     Json(request): Json<codewide_relay::update::ApplyRelayUpdateRequest>,
 ) -> Response {
-    if headers.get("origin").is_some() || !authorize_admin(&state.authorization, &headers).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    if !authorize_relay_update(&state.authorization, &headers).await {
+        return json_error(StatusCode::UNAUTHORIZED, "relay_update_authorization_required");
     }
     let Some(runtime) = state.services.relay.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
@@ -107,8 +107,8 @@ async fn relay_update_operation(
     headers: HeaderMap,
     Path(operation_id): Path<String>,
 ) -> Response {
-    if headers.get("origin").is_some() || !authorize_admin(&state.authorization, &headers).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    if !authorize_relay_update(&state.authorization, &headers).await {
+        return json_error(StatusCode::UNAUTHORIZED, "relay_update_authorization_required");
     }
     let Some(runtime) = state.services.relay.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
@@ -127,8 +127,8 @@ async fn relay_update_reconnect(
     headers: HeaderMap,
     Path(operation_id): Path<String>,
 ) -> Response {
-    if headers.get("origin").is_some() || !authorize_admin(&state.authorization, &headers).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    if !authorize_relay_update(&state.authorization, &headers).await {
+        return json_error(StatusCode::UNAUTHORIZED, "relay_update_authorization_required");
     }
     let Some(runtime) = state.services.relay.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
@@ -140,6 +140,32 @@ async fn relay_update_reconnect(
             |error| relay_update_error(&error),
             |operation| Json(operation).into_response(),
         )
+}
+
+/// The Relay updater, like the host updater, serves a paired device's
+/// session, and the admin token; never a browser.
+async fn authorize_relay_update(authorization: &Authorization, headers: &HeaderMap) -> bool {
+    if headers.get(header::ORIGIN).is_some() {
+        return false;
+    }
+    match authorization {
+        Authorization::AdminOnly(token) => authorized(headers, token),
+        Authorization::Registry(registry) => admits_relay_update(
+            registry
+                .authorization_context(header_auth(headers))
+                .await
+                .as_ref(),
+        ),
+    }
+}
+
+/// A device's long-lived credential only opens sessions; the updater needs
+/// the session itself or the admin token.
+fn admits_relay_update(context: Option<&AuthorizationContext>) -> bool {
+    matches!(
+        context,
+        Some(AuthorizationContext::Admin | AuthorizationContext::Session { .. })
+    )
 }
 
 fn relay_update_error(error: &crate::relay::RelayError) -> Response {
