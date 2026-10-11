@@ -269,7 +269,32 @@ class InstallerServiceTests(unittest.TestCase):
             verified = subprocess.run([analyzer, "--user", "verify", str(self.unit)], capture_output=True, env=self.env)
             self.assertEqual(verified.returncode, 0, verified.stderr.decode())
 
-    def test_default_install_uses_user_bin_without_sudo_or_existing_path_entry(self):
+    def test_default_install_is_on_path_without_sudo(self):
+        home = self.root / "home"
+        env = {
+            **self.env,
+            "HOME": str(home),
+            "PATH": f"{home / '.local/bin'}:{self.root / 'tools'}:{os.environ['PATH']}",
+        }
+        env.pop("CODEWIDE_RELAY_INSTALL_DIR")
+
+        result = self.install(env=env)
+
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        installed = home / ".local/bin/codewide-relay"
+        self.assertTrue(installed.is_file())
+        self.assertFalse((self.root / "sudo-used").exists())
+        self.assertIn(b"Ready: codewide-relay pair", result.stdout)
+        status = subprocess.run(
+            ["codewide-relay", "status", "--json"],
+            env=env,
+            capture_output=True,
+            timeout=10,
+        )
+        self.assertEqual(status.returncode, 0, status.stderr.decode())
+        self.assertEqual(json.loads(status.stdout)["port"], self.port)
+
+    def test_default_install_rejects_a_destination_outside_path(self):
         home = self.root / "home"
         env = {
             **self.env,
@@ -280,19 +305,10 @@ class InstallerServiceTests(unittest.TestCase):
 
         result = self.install(env=env)
 
-        self.assertEqual(result.returncode, 0, result.stderr.decode())
-        installed = home / ".local/bin/codewide-relay"
-        self.assertTrue(installed.is_file())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"No standard user executable directory is present in PATH", result.stderr)
+        self.assertFalse((home / ".local/bin/codewide-relay").exists())
         self.assertFalse((self.root / "sudo-used").exists())
-        self.assertIn(f"Ready: {installed} pair".encode(), result.stdout)
-        status = subprocess.run(
-            [str(installed), "status", "--json"],
-            env=env,
-            capture_output=True,
-            timeout=10,
-        )
-        self.assertEqual(status.returncode, 0, status.stderr.decode())
-        self.assertEqual(json.loads(status.stdout)["port"], self.port)
 
     def custom_unit(self, path):
         path.parent.mkdir(parents=True, exist_ok=True)

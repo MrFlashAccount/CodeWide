@@ -41,16 +41,16 @@ install and verify the binary without cloning the repository:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
-$HOME/.local/bin/codewide-relay pair
+codewide-relay pair
 ```
 
 The installer resolves the published product version and its release origin
 (including dated releases), verifies the release SHA-256, checks the
 binary-reported version, and atomically installs a fresh Relay to
-`~/.local/bin/codewide-relay` without `sudo`. If that directory is not yet in
-`PATH`, the final output prints the executable's absolute path. Before reporting
-success it verifies the installed binary and the running service through its
-private administration socket.
+`~/.local/bin` or `~/bin`, whichever standard user directory is already in
+`PATH`, without `sudo`. It refuses to install outside `PATH`. Before reporting
+success it verifies `command -v codewide-relay`, the binary-reported version,
+and the running service through its private administration socket.
 
 On a Linux host running systemd, it creates and enables a user service. It runs
 as the installing user, uses that user's existing state directory, and starts
@@ -76,7 +76,7 @@ For a binary-only installation without systemd activation, append `--no-start`:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh -s -- --no-start
-$HOME/.local/bin/codewide-relay serve
+codewide-relay serve
 ```
 
 Use `--version` to pin a release. `--install-dir` or
