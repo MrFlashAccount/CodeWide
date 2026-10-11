@@ -224,13 +224,17 @@ verified portable `x86_64` Linux binary with:
 curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
 ```
 
-The installer verifies the binary, places it in `/usr/local/bin`, and starts
-Relay with autostart after logout and reboot. It requests `sudo` only when
-installation or persistent startup needs administrator access. On a Linux host
-running systemd, no manual unit file, shell restart, or PATH edit is needed.
-Existing service configuration, Relay keys, and paired computers are preserved;
-a failed startup restores the previous executable and running service. Use
-`--no-start` only for a manually managed, binary-only installation.
+The installer verifies the binary, places it in `~/.local/bin` or `~/bin`
+(whichever standard user directory is already in `PATH`), and starts a systemd
+user service without `sudo`. It refuses to install outside `PATH`, so a
+successful installation always makes `codewide-relay` directly executable. The
+service starts with the user's login; an administrator may separately enable
+systemd lingering when the Relay must also run before login and after logout.
+Existing system services keep their machine-wide installation and therefore
+still require administrator access to update. Existing service configuration,
+Relay keys, and paired computers are preserved; a failed startup restores the
+previous executable and running service. Use `--no-start` only for a manually
+managed, binary-only installation.
 
 To connect a Mac, run:
 

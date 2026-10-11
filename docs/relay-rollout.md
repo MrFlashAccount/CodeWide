@@ -45,27 +45,30 @@ codewide-relay pair
 ```
 
 The installer resolves the published product version and its release origin
-(including dated releases), verifies the release SHA-256,
-checks the binary-reported version, and atomically installs it to
-`/usr/local/bin/codewide-relay`. It requests `sudo` for the installation when
-needed; downloads and verification run as the invoking user. No shell restart or
-manual PATH edit is required. Before reporting success it verifies both
-`command -v codewide-relay` and `codewide-relay --version` by name, then verifies
-the running service through its private administration socket.
+(including dated releases), verifies the release SHA-256, checks the
+binary-reported version, and atomically installs a fresh Relay to
+`~/.local/bin` or `~/bin`, whichever standard user directory is already in
+`PATH`, without `sudo`. It refuses to install outside `PATH`. Before reporting
+success it verifies `command -v codewide-relay`, the binary-reported version,
+and the running service through its private administration socket.
 
-On a Linux host running systemd, it creates a user service and enables lingering
-automatically, so Relay starts after reboot and keeps running after SSH logout.
-It runs as the installing user, using that user's existing state directory. No
-manual `systemctl` commands or unit editing are required. Existing user or system
-services retain their configuration, port, and state; the installer restarts
-them with the updated binary instead of creating another Relay. If startup or
-readiness fails, it restores the previous binary and restarts the previous
-active service. It never deletes or regenerates the Relay's identity or routes.
-Ambiguous system/user services and a running unmanaged foreground daemon are
-rejected before installation rather than replaced silently.
+On a Linux host running systemd, it creates and enables a user service. It runs
+as the installing user, uses that user's existing state directory, and starts
+with that user's login. Lingering is host policy rather than an installation
+prerequisite: when the Relay must start before login and remain after logout, an
+administrator can enable it separately with `loginctl enable-linger USER`. No
+manual unit editing is required. Existing user or system services retain their
+configuration, port, state, and installation scope; updating an existing system
+service still requests administrator access instead of creating a second Relay.
+If startup or readiness fails, the installer restores the previous binary and
+restarts the previous active service. It never deletes or regenerates the
+Relay's identity or routes. Ambiguous system/user services and a running
+unmanaged foreground daemon are rejected before installation rather than
+replaced silently.
 
-Run `codewide-relay pair` to connect a Mac. The public address is detected
-automatically; `--state` and `--address` are not needed in the ordinary case.
+Run the `pair` command printed by the installer to connect a Mac. The public
+address is detected automatically; `--state` and `--address` are not needed in
+the ordinary case.
 The VPS must accept inbound TCP `8780` (or the port of an existing customized
 service). Host and cloud firewall policies remain operator-owned.
 

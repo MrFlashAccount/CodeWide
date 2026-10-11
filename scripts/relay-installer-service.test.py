@@ -47,6 +47,7 @@ def stop(pid):
 def manager_tool(tool, args):
     root = Path(os.environ["CODEWIDE_RELAY_INSTALL_TEST_ROOT"])
     if tool == "sudo":
+        (root / "sudo-used").touch()
         return subprocess.call(args[1:] if args[0] == "--" else args)
     if tool == "loginctl":
         marker = root / "linger"
@@ -174,9 +175,15 @@ class InstallerServiceTests(unittest.TestCase):
             f"{updater_digest}  {UPDATER_ASSET}\n"
         )
 
-    def install(self, *args):
+    def install(self, *args, env=None):
         # Match curl | sh: the installer and its child commands receive a pipe.
-        return subprocess.run(["sh", "-s", "--", *args], input=(ROOT / "install/relay").read_bytes(), env=self.env, capture_output=True, timeout=45)
+        return subprocess.run(
+            ["sh", "-s", "--", *args],
+            input=(ROOT / "install/relay").read_bytes(),
+            env=env or self.env,
+            capture_output=True,
+            timeout=45,
+        )
 
     def cli(self, *args, env=None):
         result = subprocess.run([str(self.bin / "codewide-relay"), *args], env=env or self.env, capture_output=True, timeout=10)
@@ -234,7 +241,9 @@ class InstallerServiceTests(unittest.TestCase):
         self.assertIn(b"Ready: codewide-relay pair", result.stdout)
         self.assertTrue((self.root / "user.enabled").exists())
         self.assertTrue((self.root / "user.update.enabled").exists())
-        self.assertTrue((self.root / "linger").exists())
+        self.assertFalse((self.root / "linger").exists())
+        self.assertFalse((self.root / "sudo-used").exists())
+        self.assertIn(b"starts after login", result.stdout)
         self.assertTrue((self.state / "update/bootstrap/codewide-relay-updater").is_file())
         self.assertTrue((self.root / "config/systemd/user/codewide-relay-update.path").is_file())
         self.assertEqual(
@@ -259,6 +268,47 @@ class InstallerServiceTests(unittest.TestCase):
         if analyzer:
             verified = subprocess.run([analyzer, "--user", "verify", str(self.unit)], capture_output=True, env=self.env)
             self.assertEqual(verified.returncode, 0, verified.stderr.decode())
+
+    def test_default_install_is_on_path_without_sudo(self):
+        home = self.root / "home"
+        env = {
+            **self.env,
+            "HOME": str(home),
+            "PATH": f"{home / '.local/bin'}:{self.root / 'tools'}:{os.environ['PATH']}",
+        }
+        env.pop("CODEWIDE_RELAY_INSTALL_DIR")
+
+        result = self.install(env=env)
+
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        installed = home / ".local/bin/codewide-relay"
+        self.assertTrue(installed.is_file())
+        self.assertFalse((self.root / "sudo-used").exists())
+        self.assertIn(b"Ready: codewide-relay pair", result.stdout)
+        status = subprocess.run(
+            ["codewide-relay", "status", "--json"],
+            env=env,
+            capture_output=True,
+            timeout=10,
+        )
+        self.assertEqual(status.returncode, 0, status.stderr.decode())
+        self.assertEqual(json.loads(status.stdout)["port"], self.port)
+
+    def test_default_install_rejects_a_destination_outside_path(self):
+        home = self.root / "home"
+        env = {
+            **self.env,
+            "HOME": str(home),
+            "PATH": f"{self.root / 'tools'}:{os.environ['PATH']}",
+        }
+        env.pop("CODEWIDE_RELAY_INSTALL_DIR")
+
+        result = self.install(env=env)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"No standard user executable directory is present in PATH", result.stderr)
+        self.assertFalse((home / ".local/bin/codewide-relay").exists())
+        self.assertFalse((self.root / "sudo-used").exists())
 
     def custom_unit(self, path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -315,7 +365,7 @@ class InstallerServiceTests(unittest.TestCase):
         self.assert_authorized(computer)
         self.assert_ready()
 
-    def test_failed_fresh_install_restores_linger_and_removes_failed_deployment(self):
+    def test_failed_fresh_install_removes_failed_deployment(self):
         self.payload.write_text(f'#!/bin/sh\nif [ "$1" = --version ]; then echo "codewide-relay {self.version}"; else exit 1; fi\n')
         self.payload.chmod(0o755)
         self.checksum()

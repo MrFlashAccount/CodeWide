@@ -2,7 +2,7 @@
 set -eu
 
 VERSION=${CODEWIDE_RELAY_VERSION:-}
-INSTALL_DIR=${CODEWIDE_RELAY_INSTALL_DIR:-/usr/local/bin}
+INSTALL_DIR=${CODEWIDE_RELAY_INSTALL_DIR:-}
 DOWNLOAD_BASE_URL=${CODEWIDE_RELAY_DOWNLOAD_BASE_URL:-}
 ALLOW_INSECURE_DOWNLOAD=${CODEWIDE_RELAY_ALLOW_INSECURE_DOWNLOAD:-0}
 TMP_ROOT=${TMPDIR:-/tmp}
@@ -17,7 +17,6 @@ service_was_enabled=0
 unit_created=0
 activation_started=0
 deployment_started=0
-linger_changed=0
 update_service=
 update_path=
 update_units_written=0
@@ -25,8 +24,9 @@ update_path_was_enabled=0
 
 usage() {
   printf '%s\n' 'Usage: install-relay [--version VERSION] [--install-dir DIRECTORY] [--download-base-url URL] [--no-start]'
-  printf '%s\n' 'Installs codewide-relay into /usr/local/bin, using sudo if needed.'
-  printf '%s\n' 'Starts a persistent systemd service, ready for codewide-relay pair.'
+  printf '%s\n' 'Installs codewide-relay into a standard user directory already in PATH, without sudo.'
+  printf '%s\n' 'Starts a systemd user service, ready for codewide-relay pair.'
+  printf '%s\n' 'An existing system service keeps its machine-wide installation and requires administrator access.'
   printf '%s\n' 'A custom installation directory must already be in PATH.'
   printf '%s\n' '--no-start installs only the executable (for manually managed deployments).'
 }
@@ -73,7 +73,7 @@ privileged() {
     "$@"
   else
     command -v sudo >/dev/null 2>&1 || {
-      printf '%s\n' 'Administrator access is required to configure Relay autostart, but sudo is unavailable.' >&2
+      printf '%s\n' 'Administrator access is required to update the existing system Relay service, but sudo is unavailable.' >&2
       return 2
     }
     sudo -- "$@"
@@ -121,18 +121,6 @@ inspect_service() {
   fi
   if service_command is-active --quiet; then service_was_active=1; fi
   if service_command is-enabled --quiet; then service_was_enabled=1; fi
-  if [ "$service_scope" = user ]; then
-    for path in "$unit_root" "$state_root" "$INSTALL_DIR"; do
-      case "$path" in
-        /*) ;;
-        *) printf '%s\n' 'Relay service paths must be absolute. Nothing was installed.' >&2; exit 2 ;;
-      esac
-      if printf '%s' "$path" | LC_ALL=C grep -q '[[:cntrl:]]'; then
-        printf '%s\n' 'Relay service paths cannot contain control characters. Nothing was installed.' >&2
-        exit 2
-      fi
-    done
-  fi
 }
 
 if [ -z "$VERSION" ]; then
@@ -147,31 +135,6 @@ case "$VERSION" in
     ;;
 esac
 
-case "$INSTALL_DIR" in
-  /*) INSTALL_DIR=${INSTALL_DIR%/} ;;
-  *) printf '%s\n' 'The installation directory must be an absolute path in PATH.' >&2; exit 2 ;;
-esac
-if [ -z "$INSTALL_DIR" ]; then
-  printf '%s\n' 'Refusing to install into the filesystem root.' >&2
-  exit 2
-fi
-case ":${PATH:-}:" in
-  *":$INSTALL_DIR:"*) ;;
-  *)
-    printf 'Installation directory is not in PATH: %s\nChoose a directory already in PATH with --install-dir. Nothing was installed.\n' "$INSTALL_DIR" >&2
-    exit 2
-    ;;
-esac
-existing=$(command -v codewide-relay || :)
-if [ -n "$existing" ] && [ "$existing" != "$INSTALL_DIR/codewide-relay" ]; then
-  printf 'Another codewide-relay is already selected by PATH: %s\nUse --install-dir with its directory to update it. Nothing was installed.\n' "$existing" >&2
-  exit 2
-fi
-if [ -d "$INSTALL_DIR/codewide-relay" ]; then
-  printf 'Installation target is a directory: %s/codewide-relay\n' "$INSTALL_DIR" >&2
-  exit 2
-fi
-
 if [ "$(uname -s)" != Linux ]; then
   printf '%s\n' 'CodeWide Relay currently supports Linux only.' >&2
   exit 2
@@ -181,6 +144,59 @@ if [ "$(uname -m)" != x86_64 ]; then
   exit 2
 fi
 inspect_service
+existing=$(command -v codewide-relay || :)
+if [ -z "$INSTALL_DIR" ]; then
+  if [ "$service_scope" = system ]; then
+    INSTALL_DIR=/usr/local/bin
+  elif [ "$service_existed" = 1 ] && [ -n "$existing" ]; then
+    INSTALL_DIR=$(dirname -- "$existing")
+  elif case ":${PATH:-}:" in *":$HOME/.local/bin:"*) true ;; *) false ;; esac; then
+    INSTALL_DIR=$HOME/.local/bin
+  elif case ":${PATH:-}:" in *":$HOME/bin:"*) true ;; *) false ;; esac; then
+    INSTALL_DIR=$HOME/bin
+  else
+    printf '%s\n' 'No standard user executable directory is present in PATH.' >&2
+    printf '%s\n' 'Add ~/.local/bin or ~/bin to PATH, then run the installer again. Nothing was installed.' >&2
+    exit 2
+  fi
+fi
+
+case "$INSTALL_DIR" in
+  /*) INSTALL_DIR=${INSTALL_DIR%/} ;;
+  *) printf '%s\n' 'The installation directory must be an absolute path in PATH.' >&2; exit 2 ;;
+esac
+if [ -z "$INSTALL_DIR" ]; then
+  printf '%s\n' 'Refusing to install into the filesystem root.' >&2
+  exit 2
+fi
+if [ "$service_scope" = user ]; then
+  for path in "$unit_root" "$state_root" "$INSTALL_DIR"; do
+    case "$path" in
+      /*) ;;
+      *) printf '%s\n' 'Relay service paths must be absolute. Nothing was installed.' >&2; exit 2 ;;
+    esac
+    if printf '%s' "$path" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+      printf '%s\n' 'Relay service paths cannot contain control characters. Nothing was installed.' >&2
+      exit 2
+    fi
+  done
+fi
+case ":${PATH:-}:" in
+  *":$INSTALL_DIR:"*) ;;
+  *)
+    printf 'Installation directory is not in PATH: %s\nChoose a directory already in PATH with --install-dir. Nothing was installed.\n' "$INSTALL_DIR" >&2
+    exit 2
+    ;;
+esac
+if [ -n "$existing" ] && [ "$existing" != "$INSTALL_DIR/codewide-relay" ]; then
+  printf 'Another codewide-relay is already selected by PATH: %s\nUse --install-dir with its directory to update it. Nothing was installed.\n' "$existing" >&2
+  exit 2
+fi
+if [ -d "$INSTALL_DIR/codewide-relay" ]; then
+  printf 'Installation target is a directory: %s/codewide-relay\n' "$INSTALL_DIR" >&2
+  exit 2
+fi
+
 runtime_binary="$INSTALL_DIR/codewide-relay"
 updater_install_path="$INSTALL_DIR/codewide-relay-updater"
 update_root="$state_root/update"
@@ -334,7 +350,6 @@ finish() {
         fi
       fi
     fi
-    if [ "$linger_changed" = 1 ]; then privileged loginctl disable-linger "$(id -un)" || :; fi
   fi
   cleanup
   exit "$status"
@@ -418,12 +433,9 @@ write_update_units() {
 
 start_service() {
   if [ "$service_scope" = user ]; then
-    if [ "$(loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null || :)" != yes ]; then
-      linger_changed=1
-      privileged loginctl enable-linger "$(id -un)"
-    fi
-    # Enabling lingering can start a previously absent user manager. Wait for
-    # its bus rather than racing systemctl against that asynchronous startup.
+    # A login session owns the user manager. Lingering is an optional host
+    # policy, not an installation prerequisite, so rootless installs never
+    # change it implicitly.
     attempt=0
     until user_systemctl show-environment >/dev/null 2>"$temporary_root/manager-error"; do
       attempt=$((attempt + 1))
@@ -659,11 +671,19 @@ if [ "$resolved" != "$INSTALL_DIR/codewide-relay" ] ||
   printf 'Relay was copied, but command lookup verification failed: %s\n' "$resolved" >&2
   exit 1
 fi
-printf 'Installed codewide-relay %s to %s\n' "$VERSION" "$resolved"
+printf 'Installed codewide-relay %s to %s\n' "$VERSION" "$INSTALL_DIR/codewide-relay"
 if [ "$activate" = 1 ]; then
   start_service
-  printf '%s\n' 'Relay is running and will start automatically after logout and reboot.'
-  printf '%s\n' 'Ready: codewide-relay pair' 'Allow inbound TCP 8780 in your VPS firewall (or the existing service port if customized).'
+  if [ "$service_scope" = system ]; then
+    printf '%s\n' 'Relay is running and enabled as a system service.'
+  else
+    printf '%s\n' 'Relay is running and enabled for this user.'
+    if [ "$(loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null || :)" != yes ]; then
+      printf '%s\n' 'Relay starts after login. To also run before login and after logout, an administrator may enable systemd lingering for this user.'
+    fi
+  fi
+  printf '%s\n' 'Ready: codewide-relay pair'
+  printf '%s\n' 'Allow inbound TCP 8780 in your VPS firewall (or the existing service port if customized).'
 else
   printf '%s\n' 'Service activation skipped. Executable ready: codewide-relay'
 fi
