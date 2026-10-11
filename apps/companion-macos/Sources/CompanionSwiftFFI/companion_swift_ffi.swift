@@ -585,6 +585,16 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 public protocol CoreHostProtocol: AnyObject, Sendable {
 
+    /**
+     * Returns the provider status and subscription presentation used by the
+     * local macOS menu. The JSON shape is the existing validated client-wire
+     * contract and contains no credentials.
+     *
+     * # Errors
+     * Returns an adapter error if the presentation cannot be serialized.
+     */
+    func agentProvidersJson() throws  -> String
+
     func appServerConnection()  -> FfiAppServerConnection
 
     /**
@@ -792,6 +802,23 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
 
 
 
+
+    /**
+     * Returns the provider status and subscription presentation used by the
+     * local macOS menu. The JSON shape is the existing validated client-wire
+     * contract and contains no credentials.
+     *
+     * # Errors
+     * Returns an adapter error if the presentation cannot be serialized.
+     */
+open func agentProvidersJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_agent_providers_json(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
 
 open func appServerConnection() -> FfiAppServerConnection  {
     return try!  FfiConverterTypeFfiAppServerConnection_lift(try! rustCall() {
@@ -2293,6 +2320,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_func_verify_host_update_release() != 7360) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_agent_providers_json() != 37155) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_app_server_connection() != 62371) {

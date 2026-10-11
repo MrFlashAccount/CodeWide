@@ -8,6 +8,7 @@ final class RuntimeConnection: ObservableObject {
     @Published private(set) var health: RuntimeHealthPayload?
     @Published private(set) var appServer: AppServerPayload?
     @Published private(set) var appServers: [AppServerPayload] = []
+    @Published private(set) var agentProviders: [CompanionAgentProvider] = []
     @Published private(set) var codexInstallation: CodexInstallationState?
     @Published private(set) var isDiscoveringAppServers = false
     @Published private(set) var hasDiscoveredAppServers = false
@@ -91,6 +92,7 @@ final class RuntimeConnection: ObservableObject {
             self.health = nil
             self.directAccess = nil
             self.appServer = nil
+            self.agentProviders = []
             self.relay = nil
             self.relayUpdate = nil
             self.devices = []
@@ -104,8 +106,23 @@ final class RuntimeConnection: ObservableObject {
             let direct = try await requestDirectAccess()
             let relayStatus = try await requestRelayStatus()
             let deviceList = try await requestDevices()
+            let providers: [CompanionAgentProvider]?
+            let providerFailure: String?
+            do {
+                providers = try await requestAgentProviders()
+                providerFailure = nil
+            } catch {
+                providers = nil
+                providerFailure = "Agent subscriptions couldn't refresh: \(error.localizedDescription)"
+            }
             guard revision == stateRevision, !Task.isCancelled else { return }
             appServer = server
+            if let providers {
+                agentProviders = providers
+            }
+            if let providerFailure, lastError == nil {
+                lastError = providerFailure
+            }
             directAccess = direct
             if !direct.endpoints.contains(pairingEndpoint ?? "") {
                 pairingEndpoint = direct.endpoints.first
@@ -127,6 +144,7 @@ final class RuntimeConnection: ObservableObject {
             health = nil
             directAccess = nil
             appServer = nil
+            agentProviders = []
             relay = nil
             relayUpdate = nil
             devices = []
@@ -262,6 +280,7 @@ final class RuntimeConnection: ObservableObject {
         let selected = try await requestSelectAppServer(id: id)
         stateRevision += 1
         appServer = selected
+        agentProviders = []
         appServers = appServers.map { server in
             AppServerPayload(
                 id: server.id,
@@ -415,6 +434,7 @@ final class RuntimeConnection: ObservableObject {
                 health = nil
                 directAccess = nil
                 appServer = nil
+                agentProviders = []
                 relay = nil
                 relayUpdate = nil
                 devices = []
@@ -430,6 +450,7 @@ final class RuntimeConnection: ObservableObject {
             health = nil
             directAccess = nil
             appServer = nil
+            agentProviders = []
             relay = nil
             relayUpdate = nil
             devices = []
@@ -578,6 +599,19 @@ final class RuntimeConnection: ObservableObject {
                 gate.resume(with: Self.result(payload: payload, error: error))
             }
         }
+    }
+
+    private func requestAgentProviders() async throws -> [CompanionAgentProvider] {
+        let json: String = try await XPCReplyGate.perform { gate in
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.agentProviders { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+        return try CompanionAgentProvider.decodeList(json)
     }
 
     private func requestAppServers() async throws -> AppServerListPayload {

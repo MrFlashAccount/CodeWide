@@ -64,6 +64,16 @@ final class RuntimeService: NSObject, RuntimeXPCProtocol, @unchecked Sendable {
         reply(currentAppServerPayload(), nil)
     }
 
+    func agentProviders(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        do {
+            reply(try core.agentProvidersJson(), nil)
+        } catch {
+            reply(nil, Self.xpcError(error))
+        }
+    }
+
     func discoverAppServers(
         withReply reply: @escaping @Sendable (AppServerListPayload?, NSError?) -> Void
     ) {

@@ -25,6 +25,7 @@ use agent_provider_codex::{
 };
 
 use crate::{
+    agent::registry::ProviderRegistry,
     auth::{DeviceRegistry, DeviceStatus},
     content::{ContentProjector, PrivateContentService},
     device_tls::{DeviceTlsAcceptor, bootstrap_config, device_bound_config},
@@ -127,6 +128,7 @@ pub enum AppServerConnection {
 
 pub struct ManagedRuntime {
     upstream: UpstreamHandle,
+    agent_registry: Arc<ProviderRegistry>,
     registry: Arc<DeviceRegistry>,
     relay: RelayRuntime,
     identity: TransportIdentity,
@@ -251,7 +253,7 @@ impl ManagedRuntime {
         // The Codex storage modules are reached only through the Codex adapter.
         let codex = CodexProvider::new(upstream.clone())
             .with_storage(CodexStorage::new(history).with_resources(resources.clone()));
-        let registry = crate::agent::providers::load_registry(
+        let agent_registry = crate::agent::providers::load_registry(
             &config.state_directory,
             Arc::new(codex),
             Some(&crate::agent::providers::ProviderHost {
@@ -263,12 +265,16 @@ impl ManagedRuntime {
             }),
         )
         .await;
-        let mut sync = SyncHub::with_registry(registry, store.clone(), config.enable_mutations)
-            .with_content_projector(Arc::new(ContentProjector::new(content.clone())))
-            .with_dictation(dictation)
-            .with_files(files.clone())
-            .with_projects(projects.clone())
-            .with_workspaces(workspaces.clone());
+        let mut sync = SyncHub::with_registry(
+            agent_registry.clone(),
+            store.clone(),
+            config.enable_mutations,
+        )
+        .with_content_projector(Arc::new(ContentProjector::new(content.clone())))
+        .with_dictation(dictation)
+        .with_files(files.clone())
+        .with_projects(projects.clone())
+        .with_workspaces(workspaces.clone());
         if let Some(account_pool) = &account_pool {
             sync = sync.with_account_pool(account_pool);
         }
@@ -360,6 +366,7 @@ impl ManagedRuntime {
 
         Ok(Self {
             upstream,
+            agent_registry,
             registry,
             relay,
             identity: identity.public().clone(),
@@ -392,6 +399,14 @@ impl ManagedRuntime {
                 last_known_version: version,
             },
         }
+    }
+
+    /// Returns the same provider presentation exposed to authenticated clients.
+    /// The platform host uses it for local status UI; credentials are never part
+    /// of this snapshot.
+    #[must_use]
+    pub fn agent_providers(&self) -> serde_json::Value {
+        crate::agent::provider_status::snapshot(&self.agent_registry)
     }
 
     #[must_use]

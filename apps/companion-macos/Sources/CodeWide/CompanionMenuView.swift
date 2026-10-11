@@ -14,6 +14,7 @@ struct CompanionMenuView<MoreActions: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var showsDetails = false
+    @State private var expandedProviderID: String?
     @State private var showsNoticeDetails = false
     @State private var dismissedNotice: String?
 
@@ -42,6 +43,14 @@ struct CompanionMenuView<MoreActions: View>: View {
                 connectionDetails
                     .padding(.top, 14)
             }
+            ForEach(snapshot.visibleAgentProviders) { provider in
+                providerRow(provider)
+                    .padding(.top, 8)
+                if expandedProviderID == provider.id {
+                    providerDetails(provider)
+                        .padding(.top, 10)
+                }
+            }
             Divider().padding(.vertical, 18)
             if let notice = snapshot.notice, notice != dismissedNotice {
                 noticeView(notice)
@@ -67,6 +76,11 @@ struct CompanionMenuView<MoreActions: View>: View {
         .onChange(of: snapshot.notice) { _, _ in
             dismissedNotice = nil
             showsNoticeDetails = false
+        }
+        .onChange(of: snapshot.visibleAgentProviders.map(\.id)) { _, ids in
+            if let expandedProviderID, !ids.contains(expandedProviderID) {
+                self.expandedProviderID = nil
+            }
         }
     }
 
@@ -143,6 +157,67 @@ struct CompanionMenuView<MoreActions: View>: View {
             if let version = snapshot.coreVersion { detail("Core", value: version) }
             if let address = snapshot.address {
                 detail("Address", value: address)
+            }
+        }
+        .padding(.horizontal, 6)
+    }
+
+    private func providerRow(_ provider: CompanionAgentProvider) -> some View {
+        Button {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                expandedProviderID = expandedProviderID == provider.id ? nil : provider.id
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: providerSymbol(provider))
+                    .font(.system(size: 23, weight: .regular))
+                    .foregroundStyle(.primary)
+                    .frame(width: 34)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(provider.name)
+                        .font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: 5) {
+                        Image(systemName: providerStatusSymbol(provider))
+                            .font(.system(size: provider.status == .live ? 6 : 10))
+                            .foregroundStyle(providerStatusColor(provider))
+                            .accessibilityHidden(true)
+                        Text(provider.summary)
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(secondaryText)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(secondaryText)
+                    .rotationEffect(.degrees(expandedProviderID == provider.id ? 90 : 0))
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .help("Show \(provider.name) subscription details")
+        .accessibilityLabel("\(provider.name), \(provider.summary). Subscription details")
+        .accessibilityValue(expandedProviderID == provider.id ? "Expanded" : "Collapsed")
+    }
+
+    @ViewBuilder private func providerDetails(_ provider: CompanionAgentProvider) -> some View {
+        VStack(spacing: 9) {
+            if let account = provider.accountLabel {
+                detail("Account", value: account)
+            }
+            if let plan = provider.planTitle {
+                detail("Subscription", value: plan)
+            }
+            ForEach(provider.limitWindows) { window in
+                detail(window.label, value: providerLimitValue(window))
+            }
+            if provider.limitWindows.isEmpty {
+                detail("Usage", value: "Unavailable")
             }
         }
         .padding(.horizontal, 6)
@@ -348,6 +423,34 @@ struct CompanionMenuView<MoreActions: View>: View {
         case .starting: secondaryText
         default: .orange
         }
+    }
+
+    private func providerStatusColor(_ provider: CompanionAgentProvider) -> Color {
+        if provider.status == .live, provider.authentication == .authenticated {
+            return successColor
+        }
+        return provider.status == .reconnecting ? Color.orange : secondaryText
+    }
+
+    private func providerStatusSymbol(_ provider: CompanionAgentProvider) -> String {
+        switch provider.status {
+        case .live: "circle.fill"
+        case .reconnecting: "circle.dotted"
+        case .disabled, .unavailable: "exclamationmark.circle.fill"
+        }
+    }
+
+    private func providerSymbol(_ provider: CompanionAgentProvider) -> String {
+        provider.id == "claude" ? "sparkles" : "cpu"
+    }
+
+    private func providerLimitValue(_ window: CompanionAgentProvider.LimitWindow) -> String {
+        let allowance = window.remainingPercent.map { "\($0)% left" } ?? "Usage unknown"
+        guard let resetsAt = window.resetsAt else { return allowance }
+        let reset = Date(timeIntervalSince1970: TimeInterval(resetsAt)).formatted(
+            .relative(presentation: .numeric, unitsStyle: .abbreviated)
+        )
+        return "\(allowance) · resets \(reset)"
     }
 
     private var secondaryText: Color {

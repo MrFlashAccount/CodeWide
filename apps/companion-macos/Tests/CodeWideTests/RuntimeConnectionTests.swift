@@ -225,6 +225,20 @@ struct RuntimeConnectionTests {
         #expect(runtime.lastError == nil)
     }
 
+    @Test func providerPresentationFailureDoesNotTakePairingOffline() async {
+        let service = TestRuntimeService()
+        service.agentProvidersFailure = NSError(domain: "test", code: 17)
+        let runtime = makeRuntime(service: service)
+
+        await runtime.refresh()
+
+        #expect(runtime.health?.phase == "running")
+        #expect(runtime.appServer != nil)
+        #expect(runtime.devices.count == 1)
+        #expect(runtime.agentProviders.isEmpty)
+        #expect(runtime.lastError?.contains("Agent subscriptions") == true)
+    }
+
     @Test func directPairingUsesTheSelectedAddressWithoutAnOnlineRelay() async throws {
         let service = TestRuntimeService()
         service.relayEnabled = false
@@ -394,6 +408,7 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
     var healthRequests = 0
     var managementRequests = 0
     var relayFailure: NSError?
+    var agentProvidersFailure: NSError?
     var healthFailure: NSError?
     var discoveryFailure: NSError?
     var discoveryRequests = 0
@@ -402,6 +417,9 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
     var holdDevices = false
     var pendingDevices: (@Sendable (DeviceListPayload?, NSError?) -> Void)?
     var relayEnabled = true
+    var agentProvidersJSON = """
+    {"providers":[{"id":"codex","name":"Codex","primary":true,"status":"live","auth":"unknown","planLabel":null,"capabilities":{}},{"id":"claude","name":"Claude","primary":false,"status":"live","auth":"authenticated","planLabel":"max","accountLabel":"dev@example.com","capabilities":{},"rateLimits":{"updatedAt":1800000000,"windows":[{"id":"seven_day","kind":"weekly","label":"Weekly","resetsAt":1800300000,"status":"allowed","usedPercent":60,"windowDurationMins":10080}]}}],"hostCapabilities":{}}
+    """
     var relayUpdateJSON = """
     {"currentVersion":"0.4.1","capability":{"applySupported":true,"unavailableReason":null},"availableTarget":null,"activeOperation":null}
     """
@@ -434,6 +452,12 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
     func appServer(withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void) {
         managementRequests += 1
         reply(server("default"), nil)
+    }
+
+    func agentProviders(withReply reply: @escaping @Sendable (String?, NSError?) -> Void) {
+        managementRequests += 1
+        if let agentProvidersFailure { reply(nil, agentProvidersFailure); return }
+        reply(agentProvidersJSON, nil)
     }
 
     private func server(_ id: String) -> AppServerPayload {

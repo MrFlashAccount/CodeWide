@@ -39,11 +39,14 @@ struct NativeWindowLayoutTests {
         #expect(window.backgroundColor.alphaComponent == 1)
     }
 
-    @Test func nativePanelMeasuresBothDisclosureStatesBeforePresentation() {
+    @Test func nativePanelMeasuresBothDisclosureStatesBeforePresentation() throws {
         _ = NSApplication.shared
-        let snapshot = CompanionMenuSnapshot(connection: .connected, profileName: "Default",
-                                              serverVersion: "0.157.0", appVersion: "0.4.0",
-                                              coreVersion: "0.4.0", address: "192.0.2.1:8767")
+        var snapshot = CompanionMenuSnapshot(connection: .connected, profileName: "Default",
+                                             serverVersion: "0.157.0", appVersion: "0.4.0",
+                                             coreVersion: "0.4.0", address: "192.0.2.1:8767")
+        snapshot.agentProviders = try CompanionAgentProvider.decodeList(#"""
+        {"providers":[{"id":"claude","name":"Claude","status":"live","auth":"authenticated","planLabel":"max","accountLabel":"dev@example.com","rateLimits":{"updatedAt":1800000000,"windows":[{"id":"seven_day","kind":"weekly","label":"Weekly","resetsAt":1800300000,"status":"allowed","usedPercent":60,"windowDurationMins":10080}]}}]}
+        """#)
         let collapsed = MenuBarPanel(content: CompanionMenuView(
             snapshot: snapshot, primaryAction: {}, revokeDevice: { _ in }, moreActions: { EmptyView() }), anchorProvider: { nil })
         let expanded = MenuBarPanel(content: CompanionMenuView(
