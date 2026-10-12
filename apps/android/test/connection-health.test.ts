@@ -12,7 +12,10 @@ function fixture() {
     model,
     health: () => model.health$.peek().home,
     path(status: NetworkObservation["status"], companion = "backoff", appServer = "unknown") {
-      model.setPath("home", parseConnectionPath({ network: { status, epoch: 1 }, companion, appServer }));
+      model.setPath(
+        "home",
+        parseConnectionPath({ network: { status, epoch: 1 }, companion, appServer }),
+      );
     },
     live: () => model.setState("home", "live", null, true),
     down: () => model.setState("home", "connecting", undefined, false),
@@ -50,21 +53,25 @@ describe("event-driven connection presentation", () => {
     input.model.close();
   });
 
-  it("preserves authorization and delivery failures independently of network facts", () => {
+  it("preserves authorization but trusts working RPC over stale degraded state", () => {
     const input = fixture();
     input.model.setState("home", "authRequired", null, false);
     expect(input.health()).toBe("authRequired");
-    input.model.setState("home", "degraded", "Local projection failed", true);
-    expect(input.health()).toBe("connectionError");
-    expect(input.model.rows$.peek()[0]?.lastError).toBe("Local projection failed");
+    input.model.setState("home", "degraded", "Transport state lagged", true);
+    expect(input.health()).toBe("online");
+    expect(input.model.rows$.peek()[0]?.lastError).toBe("Transport state lagged");
     input.model.close();
   });
 
   it("validates additive native facts while old binaries remain explicitly unknown", () => {
     expect(parseConnectionPath(undefined)).toBeNull();
-    for (const input of [null, {}, { network: { status: "validated", epoch: -1 } },
+    for (const input of [
+      null,
+      {},
+      { network: { status: "validated", epoch: -1 } },
       { network: { status: "madeUp", epoch: 0 }, companion: "connected", appServer: "live" },
-      { network: { status: "validated", epoch: 0 }, companion: "connected", appServer: "madeUp" }]) {
+      { network: { status: "validated", epoch: 0 }, companion: "connected", appServer: "madeUp" },
+    ]) {
       expect(() => parseConnectionPath(input)).toThrow();
     }
   });

@@ -17,6 +17,7 @@ import { NativeEventEmitter, NativeModules } from "react-native";
 import { shouldFlushLiveEventsImmediately } from "../data/live-event-priority";
 import { unknownRecord } from "../data/unknownRecord";
 import { parseConnectionPath } from "../data/connectionPath";
+import { appLogger } from "../observability/logger";
 import {
   incrementDiagnosticMetric,
   liveStreamMetricKey,
@@ -121,7 +122,6 @@ export class NativeEngineSession implements RpcClient {
   readonly #projectionGate: OrderedProjectionGate;
   readonly #projectionAcknowledger: OrderedProjectionAcknowledger;
   #stopped = false;
-  #stateGeneration = 0;
   #publishedLiveRpcAvailable: boolean | undefined;
   #projectionRecoveryTimer: ReturnType<typeof setTimeout> | undefined;
   #projectionRecoveryAttempt = 0;
@@ -129,7 +129,6 @@ export class NativeEngineSession implements RpcClient {
   #journalHeadCursor: number | undefined;
   #journalRecoveryRequested = false;
   #journalDrain: Promise<void> | undefined;
-  #livePublication: Promise<void> | undefined;
 
   constructor(options: {
     connection: RemoteConnection;
@@ -143,15 +142,8 @@ export class NativeEngineSession implements RpcClient {
     this.#projection = options.projection;
     this.#onPendingRequests = options.onPendingRequests;
     this.#onEvents = options.onEvents;
-    const projectionFailed = (error: unknown) => {
-      this.#publishedLiveRpcAvailable = undefined;
-      this.#stateGeneration += 1;
-      this.#journalReadCursor = undefined;
-      this.#publishConnectionState(
-        "degraded",
-        nativeEngineErrorDiagnostic(error, "Native projection update failed"),
-      );
-      this.#scheduleProjectionRecovery();
+    const projectionFailed = (error: unknown): void => {
+      this.#handleProjectionFailure(error);
     };
     this.#projectionGate = new OrderedProjectionGate(projectionFailed);
     this.#projectionAcknowledger = new OrderedProjectionAcknowledger(projectionFailed);
@@ -233,53 +225,19 @@ export class NativeEngineSession implements RpcClient {
           this.connectionId,
           parseConnectionPath(state.path),
         );
-        const generation = ++this.#stateGeneration;
-        if (state.state === "live") {
-          // The transport can announce caught-up after it emitted the final
-          // projection batch, while that batch is still committing to SQLite.
-          // Keep the UI in syncing until the ordered durable projection seam
-          // has drained; RPC availability remains a separate transport axis.
-          // Reattaching an existing JS runtime also emits its unchanged native
-          // state. Do not fabricate a reconnect: that edge reloads the chat.
-          if (this.#publishedLiveRpcAvailable !== state.rpcAvailable) {
-            this.#publishConnectionState("syncing", undefined, state.rpcAvailable);
+        if (state.state === "live" || state.state === "syncing") {
+          // Native `syncing` describes journal/snapshot catch-up, not the secure
+          // transport. RPC availability is the transport authority: projection
+          // recovery must not fabricate a disconnect or delay a working session.
+          if (this.#publishedLiveRpcAvailable === state.rpcAvailable) {
+            return;
           }
-          const publication: Promise<void> = Promise.resolve(this.#journalDrain)
-            .then(async () => this.#projectionGate.settled())
-            .then(async () => {
-              // The gate enqueues acknowledgement only after applying the batch,
-              // so observe its tail after the presentation queue has drained.
-              await this.#projectionAcknowledger.settled();
-            })
-            .then(async () => {
-              if (
-                this.#stopped ||
-                generation !== this.#stateGeneration ||
-                this.#projectionGate.blocked ||
-                this.#projectionAcknowledger.blocked
-              ) {
-                return;
-              }
-              if (this.#publishedLiveRpcAvailable === state.rpcAvailable) {
-                return;
-              }
-              this.#publishedLiveRpcAvailable = state.rpcAvailable;
-              await this.#connectionState.setConnectionState(
-                this.connectionId,
-                "live",
-                null,
-                state.rpcAvailable,
-              );
-            })
-            .catch((error: unknown) => {
-              this.#handleProjectionFailure(error);
-            })
-            .finally(() => {
-              if (this.#livePublication === publication) {
-                this.#livePublication = undefined;
-              }
-            });
-          this.#livePublication = publication;
+          this.#publishedLiveRpcAvailable = state.rpcAvailable;
+          this.#publishConnectionState(
+            state.rpcAvailable ? "live" : "connecting",
+            state.rpcAvailable ? null : state.error,
+            state.rpcAvailable,
+          );
         } else {
           this.#publishedLiveRpcAvailable = undefined;
           this.#publishConnectionState(state.state, state.error, state.rpcAvailable);
@@ -302,11 +260,7 @@ export class NativeEngineSession implements RpcClient {
         }
         this.#onPendingRequests?.(this.connectionId, requests);
       } catch (error: unknown) {
-        this.#publishedLiveRpcAvailable = undefined;
-        this.#publishConnectionState(
-          "degraded",
-          nativeEngineErrorDiagnostic(error, "Native pending request projection is invalid"),
-        );
+        this.#handleProjectionFailure(error);
       }
       return;
     }
@@ -369,7 +323,6 @@ export class NativeEngineSession implements RpcClient {
         throw new Error("Native projection cursor is missing or invalid");
       }
       if (event.type === "snapshot") {
-        this.#publishedLiveRpcAvailable = undefined;
         const snapshot = parseJson<{ cursor: number; threads: SyncSnapshotThread[] }>(
           event.data,
           "native snapshot",
@@ -447,9 +400,6 @@ export class NativeEngineSession implements RpcClient {
     // any queued writes. A failed write clears the cursor in projectionFailed.
     if (this.#journalReadCursor !== undefined && headCursor <= this.#journalReadCursor) {
       return;
-    }
-    if (recovery) {
-      this.#publishedLiveRpcAvailable = undefined;
     }
     this.#journalHeadCursor = Math.max(this.#journalHeadCursor ?? headCursor, headCursor);
     this.#journalRecoveryRequested ||= recovery;
@@ -745,11 +695,15 @@ export class NativeEngineSession implements RpcClient {
       if (this.#stopped) {
         return;
       }
+      // The compatibility bridge name predates the native runtime owner. For
+      // an existing service session this calls attachRuntime(), which replays
+      // its checkpoint and journal without reopening the healthy mTLS socket.
       bridge.attachSocket(this.connectionId).catch((error: unknown) => {
-        this.#publishConnectionState(
-          "degraded",
-          nativeEngineErrorDiagnostic(error, "Native projection recovery failed"),
-        );
+        appLogger.warnCaught({
+          error,
+          event: "native_projection.runtime_reattach.failed",
+          fields: { connectionId: this.connectionId },
+        });
         this.#scheduleProjectionRecovery();
       });
     }, delay);
@@ -766,13 +720,12 @@ export class NativeEngineSession implements RpcClient {
   }
 
   #handleProjectionFailure(error: unknown): void {
-    this.#publishedLiveRpcAvailable = undefined;
-    this.#stateGeneration += 1;
     this.#journalReadCursor = undefined;
-    this.#publishConnectionState(
-      "degraded",
-      nativeEngineErrorDiagnostic(error, "Native projection update failed"),
-    );
+    appLogger.errorCaught({
+      error,
+      event: "native_projection.update.failed",
+      fields: { connectionId: this.connectionId },
+    });
     this.#scheduleProjectionRecovery();
   }
 

@@ -18,7 +18,7 @@ export type NativeDomainProjection = {
   ) => Promise<void>;
 };
 
-/** Publishes native connection state into the application model. */
+/** Publishes secure transport and RPC availability into the application model. */
 export type NativeConnectionStateProjection = {
   setConnectionPath?: (connectionId: string, path: ConnectionPath | null) => void;
   // WHY: This signature mirrors an established storage or native compatibility contract; parameter order is part of every current implementation and caller.

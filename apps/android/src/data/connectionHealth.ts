@@ -27,9 +27,9 @@ export function connectionHealth(input: HealthInput): ConnectionHealthStatus {
     return "authRequired";
   }
   if (input.rpcAvailable) {
-    // Keep real projection/delivery failures visible, without inventing a
-    // separate user-facing history state or claiming the network is offline.
-    return input.state === "degraded" ? "connectionError" : "online";
+    // RPC admission is the transport authority. Projection and resource
+    // failures have their own owners and must not masquerade as disconnection.
+    return "online";
   }
   return disconnectedHealth(input.path);
 }
