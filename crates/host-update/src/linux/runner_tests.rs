@@ -1,6 +1,14 @@
 use super::*;
 use crate::linux::test_support::{NeverHealthy, TEST_PRODUCT};
-use crate::{HostPlatform, HostUpdateDeadlines, HostUpdateJournalV1, HostUpdateRelayState};
+use crate::{
+    HostPlatform, HostUpdateDeadlines, HostUpdateJournalV1, HostUpdateRelayState,
+    ReleaseDescriptorV1, SignedReleaseDescriptor,
+};
+use base64::{Engine as _, engine::general_purpose};
+use p256::{
+    ecdsa::{Signature, SigningKey, signature::Signer as _},
+    pkcs8::EncodePublicKey as _,
+};
 
 fn operation(phase: HostUpdatePhase) -> OperationRecord {
     OperationRecord {
@@ -56,6 +64,9 @@ fn operation(phase: HostUpdatePhase) -> OperationRecord {
         identity_pin: "d".repeat(64),
         identity_manifest: PathBuf::from("/tmp/codewide-test-identity.json"),
         previous_generation: format!("generations/{}", "a".repeat(64)),
+        release: None,
+        artifact_size: None,
+        activation_admitted: None,
         progress: None,
         recovery_error: None,
     }
@@ -89,6 +100,101 @@ fn current_switch_is_one_relative_symlink_rename() {
         PathBuf::from("generations/abc")
     );
     assert!(!root.join(".current-next").exists());
+}
+
+#[test]
+fn activation_reverifies_the_signed_release_independently() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let mut operation = operation(HostUpdatePhase::Installing);
+    let generation = root
+        .join("generations")
+        .join(&operation.current.artifact_digest);
+    fs::create_dir_all(&generation).expect("current generation");
+    store::write_json(&generation.join("metadata.json"), &operation.current)
+        .expect("current metadata");
+    switch_current(
+        root,
+        &format!("generations/{}", operation.current.artifact_digest),
+    )
+    .expect("current link");
+
+    let now = unix_millis() / 1_000;
+    let descriptor = ReleaseDescriptorV1 {
+        schema_version: 1,
+        channel: "stable".to_owned(),
+        sequence: operation.release_sequence,
+        issued_at: now.saturating_sub(1),
+        expires_at: now.saturating_add(600),
+        targets: vec![operation.target.clone()],
+    };
+    let payload = serde_json::to_vec(&descriptor).expect("descriptor payload");
+    let signing = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+    let signature: Signature = signing.sign(&payload);
+    let trust = ReleaseTrust {
+        key_id: "test-key".to_owned(),
+        public_key_spki: general_purpose::STANDARD.encode(
+            signing
+                .verifying_key()
+                .to_public_key_der()
+                .expect("public key")
+                .as_bytes(),
+        ),
+    };
+    operation.release = Some(SignedReleaseDescriptor {
+        schema_version: 1,
+        key_id: trust.key_id.clone(),
+        algorithm: "ES256".to_owned(),
+        payload: general_purpose::URL_SAFE_NO_PAD.encode(payload),
+        signature: general_purpose::STANDARD.encode(signature.to_der().as_bytes()),
+    });
+    operation.activation_admitted = Some(true);
+    operation.journal.target_fingerprint = hex::encode(Sha256::digest(
+        serde_json::to_vec(&operation.target).expect("target"),
+    ));
+    store::write_json(
+        &root.join("highest-sequence.json"),
+        &operation.release_sequence,
+    )
+    .expect("accepted sequence");
+    let runner = Runner {
+        product: &TEST_PRODUCT,
+        health: &NeverHealthy,
+        root,
+        state_root: root,
+        trust: Some(trust),
+        scope: SystemdScope::User,
+    };
+    runner
+        .verify_release_authority(&operation)
+        .expect("signed authority");
+
+    store::write_json(
+        &root.join("highest-sequence.json"),
+        &operation.release_sequence.saturating_add(1),
+    )
+    .expect("newer sequence");
+    assert_eq!(
+        runner
+            .verify_release_authority(&operation)
+            .expect_err("replayed sequence")
+            .code,
+        "release_sequence_mismatch"
+    );
+    store::write_json(
+        &root.join("highest-sequence.json"),
+        &operation.release_sequence,
+    )
+    .expect("restore accepted sequence");
+
+    operation.target.sha256 = "c".repeat(64);
+    assert_eq!(
+        runner
+            .verify_release_authority(&operation)
+            .expect_err("tampered operation")
+            .code,
+        "release_authority_mismatch"
+    );
 }
 
 #[test]
@@ -245,13 +351,15 @@ fn archive_validation_rejects_symlink_entries() {
 #[test]
 fn runner_source_never_uses_caller_controlled_download_input() {
     let source = include_str!("runner.rs");
-    assert!(source.contains("operation.target.artifact_url"));
+    assert!(!source.contains("operation.target.artifact_url"));
+    assert!(!source.contains("reqwest"));
+    assert!(source.contains("verify_release_authority"));
     let forbidden = ["Apply", "HostUpdate", "Command"].concat();
     assert!(!source.contains(&forbidden));
 }
 
 #[tokio::test]
-async fn rejected_download_fails_without_restarting_or_rolling_back_the_current_server() {
+async fn missing_release_authority_fails_without_restarting_or_rolling_back_the_current_server() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path().join("install");
     let state = directory.path().join("state");
@@ -260,6 +368,11 @@ async fn rejected_download_fails_without_restarting_or_rolling_back_the_current_
     let record = operation(HostUpdatePhase::Installing);
     write_operation(&state, &record).expect("journal");
     store::write_json(&state.join("active.json"), &record.journal.operation_id).expect("pointer");
+    store::write_json(
+        &state.join("activation-request.json"),
+        &record.journal.operation_id,
+    )
+    .expect("request");
     store::private_directory(&state.join("downloads")).expect("downloads");
     fs::write(
         state
@@ -269,23 +382,65 @@ async fn rejected_download_fails_without_restarting_or_rolling_back_the_current_
     )
     .expect("download");
 
-    run_pending(&TEST_PRODUCT, &NeverHealthy, root.clone(), state.clone())
-        .await
-        .expect("runner");
+    run_pending(
+        &TEST_PRODUCT,
+        &NeverHealthy,
+        root.clone(),
+        state.clone(),
+        None,
+        SystemdScope::User,
+    )
+    .await
+    .expect("runner");
     let outcome = read_operation(&state, &record.journal.operation_id).expect("durable outcome");
     assert_eq!(outcome.journal.phase, HostUpdatePhase::Failed);
     assert_eq!(
         outcome.journal.error_code.as_deref(),
-        Some("artifact_digest_mismatch")
+        Some("release_authority_unavailable")
     );
     assert!(outcome.journal.restart_started_at.is_none());
     assert_eq!(
         fs::read_link(root.join("current")).expect("unchanged current"),
         PathBuf::from("generations/old")
     );
-    run_pending(&TEST_PRODUCT, &NeverHealthy, root, state)
-        .await
-        .expect("terminal resume is inert");
+    run_pending(
+        &TEST_PRODUCT,
+        &NeverHealthy,
+        root,
+        state,
+        None,
+        SystemdScope::User,
+    )
+    .await
+    .expect("terminal resume is inert");
+}
+
+#[tokio::test]
+async fn terminal_operation_clears_a_persisted_activation_request() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path().join("install");
+    let state = directory.path().join("state");
+    let record = operation(HostUpdatePhase::Committed);
+    write_operation(&state, &record).expect("journal");
+    store::write_json(&state.join("active.json"), &record.journal.operation_id).expect("pointer");
+    store::write_json(
+        &state.join("activation-request.json"),
+        &record.journal.operation_id,
+    )
+    .expect("request");
+
+    run_pending(
+        &TEST_PRODUCT,
+        &NeverHealthy,
+        root,
+        state.clone(),
+        None,
+        SystemdScope::User,
+    )
+    .await
+    .expect("terminal cleanup");
+
+    assert!(!state.join("activation-request.json").exists());
 }
 
 #[test]
@@ -424,9 +579,10 @@ async fn interrupted_partial_download_is_replaced_and_progress_matches_received_
         b"incomplete obsolete bytes",
     )
     .expect("interrupted download");
-    download(
+    super::super::prepare::download(
         &format!("http://{address}/artifact"),
         &archive,
+        body.len() as u64,
         state,
         &record.journal.operation_id,
     )

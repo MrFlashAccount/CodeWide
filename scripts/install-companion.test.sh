@@ -64,6 +64,7 @@ grep -F '"sourceRevision":"'"$expected_source_revision"'"' \
   "$install_root/current/metadata.json" >/dev/null
 test -r "$unit_root/codewide-companion.service"
 test -r "$unit_root/codewide-companion-update.service"
+test -r "$unit_root/codewide-companion-update.path"
 test -r "$unit_root/codewide-companion-memory-watch.service"
 test -r "$unit_root/codewide-companion-memory-watch.timer"
 test -s "$test_home/.codewide/host.token"

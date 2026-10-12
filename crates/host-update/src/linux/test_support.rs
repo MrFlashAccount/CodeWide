@@ -25,7 +25,6 @@ pub(super) static TEST_PRODUCT: LinuxProduct = LinuxProduct {
     ],
     bootstrap_guardian: "codewide-companion-update-guardian",
     service_unit: "codewide-companion.service",
-    update_unit: "codewide-companion-update.service",
     running_version: "1.0.0",
     ready_timeout: None,
 };

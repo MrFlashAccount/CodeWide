@@ -1334,6 +1334,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         identity_directory.join("identity.json"),
         relay.clone(),
     ));
+    update_guardian.resume_preparation();
     let services = server::CompanionServices {
         build_shelf: configured_build_shelf()?,
         files: Some(files),

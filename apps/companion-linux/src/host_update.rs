@@ -10,7 +10,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use codewide_host_update::{
     HostPlatform, HostUpdateRelayState, ReleaseTrust,
-    linux::{LinuxGuardianConfig, LinuxProduct},
+    linux::{LinuxGuardianConfig, LinuxProduct, SystemdScope},
 };
 
 pub use codewide_host_update::linux::LinuxHostUpdateGuardian;
@@ -31,7 +31,6 @@ pub static COMPANION: LinuxProduct = LinuxProduct {
     ],
     bootstrap_guardian: "codewide-companion-update-guardian",
     service_unit: "codewide-companion.service",
-    update_unit: "codewide-companion-update.service",
     running_version: env!("CODEWIDE_COMPANION_VERSION"),
     ready_timeout: None,
 };
@@ -108,5 +107,13 @@ pub async fn run_pending(
     state_root: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let health = runner_health::CompanionHealth { root: root.clone() };
-    codewide_host_update::linux::run_pending(&COMPANION, &health, root, state_root).await
+    codewide_host_update::linux::run_pending(
+        &COMPANION,
+        &health,
+        root,
+        state_root,
+        ReleaseTrust::embedded(),
+        SystemdScope::User,
+    )
+    .await
 }

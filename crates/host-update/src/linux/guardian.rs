@@ -5,7 +5,6 @@ use std::{
     fs,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    process::Command,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -15,8 +14,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use super::{
-    GenerationMetadataV1, LinuxProduct, OperationRecord, host_resolver, running_artifact, store,
-    unix_millis,
+    GenerationMetadataV1, LinuxProduct, OperationRecord, host_resolver,
+    prepare::prepare_artifact,
+    runner::{RunnerFailure, transition},
+    running_artifact, store, unix_millis,
 };
 use crate::{
     ApplyHostUpdateAccepted, ApplyHostUpdateCommand, AvailableHostUpdate, GuardianError,
@@ -33,6 +34,7 @@ const DEFAULT_MANIFEST_URL: &str =
     "https://github.com/MrFlashAccount/CodeWide/releases/latest/download/release-manifest.json";
 const MINIMUM_FREE_BYTES: u64 = 512 * 1024 * 1024;
 const RETAIN_TERMINAL_OPERATIONS: usize = 32;
+const ACTIVATION_REQUEST: &str = "activation-request.json";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,6 +93,97 @@ impl LinuxHostUpdateGuardian {
                 in_process: Mutex::new(()),
             }),
         }
+    }
+
+    /// Resumes unprivileged artifact preparation after a product restart.
+    /// The fixed systemd path unit, not this process, starts activation once
+    /// the verified request marker is durably published.
+    pub fn resume_preparation(&self) {
+        let guardian = self.clone();
+        tokio::spawn(async move {
+            if let Err(error) = guardian.prepare_active().await {
+                tracing::error!(
+                    err = ?error,
+                    "Cannot prepare the queued host update for activation"
+                );
+            }
+        });
+    }
+
+    async fn prepare_active(&self) -> Result<(), GuardianError> {
+        let _process = self.inner.in_process.lock().await;
+        let Some(operation_id) =
+            store::read_optional_json::<String>(&self.inner.state_root.join("active.json"))
+                .map_err(internal)?
+        else {
+            return Ok(());
+        };
+        let mut operation = self.read_operation(&operation_id)?;
+        if operation.journal.phase == HostUpdatePhase::Accepted {
+            transition(
+                &self.inner.state_root,
+                &operation_id,
+                HostUpdatePhase::Accepted,
+                HostUpdatePhase::Installing,
+                None,
+            )
+            .map_err(internal)?;
+            operation = self.read_operation(&operation_id)?;
+        }
+        if operation.journal.phase != HostUpdatePhase::Installing {
+            return Ok(());
+        }
+        let Some(artifact_size) = operation.artifact_size.filter(|size| *size > 0) else {
+            let failure = RunnerFailure::new(
+                "release_authority_missing",
+                "The queued update predates the preparation protocol.",
+            );
+            fail_preparation(&self.inner.state_root, &operation_id, &failure)?;
+            return Ok(());
+        };
+        if operation.release.is_none() {
+            let failure = RunnerFailure::new(
+                "release_authority_missing",
+                "The queued update has no signed release authority.",
+            );
+            fail_preparation(&self.inner.state_root, &operation_id, &failure)?;
+            return Ok(());
+        }
+        let prepared = prepare_artifact(
+            &operation.target.artifact_url,
+            &operation.target.sha256,
+            artifact_size,
+            &self.inner.state_root,
+            &operation_id,
+        )
+        .await;
+        if let Err(failure) = prepared {
+            fail_preparation(&self.inner.state_root, &operation_id, &failure)?;
+            return Ok(());
+        }
+        let _lock = store::lock(&self.inner.state_root.join("guardian.lock")).map_err(internal)?;
+        operation = self.read_operation(&operation_id)?;
+        if operation.journal.phase != HostUpdatePhase::Installing {
+            return Ok(());
+        }
+        operation.activation_admitted = Some(true);
+        operation.journal.updated_at = unix_millis();
+        store::write_json(&self.operation_path(&operation_id), &operation).map_err(internal)?;
+        let highest_sequence =
+            store::read_optional_json::<u64>(&self.inner.state_root.join("highest-sequence.json"))
+                .map_err(internal)?
+                .unwrap_or(0)
+                .max(operation.release_sequence);
+        store::write_json(
+            &self.inner.state_root.join("highest-sequence.json"),
+            &highest_sequence,
+        )
+        .map_err(internal)?;
+        store::write_json(
+            &self.inner.state_root.join(ACTIVATION_REQUEST),
+            &operation_id,
+        )
+        .map_err(internal)
     }
 
     /// The embedded release key, once the stable guardian it hands updates to is installed.
@@ -179,7 +272,9 @@ impl LinuxHostUpdateGuardian {
         };
         for entry in entries {
             let entry = entry.map_err(internal)?;
-            if let Ok(operation) = store::read_json::<OperationRecord>(&entry.path()) {
+            if let Ok(operation) = store::read_json::<OperationRecord>(&entry.path())
+                && operation.activation_admitted != Some(false)
+            {
                 highest = highest.max(operation.release_sequence);
             }
         }
@@ -336,7 +431,7 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
                 && existing.journal.target_fingerprint == command.target_fingerprint
             {
                 if !existing.journal.phase.is_terminal() {
-                    start_runner(self.inner.product)?;
+                    self.resume_preparation();
                 }
                 return Ok(ApplyHostUpdateAccepted {
                     operation_id: existing.journal.operation_id,
@@ -360,7 +455,7 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
                 && active.journal.initiating_device_id == command.initiating_device_id
                 && active.journal.target_fingerprint == command.target_fingerprint
             {
-                start_runner(self.inner.product)?;
+                self.resume_preparation();
                 return Ok(ApplyHostUpdateAccepted {
                     operation_id: active.journal.operation_id,
                     phase: HostUpdatePhase::Accepted,
@@ -412,6 +507,9 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
             .map_err(|_| precondition("artifact_size_unavailable"))?
             .content_length()
             .ok_or_else(|| precondition("artifact_size_unavailable"))?;
+        if content_length == 0 {
+            return Err(precondition("artifact_size_unsupported"));
+        }
         let required_bytes = content_length
             .saturating_mul(4)
             .saturating_add(128 * 1024 * 1024)
@@ -453,19 +551,17 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
             identity_pin: self.inner.identity_pin.clone(),
             identity_manifest: self.inner.identity_manifest.clone(),
             previous_generation,
+            release: Some(cached.envelope),
+            artifact_size: Some(content_length),
+            activation_admitted: Some(false),
             progress: None,
             recovery_error: None,
         };
         store::write_json(&self.operation_path(&operation_id), &record).map_err(internal)?;
         store::write_json(&self.inner.state_root.join("active.json"), &operation_id)
             .map_err(internal)?;
-        store::write_json(
-            &self.inner.state_root.join("highest-sequence.json"),
-            &record.release_sequence,
-        )
-        .map_err(internal)?;
         prune_operations(&self.inner.state_root)?;
-        start_runner(self.inner.product)?;
+        self.resume_preparation();
         Ok(ApplyHostUpdateAccepted {
             operation_id,
             phase: HostUpdatePhase::Accepted,
@@ -496,9 +592,10 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
             .map_err(|_| precondition("invalid_reconnect_receipt"))?;
         operation.progress = None;
         store::write_json(&path, &operation).map_err(internal)?;
+        let highest_sequence = self.highest_sequence()?.max(operation.release_sequence);
         store::write_json(
             &self.inner.state_root.join("highest-sequence.json"),
-            &operation.release_sequence,
+            &highest_sequence,
         )
         .map_err(internal)?;
         remove_if_present(&self.inner.state_root.join("available.json"))?;
@@ -596,19 +693,24 @@ fn lower_hex(value: &str, length: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn start_runner(product: &LinuxProduct) -> Result<(), GuardianError> {
-    if Command::new("systemctl")
-        .args(["--user", "start", "--no-block", product.update_unit])
-        .status()
-        .is_ok_and(|status| status.success())
-    {
-        Ok(())
-    } else {
-        Err(GuardianError::new(
-            GuardianErrorCode::Internal,
-            "update_runner_unavailable",
-        ))
-    }
+fn fail_preparation(
+    state_root: &Path,
+    operation_id: &str,
+    failure: &RunnerFailure,
+) -> Result<(), GuardianError> {
+    tracing::error!(
+        operation_id,
+        error_code = failure.code,
+        "Host update preparation failed"
+    );
+    transition(
+        state_root,
+        operation_id,
+        HostUpdatePhase::Installing,
+        HostUpdatePhase::Failed,
+        Some((failure.code, &failure.detail)),
+    )
+    .map_err(internal)
 }
 
 fn unix_seconds() -> u64 {

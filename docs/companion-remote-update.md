@@ -18,16 +18,21 @@ returns `manual_update_required` before accepting an operation.
 
 ## Ownership
 
-`companion-core` owns the authenticated HTTP shapes, signed release admission,
+`codewide-host-update` owns the authenticated shapes, signed release admission,
 phase names, fencing rules, and the additive V1 guardian/journal contract. It
-does not download, activate, restart, or roll back a host.
+also owns one Linux preparation/activation protocol reused by Companion and
+Relay.
 
-The platform guardian is outside the replaceable Companion payload. It alone
-owns the fsynced operation journal, immutable generations or application
-backup, activation, health proof, rollback, and immutable terminal result.
-Linux and macOS guardians consume the same core contract; they must not redefine
-API, journal, phase, or result schemas. Core must not import systemd, Sparkle,
-AppKit, ServiceManagement, or platform downloaders.
+On Linux the replaceable, unprivileged product owns network work: it fetches the
+manifest and artifact, performs the first signature/digest checks, writes the
+fsynced operation journal, and publishes one fixed activation marker. A stable
+bootstrap guardian is started by a systemd `.path` unit. It has no network
+access, accepts no caller-selected command, unit, or destination, independently
+verifies the embedded P-256 trust anchor and exact artifact bytes, materializes
+the immutable generation, switches `current`, restarts the one compiled-in
+service, proves its exact health, and rolls back when necessary. Companion and
+Relay supply only their payload layout and health proof; they do not redefine
+the transaction.
 
 ## Device API
 
@@ -85,7 +90,7 @@ including when the original HTTP acknowledgement was lost.
 
 An additive `progress` field reports download bytes/optional total, verification,
 extraction, restart, readiness, reconnect confirmation, and rollback. Progress is
-guardian-confirmed and fenced by the operation phase. Android polls the private
+fenced by the operation phase. Android polls the private
 HTTP operation independently of WebSocket/App Server health, bounds the entire
 request (native origin, credentials, HTTP and body), and retains the terminal
 failure across older status responses that omit it. While Companion restarts,
@@ -100,13 +105,15 @@ generation, PID, readiness and Relay state. The guardian compares the PID with
 systemd and every release identity field with the expected generation; it does
 not depend on access to another process's `/proc` entry. Legacy payloads retain
 the previous exact executable check. Release manifest, artifact size and
-artifact download requests resolve host names through the host's NSS resolver
+artifact download requests are made only by the unprivileged product and
+resolve host names through the host's NSS resolver
 (`getent ahosts`), not the static musl resolver: musl keeps the first answer of
 all nameservers at once, so on an IPv6-only host one nameserver without DNS64
 can hide the only reachable NAT64 addresses of GitHub's IPv4-only release
-assets. The stable bootstrap guardian must be
-installed manually to receive guardian fixes; remote payload replacement does
-not replace bootstrap.
+assets. The stable bootstrap guardian must be installed manually to receive
+guardian fixes; remote payload replacement does not replace bootstrap. It is
+activated only by `activation-request.json`; the product never invokes
+`systemctl`.
 
 Once rollback begins, late target-ready and reconnect receipts cannot commit.
 Reconnect commits only for the recorded device, operation id and nonce, after

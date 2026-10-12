@@ -16,6 +16,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import unittest
@@ -193,11 +194,20 @@ class InstallerServiceTests(unittest.TestCase):
         (staging / ASSET / "bin").mkdir(parents=True)
         shutil.copyfile(self.payload, staging / ASSET / "bin/codewide-relay")
         (staging / ASSET / "bin/codewide-relay").chmod(0o755)
-        subprocess.run(
-            ["tar", "--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner",
-             "-czf", str(self.release / BUNDLE), "-C", str(staging), ASSET],
-            check=True,
-        )
+        with tarfile.open(self.release / BUNDLE, "w:gz") as archive:
+            for source in sorted((staging / ASSET).rglob("*"), key=lambda path: str(path)):
+                relative = source.relative_to(staging)
+                info = archive.gettarinfo(source, arcname=str(relative))
+                info.uid = 0
+                info.gid = 0
+                info.uname = ""
+                info.gname = ""
+                info.mtime = 0
+                if source.is_file():
+                    with source.open("rb") as payload:
+                        archive.addfile(info, payload)
+                else:
+                    archive.addfile(info)
         self.bundle_digest = hashlib.sha256((self.release / BUNDLE).read_bytes()).hexdigest()
         (self.release / f"{BUNDLE}.sha256").write_text(f"{self.bundle_digest}  {BUNDLE}\n")
 
@@ -220,10 +230,15 @@ class InstallerServiceTests(unittest.TestCase):
         self.assertEqual(guardian.stat().st_mode & 0o777, 0o755)
         update_unit = (self.root / "config/systemd/user/codewide-relay-update.service").read_text()
         self.assertIn("update-run --install-root", update_unit)
-        self.assertIn("WantedBy=default.target", update_unit)
+        self.assertIn("IPAddressDeny=any", update_unit)
+        self.assertNotIn("network-online.target", update_unit)
         # A user manager cannot drop the bounding set; the unit would exit 218.
         self.assertNotIn("CapabilityBoundingSet", update_unit)
-        self.assertFalse((self.root / "config/systemd/user/codewide-relay-update.path").exists())
+        update_path = (self.root / "config/systemd/user/codewide-relay-update.path").read_text()
+        self.assertIn("activation-request.json", update_path)
+        self.assertIn("PathExists=", update_path)
+        self.assertIn("Unit=codewide-relay-update.service", update_path)
+        self.assertIn("WantedBy=default.target", update_path)
         self.assertFalse((self.state / "update").exists())
 
     def install(self, *args, env=None):
@@ -315,7 +330,7 @@ class InstallerServiceTests(unittest.TestCase):
         self.assertFalse((self.root / "unrelated").exists())
         analyzer = shutil.which("systemd-analyze")
         if analyzer:
-            verified = subprocess.run([analyzer, "--user", "verify", str(self.unit), str(self.unit.with_name("codewide-relay-update.service"))], capture_output=True, env=self.env)
+            verified = subprocess.run([analyzer, "--user", "verify", str(self.unit), str(self.unit.with_name("codewide-relay-update.service")), str(self.unit.with_name("codewide-relay-update.path"))], capture_output=True, env=self.env)
             self.assertEqual(verified.returncode, 0, verified.stderr.decode())
 
     def test_default_install_is_on_path_without_sudo(self):
@@ -485,6 +500,7 @@ class InstallerServiceTests(unittest.TestCase):
         self.assertFalse((self.root / "user.enabled").exists())
         self.assertFalse((self.root / "user.update.enabled").exists())
         self.assertFalse((self.root / "config/systemd/user/codewide-relay-update.service").exists())
+        self.assertFalse((self.root / "config/systemd/user/codewide-relay-update.path").exists())
         self.assertFalse((self.root / "linger").exists())
 
     def test_existing_system_service_is_updated_without_a_second_identity(self):

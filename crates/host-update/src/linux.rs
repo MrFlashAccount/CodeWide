@@ -1,4 +1,4 @@
-//! Crash-safe Linux generation updates under systemd user services.
+//! Crash-safe Linux generation updates under systemd services.
 //!
 //! The running service admits only a pinned, signed release descriptor and
 //! durably queues an operation. A stable bootstrap copy of the product
@@ -17,6 +17,7 @@
 mod guardian;
 mod health;
 mod host_resolver;
+mod prepare;
 mod runner;
 mod store;
 #[cfg(test)]
@@ -33,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     HostPlatform, HostUpdateJournalV1, HostUpdateProgress, HostUpdateRunningArtifact,
-    ReleaseTargetV1,
+    ReleaseTargetV1, SignedReleaseDescriptor,
 };
 
 pub use guardian::{LinuxGuardianConfig, LinuxHostUpdateGuardian};
@@ -56,10 +57,8 @@ pub struct LinuxProduct {
     pub bootstrap_only: &'static [&'static str],
     /// Stable runner executable under `<root>/bootstrap/`.
     pub bootstrap_guardian: &'static str,
-    /// systemd user unit of the service being updated.
+    /// systemd unit of the service being updated.
     pub service_unit: &'static str,
-    /// systemd user unit that runs the bootstrap runner.
-    pub update_unit: &'static str,
     /// Version compiled into the running executable.
     pub running_version: &'static str,
     /// How long a restarted target may take to prove its health before it is
@@ -77,7 +76,7 @@ pub trait ServiceHealth: Send + Sync {
     fn serves(&self, expected: &GenerationMetadataV1, operation: &OperationRecord) -> bool;
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GenerationMetadataV1 {
     pub schema_version: u16,
@@ -101,10 +100,41 @@ pub struct OperationRecord {
     pub identity_pin: String,
     pub identity_manifest: PathBuf,
     pub previous_generation: String,
+    /// Signed authority independently re-verified by the activation guardian.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<SignedReleaseDescriptor>,
+    /// Expected download size discovered before accepting the operation. The
+    /// digest remains authoritative; the size is a resource bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_size: Option<u64>,
+    /// `None` identifies an operation written by the older all-in-one runner.
+    /// New operations become admitted only after a complete verified artifact
+    /// is durably published for the activation guardian.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_admitted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<HostUpdateProgress>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_error: Option<String>,
+}
+
+/// Which systemd manager owns the service lifecycle. The update protocol is
+/// identical for user and system services; only the fixed manager invocation
+/// differs at the product boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SystemdScope {
+    User,
+    System,
+}
+
+impl SystemdScope {
+    fn command(self) -> Command {
+        let mut command = Command::new("systemctl");
+        if self == Self::User {
+            command.arg("--user");
+        }
+        command
+    }
 }
 
 /// Identity of the running process, read from the immutable generation that
@@ -128,11 +158,12 @@ pub fn running_artifact(product: &LinuxProduct) -> Option<HostUpdateRunningArtif
     })
 }
 
-/// Main PID of a systemd user unit, if it is running.
+/// Main PID of a systemd unit, if it is running.
 #[must_use]
-pub fn main_pid(unit: &str) -> Option<u32> {
-    Command::new("systemctl")
-        .args(["--user", "show", "--property", "MainPID", "--value", unit])
+pub fn main_pid(scope: SystemdScope, unit: &str) -> Option<u32> {
+    scope
+        .command()
+        .args(["show", "--property", "MainPID", "--value", unit])
         .output()
         .ok()
         .filter(|value| value.status.success())

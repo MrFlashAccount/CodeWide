@@ -1,6 +1,7 @@
 const COMPANION_UNIT: &str = include_str!("../deploy/codewide-companion.service");
 const MEMORY_WATCH_UNIT: &str = include_str!("../deploy/codewide-companion-memory-watch.service");
 const UPDATE_UNIT: &str = include_str!("../deploy/codewide-companion-update.service");
+const UPDATE_PATH: &str = include_str!("../deploy/codewide-companion-update.path");
 const INSTALL_SCRIPT: &str = include_str!("../deploy/install.sh");
 const VERIFY_SCRIPT: &str = include_str!("../deploy/verify.sh");
 const RELEASE_SCRIPT: &str = include_str!("../../../scripts/release-companion");
@@ -101,6 +102,12 @@ fn managed_install_uses_immutable_generations_and_a_stable_guardian() {
     assert!(UPDATE_UNIT.contains("ReadOnlyPaths=%h/.local/lib/codewide/bootstrap"));
     assert!(COMPANION_UNIT.contains("ReadOnlyPaths=%h/.local/lib/codewide/generations"));
     assert!(INSTALL_SCRIPT.contains("CODEWIDE_COMPANION_UPDATE_GUARDIAN_BINARY"));
+    assert!(UPDATE_PATH.contains("activation-request.json"));
+    assert!(UPDATE_PATH.contains("PathExists="));
+    assert!(UPDATE_PATH.contains("Unit=codewide-companion-update.service"));
+    assert!(INSTALL_SCRIPT.contains("enable --now codewide-companion-update.path"));
+    assert!(UPDATE_UNIT.contains("IPAddressDeny=any"));
+    assert!(!UPDATE_UNIT.contains("network-online.target"));
 }
 
 #[test]
@@ -108,7 +115,10 @@ fn remote_runner_has_no_caller_controlled_download_or_state_restore() {
     let guardian = include_str!("../../../crates/host-update/src/linux/guardian.rs");
     let runner = include_str!("../../../crates/host-update/src/linux/runner.rs");
     assert!(guardian.contains("cached.available.target"));
-    assert!(runner.contains("operation.target.artifact_url"));
+    assert!(!runner.contains("operation.target.artifact_url"));
+    assert!(guardian.contains("prepare_artifact"));
+    assert!(!guardian.contains("Command::new(\"systemctl\")"));
+    assert!(!runner.contains("reqwest"));
     assert!(!runner.contains("ApplyHostUpdateCommand"));
     assert!(!runner.contains("restore_state"));
 }

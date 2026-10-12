@@ -56,6 +56,9 @@ fn operation(id: &str, key: &str, sequence: u64, phase: HostUpdatePhase) -> Oper
         identity_pin: "d".repeat(64),
         identity_manifest: PathBuf::from("/tmp/codewide-test-identity.json"),
         previous_generation: format!("generations/{}", "a".repeat(64)),
+        release: None,
+        artifact_size: None,
+        activation_admitted: None,
         progress: None,
         recovery_error: None,
     }
@@ -169,6 +172,38 @@ fn idempotency_and_sequence_survive_guardian_restart() {
             .operation_id,
         record.journal.operation_id
     );
+}
+
+#[test]
+fn preparation_failure_does_not_consume_the_release_sequence() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let state = directory.path().join("bootstrap/state");
+    let mut rejected = operation(
+        "upd_00000000000000000000000000000000",
+        "idem_00000000000000000000",
+        42,
+        HostUpdatePhase::Failed,
+    );
+    rejected.activation_admitted = Some(false);
+    store::write_json(
+        &state
+            .join("operations")
+            .join(format!("{}.json", rejected.journal.operation_id)),
+        &rejected,
+    )
+    .expect("operation journal");
+    let guardian = test_guardian(directory.path().to_path_buf(), state.clone(), None);
+    assert_eq!(guardian.highest_sequence().expect("sequence"), 0);
+
+    rejected.activation_admitted = Some(true);
+    store::write_json(
+        &state
+            .join("operations")
+            .join(format!("{}.json", rejected.journal.operation_id)),
+        &rejected,
+    )
+    .expect("admitted operation journal");
+    assert_eq!(guardian.highest_sequence().expect("sequence"), 42);
 }
 
 #[test]

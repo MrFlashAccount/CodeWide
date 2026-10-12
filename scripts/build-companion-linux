@@ -132,6 +132,7 @@ install -m 0755 "$repo_root/apps/companion-linux/deploy/install.sh" "$bundle_roo
 install -m 0755 "$repo_root/apps/companion-linux/deploy/memory-watch.sh" "$bundle_root/libexec/codewide-companion-memory-watch"
 install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion.service" "$bundle_root/systemd/user/codewide-companion.service"
 install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion-update.service" "$bundle_root/systemd/user/codewide-companion-update.service"
+install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion-update.path" "$bundle_root/systemd/user/codewide-companion-update.path"
 install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.service" "$bundle_root/systemd/user/codewide-companion-memory-watch.service"
 install -m 0644 "$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.timer" "$bundle_root/systemd/user/codewide-companion-memory-watch.timer"
 printf '{"schemaVersion":1,"keyId":"%s","publicKeySpki":"%s","manifestUrl":"https://github.com/MrFlashAccount/CodeWide/releases/latest/download/release-manifest.json"}\n' \

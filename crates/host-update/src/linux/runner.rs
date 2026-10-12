@@ -2,23 +2,24 @@
 
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, Read as _, Write as _},
     os::unix::fs::{OpenOptionsExt, PermissionsExt, symlink},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
 };
 
-use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 
 use super::{
-    GenerationMetadataV1, LinuxProduct, OperationRecord, ServiceHealth,
+    GenerationMetadataV1, LinuxProduct, OperationRecord, ServiceHealth, SystemdScope,
     health::{rollback_is_ready, target_is_ready},
-    host_resolver::HostResolver,
     store, unix_millis,
 };
-use crate::{HostUpdatePhase, HostUpdateProgress, ReleaseTargetV1};
+use crate::{
+    HOST_UPDATE_BOOTSTRAP_VERSION, HOST_UPDATE_JOURNAL_VERSION, HostUpdatePhase,
+    HostUpdateProgress, ReleaseAdmission, ReleaseTargetV1, ReleaseTrust, admit_signed_release,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ResumeAction {
@@ -53,17 +54,29 @@ pub async fn run_pending(
     health: &dyn ServiceHealth,
     root: PathBuf,
     state_root: PathBuf,
+    trust: Option<ReleaseTrust>,
+    scope: SystemdScope,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let runner = Runner {
         product,
         health,
         root: &root,
         state_root: &state_root,
+        trust,
+        scope,
     };
     let Some(operation_id) = store::read_optional_json::<String>(&state_root.join("active.json"))?
     else {
         return Ok(());
     };
+    let Some(requested_operation) =
+        store::read_optional_json::<String>(&state_root.join("activation-request.json"))?
+    else {
+        return Ok(());
+    };
+    if requested_operation != operation_id {
+        return Err(io::Error::other("activation request does not match active operation").into());
+    }
     loop {
         let operation = read_operation(&state_root, &operation_id)?;
         match resume_action(operation.journal.phase) {
@@ -82,7 +95,7 @@ pub async fn run_pending(
                 )?;
             }
             ResumeAction::ResumeInstall => {
-                if let Err(failure) = runner.install_and_verify(&operation_id).await {
+                if let Err(failure) = runner.install_and_verify(&operation_id) {
                     let operation = read_operation(&state_root, &operation_id)?;
                     // No replacement was activated: fail the install without
                     // restarting a healthy server or waiting for rollback.
@@ -124,19 +137,22 @@ pub async fn run_pending(
                 runner.finish_rollback(&operation_id)?;
                 return Ok(());
             }
-            ResumeAction::Done => return Ok(()),
+            ResumeAction::Done => {
+                clear_available_release(&state_root)?;
+                return Ok(());
+            }
         }
     }
 }
 
 #[derive(Debug)]
-struct RunnerFailure {
-    code: &'static str,
-    detail: String,
+pub(super) struct RunnerFailure {
+    pub(super) code: &'static str,
+    pub(super) detail: String,
 }
 
 impl RunnerFailure {
-    fn new(code: &'static str, detail: impl Into<String>) -> Self {
+    pub(super) fn new(code: &'static str, detail: impl Into<String>) -> Self {
         Self {
             code,
             detail: detail.into().chars().take(160).collect(),
@@ -150,10 +166,12 @@ struct Runner<'a> {
     health: &'a dyn ServiceHealth,
     root: &'a Path,
     state_root: &'a Path,
+    trust: Option<ReleaseTrust>,
+    scope: SystemdScope,
 }
 
 impl Runner<'_> {
-    async fn install_and_verify(&self, operation_id: &str) -> Result<(), RunnerFailure> {
+    fn install_and_verify(&self, operation_id: &str) -> Result<(), RunnerFailure> {
         let (root, state_root) = (self.root, self.state_root);
         let operation = read_operation(state_root, operation_id).map_err(|_| {
             RunnerFailure::new("journal_unreadable", "Update journal is unreadable.")
@@ -164,23 +182,26 @@ impl Runner<'_> {
                 "The update did not install before its deadline.",
             ));
         }
-        let download_root = state_root.join("downloads");
-        store::private_directory(&download_root).map_err(|_| {
-            RunnerFailure::new(
-                "download_storage_failed",
-                "Cannot prepare download storage.",
-            )
-        })?;
-        let archive = download_root.join(format!("{operation_id}.tar.gz"));
-        if !archive.is_file() {
-            download(
-                &operation.target.artifact_url,
-                &archive,
-                state_root,
-                operation_id,
-            )
-            .await?;
-        }
+        self.verify_release_authority(&operation)?;
+        let artifact_size = operation
+            .artifact_size
+            .filter(|size| *size > 0)
+            .ok_or_else(|| {
+                RunnerFailure::new(
+                    "artifact_size_invalid",
+                    "The queued update has no valid artifact size bound.",
+                )
+            })?;
+        let prepared = state_root
+            .join("downloads")
+            .join(format!("{operation_id}.tar.gz"));
+        let archive = copy_prepared_artifact(
+            root,
+            operation_id,
+            &prepared,
+            &operation.target.sha256,
+            artifact_size,
+        )?;
         report_progress(state_root, operation_id, HostUpdateProgress::Verifying)?;
         verify_file_digest(&archive, &operation.target.sha256).map_err(|_| {
             RunnerFailure::new(
@@ -201,7 +222,7 @@ impl Runner<'_> {
         })?;
         report_progress(state_root, operation_id, HostUpdateProgress::Restarting)?;
         switch_current(root, &format!("generations/{}", operation.target.sha256))?;
-        restart_service(self.product)?;
+        restart_service(self.scope, self.product)?;
         report_progress(state_root, operation_id, HostUpdateProgress::CheckingHealth)?;
         self.wait_for_exact_target(&operation)?;
         transition(
@@ -215,6 +236,89 @@ impl Runner<'_> {
             RunnerFailure::new("journal_write_failed", "Cannot persist target readiness.")
         })?;
         let _ = fs::remove_file(archive);
+        let _ = fs::remove_file(prepared);
+        Ok(())
+    }
+
+    fn verify_release_authority(&self, operation: &OperationRecord) -> Result<(), RunnerFailure> {
+        let trust = self.trust.as_ref().ok_or_else(|| {
+            RunnerFailure::new(
+                "release_authority_unavailable",
+                "The activation guardian has no embedded release authority.",
+            )
+        })?;
+        let envelope = operation.release.as_ref().ok_or_else(|| {
+            RunnerFailure::new(
+                "release_authority_missing",
+                "The queued update has no signed release authority.",
+            )
+        })?;
+        let current: GenerationMetadataV1 =
+            store::read_json(&self.root.join("current/metadata.json")).map_err(|_| {
+                RunnerFailure::new(
+                    "current_generation_invalid",
+                    "The active generation metadata is unreadable.",
+                )
+            })?;
+        let current_link = fs::read_link(self.root.join("current"))
+            .ok()
+            .and_then(|path| path.to_str().map(str::to_owned));
+        if current != operation.current
+            || current_link.as_deref() != Some(operation.previous_generation.as_str())
+            || operation.previous_generation != format!("generations/{}", current.artifact_digest)
+        {
+            return Err(RunnerFailure::new(
+                "current_generation_changed",
+                "The active generation changed after update preparation.",
+            ));
+        }
+        let accepted_sequence = store::read_json::<u64>(
+            &self.state_root.join("highest-sequence.json"),
+        )
+        .map_err(|_| {
+            RunnerFailure::new(
+                "release_sequence_unavailable",
+                "The accepted release sequence is unreadable.",
+            )
+        })?;
+        if accepted_sequence != operation.release_sequence {
+            return Err(RunnerFailure::new(
+                "release_sequence_mismatch",
+                "The queued update does not match the accepted release sequence.",
+            ));
+        }
+        let admission = ReleaseAdmission {
+            trusted_key_id: &trust.key_id,
+            platform: self.product.platform,
+            current_version: &current.version,
+            current_digest: &current.artifact_digest,
+            highest_sequence: operation.release_sequence.saturating_sub(1),
+            state_epoch: 1,
+            bootstrap_version: HOST_UPDATE_BOOTSTRAP_VERSION,
+            journal_version: HOST_UPDATE_JOURNAL_VERSION,
+        };
+        let (descriptor, target, fingerprint) = admit_signed_release(
+            envelope,
+            &trust.public_key_spki,
+            unix_millis() / 1_000,
+            &admission,
+        )
+        .map_err(|_| {
+            RunnerFailure::new(
+                "release_authority_invalid",
+                "The activation guardian rejected the signed release authority.",
+            )
+        })?;
+        if descriptor.sequence != operation.release_sequence
+            || target != operation.target
+            || fingerprint != operation.journal.target_fingerprint
+            || operation.activation_admitted != Some(true)
+        {
+            return Err(RunnerFailure::new(
+                "release_authority_mismatch",
+                "The queued update does not match its signed release authority.",
+            ));
+        }
         Ok(())
     }
 
@@ -230,16 +334,17 @@ impl Runner<'_> {
                     .target_ready_by
                     .min(unix_millis().saturating_add(timeout))
             });
-        let started = service_state(self.product.service_unit);
+        let started = service_state(self.scope, self.product.service_unit);
         while unix_millis() <= deadline {
             if target_is_ready(self.root, self.health, operation) {
                 return Ok(());
             }
             // A target that exits or is restarted by systemd is broken now;
             // waiting for the deadline would only extend the outage.
-            if let (Some(started), Some(now)) =
-                (started.as_ref(), service_state(self.product.service_unit))
-                && now.crashed_since(started)
+            if let (Some(started), Some(now)) = (
+                started.as_ref(),
+                service_state(self.scope, self.product.service_unit),
+            ) && now.crashed_since(started)
             {
                 return Err(RunnerFailure::new(
                     "target_crashed",
@@ -291,7 +396,8 @@ impl Runner<'_> {
         }
         switch_current(root, &operation.previous_generation)
             .map_err(|failure| io::Error::other(failure.detail))?;
-        restart_service(self.product).map_err(|failure| io::Error::other(failure.detail))?;
+        restart_service(self.scope, self.product)
+            .map_err(|failure| io::Error::other(failure.detail))?;
         let mut healthy = false;
         while unix_millis() <= operation.journal.deadlines.rollback_by {
             healthy = rollback_is_ready(root, self.health, &operation);
@@ -324,153 +430,173 @@ impl Runner<'_> {
     }
 }
 
-fn verify_file_digest(path: &Path, expected: &str) -> io::Result<()> {
+pub(super) fn verify_file_digest(path: &Path, expected: &str) -> io::Result<()> {
     let mut file = File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
-    loop {
-        let read = std::io::Read::read(&mut file, &mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    let actual = hex::encode(hasher.finalize());
+    let actual = digest_reader(&mut file)?;
     (actual == expected)
         .then_some(())
         .ok_or_else(|| io::Error::other("artifact digest mismatch"))
 }
 
-async fn download(
-    url: &str,
-    target: &Path,
-    state_root: &Path,
+fn copy_prepared_artifact(
+    root: &Path,
     operation_id: &str,
-) -> Result<(), RunnerFailure> {
-    report_progress(
-        state_root,
-        operation_id,
-        HostUpdateProgress::Downloading {
-            downloaded_bytes: 0,
-            total_bytes: None,
-        },
-    )?;
-    let response = download_response(url, operation_id).await?;
-    let temporary = target.with_extension("partial");
-    // A killed downloader may leave a partial file; resume by downloading
-    // afresh, never treating unverified partial bytes as a complete artifact.
-    match fs::remove_file(&temporary) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(_) => {
-            return Err(RunnerFailure::new(
-                "download_storage_failed",
-                "Cannot reset the interrupted download.",
-            ));
-        }
+    prepared: &Path,
+    expected_digest: &str,
+    expected_size: u64,
+) -> Result<PathBuf, RunnerFailure> {
+    let trusted_root = root.join("activation");
+    store::private_directory(&trusted_root).map_err(|_| {
+        RunnerFailure::new(
+            "activation_storage_failed",
+            "Cannot prepare trusted activation storage.",
+        )
+    })?;
+    let target = trusted_root.join(format!("{operation_id}.tar.gz"));
+    if regular_file_matches(&target, expected_digest, expected_size) {
+        return Ok(target);
     }
-    let mut file = OpenOptions::new()
+    if target.exists() {
+        return Err(RunnerFailure::new(
+            "activation_artifact_collision",
+            "Trusted activation storage already contains different bytes.",
+        ));
+    }
+    let mut source = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(prepared)
+        .map_err(|_| {
+            RunnerFailure::new(
+                "prepared_artifact_unavailable",
+                "The prepared update artifact is unavailable.",
+            )
+        })?;
+    if !source.metadata().is_ok_and(|metadata| metadata.is_file()) {
+        return Err(RunnerFailure::new(
+            "prepared_artifact_invalid",
+            "The prepared update artifact is not a regular file.",
+        ));
+    }
+    let temporary = trusted_root.join(format!(".{operation_id}.partial"));
+    let _ = fs::remove_file(&temporary);
+    let mut destination = OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(&temporary)
         .map_err(|_| {
             RunnerFailure::new(
-                "download_storage_failed",
-                "Cannot create the download file.",
+                "activation_storage_failed",
+                "Cannot create the trusted activation artifact.",
             )
         })?;
-    let total_bytes = response.content_length();
-    let mut downloaded_bytes = 0_u64;
-    let mut published_at = std::time::Instant::now();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| {
-            let error = error.without_url();
-            tracing::error!(err = ?error, operation_id, "Signed update download was interrupted");
-            RunnerFailure::new("download_failed", "The update download was interrupted.")
-        })?;
-        file.write_all(&chunk).map_err(|_| {
-            RunnerFailure::new(
-                "download_storage_failed",
-                "Cannot store the update download.",
-            )
-        })?;
-        downloaded_bytes = downloaded_bytes.saturating_add(chunk.len() as u64);
-        if published_at.elapsed() >= Duration::from_secs(1) {
-            report_progress(
-                state_root,
-                operation_id,
-                HostUpdateProgress::Downloading {
-                    downloaded_bytes,
-                    total_bytes,
-                },
-            )?;
-            published_at = std::time::Instant::now();
+    let copied_digest = copy_bounded(&mut source, &mut destination, expected_size);
+    let (copied, digest) = match copied_digest {
+        Ok(result) => result,
+        Err(failure) => {
+            let _ = fs::remove_file(&temporary);
+            return Err(failure);
         }
-    }
-    report_progress(
-        state_root,
-        operation_id,
-        HostUpdateProgress::Downloading {
-            downloaded_bytes,
-            total_bytes,
-        },
-    )?;
-    file.sync_all().map_err(|_| {
+    };
+    destination.sync_all().map_err(|_| {
         RunnerFailure::new(
-            "download_storage_failed",
-            "Cannot persist the update download.",
+            "activation_storage_failed",
+            "Cannot persist the trusted activation artifact.",
         )
     })?;
-    fs::rename(&temporary, target).map_err(|_| {
+    if copied != expected_size || digest != expected_digest {
+        let _ = fs::remove_file(&temporary);
+        return Err(RunnerFailure::new(
+            "artifact_digest_mismatch",
+            "The prepared update did not match its signed digest.",
+        ));
+    }
+    fs::hard_link(&temporary, &target).map_err(|_| {
         RunnerFailure::new(
-            "download_storage_failed",
-            "Cannot publish the update download.",
+            "activation_storage_failed",
+            "Cannot publish the trusted activation artifact.",
         )
     })?;
-    if let Some(parent) = target.parent() {
-        store::sync_directory(parent).map_err(|_| {
-            RunnerFailure::new(
-                "download_storage_failed",
-                "Cannot persist download metadata.",
-            )
-        })?;
-    }
-    Ok(())
+    fs::remove_file(&temporary).map_err(|_| {
+        RunnerFailure::new(
+            "activation_storage_failed",
+            "Cannot finalize the trusted activation artifact.",
+        )
+    })?;
+    store::sync_directory(&trusted_root).map_err(|_| {
+        RunnerFailure::new(
+            "activation_storage_failed",
+            "Cannot persist trusted activation metadata.",
+        )
+    })?;
+    Ok(target)
 }
 
-async fn download_response(
-    url: &str,
-    operation_id: &str,
-) -> Result<reqwest::Response, RunnerFailure> {
-    reqwest::Client::builder()
-        .dns_resolver(std::sync::Arc::new(HostResolver))
-        .redirect(reqwest::redirect::Policy::limited(3))
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_mins(4))
-        .build()
-        .map_err(|error| {
-            // reqwest errors include the request URL; remove it before logging.
-            let error = error.without_url();
-            tracing::error!(err = ?error, operation_id, "Cannot initialize update downloader");
+fn regular_file_matches(path: &Path, expected_digest: &str, expected_size: u64) -> bool {
+    let Ok(mut file) = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+    else {
+        return false;
+    };
+    let Ok(metadata) = file.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() != expected_size {
+        return false;
+    }
+    digest_reader(&mut file).is_ok_and(|digest| digest == expected_digest)
+}
+
+fn digest_reader(reader: &mut impl io::Read) -> io::Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn copy_bounded(
+    source: &mut File,
+    destination: &mut File,
+    expected_size: u64,
+) -> Result<(u64, String), RunnerFailure> {
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+    let mut copied = 0_u64;
+    loop {
+        let read = source.read(&mut buffer).map_err(|_| {
             RunnerFailure::new(
-                "download_client_failed",
-                "Cannot initialize the downloader.",
+                "prepared_artifact_unreadable",
+                "The prepared update artifact could not be read.",
             )
-        })?
-        .get(url)
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|error| {
-            let error = error.without_url();
-            tracing::error!(err = ?error, operation_id, "Signed update download request failed");
+        })?;
+        if read == 0 {
+            break;
+        }
+        copied = copied.saturating_add(read as u64);
+        if copied > expected_size {
+            return Err(RunnerFailure::new(
+                "artifact_size_mismatch",
+                "The prepared update exceeded its accepted size bound.",
+            ));
+        }
+        hasher.update(&buffer[..read]);
+        destination.write_all(&buffer[..read]).map_err(|_| {
             RunnerFailure::new(
-                "download_failed",
-                "The signed update could not be downloaded.",
+                "activation_storage_failed",
+                "Cannot copy the trusted activation artifact.",
             )
-        })
+        })?;
+    }
+    Ok((copied, hex::encode(hasher.finalize())))
 }
 
 fn validate_archive(product: &LinuxProduct, archive: &Path) -> Result<(), RunnerFailure> {
@@ -615,12 +741,7 @@ fn stage_generation(
         )
     })?;
     let target = root.join("generations").join(&operation.target.sha256);
-    fs::rename(&payload, &target).map_err(|_| {
-        RunnerFailure::new(
-            "generation_storage_failed",
-            "Cannot publish the staged generation.",
-        )
-    })?;
+    publish_generation(&payload, &target)?;
     store::sync_directory(&root.join("generations")).map_err(|_| {
         RunnerFailure::new(
             "generation_storage_failed",
@@ -629,6 +750,22 @@ fn stage_generation(
     })?;
     let _ = fs::remove_dir_all(staging);
     Ok(())
+}
+
+fn publish_generation(payload: &Path, target: &Path) -> Result<(), RunnerFailure> {
+    rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        payload,
+        rustix::fs::CWD,
+        target,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(|_| {
+        RunnerFailure::new(
+            "generation_collision",
+            "Cannot publish a generation over an existing path.",
+        )
+    })
 }
 
 fn is_executable_regular_file(path: &Path) -> bool {
@@ -711,10 +848,10 @@ impl ServiceState {
     }
 }
 
-fn service_state(unit: &str) -> Option<ServiceState> {
-    let output = Command::new("systemctl")
+fn service_state(scope: SystemdScope, unit: &str) -> Option<ServiceState> {
+    let output = scope
+        .command()
         .args([
-            "--user",
             "show",
             "--property=ActiveState",
             "--property=NRestarts",
@@ -726,19 +863,16 @@ fn service_state(unit: &str) -> Option<ServiceState> {
     ServiceState::parse(&String::from_utf8(output.stdout).ok()?)
 }
 
-fn restart_service(product: &LinuxProduct) -> Result<(), RunnerFailure> {
+fn restart_service(scope: SystemdScope, product: &LinuxProduct) -> Result<(), RunnerFailure> {
     // A crash-looping target can exhaust the unit's start limit; systemd then
     // refuses every restart, including the one that rolls back. Clear it.
-    let _ = command_success(
-        "systemctl",
-        &["--user", "reset-failed", product.service_unit],
-    );
-    command_success("systemctl", &["--user", "restart", product.service_unit])
+    let _ = systemctl_success(scope, &["reset-failed", product.service_unit]);
+    systemctl_success(scope, &["restart", product.service_unit])
         .then_some(())
         .ok_or_else(|| RunnerFailure::new("service_restart_failed", "The service did not restart."))
 }
 
-fn transition(
+pub(super) fn transition(
     state_root: &Path,
     operation_id: &str,
     expected: HostUpdatePhase,
@@ -772,7 +906,7 @@ fn transition(
     Ok(())
 }
 
-fn report_progress(
+pub(super) fn report_progress(
     state_root: &Path,
     operation_id: &str,
     progress: HostUpdateProgress,
@@ -793,11 +927,14 @@ fn report_progress(
 }
 
 fn clear_available_release(state_root: &Path) -> io::Result<()> {
-    match fs::remove_file(state_root.join("available.json")) {
-        Ok(()) => store::sync_directory(state_root),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
+    for name in ["available.json", "activation-request.json"] {
+        match fs::remove_file(state_root.join(name)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
     }
+    store::sync_directory(state_root)
 }
 
 fn set_restart_started(state_root: &Path, operation_id: &str, nonce: &str) -> io::Result<()> {
@@ -835,6 +972,14 @@ fn verify_generation(
     path: &Path,
     target: &ReleaseTargetV1,
 ) -> Result<(), RunnerFailure> {
+    if !fs::symlink_metadata(path)
+        .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+    {
+        return Err(RunnerFailure::new(
+            "generation_collision",
+            "The generation path is not a directory owned by the updater.",
+        ));
+    }
     let metadata: GenerationMetadataV1 =
         store::read_json(&path.join("metadata.json")).map_err(|_| {
             RunnerFailure::new(
@@ -877,8 +1022,9 @@ fn sync_tree(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn command_success(program: &str, args: &[&str]) -> bool {
-    Command::new(program)
+fn systemctl_success(scope: SystemdScope, args: &[&str]) -> bool {
+    scope
+        .command()
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())

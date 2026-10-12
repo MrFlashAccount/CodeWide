@@ -8,7 +8,7 @@ use std::{
 
 use codewide_host_update::{
     HostUpdateRunningArtifact,
-    linux::{GenerationMetadataV1, OperationRecord, ServiceHealth, main_pid},
+    linux::{GenerationMetadataV1, OperationRecord, ServiceHealth, SystemdScope, main_pid},
 };
 
 use super::COMPANION;
@@ -31,7 +31,7 @@ impl ServiceHealth for CompanionHealth {
     }
 
     fn serves(&self, expected: &GenerationMetadataV1, operation: &OperationRecord) -> bool {
-        let pid = main_pid(COMPANION.service_unit);
+        let pid = main_pid(SystemdScope::User, COMPANION.service_unit);
         if let Some(health) = process_health() {
             return process_health_matches(&health, expected, pid, relay_required(operation));
         }

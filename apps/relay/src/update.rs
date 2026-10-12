@@ -19,7 +19,7 @@ use codewide_host_update::{
     HostUpdateRelayState, HostUpdateStatus, ReconnectReceipt, ReleaseTrust,
     linux::{
         GenerationMetadataV1, LinuxGuardianConfig, LinuxHostUpdateGuardian, LinuxProduct,
-        OperationRecord, ServiceHealth, main_pid,
+        OperationRecord, ServiceHealth, SystemdScope, main_pid,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -37,7 +37,6 @@ pub static RELAY: LinuxProduct = LinuxProduct {
     bootstrap_only: &["bootstrap", "systemd", "install.sh"],
     bootstrap_guardian: "codewide-relay-update-guardian",
     service_unit: "codewide-relay.service",
-    update_unit: "codewide-relay-update.service",
     running_version: env!("CODEWIDE_RELAY_VERSION"),
     // A healthy Relay attests within a second of starting.
     ready_timeout: Some(Duration::from_secs(30)),
@@ -224,21 +223,21 @@ impl RelayUpdater {
     /// installation reports `manual_bootstrap_required`.
     #[must_use]
     pub fn new(relay_state_root: &Path, identity_pin: String) -> Self {
-        Self {
-            guardian: Arc::new(LinuxHostUpdateGuardian::new(LinuxGuardianConfig {
-                product: &RELAY,
-                root: running_install_root().unwrap_or_else(|| relay_state_root.join("unmanaged")),
-                state_root: relay_state_root.join(GUARDIAN_STATE),
-                identity_pin,
-                identity_manifest: relay_state_root.to_path_buf(),
-                relay_probe: Arc::new(|| HostUpdateRelayState {
-                    configured: false,
-                    enabled: false,
-                    upstream_live: false,
-                }),
-                trust: ReleaseTrust::embedded(),
-            })),
-        }
+        let guardian = Arc::new(LinuxHostUpdateGuardian::new(LinuxGuardianConfig {
+            product: &RELAY,
+            root: running_install_root().unwrap_or_else(|| relay_state_root.join("unmanaged")),
+            state_root: relay_state_root.join(GUARDIAN_STATE),
+            identity_pin,
+            identity_manifest: relay_state_root.to_path_buf(),
+            relay_probe: Arc::new(|| HostUpdateRelayState {
+                configured: false,
+                enabled: false,
+                upstream_live: false,
+            }),
+            trust: ReleaseTrust::embedded(),
+        }));
+        guardian.resume_preparation();
+        Self { guardian }
     }
 
     /// Reads the durable update state of this Relay.
@@ -375,7 +374,7 @@ impl ServiceHealth for RelayHealth {
     }
 
     fn serves(&self, expected: &GenerationMetadataV1, operation: &OperationRecord) -> bool {
-        let Some(pid) = main_pid(RELAY.service_unit) else {
+        let Some(pid) = main_pid(SystemdScope::User, RELAY.service_unit) else {
             return false;
         };
         let socket = operation.identity_manifest.join(admin::SOCKET);
@@ -398,7 +397,15 @@ pub async fn run_pending(
     install_root: PathBuf,
     state_root: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    codewide_host_update::linux::run_pending(&RELAY, &RelayHealth, install_root, state_root).await
+    codewide_host_update::linux::run_pending(
+        &RELAY,
+        &RelayHealth,
+        install_root,
+        state_root,
+        ReleaseTrust::embedded(),
+        SystemdScope::User,
+    )
+    .await
 }
 
 #[cfg(test)]

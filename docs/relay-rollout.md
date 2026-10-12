@@ -81,19 +81,24 @@ A user service is installed exactly like the Linux Companion, through the shared
 - `~/.local/lib/codewide-relay/bootstrap/codewide-relay-update-guardian` is a
   stable copy of the installed Relay that runs `update-run` from
   `codewide-relay-update.service`. Remote updates never replace it; rerun the
-  installer to refresh it.
+  installer to refresh it;
+- `codewide-relay-update.path` watches only the fixed
+  `<state>/host-update/activation-request.json` marker and starts the guardian.
 
 A paired Companion checks and applies a signed release through
-`/relay/update/<route>`. While the Relay keeps serving, the guardian downloads
-the bundle, verifies its signed digest, validates and extracts it into a new
-generation, and checks the reported version. Only then does it switch `current`
-with one `rename(2)` and restart the service, which interrupts connections for
-well under a second. The update commits once the restarted Relay attests the
+`/relay/update/<route>`. While the Relay keeps serving, the Relay itself
+downloads the bundle into its bounded private spool and verifies the signed
+digest. Publishing the fixed marker wakes the network-dark guardian; no update
+request invokes `systemctl`. The guardian independently re-verifies the signed
+descriptor and bytes, copies them through an opened no-follow file into the
+guardian's activation storage, validates the archive, creates the immutable generation,
+switches `current` with one `rename(2)`, and restarts the fixed service. The
+update commits once the restarted Relay attests the
 exact generation over its control socket, keeps its TLS identity, and the
 initiating Companion reconnects. Otherwise the guardian switches `current`
 back to the previous generation and restarts it. Interrupted operations resume
-from the durable journal in `<state>/host-update` at the next start of the
-guardian unit.
+from the durable journal in `<state>/host-update`; product startup resumes
+preparation, and the path unit resumes activation while the marker exists.
 
 The first bundle release is a manual baseline: install it with the installer.
 Later releases certify its digest and update remotely. A legacy system service
