@@ -1,4 +1,3 @@
-import { Ionicons } from "@expo/vector-icons";
 import { createElement, useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, View, useWindowDimensions } from "react-native";
 
@@ -7,8 +6,6 @@ import {
   colors,
   controlHitSlop,
   controlSize,
-  iconSize,
-  layoutSize,
   menuContentInset,
   radii,
   spacing,
@@ -16,6 +13,7 @@ import {
 } from "../theme";
 import { CodeWideSlider } from "./CodeWideSlider.native";
 import { ContentMenu } from "./ContentMenu";
+import { FastModeToggle } from "./FastModeToggle";
 import {
   fastServiceTier,
   isFastServiceTier,
@@ -347,21 +345,7 @@ function FastToggle({
   if (fastTier === undefined) {
     return null;
   }
-  return (
-    <Pressable
-      accessibilityLabel="Fast mode"
-      accessibilityRole="switch"
-      accessibilityState={{ checked: enabled }}
-      onPress={toggle}
-      style={[styles.fastButton, enabled && styles.fastButtonActive]}
-    >
-      <Ionicons
-        color={enabled ? colors.onPrimary : colors.textMuted}
-        name={enabled ? "flash" : "flash-outline"}
-        size={iconSize.action}
-      />
-    </Pressable>
-  );
+  return <FastModeToggle enabled={enabled} onToggle={toggle} />;
 }
 
 function PersonalityChoices({
@@ -445,17 +429,6 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: menuContentInset,
     paddingVertical: spacing.xs,
-  },
-  fastButton: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainer,
-    borderRadius: radii.medium,
-    height: layoutSize.header,
-    justifyContent: "center",
-    width: layoutSize.header,
-  },
-  fastButtonActive: {
-    backgroundColor: colors.accent,
   },
   modelControls: {
     flexDirection: "row",

@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use tracing::warn;
 
 use super::{
-    PROVIDER_FIELD, WireProvider, model_scope::ModelScope, request_ids, results, settings,
+    PROVIDER_FIELD, WireProvider, decode, model_scope::ModelScope, request_ids, results, settings,
 };
 use crate::agent::{
     bindings::{BindOutcome, BindingOrigin, BindingStore, ThreadRoute},
@@ -480,8 +480,10 @@ impl ClientWireGateway {
     /// Copies `source` into a new thread of the same provider through the
     /// neutral `thread.fork`, writing its `created` binding like a created
     /// thread. The boundary comes from `lastTurnId` (through) or
-    /// `beforeTurnId` (before); a `model` other than the copy's becomes its
-    /// model.
+    /// `beforeTurnId` (before). The requested `model`, `serviceTier` and
+    /// `config.model_reasoning_effort` that differ from the copy's settings
+    /// are applied in one `thread.update`; without a difference no update
+    /// is sent.
     ///
     /// # Errors
     /// Returns the provider or binding failure.
@@ -520,21 +522,27 @@ impl ClientWireGateway {
             .map_err(|error| RpcFailure::from_provider(&error))?;
         self.bind_created(&source.wire.descriptor.id, thread.app_thread_id.as_str())
             .await?;
-        let model = params
-            .get("model")
-            .and_then(Value::as_str)
-            .filter(|model| !model.is_empty() && *model != thread.settings.model);
-        let Some(model) = model else {
-            return Ok(thread);
+        let requested = decode::requested_settings(params);
+        let differs = |requested: Option<String>, current: Option<&str>| {
+            requested.filter(|value| Some(value.as_str()) != current)
         };
+        let model = differs(requested.model, Some(thread.settings.model.as_str()));
+        let effort = differs(requested.effort, thread.settings.effort.as_deref());
+        let service_tier = differs(
+            requested.service_tier,
+            thread.settings.service_tier.as_deref(),
+        );
+        if model.is_none() && effort.is_none() && service_tier.is_none() {
+            return Ok(thread);
+        }
         let updated = provider
             .thread_update(ThreadUpdateParams {
                 app_thread_id: thread.app_thread_id.clone(),
                 change: ThreadChange::Settings {
-                    model: Some(model.to_owned()),
-                    effort: None,
+                    model,
+                    effort,
                     permission_profile: None,
-                    service_tier: None,
+                    service_tier,
                 },
             })
             .await
@@ -611,87 +619,6 @@ pub fn mint_app_thread_id() -> AppThreadId {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A same-provider fork on a neutral provider: the copy is bound like a
-    /// created thread, keeps the turns through the boundary and takes the
-    /// requested model.
-    #[tokio::test]
-    async fn a_neutral_fork_binds_the_copy_and_applies_the_model()
-    -> Result<(), Box<dyn std::error::Error>> {
-        use crate::agent::{
-            model::{AgentTurn, CapabilitySet, StartWhileActiveMode, TurnOrigin, TurnStatus},
-            testing::{ScriptedProvider, thread},
-        };
-        let turn = |id: &'static str| AgentTurn {
-            turn_id: TurnId::from_static(id),
-            status: TurnStatus::Completed,
-            origin: TurnOrigin::User,
-            started_at: 1,
-            completed_at: Some(2),
-            error: None,
-            items: Vec::new(),
-            provenance: None,
-            usage: None,
-        };
-        let directory = tempfile::tempdir()?;
-        let store = Arc::new(crate::store::IndexStore::open(
-            directory.path().join("state.redb"),
-        )?);
-        let mut capabilities = CapabilitySet::none(StartWhileActiveMode::Busy);
-        capabilities.threads_host_minted_ids = true;
-        capabilities.threads_fork = true;
-        let claude = Arc::new(
-            ScriptedProvider::new("claude", capabilities)
-                .with_thread(thread("claude", "source", 5)),
-        );
-        claude.set_turns("source", vec![turn("t1"), turn("t2"), turn("t3")]);
-        let provider: Arc<dyn AgentProvider> = claude.clone();
-        let registry = Arc::new(ProviderRegistry::single(provider, Vec::new()));
-        let bindings = Arc::new(BindingStore::new(store));
-        bindings
-            .bind(
-                &AppThreadId::from_static("source"),
-                &ProviderId::from_static("claude"),
-                BindingOrigin::Created,
-            )
-            .await?;
-        let gateway = ClientWireGateway::new(registry, bindings);
-        let source = gateway
-            .resolve_thread("source", None)
-            .await
-            .map_err(|failure| failure.message)?;
-
-        let forked = gateway
-            .fork_thread(&source, &json!({"lastTurnId": "t2", "model": "opus"}))
-            .await
-            .map_err(|failure| failure.message)?;
-
-        let copy = gateway
-            .resolve_thread(forked.app_thread_id.as_str(), None)
-            .await
-            .map_err(|failure| failure.message)?;
-        assert_eq!(copy.wire.descriptor.id.as_str(), "claude");
-        let kept: Vec<String> = claude
-            .turns
-            .lock()
-            .map_err(|_| "turns lock")?
-            .get(forked.app_thread_id.as_str())
-            .map(|turns| {
-                turns
-                    .iter()
-                    .map(|turn| turn.turn_id.as_str().to_owned())
-                    .collect()
-            })
-            .unwrap_or_default();
-        assert_eq!(kept, ["t1", "t2"]);
-        let updated = claude.updated.lock().map_err(|_| "updated lock")?;
-        assert!(matches!(
-            updated.as_slice(),
-            [ThreadUpdateParams { change: ThreadChange::Settings { model: Some(model), .. }, .. }]
-                if model == "opus"
-        ));
-        Ok(())
-    }
 
     #[tokio::test]
     async fn continuation_threads_leave_list_pages_and_search_hits()

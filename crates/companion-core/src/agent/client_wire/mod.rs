@@ -25,6 +25,8 @@ pub mod results;
 pub mod settings;
 
 #[cfg(test)]
+mod fork_tests;
+#[cfg(test)]
 mod golden_tests;
 
 pub use agent_core::request_ids;
