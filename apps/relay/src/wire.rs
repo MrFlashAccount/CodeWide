@@ -2,6 +2,7 @@ use crate::{Result, denied};
 use serde::{Deserialize, Serialize};
 
 pub const DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
+pub const ATTACH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 pub const FRAME_BYTES: usize = 64 * 1024;
 pub const STREAMS: usize = 64;
 

@@ -5,7 +5,7 @@ use crate::{
     pairing::{PairRequest, PairResponse},
     registry::{AuthorizedSession, Registry, validate_route_id},
     update::{ApplyRelayUpdateRequest, RelayUpdateError, RelayUpdater},
-    wire::{self, Control, DEADLINE, Target},
+    wire::{self, ATTACH_DEADLINE, Control, DEADLINE, Target},
 };
 use axum::{
     Extension, Json, Router,
@@ -218,37 +218,77 @@ impl Relay {
         }
     }
 
-    fn open(&self, route_id: &str, target: Target, upgrade: WebSocketUpgrade) -> Result<Response> {
+    async fn open(
+        &self,
+        route_id: &str,
+        target: Target,
+        upgrade: WebSocketUpgrade,
+    ) -> Result<Response> {
         validate_route_id(route_id)?;
         if self.0.shutdown.is_cancelled() {
             return Err(crate::denied());
         }
-        let global = self.0.capacity.clone().try_acquire_owned()?;
+        let global = self
+            .0
+            .capacity
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| std::io::Error::other("relay global stream capacity exhausted"))?;
         let ticket = wire::nonce();
         let (sender, receiver) = oneshot::channel();
-        let (permit, cancel) = {
-            let upstreams = self.0.upstreams.lock().map_err(|_| crate::denied())?;
-            let active = upstreams.get(route_id).ok_or_else(crate::denied)?;
-            let permit = active.capacity.clone().try_acquire_owned()?;
-            self.0.pending.lock().map_err(|_| crate::denied())?.insert(
-                ticket.clone(),
-                Pending {
-                    route_id: route_id.to_owned(),
-                    upstream: sender,
-                },
-            );
-            if active
-                .opens
-                .try_send(Control::Open {
-                    ticket: ticket.clone(),
-                    target,
-                })
-                .is_err()
+        let (permit, cancel) =
             {
-                self.remove_pending(&ticket);
-                return Err(crate::denied());
-            }
-            (permit, active.cancel.clone())
+                let upstreams =
+                    self.0.upstreams.lock().map_err(|_| {
+                        std::io::Error::other("relay upstream registry unavailable")
+                    })?;
+                let active = upstreams
+                    .get(route_id)
+                    .ok_or_else(|| std::io::Error::other("relay route has no active upstream"))?;
+                let permit =
+                    active.capacity.clone().try_acquire_owned().map_err(|_| {
+                        std::io::Error::other("relay route stream capacity exhausted")
+                    })?;
+                self.0
+                    .pending
+                    .lock()
+                    .map_err(|_| std::io::Error::other("relay pending registry unavailable"))?
+                    .insert(
+                        ticket.clone(),
+                        Pending {
+                            route_id: route_id.to_owned(),
+                            upstream: sender,
+                        },
+                    );
+                if active
+                    .opens
+                    .try_send(Control::Open {
+                        ticket: ticket.clone(),
+                        target,
+                    })
+                    .is_err()
+                {
+                    self.remove_pending(&ticket);
+                    return Err(std::io::Error::other("relay control queue unavailable").into());
+                }
+                (permit, active.cancel.clone())
+            };
+        let _guard = PendingGuard {
+            relay: self.clone(),
+            ticket,
+        };
+        let upstream = tokio::select! {
+            () = self.0.shutdown.cancelled() => return Err(crate::denied()),
+            () = cancel.cancelled() => return Err(crate::denied()),
+            stream = tokio::time::timeout(ATTACH_DEADLINE, receiver) => match stream {
+                Ok(Ok(stream)) => stream,
+                Ok(Err(error)) => return Err(std::io::Error::other(
+                    format!("relay attachment channel closed: {error}"),
+                ).into()),
+                Err(error) => return Err(std::io::Error::other(
+                    format!("relay attachment timed out: {error}"),
+                ).into()),
+            },
         };
         let relay = self.clone();
         Ok(upgrade
@@ -257,23 +297,15 @@ impl Relay {
             .write_buffer_size(0)
             .max_write_buffer_size(wire::FRAME_BYTES * 2)
             .on_upgrade(move |phone| async move {
-                let _guard = PendingGuard {
-                    relay: relay.clone(),
-                    ticket,
-                };
                 let _permits = (global, permit);
-                let upstream = tokio::select! {
-                    () = relay.0.shutdown.cancelled() => return,
-                    () = cancel.cancelled() => return,
-                    stream = tokio::time::timeout(DEADLINE, receiver) => match stream {
-                        Ok(Ok(stream)) => stream,
-                        _ => return,
-                    },
-                };
                 tokio::select! {
                     () = relay.0.shutdown.cancelled() => {},
                     () = cancel.cancelled() => {},
-                    _ = bridge(phone, upstream) => {},
+                    result = bridge(phone, upstream) => {
+                        if let Err(error) = result {
+                            eprintln!("relay_bridge_closed err={error}");
+                        }
+                    },
                 }
             }))
     }
@@ -482,7 +514,7 @@ async fn device(
     Path(route_id): Path<String>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    forward(&relay, &route_id, upgrade, Target::Device)
+    forward(&relay, &route_id, upgrade, Target::Device).await
 }
 
 async fn pairing(
@@ -490,7 +522,7 @@ async fn pairing(
     Path(route_id): Path<String>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    forward(&relay, &route_id, upgrade, Target::Pairing)
+    forward(&relay, &route_id, upgrade, Target::Pairing).await
 }
 
 const ROUTE_HEADER: &str = "x-codewide-relay-route";
@@ -506,7 +538,7 @@ async fn pinned_device(
     else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    forward(&relay, route_id, upgrade, Target::Device)
+    forward(&relay, route_id, upgrade, Target::Device).await
 }
 
 async fn pinned_pairing(
@@ -520,7 +552,7 @@ async fn pinned_pairing(
     else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    forward(&relay, route_id, upgrade, Target::Pairing)
+    forward(&relay, route_id, upgrade, Target::Pairing).await
 }
 
 async fn pair(
@@ -534,10 +566,19 @@ async fn pair(
     }
 }
 
-fn forward(relay: &Relay, route_id: &str, upgrade: WebSocketUpgrade, target: Target) -> Response {
-    relay
-        .open(route_id, target, upgrade)
-        .unwrap_or_else(|_| StatusCode::SERVICE_UNAVAILABLE.into_response())
+async fn forward(
+    relay: &Relay,
+    route_id: &str,
+    upgrade: WebSocketUpgrade,
+    target: Target,
+) -> Response {
+    match relay.open(route_id, target, upgrade).await {
+        Ok(response) => response,
+        Err(error) => {
+            eprintln!("relay_open_failed err={error}");
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
+    }
 }
 
 async fn control(
@@ -557,7 +598,9 @@ async fn control(
         .max_message_size(4096)
         .max_frame_size(4096)
         .on_upgrade(move |socket| async move {
-            let _ = worker.control(socket, permit, session).await;
+            if let Err(error) = worker.control(socket, permit, session).await {
+                eprintln!("relay_control_closed err={error}");
+            }
         })
 }
 
@@ -601,7 +644,9 @@ async fn attach(
         .max_write_buffer_size(wire::FRAME_BYTES * 2)
         .on_upgrade(move |socket| async move {
             let _permit = global;
-            let _ = sender.send(socket);
+            if sender.send(socket).is_err() {
+                eprintln!("relay_attach_orphaned err=phone request closed before attach");
+            }
         })
 }
 

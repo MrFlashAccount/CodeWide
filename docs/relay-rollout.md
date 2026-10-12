@@ -144,8 +144,10 @@ connections send the access token only after verifying that saved pin.
 Legacy data-plane connections may remain `ws://` during migration. New data
 attachments use pinned WSS. Attachments carry only
 opaque inner-TLS bytes and a 256-bit ticket that is delivered over control,
-expires after 15 seconds, and is consumed exactly once. The long-lived Relay
-access token never enters the plain channel. An active network attacker can
+expires after five seconds, and is consumed exactly once. Relay completes the
+phone's outer WebSocket upgrade only after Companion consumes that ticket, so a
+missing data attachment is reported as `503` instead of a false `101`. The
+long-lived Relay access token never enters the plain channel. An active network attacker can
 still drop or race an attachment, but gains only the same denial/ciphertext
 injection powers already assigned to a compromised Relay; it cannot read data
 or reach the Companion API. Exposing the Relay port still requires normal host
