@@ -106,6 +106,7 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => {
   for (const session of sessions.splice(0)) session.stop();
   for (const model of models.splice(0)) model.close();
+  vi.useRealTimers();
 });
 
 describe("warm foreground recovery", () => {
@@ -170,12 +171,12 @@ describe("warm foreground recovery", () => {
     const test = setup();
     test.state("live");
     await settle();
-    expect(test.states).toEqual(["syncing", "live"]);
+    expect(test.states).toEqual(["live"]);
     await test.session.reattachRuntime();
     test.state("live");
     await settle();
     expect(native.attachSocket).toHaveBeenCalledWith("server");
-    expect(test.states).toEqual(["syncing", "live"]);
+    expect(test.states).toEqual(["live"]);
   });
 
   it("still publishes a genuine reconnect", async () => {
@@ -185,7 +186,7 @@ describe("warm foreground recovery", () => {
     test.state("connecting");
     test.state("live");
     await settle();
-    expect(test.states).toEqual(["syncing", "live", "connecting", "syncing", "live"]);
+    expect(test.states).toEqual(["live", "connecting", "live"]);
   });
 
   it("does not hide recovery after an invalid native state", async () => {
@@ -200,10 +201,10 @@ describe("warm foreground recovery", () => {
     });
     test.state("live");
     await settle();
-    expect(test.states).toEqual(["syncing", "live", "degraded", "syncing", "live"]);
+    expect(test.states).toEqual(["live", "degraded", "live"]);
   });
 
-  it("still waits for a new authoritative snapshot before publishing live", async () => {
+  it("keeps transport live while a new authoritative snapshot is projected", async () => {
     const test = setup();
     test.state("live");
     await settle();
@@ -217,7 +218,49 @@ describe("warm foreground recovery", () => {
     test.state("live");
     await settle();
     expect(native.acknowledgeProjection).toHaveBeenCalledWith("server", 20);
-    expect(test.states).toEqual(["syncing", "live", "syncing", "live"]);
+    expect(test.states).toEqual(["live"]);
+  });
+
+  it("keeps transport live while a failed projection checkpoint recovers", async () => {
+    vi.useFakeTimers();
+    const states: RemoteConnectionState[] = [];
+    const checkpoint = Promise.withResolvers<void>();
+    const session = new NativeEngineSession({
+      connection: { id: "server", endpoint: "https://example.test", token: "test", enabled: true },
+      connectionState: {
+        setConnectionState: (_id, state) => {
+          states.push(state);
+        },
+      },
+      projection: {
+        applySnapshot: async () => undefined,
+        applyEvents: async () => ({ checkpoint: checkpoint.promise, threads: new Map() }),
+      },
+    });
+    sessions.push(session);
+    session.receive({
+      contractVersion: 1,
+      connectionId: "server",
+      type: "state",
+      data: JSON.stringify({ state: "live", rpcAvailable: true }),
+    });
+    session.receive({
+      contractVersion: 1,
+      connectionId: "server",
+      type: "events",
+      projectionCursor: 1,
+      data: JSON.stringify([
+        { frame: { type: "event", cursor: 1, payload: { method: "turn/completed" } } },
+      ]),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    checkpoint.reject(new Error("thread/read failed"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(states).toEqual(["live"]);
+    expect(native.attachSocket).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(native.attachSocket).toHaveBeenCalledExactlyOnceWith("server");
+    expect(states).toEqual(["live"]);
   });
 
   it("drains missing background events but does not re-read an already consumed journal head", async () => {
@@ -244,12 +287,12 @@ describe("warm foreground recovery", () => {
     await settle();
     expect(test.applied).toEqual([10]);
     expect(native.acknowledgeProjection).toHaveBeenCalledWith("server", 10);
-    expect(test.states).toEqual(["syncing", "live", "syncing", "live"]);
+    expect(test.states).toEqual(["live"]);
     test.journal(10);
     test.state("live");
     await settle();
     expect(native.readCommittedFrames).toHaveBeenCalledTimes(1);
     expect(test.applied).toEqual([10]);
-    expect(test.states).toEqual(["syncing", "live", "syncing", "live"]);
+    expect(test.states).toEqual(["live"]);
   });
 });
