@@ -19,6 +19,7 @@ import type {
   listSubagents,
   query,
   renameSession,
+  resolveSettings,
   tool,
 } from "@anthropic-ai/claude-agent-sdk";
 
@@ -34,6 +35,7 @@ export interface AgentSdk {
   readonly listSubagents: typeof listSubagents;
   readonly query: typeof query;
   readonly renameSession: typeof renameSession;
+  readonly resolveSettings: typeof resolveSettings;
   readonly tool: typeof tool;
 }
 
@@ -48,6 +50,7 @@ const FUNCTIONS = [
   "listSubagents",
   "query",
   "renameSession",
+  "resolveSettings",
   "tool",
 ] as const satisfies readonly (keyof AgentSdk)[];
 
