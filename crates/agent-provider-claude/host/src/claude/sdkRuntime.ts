@@ -2,7 +2,8 @@
  * The Agent SDK query adapter over the SDK `sdkModule.ts` loaded.
  *
  * Every query receives the options a profile fixes plus, always explicitly,
- * `permissionMode`, `settingSources`, `env: process.env`,
+ * `permissionMode`, `settingSources`, the inherited process environment plus
+ * the validated user/managed Claude proxy environment,
  * `pathToClaudeCodeExecutable`, partial messages and summarized adaptive
  * thinking. Messages are read with `query.next()` (an iterator `return()`
  * hangs while the CLI idles). The CLI path is passed by the companion; the
@@ -20,6 +21,7 @@ import type {
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentSdk } from "./sdkModule.js";
+import type { ProxyEnvironment } from "./sdkProxyEnvironment.js";
 import type {
   ClaudeQuery,
   ClaudeRuntime,
@@ -145,9 +147,9 @@ async function withTimeout<Value>(
   }
 }
 
-function baseOptions(claudeExecutable: string): Options {
+function baseOptions(claudeExecutable: string, proxyEnvironment: ProxyEnvironment): Options {
   return {
-    env: { ...process.env },
+    env: { ...process.env, ...proxyEnvironment },
     includePartialMessages: true,
     pathToClaudeCodeExecutable: claudeExecutable,
     systemPrompt: { preset: "claude_code", type: "preset" },
@@ -250,43 +252,62 @@ const EFFORTS: ReadonlySet<unknown> = new Set<EffortLevel>([
 ]);
 const isEffort = (value: string): value is EffortLevel => EFFORTS.has(value);
 
+/** Immutable process-level inputs shared by every SDK query. */
+export interface SdkRuntimeConfiguration {
+  readonly claudeExecutable: string;
+  readonly proxyEnvironment: ProxyEnvironment;
+}
+
+/**
+ * Builds one query's SDK options. The proxy environment is independent of
+ * `settingSources`: read-only receives only environment values, while hooks,
+ * MCP servers and permission settings stay excluded by its empty source set.
+ */
+export function sdkQueryOptions(
+  sdk: AgentSdk,
+  configuration: SdkRuntimeConfiguration,
+  options: QueryOpenOptions,
+): Options {
+  const canUseTool: CanUseTool = async (toolName, toolInput, context) =>
+    toPermissionResult(
+      await options.canUseTool({
+        decisionReason: context.decisionReason ?? null,
+        input: toolInput,
+        signal: context.signal,
+        toolName,
+        toolUseId: context.toolUseID,
+      }),
+      context.suggestions ?? [],
+    );
+  const profile = options.profile;
+  return {
+    ...baseOptions(configuration.claudeExecutable, configuration.proxyEnvironment),
+    additionalDirectories: [options.cwd],
+    cwd: options.cwd,
+    model: options.model,
+    ...(options.effort !== null && isEffort(options.effort) ? { effort: options.effort } : {}),
+    canUseTool,
+    permissionMode: profile.permissionMode,
+    settingSources: [...profile.settingSources],
+    ...(profile.allowDangerouslySkipPermissions ? { allowDangerouslySkipPermissions: true } : {}),
+    ...(profile.strictMcpConfig ? { strictMcpConfig: true } : {}),
+    ...mcpServersOption(sdk, profile, options.clientTools),
+    tools: profile.tools === null ? { preset: "claude_code", type: "preset" } : [...profile.tools],
+    ...(options.identity.type === "new"
+      ? { sessionId: options.identity.sessionId }
+      : { resume: options.identity.sessionId }),
+  };
+}
+
 /** Creates the production runtime bound to the user's `claude` executable. */
-export function createSdkRuntime(sdk: AgentSdk, claudeExecutable: string): ClaudeRuntime {
+export function createSdkRuntime(
+  sdk: AgentSdk,
+  configuration: SdkRuntimeConfiguration,
+): ClaudeRuntime {
   return {
     open(options: QueryOpenOptions): ClaudeQuery {
       const input = new InputQueue();
-      const canUseTool: CanUseTool = async (toolName, toolInput, context) =>
-        toPermissionResult(
-          await options.canUseTool({
-            decisionReason: context.decisionReason ?? null,
-            input: toolInput,
-            signal: context.signal,
-            toolName,
-            toolUseId: context.toolUseID,
-          }),
-          context.suggestions ?? [],
-        );
-      const profile = options.profile;
-      const sdkOptions: Options = {
-        ...baseOptions(claudeExecutable),
-        additionalDirectories: [options.cwd],
-        cwd: options.cwd,
-        model: options.model,
-        ...(options.effort !== null && isEffort(options.effort) ? { effort: options.effort } : {}),
-        canUseTool,
-        permissionMode: profile.permissionMode,
-        settingSources: [...profile.settingSources],
-        ...(profile.allowDangerouslySkipPermissions
-          ? { allowDangerouslySkipPermissions: true }
-          : {}),
-        ...(profile.strictMcpConfig ? { strictMcpConfig: true } : {}),
-        ...mcpServersOption(sdk, profile, options.clientTools),
-        tools:
-          profile.tools === null ? { preset: "claude_code", type: "preset" } : [...profile.tools],
-        ...(options.identity.type === "new"
-          ? { sessionId: options.identity.sessionId }
-          : { resume: options.identity.sessionId }),
-      };
+      const sdkOptions = sdkQueryOptions(sdk, configuration, options);
       const handle: Query = sdk.query({ options: sdkOptions, prompt: input });
       return {
         close: () => {
@@ -311,7 +332,7 @@ export function createSdkRuntime(sdk: AgentSdk, claudeExecutable: string): Claud
       const input = new InputQueue();
       const handle = sdk.query({
         options: {
-          ...baseOptions(claudeExecutable),
+          ...baseOptions(configuration.claudeExecutable, configuration.proxyEnvironment),
           mcpServers: {},
           permissionMode: "default",
           settingSources: [],

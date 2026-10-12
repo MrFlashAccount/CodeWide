@@ -18,6 +18,7 @@ import { ModelCatalog } from "./catalog/models.js";
 import { createCliRunningSessions } from "./claude/cliRunningSessions.js";
 import { readClaudeVersion } from "./claude/cliVersion.js";
 import { loadAgentSdk } from "./claude/sdkModule.js";
+import { resolveUserProxyEnvironment } from "./claude/sdkProxyEnvironment.js";
 import { createSdkRuntime } from "./claude/sdkRuntime.js";
 import { createSdkSessionStore } from "./claude/sdkSessionStore.js";
 import { ThreadStateStore } from "./state/stateStore.js";
@@ -59,7 +60,19 @@ if (parsed.status === "error") {
     // oxlint-disable-next-line unicorn/no-process-exit
     process.exit(SDK_UNAVAILABLE_EXIT_CODE);
   });
-  const runtime = createSdkRuntime(sdk, config.claudeExecutable);
+  const proxyEnvironment = await resolveUserProxyEnvironment(sdk).catch((error: unknown) => {
+    logger.log("error", "the Claude proxy environment could not be resolved", {
+      err: error instanceof Error ? error : new Error(String(error)),
+    });
+    // WHY: continuing without the resolved proxy environment could bypass
+    // the user's required network configuration, including their proxy.
+    // oxlint-disable-next-line unicorn/no-process-exit
+    process.exit(SDK_UNAVAILABLE_EXIT_CODE);
+  });
+  const runtime = createSdkRuntime(sdk, {
+    claudeExecutable: config.claudeExecutable,
+    proxyEnvironment,
+  });
   const claudeVersion = await readClaudeVersion(config.claudeExecutable).catch(
     (error: unknown): string => {
       logger.log("warn", "Claude CLI version is unavailable", {
