@@ -59,15 +59,14 @@ pub fn thread(thread: &AgentThread, provider: &WireProvider, turns: &[Value]) ->
     projected
 }
 
-/// Whether this companion can run a turn in the thread: unknown (`None`) for
-/// a thread no process has loaded, `false` while another process holds it.
+/// Whether this companion can run a turn in the thread: `false` only while
+/// another process holds it. A neutral provider reports a held thread as
+/// `OpenElsewhere`, so an unloaded thread is held by no one and a turn loads
+/// it here. Every status therefore names the lock explicitly: the client
+/// keeps the last value it received, and a released thread must clear it.
 #[must_use]
-pub const fn can_accept_direct_input(status: ThreadStatus) -> Option<bool> {
-    match status {
-        ThreadStatus::NotLoaded => None,
-        ThreadStatus::OpenElsewhere => Some(false),
-        ThreadStatus::Idle | ThreadStatus::Active | ThreadStatus::Failed => Some(true),
-    }
+pub const fn can_accept_direct_input(status: ThreadStatus) -> bool {
+    !matches!(status, ThreadStatus::OpenElsewhere)
 }
 
 /// Projects a thread lifecycle status. A thread open elsewhere runs nothing
