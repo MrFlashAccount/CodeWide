@@ -93,7 +93,10 @@ function ThreadPreview({ preview }: { readonly preview: string }): ReactElement 
   );
 }
 
-/** Shows what the agent is doing now in place of the preview while the turn runs. */
+/**
+ * Shows the agent's current reasoning title or plan step in place of the
+ * preview while the turn runs. The running title already shimmers; this line does not.
+ */
 function RunningThreadPreview({
   thread,
 }: {
@@ -102,12 +105,13 @@ function RunningThreadPreview({
   const activity = useSelector(() =>
     threadLiveActivity$[threadSummaryKey(thread.serverId, thread.id)]?.get(),
   );
-  if (activity === undefined) {
+  const label = activity === undefined ? null : threadLiveActivityLabel(activity);
+  if (label === null) {
     return <ThreadPreview preview={thread.preview} />;
   }
   return (
-    <Text numberOfLines={1} shimmering style={styles.threadPreview} testID="thread-live-activity">
-      {threadLiveActivityLabel(activity)}
+    <Text numberOfLines={1} style={styles.threadPreview} testID="thread-live-activity">
+      {label}
     </Text>
   );
 }
