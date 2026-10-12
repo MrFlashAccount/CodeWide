@@ -162,6 +162,11 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
                           onOpenProject(item.project);
                         }}
                         project={item.project}
+                        server={
+                          serverScope.kind === "all" && servers.length > 1
+                            ? servers.find((entry) => entry.id === item.project.connectionId)
+                            : undefined
+                        }
                       />
                     ) : (
                       <SelectableThreadRow

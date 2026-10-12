@@ -1,3 +1,4 @@
+import type { ServerIconId } from "../../data/serverIcons";
 import { projectScopeKey } from "../../data/project-unread-model";
 import type { RemoteProject } from "../../data/remote-projects";
 
@@ -14,6 +15,9 @@ export type SidebarProject = {
   subtitle: string;
   unread: boolean;
 };
+
+/** The server a pinned project belongs to, as a thread row shows it. */
+export type SidebarProjectServer = { readonly iconId: ServerIconId; readonly name: string };
 
 /** Pinned order is independent of incoming thread activity. */
 export function sidebarProjects(

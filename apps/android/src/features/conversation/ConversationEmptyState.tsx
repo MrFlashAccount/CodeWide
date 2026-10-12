@@ -7,6 +7,8 @@ import { colors, controlSize, iconSize, radii, spacing, typeScale } from "../../
 import { ActionMenu } from "../../ui/ActionMenu";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { AppText as Text } from "../../ui/Typography";
+import type { ServerIconId } from "../../data/serverIcons";
+import { ServerIcon } from "../connections/ServerIcon";
 import { ThreadHistoryEmptyState } from "./ConversationHistoryStatus";
 
 export function ConversationEmptyState({
@@ -16,6 +18,7 @@ export function ConversationEmptyState({
   newChat,
   onChangeWorkspaceMode,
   openProjectPicker,
+  server,
   threadSearchActive,
   workspaceMode,
   workspaceSupport,
@@ -26,6 +29,8 @@ export function ConversationEmptyState({
   newChat: boolean;
   onChangeWorkspaceMode: ((mode: NewChatWorkspaceMode) => void) | undefined;
   openProjectPicker: () => void;
+  /** The new chat's server, shown before its project while several servers are offered. */
+  server?: { readonly iconId: ServerIconId; readonly name: string } | undefined;
   threadSearchActive: boolean;
   workspaceMode: NewChatWorkspaceMode;
   workspaceSupport: WorkspaceSupport | null;
@@ -38,11 +43,16 @@ export function ConversationEmptyState({
         <View style={styles.newChatEmptyState} testID="new-chat-empty-state">
           <Text style={styles.newChatPrompt}>What would you like to work on?</Text>
           <Pressable
-            accessibilityLabel={`Change project, currently ${projectDescription}`}
+            accessibilityLabel={`Change project, currently ${projectDescription}${server === undefined ? "" : ` on ${server.name}`}`}
             accessibilityRole="button"
             onPress={openProjectPicker}
             style={({ pressed }) => [styles.newChatProjectButton, pressed && styles.pressed]}
           >
+            {server !== undefined && (
+              <View testID="new-chat-project-server">
+                <ServerIcon iconId={server.iconId} metric="body" />
+              </View>
+            )}
             <Text numberOfLines={1} style={styles.newChatProjectText}>
               in {projectDescription}
             </Text>
