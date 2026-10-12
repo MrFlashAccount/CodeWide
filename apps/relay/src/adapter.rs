@@ -17,7 +17,8 @@ use tokio::{
     task::JoinSet,
 };
 use tokio_tungstenite::{
-    Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config,
+    Connector, MaybeTlsStream, WebSocketStream, client_async_tls_with_config,
+    connect_async_tls_with_config,
     tungstenite::{Message, client::IntoClientRequest, http::HeaderValue},
 };
 use tokio_util::sync::CancellationToken;
@@ -114,7 +115,7 @@ impl Adapter {
     }
 
     async fn session(&self, status: &watch::Sender<AdapterConnectionState>) -> Result<()> {
-        let mut socket = self
+        let (mut socket, relay_peer) = self
             .connect_control(&format!("/relay/control/{}", self.route_id))
             .await
             .map_err(|error| contextual("control_connect", error))?;
@@ -158,7 +159,7 @@ impl Adapter {
                             continue;
                         }
                         let adapter = self.clone();
-                        tasks.spawn(async move { adapter.data(ticket, target).await });
+                        tasks.spawn(async move { adapter.data(ticket, target, relay_peer).await });
                     }
                     Control::Welcome { .. } => return Err(crate::denied()),
                 },
@@ -171,7 +172,7 @@ impl Adapter {
         }
     }
 
-    async fn data(&self, ticket: String, target: Target) -> Result<()> {
+    async fn data(&self, ticket: String, target: Target, relay_peer: SocketAddr) -> Result<()> {
         let target = match target {
             Target::Device => self.device_target,
             Target::Pairing => self.pairing_target,
@@ -184,7 +185,10 @@ impl Adapter {
             .set_nodelay(true)
             .map_err(|error| contextual("local_configure", error))?;
         let relay = self
-            .connect_attach(&format!("/relay/attach/{}/{ticket}", self.route_id))
+            .connect_attach(
+                &format!("/relay/attach/{}/{ticket}", self.route_id),
+                relay_peer,
+            )
             .await
             .map_err(|error| contextual("relay_attach", error))?;
         let (mut local_read, mut local_write) = tokio::io::split(&mut local);
@@ -197,7 +201,7 @@ impl Adapter {
         }
     }
 
-    async fn connect_control(&self, path: &str) -> Result<RelaySocket> {
+    async fn connect_control(&self, path: &str) -> Result<(RelaySocket, SocketAddr)> {
         let url = format!("{}{path}", self.companion_url.trim_end_matches('/'));
         let mut request = url.into_client_request()?;
         request.headers_mut().insert(
@@ -205,20 +209,25 @@ impl Adapter {
             HeaderValue::from_str(&format!("Bearer {}", self.access_token))?,
         );
         let tls = pinned_client_config(&self.relay_tls_pin_sha256)?;
-        Ok(tokio::time::timeout(
+        let socket = tokio::time::timeout(
             DEADLINE,
             connect_async_tls_with_config(request, None, true, Some(Connector::Rustls(tls))),
         )
         .await??
-        .0)
+        .0;
+        let peer = socket.get_ref().get_ref().peer_addr()?;
+        Ok((socket, peer))
     }
 
-    async fn connect_attach(&self, path: &str) -> Result<RelaySocket> {
+    async fn connect_attach(&self, path: &str, relay_peer: SocketAddr) -> Result<RelaySocket> {
         let url = format!("{}{path}", self.companion_url.trim_end_matches('/'));
+        let request = url.into_client_request()?;
         let tls = pinned_client_config(&self.relay_tls_pin_sha256)?;
+        let stream = tokio::time::timeout(DEADLINE, TcpStream::connect(relay_peer)).await??;
+        stream.set_nodelay(true)?;
         Ok(tokio::time::timeout(
             DEADLINE,
-            connect_async_tls_with_config(url, None, true, Some(Connector::Rustls(tls))),
+            client_async_tls_with_config(request, stream, None, Some(Connector::Rustls(tls))),
         )
         .await??
         .0)

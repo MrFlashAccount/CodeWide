@@ -110,7 +110,7 @@ pub fn reply(reply: Reply, json: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn pair(socket: UnixStream, endpoint: &str) -> Result<ExitCode> {
+pub async fn pair(socket: UnixStream, endpoints: &[String]) -> Result<ExitCode> {
     // Install both handlers before raw mode: even a signal during the first draw
     // must unwind Screen and close the daemon's enrollment owner.
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -118,7 +118,7 @@ pub async fn pair(socket: UnixStream, endpoint: &str) -> Result<ExitCode> {
     let mut screen = panel::Screen::open()?;
     pair_on_screen(
         socket,
-        endpoint,
+        endpoints,
         &mut screen,
         &mut terminate,
         &mut interrupt,
@@ -130,14 +130,28 @@ pub async fn pair(socket: UnixStream, endpoint: &str) -> Result<ExitCode> {
 
 async fn pair_on_screen(
     socket: UnixStream,
-    endpoint: &str,
+    endpoints: &[String],
     screen: &mut panel::Screen,
     terminate: &mut tokio::signal::unix::Signal,
     interrupt: &mut tokio::signal::unix::Signal,
     menu: bool,
 ) -> Result<PairExit> {
     let mut model = panel::Model {
-        endpoint: endpoint.to_owned(),
+        endpoint: endpoints
+            .iter()
+            .map(|endpoint| {
+                let family = endpoint
+                    .parse::<std::net::SocketAddr>()
+                    .map_or(
+                        "IP",
+                        |address| {
+                            if address.is_ipv4() { "IPv4" } else { "IPv6" }
+                        },
+                    );
+                format!("{family}  {endpoint}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         phase: Phase::Waiting,
         remaining: 60,
         failure: None,

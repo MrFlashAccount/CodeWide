@@ -9,7 +9,7 @@ use ratatui::{
 };
 use std::io::{Stderr, stderr};
 
-pub(super) const HEIGHT: u16 = 16;
+pub(super) const HEIGHT: u16 = 17;
 pub(super) const MIN_WIDTH: u16 = 44;
 pub(super) const ACCENT: Color = Color::Rgb(88, 120, 255);
 const WHITE: Color = Color::Rgb(244, 244, 245);
@@ -133,7 +133,7 @@ pub fn render(frame: &mut Frame<'_>, model: &Model, colors: bool) {
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(2),
+        Constraint::Length(3),
         Constraint::Length(1),
         Constraint::Length(2),
         Constraint::Length(1),
@@ -226,7 +226,7 @@ fn text(model: &Model) -> (&str, &str, String, &str, Color) {
         Phase::Waiting => (
             "Visible for pairing",
             &model.endpoint,
-            "In CodeWide, choose Add Relay and enter this address.".into(),
+            "In CodeWide, choose Add Relay and enter either reachable address.".into(),
             "Esc  Cancel    Ctrl+C  Cancel",
             ACCENT,
         ),
@@ -286,7 +286,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(44, HEIGHT))?;
         let model = Model {
             menu: false,
-            endpoint: "[2001:db8::1]:8780".into(),
+            endpoint: "IPv4  203.0.113.42:8780\nIPv6  [2001:db8::1]:8780".into(),
             remaining: 9,
             failure: None,
             phase: Phase::Confirm {
@@ -314,7 +314,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(35, HEIGHT))?;
         let model = Model {
             menu: false,
-            endpoint: "host:8780".into(),
+            endpoint: "IPv4  203.0.113.42:8780".into(),
             remaining: 60,
             phase: Phase::Waiting,
             failure: None,
@@ -328,6 +328,29 @@ mod tests {
             .map(ratatui::buffer::Cell::symbol)
             .collect::<String>();
         assert!(text.contains("Enter is disabled"));
+        Ok(())
+    }
+
+    #[test]
+    fn waiting_state_shows_ipv4_and_ipv6() -> Result<()> {
+        let mut terminal = Terminal::new(TestBackend::new(78, HEIGHT))?;
+        let model = Model {
+            menu: false,
+            endpoint: "IPv4  203.0.113.42:8780\nIPv6  [2001:db8::1]:8780".into(),
+            remaining: 60,
+            phase: Phase::Waiting,
+            failure: None,
+        };
+        terminal.draw(|frame| render(frame, &model, false))?;
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>();
+        assert!(text.contains("IPv4  203.0.113.42:8780"));
+        assert!(text.contains("IPv6  [2001:db8::1]:8780"));
         Ok(())
     }
 
@@ -388,7 +411,7 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(78, HEIGHT))?;
             let model = Model {
                 menu: true,
-                endpoint: "203.0.113.42:8780".into(),
+                endpoint: "IPv4  203.0.113.42:8780\nIPv6  [2001:db8::1]:8780".into(),
                 phase,
                 remaining,
                 failure: None,
