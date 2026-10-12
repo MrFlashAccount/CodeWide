@@ -27,11 +27,21 @@ fn companion_service_relaxes_only_what_claude_is_proven_to_need() {
     for expected in [
         "ProtectSystem=full",
         "NoNewPrivileges=true",
-        "CapabilityBoundingSet=",
         "RestrictNamespaces=user mnt pid net ipc uts cgroup",
         "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
     ] {
         assert!(unit.contains(&expected), "the unit sets {expected}");
+    }
+}
+
+#[test]
+fn user_units_never_shrink_the_capability_bounding_set() {
+    // A per-user manager has no effective capabilities, so it cannot drop the
+    // bounding set: `CapabilityBoundingSet=` fails every start with
+    // 218/CAPABILITIES (systemd 252 and 255). The process already has no
+    // capabilities and NoNewPrivileges keeps it that way.
+    for unit in [COMPANION_UNIT, UPDATE_UNIT, MEMORY_WATCH_UNIT] {
+        assert!(!unit.contains("CapabilityBoundingSet"));
     }
 }
 

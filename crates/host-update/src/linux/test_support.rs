@@ -27,6 +27,7 @@ pub(super) static TEST_PRODUCT: LinuxProduct = LinuxProduct {
     service_unit: "codewide-companion.service",
     update_unit: "codewide-companion-update.service",
     running_version: "1.0.0",
+    ready_timeout: None,
 };
 
 /// Health that never proves readiness; tests must not reach a restart.

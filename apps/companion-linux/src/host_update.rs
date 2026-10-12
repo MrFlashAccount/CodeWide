@@ -33,6 +33,7 @@ pub static COMPANION: LinuxProduct = LinuxProduct {
     service_unit: "codewide-companion.service",
     update_unit: "codewide-companion-update.service",
     running_version: env!("CODEWIDE_COMPANION_VERSION"),
+    ready_timeout: None,
 };
 
 /// The in-process guardian of the running Companion.

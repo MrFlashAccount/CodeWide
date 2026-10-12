@@ -407,7 +407,7 @@ write_update_unit() {
     'ProtectSystem=full' 'ProtectHome=read-only' \
     "ReadWritePaths=\"$(unit_argument "$install_root")\" \"$(unit_argument "$state_root/host-update")\"" \
     "ReadOnlyPaths=\"$(unit_argument "$install_root/bootstrap")\"" \
-    'CapabilityBoundingSet=' 'AmbientCapabilities=' '' '[Install]' 'WantedBy=default.target' >"$service_staged"
+    'AmbientCapabilities=' '' '[Install]' 'WantedBy=default.target' >"$service_staged"
   chmod 0644 "$service_staged"
   update_unit_written=1
   mv -f -- "$service_staged" "$update_service"
@@ -614,7 +614,8 @@ if [ "$managed" = 1 ]; then
     chmod 0755 "$staged/bin" "$staged/bin/codewide-relay"
     printf '%s\n' "$metadata" >"$staged/metadata.json"
     chmod 0600 "$staged/metadata.json"
-    chmod 0755 "$staged"
+    # Same modes as a generation the update runner publishes.
+    chmod 0700 "$staged"
     mv -- "$staged" "$generation"
     staged=
   fi

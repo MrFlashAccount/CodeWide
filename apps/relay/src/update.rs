@@ -39,6 +39,8 @@ pub static RELAY: LinuxProduct = LinuxProduct {
     service_unit: "codewide-relay.service",
     update_unit: "codewide-relay-update.service",
     running_version: env!("CODEWIDE_RELAY_VERSION"),
+    // A healthy Relay attests within a second of starting.
+    ready_timeout: Some(Duration::from_secs(30)),
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

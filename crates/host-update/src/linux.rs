@@ -26,7 +26,7 @@ use std::{
     fs,
     path::PathBuf,
     process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -62,6 +62,9 @@ pub struct LinuxProduct {
     pub update_unit: &'static str,
     /// Version compiled into the running executable.
     pub running_version: &'static str,
+    /// How long a restarted target may take to prove its health before it is
+    /// rolled back; `None` waits until the operation's readiness deadline.
+    pub ready_timeout: Option<Duration>,
 }
 
 /// Product-owned proof that the restarted service is the exact generation and

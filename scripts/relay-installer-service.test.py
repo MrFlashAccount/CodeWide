@@ -221,6 +221,8 @@ class InstallerServiceTests(unittest.TestCase):
         update_unit = (self.root / "config/systemd/user/codewide-relay-update.service").read_text()
         self.assertIn("update-run --install-root", update_unit)
         self.assertIn("WantedBy=default.target", update_unit)
+        # A user manager cannot drop the bounding set; the unit would exit 218.
+        self.assertNotIn("CapabilityBoundingSet", update_unit)
         self.assertFalse((self.root / "config/systemd/user/codewide-relay-update.path").exists())
         self.assertFalse((self.state / "update").exists())
 

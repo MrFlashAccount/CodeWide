@@ -141,11 +141,11 @@ its own trust anchor.
 
 ## Embedded release trust
 
-Every Companion platform embeds the release signing key id and P-256 public
-key at build time: `companion-core/build.rs` reads
+Every Companion platform and the Relay embed the release signing key id and
+P-256 public key at build time: `crates/host-update/build.rs` reads
 `CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID` and
 `CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI` and exposes them as
-`ReleaseTrust::embedded()`, the same way Relay embeds its updater key. No
+`ReleaseTrust::embedded()`. No
 installer-written file supplies trust, so an install path cannot silently
 disable updates by omitting it.
 
@@ -183,6 +183,8 @@ Until then `applySupported` is false and apply returns
 `manual_update_required`.
 
 Android self-update and a global compatibility dashboard are outside this
-contract. The Companion proxies the Relay updater at `/v1/relay-update` with the
+contract. The Relay runs the same Linux guardian from `codewide-host-update`
+with its own payload and health proof; the Companion proxies it at
+`/v1/relay-update` with the
 same authorization: a device session or the admin token, never a browser
 `Origin`.

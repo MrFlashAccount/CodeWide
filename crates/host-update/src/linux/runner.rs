@@ -219,9 +219,32 @@ impl Runner<'_> {
     }
 
     fn wait_for_exact_target(&self, operation: &OperationRecord) -> Result<(), RunnerFailure> {
-        while unix_millis() <= operation.journal.deadlines.target_ready_by {
+        let deadline = self
+            .product
+            .ready_timeout
+            .and_then(|timeout| u64::try_from(timeout.as_millis()).ok())
+            .map_or(operation.journal.deadlines.target_ready_by, |timeout| {
+                operation
+                    .journal
+                    .deadlines
+                    .target_ready_by
+                    .min(unix_millis().saturating_add(timeout))
+            });
+        let started = service_state(self.product.service_unit);
+        while unix_millis() <= deadline {
             if target_is_ready(self.root, self.health, operation) {
                 return Ok(());
+            }
+            // A target that exits or is restarted by systemd is broken now;
+            // waiting for the deadline would only extend the outage.
+            if let (Some(started), Some(now)) =
+                (started.as_ref(), service_state(self.product.service_unit))
+                && now.crashed_since(started)
+            {
+                return Err(RunnerFailure::new(
+                    "target_crashed",
+                    "The updated service exited during startup.",
+                ));
             }
             std::thread::sleep(Duration::from_millis(250));
         }
@@ -526,8 +549,11 @@ fn stage_generation(
             "Cannot create staged generation.",
         )
     })?;
+    // Keep the modes of the verified archive instead of the runner's
+    // UMask=0077, so a generation is identical whether the installer or a
+    // remote update created it. The archive holds only files and directories.
     let status = Command::new("tar")
-        .args(["-xzf"])
+        .args(["--no-same-owner", "-xpzf"])
         .arg(archive)
         .args(["-C"])
         .arg(&staging)
@@ -651,7 +677,62 @@ fn switch_current(root: &Path, relative_target: &str) -> Result<(), RunnerFailur
     })
 }
 
+/// The systemd view of a service that reveals a crash after a restart.
+#[derive(Debug, Eq, PartialEq)]
+struct ServiceState {
+    active_state: String,
+    restarts: u64,
+}
+
+impl ServiceState {
+    fn parse(output: &str) -> Option<Self> {
+        let mut active_state = None;
+        let mut restarts = None;
+        for line in output.lines() {
+            match line.split_once('=') {
+                Some(("ActiveState", value)) => active_state = Some(value.to_owned()),
+                Some(("NRestarts", value)) => restarts = value.parse().ok(),
+                _ => {}
+            }
+        }
+        Some(Self {
+            active_state: active_state?,
+            restarts: restarts?,
+        })
+    }
+
+    /// Exited, failed, or restarted by systemd since `started` was observed.
+    fn crashed_since(&self, started: &Self) -> bool {
+        self.restarts > started.restarts
+            || !matches!(
+                self.active_state.as_str(),
+                "active" | "activating" | "reloading"
+            )
+    }
+}
+
+fn service_state(unit: &str) -> Option<ServiceState> {
+    let output = Command::new("systemctl")
+        .args([
+            "--user",
+            "show",
+            "--property=ActiveState",
+            "--property=NRestarts",
+            unit,
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    ServiceState::parse(&String::from_utf8(output.stdout).ok()?)
+}
+
 fn restart_service(product: &LinuxProduct) -> Result<(), RunnerFailure> {
+    // A crash-looping target can exhaust the unit's start limit; systemd then
+    // refuses every restart, including the one that rolls back. Clear it.
+    let _ = command_success(
+        "systemctl",
+        &["--user", "reset-failed", product.service_unit],
+    );
     command_success("systemctl", &["--user", "restart", product.service_unit])
         .then_some(())
         .ok_or_else(|| RunnerFailure::new("service_restart_failed", "The service did not restart."))

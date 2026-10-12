@@ -17,7 +17,6 @@ ProtectSystem=full
 ProtectHome=read-only
 ReadWritePaths=%h/.local/lib/codewide %h/.local/state/codewide/host-update
 ReadOnlyPaths=%h/.local/lib/codewide/bootstrap %h/.config/systemd/user
-CapabilityBoundingSet=
 AmbientCapabilities=
 LockPersonality=true
 RestrictRealtime=true

@@ -62,6 +62,23 @@ fn operation(phase: HostUpdatePhase) -> OperationRecord {
 }
 
 #[test]
+fn a_target_that_exits_or_is_restarted_is_a_crash() {
+    let started = ServiceState::parse("ActiveState=active\nNRestarts=4\n").expect("state");
+    let still_starting =
+        ServiceState::parse("NRestarts=4\nActiveState=activating\n").expect("state");
+    assert!(!still_starting.crashed_since(&started));
+    for crashed in [
+        "ActiveState=activating\nNRestarts=5\n",
+        "ActiveState=failed\nNRestarts=4\n",
+        "ActiveState=inactive\nNRestarts=4\n",
+    ] {
+        let state = ServiceState::parse(crashed).expect("state");
+        assert!(state.crashed_since(&started), "{crashed}");
+    }
+    assert_eq!(ServiceState::parse("ActiveState=active\n"), None);
+}
+
+#[test]
 fn current_switch_is_one_relative_symlink_rename() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path();
