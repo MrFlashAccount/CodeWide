@@ -1,6 +1,8 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -18,11 +20,13 @@ use crate::{
         HistoryError, SUMMARY_PROJECTION_VERSION, SummaryProjectionState,
         summary_projection_state_from_file,
     },
+    history_base::read_history_base,
     rollout::{
         IndexError, RolloutWitness, backfill_rollout_prefix, current_indexed_anchor_from_file,
         current_indexed_coverage_from_file, current_indexed_turns_from_file, index_rollout,
         index_rollout_through_anchor, rollout_file_id, rollout_witness_from_file,
-        rollout_witness_matches, scan_tail_turns_from_file, scan_turns_after_from_file,
+        rollout_witness_matches, scan_frozen_tail_turns_from_file,
+        scan_frozen_turns_before_from_file, scan_tail_turns_from_file, scan_turns_after_from_file,
         scan_turns_before_from_file,
     },
     rollout_monitor::{self, RolloutChange},
@@ -198,6 +202,12 @@ struct Cursor {
     source_offset: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source: Option<HistorySourceWitness>,
+    /// The inherited base `source_offset` is in, whose witness `source` then
+    /// is; 1 is the base of the thread's own rollout. Absent, the offset is
+    /// in the thread's own rollout, as in every cursor issued before fork
+    /// bases were followed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    segment: Option<NonZeroUsize>,
 }
 
 impl HistoryService {
@@ -976,7 +986,7 @@ fn latest_thread_state(
     // independent of the total rollout size.
     index_rollout(store, &path)?;
     let lane = store.rollout_index_lock(rollout_file_id(&path));
-    let _guard = lane
+    let guard = lane
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let reader = HistoryReader::open(store, summaries, thread_id, &path)?;
@@ -988,7 +998,22 @@ fn latest_thread_state(
     let (turns, indexed_exact) = reader.latest(None, 1)?;
     let Some(projected) = reader.project(&turns, indexed_exact)?.pop() else {
         reader.finish()?;
-        let state = LatestThreadState::default();
+        drop(reader);
+        drop(guard);
+        // A fork that has not run a turn yet previews the history it
+        // inherited; nothing inherited is running in the fork.
+        let state = LatestThreadState {
+            preview: ForkContinuation {
+                catalog,
+                store,
+                summaries,
+                thread_id,
+                own_path: &path,
+            }
+            .below_own(1)
+            .and_then(|inherited| inherited.turns.first().and_then(summary_preview)),
+            active: false,
+        };
         remember_preview(previews, thread_id, revision, state.clone());
         return Ok(state);
     };
@@ -1113,6 +1138,9 @@ struct HistoryReader<'a> {
     path: &'a std::path::Path,
     file: File,
     source: RolloutWitness,
+    /// The end of an inherited base: the reader sees only records before it,
+    /// and a turn the fork point cut ends there, interrupted.
+    frozen_end: Option<u64>,
 }
 
 impl<'a> HistoryReader<'a> {
@@ -1132,6 +1160,36 @@ impl<'a> HistoryReader<'a> {
             path,
             file,
             source,
+            frozen_end: None,
+        })
+    }
+
+    /// Opens the inherited prefix of a paginated fork's base: the records of
+    /// `path` before `end`. The rollout keeps growing past `end` on its own.
+    fn open_frozen(
+        store: &'a RolloutStore,
+        summaries: &'a Mutex<SummaryCache>,
+        thread_id: &'a str,
+        base: &'a BaseSegment,
+    ) -> Result<Self, HistoryServiceError> {
+        let file = File::open(&base.path).map_err(IndexError::from)?;
+        if file.metadata().map_err(IndexError::from)?.len() < base.end {
+            return Err(HistoryServiceError::HistorySourceChanged);
+        }
+        let source = rollout_witness_from_file(&file, base.end)?;
+        // Codex ends a base at a record boundary; a shorter durable prefix
+        // means the rollout was rewritten under the fork.
+        if source.durable_bytes != base.end {
+            return Err(HistoryServiceError::HistorySourceChanged);
+        }
+        Ok(Self {
+            store,
+            summaries,
+            thread_id,
+            path: &base.path,
+            file,
+            source,
+            frozen_end: Some(base.end),
         })
     }
 
@@ -1146,7 +1204,10 @@ impl<'a> HistoryReader<'a> {
     }
 
     fn finish(&self) -> Result<String, HistoryServiceError> {
-        let bytes = self.file.metadata().map_err(IndexError::from)?.len();
+        let bytes = match self.frozen_end {
+            Some(end) => end,
+            None => self.file.metadata().map_err(IndexError::from)?.len(),
+        };
         if !rollout_witness_matches(&self.file, bytes, &self.source)? {
             return Err(HistoryServiceError::HistorySourceChanged);
         }
@@ -1158,6 +1219,9 @@ impl<'a> HistoryReader<'a> {
         before: Option<u64>,
         limit: usize,
     ) -> Result<(Vec<TurnRef>, bool), HistoryServiceError> {
+        if let Some(end) = self.frozen_end {
+            return self.frozen_latest(end, before, limit);
+        }
         if let Some(indexed) = current_indexed_turns_from_file(
             self.store,
             self.path,
@@ -1183,12 +1247,103 @@ impl<'a> HistoryReader<'a> {
         Ok((turns, false))
     }
 
+    /// Reads the inherited prefix through the base rollout's own index when
+    /// that index sees the prefix unchanged. The index applies every rollback
+    /// in the rollout, including the base thread's rollbacks after the fork
+    /// point, so a page whose range lost a turn is rescanned within `end`.
+    fn frozen_latest(
+        &self,
+        end: u64,
+        before: Option<u64>,
+        limit: usize,
+    ) -> Result<(Vec<TurnRef>, bool), HistoryServiceError> {
+        let before = before.map_or(end, |offset| offset.min(end));
+        let file_bytes = self.file.metadata().map_err(IndexError::from)?.len();
+        if let Some(indexed) = current_indexed_turns_from_file(
+            self.store,
+            self.path,
+            &self.file,
+            file_bytes,
+            Some(before),
+            limit,
+        )? && !indexed.has_more
+        {
+            // A short page without more rows reached the start of the rollout.
+            let from = if indexed.turns.len() < limit {
+                0
+            } else {
+                indexed.turns.last().map_or(0, |turn| turn.start_offset)
+            };
+            if !self
+                .store
+                .has_removed_turns(&rollout_file_id(self.path), from, before)?
+            {
+                let turns = indexed
+                    .turns
+                    .into_iter()
+                    .map(|turn| close_at_fork_point(turn, end))
+                    .collect();
+                return Ok((turns, true));
+            }
+        }
+        let turns = scan_frozen_tail_turns_from_file(&self.file, end, Some(before), limit)?
+            .turns
+            .into_iter()
+            .map(|turn| TurnRef {
+                id: turn.id,
+                start_offset: turn.start_offset,
+                end_offset: turn.end_offset,
+                completed: turn.completed,
+            })
+            .collect();
+        Ok((turns, false))
+    }
+
+    /// Resolves an older page before `anchor_id` inside the inherited prefix.
+    fn frozen_before(
+        &self,
+        end: u64,
+        anchor_id: &str,
+        limit: usize,
+    ) -> Result<Option<(Vec<TurnRef>, bool)>, HistoryServiceError> {
+        let file_bytes = self.file.metadata().map_err(IndexError::from)?.len();
+        if let Some(anchor) = current_indexed_anchor_from_file(
+            self.store, self.path, &self.file, file_bytes, anchor_id,
+        )? && anchor.start_offset < end
+        {
+            return self
+                .frozen_latest(end, Some(anchor.start_offset), limit)
+                .map(Some);
+        }
+        // Complete coverage without a rollback proves the anchor is not here.
+        if current_indexed_coverage_from_file(self.store, self.path, &self.file, file_bytes)?
+            .is_some_and(crate::rollout_store::FileState::is_complete)
+            && !self
+                .store
+                .has_removed_turns(&rollout_file_id(self.path), 0, end)?
+        {
+            return Ok(None);
+        }
+        Ok(
+            scan_frozen_turns_before_from_file(&self.file, end, anchor_id, limit)?
+                .map(|turns| (turns, false)),
+        )
+    }
+
     fn anchored(
         &self,
         anchor_id: &str,
         direction: HistoryDirection,
         limit: usize,
     ) -> Result<Option<(Vec<TurnRef>, bool)>, HistoryServiceError> {
+        if let Some(end) = self.frozen_end {
+            // Newer history of a base continues in the fork, not after `end`;
+            // an anchor there is unknown to forward reads, which then reset.
+            return match direction {
+                HistoryDirection::After => Ok(None),
+                HistoryDirection::Before => self.frozen_before(end, anchor_id, limit),
+            };
+        }
         if let Some(anchor) = current_indexed_anchor_from_file(
             self.store,
             self.path,
@@ -1247,12 +1402,15 @@ impl<'a> HistoryReader<'a> {
             let value = if let Some(value) = cached_summary(self.summaries, &key) {
                 value
             } else {
+                // The base rollout's persisted projection of a turn the fork
+                // point cut covers records the fork never inherited.
+                let cut = self.frozen_end == Some(turn.end_offset);
                 let value = projected_turn(
                     self.store,
                     self.path,
                     &self.file,
                     turn,
-                    indexed,
+                    indexed && !cut,
                     self.source.durable_bytes,
                 )?;
                 remember_summary(self.summaries, key, &value);
@@ -1261,6 +1419,263 @@ impl<'a> HistoryReader<'a> {
             projected.push(value);
         }
         Ok(projected)
+    }
+}
+
+/// Turns the fork point cut are still running or finished later in the base
+/// rollout; the fork inherited them only up to `end`.
+fn close_at_fork_point(turn: TurnRef, end: u64) -> TurnRef {
+    if turn.end_offset != 0 && turn.end_offset <= end {
+        return turn;
+    }
+    TurnRef {
+        end_offset: end,
+        completed: false,
+        ..turn
+    }
+}
+
+/// One inherited base of a paginated fork: the records of `path` before `end`.
+struct BaseSegment {
+    path: PathBuf,
+    end: u64,
+}
+
+/// The most nested bases followed; each paginated fork of a fork adds one.
+const MAX_BASE_DEPTH: usize = 64;
+
+/// Walks a thread's inherited bases from its own rollout to the oldest.
+struct BaseChain<'a> {
+    catalog: &'a SessionCatalog,
+    current: PathBuf,
+    visited: HashSet<PathBuf>,
+}
+
+impl<'a> BaseChain<'a> {
+    fn new(catalog: &'a SessionCatalog, own: &Path) -> Self {
+        Self {
+            catalog,
+            current: own.to_path_buf(),
+            visited: HashSet::from([own.to_path_buf()]),
+        }
+    }
+
+    /// The base the current rollout continues. A missing or cyclic base ends
+    /// the chain, so the history the fork wrote itself stays readable.
+    fn next(&mut self) -> Result<Option<BaseSegment>, HistoryServiceError> {
+        if self.visited.len() > MAX_BASE_DEPTH {
+            tracing::warn!("paginated fork history is nested too deeply; older bases are skipped");
+            return Ok(None);
+        }
+        let Some(base) = read_history_base(&self.current).map_err(IndexError::from)? else {
+            return Ok(None);
+        };
+        let path = match self.catalog.resolve(&base.thread_id) {
+            Ok(path) => path,
+            Err(CatalogError::NotFound(_)) => {
+                tracing::warn!(
+                    base_thread_id = base.thread_id,
+                    "inherited history of a paginated fork is unavailable: its base rollout is missing"
+                );
+                return Ok(None);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if !self.visited.insert(path.clone()) {
+            tracing::warn!(
+                base_thread_id = base.thread_id,
+                "paginated fork history bases form a cycle; older bases are skipped"
+            );
+            return Ok(None);
+        }
+        self.current.clone_from(&path);
+        Ok(Some(BaseSegment {
+            path,
+            end: base.end_byte_offset,
+        }))
+    }
+
+    /// The `depth`-th base; 1 is the base of the thread's own rollout.
+    fn nth(&mut self, depth: NonZeroUsize) -> Result<Option<BaseSegment>, HistoryServiceError> {
+        let mut segment = None;
+        for _ in 0..depth.get() {
+            segment = self.next()?;
+            if segment.is_none() {
+                break;
+            }
+        }
+        Ok(segment)
+    }
+}
+
+/// Where an inherited page starts.
+enum InheritedStart<'a> {
+    /// Below `before` (the fork point when absent) in base `depth`; a cursor
+    /// into that base also carries the source it was issued against.
+    Below {
+        depth: NonZeroUsize,
+        before: Option<u64>,
+        source: Option<&'a HistorySourceWitness>,
+    },
+    /// Strictly before the turn `anchor`, in whichever base holds it.
+    Anchor(&'a str),
+}
+
+/// The oldest turn of an inherited page, from which the next page continues.
+struct InheritedPosition {
+    depth: NonZeroUsize,
+    start_offset: u64,
+    source: RolloutWitness,
+}
+
+/// Inherited immutable turns, newest first.
+struct InheritedPage {
+    turns: Vec<Value>,
+    oldest: Option<InheritedPosition>,
+    has_more: bool,
+    /// The witness of the first base read, when a page starts inside a base.
+    first_source: Option<String>,
+}
+
+impl InheritedPage {
+    fn older_cursor(&self, thread_id: &str, offset: usize) -> Option<String> {
+        let oldest = self.oldest.as_ref().filter(|_| self.has_more)?;
+        Some(encode_cursor(&Cursor {
+            kind: "turns".into(),
+            thread_id: thread_id.to_owned(),
+            direction: "desc".into(),
+            offset,
+            source_offset: Some(oldest.start_offset),
+            source: Some(HistorySourceWitness::current(oldest.source.clone())),
+            segment: Some(oldest.depth),
+        }))
+    }
+}
+
+/// Reads up to `limit` inherited turns of `thread_id`, continuing from base
+/// to older base. Returns `None` when the start names no base or no base
+/// holds the anchor. Each base is read under its own index lane; the caller
+/// must not hold the lane of the thread's own rollout.
+fn inherited_page(
+    catalog: &SessionCatalog,
+    store: &RolloutStore,
+    summaries: &Mutex<SummaryCache>,
+    thread_id: &str,
+    own_path: &Path,
+    start: &InheritedStart<'_>,
+    limit: usize,
+) -> Result<Option<InheritedPage>, HistoryServiceError> {
+    let mut chain = BaseChain::new(catalog, own_path);
+    let (mut depth, mut before, mut source, mut anchor) = match *start {
+        InheritedStart::Below {
+            depth,
+            before,
+            source,
+        } => (depth, before, source, None),
+        InheritedStart::Anchor(anchor) => (NonZeroUsize::MIN, None, None, Some(anchor)),
+    };
+    let Some(mut base) = chain.nth(depth)? else {
+        return Ok(None);
+    };
+    let mut page = InheritedPage {
+        turns: Vec::new(),
+        oldest: None,
+        has_more: false,
+        first_source: None,
+    };
+    loop {
+        index_rollout(store, &base.path)?;
+        let lane = store.rollout_index_lock(rollout_file_id(&base.path));
+        let guard = lane
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reader = HistoryReader::open_frozen(store, summaries, thread_id, &base)?;
+        if let Some(source) = source.take() {
+            reader.validate_source(source)?;
+        }
+        let remaining = limit.saturating_sub(page.turns.len());
+        let wanted = remaining.saturating_add(1);
+        let found = match anchor {
+            Some(anchor_id) => reader.anchored(anchor_id, HistoryDirection::Before, wanted)?,
+            None => Some(reader.latest(before, wanted)?),
+        };
+        if let Some((refs, indexed)) = found {
+            anchor = None;
+            let taken = &refs[..refs.len().min(remaining)];
+            page.turns.extend(reader.project(taken, indexed)?);
+            if let Some(oldest) = taken.last() {
+                page.oldest = Some(InheritedPosition {
+                    depth,
+                    start_offset: oldest.start_offset,
+                    source: reader.source.clone(),
+                });
+            }
+            let witness = reader.finish()?;
+            page.first_source.get_or_insert(witness);
+            if refs.len() > taken.len() {
+                page.has_more = true;
+                return Ok(Some(page));
+            }
+        }
+        drop(reader);
+        drop(guard);
+        let Some(older) = chain.next()? else {
+            return Ok(anchor.is_none().then_some(page));
+        };
+        base = older;
+        depth = depth.saturating_add(1);
+        before = None;
+    }
+}
+
+/// Reads past the start of one thread's own rollout into its inherited bases.
+struct ForkContinuation<'a> {
+    catalog: &'a SessionCatalog,
+    store: &'a RolloutStore,
+    summaries: &'a Mutex<SummaryCache>,
+    thread_id: &'a str,
+    own_path: &'a Path,
+}
+
+impl ForkContinuation<'_> {
+    /// Up to `limit` inherited turns, newest first. A base that cannot be
+    /// read leaves the fork's own history intact.
+    fn below_own(&self, limit: usize) -> Option<InheritedPage> {
+        let start = InheritedStart::Below {
+            depth: NonZeroUsize::MIN,
+            before: None,
+            source: None,
+        };
+        let page = inherited_page(
+            self.catalog,
+            self.store,
+            self.summaries,
+            self.thread_id,
+            self.own_path,
+            &start,
+            limit,
+        );
+        match page {
+            Ok(page) => page,
+            Err(error) => {
+                let thread_id = self.thread_id;
+                tracing::warn!(thread_id, %error, "inherited history of a paginated fork is unreadable");
+                None
+            }
+        }
+    }
+
+    /// Fills a newest-first page that reached the start of the thread's own
+    /// rollout up to `limit` turns and returns its older cursor. `offset`
+    /// counts turns returned by earlier pages.
+    fn complete(&self, turns: &mut Vec<Value>, limit: usize, offset: usize) -> Option<String> {
+        let inherited = self.below_own(limit.saturating_sub(turns.len()))?;
+        let returned = offset
+            .saturating_add(turns.len())
+            .saturating_add(inherited.turns.len());
+        let older_cursor = inherited.older_cursor(self.thread_id, returned);
+        turns.extend(inherited.turns);
+        older_cursor
     }
 }
 
@@ -1278,33 +1693,76 @@ fn semantic_history_page(
     };
     index_rollout_through_anchor(store, &path, &request.anchor_turn_id, older_limit)?;
     let lane = store.rollout_index_lock(rollout_file_id(&path));
-    let _guard = lane
+    let guard = lane
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let reader = HistoryReader::open(store, summaries, &request.thread_id, &path)?;
     if let Some(source) = &request.source {
         reader.validate_source(source)?;
     }
-    let Some((refs, indexed)) = reader.anchored(
-        &request.anchor_turn_id,
-        direction,
-        request.limit.saturating_add(2),
-    )?
-    else {
-        return Err(HistoryServiceError::InvalidCursor);
+    let scan_limit = request.limit.saturating_add(2);
+    let anchored = reader.anchored(&request.anchor_turn_id, direction, scan_limit)?;
+    let own = match anchored {
+        Some((refs, indexed)) => {
+            let exhausted = refs.len() < scan_limit;
+            let mut sealed = refs
+                .into_iter()
+                .filter(|turn| is_immutable_turn_ref(turn, None))
+                .take(request.limit.saturating_add(1))
+                .collect::<Vec<_>>();
+            let has_more = sealed.len() > request.limit;
+            sealed.truncate(request.limit);
+            Some((reader.project(&sealed, indexed)?, has_more, exhausted))
+        }
+        // Only an older page can start in the inherited history.
+        None if matches!(direction, HistoryDirection::Before) => None,
+        None => return Err(HistoryServiceError::InvalidCursor),
     };
-    let mut sealed = refs
-        .into_iter()
-        .filter(|turn| is_immutable_turn_ref(turn, None))
-        .take(request.limit.saturating_add(1))
-        .collect::<Vec<_>>();
-    let has_more = sealed.len() > request.limit;
-    sealed.truncate(request.limit);
+    let witness = reader.finish()?;
+    drop(reader);
+    drop(guard);
+    let (mut turns, has_more) = match (own, direction) {
+        (Some((turns, has_more, _)), HistoryDirection::After) => (turns, has_more),
+        (Some((mut turns, has_more, exhausted)), HistoryDirection::Before) => {
+            let inherited = (exhausted && !has_more)
+                .then(|| {
+                    ForkContinuation {
+                        catalog,
+                        store,
+                        summaries,
+                        thread_id: &request.thread_id,
+                        own_path: &path,
+                    }
+                    .below_own(request.limit - turns.len())
+                })
+                .flatten();
+            match inherited {
+                Some(inherited) => {
+                    turns.extend(inherited.turns);
+                    (turns, inherited.has_more)
+                }
+                None => (turns, has_more),
+            }
+        }
+        (None, _) => {
+            let start = InheritedStart::Anchor(&request.anchor_turn_id);
+            let inherited = inherited_page(
+                catalog,
+                store,
+                summaries,
+                &request.thread_id,
+                &path,
+                &start,
+                request.limit,
+            )?
+            .ok_or(HistoryServiceError::InvalidCursor)?;
+            (inherited.turns, inherited.has_more)
+        }
+    };
     if matches!(direction, HistoryDirection::Before) {
-        sealed.reverse();
+        turns.reverse();
     }
-    let turns = reader.project(&sealed, indexed)?;
-    Ok(json!({"data":turns, "hasMore":has_more, "sourceWitness":reader.finish()?}))
+    Ok(json!({"data":turns, "hasMore":has_more, "sourceWitness":witness}))
 }
 
 fn turns_page(
@@ -1318,13 +1776,13 @@ fn turns_page(
         .get("threadId")
         .and_then(Value::as_str)
         .ok_or(HistoryServiceError::MissingThreadId)?;
-    let limit = params
-        .get("limit")
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-        .unwrap_or(DEFAULT_PAGE_SIZE)
-        .clamp(1, MAX_PAGE_SIZE);
+    let limit = page_limit(params);
     let cursor = decode_cursor(params.get("cursor"), thread_id)?;
+    if let Some(cursor) = &cursor
+        && let Some(depth) = cursor.segment
+    {
+        return inherited_turns_page(catalog, store, summaries, cursor, depth, limit, not_loaded);
+    }
     let logical_offset = cursor.as_ref().map_or(0, |cursor| cursor.offset);
     let source_offset = cursor.as_ref().and_then(|cursor| cursor.source_offset);
     let scan_limit = if source_offset.is_some() {
@@ -1335,7 +1793,7 @@ fn turns_page(
     let path = catalog.resolve(thread_id)?;
     index_rollout(store, &path)?;
     let lane = store.rollout_index_lock(rollout_file_id(&path));
-    let _guard = lane
+    let guard = lane
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let reader = HistoryReader::open(store, summaries, thread_id, &path)?;
@@ -1375,22 +1833,7 @@ fn turns_page(
     let has_more = indexed_has_more || page_refs.len() > limit;
     let selected = page_refs.into_iter().take(limit).collect::<Vec<_>>();
     let mut data = reader.project(&selected, indexed_exact)?;
-    for projected in &mut data {
-        if not_loaded {
-            let activity = projected.pointer_mut("/codewide/activity").map(Value::take);
-            if let Some(object) = projected.as_object_mut() {
-                object.insert("items".into(), json!([]));
-                object.insert("itemsView".into(), Value::String("notLoaded".into()));
-                object.remove("codewide");
-                if let Some(activity) = activity {
-                    object.insert("codewide".into(), json!({"activity": activity}));
-                }
-            }
-        }
-    }
-    validate_expected_recency(params, cursor.as_ref(), thread_id, &data)?;
-    validate_expected_lifecycle(params, cursor.as_ref(), thread_id, &data)?;
-    let next_cursor = if has_more {
+    let mut next_cursor = if has_more {
         selected.last().map(|turn| {
             encode_cursor(&Cursor {
                 kind: "turns".into(),
@@ -1399,16 +1842,107 @@ fn turns_page(
                 offset: logical_offset.saturating_add(selected.len()),
                 source_offset: Some(turn.start_offset),
                 source: Some(HistorySourceWitness::current(reader.source.clone())),
+                segment: None,
             })
         })
     } else {
         None
     };
+    let witness = reader.finish()?;
+    drop(reader);
+    drop(guard);
+    if !has_more {
+        let bases = ForkContinuation {
+            catalog,
+            store,
+            summaries,
+            thread_id,
+            own_path: &path,
+        };
+        next_cursor = bases.complete(&mut data, limit, logical_offset);
+    }
+    if not_loaded {
+        data.iter_mut().for_each(drop_loaded_items);
+    }
+    validate_expected_recency(params, cursor.as_ref(), thread_id, &data)?;
+    validate_expected_lifecycle(params, cursor.as_ref(), thread_id, &data)?;
     Ok(json!({
         "data": data,
         "nextCursor": next_cursor,
         "backwardsCursor": Value::Null,
-        "sourceWitness": reader.finish()?,
+        "sourceWitness": witness,
+    }))
+}
+
+/// The requested page size, defaulted and bounded.
+fn page_limit(params: &Value) -> usize {
+    params
+        .get("limit")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(DEFAULT_PAGE_SIZE)
+        .clamp(1, MAX_PAGE_SIZE)
+}
+
+/// A `notLoaded` turn keeps only its activity signal.
+fn drop_loaded_items(projected: &mut Value) {
+    let activity = projected.pointer_mut("/codewide/activity").map(Value::take);
+    if let Some(object) = projected.as_object_mut() {
+        object.insert("items".into(), json!([]));
+        object.insert("itemsView".into(), Value::String("notLoaded".into()));
+        object.remove("codewide");
+        if let Some(activity) = activity {
+            object.insert("codewide".into(), json!({"activity": activity}));
+        }
+    }
+}
+
+/// A descending page whose cursor points into the thread's inherited bases.
+fn inherited_turns_page(
+    catalog: &SessionCatalog,
+    store: &RolloutStore,
+    summaries: &Mutex<SummaryCache>,
+    cursor: &Cursor,
+    depth: NonZeroUsize,
+    limit: usize,
+    not_loaded: bool,
+) -> Result<Value, HistoryServiceError> {
+    let path = catalog.resolve(&cursor.thread_id)?;
+    let start = InheritedStart::Below {
+        depth,
+        before: cursor.source_offset,
+        source: cursor.source.as_ref(),
+    };
+    let page = match inherited_page(
+        catalog,
+        store,
+        summaries,
+        &cursor.thread_id,
+        &path,
+        &start,
+        limit,
+    ) {
+        Ok(Some(page)) => page,
+        Ok(None) | Err(HistoryServiceError::HistorySourceChanged) => {
+            return Err(HistoryServiceError::InvalidCursor);
+        }
+        Err(error) => return Err(error),
+    };
+    let offset = cursor.offset.saturating_add(page.turns.len());
+    let next_cursor = page.older_cursor(&cursor.thread_id, offset);
+    let InheritedPage {
+        turns: mut data,
+        first_source,
+        ..
+    } = page;
+    if not_loaded {
+        data.iter_mut().for_each(drop_loaded_items);
+    }
+    Ok(json!({
+        "data": data,
+        "nextCursor": next_cursor,
+        "backwardsCursor": Value::Null,
+        "sourceWitness": first_source,
     }))
 }
 
@@ -1466,7 +2000,7 @@ fn sync_history_with_source(
         index_rollout(store, &path)?;
     }
     let lane = store.rollout_index_lock(rollout_file_id(&path));
-    let _guard = lane
+    let guard = lane
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let reader = HistoryReader::open(store, summaries, thread_id, &path)?;
@@ -1508,6 +2042,7 @@ fn sync_history_with_source(
         }));
     }
 
+    let own_exhausted = latest_refs.len() < scan_limit;
     let reset = latest_reset(
         latest_refs,
         thread_id,
@@ -1516,14 +2051,36 @@ fn sync_history_with_source(
         &reader.source,
     );
     let mut turns = reader.project(&reset.turns, latest_refs_are_indexed)?;
+    let witness = reader.finish()?;
+    drop(reader);
+    drop(guard);
+    let mut older_cursor = reset.older_cursor;
+    if own_exhausted && older_cursor.is_none() {
+        let bases = ForkContinuation {
+            catalog,
+            store,
+            summaries,
+            thread_id,
+            own_path: &path,
+        };
+        older_cursor = bases.complete(&mut turns, limit, 0);
+    }
+    // A fork without sealed turns of its own is headed by its inherited history.
+    let head_turn_id = head_turn_id.or_else(|| {
+        turns
+            .first()
+            .and_then(|turn| turn.get("id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    });
     turns.reverse();
     Ok(json!({
         "kind": "reset",
         "headTurnId": head_turn_id,
         "turns": turns,
         "hasMore": false,
-        "olderCursor": reset.older_cursor,
-        "sourceWitness": reader.finish()?,
+        "olderCursor": older_cursor,
+        "sourceWitness": witness,
     }))
 }
 
@@ -1555,6 +2112,7 @@ fn latest_reset(
                 offset: turns.len(),
                 source_offset: Some(turn.start_offset),
                 source: Some(HistorySourceWitness::current(source.clone())),
+                segment: None,
             })
         })
     } else {
@@ -1834,6 +2392,9 @@ fn decode_cursor(
     }
     Ok(Some(cursor))
 }
+
+#[cfg(test)]
+mod fork_tests;
 
 #[cfg(test)]
 mod tests {

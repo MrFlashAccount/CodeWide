@@ -489,7 +489,7 @@ pub(crate) fn index_rollout_through_anchor(
     let mut found = false;
     let mut remaining = older_limit;
     let mut indexed_from = 0;
-    visit_logical_turns_reverse(&file, state.indexed_bytes, |turn| {
+    visit_logical_turns_reverse(&file, state.indexed_bytes, RolloutEnd::Live, |turn| {
         if turn.id == anchor_id {
             found = true;
             if remaining == 0 {
@@ -1143,6 +1143,27 @@ pub(crate) fn scan_tail_turns_from_file(
     before_offset: Option<u64>,
     limit: usize,
 ) -> Result<TailScanReport, IndexError> {
+    scan_tail_turns_until(file, file_bytes, RolloutEnd::Live, before_offset, limit)
+}
+
+/// Scans a rollout prefix that will never grow: a paginated fork's base. A
+/// turn the fork point cut is closed at `end` instead of staying open.
+pub(crate) fn scan_frozen_tail_turns_from_file(
+    file: &File,
+    end: u64,
+    before_offset: Option<u64>,
+    limit: usize,
+) -> Result<TailScanReport, IndexError> {
+    scan_tail_turns_until(file, end, RolloutEnd::Frozen, before_offset, limit)
+}
+
+fn scan_tail_turns_until(
+    file: &File,
+    file_bytes: u64,
+    rollout_end: RolloutEnd,
+    before_offset: Option<u64>,
+    limit: usize,
+) -> Result<TailScanReport, IndexError> {
     let started = Instant::now();
     let durable_bytes = durable_end(file, file_bytes)?;
     let search_end = before_offset.unwrap_or(durable_bytes).min(durable_bytes);
@@ -1157,7 +1178,7 @@ pub(crate) fn scan_tail_turns_from_file(
     }
 
     let mut turns = Vec::with_capacity(limit);
-    let bytes_scanned = visit_logical_turns_reverse(file, durable_bytes, |turn| {
+    let bytes_scanned = visit_logical_turns_reverse(file, durable_bytes, rollout_end, |turn| {
         if turn.start_offset < search_end {
             turns.push(turn.into());
         }
@@ -1182,7 +1203,8 @@ pub(crate) fn scan_turns_after_from_file(
 ) -> Result<Option<Vec<TurnRef>>, IndexError> {
     let mut found = false;
     let mut newer = std::collections::VecDeque::with_capacity(limit);
-    visit_logical_turns_reverse(file, durable_end(file, file_bytes)?, |turn| {
+    let durable_bytes = durable_end(file, file_bytes)?;
+    visit_logical_turns_reverse(file, durable_bytes, RolloutEnd::Live, |turn| {
         if turn.id == anchor_id {
             found = turn.end_offset != 0;
             return false;
@@ -1205,9 +1227,31 @@ pub(crate) fn scan_turns_before_from_file(
     anchor_id: &str,
     limit: usize,
 ) -> Result<Option<Vec<TurnRef>>, IndexError> {
+    scan_turns_before_until(file, file_bytes, RolloutEnd::Live, anchor_id, limit)
+}
+
+/// [`scan_turns_before_from_file`] over a frozen prefix ending at `end`; the
+/// anchor may be the turn the fork point cut.
+pub(crate) fn scan_frozen_turns_before_from_file(
+    file: &File,
+    end: u64,
+    anchor_id: &str,
+    limit: usize,
+) -> Result<Option<Vec<TurnRef>>, IndexError> {
+    scan_turns_before_until(file, end, RolloutEnd::Frozen, anchor_id, limit)
+}
+
+fn scan_turns_before_until(
+    file: &File,
+    file_bytes: u64,
+    rollout_end: RolloutEnd,
+    anchor_id: &str,
+    limit: usize,
+) -> Result<Option<Vec<TurnRef>>, IndexError> {
     let mut found = false;
     let mut turns = Vec::with_capacity(limit);
-    visit_logical_turns_reverse(file, durable_end(file, file_bytes)?, |turn| {
+    let durable_bytes = durable_end(file, file_bytes)?;
+    visit_logical_turns_reverse(file, durable_bytes, rollout_end, |turn| {
         if turn.id == anchor_id {
             found = turn.end_offset != 0;
             return found && limit > 0;
@@ -1241,13 +1285,26 @@ fn collect_rollback_removals(
     Ok(())
 }
 
+/// Whether records may still be appended after a scanned rollout's end.
+#[derive(Clone, Copy)]
+enum RolloutEnd {
+    /// The newest turn without a terminal is still running (`end_offset == 0`).
+    Live,
+    /// The scanned end is final; an unterminated newest turn ends there.
+    Frozen,
+}
+
 fn visit_logical_turns_reverse(
     file: &File,
     durable_bytes: u64,
+    rollout_end: RolloutEnd,
     mut visit: impl FnMut(TurnRef) -> bool,
 ) -> Result<u64, IndexError> {
     let mut skipped = 0_u64;
-    let mut next_start = 0;
+    let mut next_start = match rollout_end {
+        RolloutEnd::Live => 0,
+        RolloutEnd::Frozen => durable_bytes,
+    };
     let mut terminal: Option<(String, u64, bool)> = None;
     let mut pending_realtime = Vec::new();
     let mut stopped = false;

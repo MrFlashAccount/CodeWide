@@ -20,6 +20,7 @@ mod catalog_visibility;
 mod client_tools;
 mod dispatch;
 pub mod history;
+mod history_base;
 mod history_questions;
 pub mod history_service;
 pub mod host;
