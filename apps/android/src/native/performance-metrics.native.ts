@@ -31,6 +31,7 @@ export type CurrentPerformanceMetrics = PerformanceMetricPoint & {
   javaHeapLimitBytes: number;
   javaHeapPssBytes: number;
   maxFrameMs: number;
+  memorySampleAgeMs: number;
   nativeHeapBytes: number;
   nativeHeapPssBytes: number;
   privateOtherPssBytes: number;
@@ -39,6 +40,7 @@ export type CurrentPerformanceMetrics = PerformanceMetricPoint & {
   rxSessionBytes: number;
   sequence: number;
   stackPssBytes: number;
+  swapPssBytes: number;
   systemPssBytes: number;
   txSessionBytes: number;
   uptimeMs: number;

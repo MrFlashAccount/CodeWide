@@ -11,8 +11,6 @@ import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
 import android.provider.MediaStore
-import android.system.Os
-import android.system.OsConstants
 import android.view.FrameMetrics
 import android.view.Window
 import com.facebook.drawee.backends.pipeline.Fresco
@@ -58,8 +56,10 @@ private data class PerformanceSample(
   val sampledAtMs: Long,
   val uptimeMs: Long,
   val cpuPercent: Double,
+  val memorySampleAgeMs: Long,
   val pssBytes: Long,
   val rssBytes: Long,
+  val swapPssBytes: Long,
   val javaHeapBytes: Long,
   val javaHeapLimitBytes: Long,
   val nativeHeapBytes: Long,
@@ -78,6 +78,7 @@ private data class PerformanceSample(
 )
 
 private data class ProcessMemorySample(
+  val capturedAtElapsedMs: Long,
   val codePssBytes: Long,
   val graphicsPssBytes: Long,
   val javaHeapPssBytes: Long,
@@ -86,6 +87,7 @@ private data class ProcessMemorySample(
   val pssBytes: Long,
   val rssBytes: Long,
   val stackPssBytes: Long,
+  val swapPssBytes: Long,
   val systemPssBytes: Long,
 )
 
@@ -112,9 +114,6 @@ class CodexPerformanceModule(
   }
   private val heapSnapshotInFlight = AtomicBoolean(false)
   private val hermesNavigationCaptureArmed = AtomicBoolean(false)
-  private val memoryPageSizeBytes = runCatching {
-    Os.sysconf(OsConstants._SC_PAGESIZE)
-  }.getOrDefault(4_096L).coerceAtLeast(1L)
   private val frameThread = HandlerThread("codex-frame-metrics").apply { start() }
   private val frameHandler = Handler(frameThread.looper)
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -649,7 +648,6 @@ class CodexPerformanceModule(
     previousCpuMs = cpuMs
 
     val memory = currentMemorySample(elapsedMs)
-    val rssBytes = currentResidentBytes(memory.rssBytes)
     val runtime = Runtime.getRuntime()
     val javaHeapBytes = runtime.totalMemory() - runtime.freeMemory()
     val javaHeapLimitBytes = runtime.maxMemory()
@@ -675,8 +673,10 @@ class CodexPerformanceModule(
       sampledAtMs = System.currentTimeMillis(),
       uptimeMs = elapsedMs - sessionStartedElapsedMs,
       cpuPercent = cpuPercent,
+      memorySampleAgeMs = elapsedMs - memory.capturedAtElapsedMs,
       pssBytes = memory.pssBytes,
-      rssBytes = rssBytes,
+      rssBytes = memory.rssBytes,
+      swapPssBytes = memory.swapPssBytes,
       javaHeapBytes = javaHeapBytes,
       javaHeapLimitBytes = javaHeapLimitBytes,
       nativeHeapBytes = nativeHeapBytes,
@@ -717,32 +717,32 @@ class CodexPerformanceModule(
   private fun currentMemorySample(elapsedMs: Long): ProcessMemorySample {
     val cached = lastMemorySample
     if (cached != null && elapsedMs < nextMemorySampleElapsedMs) return cached
+    val rollup = runCatching { ProcessMemoryRollupReader.read() }.getOrElse { cause ->
+      if (cached != null) {
+        nextMemorySampleElapsedMs = elapsedMs + MEMORY_SAMPLE_PERIOD_MS
+        return cached
+      }
+      throw cause
+    }
     val memory = Debug.MemoryInfo()
     Debug.getMemoryInfo(memory)
-    val pssBytes = memory.totalPss.toLong() * 1_024L
     val sample = ProcessMemorySample(
+      capturedAtElapsedMs = elapsedMs,
       codePssBytes = memoryStatBytes(memory, "summary.code"),
       graphicsPssBytes = memoryStatBytes(memory, "summary.graphics"),
       javaHeapPssBytes = memoryStatBytes(memory, "summary.java-heap"),
       nativeHeapPssBytes = memoryStatBytes(memory, "summary.native-heap"),
       privateOtherPssBytes = memoryStatBytes(memory, "summary.private-other"),
-      pssBytes = pssBytes,
-      rssBytes = memory.getMemoryStat("summary.total-rss")?.toLongOrNull()?.times(1_024L) ?: pssBytes,
+      pssBytes = rollup.pssBytes,
+      rssBytes = rollup.rssBytes,
       stackPssBytes = memoryStatBytes(memory, "summary.stack"),
+      swapPssBytes = rollup.swapPssBytes,
       systemPssBytes = memoryStatBytes(memory, "summary.system"),
     )
     lastMemorySample = sample
     nextMemorySampleElapsedMs = elapsedMs + MEMORY_SAMPLE_PERIOD_MS
     return sample
   }
-
-  private fun currentResidentBytes(fallback: Long): Long = runCatching {
-    val statm = File("/proc/self/statm").readText()
-    val residentStart = statm.indexOf(' ').takeIf { it >= 0 }?.plus(1)
-      ?: return@runCatching fallback
-    val residentEnd = statm.indexOf(' ', residentStart).takeIf { it >= 0 } ?: statm.length
-    statm.substring(residentStart, residentEnd).toLong() * memoryPageSizeBytes
-  }.getOrDefault(fallback)
 
   private fun resetSamplingClock() {
     previousElapsedMs = SystemClock.elapsedRealtime()
@@ -788,8 +788,10 @@ class CodexPerformanceModule(
     putDouble("sampledAtMs", sample.sampledAtMs.toDouble())
     putDouble("uptimeMs", sample.uptimeMs.toDouble())
     putDouble("cpuPercent", sample.cpuPercent)
+    putDouble("memorySampleAgeMs", sample.memorySampleAgeMs.toDouble())
     putDouble("pssBytes", sample.pssBytes.toDouble())
     putDouble("rssBytes", sample.rssBytes.toDouble())
+    putDouble("swapPssBytes", sample.swapPssBytes.toDouble())
     putDouble("javaHeapBytes", sample.javaHeapBytes.toDouble())
     putDouble("javaHeapLimitBytes", sample.javaHeapLimitBytes.toDouble())
     putDouble("nativeHeapBytes", sample.nativeHeapBytes.toDouble())
