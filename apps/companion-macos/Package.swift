@@ -46,6 +46,7 @@ let package = Package(
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Sources/CodeWide",
+            resources: [.copy("Resources/AgentProviders")],
             linkerSettings: [.linkedFramework("IOKit")]
         ),
         .executableTarget(

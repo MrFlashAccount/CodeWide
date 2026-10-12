@@ -67,6 +67,7 @@ struct CompanionPanel: View {
         value.directStatus = CompanionDirectStatus(runtime.directAccess)
         value.relayStatus = CompanionRelayStatus(runtime.relay)
         value.devices = runtime.devices
+        value.agentProviders = runtime.agentProviders
         value.profileName = runtime.appServer?.displayName ?? "None selected"
         value.serverVersion = runtime.appServer?.state.version
         value.appVersion = runtime.health?.appVersion

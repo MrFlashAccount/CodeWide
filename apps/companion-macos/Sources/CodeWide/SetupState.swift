@@ -5,10 +5,10 @@ enum SetupStep: Int, CaseIterable, Identifiable {
     case mac, relay, phone
     var id: Int { rawValue }
     var title: String {
-        switch self { case .mac: "Codex"; case .relay: "Relay"; case .phone: "Your phone" }
+        switch self { case .mac: "CodeWide"; case .relay: "Relay"; case .phone: "Your phone" }
     }
     var symbol: String {
-        switch self { case .mac: "terminal"; case .relay: "network"; case .phone: "iphone" }
+        switch self { case .mac: "cpu"; case .relay: "network"; case .phone: "iphone" }
     }
 }
 
@@ -41,11 +41,11 @@ enum SetupMacState: Equatable {
 
     var title: String {
         switch self {
-        case .checking: "Connect Codex"
+        case .checking: "Set up CodeWide"
         case .chooseProfile: "Choose your Codex profile"
-        case .ready: "Codex is ready"
+        case .ready: "CodeWide is ready"
         case .permissionRequired: "Keep CodeWide available"
-        case .helperUnavailable: "Reconnect to Codex"
+        case .helperUnavailable: "Reconnect CodeWide"
         case .startCodex: "Start Codex on this Mac"
         case .installCodex: "Install Codex to continue"
         case .updateCodex: "Update Codex to continue"
@@ -56,11 +56,11 @@ enum SetupMacState: Equatable {
     var explanation: String {
         switch self {
         case .checking:
-            "CodeWide looks for Codex on this Mac so you can use it from your phone."
+            "CodeWide is finding the agent providers available on this Mac."
         case .chooseProfile:
             "Choose the Codex profile you want to use from your phone."
         case .ready:
-            "CodeWide is connected to Codex on this Mac. Next, choose how your phone will connect."
+            "Review the connected providers, then choose how your phone will reach this Mac."
         case .permissionRequired:
             "Allow CodeWide in Login Items so your phone can connect while the app is in the background."
         case .helperUnavailable:
@@ -93,6 +93,7 @@ struct SetupSnapshot {
     var step: SetupStep = .mac
     var macState: SetupMacState = .checking
     var profiles: [AppServerPayload] = []
+    var agentProviders: [CompanionAgentProvider] = []
     var installation: CodexInstallationState?
     var endpoints: [String] = []
     var selectedEndpoint: String?
@@ -107,10 +108,8 @@ struct SetupSnapshot {
     var relay: RelayStatusPayload?
     var hasChosenConnection = false
 
-    /// Skip a redundant confirmation, but never a profile choice or a recovery action.
-    var canAdvancePastCodex: Bool {
-        step == .mac && macState == .ready && !isWorking && !isDiscovering && error == nil
-            && profiles.count == 1 && profiles[0].selected && profiles[0].state.isAvailable
+    var visibleAgentProviders: [CompanionAgentProvider] {
+        agentProviders.filter(\.isEnabled)
     }
 
     var showsProfilePicker: Bool {

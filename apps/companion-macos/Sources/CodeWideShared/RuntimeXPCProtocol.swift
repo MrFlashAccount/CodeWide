@@ -20,6 +20,10 @@ import Foundation
         withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void
     )
 
+    func agentProviderConnections(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    )
+
     func discoverAppServers(
         withReply reply: @escaping @Sendable (AppServerListPayload?, NSError?) -> Void
     )

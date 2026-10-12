@@ -8,17 +8,27 @@ import Testing
 /// It is not a Computer Use or backdrop-composition test.
 @Suite(.serialized) @MainActor
 struct NativeWindowLayoutTests {
+    @Test func providerBrandAssetsAreBundledAsMonochromeTemplates() throws {
+        let codex = try #require(AgentProviderAssets.image(providerID: "codex"))
+        let claude = try #require(AgentProviderAssets.image(providerID: "claude"))
+        #expect(codex.isTemplate)
+        #expect(claude.isTemplate)
+    }
+
     @Test(arguments: SetupStep.allCases, [false, true])
     func setupKeepsSystemWindowControlsInsideTheFrameAndAboveContent(step: SetupStep, dark: Bool) throws {
         _ = NSApplication.shared
         let profile = AppServerPayload(id: "default", displayName: "Default", codexHome: "/fixture",
                                        state: .available(version: "0.157.0"), selected: true)
         let endpoint = "wss://192.0.2.1:8767/v1/sync"
-        let snapshot = SetupSnapshot(step: step, macState: .ready, profiles: [profile],
+        var snapshot = SetupSnapshot(step: step, macState: .ready, profiles: [profile],
             endpoints: [endpoint], selectedEndpoint: endpoint,
             pairing: PairingPayload(link: "codewide://pair?fixture=not-a-credential",
                                     expiresAtUnixMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000) + 60_000),
             hasChosenConnection: true)
+        snapshot.agentProviders = try CompanionAgentProvider.decodeList(#"""
+        {"providers":[{"id":"codex","name":"Codex","primary":true,"status":"live"},{"id":"claude","name":"Claude","primary":false,"status":"live"}]}
+        """#)
         let window = OnboardingWindowController.makeWindow(content: SetupView(snapshot: snapshot, actions: SetupActions())
             .environment(\.colorScheme, dark ? .dark : .light))
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -39,16 +49,24 @@ struct NativeWindowLayoutTests {
         #expect(window.backgroundColor.alphaComponent == 1)
     }
 
-    @Test func nativePanelMeasuresBothDisclosureStatesBeforePresentation() {
+    @Test(arguments: [false, true])
+    func nativePanelMeasuresBothDisclosureStatesBeforePresentation(dark: Bool) throws {
         _ = NSApplication.shared
-        let snapshot = CompanionMenuSnapshot(connection: .connected, profileName: "Default",
-                                              serverVersion: "0.157.0", appVersion: "0.4.0",
-                                              coreVersion: "0.4.0", address: "192.0.2.1:8767")
+        var snapshot = CompanionMenuSnapshot(connection: .connected, profileName: "Default",
+                                             serverVersion: "0.157.0", appVersion: "0.4.0",
+                                             coreVersion: "0.4.0", address: "192.0.2.1:8767")
+        snapshot.agentProviders = try CompanionAgentProvider.decodeList(#"""
+        {"providers":[{"id":"codex","name":"Codex","primary":true,"status":"live"},{"id":"claude","name":"Claude","primary":false,"status":"reconnecting"}]}
+        """#)
         let collapsed = MenuBarPanel(content: CompanionMenuView(
-            snapshot: snapshot, primaryAction: {}, revokeDevice: { _ in }, moreActions: { EmptyView() }), anchorProvider: { nil })
+            snapshot: snapshot, primaryAction: {}, revokeDevice: { _ in }, moreActions: { EmptyView() })
+            .environment(\.colorScheme, dark ? .dark : .light), anchorProvider: { nil })
         let expanded = MenuBarPanel(content: CompanionMenuView(
             snapshot: snapshot, primaryAction: {}, revokeDevice: { _ in }, initiallyShowsDetails: true,
-            moreActions: { EmptyView() }), anchorProvider: { nil })
+            moreActions: { EmptyView() })
+            .environment(\.colorScheme, dark ? .dark : .light), anchorProvider: { nil })
+        collapsed.window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        expanded.window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         #expect(abs(collapsed.contentSize.width - 360) < 1)
         #expect(abs(expanded.contentSize.width - 360) < 1)
         #expect(collapsed.contentSize.height > 200)

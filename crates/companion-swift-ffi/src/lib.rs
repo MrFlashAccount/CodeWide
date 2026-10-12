@@ -361,6 +361,17 @@ impl CoreHost {
         }
     }
 
+    /// Returns the data-minimized provider connection snapshot used by the
+    /// local macOS UI. Account, subscription, capability and credential data
+    /// are not part of this contract.
+    ///
+    /// # Errors
+    /// Returns an adapter error if the presentation cannot be serialized.
+    pub fn agent_provider_connections_json(&self) -> Result<String, CompanionFfiError> {
+        serde_json::to_string(&self.companion.agent_provider_connections())
+            .map_err(CompanionFfiError::runtime)
+    }
+
     /// Finds local Codex homes with a reachable App Server endpoint.
     ///
     /// The default and currently selected homes remain visible while offline,

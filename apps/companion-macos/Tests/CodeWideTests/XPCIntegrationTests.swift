@@ -52,6 +52,7 @@ func nativeManagementCrossesXPCIntoTheRustCore() async throws {
     #expect(runtime.health?.phase == "running")
     #expect(runtime.appServer?.codexHome == codex.path)
     #expect(runtime.appServer?.state == .unavailable(lastKnownVersion: nil))
+    #expect(runtime.agentProviders.contains { $0.id == "codex" })
     #expect(runtime.relay?.configured == false)
     #expect(runtime.devices.isEmpty)
     #expect(!runtime.appServers.isEmpty)

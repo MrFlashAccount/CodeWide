@@ -156,6 +156,7 @@ struct CompanionMenuSnapshot {
     var directStatus: CompanionDirectStatus = .unavailable
     var relayStatus: CompanionRelayStatus = .notConfigured
     var devices: [DeviceStatusPayload] = []
+    var agentProviders: [CompanionAgentProvider] = []
     var profileName = "Default"
     var serverVersion: String?
     var appVersion: String?
@@ -169,6 +170,10 @@ struct CompanionMenuSnapshot {
 
     var onlineDeviceCount: Int {
         devices.filter { $0.activeConnections > 0 }.count
+    }
+
+    var visibleAgentProviders: [CompanionAgentProvider] {
+        agentProviders.filter(\.isEnabled)
     }
 
     var devicesSummary: String {

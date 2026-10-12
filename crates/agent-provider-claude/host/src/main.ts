@@ -16,6 +16,7 @@ import { createLogger } from "./log.js";
 import { RateLimitReporter } from "./account/rateLimitReporter.js";
 import { ModelCatalog } from "./catalog/models.js";
 import { createCliRunningSessions } from "./claude/cliRunningSessions.js";
+import { readClaudeVersion } from "./claude/cliVersion.js";
 import { loadAgentSdk } from "./claude/sdkModule.js";
 import { createSdkRuntime } from "./claude/sdkRuntime.js";
 import { createSdkSessionStore } from "./claude/sdkSessionStore.js";
@@ -59,6 +60,14 @@ if (parsed.status === "error") {
     process.exit(SDK_UNAVAILABLE_EXIT_CODE);
   });
   const runtime = createSdkRuntime(sdk, config.claudeExecutable);
+  const claudeVersion = await readClaudeVersion(config.claudeExecutable).catch(
+    (error: unknown): string => {
+      logger.log("warn", "Claude CLI version is unavailable", {
+        err: error instanceof Error ? error : new Error(String(error)),
+      });
+      return "";
+    },
+  );
   const sessionStore = createSdkSessionStore(sdk);
   const holder: { server: RpcServer | null } = { server: null };
   const models = new ModelCatalog();
@@ -101,7 +110,7 @@ if (parsed.status === "error") {
     rateLimits,
     runtime,
     service,
-    version: HOST_VERSION,
+    version: claudeVersion,
     write: writeStdout,
   });
   holder.server = server;
@@ -109,6 +118,7 @@ if (parsed.status === "error") {
     server.emit(event);
   }
   logger.log("info", "claude agent host started", {
+    hostVersion: HOST_VERSION,
     idleReleaseMinutes: config.idleReleaseMinutes,
   });
 

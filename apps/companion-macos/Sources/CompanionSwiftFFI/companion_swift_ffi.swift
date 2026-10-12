@@ -585,6 +585,16 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 public protocol CoreHostProtocol: AnyObject, Sendable {
 
+    /**
+     * Returns the data-minimized provider connection snapshot used by the
+     * local macOS UI. Account, subscription, capability and credential data
+     * are not part of this contract.
+     *
+     * # Errors
+     * Returns an adapter error if the presentation cannot be serialized.
+     */
+    func agentProviderConnectionsJson() throws  -> String
+
     func appServerConnection()  -> FfiAppServerConnection
 
     /**
@@ -792,6 +802,23 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
 
 
 
+
+    /**
+     * Returns the data-minimized provider connection snapshot used by the
+     * local macOS UI. Account, subscription, capability and credential data
+     * are not part of this contract.
+     *
+     * # Errors
+     * Returns an adapter error if the presentation cannot be serialized.
+     */
+open func agentProviderConnectionsJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_agent_provider_connections_json(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
 
 open func appServerConnection() -> FfiAppServerConnection  {
     return try!  FfiConverterTypeFfiAppServerConnection_lift(try! rustCall() {
@@ -2374,6 +2401,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_func_verify_host_update_release() != 7360) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_agent_provider_connections_json() != 6547) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_app_server_connection() != 62371) {
