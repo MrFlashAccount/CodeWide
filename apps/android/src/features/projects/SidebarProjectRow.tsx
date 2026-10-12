@@ -3,7 +3,11 @@ import type { ActionMenuItem } from "../../ui/ActionMenu.types";
 import { RowActionTrigger } from "../../ui/RowActionTrigger";
 import { SidebarProjectShortcutContent } from "./SidebarProjectShortcutContent";
 import { RowActionMenu } from "../../ui/RowActionMenu";
-import type { SidebarProject, SidebarProjectActions } from "./sidebarProjects";
+import type {
+  SidebarProject,
+  SidebarProjectActions,
+  SidebarProjectServer,
+} from "./sidebarProjects";
 import { styles } from "./SidebarProjects.styles";
 import { useProjectShortcutActions } from "./projectShortcutActions";
 
@@ -11,6 +15,8 @@ type SidebarProjectRowProps = {
   actions?: SidebarProjectActions | undefined;
   onPress: () => void;
   project: SidebarProject;
+  /** The project's server, shown like a thread's while the list spans several servers. */
+  server?: SidebarProjectServer | undefined;
 };
 
 /** A pinned shortcut retains its own command lifetime when a virtualized row is recycled. */
@@ -18,7 +24,12 @@ export function SidebarProjectRow(props: SidebarProjectRowProps): React.JSX.Elem
   return <ProjectShortcut key={props.project.key} {...props} />;
 }
 
-function ProjectShortcut({ actions, onPress, project }: SidebarProjectRowProps): React.JSX.Element {
+function ProjectShortcut({
+  actions,
+  onPress,
+  project,
+  server,
+}: SidebarProjectRowProps): React.JSX.Element {
   const press = useEvent(onPress);
   const { pending, select } = useProjectShortcutActions(project, actions);
   const menuActions: readonly ActionMenuItem[] = [
@@ -43,6 +54,7 @@ function ProjectShortcut({ actions, onPress, project }: SidebarProjectRowProps):
           onPress={press}
           pending={pending}
           project={project}
+          server={server}
         />
       )}
     </RowActionMenu>
@@ -54,11 +66,13 @@ function ProjectTrigger({
   onPress,
   pending,
   project,
+  server,
 }: {
   readonly onLongPress: (() => void) | undefined;
   readonly onPress: () => void;
   readonly pending: boolean;
   readonly project: SidebarProject;
+  readonly server: SidebarProjectServer | undefined;
 }): React.JSX.Element {
   return (
     <RowActionTrigger
@@ -70,7 +84,7 @@ function ProjectTrigger({
       onPress={onPress}
       style={[styles.project, styles.shortcut]}
     >
-      <SidebarProjectShortcutContent pending={pending} project={project} />
+      <SidebarProjectShortcutContent pending={pending} project={project} server={server} />
     </RowActionTrigger>
   );
 }

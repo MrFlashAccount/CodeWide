@@ -223,6 +223,13 @@ it("keeps draft, loading existing, and confirmed empty thread states distinct", 
 
   expect(draftView.getByText("What would you like to work on?")).toBeTruthy();
   expect(draftView.getByLabelText("Change project, currently workspace")).toBeTruthy();
+  expect(draftView.queryByTestId("new-chat-project-server")).toBeNull();
+  draftView.rerender(
+    <ConversationEmptyState {...props} newChat server={{ iconId: "desktop", name: "Buddy" }} />,
+  );
+  // The draft's server is shown next to its project, as a thread row shows it.
+  expect(draftView.getByTestId("new-chat-project-server")).toBeTruthy();
+  expect(draftView.getByLabelText("Change project, currently workspace on Buddy")).toBeTruthy();
   draftView.unmount();
 
   const loadingView = render(
