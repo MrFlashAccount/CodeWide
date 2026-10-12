@@ -3,42 +3,36 @@
 
 use std::path::Path;
 
-use super::{GenerationMetadataV1, OperationRecord, ServiceHealth, store};
+use super::{GenerationMetadataV1, ServiceHealth, ServiceHealthContext, store};
 
 pub(super) fn target_is_ready(
     root: &Path,
     health: &dyn ServiceHealth,
-    operation: &OperationRecord,
+    expected: &GenerationMetadataV1,
+    context: &ServiceHealthContext,
 ) -> bool {
     let Ok(metadata) =
         store::read_json::<GenerationMetadataV1>(&root.join("current/metadata.json"))
     else {
         return false;
     };
-    metadata.version == operation.target.version
-        && metadata.build == operation.target.build
-        && metadata.source_revision == operation.target.source_revision
-        && metadata.artifact_digest == operation.target.sha256
-        && identity_preserved(health, operation)
-        && health.serves(&metadata, operation)
+    metadata == *expected
+        && identity_preserved(health, context)
+        && health.serves(&metadata, context)
 }
 
 pub(super) fn rollback_is_ready(
     root: &Path,
     health: &dyn ServiceHealth,
-    operation: &OperationRecord,
+    previous: &GenerationMetadataV1,
+    context: &ServiceHealthContext,
 ) -> bool {
-    store::read_json::<GenerationMetadataV1>(&root.join("current/metadata.json")).is_ok_and(
-        |metadata| {
-            metadata.artifact_digest == operation.current.artifact_digest
-                && metadata.version == operation.current.version
-                && metadata.build == operation.current.build
-                && metadata.source_revision == operation.current.source_revision
-        },
-    ) && identity_preserved(health, operation)
-        && health.serves(&operation.current, operation)
+    store::read_json::<GenerationMetadataV1>(&root.join("current/metadata.json"))
+        .is_ok_and(|metadata| metadata == *previous)
+        && identity_preserved(health, context)
+        && health.serves(previous, context)
 }
 
-fn identity_preserved(health: &dyn ServiceHealth, operation: &OperationRecord) -> bool {
-    health.identity_pin(operation).as_deref() == Some(operation.identity_pin.as_str())
+fn identity_preserved(health: &dyn ServiceHealth, context: &ServiceHealthContext) -> bool {
+    health.identity_pin(context).as_deref() == Some(context.identity_pin.as_str())
 }

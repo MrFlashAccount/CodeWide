@@ -18,8 +18,8 @@ use codewide_host_update::{
     HostUpdateGuardian, HostUpdateOperation, HostUpdatePhase, HostUpdateProgress,
     HostUpdateRelayState, HostUpdateStatus, ReconnectReceipt, ReleaseTrust,
     linux::{
-        GenerationMetadataV1, LinuxGuardianConfig, LinuxHostUpdateGuardian, LinuxProduct,
-        OperationRecord, ServiceHealth, SystemdScope, main_pid,
+        GenerationMetadataV1, LinuxActivationProduct, LinuxGuardianConfig, LinuxHostUpdateGuardian,
+        LinuxProduct, ServiceHealth, ServiceHealthContext, SystemdScope, main_pid,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -30,16 +30,18 @@ use crate::{admin, transport_tls::RelayTlsIdentity};
 pub const GUARDIAN_STATE: &str = "host-update";
 
 pub static RELAY: LinuxProduct = LinuxProduct {
+    activation: LinuxActivationProduct {
+        executable_name: "codewide-relay",
+        service_unit: "codewide-relay.service",
+        // A healthy Relay attests within a second of starting.
+        ready_timeout: Some(Duration::from_secs(30)),
+    },
     platform: HostPlatform::RelayLinuxX86_64,
     bundle_directory: "codewide-relay-x86_64-unknown-linux-musl",
-    executable_name: "codewide-relay",
     payload_executables: &[],
     bootstrap_only: &["bootstrap", "systemd", "install.sh"],
     bootstrap_guardian: "codewide-relay-update-guardian",
-    service_unit: "codewide-relay.service",
     running_version: env!("CODEWIDE_RELAY_VERSION"),
-    // A healthy Relay attests within a second of starting.
-    ready_timeout: Some(Duration::from_secs(30)),
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -367,17 +369,17 @@ fn running_install_root() -> Option<PathBuf> {
 pub struct RelayHealth;
 
 impl ServiceHealth for RelayHealth {
-    fn identity_pin(&self, operation: &OperationRecord) -> Option<String> {
-        RelayTlsIdentity::load_existing(&operation.identity_manifest)
+    fn identity_pin(&self, context: &ServiceHealthContext) -> Option<String> {
+        RelayTlsIdentity::load_existing(&context.identity_manifest)
             .ok()
             .map(|identity| identity.pin())
     }
 
-    fn serves(&self, expected: &GenerationMetadataV1, operation: &OperationRecord) -> bool {
-        let Some(pid) = main_pid(SystemdScope::User, RELAY.service_unit) else {
+    fn serves(&self, expected: &GenerationMetadataV1, context: &ServiceHealthContext) -> bool {
+        let Some(pid) = main_pid(SystemdScope::User, RELAY.activation.service_unit) else {
             return false;
         };
-        let socket = operation.identity_manifest.join(admin::SOCKET);
+        let socket = context.identity_manifest.join(admin::SOCKET);
         admin::attest_blocking(&socket, Duration::from_secs(2)).is_some_and(|artifact| {
             artifact.process_id == pid
                 && artifact.version == expected.version
@@ -398,11 +400,10 @@ pub async fn run_pending(
     state_root: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     codewide_host_update::linux::run_pending(
-        &RELAY,
+        &RELAY.activation,
         &RelayHealth,
         install_root,
         state_root,
-        ReleaseTrust::embedded(),
         SystemdScope::User,
     )
     .await

@@ -113,12 +113,24 @@ fn managed_install_uses_immutable_generations_and_a_stable_guardian() {
 #[test]
 fn remote_runner_has_no_caller_controlled_download_or_state_restore() {
     let guardian = include_str!("../../../crates/host-update/src/linux/guardian.rs");
+    let prepare = include_str!("../../../crates/host-update/src/linux/prepare.rs");
     let runner = include_str!("../../../crates/host-update/src/linux/runner.rs");
     assert!(guardian.contains("cached.available.target"));
-    assert!(!runner.contains("operation.target.artifact_url"));
-    assert!(guardian.contains("prepare_artifact"));
+    assert!(guardian.contains("prepare_generation"));
+    assert!(prepare.contains("artifact_url"));
+    assert!(prepare.contains("validate_archive"));
     assert!(!guardian.contains("Command::new(\"systemctl\")"));
-    assert!(!runner.contains("reqwest"));
+    for forbidden in [
+        "artifact_url",
+        "ReleaseTargetV1",
+        "SignedReleaseDescriptor",
+        "reqwest",
+        "validate_archive",
+        "verify_file_digest",
+    ] {
+        assert!(!runner.contains(forbidden), "runner contains {forbidden}");
+    }
+    assert!(runner.contains("LinuxActivationProduct"));
     assert!(!runner.contains("ApplyHostUpdateCommand"));
     assert!(!runner.contains("restore_state"));
 }

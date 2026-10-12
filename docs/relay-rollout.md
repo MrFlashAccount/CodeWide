@@ -87,13 +87,14 @@ A user service is installed exactly like the Linux Companion, through the shared
 
 A paired Companion checks and applies a signed release through
 `/relay/update/<route>`. While the Relay keeps serving, the Relay itself
-downloads the bundle into its bounded private spool and verifies the signed
-digest. Publishing the fixed marker wakes the network-dark guardian; no update
-request invokes `systemctl`. The guardian independently re-verifies the signed
-descriptor and bytes, copies them through an opened no-follow file into the
-guardian's activation storage, validates the archive, creates the immutable generation,
-switches `current` with one `rename(2)`, and restarts the fixed service. The
-update commits once the restarted Relay attests the
+admits the signed descriptor, downloads and digest-checks the bundle, validates
+and extracts it, verifies the payload, and fsyncs a complete local generation
+under `preparations/<operationId>`. Only then does it publish the fixed marker;
+no update request invokes `systemctl`. The network-dark, package-format-blind
+guardian accepts only that prepared generation, atomically publishes it under
+`generations/`, switches `current` with one `rename(2)`, and restarts the fixed
+service. It does not know a release URL, signature, archive, or download
+protocol. The update commits once the restarted Relay attests the
 exact generation over its control socket, keeps its TLS identity, and the
 initiating Companion reconnects. Otherwise the guardian switches `current`
 back to the previous generation and restarts it. Interrupted operations resume

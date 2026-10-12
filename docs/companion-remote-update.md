@@ -23,16 +23,19 @@ phase names, fencing rules, and the additive V1 guardian/journal contract. It
 also owns one Linux preparation/activation protocol reused by Companion and
 Relay.
 
-On Linux the replaceable, unprivileged product owns network work: it fetches the
-manifest and artifact, performs the first signature/digest checks, writes the
-fsynced operation journal, and publishes one fixed activation marker. A stable
-bootstrap guardian is started by a systemd `.path` unit. It has no network
-access, accepts no caller-selected command, unit, or destination, independently
-verifies the embedded P-256 trust anchor and exact artifact bytes, materializes
-the immutable generation, switches `current`, restarts the one compiled-in
-service, proves its exact health, and rolls back when necessary. Companion and
-Relay supply only their payload layout and health proof; they do not redefine
-the transaction.
+On Linux the replaceable, unprivileged product owns the whole delivery path. It
+admits the signed manifest, downloads and digest-checks the artifact, validates
+and extracts the archive, removes installer-only files, verifies the payload,
+writes generation metadata, fsyncs the complete generation under
+`preparations/<operationId>`, and only then publishes one fixed activation
+marker. A stable bootstrap guardian is started by a systemd `.path` unit. It is
+network-dark and package-format-blind: it accepts no URL, signature, archive,
+caller-selected command, unit, or destination. Its narrow input is the expected
+local generation identity plus the previously active identity. It atomically
+moves that prepared directory into `generations/`, switches `current`, restarts
+the one compiled-in service, proves exact health, and rolls back when needed.
+Companion and Relay supply their preparation layout and health proof without
+redefining the transaction.
 
 ## Device API
 
@@ -110,10 +113,12 @@ resolve host names through the host's NSS resolver
 (`getent ahosts`), not the static musl resolver: musl keeps the first answer of
 all nameservers at once, so on an IPv6-only host one nameserver without DNS64
 can hide the only reachable NAT64 addresses of GitHub's IPv4-only release
-assets. The stable bootstrap guardian must be installed manually to receive
-guardian fixes; remote payload replacement does not replace bootstrap. It is
-activated only by `activation-request.json`; the product never invokes
-`systemctl`.
+assets. Archive validation, extraction and payload-layout validation also stay
+in that replaceable product. The stable bootstrap guardian knows only the fixed
+prepared-generation path, generation metadata, fixed service, health contract,
+and rollback pointer. It must be installed manually to receive guardian fixes;
+remote payload replacement does not replace bootstrap. It is activated only by
+`activation-request.json`; the product never invokes `systemctl`.
 
 Once rollback begins, late target-ready and reconnect receipts cannot commit.
 Reconnect commits only for the recorded device, operation id and nonce, after

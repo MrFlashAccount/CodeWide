@@ -59,6 +59,7 @@ fn operation(id: &str, key: &str, sequence: u64, phase: HostUpdatePhase) -> Oper
         release: None,
         artifact_size: None,
         activation_admitted: None,
+        activation_target: None,
         progress: None,
         recovery_error: None,
     }

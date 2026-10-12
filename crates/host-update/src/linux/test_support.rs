@@ -4,15 +4,19 @@
 use std::{path::PathBuf, sync::Arc};
 
 use super::{
-    GenerationMetadataV1, LinuxGuardianConfig, LinuxHostUpdateGuardian, LinuxProduct,
-    OperationRecord, ServiceHealth,
+    GenerationMetadataV1, LinuxActivationProduct, LinuxGuardianConfig, LinuxHostUpdateGuardian,
+    LinuxProduct, ServiceHealth, ServiceHealthContext,
 };
 use crate::{HostPlatform, HostUpdateRelayState, ReleaseTrust};
 
 pub(super) static TEST_PRODUCT: LinuxProduct = LinuxProduct {
+    activation: LinuxActivationProduct {
+        executable_name: "codewide-companion",
+        service_unit: "codewide-companion.service",
+        ready_timeout: None,
+    },
     platform: HostPlatform::LinuxX86_64,
     bundle_directory: "codewide-companion-x86_64-unknown-linux-musl",
-    executable_name: "codewide-companion",
     payload_executables: &[
         "libexec/codewide-vcs-git",
         "libexec/codewide-companion-memory-watch",
@@ -24,20 +28,18 @@ pub(super) static TEST_PRODUCT: LinuxProduct = LinuxProduct {
         "libexec/codewide-companion-update-guardian",
     ],
     bootstrap_guardian: "codewide-companion-update-guardian",
-    service_unit: "codewide-companion.service",
     running_version: "1.0.0",
-    ready_timeout: None,
 };
 
 /// Health that never proves readiness; tests must not reach a restart.
 pub(super) struct NeverHealthy;
 
 impl ServiceHealth for NeverHealthy {
-    fn identity_pin(&self, _operation: &OperationRecord) -> Option<String> {
+    fn identity_pin(&self, _context: &ServiceHealthContext) -> Option<String> {
         None
     }
 
-    fn serves(&self, _expected: &GenerationMetadataV1, _operation: &OperationRecord) -> bool {
+    fn serves(&self, _expected: &GenerationMetadataV1, _context: &ServiceHealthContext) -> bool {
         false
     }
 }

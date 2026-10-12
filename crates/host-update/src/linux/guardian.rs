@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 
 use super::{
     GenerationMetadataV1, LinuxProduct, OperationRecord, host_resolver,
-    prepare::prepare_artifact,
+    prepare::{activation_target, prepare_generation},
     runner::{RunnerFailure, transition},
     running_artifact, store, unix_millis,
 };
@@ -149,9 +149,10 @@ impl LinuxHostUpdateGuardian {
             fail_preparation(&self.inner.state_root, &operation_id, &failure)?;
             return Ok(());
         }
-        let prepared = prepare_artifact(
-            &operation.target.artifact_url,
-            &operation.target.sha256,
+        let prepared = prepare_generation(
+            self.inner.product,
+            &self.inner.root,
+            &operation,
             artifact_size,
             &self.inner.state_root,
             &operation_id,
@@ -166,6 +167,7 @@ impl LinuxHostUpdateGuardian {
         if operation.journal.phase != HostUpdatePhase::Installing {
             return Ok(());
         }
+        operation.activation_target = Some(activation_target(&operation));
         operation.activation_admitted = Some(true);
         operation.journal.updated_at = unix_millis();
         store::write_json(&self.operation_path(&operation_id), &operation).map_err(internal)?;
@@ -554,6 +556,7 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
             release: Some(cached.envelope),
             artifact_size: Some(content_length),
             activation_admitted: Some(false),
+            activation_target: None,
             progress: None,
             recovery_error: None,
         };

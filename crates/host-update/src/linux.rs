@@ -1,9 +1,9 @@
 //! Crash-safe Linux generation updates under systemd services.
 //!
-//! The running service admits only a pinned, signed release descriptor and
-//! durably queues an operation. A stable bootstrap copy of the product
-//! executable performs activation and rollback under systemd, so replacing or
-//! killing the payload process cannot strand the installation.
+//! The running service admits a release and prepares a complete local
+//! generation. A stable, network-dark bootstrap executable only activates that
+//! prepared generation and rolls it back under systemd, so replacing or killing
+//! the payload process cannot strand the installation.
 //!
 //! Layout under the install root:
 //!
@@ -14,6 +14,7 @@
 //! - `bootstrap/<guardian>` is the stable runner that is never replaced by a
 //!   remote update.
 
+mod generation;
 mod guardian;
 mod health;
 mod host_resolver;
@@ -44,36 +45,51 @@ pub use runner::run_pending;
 /// The generation layout, journal, activation and rollback are shared.
 #[derive(Debug)]
 pub struct LinuxProduct {
+    /// Stable lifecycle contract consumed by the network-dark runner.
+    pub activation: LinuxActivationProduct,
     /// Release-manifest platform whose target this product installs.
     pub platform: HostPlatform,
     /// Single top-level directory of the release archive.
     pub bundle_directory: &'static str,
-    /// Executable name: the payload ships `bin/<name>`, which must print
-    /// `<name> <version>` for `--version`.
-    pub executable_name: &'static str,
     /// Other executables, relative to the payload, that a generation must contain.
     pub payload_executables: &'static [&'static str],
     /// Installer-only payload entries removed before a generation is published.
     pub bootstrap_only: &'static [&'static str],
     /// Stable runner executable under `<root>/bootstrap/`.
     pub bootstrap_guardian: &'static str,
-    /// systemd unit of the service being updated.
-    pub service_unit: &'static str,
     /// Version compiled into the running executable.
     pub running_version: &'static str,
+}
+
+/// The complete product knowledge allowed inside the stable activation runner.
+#[derive(Debug)]
+pub struct LinuxActivationProduct {
+    /// Executable name at `bin/<name>` in every admitted generation.
+    pub executable_name: &'static str,
+    /// Fixed systemd unit of the service being updated.
+    pub service_unit: &'static str,
     /// How long a restarted target may take to prove its health before it is
     /// rolled back; `None` waits until the operation's readiness deadline.
     pub ready_timeout: Option<Duration>,
 }
 
+/// Narrow runtime context exposed to product-owned health checks. It contains
+/// lifecycle state only, never release delivery or package metadata.
+#[derive(Clone, Debug)]
+pub struct ServiceHealthContext {
+    pub identity_pin: String,
+    pub identity_manifest: PathBuf,
+    pub pre_update_relay: crate::HostUpdateRelayState,
+}
+
 /// Product-owned proof that the restarted service is the exact generation and
 /// that its long-lived identity survived the update.
 pub trait ServiceHealth: Send + Sync {
-    /// Current pin of the identity recorded in `operation.identity_pin`.
-    fn identity_pin(&self, operation: &OperationRecord) -> Option<String>;
+    /// Current pin of the identity recorded before activation.
+    fn identity_pin(&self, context: &ServiceHealthContext) -> Option<String>;
 
     /// Whether the service process runs exactly `expected` and is ready.
-    fn serves(&self, expected: &GenerationMetadataV1, operation: &OperationRecord) -> bool;
+    fn serves(&self, expected: &GenerationMetadataV1, context: &ServiceHealthContext) -> bool;
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -100,7 +116,7 @@ pub struct OperationRecord {
     pub identity_pin: String,
     pub identity_manifest: PathBuf,
     pub previous_generation: String,
-    /// Signed authority independently re-verified by the activation guardian.
+    /// Signed authority retained by the replaceable product-side preparer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release: Option<SignedReleaseDescriptor>,
     /// Expected download size discovered before accepting the operation. The
@@ -112,6 +128,10 @@ pub struct OperationRecord {
     /// is durably published for the activation guardian.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activation_admitted: Option<bool>,
+    /// Complete local generation accepted for activation. This is the only
+    /// target contract consumed by the stable bootstrap runner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_target: Option<GenerationMetadataV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<HostUpdateProgress>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

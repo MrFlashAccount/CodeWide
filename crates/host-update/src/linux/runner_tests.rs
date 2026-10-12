@@ -1,14 +1,13 @@
 use super::*;
-use crate::linux::test_support::{NeverHealthy, TEST_PRODUCT};
+use crate::linux::{
+    OperationRecord,
+    test_support::{NeverHealthy, TEST_PRODUCT},
+};
 use crate::{
-    HostPlatform, HostUpdateDeadlines, HostUpdateJournalV1, HostUpdateRelayState,
-    ReleaseDescriptorV1, SignedReleaseDescriptor,
+    HostPlatform, HostUpdateDeadlines, HostUpdateJournalV1, HostUpdateRelayState, ReleaseTargetV1,
 };
-use base64::{Engine as _, engine::general_purpose};
-use p256::{
-    ecdsa::{Signature, SigningKey, signature::Signer as _},
-    pkcs8::EncodePublicKey as _,
-};
+use sha2::{Digest as _, Sha256};
+use std::process::Command;
 
 fn operation(phase: HostUpdatePhase) -> OperationRecord {
     OperationRecord {
@@ -67,9 +66,28 @@ fn operation(phase: HostUpdatePhase) -> OperationRecord {
         release: None,
         artifact_size: None,
         activation_admitted: None,
+        activation_target: None,
         progress: None,
         recovery_error: None,
     }
+}
+
+fn activation(record: &OperationRecord) -> ActivationRecord {
+    serde_json::from_value(serde_json::to_value(record).expect("serialize product operation"))
+        .expect("read narrow activation record")
+}
+
+fn persist_operation(state_root: &Path, record: &OperationRecord) {
+    write_operation(state_root, &activation(record)).expect("persist operation");
+}
+
+fn read_product_operation(state_root: &Path, operation_id: &str) -> OperationRecord {
+    store::read_json(
+        &state_root
+            .join("operations")
+            .join(format!("{operation_id}.json")),
+    )
+    .expect("read product operation")
 }
 
 #[test]
@@ -103,7 +121,45 @@ fn current_switch_is_one_relative_symlink_rename() {
 }
 
 #[test]
-fn activation_reverifies_the_signed_release_independently() {
+fn activation_paths_accept_only_fixed_local_identifiers() {
+    assert!(valid_operation_id("upd_00000000000000000000000000000000"));
+    assert!(!valid_operation_id("../../other-operation"));
+    let mut target =
+        super::super::prepare::activation_target(&operation(HostUpdatePhase::Installing));
+    assert!(valid_generation_identity(&target));
+    target.artifact_digest = "../outside".to_owned();
+    assert!(!valid_generation_identity(&target));
+}
+
+#[test]
+fn activation_resumes_after_prepared_generation_was_already_published() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    let operation = operation(HostUpdatePhase::Installing);
+    let target = super::super::prepare::activation_target(&operation);
+    let published = root.join("generations").join(&target.artifact_digest);
+    fs::create_dir_all(published.join("bin")).expect("published generation");
+    let executable = published.join("bin/codewide-companion");
+    fs::write(&executable, b"published executable").expect("published executable");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).expect("executable mode");
+    store::write_json(&published.join("metadata.json"), &target).expect("published metadata");
+    let runner = Runner {
+        product: &TEST_PRODUCT.activation,
+        health: &NeverHealthy,
+        root,
+        state_root: root,
+        scope: SystemdScope::User,
+    };
+
+    runner
+        .publish_prepared_generation(&operation.journal.operation_id, &target)
+        .expect("resume after publication");
+}
+
+#[test]
+fn activation_accepts_only_a_completed_local_preparation() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path();
     let mut operation = operation(HostUpdatePhase::Installing);
@@ -119,81 +175,44 @@ fn activation_reverifies_the_signed_release_independently() {
     )
     .expect("current link");
 
-    let now = unix_millis() / 1_000;
-    let descriptor = ReleaseDescriptorV1 {
-        schema_version: 1,
-        channel: "stable".to_owned(),
-        sequence: operation.release_sequence,
-        issued_at: now.saturating_sub(1),
-        expires_at: now.saturating_add(600),
-        targets: vec![operation.target.clone()],
-    };
-    let payload = serde_json::to_vec(&descriptor).expect("descriptor payload");
-    let signing = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
-    let signature: Signature = signing.sign(&payload);
-    let trust = ReleaseTrust {
-        key_id: "test-key".to_owned(),
-        public_key_spki: general_purpose::STANDARD.encode(
-            signing
-                .verifying_key()
-                .to_public_key_der()
-                .expect("public key")
-                .as_bytes(),
-        ),
-    };
-    operation.release = Some(SignedReleaseDescriptor {
-        schema_version: 1,
-        key_id: trust.key_id.clone(),
-        algorithm: "ES256".to_owned(),
-        payload: general_purpose::URL_SAFE_NO_PAD.encode(payload),
-        signature: general_purpose::STANDARD.encode(signature.to_der().as_bytes()),
-    });
-    operation.activation_admitted = Some(true);
-    operation.journal.target_fingerprint = hex::encode(Sha256::digest(
-        serde_json::to_vec(&operation.target).expect("target"),
-    ));
-    store::write_json(
-        &root.join("highest-sequence.json"),
-        &operation.release_sequence,
-    )
-    .expect("accepted sequence");
     let runner = Runner {
-        product: &TEST_PRODUCT,
+        product: &TEST_PRODUCT.activation,
         health: &NeverHealthy,
         root,
         state_root: root,
-        trust: Some(trust),
         scope: SystemdScope::User,
     };
-    runner
-        .verify_release_authority(&operation)
-        .expect("signed authority");
-
-    store::write_json(
-        &root.join("highest-sequence.json"),
-        &operation.release_sequence.saturating_add(1),
-    )
-    .expect("newer sequence");
     assert_eq!(
         runner
-            .verify_release_authority(&operation)
-            .expect_err("replayed sequence")
+            .verify_activation_request(&activation(&operation))
+            .expect_err("preparation was not admitted")
             .code,
-        "release_sequence_mismatch"
+        "activation_not_admitted"
     );
-    store::write_json(
-        &root.join("highest-sequence.json"),
-        &operation.release_sequence,
-    )
-    .expect("restore accepted sequence");
-
-    operation.target.sha256 = "c".repeat(64);
+    operation.activation_admitted = Some(true);
     assert_eq!(
         runner
-            .verify_release_authority(&operation)
-            .expect_err("tampered operation")
+            .verify_activation_request(&activation(&operation))
+            .expect_err("prepared target was not published")
             .code,
-        "release_authority_mismatch"
+        "activation_target_missing"
+    );
+    operation.activation_target = Some(super::super::prepare::activation_target(&operation));
+    runner
+        .verify_activation_request(&activation(&operation))
+        .expect("complete local preparation");
+
+    let changed = root.join("generations/changed");
+    fs::create_dir_all(&changed).expect("changed generation");
+    store::write_json(&changed.join("metadata.json"), &operation.current)
+        .expect("changed metadata");
+    switch_current(root, "generations/changed").expect("changed current link");
+    assert_eq!(
+        runner
+            .verify_activation_request(&activation(&operation))
+            .expect_err("current generation changed")
+            .code,
+        "current_generation_changed"
     );
 }
 
@@ -260,7 +279,7 @@ fn kill_after_each_phase_has_a_deterministic_durable_resume_action() {
     for (phase, expected) in cases {
         let record = operation(phase);
         let operation_id = record.journal.operation_id.clone();
-        write_operation(state_root, &record).expect("persist interrupted operation");
+        persist_operation(state_root, &record);
 
         // Re-open the journal as a new guardian process would after process kill
         // or login/reboot activation of the stable systemd unit.
@@ -274,7 +293,7 @@ fn rollback_fence_clears_the_consumed_available_release() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let state_root = directory.path();
     let record = operation(HostUpdatePhase::Accepted);
-    write_operation(state_root, &record).expect("operation");
+    persist_operation(state_root, &record);
     store::write_json(&state_root.join("available.json"), &"cached").expect("available");
 
     transition(
@@ -310,7 +329,8 @@ fn bootstrap_material_is_removed_before_generation_publish() {
     )
     .expect("guardian");
 
-    strip_bootstrap_payload(&TEST_PRODUCT, payload).expect("strip bootstrap material");
+    super::super::prepare::strip_bootstrap_payload(&TEST_PRODUCT, payload)
+        .expect("strip bootstrap material");
 
     assert!(!payload.join("bootstrap").exists());
     assert!(!payload.join("systemd").exists());
@@ -344,50 +364,53 @@ fn archive_validation_rejects_symlink_entries() {
         .status()
         .expect("tar");
     assert!(status.success());
-    let failure = validate_archive(&TEST_PRODUCT, &archive).expect_err("symlink must be rejected");
+    let failure = super::super::prepare::validate_archive(&TEST_PRODUCT, &archive)
+        .expect_err("symlink must be rejected");
     assert_eq!(failure.code, "archive_unsafe_entry");
 }
 
 #[test]
-fn runner_source_never_uses_caller_controlled_download_input() {
+fn runner_source_has_no_release_delivery_or_package_logic() {
     let source = include_str!("runner.rs");
-    assert!(!source.contains("operation.target.artifact_url"));
-    assert!(!source.contains("reqwest"));
-    assert!(source.contains("verify_release_authority"));
-    let forbidden = ["Apply", "HostUpdate", "Command"].concat();
-    assert!(!source.contains(&forbidden));
+    for forbidden in [
+        "artifact_url",
+        "ReleaseTargetV1",
+        "SignedReleaseDescriptor",
+        "reqwest",
+        "tar.gz",
+        "validate_archive",
+        "verify_file_digest",
+    ] {
+        assert!(!source.contains(forbidden), "runner contains {forbidden}");
+    }
+    assert!(source.contains("activation_target"));
 }
 
 #[tokio::test]
-async fn missing_release_authority_fails_without_restarting_or_rolling_back_the_current_server() {
+async fn missing_prepared_generation_fails_without_restarting_the_current_server() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let root = directory.path().join("install");
     let state = directory.path().join("state");
     fs::create_dir_all(&root).expect("install root");
-    switch_current(&root, "generations/old").expect("old current");
-    let record = operation(HostUpdatePhase::Installing);
-    write_operation(&state, &record).expect("journal");
+    let mut record = operation(HostUpdatePhase::Installing);
+    let old = root.join(&record.previous_generation);
+    fs::create_dir_all(&old).expect("old generation");
+    store::write_json(&old.join("metadata.json"), &record.current).expect("old metadata");
+    switch_current(&root, &record.previous_generation).expect("old current");
+    record.activation_admitted = Some(true);
+    record.activation_target = Some(super::super::prepare::activation_target(&record));
+    persist_operation(&state, &record);
     store::write_json(&state.join("active.json"), &record.journal.operation_id).expect("pointer");
     store::write_json(
         &state.join("activation-request.json"),
         &record.journal.operation_id,
     )
     .expect("request");
-    store::private_directory(&state.join("downloads")).expect("downloads");
-    fs::write(
-        state
-            .join("downloads")
-            .join(format!("{}.tar.gz", record.journal.operation_id)),
-        b"corrupt download",
-    )
-    .expect("download");
-
     run_pending(
-        &TEST_PRODUCT,
+        &TEST_PRODUCT.activation,
         &NeverHealthy,
         root.clone(),
         state.clone(),
-        None,
         SystemdScope::User,
     )
     .await
@@ -396,19 +419,18 @@ async fn missing_release_authority_fails_without_restarting_or_rolling_back_the_
     assert_eq!(outcome.journal.phase, HostUpdatePhase::Failed);
     assert_eq!(
         outcome.journal.error_code.as_deref(),
-        Some("release_authority_unavailable")
+        Some("generation_collision")
     );
     assert!(outcome.journal.restart_started_at.is_none());
     assert_eq!(
         fs::read_link(root.join("current")).expect("unchanged current"),
-        PathBuf::from("generations/old")
+        PathBuf::from(&record.previous_generation)
     );
     run_pending(
-        &TEST_PRODUCT,
+        &TEST_PRODUCT.activation,
         &NeverHealthy,
         root,
         state,
-        None,
         SystemdScope::User,
     )
     .await
@@ -421,7 +443,7 @@ async fn terminal_operation_clears_a_persisted_activation_request() {
     let root = directory.path().join("install");
     let state = directory.path().join("state");
     let record = operation(HostUpdatePhase::Committed);
-    write_operation(&state, &record).expect("journal");
+    persist_operation(&state, &record);
     store::write_json(&state.join("active.json"), &record.journal.operation_id).expect("pointer");
     store::write_json(
         &state.join("activation-request.json"),
@@ -430,11 +452,10 @@ async fn terminal_operation_clears_a_persisted_activation_request() {
     .expect("request");
 
     run_pending(
-        &TEST_PRODUCT,
+        &TEST_PRODUCT.activation,
         &NeverHealthy,
         root,
         state.clone(),
-        None,
         SystemdScope::User,
     )
     .await
@@ -448,7 +469,7 @@ fn recovery_failure_preserves_the_install_failure_after_reopening() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let state = directory.path();
     let record = operation(HostUpdatePhase::Installing);
-    write_operation(state, &record).expect("journal");
+    persist_operation(state, &record);
     transition(
         state,
         &record.journal.operation_id,
@@ -480,7 +501,8 @@ fn recovery_failure_preserves_the_install_failure_after_reopening() {
         reopened.recovery_error.as_deref(),
         Some("rollback_health_failed")
     );
-    let view = super::super::guardian::operation_view(&reopened);
+    let product = read_product_operation(state, &record.journal.operation_id);
+    let view = super::super::guardian::operation_view(&product);
     assert!(
         view.error_message
             .expect("message")
@@ -493,15 +515,14 @@ fn download_progress_survives_reopening_and_cannot_overwrite_a_terminal_outcome(
     let directory = tempfile::tempdir().expect("temporary directory");
     let state = directory.path();
     let record = operation(HostUpdatePhase::Installing);
-    write_operation(state, &record).expect("journal");
+    persist_operation(state, &record);
     let progress = HostUpdateProgress::Downloading {
         downloaded_bytes: 512,
         total_bytes: Some(1024),
     };
     report_progress(state, &record.journal.operation_id, progress.clone()).expect("progress");
-    let reopened = read_operation(state, &record.journal.operation_id).expect("reopen");
     assert_eq!(
-        super::super::guardian::operation_view(&reopened).progress,
+        read_product_operation(state, &record.journal.operation_id).progress,
         Some(progress)
     );
     transition(
@@ -572,7 +593,7 @@ async fn interrupted_partial_download_is_replaced_and_progress_matches_received_
     let directory = tempfile::tempdir().expect("temporary directory");
     let state = directory.path();
     let record = operation(HostUpdatePhase::Installing);
-    write_operation(state, &record).expect("journal");
+    persist_operation(state, &record);
     let archive = state.join("artifact.tar.gz");
     fs::write(
         archive.with_extension("partial"),
@@ -590,7 +611,7 @@ async fn interrupted_partial_download_is_replaced_and_progress_matches_received_
     .expect("download resumes");
     server.await.expect("fixture completes");
     let received = fs::read(&archive).expect("published download");
-    verify_file_digest(&archive, &hex::encode(Sha256::digest(body)))
+    super::super::prepare::verify_file_digest(&archive, &hex::encode(Sha256::digest(body)))
         .expect("complete artifact digest");
     let reopened = read_operation(state, &record.journal.operation_id).expect("reopen");
     assert_eq!(

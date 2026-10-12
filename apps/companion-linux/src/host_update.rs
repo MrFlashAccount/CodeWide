@@ -10,15 +10,19 @@ use std::{path::PathBuf, sync::Arc};
 
 use codewide_host_update::{
     HostPlatform, HostUpdateRelayState, ReleaseTrust,
-    linux::{LinuxGuardianConfig, LinuxProduct, SystemdScope},
+    linux::{LinuxActivationProduct, LinuxGuardianConfig, LinuxProduct, SystemdScope},
 };
 
 pub use codewide_host_update::linux::LinuxHostUpdateGuardian;
 
 pub static COMPANION: LinuxProduct = LinuxProduct {
+    activation: LinuxActivationProduct {
+        executable_name: "codewide-companion",
+        service_unit: "codewide-companion.service",
+        ready_timeout: None,
+    },
     platform: HostPlatform::LinuxX86_64,
     bundle_directory: "codewide-companion-x86_64-unknown-linux-musl",
-    executable_name: "codewide-companion",
     payload_executables: &[
         "libexec/codewide-vcs-git",
         "libexec/codewide-companion-memory-watch",
@@ -30,9 +34,7 @@ pub static COMPANION: LinuxProduct = LinuxProduct {
         "libexec/codewide-companion-update-guardian",
     ],
     bootstrap_guardian: "codewide-companion-update-guardian",
-    service_unit: "codewide-companion.service",
     running_version: env!("CODEWIDE_COMPANION_VERSION"),
-    ready_timeout: None,
 };
 
 /// The in-process guardian of the running Companion.
@@ -108,11 +110,10 @@ pub async fn run_pending(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let health = runner_health::CompanionHealth { root: root.clone() };
     codewide_host_update::linux::run_pending(
-        &COMPANION,
+        &COMPANION.activation,
         &health,
         root,
         state_root,
-        ReleaseTrust::embedded(),
         SystemdScope::User,
     )
     .await

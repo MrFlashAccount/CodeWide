@@ -8,7 +8,7 @@ use std::{
 
 use codewide_host_update::{
     HostUpdateRunningArtifact,
-    linux::{GenerationMetadataV1, OperationRecord, ServiceHealth, SystemdScope, main_pid},
+    linux::{GenerationMetadataV1, ServiceHealth, ServiceHealthContext, SystemdScope, main_pid},
 };
 
 use super::COMPANION;
@@ -26,20 +26,20 @@ pub(super) struct CompanionHealth {
 }
 
 impl ServiceHealth for CompanionHealth {
-    fn identity_pin(&self, operation: &OperationRecord) -> Option<String> {
-        identity_pin(&operation.identity_manifest)
+    fn identity_pin(&self, context: &ServiceHealthContext) -> Option<String> {
+        identity_pin(&context.identity_manifest)
     }
 
-    fn serves(&self, expected: &GenerationMetadataV1, operation: &OperationRecord) -> bool {
-        let pid = main_pid(SystemdScope::User, COMPANION.service_unit);
+    fn serves(&self, expected: &GenerationMetadataV1, context: &ServiceHealthContext) -> bool {
+        let pid = main_pid(SystemdScope::User, COMPANION.activation.service_unit);
         if let Some(health) = process_health() {
-            return process_health_matches(&health, expected, pid, relay_required(operation));
+            return process_health_matches(&health, expected, pid, relay_required(context));
         }
         // Legacy payloads have no self-attestation endpoint. Preserve their exact
         // executable proof when /proc is accessible; never accept readiness alone.
         running_companion_is_current(&self.root, pid)
             && health_is_ready()
-            && relay_requirement_is_ready(operation)
+            && relay_requirement_is_ready(context)
     }
 }
 
@@ -64,8 +64,8 @@ fn artifact_matches(artifact: &HostUpdateRunningArtifact, expected: &GenerationM
         && artifact.artifact_digest == expected.artifact_digest
 }
 
-fn relay_required(operation: &OperationRecord) -> bool {
-    operation.journal.pre_update_relay.enabled && operation.journal.pre_update_relay.upstream_live
+fn relay_required(context: &ServiceHealthContext) -> bool {
+    context.pre_update_relay.enabled && context.pre_update_relay.upstream_live
 }
 
 fn process_health() -> Option<ProcessHealth> {
@@ -86,9 +86,9 @@ fn process_health() -> Option<ProcessHealth> {
     serde_json::from_slice(&output.stdout).ok()
 }
 
-fn relay_requirement_is_ready(operation: &OperationRecord) -> bool {
-    !operation.journal.pre_update_relay.enabled
-        || !operation.journal.pre_update_relay.upstream_live
+fn relay_requirement_is_ready(context: &ServiceHealthContext) -> bool {
+    !context.pre_update_relay.enabled
+        || !context.pre_update_relay.upstream_live
         || relay_is_online()
 }
 
