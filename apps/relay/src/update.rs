@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, fchown},
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -313,7 +313,18 @@ impl RelayUpdater {
                 "The Relay release manifest is malformed.",
             )
         })?;
-        let cached = admit_release(&envelope, &config, &receipt, unix_seconds()?)?;
+        let cached = match admit_release(&envelope, &config, &receipt, unix_seconds()?) {
+            Ok(cached) => cached,
+            Err(error) => {
+                // A release that cannot be applied to the installed Relay must
+                // not keep advertising an earlier admitted target.
+                remove_cached_release(&self.root)?;
+                if error.code == "update_not_available" {
+                    return self.status_inner();
+                }
+                return Err(error);
+            }
+        };
         atomic_json(&self.root.join("release.json"), &cached)?;
         self.status_inner()
     }
@@ -480,17 +491,19 @@ impl RelayUpdater {
         let current_source_revision = env!("CODEWIDE_RELAY_SOURCE_REVISION").to_owned();
         match self.bootstrap() {
             Ok((_config, receipt)) => {
-                let available_target = read_optional_json::<CachedRelease>(
-                    &self.root.join("release.json"),
-                )?
-                .map(|cached| AvailableRelayUpdate {
-                    version: cached.target.version,
-                    build: cached.target.build,
-                    source_revision: cached.target.source_revision,
-                    target_fingerprint: cached.target_fingerprint,
-                    release_sequence: cached.sequence,
-                    expires_at: cached.expires_at,
-                });
+                let available_target =
+                    read_optional_json::<CachedRelease>(&self.root.join("release.json"))?
+                        .filter(|cached| {
+                            newer_than_installed(&cached.target.version, &receipt.version)
+                        })
+                        .map(|cached| AvailableRelayUpdate {
+                            version: cached.target.version,
+                            build: cached.target.build,
+                            source_revision: cached.target.source_revision,
+                            target_fingerprint: cached.target_fingerprint,
+                            release_sequence: cached.sequence,
+                            expires_at: cached.expires_at,
+                        });
                 Ok(RelayUpdateStatus {
                     current_version: receipt.version,
                     current_build: receipt.build,
@@ -531,12 +544,10 @@ impl RelayUpdater {
     }
 }
 
-fn admit_release(
+fn verified_descriptor(
     envelope: &SignedReleaseDescriptor,
     config: &UpdaterConfigV1,
-    receipt: &InstalledReceiptV1,
-    now: u64,
-) -> std::result::Result<CachedRelease, RelayUpdateError> {
+) -> std::result::Result<ReleaseDescriptorV1, RelayUpdateError> {
     if envelope.schema_version != 1
         || envelope.algorithm != "ES256"
         || envelope.key_id != config.key_id
@@ -580,18 +591,22 @@ fn admit_release(
             "The Relay release signature is invalid.",
         )
     })?;
-    let descriptor: ReleaseDescriptorV1 = serde_json::from_slice(&payload).map_err(|_| {
+    serde_json::from_slice(&payload).map_err(|_| {
         update_error(
             "invalid_release_manifest",
             "The Relay release payload is malformed.",
         )
-    })?;
-    let schema_invalid = descriptor.schema_version != 1 || descriptor.channel != "stable";
-    let sequence_replayed = descriptor.sequence <= receipt.highest_sequence;
-    let clock_invalid = descriptor.issued_at > now || descriptor.expires_at < now;
-    let lifetime_invalid = descriptor.expires_at <= descriptor.issued_at
-        || descriptor.expires_at - descriptor.issued_at > MAX_DESCRIPTOR_LIFETIME;
-    if schema_invalid || sequence_replayed || clock_invalid || lifetime_invalid {
+    })
+}
+
+fn admit_release(
+    envelope: &SignedReleaseDescriptor,
+    config: &UpdaterConfigV1,
+    receipt: &InstalledReceiptV1,
+    now: u64,
+) -> std::result::Result<CachedRelease, RelayUpdateError> {
+    let descriptor = verified_descriptor(envelope, config)?;
+    if descriptor.schema_version != 1 || descriptor.channel != "stable" {
         return Err(update_error(
             "release_not_admissible",
             "The Relay release is stale or replayed.",
@@ -604,11 +619,31 @@ fn admit_release(
     let target = matches
         .next()
         .ok_or_else(|| update_error("update_not_available", "This release has no Relay update."))?;
-    if matches.next().is_some()
+    let duplicate_target = matches.next().is_some();
+    // A signed release that is not newer has nothing to apply, including the
+    // release this Relay was just updated to; that is the up-to-date answer.
+    if !duplicate_target
+        && compare_versions(&target.version, &receipt.version)? != std::cmp::Ordering::Greater
+    {
+        return Err(update_error(
+            "update_not_available",
+            "The installed Relay is up to date.",
+        ));
+    }
+    let sequence_replayed = descriptor.sequence <= receipt.highest_sequence;
+    let clock_invalid = descriptor.issued_at > now || descriptor.expires_at < now;
+    let lifetime_invalid = descriptor.expires_at <= descriptor.issued_at
+        || descriptor.expires_at - descriptor.issued_at > MAX_DESCRIPTOR_LIFETIME;
+    if sequence_replayed || clock_invalid || lifetime_invalid {
+        return Err(update_error(
+            "release_not_admissible",
+            "The Relay release is stale or replayed.",
+        ));
+    }
+    if duplicate_target
         || target.bootstrap_version > BOOTSTRAP_VERSION
         || target.journal_version > JOURNAL_VERSION
         || target.state_epoch != STATE_EPOCH
-        || compare_versions(&target.version, &receipt.version)? != std::cmp::Ordering::Greater
         || !target
             .rollback_compatible_from
             .contains(&receipt.artifact_digest)
@@ -699,6 +734,21 @@ fn stable_version(value: &str) -> std::result::Result<[u64; 3], RelayUpdateError
         .ok_or_else(|| update_error("invalid_release_manifest", "Relay version is invalid."))
 }
 
+fn newer_than_installed(target: &str, installed: &str) -> bool {
+    compare_versions(target, installed).is_ok_and(|order| order == std::cmp::Ordering::Greater)
+}
+
+fn remove_cached_release(root: &Path) -> std::result::Result<(), RelayUpdateError> {
+    match fs::remove_file(root.join("release.json")) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(update_error(
+            "update_storage_failed",
+            "Cannot clear the cached Relay release.",
+        )),
+    }
+}
+
 fn compare_versions(
     left: &str,
     right: &str,
@@ -776,6 +826,7 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> std::result::Result<(), R
         .open(&temporary)
         .map_err(|_| update_error("update_storage_failed", "Cannot create Relay update state."))?;
     file.write_all(&bytes)
+        .and_then(|()| inherit_owner(&file, parent))
         .and_then(|()| file.sync_all())
         .and_then(|()| fs::rename(&temporary, path))
         .and_then(|()| sync_directory(parent))
@@ -814,6 +865,29 @@ fn durable_marker(path: &Path) -> std::result::Result<(), RelayUpdateError> {
 
 fn sync_directory(path: &Path) -> std::io::Result<()> {
     File::open(path)?.sync_all()
+}
+
+/// The service account must be able to execute the replacement exactly as it
+/// executed the preserved binary. The Updater's own umask is not that contract.
+fn match_installed_access(staged: &File, installed: &Path) -> std::io::Result<()> {
+    let installed = fs::metadata(installed)?;
+    let current = staged.metadata()?;
+    if current.uid() != installed.uid() || current.gid() != installed.gid() {
+        fchown(staged, Some(installed.uid()), Some(installed.gid()))?;
+    }
+    staged.set_permissions(fs::Permissions::from_mode(installed.mode() & 0o777))
+}
+
+/// The root-owned Updater shares durable state with the unprivileged Relay
+/// service, which owns the state directory. Files the Updater creates must
+/// stay readable by that owner.
+fn inherit_owner(file: &File, directory: &Path) -> std::io::Result<()> {
+    let owner = fs::metadata(directory)?;
+    let current = file.metadata()?;
+    if current.uid() == owner.uid() && current.gid() == owner.gid() {
+        return Ok(());
+    }
+    fchown(file, Some(owner.uid()), Some(owner.gid()))
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path) -> std::result::Result<T, RelayUpdateError> {
@@ -1078,6 +1152,7 @@ pub async fn run_pending(run: RelayUpdaterRunConfig) -> Result<()> {
             operation.updated_at = unix_millis()?;
             atomic_json(&operation_path(&root, &operation_id), &operation)?;
             remove_backup(&config, &operation.operation_id);
+            let _ = remove_cached_release(&root);
             let _ = fs::remove_file(root.join("pending"));
             return Ok(());
         }
@@ -1133,6 +1208,7 @@ async fn install_and_restart(
             .open(&stage)
             .map_err(|_| update_error("install_failed", "Cannot stage the Relay executable."))?;
         file.write_all(&bytes)
+            .and_then(|()| match_installed_access(&file, &backup))
             .and_then(|()| file.sync_all())
             .map_err(|_| update_error("install_failed", "Cannot persist the Relay executable."))?;
         // Linux refuses to execute a binary while this process still holds it
@@ -1348,6 +1424,162 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    const CURRENT_DIGEST: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const TARGET_DIGEST: &str = "2222222222222222222222222222222222222222222222222222222222222222";
+    const NOW: u64 = 1_800_000_000;
+
+    fn trust_key() -> p256::ecdsa::SigningKey {
+        let Ok(key) = p256::ecdsa::SigningKey::from_slice(&[7_u8; 32]) else {
+            panic!("fixed test scalar was rejected");
+        };
+        key
+    }
+
+    fn updater_config(key: &p256::ecdsa::SigningKey) -> UpdaterConfigV1 {
+        use p256::pkcs8::EncodePublicKey as _;
+        let Ok(spki) = key.verifying_key().to_public_key_der() else {
+            panic!("test public key cannot be encoded");
+        };
+        UpdaterConfigV1 {
+            schema_version: BOOTSTRAP_VERSION,
+            key_id: "relay-test".to_owned(),
+            public_key_spki: general_purpose::STANDARD.encode(spki.as_bytes()),
+            manifest_url: MANIFEST_URL.to_owned(),
+            install_path: PathBuf::from("/usr/local/bin/codewide-relay"),
+            updater_path: PathBuf::from("/usr/local/bin/codewide-relay-updater"),
+            service_scope: ServiceScope::System,
+            service_name: "codewide-relay.service".to_owned(),
+        }
+    }
+
+    fn installed(version: &str, digest: &str, highest_sequence: u64) -> InstalledReceiptV1 {
+        InstalledReceiptV1 {
+            schema_version: 1,
+            version: version.to_owned(),
+            build: "build".to_owned(),
+            source_revision: "a".repeat(40),
+            artifact_digest: digest.to_owned(),
+            highest_sequence,
+        }
+    }
+
+    fn signed_release(
+        key: &p256::ecdsa::SigningKey,
+        version: &str,
+        sequence: u64,
+    ) -> SignedReleaseDescriptor {
+        use p256::ecdsa::signature::Signer as _;
+        let descriptor = ReleaseDescriptorV1 {
+            schema_version: 1,
+            channel: "stable".to_owned(),
+            sequence,
+            issued_at: NOW - 60,
+            expires_at: NOW + 3600,
+            targets: vec![ReleaseTargetV1 {
+                platform: "relay-linux-x86-64".to_owned(),
+                version: version.to_owned(),
+                build: "build".to_owned(),
+                source_revision: "b".repeat(40),
+                artifact_url: "https://github.com/MrFlashAccount/CodeWide/releases/download/r/codewide-relay-x86_64-unknown-linux-musl".to_owned(),
+                sha256: TARGET_DIGEST.to_owned(),
+                bootstrap_version: BOOTSTRAP_VERSION,
+                journal_version: JOURNAL_VERSION,
+                state_epoch: STATE_EPOCH,
+                rollback_compatible_from: vec![CURRENT_DIGEST.to_owned()],
+            }],
+        };
+        let Ok(payload) = serde_json::to_vec(&descriptor) else {
+            panic!("test descriptor cannot be encoded");
+        };
+        let signature: Signature = key.sign(&payload);
+        SignedReleaseDescriptor {
+            schema_version: 1,
+            key_id: "relay-test".to_owned(),
+            algorithm: "ES256".to_owned(),
+            payload: general_purpose::URL_SAFE_NO_PAD.encode(&payload),
+            signature: general_purpose::STANDARD.encode(signature.to_der().as_bytes()),
+        }
+    }
+
+    #[test]
+    fn only_a_newer_signed_release_is_applicable() {
+        let key = trust_key();
+        let config = updater_config(&key);
+        let previous = installed("0.6.1", CURRENT_DIGEST, 0);
+        assert!(admit_release(&signed_release(&key, "0.6.2", 5), &config, &previous, NOW).is_ok());
+
+        // After committing 0.6.2 from sequence 5, the same signed release is
+        // the current one rather than a stale, replayed or unsafe update.
+        let committed = installed("0.6.2", TARGET_DIGEST, 5);
+        for (version, sequence) in [("0.6.2", 5), ("0.6.1", 4)] {
+            let Err(error) = admit_release(
+                &signed_release(&key, version, sequence),
+                &config,
+                &committed,
+                NOW,
+            ) else {
+                panic!("release {version} was admitted over the installed 0.6.2");
+            };
+            assert_eq!(error.code, "update_not_available");
+        }
+
+        let replay_baseline = installed("0.6.1", CURRENT_DIGEST, 5);
+        let Err(error) = admit_release(
+            &signed_release(&key, "0.6.3", 5),
+            &config,
+            &replay_baseline,
+            NOW,
+        ) else {
+            panic!("a replayed release sequence was admitted");
+        };
+        assert_eq!(error.code, "release_not_admissible");
+    }
+
+    #[test]
+    fn status_does_not_offer_the_installed_release()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let key = trust_key();
+        let config = updater_config(&key);
+        let state = tempfile::tempdir()?;
+        let updater = RelayUpdater::new(state.path());
+        let previous = installed("0.6.1", CURRENT_DIGEST, 0);
+        let cached = admit_release(&signed_release(&key, "0.6.2", 5), &config, &previous, NOW)?;
+        atomic_json(&updater.root.join("config.json"), &config)?;
+        atomic_json(&updater.root.join("installed.json"), &previous)?;
+        atomic_json(&updater.root.join("release.json"), &cached)?;
+        let offered = updater
+            .status_inner()?
+            .available_target
+            .map(|target| target.version);
+        assert_eq!(offered.as_deref(), Some("0.6.2"));
+
+        // A Relay installed outside the Updater can leave the admitted target behind.
+        atomic_json(
+            &updater.root.join("installed.json"),
+            &installed("0.6.2", TARGET_DIGEST, 0),
+        )?;
+        assert!(updater.status_inner()?.available_target.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn staged_executable_keeps_the_installed_access_mode() -> std::io::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let installed = directory.path().join("codewide-relay");
+        fs::write(&installed, b"current")?;
+        fs::set_permissions(&installed, fs::Permissions::from_mode(0o755))?;
+        // The Updater unit runs with UMask=0077, so a freshly created stage is
+        // owner-only even when it is requested as 0755.
+        let staged = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o700)
+            .open(directory.path().join("stage"))?;
+        match_installed_access(&staged, &installed)?;
+        assert_eq!(staged.metadata()?.mode() & 0o777, 0o755);
+        Ok(())
     }
 
     #[test]

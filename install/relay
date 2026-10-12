@@ -676,6 +676,8 @@ if [ "$activate" = 1 ]; then
   start_service
   if [ "$service_scope" = system ]; then
     printf '%s\n' 'Relay is running and enabled as a system service.'
+    printf '%s\n' 'This installer keeps an existing system service. To move Relay to a rootless user service, run once:'
+    printf '%s\n' '  curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay-migrate-user | sh'
   else
     printf '%s\n' 'Relay is running and enabled for this user.'
     if [ "$(loginctl show-user "$(id -un)" --property=Linger --value 2>/dev/null || :)" != yes ]; then
