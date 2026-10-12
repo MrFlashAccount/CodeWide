@@ -18,7 +18,7 @@ use crate::{
     catalog::{CatalogError, SessionCatalog},
     content::{ContentQuery, PrivateContentService},
     device_tls::DeviceTlsConnectInfo,
-    file_uploads::WorkspaceUploadStore,
+    file_uploads::FileTransfer,
     files::{FileQuery, FileService, FileTextQuery},
     host_update::SharedHostUpdateGuardian,
     identity::TransportIdentity,
@@ -65,7 +65,8 @@ pub struct CompanionRouters {
 #[derive(Clone, Default)]
 pub struct CompanionServices {
     pub build_shelf: Option<BuildShelfProxy>,
-    pub files: Option<Arc<FileService>>,
+    /// Files and their upload staging are one unit: neither is served without the other.
+    pub files: Option<FileTransfer>,
     pub content: Option<Arc<PrivateContentService>>,
     pub image_previews: Option<Arc<ImagePreviewService>>,
     pub media: Option<Arc<MediaProxyService>>,
@@ -81,7 +82,12 @@ pub struct CompanionServices {
     pub inner_tls_target: Option<SocketAddr>,
     pub inner_tls_limit: Option<Arc<tokio::sync::Semaphore>>,
     pub relay: Option<crate::relay::RelayRuntime>,
-    pub workspace_upload_staging: Option<WorkspaceUploadStore>,
+}
+
+impl CompanionServices {
+    pub(crate) fn file_service(&self) -> Option<Arc<FileService>> {
+        self.files.as_ref().map(|transfer| transfer.files().clone())
+    }
 }
 
 #[derive(Clone)]

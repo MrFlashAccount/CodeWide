@@ -7,6 +7,7 @@ use std::{
 use codewide_companion::{
     catalog::SessionCatalog,
     content::PrivateContentService,
+    file_uploads::FileTransfer,
     files::FileService,
     history_service::HistoryService,
     image_previews::ImagePreviewService,
@@ -64,7 +65,10 @@ async fn v1_serves_gzipped_text_and_progressive_webp_variants()
         Arc::from(TOKEN),
         sync,
         CompanionServices {
-            files: Some(files),
+            files: Some(FileTransfer::without_devices(
+                files,
+                directory.path().join("workspace-uploads.redb"),
+            )?),
             content: Some(content),
             image_previews: Some(Arc::new(ImagePreviewService::new())),
             ..CompanionServices::default()

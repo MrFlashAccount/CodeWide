@@ -11,7 +11,7 @@ use base64::{Engine as _, engine::general_purpose};
 use codewide_companion::{
     auth::{DeviceRegistry, PairingClaim, SessionProof, pairing_claim_message},
     catalog::SessionCatalog,
-    file_uploads::WorkspaceUploadStore,
+    file_uploads::FileTransfer,
     files::{FileQuery, FileService},
     history_service::HistoryService,
     server::{self, CompanionServices},
@@ -120,7 +120,7 @@ async fn file_reads_are_host_wide_while_uploads_remain_resumable()
         Arc::from(TOKEN),
         sync,
         CompanionServices {
-            files: Some(files.clone()),
+            files: Some(admin_file_transfer(&files, directory.path())?),
             ..CompanionServices::default()
         },
     );
@@ -171,7 +171,7 @@ async fn managed_attachments_are_scoped_by_thread_and_share_cas_blobs()
         Arc::from(TOKEN),
         sync,
         CompanionServices {
-            files: Some(files.clone()),
+            files: Some(admin_file_transfer(&files, directory.path())?),
             ..CompanionServices::default()
         },
     );
@@ -262,10 +262,6 @@ async fn v1_registry_upload_cannot_publish_after_device_revoke()
         )
         .await?,
     );
-    let staging = WorkspaceUploadStore::open(
-        directory.path().join("workspace-uploads.redb"),
-        files.clone(),
-    )?;
     let registry = Arc::new(
         DeviceRegistry::open(
             Arc::from(TOKEN),
@@ -274,7 +270,11 @@ async fn v1_registry_upload_cannot_publish_after_device_revoke()
         )
         .await?,
     );
-    staging.start_revocation_cleanup(registry.subscribe_authorization_changes());
+    let file_transfer = FileTransfer::for_devices(
+        files,
+        directory.path().join("workspace-uploads.redb"),
+        &registry,
+    )?;
     let device = pair_file_device(&registry, 31, "file-device").await?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let history = HistoryService::new(
@@ -291,8 +291,7 @@ async fn v1_registry_upload_cannot_publish_after_device_revoke()
         registry.clone(),
         sync,
         CompanionServices {
-            files: Some(files),
-            workspace_upload_staging: Some(staging),
+            files: Some(file_transfer),
             ..CompanionServices::default()
         },
     );
@@ -310,6 +309,18 @@ async fn v1_registry_upload_cannot_publish_after_device_revoke()
     });
     let expected_hash = sha256(b"hello");
     let client = reqwest::Client::new();
+    // A paired device starts a resumable upload with a status probe; it must answer
+    // "not started" rather than an unavailable staging service.
+    let probe = client
+        .head(format!(
+            "http://{address}/v1/files/upload?rootId=workspace&path=fresh.txt"
+        ))
+        .bearer_auth(&device.session)
+        .header("x-content-sha256", &expected_hash)
+        .header("x-upload-id", format!("sha256-{expected_hash}"))
+        .send()
+        .await?;
+    assert_eq!(probe.status(), reqwest::StatusCode::NOT_FOUND);
     let request = client
         .put(format!(
             "http://{address}/v1/files/upload?rootId=workspace&path=revoked.txt"
@@ -339,6 +350,16 @@ async fn v1_registry_upload_cannot_publish_after_device_revoke()
     drop(sender);
     server_task.abort();
     Ok(())
+}
+
+fn admin_file_transfer(
+    files: &Arc<FileService>,
+    directory: &Path,
+) -> Result<FileTransfer, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(FileTransfer::without_devices(
+        files.clone(),
+        directory.join("workspace-uploads.redb"),
+    )?)
 }
 
 async fn pair_file_device(

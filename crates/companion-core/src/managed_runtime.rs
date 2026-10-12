@@ -18,6 +18,7 @@ use crate::{
     content::{ContentProjector, PrivateContentService},
     device_tls::{DeviceTlsAcceptor, bootstrap_config, device_bound_config},
     dictation::DictationService,
+    file_uploads::FileTransfer,
     files::FileService,
     history_service::HistoryService,
     host_identity::HostDisplayName,
@@ -255,6 +256,11 @@ impl ManagedRuntime {
             .await?,
         );
         tunnels.start_revocation_cleanup(registry.subscribe_authorization_changes());
+        let file_transfer = FileTransfer::for_devices(
+            files,
+            config.state_directory.join("workspace-uploads.redb"),
+            &registry,
+        )?;
 
         let bootstrap_listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         bootstrap_listener.set_nonblocking(true)?;
@@ -270,7 +276,7 @@ impl ManagedRuntime {
         .await?;
         let services = CompanionServices {
             build_shelf: None,
-            files: Some(files),
+            files: Some(file_transfer),
             content: Some(content),
             image_previews: Some(image_previews.clone()),
             media: Some(media.clone()),

@@ -1,7 +1,7 @@
 //! Authenticated resumable upload adapters shared by the surviving Companion API.
 
 use super::response::{self, UploadErrorCode};
-use super::{owner::UploadOwnerKey, staging::WorkspaceUploadError};
+use super::{FileTransfer, owner::UploadOwnerKey, staging::WorkspaceUploadError};
 use crate::{
     files::{FileError, FileQuery, UploadCommitGuard},
     server::{AppState, Authorization, authenticated_session},
@@ -53,13 +53,13 @@ pub(crate) async fn protected_file_upload_status(
     let Some(location) = file_location(query) else {
         return invalid_request();
     };
-    let Some(files) = state.services.files.clone() else {
+    let Some(files) = state.services.file_service() else {
         return unavailable("file service unavailable");
     };
     let Some(owner) = authorized_context(&state, &headers).await else {
         return unauthorized();
     };
-    let Some(staging) = state.services.workspace_upload_staging.as_ref() else {
+    let Some(staging) = state.services.files.as_ref().map(FileTransfer::uploads) else {
         return unavailable("workspace upload staging unavailable");
     };
     let Some(upload_id) = upload_id(&headers) else {
@@ -104,7 +104,7 @@ pub(crate) async fn protected_file_upload_cancel(
     let Some(owner) = authorized_context(&state, &headers).await else {
         return unauthorized();
     };
-    let Some(staging) = state.services.workspace_upload_staging.as_ref() else {
+    let Some(staging) = state.services.files.as_ref().map(FileTransfer::uploads) else {
         return unavailable("workspace upload staging unavailable");
     };
     let Some(upload_id) = upload_id(&headers) else {
@@ -133,14 +133,14 @@ pub(crate) async fn protected_file_upload(
     let Some(location) = file_location(query) else {
         return invalid_request();
     };
-    let Some(files) = state.services.files.clone() else {
+    let Some(files) = state.services.file_service() else {
         return unavailable("file service unavailable");
     };
     let changes = authorization_changes(&state);
     let Some(authorization) = authorized_upload_context(&state, &headers).await else {
         return unauthorized();
     };
-    let Some(staging) = state.services.workspace_upload_staging.as_ref() else {
+    let Some(staging) = state.services.files.as_ref().map(FileTransfer::uploads) else {
         return unavailable("workspace upload staging unavailable");
     };
     let Some((upload_id, sha256, total_bytes)) = workspace_upload_descriptor(&headers) else {
@@ -424,6 +424,22 @@ fn file_location(query: FileQuery) -> Option<FileLocation> {
 }
 
 fn file_error(error: &FileError) -> Response {
+    // The public response is deliberately coarse; keep the precise cause in the local log.
+    match error {
+        FileError::Client { status, code } => {
+            tracing::warn!(
+                status = status.as_u16(),
+                code,
+                "file upload operation rejected"
+            );
+        }
+        FileError::Io(io) => tracing::error!(
+            kind = %io.kind(),
+            os_error = io.raw_os_error(),
+            "file upload operation failed"
+        ),
+        FileError::Json(_) => tracing::error!("file upload metadata is invalid"),
+    }
     match error {
         FileError::Client { status, .. } if *status == StatusCode::NOT_FOUND => {
             response::error(*status, UploadErrorCode::NotFound, "file not found")
@@ -454,7 +470,10 @@ fn workspace_upload_error(error: &WorkspaceUploadError) -> Response {
             UploadErrorCode::LimitExceeded,
             "workspace upload staging quota exceeded",
         ),
-        WorkspaceUploadError::Storage(_) => unavailable("workspace upload staging unavailable"),
+        WorkspaceUploadError::Storage(reason) => {
+            tracing::error!(reason, "workspace upload staging failed");
+            unavailable("workspace upload staging unavailable")
+        }
     }
 }
 

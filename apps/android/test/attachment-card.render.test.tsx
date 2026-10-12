@@ -28,6 +28,13 @@ describe("attachment card presentation", () => {
     expect(view.getByText("Ready · 100 B")).toBeTruthy();
     expect(view.getByLabelText("drawing.png").props.source).toEqual({ uri: props.uri });
   });
+  it("keeps the image preview on failure and opens the complete error on demand", () => {
+    const details = jest.fn();
+    const view = render(<AttachmentCard name="photo.jpg" label="Image" uri="file:///cache/photo.jpg" onErrorDetails={details} state={{ status: "error", message: "Upload resume check failed (HTTP 503): workspace upload staging unavailable" }} />);
+    expect(view.getByLabelText("photo.jpg").props.source).toEqual({ uri: "file:///cache/photo.jpg" });
+    fireEvent.press(view.getByLabelText("Upload error details for photo.jpg"));
+    expect(details).toHaveBeenCalledTimes(1);
+  });
   it("distinguishes preparation and verification from upload progress", () => {
     const view = render(<AttachmentCard name="video.mp4" label="Video" state={{ status: "uploading", progress: { phase: "hashing", transferred: 25, total: 100 } }} />);
     expect(view.getByText("Preparing · 25%")).toBeTruthy();
