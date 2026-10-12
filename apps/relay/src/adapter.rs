@@ -24,6 +24,9 @@ use tokio_util::sync::CancellationToken;
 
 type RelaySocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 const MAX_UPDATE_RESPONSE_BYTES: usize = 64 * 1024;
+const INITIAL_RETRY_MS: u64 = 250;
+const MAX_RETRY_MS: u64 = 2_000;
+const RETRY_JITTER_MS: u64 = 250;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
@@ -77,7 +80,7 @@ impl Adapter {
         if !self.device_target.ip().is_loopback() || !self.pairing_target.ip().is_loopback() {
             return Err(crate::denied());
         }
-        let mut backoff = 1_u64;
+        let mut backoff_ms = INITIAL_RETRY_MS;
         let mut first_attempt = true;
         loop {
             let _ = status.send(if first_attempt {
@@ -86,36 +89,41 @@ impl Adapter {
                 AdapterConnectionState::Reconnecting
             });
             first_attempt = false;
-            let started = tokio::time::Instant::now();
-            tokio::select! {
+            let result = tokio::select! {
                 () = stop.cancelled() => return Ok(()),
-                _ = self.session(&status) => {},
-            }
+                result = self.session(&status) => result,
+            };
+            let reached_ready = *status.borrow() == AdapterConnectionState::Connected;
             let _ = status.send(AdapterConnectionState::Reconnecting);
-            if started.elapsed() > Duration::from_mins(1) {
-                backoff = 1;
+            if reached_ready {
+                backoff_ms = INITIAL_RETRY_MS;
             }
-            let delay = Duration::from_millis(backoff * 1000 + rand::random_range(0..1000));
-            eprintln!(
-                "relay_adapter connection_closed retry_ms={}",
-                delay.as_millis()
+            let delay_ms = retry_delay_ms(backoff_ms, rand::random_range(0..=RETRY_JITTER_MS));
+            let delay = Duration::from_millis(delay_ms);
+            let error = result.as_ref().err().map_or_else(
+                || "connection closed".to_owned(),
+                std::string::ToString::to_string,
             );
+            eprintln!("relay_adapter connection_closed err={error} retry_ms={delay_ms}");
             tokio::select! {
                 () = stop.cancelled() => return Ok(()),
                 () = tokio::time::sleep(delay) => {},
             }
-            backoff = (backoff * 2).min(30);
+            backoff_ms = (backoff_ms * 2).min(MAX_RETRY_MS);
         }
     }
 
     async fn session(&self, status: &watch::Sender<AdapterConnectionState>) -> Result<()> {
         let mut socket = self
             .connect_control(&format!("/relay/control/{}", self.route_id))
-            .await?;
+            .await
+            .map_err(|error| contextual("control_connect", error))?;
         let welcome = tokio::time::timeout(DEADLINE, socket.next())
-            .await?
-            .transpose()?
-            .ok_or_else(crate::denied)?;
+            .await
+            .map_err(|error| contextual("control_welcome_timeout", error))?
+            .transpose()
+            .map_err(|error| contextual("control_welcome", error))?
+            .ok_or_else(|| contextual("control_welcome", "connection closed"))?;
         let Message::Text(welcome) = welcome else {
             return Err(crate::denied());
         };
@@ -133,13 +141,18 @@ impl Adapter {
         });
         let mut tasks = JoinSet::new();
         loop {
-            while tasks.try_join_next().is_some() {}
+            while let Some(result) = tasks.try_join_next() {
+                report_data_result(result);
+            }
             let message = tokio::time::timeout(DEADLINE, socket.next()).await?;
             match message.transpose()? {
                 Some(Message::Text(text)) => match wire::decode(&text)? {
                     Control::Open { ticket, target } => {
-                        if tasks.len() >= wire::STREAMS {
-                            let _ = tokio::time::timeout(DEADLINE, tasks.join_next()).await?;
+                        if tasks.len() >= wire::STREAMS
+                            && let Some(result) =
+                                tokio::time::timeout(DEADLINE, tasks.join_next()).await?
+                        {
+                            report_data_result(result);
                         }
                         if tasks.len() >= wire::STREAMS {
                             continue;
@@ -163,16 +176,25 @@ impl Adapter {
             Target::Device => self.device_target,
             Target::Pairing => self.pairing_target,
         };
-        let mut local = tokio::time::timeout(DEADLINE, TcpStream::connect(target)).await??;
-        local.set_nodelay(true)?;
+        let mut local = tokio::time::timeout(DEADLINE, TcpStream::connect(target))
+            .await
+            .map_err(|error| contextual("local_connect_timeout", error))?
+            .map_err(|error| contextual("local_connect", error))?;
+        local
+            .set_nodelay(true)
+            .map_err(|error| contextual("local_configure", error))?;
         let relay = self
             .connect_attach(&format!("/relay/attach/{}/{ticket}", self.route_id))
-            .await?;
+            .await
+            .map_err(|error| contextual("relay_attach", error))?;
         let (mut local_read, mut local_write) = tokio::io::split(&mut local);
         let (mut relay_write, mut relay_read) = relay.split();
         let upload = copy_to_websocket(&mut local_read, &mut relay_write);
         let download = copy_from_websocket(&mut relay_read, &mut local_write);
-        tokio::select! { result = upload => result, result = download => result }
+        tokio::select! {
+            result = upload => result.map_err(|error| contextual("bridge_upload", error)),
+            result = download => result.map_err(|error| contextual("bridge_download", error)),
+        }
     }
 
     async fn connect_control(&self, path: &str) -> Result<RelaySocket> {
@@ -333,6 +355,22 @@ impl Adapter {
     }
 }
 
+fn retry_delay_ms(backoff_ms: u64, jitter_ms: u64) -> u64 {
+    backoff_ms.saturating_add(jitter_ms).min(MAX_RETRY_MS)
+}
+
+fn contextual(stage: &'static str, error: impl std::fmt::Display) -> crate::Error {
+    std::io::Error::other(format!("{stage}: {error}")).into()
+}
+
+fn report_data_result(result: std::result::Result<Result<()>, tokio::task::JoinError>) {
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("relay_adapter data_closed err={error}"),
+        Err(error) => eprintln!("relay_adapter data_task_failed err={error}"),
+    }
+}
+
 fn validate_companion_url(value: &str) -> Result<()> {
     let uri: tokio_tungstenite::tungstenite::http::Uri = value.parse()?;
     if uri.scheme_str() != Some("wss")
@@ -383,4 +421,22 @@ async fn copy_from_websocket(
     }
     writer.shutdown().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{INITIAL_RETRY_MS, MAX_RETRY_MS, RETRY_JITTER_MS, retry_delay_ms};
+
+    #[test]
+    fn reconnect_delay_is_bounded_for_a_critical_control_channel() {
+        let mut backoff_ms = INITIAL_RETRY_MS;
+        let mut worst_case_total_ms = 0;
+        for _ in 0..11 {
+            let delay_ms = retry_delay_ms(backoff_ms, RETRY_JITTER_MS);
+            assert!(delay_ms <= MAX_RETRY_MS);
+            worst_case_total_ms += delay_ms;
+            backoff_ms = (backoff_ms * 2).min(MAX_RETRY_MS);
+        }
+        assert!(worst_case_total_ms <= 19_000);
+    }
 }
