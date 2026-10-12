@@ -17,6 +17,11 @@ export type ThreadHeaderProps = {
   onRenameRequest: () => void;
   onTogglePin?: () => Promise<void>;
   onUnarchive?: () => Promise<void>;
+  /**
+   * Another app holds the thread: actions that need its session (compacting
+   * it, deleting it from under the running app) are off, the rest stay.
+   */
+  openElsewhere?: boolean;
   pinned: boolean;
   threadId: string;
 };

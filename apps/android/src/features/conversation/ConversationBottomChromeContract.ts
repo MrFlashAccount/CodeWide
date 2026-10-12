@@ -12,6 +12,14 @@ export type ConversationBottomChromeProps = {
     kind: "conversationOpenElsewhere" | "generic";
     message: string;
   } | null;
+  /**
+   * The open-elsewhere bar's actions; `null` on a surface that shows no bar
+   * (a sub-agent's read surface).
+   */
+  openElsewhereActions: {
+    readonly onCheckAgain: () => Promise<void>;
+    readonly onFork: (() => void) | null;
+  } | null;
   readOnly: boolean;
   remoteThread: Thread | null | undefined;
   reportBottomChromeHeight: (height: number) => void;

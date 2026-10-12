@@ -184,6 +184,17 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         // A thread another process holds opens read-only until it lets go; a
         // sub-agent, driven by its parent agent, is always read-only.
         readOnly: threadRefusesDirectInput(remoteThread),
+        recheckThread:
+          props.activeConnectionId === "" || remoteThread === null
+            ? undefined
+            : async () => {
+                await props.features.conversation.readThread(
+                  props.activeConnectionId,
+                  remoteThread.id,
+                  undefined,
+                  true,
+                );
+              },
         server: props.servers.find((server) => server.id === props.activeConnectionId),
         thread: visibleThread,
         unread: props.activeThread?.unread ?? 0,
