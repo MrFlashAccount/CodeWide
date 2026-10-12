@@ -1037,7 +1037,9 @@ name = "companion-swift-ffi"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "companion-core",
+ "p256",
  "rand 0.9.5",
  "semver",
  "serde",

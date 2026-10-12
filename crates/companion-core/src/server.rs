@@ -528,12 +528,25 @@ async fn readiness(State(state): State<AppState>) -> (StatusCode, Json<Health>) 
 
 #[cfg(test)]
 mod tests {
-    use super::constant_time_eq;
+    use super::{AuthorizationContext, admits_relay_update, constant_time_eq};
 
     #[test]
     fn token_comparison_requires_exact_bytes() {
         assert!(constant_time_eq(b"same", b"same"));
         assert!(!constant_time_eq(b"same", b"diff"));
         assert!(!constant_time_eq(b"short", b"longer"));
+    }
+
+    #[test]
+    fn relay_update_admits_device_sessions_and_the_admin_only() {
+        assert!(admits_relay_update(Some(&AuthorizationContext::Admin)));
+        assert!(admits_relay_update(Some(&AuthorizationContext::Session {
+            device_id: "phone".to_owned(),
+            expires_at: 1,
+        })));
+        assert!(!admits_relay_update(Some(&AuthorizationContext::Device {
+            device_id: "phone".to_owned(),
+        })));
+        assert!(!admits_relay_update(None));
     }
 }

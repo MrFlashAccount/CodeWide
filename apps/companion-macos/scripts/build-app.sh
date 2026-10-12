@@ -10,6 +10,10 @@ host_update_public_key=${CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI:-}
 host_update_key_id=${CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID:-}
 app_dir=${CODEWIDE_APP_OUTPUT:-"$mac_root/.build/app/CodeWide.app"}
 source_revision=${CODEWIDE_SOURCE_REVISION:-$(git -C "$repo_root" rev-parse HEAD)}
+# The GitHub release tag this build is published under (the release workflow's
+# RELEASE_TAG). The update guardian proves the installed app against that
+# release's manifest; local builds have none.
+release_tag=${CODEWIDE_RELEASE_TAG:-${RELEASE_TAG:-}}
 e2e_namespace=${CODEWIDE_E2E_NAMESPACE:-0}
 
 case "$e2e_namespace" in
@@ -60,6 +64,7 @@ if ! printf '%s\n' "$source_revision" | grep -Eq '^[0-9a-f]{40}$'; then
   echo "CODEWIDE_SOURCE_REVISION must be a full lowercase Git revision." >&2
   exit 1
 fi
+sh "$mac_root/scripts/validate-release-tag.sh" "$release_tag"
 if ! printf '%s\n' "$build_number" | grep -Eq '^[1-9][0-9]*([.][0-9]+){0,2}$'; then
   echo "CODEWIDE_BUILD_NUMBER must contain one to three numeric components." >&2
   exit 1
@@ -203,6 +208,9 @@ plutil -replace CFBundleShortVersionString -string "$version" "$contents/Info.pl
 plutil -replace CFBundleVersion -string "$build_number" "$contents/Info.plist"
 plutil -replace CFBundleIdentifier -string "$app_identifier" "$contents/Info.plist"
 plutil -replace CodeWideSourceRevision -string "$source_revision" "$contents/Info.plist"
+if [ -n "$release_tag" ]; then
+  plutil -replace CodeWideReleaseTag -string "$release_tag" "$contents/Info.plist"
+fi
 plutil -replace SUPublicEDKey -string "$public_key" "$contents/Info.plist"
 plutil -replace Label -string "$runtime_identifier" "$runtime_plist"
 plutil -replace MachServices -json "{\"$runtime_mach_service\":true}" "$runtime_plist"

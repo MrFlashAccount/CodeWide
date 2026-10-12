@@ -135,6 +135,15 @@ The first signed host-update release has no signed predecessor digest and is a
 manual baseline. Install it normally on each host. A later release can certify
 that baseline digest and become remotely admissible.
 
+The macOS guardian establishes its receipt from the signed manifest that lists
+the installed app: the latest release when the app is current, otherwise the
+release named by the bundle's `CodeWideReleaseTag` (`release-YYYY-MM-DD.N`,
+embedded by `build-app.sh` from `RELEASE_TAG`), falling back to
+`v<version>` for apps built before the tag was embedded. A latest release that
+is the installed version, or one already accepted, is "up to date", not a
+failure. A finished operation stays readable by id but is no longer reported
+as the active one.
+
 Shipping these core routes does not enable apply. Each platform must first ship
 an external guardian and prove power/process interruption recovery, exact target
 version/build/revision/digest, Companion readiness, preserved pairing identity,
@@ -142,5 +151,7 @@ restored Relay connectivity, bounded rollback, and durable error reporting.
 Until then `applySupported` is false and apply returns
 `manual_update_required`.
 
-Relay update, Android self-update, and a global compatibility dashboard are
-outside this contract.
+Android self-update and a global compatibility dashboard are outside this
+contract. The Companion proxies the Relay updater at `/v1/relay-update` with the
+same authorization: a device session or the admin token, never a browser
+`Origin`.
