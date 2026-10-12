@@ -10,8 +10,12 @@ const openElsewhereFailure = {
   message: "This conversation is open in another app. Close it there, then try again here.",
 };
 
-function chrome(canAcceptDirectInput: boolean | null) {
-  const thread = { ...createV1TestThread("thread", null, 1, []), canAcceptDirectInput };
+function chrome(canAcceptDirectInput: boolean | null, parentThreadId: string | null = null) {
+  const thread = {
+    ...createV1TestThread("thread", null, 1, []),
+    canAcceptDirectInput,
+    parentThreadId,
+  };
   return (
     <ConversationBottomChrome
       composerContent={<View testID="composer" />}
@@ -39,5 +43,10 @@ describe("a conversation another app is running", () => {
     render(chrome(null));
     expect(screen.queryByTestId("thread-open-elsewhere-notice")).toBeNull();
     expect(screen.getByTestId("thread-error-banner")).toBeOnTheScreen();
+  });
+
+  it("is not claimed for a sub-agent, which its parent agent drives", () => {
+    render(chrome(false, "parent"));
+    expect(screen.queryByTestId("thread-open-elsewhere-notice")).toBeNull();
   });
 });
