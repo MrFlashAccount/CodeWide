@@ -18,6 +18,7 @@ export function useThreadHeaderActions({
   onRenameRequest,
   onTogglePin,
   onUnarchive,
+  openElsewhere = false,
   pinned,
   threadId,
 }: ThreadHeaderProps) {
@@ -39,25 +40,22 @@ export function useThreadHeaderActions({
       id: "fork",
       label: "Fork thread",
     },
-    {
-      disabled: onCompact === undefined,
-      icon: "contract-outline",
-      id: "compact",
-      label: "Compact context",
-    },
+    sessionItem(
+      { icon: "contract-outline", id: "compact", label: "Compact context" },
+      onCompact,
+      openElsewhere,
+    ),
     {
       disabled: archived ? onUnarchive === undefined : onArchive === undefined,
       icon: archived ? "archive" : "archive-outline",
       id: "archive",
       label: archived ? "Unarchive thread" : "Archive thread",
     },
-    {
-      destructive: true,
-      disabled: onDelete === undefined,
-      icon: "trash-outline",
-      id: "delete",
-      label: "Delete thread",
-    },
+    sessionItem(
+      { destructive: true, icon: "trash-outline", id: "delete", label: "Delete thread" },
+      onDelete,
+      openElsewhere,
+    ),
   ];
   const run = useEvent((action: (() => Promise<void>) | undefined, label: string) => {
     if (action === undefined) {
@@ -112,4 +110,15 @@ export function useThreadHeaderActions({
   });
 
   return { actions, handleAction, run };
+}
+
+/** An action that needs the thread's session: off, with the reason, while another app holds it. */
+function sessionItem(
+  item: ActionMenuItem,
+  action: (() => Promise<void>) | undefined,
+  openElsewhere: boolean,
+): ActionMenuItem {
+  return openElsewhere
+    ? { ...item, description: "Open in another app", disabled: true }
+    : { ...item, disabled: action === undefined };
 }

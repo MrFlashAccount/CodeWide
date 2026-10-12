@@ -7,6 +7,7 @@ import type { useTerminalDeletion } from "../terminal/terminalActions";
 import type { ForkTargetPicker } from "../turnActions/forkTargetPicker";
 import type { useThreadRename } from "../turnActions/threadRename";
 import { ConversationBottomChrome } from "./ConversationBottomChrome";
+import type { ConversationBottomChromeProps } from "./ConversationBottomChromeContract";
 import type { createConversationComposerContent } from "./ConversationComposerContent";
 import { ConversationHeader } from "./header/ConversationHeader";
 import type { useConversationTimelineRead } from "./timeline/conversationTimelineRead";
@@ -145,6 +146,7 @@ export function createConversationChromeContent({
       composerContent={composerView.composerContent}
       currentOutcome={currentOutcome}
       failureNotice={timelineRead.conversationPresentationBinding.failureNotice}
+      openElsewhereActions={openElsewhereActions(surfaceInputs, actionsInputs, forkPicker)}
       readOnly={readOnly}
       remoteThread={readInputs.remoteThread}
       reportBottomChromeHeight={timelineState.timelineViewportStateBinding.reportBottomChromeHeight}
@@ -153,4 +155,26 @@ export function createConversationChromeContent({
     />
   );
   return { bottomChrome, headerContent, jumpContent, searchContent };
+}
+
+/** Check again re-reads the thread; Fork opens the fork sheet for the whole chat. */
+function openElsewhereActions(
+  surfaceInputs: ConversationSurfaceCapabilities,
+  actionsInputs: ThreadConversationCapabilities,
+  forkPicker: ForkTargetPicker,
+): ConversationBottomChromeProps["openElsewhereActions"] {
+  const recheckThread = surfaceInputs.recheckThread;
+  if (recheckThread === undefined) {
+    return null;
+  }
+  const forkOffer = actionsInputs.forkOffer;
+  return {
+    onCheckAgain: recheckThread,
+    onFork:
+      actionsInputs.onFork === undefined || forkOffer === undefined
+        ? null
+        : () => {
+            forkPicker.openFork({ kind: "all" }, forkOffer);
+          },
+  };
 }
