@@ -31,7 +31,7 @@ export function modelEntries(models: readonly RawModel[]): readonly ModelEntry[]
       ? "high"
       : (model.supportedEffortLevels[0] ?? null),
     description: model.description,
-    displayName: model.displayName,
+    displayName: versionedDisplayName(model),
     efforts: model.supportedEffortLevels.map((effort) => ({
       description: EFFORT_DESCRIPTIONS[effort] ?? effort,
       effort,
@@ -42,6 +42,24 @@ export function modelEntries(models: readonly RawModel[]): readonly ModelEntry[]
     isDefault: index === defaultIndex,
     model: model.value,
   }));
+}
+
+/**
+ * The row's name with its model version. The SDK names alias rows by family
+ * only (`Opus`) and leads their description with the versioned name
+ * (`Opus 5.5 · …`); the `default` row names the model it currently resolves
+ * to. A description that does not lead with the family keeps the SDK name.
+ */
+function versionedDisplayName(model: RawModel): string {
+  const separator = model.description.indexOf(" · ");
+  const named = separator > 0 ? model.description.slice(0, separator).trim() : "";
+  if (named === "") {
+    return model.displayName;
+  }
+  if (model.value === "default") {
+    return `Default (${named})`;
+  }
+  return named.startsWith(`${model.displayName} `) ? named : model.displayName;
 }
 
 /**

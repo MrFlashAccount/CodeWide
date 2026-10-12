@@ -1,7 +1,7 @@
 /** The recorded model of a session and its catalog id. */
 
 import { describe, expect, it } from "vitest";
-import { catalogModelId } from "../src/catalog/models.js";
+import { catalogModelId, modelEntries } from "../src/catalog/models.js";
 import { lastRecordedModel } from "../src/history/recordedModel.js";
 
 const assistant = (model: string, parentToolUseId: string | null = null) => ({
@@ -50,5 +50,24 @@ describe("recorded model", () => {
     expect(catalogModelId(models, "claude-opus-5-5")).toBe("opus");
     expect(catalogModelId(models, "claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
     expect(catalogModelId(models, "claude-unknown-1")).toBe("claude-unknown-1");
+  });
+});
+
+describe("model catalog names", () => {
+  it("carry the model version the SDK leads each description with", () => {
+    const row = (value: string, displayName: string, description: string) => ({
+      description,
+      displayName,
+      supportedEffortLevels: [],
+      value,
+    });
+    const names = modelEntries([
+      row("default", "Default (recommended)", "Opus 5.5 · Best for everyday, complex tasks"),
+      row("opus", "Opus", "Opus 5.5 · Best for everyday, complex tasks"),
+      row("fable", "Fable", "Fable 5.1 · Most capable for your hardest tasks"),
+      row("custom", "Custom", "Something else · unrelated"),
+      row("claude-sonnet-4-6", "Sonnet 4.6", ""),
+    ]).map((entry) => entry.displayName);
+    expect(names).toEqual(["Default (Opus 5.5)", "Opus 5.5", "Fable 5.1", "Custom", "Sonnet 4.6"]);
   });
 });

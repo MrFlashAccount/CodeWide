@@ -21,19 +21,25 @@ afterEach(() => {
   });
 });
 
-it("shows the live activity with shimmer while running and the preview once it clears", () => {
+it("shows the reasoning step without shimmer while running and the preview once it clears", () => {
   const view = render(<ThreadRowContent selected={false} thread={{ ...thread, state: "running" }} />);
   expect(view.getByTestId("thread-preview")).toHaveTextContent("Latest answer");
 
   act(() => {
-    threadLiveActivity$[key]?.set({ command: "cargo test", kind: "command" });
+    threadLiveActivity$[key]?.set({ kind: "reasoning", title: "Inspecting tests" });
   });
-  expect(view.getByTestId("thread-live-activity")).toHaveTextContent("Running cargo test");
+  expect(view.getByTestId("thread-live-activity")).toHaveTextContent("Inspecting tests");
   expect(view.queryByTestId("thread-preview")).toBeNull();
   expect(
     view.UNSAFE_getAllByType(AppText).find((node) => node.props.testID === "thread-live-activity")
       ?.props.shimmering,
-  ).toBe(true);
+  ).not.toBe(true);
+
+  act(() => {
+    threadLiveActivity$[key]?.set({ command: "cargo test", kind: "command" });
+  });
+  expect(view.queryByTestId("thread-live-activity")).toBeNull();
+  expect(view.getByTestId("thread-preview")).toHaveTextContent("Latest answer");
 
   act(() => {
     threadLiveActivity$[key]?.delete();

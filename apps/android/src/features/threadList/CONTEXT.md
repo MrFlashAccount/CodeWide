@@ -30,7 +30,7 @@ thread. Only explicit selection does. Project paging and offset memory use one q
 project/mode key across mobile route and desktop sidebar presentations. Wide project/filter
 changes retain the selected conversation; project navigation targets the existing catalog stack without changing conversation focus.
 
-While a row is running, its preview line shows the Companion-published live activity from the lower `data/threadLiveActivity` owner, formatted by `threadLiveActivityLabel` and rendered with the text shimmer; only running rows subscribe, and an absent activity falls back to the preview. The row never derives activity from transcript items.
+While a row is running, its preview line shows the Companion-published live activity from the lower `data/threadLiveActivity` owner, formatted by `threadLiveActivityLabel` without a shimmer (the running title already shimmers). Only a reasoning title or plan step replaces the preview; commands, file edits, tool calls, searches and compaction keep it. Only running rows subscribe, and an absent activity falls back to the preview. The row never derives activity from transcript items.
 
 The unread slot prioritizes a raised-hand icon for current pending requests, waiting flags and observed async questions. Opening a thread does not resolve that attention. The unread state is retained and reappears after attention clears. This owner consumes summary metadata without loading chat history for each row.
 
