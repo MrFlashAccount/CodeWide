@@ -38,6 +38,7 @@
     "test:watch": "vitest",
     "protocol:generate": "node scripts/generate-codex-protocol.ts",
     "validate:android:v1": "pnpm --filter @codewide/android validate:v1",
+    "validate:repo": "sh scripts/validate-repo.sh",
     "lint:agents": "pnpm --filter @codewide/agent-protocol --filter @codewide/claude-agent-host lint",
     "format:agents:check": "pnpm --filter @codewide/agent-protocol --filter @codewide/claude-agent-host format:check",
     "validate:agents": "pnpm format:agents:check && pnpm lint:agents && pnpm --filter @codewide/agent-protocol test && pnpm --filter @codewide/claude-agent-host test"
