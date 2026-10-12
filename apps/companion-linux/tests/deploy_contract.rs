@@ -95,8 +95,8 @@ fn managed_install_uses_immutable_generations_and_a_stable_guardian() {
 
 #[test]
 fn remote_runner_has_no_caller_controlled_download_or_state_restore() {
-    let guardian = include_str!("../src/host_update.rs");
-    let runner = include_str!("../src/host_update/runner.rs");
+    let guardian = include_str!("../../../crates/host-update/src/linux/guardian.rs");
+    let runner = include_str!("../../../crates/host-update/src/linux/runner.rs");
     assert!(guardian.contains("cached.available.target"));
     assert!(runner.contains("operation.target.artifact_url"));
     assert!(!runner.contains("ApplyHostUpdateCommand"));

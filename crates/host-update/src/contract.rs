@@ -1,6 +1,6 @@
-//! Shared contracts for authenticated, guardian-owned Companion host updates.
+//! Shared contracts for authenticated, guardian-owned host updates.
 //!
-//! The core owns wire shapes, release admission, and fenced phase semantics.
+//! The contract owns wire shapes, release admission, and fenced phase semantics.
 //! Platform guardians own downloads, the durable journal, activation, health
 //! proof, rollback, and terminal outcomes.
 
@@ -663,5 +663,4 @@ pub trait HostUpdateGuardian: Send + Sync {
 
 pub type SharedHostUpdateGuardian = Arc<dyn HostUpdateGuardian>;
 #[cfg(test)]
-#[path = "host_update/tests.rs"]
 mod tests;

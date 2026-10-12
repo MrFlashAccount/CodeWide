@@ -116,7 +116,7 @@ rollback that cannot restore and prove the previous Companion records
 `rollingBack -> failed` through the same fenced compare-and-swap path.
 
 The frozen machine-readable contract is
-`crates/companion-core/contract/host-update-v1.json`. Contract negotiation is
+`crates/host-update/contract/host-update-v1.json`. Contract negotiation is
 additive: a runtime that does not exactly support guardian, bootstrap, and
 journal V1 must return `manual_update_required` before `202`.
 

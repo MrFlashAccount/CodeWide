@@ -1,4 +1,6 @@
 use super::*;
+use crate::linux::test_support::{TEST_PRODUCT, guardian as test_guardian};
+use crate::{HostPlatform, ReleaseTargetV1};
 
 fn operation(id: &str, key: &str, sequence: u64, phase: HostUpdatePhase) -> OperationRecord {
     OperationRecord {
@@ -63,7 +65,7 @@ fn operation(id: &str, key: &str, sequence: u64, phase: HostUpdatePhase) -> Oper
 fn flat_mutable_install_requires_manual_bootstrap() {
     let directory = tempfile::tempdir().expect("temporary directory");
     fs::write(directory.path().join("codewide-companion"), b"legacy").expect("legacy binary");
-    let guardian = LinuxHostUpdateGuardian::with_trust(
+    let guardian = test_guardian(
         directory.path().to_path_buf(),
         directory.path().join("host-update-state"),
         Some(test_trust()),
@@ -78,7 +80,7 @@ fn flat_mutable_install_requires_manual_bootstrap() {
 fn build_without_embedded_trust_is_not_remotely_updatable() {
     let directory = tempfile::tempdir().expect("temporary directory");
     install_generation(directory.path());
-    let guardian = LinuxHostUpdateGuardian::with_trust(
+    let guardian = test_guardian(
         directory.path().to_path_buf(),
         directory.path().join("host-update-state"),
         None,
@@ -96,7 +98,7 @@ fn embedded_trust_needs_only_the_installed_guardian_not_an_installer_config() {
     let directory = tempfile::tempdir().expect("temporary directory");
     install_generation(directory.path());
     assert!(!directory.path().join("bootstrap/config.json").exists());
-    let guardian = LinuxHostUpdateGuardian::with_trust(
+    let guardian = test_guardian(
         directory.path().to_path_buf(),
         directory.path().join("host-update-state"),
         Some(test_trust()),
@@ -120,7 +122,7 @@ fn install_generation(root: &std::path::Path) {
     let bootstrap = root.join("bootstrap");
     fs::create_dir_all(&bootstrap).expect("bootstrap directory");
     fs::set_permissions(&bootstrap, fs::Permissions::from_mode(0o700)).expect("bootstrap mode");
-    let guardian = bootstrap.join("codewide-companion-update-guardian");
+    let guardian = bootstrap.join(TEST_PRODUCT.bootstrap_guardian);
     fs::write(&guardian, b"guardian").expect("guardian binary");
     fs::set_permissions(&guardian, fs::Permissions::from_mode(0o755)).expect("guardian mode");
     let generation = root.join("generations").join(&digest);
@@ -157,16 +159,7 @@ fn idempotency_and_sequence_survive_guardian_restart() {
         &record,
     )
     .expect("operation journal");
-    let guardian = LinuxHostUpdateGuardian::new(
-        directory.path().to_path_buf(),
-        state.clone(),
-        "pin".to_owned(),
-        HostUpdateRelayState {
-            configured: false,
-            enabled: false,
-            upstream_live: false,
-        },
-    );
+    let guardian = test_guardian(directory.path().to_path_buf(), state.clone(), None);
     assert_eq!(guardian.highest_sequence().expect("sequence"), 42);
     assert_eq!(
         find_idempotency(&state, "idem_00000000000000000000")
@@ -217,8 +210,7 @@ async fn terminal_outcome_and_lost_acceptance_survive_restart_without_a_cached_r
     )
     .expect("journal");
     store::write_json(&state.join("active.json"), &record.journal.operation_id).expect("pointer");
-    let guardian =
-        LinuxHostUpdateGuardian::with_trust(root.to_path_buf(), state, Some(test_trust()));
+    let guardian = test_guardian(root.to_path_buf(), state, Some(test_trust()));
     let status = guardian
         .status()
         .await

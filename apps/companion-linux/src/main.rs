@@ -1327,15 +1327,13 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let mut excluded_ports = HashSet::from([options.listen.port()]);
     excluded_ports.insert(bootstrap_tls_target.port());
     excluded_ports.insert(inner_tls_target.port());
-    let update_guardian = Arc::new(
-        codewide_companion::host_update::LinuxHostUpdateGuardian::new_with_runtime(
-            codewide_companion::host_update::LinuxHostUpdateGuardian::default_root(),
-            codewide_companion::host_update::LinuxHostUpdateGuardian::default_state_root(),
-            identity.public().tls_pin_sha256.clone(),
-            identity_directory.join("identity.json"),
-            relay.clone(),
-        ),
-    );
+    let update_guardian = Arc::new(codewide_companion::host_update::guardian(
+        codewide_companion::host_update::default_root(),
+        codewide_companion::host_update::default_state_root(),
+        identity.public().tls_pin_sha256.clone(),
+        identity_directory.join("identity.json"),
+        relay.clone(),
+    ));
     let services = server::CompanionServices {
         build_shelf: configured_build_shelf()?,
         files: Some(files),

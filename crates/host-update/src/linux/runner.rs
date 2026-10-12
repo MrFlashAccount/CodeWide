@@ -1,4 +1,4 @@
-//! Stable transaction runner for Linux Companion generations.
+//! Stable transaction runner for Linux product generations.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -9,18 +9,16 @@ use std::{
     time::Duration,
 };
 
-use companion_core::host_update::{HostUpdatePhase, HostUpdateProgress};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 
 use super::{
-    GenerationMetadataV1, OperationRecord,
+    GenerationMetadataV1, LinuxProduct, OperationRecord, ServiceHealth,
+    health::{rollback_is_ready, target_is_ready},
     host_resolver::HostResolver,
-    runner_health::{rollback_is_ready, target_is_ready},
     store, unix_millis,
 };
-
-const BUNDLE_DIRECTORY: &str = "codewide-companion-x86_64-unknown-linux-musl";
+use crate::{HostUpdatePhase, HostUpdateProgress, ReleaseTargetV1};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ResumeAction {
@@ -45,10 +43,23 @@ fn resume_action(phase: HostUpdatePhase) -> ResumeAction {
     }
 }
 
-pub(super) async fn run_pending(
+/// Runs one queued operation from the stable bootstrap executable.
+///
+/// # Errors
+/// Returns an error when the durable journal is corrupt or the runner cannot
+/// persist, activate, verify, or roll back a generation.
+pub async fn run_pending(
+    product: &LinuxProduct,
+    health: &dyn ServiceHealth,
     root: PathBuf,
     state_root: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let runner = Runner {
+        product,
+        health,
+        root: &root,
+        state_root: &state_root,
+    };
     let Some(operation_id) = store::read_optional_json::<String>(&state_root.join("active.json"))?
     else {
         return Ok(());
@@ -71,7 +82,7 @@ pub(super) async fn run_pending(
                 )?;
             }
             ResumeAction::ResumeInstall => {
-                if let Err(failure) = install_and_verify(&root, &state_root, &operation_id).await {
+                if let Err(failure) = runner.install_and_verify(&operation_id).await {
                     let operation = read_operation(&state_root, &operation_id)?;
                     // No replacement was activated: fail the install without
                     // restarting a healthy server or waiting for rollback.
@@ -85,13 +96,7 @@ pub(super) async fn run_pending(
                         )?;
                         return Ok(());
                     }
-                    rollback(
-                        &root,
-                        &state_root,
-                        &operation_id,
-                        failure.code,
-                        &failure.detail,
-                    )?;
+                    runner.rollback(&operation_id, failure.code, &failure.detail)?;
                     return Ok(());
                 }
             }
@@ -106,9 +111,7 @@ pub(super) async fn run_pending(
             }
             ResumeAction::WaitForReconnect => {
                 if unix_millis() > operation.journal.deadlines.reconnect_by {
-                    rollback(
-                        &root,
-                        &state_root,
+                    runner.rollback(
                         &operation_id,
                         "initiator_reconnect_timeout",
                         "The initiating device did not reconnect before the deadline.",
@@ -118,7 +121,7 @@ pub(super) async fn run_pending(
                 tokio::time::sleep(Duration::from_millis(250)).await;
             }
             ResumeAction::ResumeRollback => {
-                finish_rollback(&root, &state_root, &operation_id)?;
+                runner.finish_rollback(&operation_id)?;
                 return Ok(());
             }
             ResumeAction::Done => return Ok(()),
@@ -141,68 +144,161 @@ impl RunnerFailure {
     }
 }
 
-async fn install_and_verify(
-    root: &Path,
-    state_root: &Path,
-    operation_id: &str,
-) -> Result<(), RunnerFailure> {
-    let operation = read_operation(state_root, operation_id)
-        .map_err(|_| RunnerFailure::new("journal_unreadable", "Update journal is unreadable."))?;
-    if unix_millis() > operation.journal.deadlines.install_by {
-        return Err(RunnerFailure::new(
-            "install_deadline_exceeded",
-            "The update did not install before its deadline.",
-        ));
-    }
-    let download_root = state_root.join("downloads");
-    store::private_directory(&download_root).map_err(|_| {
-        RunnerFailure::new(
-            "download_storage_failed",
-            "Cannot prepare download storage.",
-        )
-    })?;
-    let archive = download_root.join(format!("{operation_id}.tar.gz"));
-    if !archive.is_file() {
-        download(
-            &operation.target.artifact_url,
-            &archive,
+/// The product and install locations one runner invocation operates on.
+struct Runner<'a> {
+    product: &'a LinuxProduct,
+    health: &'a dyn ServiceHealth,
+    root: &'a Path,
+    state_root: &'a Path,
+}
+
+impl Runner<'_> {
+    async fn install_and_verify(&self, operation_id: &str) -> Result<(), RunnerFailure> {
+        let (root, state_root) = (self.root, self.state_root);
+        let operation = read_operation(state_root, operation_id).map_err(|_| {
+            RunnerFailure::new("journal_unreadable", "Update journal is unreadable.")
+        })?;
+        if unix_millis() > operation.journal.deadlines.install_by {
+            return Err(RunnerFailure::new(
+                "install_deadline_exceeded",
+                "The update did not install before its deadline.",
+            ));
+        }
+        let download_root = state_root.join("downloads");
+        store::private_directory(&download_root).map_err(|_| {
+            RunnerFailure::new(
+                "download_storage_failed",
+                "Cannot prepare download storage.",
+            )
+        })?;
+        let archive = download_root.join(format!("{operation_id}.tar.gz"));
+        if !archive.is_file() {
+            download(
+                &operation.target.artifact_url,
+                &archive,
+                state_root,
+                operation_id,
+            )
+            .await?;
+        }
+        report_progress(state_root, operation_id, HostUpdateProgress::Verifying)?;
+        verify_file_digest(&archive, &operation.target.sha256).map_err(|_| {
+            RunnerFailure::new(
+                "artifact_digest_mismatch",
+                "The downloaded update did not match its signed digest.",
+            )
+        })?;
+        validate_archive(self.product, &archive)?;
+        let generation = root.join("generations").join(&operation.target.sha256);
+        report_progress(state_root, operation_id, HostUpdateProgress::Extracting)?;
+        if generation.exists() {
+            verify_generation(self.product, &generation, &operation.target)?;
+        } else {
+            stage_generation(self.product, root, operation_id, &archive, &operation)?;
+        }
+        set_restart_started(state_root, operation_id, &operation.journal.nonce).map_err(|_| {
+            RunnerFailure::new("journal_write_failed", "Cannot persist restart state.")
+        })?;
+        report_progress(state_root, operation_id, HostUpdateProgress::Restarting)?;
+        switch_current(root, &format!("generations/{}", operation.target.sha256))?;
+        restart_service(self.product)?;
+        report_progress(state_root, operation_id, HostUpdateProgress::CheckingHealth)?;
+        self.wait_for_exact_target(&operation)?;
+        transition(
             state_root,
             operation_id,
+            HostUpdatePhase::Installing,
+            HostUpdatePhase::TargetReady,
+            None,
         )
-        .await?;
+        .map_err(|_| {
+            RunnerFailure::new("journal_write_failed", "Cannot persist target readiness.")
+        })?;
+        let _ = fs::remove_file(archive);
+        Ok(())
     }
-    report_progress(state_root, operation_id, HostUpdateProgress::Verifying)?;
-    verify_file_digest(&archive, &operation.target.sha256).map_err(|_| {
-        RunnerFailure::new(
-            "artifact_digest_mismatch",
-            "The downloaded update did not match its signed digest.",
-        )
-    })?;
-    validate_archive(&archive)?;
-    let generation = root.join("generations").join(&operation.target.sha256);
-    report_progress(state_root, operation_id, HostUpdateProgress::Extracting)?;
-    if generation.exists() {
-        verify_generation(&generation, &operation.target)?;
-    } else {
-        stage_generation(root, operation_id, &archive, &operation)?;
+
+    fn wait_for_exact_target(&self, operation: &OperationRecord) -> Result<(), RunnerFailure> {
+        while unix_millis() <= operation.journal.deadlines.target_ready_by {
+            if target_is_ready(self.root, self.health, operation) {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        Err(RunnerFailure::new(
+            "target_health_timeout",
+            "The updated service did not become healthy before the deadline.",
+        ))
     }
-    set_restart_started(state_root, operation_id, &operation.journal.nonce)
-        .map_err(|_| RunnerFailure::new("journal_write_failed", "Cannot persist restart state."))?;
-    report_progress(state_root, operation_id, HostUpdateProgress::Restarting)?;
-    switch_current(root, &format!("generations/{}", operation.target.sha256))?;
-    restart_companion()?;
-    report_progress(state_root, operation_id, HostUpdateProgress::CheckingHealth)?;
-    wait_for_exact_target(root, &operation)?;
-    transition(
-        state_root,
-        operation_id,
-        HostUpdatePhase::Installing,
-        HostUpdatePhase::TargetReady,
-        None,
-    )
-    .map_err(|_| RunnerFailure::new("journal_write_failed", "Cannot persist target readiness."))?;
-    let _ = fs::remove_file(archive);
-    Ok(())
+
+    fn rollback(
+        &self,
+        operation_id: &str,
+        code: &str,
+        detail: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let operation = read_operation(self.state_root, operation_id)?;
+        if operation.journal.phase != HostUpdatePhase::RollingBack {
+            transition(
+                self.state_root,
+                operation_id,
+                operation.journal.phase,
+                HostUpdatePhase::RollingBack,
+                Some((code, detail)),
+            )?;
+        }
+        self.finish_rollback(operation_id)
+    }
+
+    fn finish_rollback(&self, operation_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let (root, state_root) = (self.root, self.state_root);
+        let operation = read_operation(state_root, operation_id)?;
+        if unix_millis() > operation.journal.deadlines.rollback_by {
+            transition(
+                state_root,
+                operation_id,
+                HostUpdatePhase::RollingBack,
+                HostUpdatePhase::Failed,
+                Some((
+                    "rollback_deadline_exceeded",
+                    "Rollback exceeded its deadline.",
+                )),
+            )?;
+            return Ok(());
+        }
+        switch_current(root, &operation.previous_generation)
+            .map_err(|failure| io::Error::other(failure.detail))?;
+        restart_service(self.product).map_err(|failure| io::Error::other(failure.detail))?;
+        let mut healthy = false;
+        while unix_millis() <= operation.journal.deadlines.rollback_by {
+            healthy = rollback_is_ready(root, self.health, &operation);
+            if healthy {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        if !healthy {
+            transition(
+                state_root,
+                operation_id,
+                HostUpdatePhase::RollingBack,
+                HostUpdatePhase::Failed,
+                Some((
+                    "rollback_health_failed",
+                    "The previous service did not recover.",
+                )),
+            )?;
+            return Ok(());
+        }
+        transition(
+            state_root,
+            operation_id,
+            HostUpdatePhase::RollingBack,
+            HostUpdatePhase::RolledBack,
+            None,
+        )?;
+        Ok(())
+    }
 }
 
 fn verify_file_digest(path: &Path, expected: &str) -> io::Result<()> {
@@ -354,7 +450,7 @@ async fn download_response(
         })
 }
 
-fn validate_archive(archive: &Path) -> Result<(), RunnerFailure> {
+fn validate_archive(product: &LinuxProduct, archive: &Path) -> Result<(), RunnerFailure> {
     let output = Command::new("tar")
         .args(["-tzf"])
         .arg(archive)
@@ -369,11 +465,12 @@ fn validate_archive(archive: &Path) -> Result<(), RunnerFailure> {
     let listing = String::from_utf8(output.stdout).map_err(|_| {
         RunnerFailure::new("archive_invalid", "The update archive has invalid paths.")
     })?;
-    let expected_prefix = format!("{BUNDLE_DIRECTORY}/");
+    let bundle_directory = product.bundle_directory;
+    let expected_prefix = format!("{bundle_directory}/");
     if listing.lines().any(|line| {
         line.starts_with('/')
             || line.split('/').any(|component| component == "..")
-            || (line != BUNDLE_DIRECTORY && !line.starts_with(&expected_prefix))
+            || (line != bundle_directory && !line.starts_with(&expected_prefix))
     }) {
         return Err(RunnerFailure::new(
             "archive_unsafe_path",
@@ -401,6 +498,7 @@ fn validate_archive(archive: &Path) -> Result<(), RunnerFailure> {
 }
 
 fn stage_generation(
+    product: &LinuxProduct,
     root: &Path,
     operation_id: &str,
     archive: &Path,
@@ -441,33 +539,33 @@ fn stage_generation(
             "The update archive could not be extracted.",
         ));
     }
-    let payload = staging.join(BUNDLE_DIRECTORY);
-    let companion = payload.join("bin/codewide-companion");
-    let git_plugin = payload.join("libexec/codewide-vcs-git");
-    let memory_watch = payload.join("libexec/codewide-companion-memory-watch");
-    if !is_executable_regular_file(&companion)
-        || !is_executable_regular_file(&git_plugin)
-        || !is_executable_regular_file(&memory_watch)
+    let payload = staging.join(product.bundle_directory);
+    let executable = payload.join("bin").join(product.executable_name);
+    if !is_executable_regular_file(&executable)
+        || !product
+            .payload_executables
+            .iter()
+            .all(|path| is_executable_regular_file(&payload.join(path)))
     {
         return Err(RunnerFailure::new(
             "payload_incomplete",
             "The update payload is incomplete.",
         ));
     }
-    let reported = Command::new(&companion)
+    let reported = Command::new(&executable)
         .arg("--version")
         .output()
         .map_err(|_| {
-            RunnerFailure::new("payload_not_executable", "The new Companion cannot start.")
+            RunnerFailure::new("payload_not_executable", "The new service cannot start.")
         })?;
-    let expected = format!("codewide-companion {}\n", operation.target.version);
+    let expected = format!("{} {}\n", product.executable_name, operation.target.version);
     if !reported.status.success() || reported.stdout != expected.as_bytes() {
         return Err(RunnerFailure::new(
             "payload_version_mismatch",
-            "The new Companion reports the wrong version.",
+            "The new service reports the wrong version.",
         ));
     }
-    strip_bootstrap_payload(&payload)?;
+    strip_bootstrap_payload(product, &payload)?;
     store::write_json(
         &payload.join("metadata.json"),
         &GenerationMetadataV1 {
@@ -513,31 +611,21 @@ fn is_executable_regular_file(path: &Path) -> bool {
     })
 }
 
-fn strip_bootstrap_payload(payload: &Path) -> Result<(), RunnerFailure> {
-    for directory in [payload.join("bootstrap"), payload.join("systemd")] {
-        if directory.exists() {
-            fs::remove_dir_all(directory).map_err(|_| {
-                RunnerFailure::new(
-                    "payload_sanitization_failed",
-                    "Cannot remove bootstrap-only update payload files.",
-                )
-            })?;
-        }
-    }
-    for file in [
-        payload.join("install.sh"),
-        payload.join("libexec/codewide-companion-update-guardian"),
-    ] {
-        match fs::remove_file(file) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(_) => {
-                return Err(RunnerFailure::new(
-                    "payload_sanitization_failed",
-                    "Cannot remove bootstrap-only update payload files.",
-                ));
-            }
-        }
+fn strip_bootstrap_payload(product: &LinuxProduct, payload: &Path) -> Result<(), RunnerFailure> {
+    for entry in product.bootstrap_only {
+        let path = payload.join(entry);
+        let removed = match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path),
+            Ok(_) => fs::remove_file(&path),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        };
+        removed.map_err(|_| {
+            RunnerFailure::new(
+                "payload_sanitization_failed",
+                "Cannot remove bootstrap-only update payload files.",
+            )
+        })?;
     }
     Ok(())
 }
@@ -563,104 +651,10 @@ fn switch_current(root: &Path, relative_target: &str) -> Result<(), RunnerFailur
     })
 }
 
-fn restart_companion() -> Result<(), RunnerFailure> {
-    command_success(
-        "systemctl",
-        &["--user", "restart", "codewide-companion.service"],
-    )
-    .then_some(())
-    .ok_or_else(|| {
-        RunnerFailure::new(
-            "service_restart_failed",
-            "The Companion service did not restart.",
-        )
-    })
-}
-
-fn wait_for_exact_target(root: &Path, operation: &OperationRecord) -> Result<(), RunnerFailure> {
-    while unix_millis() <= operation.journal.deadlines.target_ready_by {
-        if target_is_ready(root, operation) {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-    Err(RunnerFailure::new(
-        "target_health_timeout",
-        "The updated Companion did not become healthy before the deadline.",
-    ))
-}
-
-fn rollback(
-    root: &Path,
-    state_root: &Path,
-    operation_id: &str,
-    code: &str,
-    detail: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let operation = read_operation(state_root, operation_id)?;
-    if operation.journal.phase != HostUpdatePhase::RollingBack {
-        transition(
-            state_root,
-            operation_id,
-            operation.journal.phase,
-            HostUpdatePhase::RollingBack,
-            Some((code, detail)),
-        )?;
-    }
-    finish_rollback(root, state_root, operation_id)
-}
-
-fn finish_rollback(
-    root: &Path,
-    state_root: &Path,
-    operation_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let operation = read_operation(state_root, operation_id)?;
-    if unix_millis() > operation.journal.deadlines.rollback_by {
-        transition(
-            state_root,
-            operation_id,
-            HostUpdatePhase::RollingBack,
-            HostUpdatePhase::Failed,
-            Some((
-                "rollback_deadline_exceeded",
-                "Rollback exceeded its deadline.",
-            )),
-        )?;
-        return Ok(());
-    }
-    switch_current(root, &operation.previous_generation)
-        .map_err(|failure| io::Error::other(failure.detail))?;
-    restart_companion().map_err(|failure| io::Error::other(failure.detail))?;
-    let mut healthy = false;
-    while unix_millis() <= operation.journal.deadlines.rollback_by {
-        healthy = rollback_is_ready(root, &operation);
-        if healthy {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-    if !healthy {
-        transition(
-            state_root,
-            operation_id,
-            HostUpdatePhase::RollingBack,
-            HostUpdatePhase::Failed,
-            Some((
-                "rollback_health_failed",
-                "The previous Companion did not recover.",
-            )),
-        )?;
-        return Ok(());
-    }
-    transition(
-        state_root,
-        operation_id,
-        HostUpdatePhase::RollingBack,
-        HostUpdatePhase::RolledBack,
-        None,
-    )?;
-    Ok(())
+fn restart_service(product: &LinuxProduct) -> Result<(), RunnerFailure> {
+    command_success("systemctl", &["--user", "restart", product.service_unit])
+        .then_some(())
+        .ok_or_else(|| RunnerFailure::new("service_restart_failed", "The service did not restart."))
 }
 
 fn transition(
@@ -756,8 +750,9 @@ fn write_operation(state_root: &Path, operation: &OperationRecord) -> io::Result
 }
 
 fn verify_generation(
+    product: &LinuxProduct,
     path: &Path,
-    target: &companion_core::host_update::ReleaseTargetV1,
+    target: &ReleaseTargetV1,
 ) -> Result<(), RunnerFailure> {
     let metadata: GenerationMetadataV1 =
         store::read_json(&path.join("metadata.json")).map_err(|_| {
@@ -771,14 +766,15 @@ fn verify_generation(
         || metadata.build != target.build
         || metadata.source_revision != target.source_revision
         || metadata.artifact_digest != target.sha256
-        || !is_executable_regular_file(&path.join("bin/codewide-companion"))
-        || !is_executable_regular_file(&path.join("libexec/codewide-vcs-git"))
-        || !is_executable_regular_file(&path.join("libexec/codewide-companion-memory-watch"))
-        || path.join("bootstrap").exists()
-        || path.join("systemd").exists()
-        || path
-            .join("libexec/codewide-companion-update-guardian")
-            .exists()
+        || !is_executable_regular_file(&path.join("bin").join(product.executable_name))
+        || !product
+            .payload_executables
+            .iter()
+            .all(|executable| is_executable_regular_file(&path.join(executable)))
+        || product
+            .bootstrap_only
+            .iter()
+            .any(|entry| fs::symlink_metadata(path.join(entry)).is_ok())
     {
         return Err(RunnerFailure::new(
             "generation_collision",

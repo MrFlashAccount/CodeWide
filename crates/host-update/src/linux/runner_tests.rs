@@ -1,7 +1,6 @@
 use super::*;
-use companion_core::host_update::{
-    HostPlatform, HostUpdateDeadlines, HostUpdateJournalV1, HostUpdateRelayState, ReleaseTargetV1,
-};
+use crate::linux::test_support::{NeverHealthy, TEST_PRODUCT};
+use crate::{HostPlatform, HostUpdateDeadlines, HostUpdateJournalV1, HostUpdateRelayState};
 
 fn operation(phase: HostUpdatePhase) -> OperationRecord {
     OperationRecord {
@@ -188,7 +187,7 @@ fn bootstrap_material_is_removed_before_generation_publish() {
     )
     .expect("guardian");
 
-    strip_bootstrap_payload(payload).expect("strip bootstrap material");
+    strip_bootstrap_payload(&TEST_PRODUCT, payload).expect("strip bootstrap material");
 
     assert!(!payload.join("bootstrap").exists());
     assert!(!payload.join("systemd").exists());
@@ -202,14 +201,14 @@ fn bootstrap_material_is_removed_before_generation_publish() {
 
 #[test]
 fn archive_validation_rejects_parent_traversal_listing() {
-    let unsafe_line = format!("{BUNDLE_DIRECTORY}/../escape");
+    let unsafe_line = format!("{}/../escape", TEST_PRODUCT.bundle_directory);
     assert!(unsafe_line.split('/').any(|component| component == ".."));
 }
 
 #[test]
 fn archive_validation_rejects_symlink_entries() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let bundle = directory.path().join(BUNDLE_DIRECTORY);
+    let bundle = directory.path().join(TEST_PRODUCT.bundle_directory);
     fs::create_dir(&bundle).expect("bundle");
     std::os::unix::fs::symlink("/tmp", bundle.join("escape")).expect("symlink");
     let archive = directory.path().join("payload.tar.gz");
@@ -218,11 +217,11 @@ fn archive_validation_rejects_symlink_entries() {
         .arg(&archive)
         .args(["-C"])
         .arg(directory.path())
-        .arg(BUNDLE_DIRECTORY)
+        .arg(TEST_PRODUCT.bundle_directory)
         .status()
         .expect("tar");
     assert!(status.success());
-    let failure = validate_archive(&archive).expect_err("symlink must be rejected");
+    let failure = validate_archive(&TEST_PRODUCT, &archive).expect_err("symlink must be rejected");
     assert_eq!(failure.code, "archive_unsafe_entry");
 }
 
@@ -253,7 +252,7 @@ async fn rejected_download_fails_without_restarting_or_rolling_back_the_current_
     )
     .expect("download");
 
-    run_pending(root.clone(), state.clone())
+    run_pending(&TEST_PRODUCT, &NeverHealthy, root.clone(), state.clone())
         .await
         .expect("runner");
     let outcome = read_operation(&state, &record.journal.operation_id).expect("durable outcome");
@@ -267,7 +266,7 @@ async fn rejected_download_fails_without_restarting_or_rolling_back_the_current_
         fs::read_link(root.join("current")).expect("unchanged current"),
         PathBuf::from("generations/old")
     );
-    run_pending(root, state)
+    run_pending(&TEST_PRODUCT, &NeverHealthy, root, state)
         .await
         .expect("terminal resume is inert");
 }
@@ -309,7 +308,7 @@ fn recovery_failure_preserves_the_install_failure_after_reopening() {
         reopened.recovery_error.as_deref(),
         Some("rollback_health_failed")
     );
-    let view = super::super::operation_view(&reopened);
+    let view = super::super::guardian::operation_view(&reopened);
     assert!(
         view.error_message
             .expect("message")
@@ -330,7 +329,7 @@ fn download_progress_survives_reopening_and_cannot_overwrite_a_terminal_outcome(
     report_progress(state, &record.journal.operation_id, progress.clone()).expect("progress");
     let reopened = read_operation(state, &record.journal.operation_id).expect("reopen");
     assert_eq!(
-        super::super::operation_view(&reopened).progress,
+        super::super::guardian::operation_view(&reopened).progress,
         Some(progress)
     );
     transition(
