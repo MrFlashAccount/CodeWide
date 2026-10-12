@@ -13,7 +13,11 @@ const workspaceOwner = compactSource(readFileSync(new URL("../src/features/proje
 describe("new chat workspace selector", () => {
   it("shows the second-row dropdown only after plugin capability inspection", () => {
     const emptyStateStart = emptyStateOwner.indexOf('testID="new-chat-empty-state"');
-    const emptyStateEnd = emptyStateOwner.indexOf("</View>", emptyStateStart);
+    // The project button nests the server icon's View; the slice ends after the workspace mode menu.
+    const emptyStateEnd = emptyStateOwner.indexOf(
+      "</View>",
+      emptyStateOwner.indexOf("Choose workspace mode", emptyStateStart),
+    );
     const emptyState = emptyStateOwner.slice(emptyStateStart, emptyStateEnd);
 
     expect(emptyState).toContain("workspaceSupport !== null");
