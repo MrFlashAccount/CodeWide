@@ -538,7 +538,20 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
               putDouble("expiresAt", credential.expiresAt.toDouble())
             })
           },
-          onFailure = { error -> promise.reject("SESSION_MINT_FAILED", "Could not authorize the remote operation", error) },
+          onFailure = { error ->
+            // Only a 401/409 from Companion is an authorization verdict; any other
+            // failure means Companion was not reached, and the user must see that.
+            // Transport errors may carry credentials, so only their class is exported.
+            if (error is SessionAuthorizationException) {
+              promise.reject("SESSION_AUTH_REQUIRED", "Companion rejected this device; pair it again", error)
+            } else {
+              promise.reject(
+                "SESSION_MINT_FAILED",
+                "Could not reach Companion to authorize the request (${error.javaClass.simpleName})",
+                error,
+              )
+            }
+          },
         )
       }
     } catch (error: Throwable) {

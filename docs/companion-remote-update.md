@@ -99,7 +99,12 @@ recovery code. Linux process health uses the authenticated control-only
 generation, PID, readiness and Relay state. The guardian compares the PID with
 systemd and every release identity field with the expected generation; it does
 not depend on access to another process's `/proc` entry. Legacy payloads retain
-the previous exact executable check. The stable bootstrap guardian must be
+the previous exact executable check. Release manifest, artifact size and
+artifact download requests resolve host names through the host's NSS resolver
+(`getent ahosts`), not the static musl resolver: musl keeps the first answer of
+all nameservers at once, so on an IPv6-only host one nameserver without DNS64
+can hide the only reachable NAT64 addresses of GitHub's IPv4-only release
+assets. The stable bootstrap guardian must be
 installed manually to receive guardian fixes; remote payload replacement does
 not replace bootstrap.
 

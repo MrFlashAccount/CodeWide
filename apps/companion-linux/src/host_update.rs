@@ -5,6 +5,7 @@
 //! performs activation and rollback under systemd, so replacing or killing the
 //! payload process cannot strand the installation.
 
+mod host_resolver;
 mod runner;
 mod runner_health;
 mod store;
@@ -362,6 +363,7 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
         let bootstrap = self.bootstrap()?;
         let current = self.current()?;
         let envelope = reqwest::Client::builder()
+            .dns_resolver(std::sync::Arc::new(host_resolver::HostResolver))
             .timeout(std::time::Duration::from_secs(15))
             .redirect(reqwest::redirect::Policy::limited(3))
             .build()
@@ -510,6 +512,7 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
             return Err(precondition("cached_release_mismatch"));
         }
         let content_length = reqwest::Client::builder()
+            .dns_resolver(std::sync::Arc::new(host_resolver::HostResolver))
             .timeout(std::time::Duration::from_secs(15))
             .redirect(reqwest::redirect::Policy::limited(3))
             .build()

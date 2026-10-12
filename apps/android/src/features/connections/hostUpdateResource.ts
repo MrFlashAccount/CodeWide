@@ -23,6 +23,7 @@ import { HostUpdateHttpError, type HostUpdateTransport } from "./hostUpdateTrans
 type HostUpdateResourceOptions = {
   readonly createIdempotencyKey: () => string;
   readonly idempotencyPrefix?: string;
+  readonly now?: () => number;
   readonly retryBaseMilliseconds?: number;
   readonly subject?: string;
   readonly transport: HostUpdateTransport;
@@ -31,6 +32,9 @@ type HostUpdateResourceOptions = {
 const DEFAULT_RETRY_MILLISECONDS = 1000;
 const RETRY_MULTIPLIER = 2;
 const MAX_RETRY_MILLISECONDS = 8000;
+// Demand older than this rereads the server: Companion or Relay may have been
+// updated or restarted while no settings surface observed the connection.
+const STATUS_FRESH_MILLISECONDS = 30_000;
 const NOT_FOUND_STATUS = 404;
 
 type TransportFailureInput = {
@@ -56,6 +60,7 @@ function cancelTimer(record: HostUpdateResourceRecord): void {
 export function createHostUpdateResource({
   createIdempotencyKey,
   idempotencyPrefix = "host-update",
+  now = Date.now,
   retryBaseMilliseconds = DEFAULT_RETRY_MILLISECONDS,
   subject = "Companion",
   transport,
@@ -144,7 +149,6 @@ export function createHostUpdateResource({
     record: HostUpdateResourceRecord,
   ): Promise<void> => {
     const status = await transport.readStatus(connectionId);
-    record.loaded = true;
     record.retryAttempt = 0;
     record.intent = intentAfterStatus(record.intent, status);
     const view = hostUpdateStatusView(status);
@@ -289,6 +293,7 @@ export function createHostUpdateResource({
     }
     cancelTimer(record);
     record.busy = true;
+    record.lastReadAt = now();
     const generation = record.generation;
     try {
       await runReconcile(connectionId, record);
@@ -326,6 +331,10 @@ export function createHostUpdateResource({
       });
     }
   };
+
+  // A failed read also counts as recent, so a rerender cannot loop requests.
+  const isStale = (record: HostUpdateResourceRecord): boolean =>
+    record.lastReadAt === null || now() - record.lastReadAt >= STATUS_FRESH_MILLISECONDS;
 
   const resource: HostUpdateResource = {
     async apply(connectionId, targetFingerprint) {
@@ -370,6 +379,7 @@ export function createHostUpdateResource({
         return;
       }
       record.busy = true;
+      record.lastReadAt = now();
       publish(connectionId, record, {
         ...record.view,
         canApply: false,
@@ -379,7 +389,6 @@ export function createHostUpdateResource({
       });
       try {
         const status = await transport.check(connectionId);
-        record.loaded = true;
         record.retryAttempt = 0;
         record.intent = intentAfterStatus(record.intent, status);
         publish(connectionId, record, hostUpdateStatusView(status));
@@ -412,7 +421,7 @@ export function createHostUpdateResource({
         observeDisconnected(connectionId, record, disconnected);
         return;
       }
-      if (!record.loaded || reconnected) {
+      if (reconnected || isStale(record)) {
         reconcile(connectionId, record).catch(() => undefined);
       }
     },
