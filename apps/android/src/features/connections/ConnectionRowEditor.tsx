@@ -19,6 +19,7 @@ import { ProviderAccounts } from "../accounts/ProviderAccounts";
 import { AgentProviderMarks } from "./AgentProviderMarks";
 import { connectionDiagnosticReport } from "./connectionDiagnosticReport";
 import { connectionStateLabel } from "./connectionPresentation";
+import { hostUpdateConnectionLabel } from "./hostUpdatePresentation";
 import { ServerIcon } from "./ServerIcon";
 import { styles } from "./ConnectionRowEditor.styles";
 
@@ -26,6 +27,7 @@ export function ConnectionRowEditor({
   accountPool,
   agentProviders,
   connection,
+  hostUpdate,
   onActivateAccountProfile,
   onCancelAccountLogin,
   onConsumeAccountResetCredit,
@@ -179,7 +181,10 @@ export function ConnectionRowEditor({
                 {createElement(ServerIcon, { iconId: connection.iconId, metric: "body" })}
               </View>
             }
-            title={connectionStateLabel(connection.state, connection.enabled, connection.health)}
+            title={
+              hostUpdateConnectionLabel(hostUpdate) ??
+              connectionStateLabel(connection.state, connection.enabled, connection.health)
+            }
             trailing={
               <>
                 {agentProviders !== undefined && (
@@ -215,6 +220,7 @@ export function ConnectionRowEditor({
           />
           <ConnectionStatus
             connection={connection}
+            {...(hostUpdate === undefined ? {} : { hostUpdate })}
             copyDiagnostic={copyDiagnostic}
             diagnosticExpanded={diagnosticExpanded}
             secureLive={secureLive}

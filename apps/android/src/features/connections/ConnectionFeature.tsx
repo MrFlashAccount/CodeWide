@@ -10,6 +10,7 @@ import {
 } from "./connectionPresentation";
 import { ConnectionRowEditor } from "./ConnectionRowEditor";
 import type { HostUpdateView } from "./hostUpdateSettingsContract";
+import { hostUpdateConnectionLabel } from "./hostUpdatePresentation";
 import { ServerIcon } from "./ServerIcon";
 import { ServerRefreshButton } from "./ServerRefreshButton";
 import { ServerSoftwareSection } from "./ServerSoftwareSection";
@@ -73,6 +74,7 @@ export function connectionSettingsSections({
               null
             }
             connection={connection}
+            {...(hostUpdate === undefined ? {} : { hostUpdate })}
             {...(agentProviders === undefined ? {} : { agentProviders })}
             onDelete={onDelete}
             onReconnect={onReconnect}
@@ -98,7 +100,8 @@ export function connectionSettingsSections({
         </View>
       ),
       description: connectionDescription(
-        connectionStateLabel(connection.state, connection.enabled, connection.health),
+        hostUpdateConnectionLabel(hostUpdate) ??
+          connectionStateLabel(connection.state, connection.enabled, connection.health),
         hostUpdate,
         relayUpdate,
       ),

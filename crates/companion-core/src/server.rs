@@ -474,6 +474,7 @@ fn build_control_router(state: AppState) -> Router {
         .route("/healthz", get(health))
         .route("/readyz", get(readiness))
         .route("/v1/app-server", get(app_server_upgrade))
+        .route("/v1/host-update/health", get(host_update_process_health))
         .route("/v1/pairing/start", post(pairing_start))
         .route("/v1/devices", get(devices_list))
         .route("/v1/devices/{device_id}", delete(device_revoke))

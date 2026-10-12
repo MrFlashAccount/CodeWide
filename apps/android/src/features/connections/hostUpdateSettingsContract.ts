@@ -1,4 +1,4 @@
-import type { HostUpdatePhase, HostUpdatePlatform } from "./hostUpdateContract";
+import type { HostUpdatePhase, HostUpdatePlatform, HostUpdateProgress } from "./hostUpdateContract";
 
 /** Capability/loading classification rendered on a server settings page. */
 type HostUpdateAvailability =
@@ -24,5 +24,6 @@ export type HostUpdateView = {
   readonly operationId: string | null;
   readonly phase: HostUpdatePhase | null;
   readonly platform: HostUpdatePlatform | null;
+  readonly progress: HostUpdateProgress | null;
   readonly targetFingerprint: string | null;
 };

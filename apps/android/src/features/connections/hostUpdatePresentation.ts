@@ -1,5 +1,12 @@
-import type { HostUpdatePlatform } from "./hostUpdateContract";
+import {
+  isTerminalHostUpdatePhase,
+  type HostUpdatePlatform,
+  type HostUpdateProgress,
+} from "./hostUpdateContract";
 import type { HostUpdateView } from "./hostUpdateSettingsContract";
+
+const PERCENT_SCALE = 100;
+const BYTES_PER_MEGABYTE = 1_000_000;
 
 /** Software whose remote update one settings row presents. */
 export type HostUpdateSubject = "Companion" | "Relay";
@@ -34,10 +41,14 @@ export function hostUpdateGuidance(
   if (update.disconnected && update.phase !== null) {
     return {
       kind: "progress",
-      text:
-        subject === "Relay"
-          ? "Relay is restarting. Waiting to verify the update; paired devices remain connected safely."
-          : "Companion is restarting. Waiting to verify the update; the device remains paired.",
+      text: `Last confirmed: ${confirmedStep(update)}. Waiting for fresh ${subject} status; the device remains paired.`,
+    };
+  }
+  if (update.progress !== null) {
+    const reason = update.errorMessage === null ? "" : ` Reason: ${update.errorMessage}`;
+    return {
+      kind: "progress",
+      text: `${progressText(update.progress)}. ${subject} is reachable.${reason}`,
     };
   }
   if (update.errorMessage !== null) {
@@ -47,6 +58,48 @@ export function hostUpdateGuidance(
     };
   }
   return phaseGuidance(update.phase, subject) ?? availabilityGuidance(update, subject);
+}
+
+/** Gives an active update priority over expected reconnect diagnostics. */
+export function hostUpdateConnectionLabel(update: HostUpdateView | undefined): string | null {
+  if (update === undefined || update.phase === null || isTerminalHostUpdatePhase(update.phase)) {
+    return null;
+  }
+  const step = confirmedStep(update);
+  return update.disconnected ? `${step} · reconnecting` : step;
+}
+
+function confirmedStep(update: HostUpdateView): string {
+  return update.progress === null
+    ? (phaseSummary(update.phase)?.text ?? "updating")
+    : progressText(update.progress);
+}
+
+function progressText(progress: HostUpdateProgress): string {
+  if (progress.stage === "downloading") {
+    const downloaded = megabytes(progress.downloadedBytes);
+    if (progress.totalBytes === null || progress.totalBytes === 0) {
+      return `Downloading · ${downloaded} MB`;
+    }
+    const percent = Math.min(
+      PERCENT_SCALE,
+      Math.floor((progress.downloadedBytes / progress.totalBytes) * PERCENT_SCALE),
+    );
+    return `Downloading · ${String(percent)}% · ${downloaded} / ${megabytes(progress.totalBytes)} MB`;
+  }
+  const labels = {
+    awaitingReconnect: "Waiting for phone confirmation",
+    checkingHealth: "Checking server readiness",
+    extracting: "Unpacking update",
+    restarting: "Restarting Companion",
+    rollingBack: "Restoring previous version",
+    verifying: "Verifying download",
+  } as const;
+  return labels[progress.stage];
+}
+
+function megabytes(bytes: number): string {
+  return (bytes / BYTES_PER_MEGABYTE).toFixed(1);
 }
 
 /**
@@ -65,7 +118,10 @@ export function hostUpdateRowAction(
 
 function hostUpdateSummary(update: HostUpdateView): HostUpdateSummary {
   if (update.disconnected && update.phase !== null) {
-    return muted("restarting");
+    return muted(`${confirmedStep(update)} · reconnecting`);
+  }
+  if (update.progress !== null) {
+    return muted(progressText(update.progress));
   }
   if (update.errorMessage !== null) {
     return {
@@ -83,7 +139,7 @@ function phaseSummary(phase: HostUpdateView["phase"]): HostUpdateSummary | null 
     case "installing":
       return muted("installing update");
     case "targetReady":
-      return muted("ready to restart");
+      return muted("updated server ready");
     case "awaitingReconnect":
       return muted("waiting to reconnect");
     case "rollingBack":
@@ -132,7 +188,7 @@ function phaseGuidance(
     case "installing":
       return progress(`Installing the signed ${subject} update.`);
     case "targetReady":
-      return progress(`The new ${subject} version is ready to restart.`);
+      return progress(`The updated ${subject} is ready. Waiting for phone confirmation.`);
     case "awaitingReconnect":
       return progress(`Waiting for the updated ${subject} to reconnect.`);
     case "rollingBack":

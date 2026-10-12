@@ -94,6 +94,36 @@ it("reports a build without embedded release trust as unofficial, not as missing
 });
 
 describe("Companion host update resource", () => {
+  it("retains a terminal failure when the subsequent legacy status omits it", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.statuses.set("server", status("linux-x86-64"));
+    harness.resource.observe("server", true);
+    await settle();
+    await harness.resource.apply("server", TARGET_FINGERPRINT);
+    const id = harness.view("server").operationId;
+    if (id === null) throw new Error("Missing accepted operation");
+    harness.operations.set("server", operation(id, "failed", "download_failed", "The signed update could not be downloaded."));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.view("server")).toMatchObject({ phase: "failed", canRetry: true, canCheck: true, errorCode: "download_failed" });
+    harness.resource.forget("server");
+  });
+
+  it("publishes received download progress and replaces it with the durable failure", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    const pending = { ...operation(operationId("progress"), "installing"), progress: { stage: "downloading", downloadedBytes: 512, totalBytes: 1024 } as const };
+    harness.statuses.set("server", { ...status("linux-x86-64"), activeOperation: pending });
+    harness.resource.observe("server", true);
+    await settle();
+    expect(harness.view("server").progress).toEqual(pending.progress);
+    harness.operations.set("server", operation(pending.operationId, "failed", "download_failed", "Download interrupted"));
+    harness.statuses.set("server", status("linux-x86-64"));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.view("server")).toMatchObject({ phase: "failed", progress: null, disconnected: false, errorMessage: "Download interrupted" });
+    harness.resource.forget("server");
+  });
+
   it("sanitizes guardian terminal errors before publishing them", () => {
     expect(
       parseHostUpdateOperation({
@@ -418,6 +448,7 @@ function operation(
     targetFingerprint: TARGET_FINGERPRINT,
     targetVersion: "1.1.0",
     updatedAt: 2,
+    progress: null,
   };
 }
 

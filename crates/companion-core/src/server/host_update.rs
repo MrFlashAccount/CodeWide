@@ -10,6 +10,20 @@ struct HostUpdateErrorBody {
     message: String,
 }
 
+async fn host_update_process_health(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if headers.get(header::ORIGIN).is_some()
+        || !authorize_admin(&state.authorization, &headers).await
+    {
+        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    }
+    let artifact = state.host_update_guardian.as_ref().and_then(|guardian| guardian.running_artifact());
+    let ready = state.sync.upstream_status() == upstream::ConnectionStatus::Live;
+    let relay_online = state.services.relay.as_ref().is_some_and(|relay| {
+        relay.status().is_ok_and(|status| matches!(status.connection, crate::relay::RelayConnectionStatus::Online))
+    });
+    Json(serde_json::json!({ "artifact": artifact, "ready": ready, "relayOnline": relay_online })).into_response()
+}
+
 async fn host_update_status(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Err(response) = host_update_actor(&state.authorization, &headers).await {
         return response;

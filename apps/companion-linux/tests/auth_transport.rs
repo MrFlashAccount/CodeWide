@@ -127,6 +127,31 @@ async fn pairing_proof_session_and_full_grant_work_over_wire()
         .build()?;
     let public_base = format!("http://{public_address}");
     let control_base = "http://localhost";
+    let process_health = format!("{control_base}/v1/host-update/health");
+    assert_eq!(
+        control_client.get(&process_health).send().await?.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let health: Value = control_client
+        .get(&process_health)
+        .bearer_auth(ADMIN_TOKEN)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(health["ready"], true);
+    assert!(health["artifact"].is_null()); // This fixture has no installed generation/guardian.
+    assert_eq!(
+        control_client
+            .get(&process_health)
+            .bearer_auth(ADMIN_TOKEN)
+            .header("origin", "https://example.invalid")
+            .send()
+            .await?
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
 
     assert_eq!(
         public_client
@@ -140,6 +165,7 @@ async fn pairing_proof_session_and_full_grant_work_over_wire()
     for path in [
         "/healthz",
         "/readyz",
+        "/v1/host-update/health",
         "/v1/devices",
         "/v1/app-server",
         "/v1/pairing/claim",

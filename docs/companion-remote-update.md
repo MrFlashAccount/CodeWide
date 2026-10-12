@@ -77,6 +77,32 @@ accepted -> installing -> targetReady -> awaitingReconnect -> committed
 accepted/installing -> failed (only before activating a replacement)
 ```
 
+Linux status retains the most recent terminal operation in `activeOperation`;
+only admission filters out terminal records when checking the single-active
+lock. This lets a restarted phone recover the actual outcome. Replaying an
+apply idempotency key finds its journal before requiring a fresh release check,
+including when the original HTTP acknowledgement was lost.
+
+An additive `progress` field reports download bytes/optional total, verification,
+extraction, restart, readiness, reconnect confirmation, and rollback. Progress is
+guardian-confirmed and fenced by the operation phase. Android polls the private
+HTTP operation independently of WebSocket/App Server health, bounds the entire
+request (native origin, credentials, HTTP and body), and retains the terminal
+failure across older status responses that omit it. While Companion restarts,
+the phone explicitly shows the last confirmed stage and waits for a fresh
+response; it does not claim that cached progress is live.
+
+Failures before activation do not restart the previous Companion or begin a
+rollback. A recovery failure retains the original install error and a separate
+recovery code. Linux process health uses the authenticated control-only
+`GET /v1/host-update/health`: the serving process attests its own immutable
+generation, PID, readiness and Relay state. The guardian compares the PID with
+systemd and every release identity field with the expected generation; it does
+not depend on access to another process's `/proc` entry. Legacy payloads retain
+the previous exact executable check. The stable bootstrap guardian must be
+installed manually to receive guardian fixes; remote payload replacement does
+not replace bootstrap.
+
 Once rollback begins, late target-ready and reconnect receipts cannot commit.
 Reconnect commits only for the recorded device, operation id and nonce, after
 the recorded restart start and before the reconnect deadline. Terminal results
