@@ -276,6 +276,46 @@ describe("history from Claude's session store", () => {
     );
     expect(turns).toEqual([]);
   });
+
+  it("drops the placeholder Claude writes for an interrupted turn", () => {
+    const at = (second: number) => `2026-10-01T10:00:${String(second).padStart(2, "0")}.000Z`;
+    const user = (uuid: string, second: number, content: string) => ({
+      type: "user",
+      uuid,
+      timestamp: at(second),
+      parent_tool_use_id: null,
+      message: { role: "user", content },
+    });
+    const assistant = (uuid: string, second: number, model: string, text: string) => ({
+      type: "assistant",
+      uuid,
+      timestamp: at(second),
+      parent_tool_use_id: null,
+      message: { id: uuid, model, role: "assistant", content: [{ type: "text", text }] },
+    });
+    const turns = reconstructTurns(
+      [
+        user("p1", 1, "first"),
+        user("i1", 2, "[Request interrupted by user]"),
+        assistant("s1", 3, "<synthetic>", "No response requested."),
+        user("p2", 4, "second"),
+        assistant("a2", 5, "claude-opus-5-5", "The answer."),
+      ],
+      [],
+      context,
+    );
+    expect(
+      turns.map((turn) => [
+        turn.status,
+        turn.items.flatMap((item) =>
+          item.type === "agentMessage" ? [`${item.phase}:${item.text}`] : [],
+        ),
+      ]),
+    ).toEqual([
+      ["interrupted", []],
+      ["completed", ["final:The answer."]],
+    ]);
+  });
 });
 
 /** Sub-agent transcripts a synthetic fixture carries next to its messages, by agent id. */

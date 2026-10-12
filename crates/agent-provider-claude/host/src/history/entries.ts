@@ -5,7 +5,9 @@
  * Pure; no I/O.
  *
  * - An assistant message, or a user message carrying `tool_result` blocks,
- *   is a frame for the turn builder (the same classification as live).
+ *   is a frame for the turn builder (the same classification as live). An
+ *   assistant message that is no model answer (the placeholder Claude writes
+ *   for an interrupted turn) is skipped, so it opens no turn.
  * - A user message whose `origin` is not a person (`origin.kind` other than
  *   `human`: task notification, peer message) wakes the agent: it is never
  *   shown as a user message. A task notification also reports a sub-agent's
@@ -199,7 +201,8 @@ function classifyStored(
 ): HistoryEntry | null {
   const { raw, timestampMs, uuid } = message;
   if (raw["type"] === "assistant") {
-    return { frame: classifyFrame(raw), kind: "frame", timestampMs, uuid };
+    const frame = classifyFrame(raw);
+    return frame.kind === "other" ? null : { frame, kind: "frame", timestampMs, uuid };
   }
   if (raw["type"] !== "user") {
     return null;

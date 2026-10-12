@@ -243,3 +243,55 @@ describe("thread list", () => {
     expect(listThreads(rows(), { ...params, cursor: "v1:createdAt:asc:1:a" }).status).toBe("error");
   });
 });
+
+describe("interrupted turn placeholder", () => {
+  // Claude Code writes this when a prompt follows an interrupted turn; the
+  // stream delivers it inside the next turn, after that turn's own answer.
+  const placeholder = {
+    type: "assistant",
+    uuid: "placeholder-1",
+    message: {
+      content: [{ text: "No response requested.", type: "text" }],
+      id: "placeholder-1",
+      model: "<synthetic>",
+      role: "assistant",
+    },
+  };
+  const answer = classifyFrame({
+    type: "assistant",
+    uuid: "answer-1",
+    message: {
+      content: [{ text: "Here is the answer.", type: "text" }],
+      id: "msg_answer",
+      model: "claude-opus-5-5",
+      role: "assistant",
+    },
+  });
+
+  it("is not a model answer, unlike a synthetic API error", () => {
+    expect(classifyFrame(placeholder)).toEqual({ kind: "other", type: "assistant" });
+    expect(classifyFrame({ ...placeholder, error: "authentication_failed" }).kind).toBe(
+      "assistant",
+    );
+    expect(classifyFrame({ ...placeholder, isApiErrorMessage: true }).kind).toBe("assistant");
+  });
+
+  it("keeps the turn's own answer final when it arrives after it", () => {
+    const turn = new TurnBuilder({
+      appThreadId: asAppThreadId("00000000-0000-4000-8000-0000000000aa"),
+      cwd: "/tmp",
+      nowMs: () => 0,
+      origin: "user",
+      turnId: asTurnId("turn-1"),
+    });
+    turn.begin(null);
+    turn.onFrame(answer);
+    turn.onFrame(classifyFrame(placeholder));
+    const messages = turn
+      .finish({ status: "completed" }, null)
+      .turn.items.flatMap((item) =>
+        item.type === "agentMessage" ? [[item.phase, item.text]] : [],
+      );
+    expect(messages).toEqual([["final", "Here is the answer."]]);
+  });
+});
