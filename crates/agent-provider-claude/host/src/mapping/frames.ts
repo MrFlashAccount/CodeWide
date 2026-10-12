@@ -346,9 +346,25 @@ function taskFrame(value: JsonRecord, subtype: string): ClaudeFrame {
   };
 }
 
+/**
+ * Whether `value` is the placeholder Claude Code writes for an interrupted
+ * turn ("No response requested.") once the next prompt arrives: a synthetic
+ * message that reports no API error. It is no model answer; the stream
+ * delivers it inside the next turn, where it would replace that turn's final
+ * answer. Synthetic API error messages (`error` live, `isApiErrorMessage`
+ * stored) stay visible.
+ */
+function isInterruptPlaceholder(value: JsonRecord, message: JsonRecord): boolean {
+  return (
+    message["model"] === "<synthetic>" &&
+    str(value["error"]) === null &&
+    value["isApiErrorMessage"] !== true
+  );
+}
+
 function assistantFrame(value: JsonRecord): ClaudeFrame {
   const message = value["message"];
-  if (!isRecord(message)) {
+  if (!isRecord(message) || isInterruptPlaceholder(value, message)) {
     return { kind: "other", type: "assistant" };
   }
   return {
