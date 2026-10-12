@@ -61,6 +61,15 @@ describe("a conversation another app is running", () => {
     expect(screen.queryByTestId("thread-error-banner")).toBeNull();
   });
 
+  it("explains the lock and both actions when the bar is pressed", () => {
+    render(chrome());
+    expect(screen.queryByTestId("thread-open-elsewhere-details")).toBeNull();
+    fireEvent.press(screen.getByRole("button", { name: "Open in another app" }));
+    expect(screen.getByTestId("thread-open-elsewhere-details")).toHaveTextContent(
+      /sending is off until that app lets go.*Check again.*Fork/u,
+    );
+  });
+
   it("checks again until the read settles, then allows another check", async () => {
     const pending = deferred();
     const onCheckAgain = jest.fn(async () => pending.promise);

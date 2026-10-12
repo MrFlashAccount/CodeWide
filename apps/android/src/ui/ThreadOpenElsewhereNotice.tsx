@@ -1,17 +1,19 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
 
 import { useEvent } from "../react/useEvent";
 import { colors, iconSize, radii, spacing, touchTarget, typeScale } from "../theme";
 import { AppText } from "./AppText";
 import { useAppDialog } from "./AppDialog";
+import { ContentMenu } from "./ContentMenu";
 import {
   conversationChromeEdgeInset,
   conversationComposerDockMinHeight,
 } from "./conversation-chrome-layout";
 
 const PRESSED_OPACITY = 0.68;
+const DETAILS_MAX_WIDTH = 320;
 
 /**
  * Persistent state of a conversation another app is running. It takes the
@@ -29,6 +31,10 @@ export function ThreadOpenElsewhereNotice({
 }): React.JSX.Element {
   const dialog = useAppDialog();
   const [checking, setChecking] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const openDetails = useEvent(() => {
+    setDetailsOpen(true);
+  });
   const checkAgain = useEvent(() => {
     setChecking(true);
     onCheckAgain().then(
@@ -46,17 +52,24 @@ export function ThreadOpenElsewhereNotice({
   });
   return (
     <View style={styles.row} testID="thread-open-elsewhere-notice">
-      <View
-        accessibilityLabel="Open in another app. Another app is running this conversation."
+      <Pressable
+        accessibilityHint="Shows why sending is off"
+        accessibilityLabel="Open in another app"
         accessibilityLiveRegion="polite"
-        accessible
-        style={styles.pill}
+        accessibilityRole="button"
+        onPress={openDetails}
+        style={({ pressed }) => [styles.pill, pressed && styles.pressed]}
       >
-        <Ionicons color={colors.textMuted} name="lock-closed-outline" size={iconSize.inline} />
+        {/* The pill stretches; the menu anchors to its fixed-size lock and opens above it. */}
+        <OpenElsewhereDetails
+          onOpenChange={setDetailsOpen}
+          onPressAnchor={openDetails}
+          open={detailsOpen}
+        />
         <AppText numberOfLines={1} shimmering={checking} style={styles.label}>
           Open in another app
         </AppText>
-      </View>
+      </Pressable>
       {onFork !== null && (
         <Pressable
           accessibilityLabel="Fork chat"
@@ -81,7 +94,86 @@ export function ThreadOpenElsewhereNotice({
   );
 }
 
+/** What "open in another app" means and what the bar's two actions do. */
+function OpenElsewhereDetails({
+  onOpenChange,
+  onPressAnchor,
+  open,
+}: {
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onPressAnchor: () => void;
+  readonly open: boolean;
+}): React.JSX.Element {
+  const window = useWindowDimensions();
+  return (
+    <ContentMenu
+      align="start"
+      onOpenChange={onOpenChange}
+      open={open}
+      placement="top"
+      trigger={
+        <Pressable
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          onPress={onPressAnchor}
+        >
+          <Ionicons color={colors.textMuted} name="lock-closed-outline" size={iconSize.inline} />
+        </Pressable>
+      }
+      width={Math.min(DETAILS_MAX_WIDTH, window.width - spacing.lg)}
+    >
+      <View style={styles.details} testID="thread-open-elsewhere-details">
+        <AppText style={styles.detailsTitle}>Open in another app</AppText>
+        <AppText style={styles.detailsBody}>
+          Another app on this computer is running this conversation, such as a terminal or a desktop
+          app. You can read it here, but sending is off until that app lets go.
+        </AppText>
+        <DetailsAction icon="refresh" text="Check again to see if it has let go." />
+        <DetailsAction icon="git-branch-outline" text="Fork to continue in a new chat now." />
+      </View>
+    </ContentMenu>
+  );
+}
+
+function DetailsAction({
+  icon,
+  text,
+}: {
+  readonly icon: "refresh" | "git-branch-outline";
+  readonly text: string;
+}): React.JSX.Element {
+  return (
+    <View style={styles.detailsAction}>
+      <Ionicons color={colors.textMuted} name={icon} size={iconSize.inline} />
+      <AppText style={styles.detailsActionText}>{text}</AppText>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  details: {
+    gap: spacing.xs,
+    padding: spacing.md,
+  },
+  detailsAction: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+  },
+  detailsActionText: {
+    ...typeScale.body,
+    color: colors.textMuted,
+    flexShrink: 1,
+  },
+  detailsBody: {
+    ...typeScale.body,
+    color: colors.text,
+    marginBottom: spacing.xxs,
+  },
+  detailsTitle: {
+    ...typeScale.title,
+    color: colors.text,
+  },
   label: {
     ...typeScale.composerInput,
     color: colors.text,
