@@ -21,7 +21,7 @@ const version = "0.4.1";
 function artifactFiles(releaseVersion: string) {
   return [
     [`codewide-relay-${releaseVersion}-linux-x86_64`, "codewide-relay-x86_64-unknown-linux-musl"],
-    [`codewide-relay-${releaseVersion}-linux-x86_64`, "codewide-relay-updater-x86_64-unknown-linux-musl"],
+    [`codewide-relay-${releaseVersion}-linux-x86_64`, "codewide-relay-x86_64-unknown-linux-musl.tar.gz"],
     [
       `codewide-companion-${releaseVersion}-linux-x86_64`,
       `codewide-companion-${releaseVersion}-x86_64-unknown-linux-musl.tar.gz`,
@@ -106,7 +106,7 @@ describe("atomic release package", () => {
       expect(sums).toContain("appcast.xml");
       for (const name of [
         "codewide-relay-x86_64-unknown-linux-musl",
-        "codewide-relay-updater-x86_64-unknown-linux-musl",
+        "codewide-relay-x86_64-unknown-linux-musl.tar.gz",
         `codewide-companion-${version}-x86_64-unknown-linux-musl.tar.gz`,
       ]) {
         const payload = readFileSync(join(assets, name));
@@ -129,12 +129,16 @@ describe("atomic release package", () => {
       const descriptor = JSON.parse(payload.toString("utf8")) as {
         readonly sequence: number;
         readonly targets: readonly {
+          readonly platform: string;
+          readonly artifactUrl: string;
           readonly sourceRevision: string;
           readonly sha256: string;
           readonly rollbackCompatibleFrom: readonly string[];
         }[];
       };
       expect(descriptor.sequence).toBe(4_000_001);
+      const relayTarget = descriptor.targets.find(({ platform }) => platform === "relay-linux-x86-64");
+      expect(relayTarget?.artifactUrl.endsWith("/codewide-relay-x86_64-unknown-linux-musl.tar.gz")).toBe(true);
       expect(descriptor.targets).toHaveLength(3);
       expect(descriptor.targets.every(({ sourceRevision }) => sourceRevision.length === 40)).toBe(true);
       expect(descriptor.targets.every(({ sha256 }) => sha256.length === 64)).toBe(true);

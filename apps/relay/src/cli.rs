@@ -89,6 +89,29 @@ enum Command {
     },
 }
 
+/// Build provenance in a fixed field order: the installer matches this exact
+/// line before it records a generation's metadata.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildInfo {
+    schema_version: u16,
+    version: &'static str,
+    build: &'static str,
+    source_revision: &'static str,
+}
+
+impl BuildInfo {
+    fn current() -> Self {
+        let source_revision = env!("CODEWIDE_RELAY_SOURCE_REVISION");
+        Self {
+            schema_version: 1,
+            version: env!("CODEWIDE_RELAY_VERSION"),
+            build: &source_revision[..12],
+            source_revision,
+        }
+    }
+}
+
 pub async fn run() -> ExitCode {
     let cli = Cli::parse();
     presentation::configure_color(cli.color, cli.json);
@@ -111,16 +134,7 @@ async fn execute(cli: &Cli) -> Result<ExitCode> {
         return run_server(cli).await.map(|()| ExitCode::SUCCESS);
     }
     if matches!(cli.command, Some(Command::BuildInfo)) {
-        let source_revision = env!("CODEWIDE_RELAY_SOURCE_REVISION");
-        println!(
-            "{}",
-            serde_json::json!({
-                "schemaVersion": 1,
-                "version": env!("CODEWIDE_RELAY_VERSION"),
-                "build": &source_revision[..12],
-                "sourceRevision": source_revision,
-            })
-        );
+        println!("{}", serde_json::to_string(&BuildInfo::current())?);
         return Ok(ExitCode::SUCCESS);
     }
     if let Some(Command::UpdateRun { install_root }) = &cli.command {
@@ -248,5 +262,22 @@ async fn shutdown_signal() -> std::io::Result<()> {
     tokio::select! {
         result = tokio::signal::ctrl_c() => result,
         _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BuildInfo;
+
+    #[test]
+    fn build_info_keeps_the_installer_field_order() -> Result<(), serde_json::Error> {
+        let line = serde_json::to_string(&BuildInfo::current())?;
+        let prefix = format!(
+            r#"{{"schemaVersion":1,"version":"{}","build":""#,
+            env!("CODEWIDE_RELAY_VERSION")
+        );
+        assert!(line.starts_with(&prefix), "{line}");
+        assert!(line.contains(r#"","sourceRevision":""#));
+        Ok(())
     }
 }
