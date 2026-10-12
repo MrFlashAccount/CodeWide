@@ -303,12 +303,27 @@ export function projectTurnPresentation(
     turnPreparationCache.delete(oldest);
   }
   const canForkThrough = turn.turn.status !== "inProgress" && forkAvailable;
+  const pendingRequest = pendingRequestPresentation(prepared, hasPendingRequest);
   return {
     ...prepared,
     canForkThrough,
-    hasAgentContent: prepared.hasAgentContent || hasPendingRequest,
+    hasAgentContent: pendingRequest.hasAgentContent,
     searchedAgentBlock: searchAgentBlock(turn, searchFocus, prepared.latestAgentBlock),
+    showEmptyResponsePlaceholder: pendingRequest.showEmptyResponsePlaceholder,
     showMessageActions: prepared.copyText !== "" || canForkThrough || prepared.canReviewResponse,
+  };
+}
+
+function pendingRequestPresentation(
+  prepared: ReturnType<typeof prepareTurnPresentation>,
+  hasPendingRequest: boolean,
+) {
+  if (hasPendingRequest) {
+    return { hasAgentContent: true, showEmptyResponsePlaceholder: false };
+  }
+  return {
+    hasAgentContent: prepared.hasAgentContent,
+    showEmptyResponsePlaceholder: prepared.showEmptyResponsePlaceholder,
   };
 }
 
@@ -395,8 +410,8 @@ function prepareTurnPresentation(turn: TurnRow) {
         item.delivery === "async" &&
         (item.questions?.length ?? 0) > 0,
     );
-  // Explicit compaction completes successfully without generating an answer.
-  // Its lifecycle row is the result; failed/interrupted turns still need their warning.
+  // This is presentation fallback copy, not an agent message. Grouped turns
+  // decide later whether their combined bubble is still empty.
   const completedCompaction =
     rawTurn.status === "completed" &&
     rawTurn.items.some((item) => item.type === "contextCompaction");
@@ -443,7 +458,6 @@ function prepareTurnPresentation(turn: TurnRow) {
       : visibleLiveActivitySequence.length > 0 ||
         preTurnBlocks.length > 0 ||
         latestAgentBlock !== null) ||
-    showEmptyResponsePlaceholder ||
     artifacts.length > 0;
   return {
     agentBubbleFill,

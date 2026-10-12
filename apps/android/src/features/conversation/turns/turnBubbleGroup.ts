@@ -14,6 +14,8 @@ type TimelineTurnItem = Extract<TimelineItem, { kind: "turn" }>;
  * own rows and identity; only the bubble chrome is shared.
  */
 export type TurnBubbleGroup = {
+  /** Whether any member contributes real agent content to the combined bubble. */
+  readonly hasVisibleAgentContent: boolean;
   /** The position of this row's turn in `members`. */
   readonly memberIndex: number;
   /** Every turn of the bubble in timeline order; the first is the head. */
@@ -22,24 +24,18 @@ export type TurnBubbleGroup = {
 
 /**
  * Whether a turn's own answer belongs in the bubble's collapsed history:
- * once the bubble's latest turn has finished, every earlier finished answer
- * reads as an intermediate update and only the latest answer stays outside,
- * like the commentary of a single turn. While the latest turn runs, earlier
- * answers stay visible; a turn still running (for example, waiting for an
- * approval while a continuation already finished) keeps its own rows, because
- * only a finished turn has a history to fold into.
+ * every earlier finished answer reads as an intermediate update and only the
+ * latest turn's answer stays outside, like the commentary of a single turn.
+ * A turn still running (for example, waiting for an approval while a
+ * continuation already finished) keeps its own rows, because only a finished
+ * turn has a history to fold into.
  */
 export function foldsAnswerIntoHistory(
   members: readonly TimelineTurnItem[],
   turn: TimelineTurnItem,
 ): boolean {
   const tail = members.at(-1);
-  return (
-    tail !== undefined &&
-    tail !== turn &&
-    tail.turn.status !== "inProgress" &&
-    turn.turn.status !== "inProgress"
-  );
+  return tail !== undefined && tail !== turn && turn.turn.status !== "inProgress";
 }
 
 /** The turn whose actions and footer represent the whole bubble. */

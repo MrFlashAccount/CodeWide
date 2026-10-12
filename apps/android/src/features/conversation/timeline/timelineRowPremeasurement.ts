@@ -336,7 +336,7 @@ function estimatedTurnSliceSize(options: {
   }
   if (isTrailingPlacement(row.placement)) {
     bodyHeight += presentation.artifacts.length * controlSize.regular;
-    bodyHeight += presentation.showEmptyResponsePlaceholder
+    bodyHeight += showsEmptyResponsePlaceholder(row, presentation)
       ? typeScale.label.lineHeight * fontScale
       : 0;
   }
@@ -348,6 +348,20 @@ function estimatedTurnSliceSize(options: {
       rowOuterVerticalChrome(row, geometry, fontScale) +
       trailingFooterHeight(row, fontScale),
     geometry.density,
+  );
+}
+
+function showsEmptyResponsePlaceholder(
+  row: MeasurableTimelineRow,
+  presentation: ReturnType<typeof projectTurnPresentation>,
+): boolean {
+  if (!presentation.showEmptyResponsePlaceholder) {
+    return false;
+  }
+  const group = row.group;
+  return (
+    group === null ||
+    (group.memberIndex === group.members.length - 1 && !group.hasVisibleAgentContent)
   );
 }
 

@@ -288,7 +288,7 @@ function renderActivityPart(
 }
 
 function VirtualizedTurnTail(props: VirtualizedAgentTurnBodyProps): ReactElement {
-  const placeholder = props.presentation.showEmptyResponsePlaceholder ? (
+  const placeholder = showsEmptyResponsePlaceholder(props) ? (
     <Text style={styles.agentPlaceholder}>
       {props.presentation.rawTurn.status === "interrupted"
         ? "Stopped before response was generated"
@@ -306,6 +306,18 @@ function VirtualizedTurnTail(props: VirtualizedAgentTurnBodyProps): ReactElement
       {placeholder}
       {thinking}
     </>
+  );
+}
+
+/** One fallback belongs to the combined bubble, never to each empty member turn. */
+function showsEmptyResponsePlaceholder(props: VirtualizedAgentTurnBodyProps): boolean {
+  if (!props.presentation.showEmptyResponsePlaceholder) {
+    return false;
+  }
+  const group = props.group;
+  return (
+    group === null ||
+    (group.memberIndex === group.members.length - 1 && !group.hasVisibleAgentContent)
   );
 }
 

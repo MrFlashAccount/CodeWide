@@ -53,7 +53,11 @@ const answer = (id: string, text: string) => ({
   type: "agentMessage",
 });
 
-function completedTurn(id: string, items: readonly unknown[], extra: Record<string, unknown> = {}): TurnItem {
+function completedTurn(
+  id: string,
+  items: readonly unknown[],
+  extra: Record<string, unknown> = {},
+): TurnItem {
   const value: unknown = {
     connectionId: "server",
     id,
@@ -78,16 +82,20 @@ function completedTurn(id: string, items: readonly unknown[], extra: Record<stri
   return value as TurnItem;
 }
 
-const head = completedTurn("head", [
-  {
-    clientId: null,
-    content: [{ text: "Deploy it", text_elements: [], type: "text" }],
-    id: "head-prompt",
-    type: "userMessage",
-  },
-  command("head-command"),
-  answer("head-answer", "Waiting for the build."),
-], oneCommandMetrics);
+const head = completedTurn(
+  "head",
+  [
+    {
+      clientId: null,
+      content: [{ text: "Deploy it", text_elements: [], type: "text" }],
+      id: "head-prompt",
+      type: "userMessage",
+    },
+    command("head-command"),
+    answer("head-answer", "Waiting for the build."),
+  ],
+  oneCommandMetrics,
+);
 const wake = completedTurn(
   "wake",
   [command("wake-command"), answer("wake-answer", "The build is out.")],
@@ -102,8 +110,8 @@ const wake = completedTurn(
   },
 );
 
-function bubbleSurface() {
-  const rows = projectTimelineRows([head, wake], {
+function bubbleSurface(turns: readonly TurnItem[] = [head, wake]) {
+  const rows = projectTimelineRows(turns, {
     enabled: true,
     searchMessageItemId: null,
     threadSearchActive: false,
@@ -146,23 +154,71 @@ it("draws a continued response as one activity group and the latest answer", () 
   expect(view.queryByText("1m 0s")).toBeNull();
 });
 
-it("draws no activity group and no zero count for a turn without activity", () => {
-  const plain = completedTurn("head", [
+it("does not render an empty head turn as a response before the continuation answer", () => {
+  const emptyHead = completedTurn("head", [
     {
       clientId: null,
-      content: [{ text: "Hi", text_elements: [], type: "text" }],
-      id: "plain-prompt",
+      content: [{ text: "Deploy it", text_elements: [], type: "text" }],
+      id: "head-prompt",
       type: "userMessage",
     },
-    answer("plain-answer", "Hello."),
-  ], {
-    codewide: {
-      activityMetrics: {
-        ...oneCommandMetrics.codewide.activityMetrics,
-        total: { ...oneCommandMetrics.codewide.activityMetrics.total, count: 0, kinds: [] },
+  ]);
+  const view = render(bubbleSurface([emptyHead, wake]));
+
+  expect(view.queryByText("No response was generated")).toBeNull();
+  expect(view.queryByText("Stopped before response was generated")).toBeNull();
+  expect(view.getAllByText("Rendered Markdown block")).toHaveLength(1);
+});
+
+it("renders one presentation fallback when the combined bubble is empty", () => {
+  const emptyHead = completedTurn("empty-head", [
+    {
+      clientId: null,
+      content: [{ text: "Deploy it", text_elements: [], type: "text" }],
+      id: "empty-head-prompt",
+      type: "userMessage",
+    },
+  ]);
+  const emptyWake = completedTurn("empty-wake", []);
+  const view = render(bubbleSurface([emptyHead, emptyWake]));
+
+  expect(view.getAllByText("No response was generated")).toHaveLength(1);
+});
+
+it("keeps an earlier answer folded while its continuation is running", () => {
+  const liveHead = completedTurn("live-head", head.turn.items, oneCommandMetrics);
+  const liveWake = completedTurn(
+    "live-wake",
+    [command("wake-command"), answer("wake-answer", "Still working.")],
+    { completedAt: null, status: "inProgress" },
+  );
+  const view = render(bubbleSurface([liveHead, liveWake]));
+
+  expect(view.getAllByText("Rendered Markdown block")).toHaveLength(1);
+  expect(view.queryByText("Waiting for the build.")).toBeNull();
+});
+
+it("draws no activity group and no zero count for a turn without activity", () => {
+  const plain = completedTurn(
+    "head",
+    [
+      {
+        clientId: null,
+        content: [{ text: "Hi", text_elements: [], type: "text" }],
+        id: "plain-prompt",
+        type: "userMessage",
+      },
+      answer("plain-answer", "Hello."),
+    ],
+    {
+      codewide: {
+        activityMetrics: {
+          ...oneCommandMetrics.codewide.activityMetrics,
+          total: { ...oneCommandMetrics.codewide.activityMetrics.total, count: 0, kinds: [] },
+        },
       },
     },
-  });
+  );
   const rows = projectTimelineRows([plain], {
     enabled: true,
     searchMessageItemId: null,
@@ -194,7 +250,11 @@ it("draws no activity group and no zero count for a turn without activity", () =
 
 it("keeps a running head's own rows when its continuation already finished", () => {
   // Claude answered a wake while the head still waited for an approval.
-  const running = completedTurn("head", head.turn.items, { ...oneCommandMetrics, completedAt: null, status: "inProgress" });
+  const running = completedTurn("head", head.turn.items, {
+    ...oneCommandMetrics,
+    completedAt: null,
+    status: "inProgress",
+  });
   const rows = projectTimelineRows([running, wake], {
     enabled: true,
     searchMessageItemId: null,
