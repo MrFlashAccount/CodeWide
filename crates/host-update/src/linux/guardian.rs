@@ -26,7 +26,7 @@ use crate::{
     HostUpdateGuardian, HostUpdateJournalV1, HostUpdateOperation, HostUpdatePhase,
     HostUpdateRelayState, HostUpdateRunningArtifact, HostUpdateStatus, ReconnectReceipt,
     ReleaseAdmission, ReleaseAdmissionError, ReleaseTrust, SignedReleaseDescriptor,
-    admit_signed_release, verify_signed_release_descriptor,
+    admit_signed_release, is_newer_version, verify_signed_release_descriptor,
 };
 
 const DEFAULT_MANIFEST_URL: &str =
@@ -198,7 +198,10 @@ impl LinuxHostUpdateGuardian {
             &self.inner.state_root.join("available.json"),
         )
         .map_err(internal)?
-        .map(|value| value.available);
+        .map(|value| value.available)
+        // A version installed outside the guardian can overtake the cached
+        // target; never offer what apply would reject as a downgrade.
+        .filter(|available| is_newer_version(&available.target.version, &current.version));
         // The pointer retains the last outcome after a guardian/phone restart;
         // only admission uses active_operation() to filter out terminal records.
         let active_operation =

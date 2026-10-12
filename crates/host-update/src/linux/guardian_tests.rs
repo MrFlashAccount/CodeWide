@@ -236,3 +236,41 @@ async fn terminal_outcome_and_lost_acceptance_survive_restart_without_a_cached_r
         outcome.error_code
     );
 }
+
+#[tokio::test]
+async fn status_never_offers_a_cached_target_that_is_not_newer_than_current() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    install_generation(root);
+    let state = root.join("host-update-state");
+    let guardian = test_guardian(root.to_path_buf(), state.clone(), Some(test_trust()));
+    for (cached_version, offered) in [("1.0.1", true), ("1.0.0", false), ("0.9.9", false)] {
+        let mut target = operation("upd_0", "idem_0", 1, HostUpdatePhase::Accepted).target;
+        target.version = cached_version.to_owned();
+        store::write_json(
+            &state.join("available.json"),
+            &CachedRelease {
+                envelope: SignedReleaseDescriptor {
+                    schema_version: 1,
+                    key_id: "test-key".to_owned(),
+                    algorithm: "ES256".to_owned(),
+                    payload: "payload".to_owned(),
+                    signature: "signature".to_owned(),
+                },
+                available: AvailableHostUpdate {
+                    target,
+                    target_fingerprint: "c".repeat(64),
+                    release_sequence: 2,
+                    expires_at: u64::MAX,
+                },
+            },
+        )
+        .expect("cached release");
+        let status = guardian.status().await.expect("status");
+        assert_eq!(
+            status.available_target.is_some(),
+            offered,
+            "cached {cached_version}"
+        );
+    }
+}

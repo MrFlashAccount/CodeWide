@@ -350,6 +350,13 @@ fn stable_version(value: &str) -> Result<[u64; 3], ReleaseAdmissionError> {
         .map_err(|_| ReleaseAdmissionError::InvalidTarget)
 }
 
+/// Whether `target` is a strictly newer stable version than `current`.
+/// Malformed versions are never newer.
+#[must_use]
+pub fn is_newer_version(target: &str, current: &str) -> bool {
+    compare_stable_versions(target, current).is_ok_and(|order| order == std::cmp::Ordering::Greater)
+}
+
 fn compare_stable_versions(
     target: &str,
     current: &str,

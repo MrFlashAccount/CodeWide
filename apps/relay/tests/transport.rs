@@ -208,7 +208,10 @@ fn spawn_relay(
 ) -> JoinHandle<()> {
     let relay = Relay::new(registry);
     let relay = if with_updater {
-        relay.with_updater(codewide_relay::update::RelayUpdater::new(state_root))
+        relay.with_updater(codewide_relay::update::RelayUpdater::new(
+            state_root,
+            "test-pin".to_owned(),
+        ))
     } else {
         relay
     };
@@ -488,9 +491,16 @@ async fn relay_update_status_requires_route_credentials_and_reports_bootstrap_st
         .await?;
     assert_eq!(status.current_version, env!("CARGO_PKG_VERSION"));
     assert!(!status.capability.apply_supported);
+    // A test build has no embedded release key; an official build that does
+    // not run from an installed generation needs the manual bootstrap.
+    let expected = if codewide_host_update::ReleaseTrust::embedded().is_some() {
+        "manual_bootstrap_required"
+    } else {
+        "unofficial_build"
+    };
     assert_eq!(
         status.capability.unavailable_reason.as_deref(),
-        Some("manual_bootstrap_required")
+        Some(expected)
     );
     Ok(())
 }
