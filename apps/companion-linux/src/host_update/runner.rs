@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 
 use super::{
     GenerationMetadataV1, OperationRecord,
+    host_resolver::HostResolver,
     runner_health::{rollback_is_ready, target_is_ready},
     store, unix_millis,
 };
@@ -325,6 +326,7 @@ async fn download_response(
     operation_id: &str,
 ) -> Result<reqwest::Response, RunnerFailure> {
     reqwest::Client::builder()
+        .dns_resolver(std::sync::Arc::new(HostResolver))
         .redirect(reqwest::redirect::Policy::limited(3))
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_mins(4))

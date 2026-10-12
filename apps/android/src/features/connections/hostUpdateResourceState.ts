@@ -38,7 +38,8 @@ export type HostUpdateResourceRecord = {
   connected: boolean;
   generation: number;
   intent: UpdateIntent | null;
-  loaded: boolean;
+  /** Start of the latest server read; `null` before the first one. */
+  lastReadAt: number | null;
   retryAttempt: number;
   timer: ReturnType<typeof setTimeout> | null;
   view: HostUpdateView;
@@ -178,7 +179,7 @@ export function createHostUpdateResourceRecord(connected: boolean): HostUpdateRe
     connected,
     generation: 0,
     intent: null,
-    loaded: false,
+    lastReadAt: null,
     retryAttempt: 0,
     timer: null,
     view: INITIAL_HOST_UPDATE_VIEW,
