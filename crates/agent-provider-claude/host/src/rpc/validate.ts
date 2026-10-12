@@ -43,6 +43,22 @@ const fail = (path: string, expected: string): never => {
   throw new ShapeError(`${path}: expected ${expected}`);
 };
 
+const forkBoundary: Check<ValidParams<"thread.fork">["boundary"]> = (value, path) => {
+  const boundary = record(value, path);
+  switch (boundary["kind"]) {
+    case "all":
+      return { kind: "all" };
+    case "before":
+    case "through":
+      return {
+        kind: boundary["kind"],
+        turnId: str(boundary["turnId"], `${path}.turnId`),
+      };
+    default:
+      return fail(`${path}.kind`, "all | before | through");
+  }
+};
+
 const requestId: Check<string | number> = (value, path) =>
   typeof value === "string" || (typeof value === "number" && Number.isSafeInteger(value))
     ? value
@@ -276,6 +292,14 @@ const validators: { readonly [Name in OperationName]: Check<HostParams<Name>> } 
       clientTools: clientTools(params["clientTools"], `${path}.clientTools`),
       cwd: str(params["cwd"], `${path}.cwd`),
       settings: settings(params["settings"], `${path}.settings`),
+    };
+  },
+  "thread.fork": (value, path) => {
+    const params = record(value, path);
+    return {
+      appThreadId: str(params["appThreadId"], `${path}.appThreadId`),
+      boundary: forkBoundary(params["boundary"], `${path}.boundary`),
+      forkAppThreadId: nullable(str)(params["forkAppThreadId"], `${path}.forkAppThreadId`),
     };
   },
   "thread.list": listParams,

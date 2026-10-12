@@ -86,6 +86,18 @@ async function remove(sdk: AgentSdk, location: SessionLocation): Promise<Session
   }
 }
 
+async function fork(
+  sdk: AgentSdk,
+  location: SessionLocation,
+  upToMessageId: string | null,
+): Promise<string> {
+  const forked = await sdk.forkSession(location.sessionId, {
+    ...directoryOf(location),
+    ...(upToMessageId === null ? {} : { upToMessageId }),
+  });
+  return forked.sessionId;
+}
+
 async function rename(sdk: AgentSdk, location: SessionLocation, title: string): Promise<void> {
   await sdk.renameSession(location.sessionId, title, directoryOf(location));
 }
@@ -93,6 +105,7 @@ async function rename(sdk: AgentSdk, location: SessionLocation, title: string): 
 /** The production session store backed by Claude's local session files. */
 export function createSdkSessionStore(sdk: AgentSdk): SessionStore {
   return {
+    fork: async (location, upToMessageId) => fork(sdk, location, upToMessageId),
     info: async (location) => info(sdk, location),
     list: async (query) => list(sdk, query),
     messages: async (location) => messages(sdk, location),

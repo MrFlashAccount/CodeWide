@@ -101,7 +101,7 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
         return;
       }
       if (selectedRequest.onFork !== undefined) {
-        void selectedRequest.onFork().catch((error: unknown) => {
+        void Promise.resolve(selectedRequest.onFork()).catch((error: unknown) => {
           dialog.alert(
             "Fork failed",
             error instanceof Error ? error.message : "Could not fork thread",

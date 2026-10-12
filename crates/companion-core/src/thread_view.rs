@@ -12,7 +12,9 @@ use crate::agent::{
         ItemsView, SortDirection, ThreadSettings, ThreadStatus, ThreadTurnsParams,
         thread_not_found_message,
     },
-    provider::{HistorySyncRequest, NativeSurface, ProviderError, ProviderFence},
+    provider::{
+        HistorySyncRequest, NativeSurface, NativeThreadStore, ProviderError, ProviderFence,
+    },
 };
 
 pub const READ_MODEL_VERSION: u64 = 4;
@@ -20,6 +22,20 @@ pub const READ_MODEL_VERSION: u64 = 4;
 // Match App Server's explicit instruction to inspect this unloaded child.
 // A generic RPC error code is insufficient: unrelated failures must stay visible.
 const UNLOADED_SUBAGENT_RESUME: &str = "cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first, or use thread/read to inspect it";
+
+enum ThreadShellAccess {
+    ExternalWriter,
+    Observed {
+        execution_settings: ThreadExecutionSettingsSnapshot,
+    },
+    UnloadedSubagent,
+}
+
+struct ThreadShellRead {
+    access: ThreadShellAccess,
+    fence: ProviderFence,
+    result: Value,
+}
 
 /// Current App Server execution authority for one thread.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -167,8 +183,11 @@ impl ThreadViewService {
         let thread_store = native.thread_store().ok_or_else(|| {
             ThreadViewError::History("Thread history storage is unavailable".into())
         })?;
-        let (result, execution_settings, shell_fence) =
-            Self::read_thread_shell(native, thread_id).await?;
+        let ThreadShellRead {
+            access,
+            fence: shell_fence,
+            result,
+        } = Self::read_thread_shell(native, thread_id).await?;
         let mut thread = result
             .get("thread")
             .cloned()
@@ -178,26 +197,45 @@ impl ThreadViewService {
             Some("idle" | "notLoaded" | "systemError") => false,
             _ => return Err(ThreadViewError::InvalidStatus),
         };
-        thread
+        let thread_object = thread
             .as_object_mut()
-            .ok_or(ThreadViewError::InvalidStatus)?
-            .insert("turns".into(), Value::Array(Vec::new()));
-        let (mut active_turn, fence) = if active {
-            let (active_turn, active_fence) = Self::read_active_turn(native, thread_id).await?;
-            (active_turn, active_fence)
-        } else {
-            (Value::Null, shell_fence)
+            .ok_or(ThreadViewError::InvalidStatus)?;
+        thread_object.insert("turns".into(), Value::Array(Vec::new()));
+        if matches!(&access, ThreadShellAccess::ExternalWriter) {
+            // `thread/read` does not own mutation authority. Publish the
+            // proven writer conflict through the existing client capability.
+            thread_object.insert("canAcceptDirectInput".into(), Value::Bool(false));
+        }
+        // The thread's agent, as on every other projected thread: the client
+        // offers only its provider's models, so a switch goes through a fork.
+        target.wire.attach_extension(&mut thread);
+        let (execution_settings, mut active_turn, fence) = match access {
+            ThreadShellAccess::ExternalWriter => {
+                let active_turn = if active {
+                    Self::read_external_active_turn(thread_store.as_ref(), thread_id).await?
+                } else {
+                    Value::Null
+                };
+                (None, active_turn, shell_fence)
+            }
+            ThreadShellAccess::Observed { execution_settings } => {
+                let (active_turn, fence) = if active {
+                    Self::read_active_turn(native, thread_id).await?
+                } else {
+                    (Value::Null, shell_fence)
+                };
+                (Some(execution_settings), active_turn, fence)
+            }
+            ThreadShellAccess::UnloadedSubagent => {
+                let (active_turn, fence) = if active {
+                    Self::read_active_turn(native, thread_id).await?
+                } else {
+                    (Value::Null, shell_fence)
+                };
+                (None, active_turn, fence)
+            }
         };
-        let active_turn_id = if active {
-            Some(
-                active_turn
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .ok_or(ThreadViewError::InvalidActiveTurn)?,
-            )
-        } else {
-            None
-        };
+        let active_turn_id = active_turn.get("id").and_then(Value::as_str);
         let history = thread_store
             .sync_history(HistorySyncRequest {
                 thread_id,
@@ -226,14 +264,7 @@ impl ThreadViewService {
     async fn read_thread_shell(
         native: &dyn NativeSurface,
         thread_id: &str,
-    ) -> Result<
-        (
-            Value,
-            Option<ThreadExecutionSettingsSnapshot>,
-            ProviderFence,
-        ),
-        ThreadViewError,
-    > {
+    ) -> Result<ThreadShellRead, ThreadViewError> {
         let (response, fence) = native
             .request_fenced(json!({
                 "id": "thread-view-observe",
@@ -255,14 +286,64 @@ impl ThreadViewService {
                         "params": {"threadId": thread_id, "includeTurns": false},
                     }))
                     .await?;
-                Ok((rpc_result(&stored)?, None, stored_fence))
+                Ok(ThreadShellRead {
+                    access: ThreadShellAccess::UnloadedSubagent,
+                    fence: stored_fence,
+                    result: rpc_result(&stored)?,
+                })
+            }
+            Err(ThreadViewError::Rpc(message))
+                if is_active_writer_conflict(&message, thread_id) =>
+            {
+                // Another App Server owns mutation, but its stored shell and
+                // canonical rollout remain safe read-only authorities.
+                let (stored, stored_fence) = native
+                    .request_fenced(json!({
+                        "id": "thread-view-read-external",
+                        "method": "thread/read",
+                        "params": {"threadId": thread_id, "includeTurns": false},
+                    }))
+                    .await?;
+                Ok(ThreadShellRead {
+                    access: ThreadShellAccess::ExternalWriter,
+                    fence: stored_fence,
+                    result: rpc_result(&stored)?,
+                })
             }
             result => {
                 let result = result?;
                 let execution_settings = thread_execution_settings(&result)?;
-                Ok((result, Some(execution_settings), fence))
+                Ok(ThreadShellRead {
+                    access: ThreadShellAccess::Observed { execution_settings },
+                    fence,
+                    result,
+                })
             }
         }
+    }
+
+    async fn read_external_active_turn(
+        thread_store: &dyn NativeThreadStore,
+        thread_id: &str,
+    ) -> Result<Value, ThreadViewError> {
+        let params = json!({
+            "threadId": thread_id,
+            "cursor": null,
+            "limit": 1,
+            "sortDirection": "desc",
+            "itemsView": "summary",
+        });
+        let Some(page) = thread_store.turns_page("thread/turns/list", &params).await else {
+            return Err(ThreadViewError::InvalidActiveTurn);
+        };
+        let page = page.map_err(ThreadViewError::History)?;
+        Ok(page
+            .get("data")
+            .and_then(Value::as_array)
+            .and_then(|turns| turns.first())
+            .filter(|turn| turn.get("status").and_then(Value::as_str) == Some("inProgress"))
+            .cloned()
+            .unwrap_or(Value::Null))
     }
 
     /// Reads the complete semantic mutable head. Large content is externalized
@@ -294,6 +375,10 @@ impl ThreadViewService {
             .ok_or(ThreadViewError::InvalidActiveTurn)?;
         Ok((turn, fence))
     }
+}
+
+fn is_active_writer_conflict(message: &str, thread_id: &str) -> bool {
+    message == format!("thread {thread_id} already has an active writer")
 }
 
 impl ThreadViewService {
@@ -476,6 +561,19 @@ mod tests {
                 .is_thread_not_found("t")
         );
         assert!(!ThreadViewError::InvalidRequest.is_thread_not_found("t"));
+    }
+
+    #[test]
+    fn active_writer_conflict_matches_only_the_requested_thread() {
+        assert!(is_active_writer_conflict(
+            "thread t already has an active writer",
+            "t"
+        ));
+        assert!(!is_active_writer_conflict(
+            "thread other already has an active writer",
+            "t"
+        ));
+        assert!(!is_active_writer_conflict("access denied", "t"));
     }
 
     #[test]

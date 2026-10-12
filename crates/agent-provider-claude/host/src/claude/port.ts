@@ -196,6 +196,12 @@ export type SessionRemoval = "removed" | "missing";
  * opens Claude's files itself.
  */
 export interface SessionStore {
+  /**
+   * Copies the session into a new session with fresh message uuids, through
+   * the message `upToMessageId` (inclusive) or entirely when `null`; returns
+   * the new session id.
+   */
+  readonly fork: (location: SessionLocation, upToMessageId: string | null) => Promise<string>;
   /** Metadata of one session, or `null` when Claude has no such session. */
   readonly info: (location: SessionLocation) => Promise<StoredSession | null>;
   readonly list: (query: SessionListQuery) => Promise<readonly StoredSession[]>;

@@ -1,40 +1,52 @@
+import type { ThreadForkBoundary } from "../../data/thread-fork";
 import { useEvent } from "../../react/useEvent";
 import { useConversationState } from "../../ui/use-conversation-scope";
-import type { ForkTargetChoice, ReadForkTargets } from "./forkTargets";
+import type { ForkOffer, ReadForkOffer } from "./forkTargets";
 
-/**
- * Conversation-scoped owner of the "Fork into" picker. The thread header menu
- * renders the picker; the header's "Fork thread" action and the composer's
- * model picker both open it. Choices are read from the catalog when the user
- * asks to fork, never during render.
- */
-export type ForkTargetPicker = {
-  readonly closeForkTargets: () => void;
-  /** The rows of the open picker; `null` while it is closed. */
-  readonly forkChoices: readonly ForkTargetChoice[] | null;
-  /**
-   * Opens the picker with the thread's targets. Returns `false` when the
-   * thread has no picker (a legacy or same-agent-only thread forks at once).
-   */
-  readonly openForkTargets: (readTargets: ReadForkTargets) => boolean;
+/** One open "Fork" sheet: the history it keeps and the models it offers. */
+export type ForkRequest = {
+  readonly boundary: ThreadForkBoundary;
+  readonly offer: ForkOffer;
 };
 
-/** Binds the picker to one conversation activation. */
+/**
+ * Conversation-scoped owner of the open "Fork" sheet. The header's "Fork thread"
+ * action and a message's "Fork" action both open it; the conversation header
+ * renders it. The offer is read from the catalog when the user asks to fork,
+ * never during render.
+ */
+export type ForkTargetPicker = {
+  readonly closeFork: () => void;
+  /** Opens the sheet for a fork that keeps `boundary` of the history. */
+  readonly openFork: (boundary: ThreadForkBoundary, readOffer: ReadForkOffer) => void;
+  /** The open sheet; `null` while it is closed. */
+  readonly request: ForkRequest | null;
+};
+
+/** Binds the sheet to one conversation activation. */
 export function useForkTargetPicker(composerScope: string): ForkTargetPicker {
-  const [forkChoices, setForkChoices] = useConversationState<readonly ForkTargetChoice[] | null>(
-    composerScope,
-    () => null,
-  );
-  const openForkTargets = useEvent((readTargets: ReadForkTargets) => {
-    const choices = readTargets();
-    if (choices === null) {
-      return false;
-    }
-    setForkChoices(choices);
-    return true;
+  const [request, setRequest] = useConversationState<ForkRequest | null>(composerScope, () => null);
+  const openFork = useEvent((boundary: ThreadForkBoundary, readOffer: ReadForkOffer) => {
+    setRequest({ boundary, offer: readOffer() });
   });
-  const closeForkTargets = useEvent(() => {
-    setForkChoices(null);
+  const closeFork = useEvent(() => {
+    setRequest(null);
   });
-  return { closeForkTargets, forkChoices, openForkTargets };
+  return { closeFork, openFork, request };
+}
+
+/**
+ * A message's "Fork" intent: opens the sheet for a fork through that turn.
+ * `undefined` when the thread offers no fork.
+ */
+export function messageForkOpener(
+  picker: ForkTargetPicker,
+  readOffer: ReadForkOffer | undefined,
+): ((turnId: string) => void) | undefined {
+  if (readOffer === undefined) {
+    return undefined;
+  }
+  return (turnId) => {
+    picker.openFork({ kind: "through", turnId }, readOffer);
+  };
 }

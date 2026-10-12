@@ -13,7 +13,7 @@ export type TurnTimelineItemProps = {
   getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
   latestAgentRef?: (node: View | null) => void;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
-  onForkThroughTurn?: (turnId: string) => Promise<void>;
+  onForkThroughTurn?: (turnId: string) => void;
   onLatestAgentLayout?: () => void;
   onLoadItems?: (turnId: string) => Promise<void>;
   requestPrompt: ReactNode;

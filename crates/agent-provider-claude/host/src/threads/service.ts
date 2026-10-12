@@ -51,6 +51,7 @@ import {
   type ThreadState,
   type TitleOverride,
 } from "../state/threadState.js";
+import { forkCut, type ChainSession, type ForkBoundary, type SessionCut } from "./forkCut.js";
 import { historyLines, ThreadHistory, withActiveTurn } from "./history.js";
 import { contentText } from "./prompt.js";
 import {
@@ -528,6 +529,94 @@ export class ThreadService {
     const thread = this.project(entry);
     this.emitUpdated(thread);
     return ok(thread);
+  }
+
+  /**
+   * Copies a thread into a new thread through `boundary`: every session of
+   * its chain up to the boundary is forked in Claude's store (fresh message
+   * uuids), so the copy owns its sessions and the source is unchanged. The
+   * copy keeps the source's settings and starts with no turn index: its
+   * turns are derived from the copied transcript. Repeating with the same
+   * `forkAppThreadId` returns the existing copy.
+   */
+  public async fork(
+    appThreadId: string,
+    forkAppThreadId: string | null,
+    boundary: ForkBoundary,
+  ): Promise<OperationResult<AgentThread>> {
+    if (forkAppThreadId === null || !UUID.test(forkAppThreadId)) {
+      return fail(
+        ERROR_CODES.invalidParams,
+        "Claude forks need a host-minted UUID forkAppThreadId",
+      );
+    }
+    const existing = this.registry.get(forkAppThreadId);
+    if (existing !== null) {
+      return isDeleted(existing.state) ? notFound(forkAppThreadId) : ok(this.project(existing));
+    }
+    const source = await this.entryFor(appThreadId);
+    if (source === null) {
+      return notFound(appThreadId);
+    }
+    const copied = await this.copySessions(source.state, boundary);
+    if (copied.status === "error") {
+      return copied;
+    }
+    const now = seconds(this.deps.nowMs());
+    const entry = this.registry.add({
+      appThreadId: forkAppThreadId,
+      createdAt: now,
+      cwd: source.state.cwd,
+      origin: "created",
+      pendingSettings: null,
+      presence: { archived: false, type: "listed" },
+      recencyAt: null,
+      sessionIds: copied.value,
+      sessionStarted: true,
+      settings: source.state.pendingSettings ?? source.state.settings,
+      title: { type: "none" },
+      ...NEW_THREAD_USAGE,
+      turns: [],
+      updatedAt: now,
+      version: THREAD_STATE_VERSION,
+    });
+    const thread = this.project(entry);
+    this.emitUpdated(thread);
+    return ok(thread);
+  }
+
+  /** Forks the sessions of `state`'s chain through `boundary`; returns the copies, oldest first. */
+  private async copySessions(
+    state: ThreadState,
+    boundary: ForkBoundary,
+  ): Promise<OperationResult<[string, ...string[]]>> {
+    const location = { cwd: state.cwd.length > 0 ? state.cwd : null };
+    const read = async (sessionId: string): Promise<ChainSession> => ({
+      messages: await this.deps.sessionStore.messages({ ...location, sessionId }),
+      sessionId,
+    });
+    const [firstId, ...restIds] = state.sessionIds;
+    const cut = forkCut(
+      [await read(firstId), ...(await Promise.all(restIds.map(read)))],
+      state.turns,
+      boundary,
+    );
+    if (cut.kind !== "cut") {
+      return cut.kind === "unknownTurn"
+        ? fail(ERROR_CODES.invalidRequest, "the fork boundary turn is not in this thread")
+        : fail(ERROR_CODES.invalidParams, "a fork before the first turn would be empty");
+    }
+    const copy = async (session: SessionCut): Promise<string> =>
+      this.deps.sessionStore.fork(
+        { ...location, sessionId: session.sessionId },
+        session.upToMessageId,
+      );
+    const [firstCut, ...restCuts] = cut.sessions;
+    const sessionIds: [string, ...string[]] = [await copy(firstCut)];
+    for (const session of restCuts) {
+      sessionIds.push(await copy(session));
+    }
+    return ok(sessionIds);
   }
 
   public async read(

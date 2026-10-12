@@ -47,7 +47,7 @@ it("preserves presentation integration contracts", () => {
   expect(appFullscreenModal).toContain('presentationStyle="fullScreen"');
   expect(turnControlMenus).toContain("ModelThinkingSheet as ModelThinkingMenu");
   expect(modelThinkingSheet).toContain("<ContentMenu");
-  expect(modelThinkingSheet).toContain("<ModelChoices");
+  expect(modelThinkingSheet).toContain("<ModelChoiceList");
   expect(modelThinkingSheet).toContain("<CodeWideSlider");
   expect(modelThinkingSheet).toContain("<PersonalityChoices");
   expect(turnControlMenus).toContain('section: "Security permissions"');

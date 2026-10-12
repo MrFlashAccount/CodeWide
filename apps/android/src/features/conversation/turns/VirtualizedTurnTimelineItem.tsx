@@ -43,7 +43,7 @@ type VirtualizedTurnTimelineItemProps = {
   group: TurnBubbleGroup | null;
   latestAgentRef?: TurnTimelineItemProps["latestAgentRef"];
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
-  onForkThroughTurn?: (turnId: string) => Promise<void>;
+  onForkThroughTurn?: (turnId: string) => void;
   onLatestAgentLayout?: TurnTimelineItemProps["onLatestAgentLayout"];
   onLoadItems?: (turnId: string) => Promise<void>;
   parts: readonly VirtualizedTurnPart[];
@@ -256,17 +256,17 @@ function VirtualizedMessageActions({
   presentation,
   turn,
 }: {
-  onForkThroughTurn: ((turnId: string) => Promise<void>) | undefined;
+  onForkThroughTurn: ((turnId: string) => void) | undefined;
   placement: VirtualizedTurnPlacement;
   presentation: TurnPresentation;
   turn: TurnTimelineItemProps["turn"];
 }): ReactElement | null {
   const beginContentReview = useContentReview();
-  const fork = useEvent(async () => {
+  const fork = useEvent(() => {
     if (onForkThroughTurn === undefined) {
       throw new Error("Thread fork is unavailable");
     }
-    await onForkThroughTurn(turn.id);
+    onForkThroughTurn(turn.id);
   });
   const review = useEvent(() => {
     if (presentation.agentReviewTarget === null) {

@@ -9,6 +9,7 @@ import { AppText as Text } from "../../../ui/Typography";
 import { ContextRing } from "../../accounts/UsageMenu";
 import { WorkspaceAccountUsageMenu } from "../../accounts/WorkspaceAccountUsageMenu";
 import { ThreadHeaderMenu } from "../../turnActions/ThreadActions";
+import { ThreadForkSheet } from "../../turnActions/ThreadForkSheet";
 import {
   ConversationBackendRefreshWarning,
   ConversationHistorySubtitle,
@@ -27,8 +28,8 @@ export function ConversationHeader({
   dismissComposerKeyboardForOverlay,
   draftConnectionId,
   draftThreadId,
+  forkOffer,
   forkPicker,
-  forkTargets,
   historyActivityModel,
   historyActivityResourceId,
   newChat,
@@ -152,10 +153,14 @@ export function ConversationHeader({
               : { onArchive })}
           {...(onCompact === undefined ? {} : { onCompact })}
           {...(onFork === undefined ? {} : { onFork })}
-          {...(forkTargets === undefined ? {} : { forkTargets })}
+          {...(forkOffer === undefined ? {} : { forkOffer })}
           {...(forkPicker === undefined ? {} : { forkPicker })}
           {...(deleteThread === undefined ? {} : { onDelete: deleteThread })}
         />
+      )}
+      {/* Outside the menu gate: a message's "Fork" opens the sheet in a read-only thread too. */}
+      {onFork !== undefined && forkPicker !== undefined && (
+        <ThreadForkSheet onFork={onFork} picker={forkPicker} />
       )}
     </View>
   );

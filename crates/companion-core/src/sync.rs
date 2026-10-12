@@ -1484,6 +1484,13 @@ impl SyncHub {
                 Err(failure) => return send_rpc_failure(socket, id, &failure).await,
             },
         };
+        if let Err(failure) = self
+            .gateway
+            .check_model_scope(&target, &method, &params)
+            .await
+        {
+            return send_rpc_failure(socket, id, &failure).await;
+        }
         if method == "turn/start" && self.recent_turn_starts.lock().await.seen_or_insert(&params) {
             match reconcile_direct_turn_start(&target, &params).await {
                 Ok(Some(turn)) => {
@@ -1514,6 +1521,10 @@ impl SyncHub {
             if let Some(object) = request.as_object_mut() {
                 object.insert("params".into(), prepared);
             }
+        }
+        if method == "thread/fork" && target.native().is_none() {
+            let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+            return provider_rpc::handle_neutral_fork(self, socket, &target, &params, id).await;
         }
         if target.native().is_none() {
             return provider_rpc::handle_neutral_thread_rpc(

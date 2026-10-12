@@ -92,8 +92,8 @@ export function createConversationChromeContent({
       }
       draftConnectionId={draftConnectionId}
       draftThreadId={draftThreadId}
+      forkOffer={actionsInputs.forkOffer}
       forkPicker={forkPicker}
-      forkTargets={actionsInputs.forkTargets}
       historyActivityModel={historyActivityModel}
       historyActivityResourceId={historyActivityResourceId}
       newChat={newChat}

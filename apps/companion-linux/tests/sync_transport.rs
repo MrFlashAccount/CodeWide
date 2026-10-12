@@ -453,6 +453,68 @@ async fn unloaded_subagent_sync_reads_history_without_resuming_its_parent()
 }
 
 #[tokio::test]
+async fn active_writer_sync_falls_back_to_read_only_indexed_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let sessions = directory.path().join("sessions");
+    std::fs::create_dir_all(&sessions)?;
+    let mut rollout = std::fs::File::create(sessions.join(format!(
+        "rollout-2026-10-11T00-00-00-{EXTERNAL_THREAD_ID}.jsonl"
+    )))?;
+    for line in [
+        r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"external-turn","started_at":10}}"#,
+        r#"{"type":"event_msg","payload":{"type":"user_message","message":"watch this"}}"#,
+        r#"{"type":"event_msg","payload":{"type":"agent_message","message":"still working","phase":"commentary"}}"#,
+    ] {
+        writeln!(rollout, "{line}")?;
+    }
+    rollout.sync_all()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut requests) = mpsc::channel(4);
+    let fake = tokio::spawn(run_active_writer_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+    send_json(
+        &mut client,
+        &json!({
+            "type": "rpc",
+            "request": {
+                "id": "read-active-writer",
+                "method": "companion/thread/sync",
+                "params": {"threadId": EXTERNAL_THREAD_ID, "limit": 36}
+            }
+        }),
+    )
+    .await?;
+    let response = receive_type(&mut client, "rpc").await?;
+    let result = &response["response"]["result"];
+    assert!(response["response"].get("error").is_none());
+    assert_eq!(result["thread"]["canAcceptDirectInput"], false);
+    assert_eq!(result["thread"]["status"]["type"], "active");
+    assert_eq!(result["executionSettings"], Value::Null);
+    assert_eq!(result["activeTurn"]["id"], "external-turn");
+    assert_eq!(result["activeTurn"]["itemsView"], "summary");
+    assert_eq!(requests.recv().await.as_deref(), Some("thread/resume"));
+    assert_eq!(requests.recv().await.as_deref(), Some("thread/read"));
+    assert!(
+        requests.try_recv().is_err(),
+        "read-only sync must not ask the non-owning App Server for the active turn"
+    );
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_sync_does_not_hide_unrelated_resume_errors()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
@@ -2500,6 +2562,53 @@ async fn run_idle_thread_app_server(
     observed: mpsc::Sender<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     run_thread_shell_app_server(socket_path, observed, None).await
+}
+
+async fn run_active_writer_app_server(
+    socket_path: PathBuf,
+    observed: mpsc::Sender<String>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let listener = UnixListener::bind(socket_path)?;
+    let (stream, _) = listener.accept().await?;
+    let mut socket = accept_initialized(stream).await?;
+    while let Some(frame) = socket.next().await {
+        let Message::Text(raw) = frame? else {
+            continue;
+        };
+        let request: Value = serde_json::from_str(&raw)?;
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        observed.send(method.to_owned()).await?;
+        let response = if method == "thread/resume" {
+            json!({
+                "id": request["id"].clone(),
+                "error": {
+                    "code": -32600,
+                    "message": format!("thread {EXTERNAL_THREAD_ID} already has an active writer")
+                }
+            })
+        } else if method == "thread/read" {
+            json!({
+                "id": request["id"].clone(),
+                "result": {
+                    "thread": {
+                        "id": EXTERNAL_THREAD_ID,
+                        "name": "Externally owned thread",
+                        "recencyAt": 10,
+                        "status": {"type": "active", "activeFlags": []},
+                        "canAcceptDirectInput": true,
+                        "turns": []
+                    }
+                }
+            })
+        } else {
+            json!({"id": request["id"].clone(), "result": {}})
+        };
+        send_value(&mut socket, &response).await?;
+    }
+    Ok(())
 }
 
 async fn run_thread_shell_app_server(

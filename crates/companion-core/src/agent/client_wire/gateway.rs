@@ -16,14 +16,16 @@ use rand::Rng;
 use serde_json::{Value, json};
 use tracing::warn;
 
-use super::{PROVIDER_FIELD, WireProvider, request_ids, results, settings};
+use super::{
+    PROVIDER_FIELD, WireProvider, model_scope::ModelScope, request_ids, results, settings,
+};
 use crate::agent::{
     bindings::{BindOutcome, BindingOrigin, BindingStore, ThreadRoute},
     model::{
         AppThreadId, Capability, ERROR_CAPABILITY_UNSUPPORTED, ERROR_INVALID_PARAMS,
-        ERROR_INVALID_REQUEST, ERROR_PROVIDER_DISABLED, ProviderId, RuntimeRequestId,
-        ThreadCreateParams, ThreadSettings, capability_unsupported_message,
-        thread_not_found_message,
+        ERROR_INVALID_REQUEST, ERROR_PROVIDER_DISABLED, ForkBoundary, ProviderId, RuntimeRequestId,
+        ThreadChange, ThreadCreateParams, ThreadForkParams, ThreadSettings, ThreadUpdateParams,
+        TurnId, capability_unsupported_message, thread_not_found_message,
     },
     provider::{AgentProvider, NativeSurface, ProviderError},
     registry::{ProviderRegistry, disabled_provider_name},
@@ -140,12 +142,33 @@ pub enum ThreadStartRoute {
 pub struct ClientWireGateway {
     registry: Arc<ProviderRegistry>,
     bindings: Arc<BindingStore>,
+    model_scope: ModelScope,
 }
 
 impl ClientWireGateway {
     #[must_use]
     pub fn new(registry: Arc<ProviderRegistry>, bindings: Arc<BindingStore>) -> Self {
-        Self { registry, bindings }
+        Self {
+            registry,
+            bindings,
+            model_scope: ModelScope::default(),
+        }
+    }
+
+    /// Rejects a thread-scoped `method` whose `model` only another provider
+    /// offers: switching agents is a fork (`model_scope`).
+    ///
+    /// # Errors
+    /// Returns `-32602` naming the provider that offers the model.
+    pub async fn check_model_scope(
+        &self,
+        target: &Target,
+        method: &str,
+        params: &Value,
+    ) -> Result<(), RpcFailure> {
+        self.model_scope
+            .check(&self.registry, target, method, params)
+            .await
     }
 
     #[must_use]
@@ -454,6 +477,71 @@ impl ClientWireGateway {
         Ok(thread)
     }
 
+    /// Copies `source` into a new thread of the same provider through the
+    /// neutral `thread.fork`, writing its `created` binding like a created
+    /// thread. The boundary comes from `lastTurnId` (through) or
+    /// `beforeTurnId` (before); a `model` other than the copy's becomes its
+    /// model.
+    ///
+    /// # Errors
+    /// Returns the provider or binding failure.
+    pub async fn fork_thread(
+        &self,
+        source: &Target,
+        params: &Value,
+    ) -> Result<crate::agent::model::AgentThread, RpcFailure> {
+        let turn = |name: &str| {
+            params
+                .get(name)
+                .and_then(Value::as_str)
+                .and_then(TurnId::parse)
+        };
+        let boundary = match (turn("lastTurnId"), turn("beforeTurnId")) {
+            (Some(turn_id), _) => ForkBoundary::Through { turn_id },
+            (None, Some(turn_id)) => ForkBoundary::Before { turn_id },
+            (None, None) => ForkBoundary::All,
+        };
+        let provider = &source.provider;
+        let fork_app_thread_id = provider
+            .capabilities()
+            .supports(Capability::ThreadsHostMintedIds)
+            .then(mint_app_thread_id);
+        if let Some(id) = &fork_app_thread_id {
+            self.bind_created(&source.wire.descriptor.id, id.as_str())
+                .await?;
+        }
+        let thread = provider
+            .thread_fork(ThreadForkParams {
+                app_thread_id: source.thread_id.clone(),
+                boundary,
+                fork_app_thread_id,
+            })
+            .await
+            .map_err(|error| RpcFailure::from_provider(&error))?;
+        self.bind_created(&source.wire.descriptor.id, thread.app_thread_id.as_str())
+            .await?;
+        let model = params
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|model| !model.is_empty() && *model != thread.settings.model);
+        let Some(model) = model else {
+            return Ok(thread);
+        };
+        let updated = provider
+            .thread_update(ThreadUpdateParams {
+                app_thread_id: thread.app_thread_id.clone(),
+                change: ThreadChange::Settings {
+                    model: Some(model.to_owned()),
+                    effort: None,
+                    permission_profile: None,
+                    service_tier: None,
+                },
+            })
+            .await
+            .map_err(|error| RpcFailure::from_provider(&error))?;
+        Ok(updated.thread.unwrap_or(thread))
+    }
+
     /// The `ThreadStartResponse` and `thread/started` notification of a
     /// thread created through the neutral operation.
     #[must_use]
@@ -523,6 +611,87 @@ pub fn mint_app_thread_id() -> AppThreadId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A same-provider fork on a neutral provider: the copy is bound like a
+    /// created thread, keeps the turns through the boundary and takes the
+    /// requested model.
+    #[tokio::test]
+    async fn a_neutral_fork_binds_the_copy_and_applies_the_model()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::agent::{
+            model::{AgentTurn, CapabilitySet, StartWhileActiveMode, TurnOrigin, TurnStatus},
+            testing::{ScriptedProvider, thread},
+        };
+        let turn = |id: &'static str| AgentTurn {
+            turn_id: TurnId::from_static(id),
+            status: TurnStatus::Completed,
+            origin: TurnOrigin::User,
+            started_at: 1,
+            completed_at: Some(2),
+            error: None,
+            items: Vec::new(),
+            provenance: None,
+            usage: None,
+        };
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(crate::store::IndexStore::open(
+            directory.path().join("state.redb"),
+        )?);
+        let mut capabilities = CapabilitySet::none(StartWhileActiveMode::Busy);
+        capabilities.threads_host_minted_ids = true;
+        capabilities.threads_fork = true;
+        let claude = Arc::new(
+            ScriptedProvider::new("claude", capabilities)
+                .with_thread(thread("claude", "source", 5)),
+        );
+        claude.set_turns("source", vec![turn("t1"), turn("t2"), turn("t3")]);
+        let provider: Arc<dyn AgentProvider> = claude.clone();
+        let registry = Arc::new(ProviderRegistry::single(provider, Vec::new()));
+        let bindings = Arc::new(BindingStore::new(store));
+        bindings
+            .bind(
+                &AppThreadId::from_static("source"),
+                &ProviderId::from_static("claude"),
+                BindingOrigin::Created,
+            )
+            .await?;
+        let gateway = ClientWireGateway::new(registry, bindings);
+        let source = gateway
+            .resolve_thread("source", None)
+            .await
+            .map_err(|failure| failure.message)?;
+
+        let forked = gateway
+            .fork_thread(&source, &json!({"lastTurnId": "t2", "model": "opus"}))
+            .await
+            .map_err(|failure| failure.message)?;
+
+        let copy = gateway
+            .resolve_thread(forked.app_thread_id.as_str(), None)
+            .await
+            .map_err(|failure| failure.message)?;
+        assert_eq!(copy.wire.descriptor.id.as_str(), "claude");
+        let kept: Vec<String> = claude
+            .turns
+            .lock()
+            .map_err(|_| "turns lock")?
+            .get(forked.app_thread_id.as_str())
+            .map(|turns| {
+                turns
+                    .iter()
+                    .map(|turn| turn.turn_id.as_str().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(kept, ["t1", "t2"]);
+        let updated = claude.updated.lock().map_err(|_| "updated lock")?;
+        assert!(matches!(
+            updated.as_slice(),
+            [ThreadUpdateParams { change: ThreadChange::Settings { model: Some(model), .. }, .. }]
+                if model == "opus"
+        ));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn continuation_threads_leave_list_pages_and_search_hits()

@@ -262,6 +262,55 @@ export class MemorySessionStore implements SessionStore {
   public messages = async (location: SessionLocation): Promise<readonly unknown[]> =>
     Promise.resolve(this.sessions.get(location.sessionId)?.messages ?? []);
 
+  public readonly forked: (readonly [string, string | null])[] = [];
+
+  /** Copies a session like `forkSession`: fresh uuids, the parent chain remapped, sliced inclusively. */
+  public fork = async (
+    location: SessionLocation,
+    upToMessageId: string | null,
+  ): Promise<string> => {
+    const source = this.sessions.get(location.sessionId);
+    if (source === undefined) {
+      return Promise.reject(new Error(`Session ${location.sessionId} not found`));
+    }
+    const end =
+      upToMessageId === null
+        ? source.messages.length
+        : source.messages.findIndex(
+            (message) => isRecord(message) && message["uuid"] === upToMessageId,
+          ) + 1;
+    if (end === 0) {
+      return Promise.reject(new Error(`Message ${String(upToMessageId)} not found`));
+    }
+    this.counter += 1;
+    const sessionId = `fork-${String(this.counter)}-${location.sessionId}`;
+    const uuids = new Map<string, string>();
+    const remapped = (uuid: unknown): unknown => {
+      if (typeof uuid !== "string") {
+        return uuid;
+      }
+      const known = uuids.get(uuid) ?? `${sessionId}:${uuid}`;
+      uuids.set(uuid, known);
+      return known;
+    };
+    const copy = this.session(sessionId, source.meta.cwd ?? "", source.interactive);
+    for (const message of source.messages.slice(0, end)) {
+      copy.messages.push(
+        isRecord(message)
+          ? {
+              ...message,
+              parentUuid: remapped(message["parentUuid"]),
+              session_id: sessionId,
+              uuid: remapped(message["uuid"]),
+            }
+          : message,
+      );
+    }
+    copy.meta = { ...source.meta, sessionId, title: null };
+    this.forked.push([location.sessionId, upToMessageId]);
+    return Promise.resolve(sessionId);
+  };
+
   public remove = async (location: SessionLocation): Promise<SessionRemoval> => {
     this.removed.push(location.sessionId);
     return Promise.resolve(this.sessions.delete(location.sessionId) ? "removed" : "missing");

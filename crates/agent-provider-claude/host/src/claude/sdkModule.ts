@@ -11,6 +11,7 @@ import { pathToFileURL } from "node:url";
 import type {
   createSdkMcpServer,
   deleteSession,
+  forkSession,
   getSessionInfo,
   getSessionMessages,
   getSubagentMessages,
@@ -25,6 +26,7 @@ import type {
 export interface AgentSdk {
   readonly createSdkMcpServer: typeof createSdkMcpServer;
   readonly deleteSession: typeof deleteSession;
+  readonly forkSession: typeof forkSession;
   readonly getSessionInfo: typeof getSessionInfo;
   readonly getSessionMessages: typeof getSessionMessages;
   readonly getSubagentMessages: typeof getSubagentMessages;
@@ -38,6 +40,7 @@ export interface AgentSdk {
 const FUNCTIONS = [
   "createSdkMcpServer",
   "deleteSession",
+  "forkSession",
   "getSessionInfo",
   "getSessionMessages",
   "getSubagentMessages",
