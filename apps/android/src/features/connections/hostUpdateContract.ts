@@ -51,11 +51,29 @@ export type HostUpdateOperation = {
   readonly errorMessage: string | null;
   readonly operationId: string;
   readonly phase: HostUpdatePhase;
+  readonly progress: HostUpdateProgress | null;
   readonly startedAt: number;
   readonly targetFingerprint: string;
   readonly targetVersion: string;
   readonly updatedAt: number;
 };
+
+/** Confirmed platform progress; byte counters are meaningful only during download. */
+export type HostUpdateProgress =
+  | {
+      readonly downloadedBytes: number;
+      readonly stage: "downloading";
+      readonly totalBytes: number | null;
+    }
+  | {
+      readonly stage:
+        | "verifying"
+        | "extracting"
+        | "restarting"
+        | "checkingHealth"
+        | "awaitingReconnect"
+        | "rollingBack";
+    };
 
 /** Current host, capability, release and operation read model. */
 export type HostUpdateStatus = {
@@ -105,11 +123,36 @@ export function parseHostUpdateOperation(value: unknown): HostUpdateOperation {
     errorMessage: sanitizedNullableText(row.errorMessage, "errorMessage"),
     operationId: opaqueId(row.operationId, "operationId"),
     phase: phase(row.phase),
+    progress: parseProgress(row.progress),
     startedAt: finiteNumber(row.startedAt, "startedAt"),
     targetFingerprint: hex(row.targetFingerprint, SHA256_HEX_LENGTH, "targetFingerprint"),
     targetVersion: text(row.targetVersion, "targetVersion"),
     updatedAt: finiteNumber(row.updatedAt, "updatedAt"),
   };
+}
+
+function parseProgress(value: unknown): HostUpdateProgress | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const row = record(value, "progress");
+  switch (row.stage) {
+    case "downloading":
+      return {
+        downloadedBytes: integer(row.downloadedBytes, "downloadedBytes"),
+        stage: "downloading",
+        totalBytes: row.totalBytes === null ? null : integer(row.totalBytes, "totalBytes"),
+      };
+    case "verifying":
+    case "extracting":
+    case "restarting":
+    case "checkingHealth":
+    case "awaitingReconnect":
+    case "rollingBack":
+      return { stage: row.stage };
+    default:
+      throw new Error("Host update progress stage is invalid");
+  }
 }
 
 /** Parses the durable acknowledgement returned only after journal persistence. */

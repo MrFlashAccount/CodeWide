@@ -147,7 +147,27 @@ export function createHostUpdateResource({
     record.loaded = true;
     record.retryAttempt = 0;
     record.intent = intentAfterStatus(record.intent, status);
-    publish(connectionId, record, hostUpdateStatusView(status));
+    const view = hostUpdateStatusView(status);
+    // Some older guardians omit completed operations from status. A status
+    // refresh must not erase the terminal result we just read by operation id.
+    const terminal =
+      status.activeOperation === null &&
+      record.view.phase !== null &&
+      isTerminalHostUpdatePhase(record.view.phase);
+    publish(
+      connectionId,
+      record,
+      terminal
+        ? {
+            ...view,
+            canRetry: record.view.canRetry,
+            errorCode: record.view.errorCode,
+            errorMessage: record.view.errorMessage,
+            operationId: record.view.operationId,
+            phase: record.view.phase,
+          }
+        : view,
+    );
     if (
       status.activeOperation !== null &&
       !isTerminalHostUpdatePhase(status.activeOperation.phase)
@@ -340,6 +360,7 @@ export function createHostUpdateResource({
         errorCode: null,
         errorMessage: null,
         phase: "accepted",
+        progress: null,
       });
       await reconcile(connectionId, record);
     },

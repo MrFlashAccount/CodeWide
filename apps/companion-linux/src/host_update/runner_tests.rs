@@ -57,6 +57,8 @@ fn operation(phase: HostUpdatePhase) -> OperationRecord {
         identity_pin: "d".repeat(64),
         identity_manifest: PathBuf::from("/tmp/codewide-test-identity.json"),
         previous_generation: format!("generations/{}", "a".repeat(64)),
+        progress: None,
+        recovery_error: None,
     }
 }
 
@@ -230,4 +232,201 @@ fn runner_source_never_uses_caller_controlled_download_input() {
     assert!(source.contains("operation.target.artifact_url"));
     let forbidden = ["Apply", "HostUpdate", "Command"].concat();
     assert!(!source.contains(&forbidden));
+}
+
+#[tokio::test]
+async fn rejected_download_fails_without_restarting_or_rolling_back_the_current_server() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path().join("install");
+    let state = directory.path().join("state");
+    fs::create_dir_all(&root).expect("install root");
+    switch_current(&root, "generations/old").expect("old current");
+    let record = operation(HostUpdatePhase::Installing);
+    write_operation(&state, &record).expect("journal");
+    store::write_json(&state.join("active.json"), &record.journal.operation_id).expect("pointer");
+    store::private_directory(&state.join("downloads")).expect("downloads");
+    fs::write(
+        state
+            .join("downloads")
+            .join(format!("{}.tar.gz", record.journal.operation_id)),
+        b"corrupt download",
+    )
+    .expect("download");
+
+    run_pending(root.clone(), state.clone())
+        .await
+        .expect("runner");
+    let outcome = read_operation(&state, &record.journal.operation_id).expect("durable outcome");
+    assert_eq!(outcome.journal.phase, HostUpdatePhase::Failed);
+    assert_eq!(
+        outcome.journal.error_code.as_deref(),
+        Some("artifact_digest_mismatch")
+    );
+    assert!(outcome.journal.restart_started_at.is_none());
+    assert_eq!(
+        fs::read_link(root.join("current")).expect("unchanged current"),
+        PathBuf::from("generations/old")
+    );
+    run_pending(root, state)
+        .await
+        .expect("terminal resume is inert");
+}
+
+#[test]
+fn recovery_failure_preserves_the_install_failure_after_reopening() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let state = directory.path();
+    let record = operation(HostUpdatePhase::Installing);
+    write_operation(state, &record).expect("journal");
+    transition(
+        state,
+        &record.journal.operation_id,
+        HostUpdatePhase::Installing,
+        HostUpdatePhase::RollingBack,
+        Some((
+            "target_health_timeout",
+            "The updated Companion did not become healthy.",
+        )),
+    )
+    .expect("rollback");
+    transition(
+        state,
+        &record.journal.operation_id,
+        HostUpdatePhase::RollingBack,
+        HostUpdatePhase::Failed,
+        Some((
+            "rollback_health_failed",
+            "The previous Companion did not recover.",
+        )),
+    )
+    .expect("failure");
+    let reopened = read_operation(state, &record.journal.operation_id).expect("reopen");
+    assert_eq!(
+        reopened.journal.error_code.as_deref(),
+        Some("target_health_timeout")
+    );
+    assert_eq!(
+        reopened.recovery_error.as_deref(),
+        Some("rollback_health_failed")
+    );
+    let view = super::super::operation_view(&reopened);
+    assert!(
+        view.error_message
+            .expect("message")
+            .contains("Recovery also failed: rollback_health_failed")
+    );
+}
+
+#[test]
+fn download_progress_survives_reopening_and_cannot_overwrite_a_terminal_outcome() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let state = directory.path();
+    let record = operation(HostUpdatePhase::Installing);
+    write_operation(state, &record).expect("journal");
+    let progress = HostUpdateProgress::Downloading {
+        downloaded_bytes: 512,
+        total_bytes: Some(1024),
+    };
+    report_progress(state, &record.journal.operation_id, progress.clone()).expect("progress");
+    let reopened = read_operation(state, &record.journal.operation_id).expect("reopen");
+    assert_eq!(
+        super::super::operation_view(&reopened).progress,
+        Some(progress)
+    );
+    transition(
+        state,
+        &record.journal.operation_id,
+        HostUpdatePhase::Installing,
+        HostUpdatePhase::Failed,
+        Some(("download_failed", "The update download was interrupted.")),
+    )
+    .expect("failure");
+    assert!(
+        report_progress(
+            state,
+            &record.journal.operation_id,
+            HostUpdateProgress::Verifying
+        )
+        .is_err()
+    );
+    assert_eq!(
+        read_operation(state, &record.journal.operation_id)
+            .expect("reopen terminal")
+            .journal
+            .phase,
+        HostUpdatePhase::Failed
+    );
+}
+
+#[tokio::test]
+async fn interrupted_partial_download_is_replaced_and_progress_matches_received_bytes() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("HTTP fixture");
+    let address = listener.local_addr().expect("address");
+    let body = b"complete signed artifact fixture";
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("request");
+        let mut request = [0_u8; 1024];
+        let mut request_bytes = 0;
+        loop {
+            let received = stream
+                .read(&mut request[request_bytes..])
+                .await
+                .expect("read request");
+            assert_ne!(received, 0, "request ended before complete HTTP headers");
+            request_bytes += received;
+            if request[..request_bytes]
+                .windows(4)
+                .any(|end| end == b"\r\n\r\n")
+            {
+                break;
+            }
+            assert!(
+                request_bytes < request.len(),
+                "bounded fixture HTTP headers"
+            );
+        }
+        stream
+            .write_all(response.as_bytes())
+            .await
+            .expect("headers");
+        stream.write_all(body).await.expect("body");
+    });
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let state = directory.path();
+    let record = operation(HostUpdatePhase::Installing);
+    write_operation(state, &record).expect("journal");
+    let archive = state.join("artifact.tar.gz");
+    fs::write(
+        archive.with_extension("partial"),
+        b"incomplete obsolete bytes",
+    )
+    .expect("interrupted download");
+    download(
+        &format!("http://{address}/artifact"),
+        &archive,
+        state,
+        &record.journal.operation_id,
+    )
+    .await
+    .expect("download resumes");
+    server.await.expect("fixture completes");
+    let received = fs::read(&archive).expect("published download");
+    verify_file_digest(&archive, &hex::encode(Sha256::digest(body)))
+        .expect("complete artifact digest");
+    let reopened = read_operation(state, &record.journal.operation_id).expect("reopen");
+    assert_eq!(
+        reopened.progress,
+        Some(HostUpdateProgress::Downloading {
+            downloaded_bytes: received.len() as u64,
+            total_bytes: Some(body.len() as u64)
+        })
+    );
+    assert!(!archive.with_extension("partial").exists());
 }

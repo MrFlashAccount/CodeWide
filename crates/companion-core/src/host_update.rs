@@ -532,6 +532,37 @@ pub struct HostUpdateOperation {
     pub updated_at: u64,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<HostUpdateProgress>,
+}
+
+/// Additive, guardian-confirmed progress; byte counts belong only to downloads.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "stage", rename_all = "camelCase")]
+pub enum HostUpdateProgress {
+    Downloading {
+        #[serde(rename = "downloadedBytes")]
+        downloaded_bytes: u64,
+        #[serde(rename = "totalBytes")]
+        total_bytes: Option<u64>,
+    },
+    Verifying,
+    Extracting,
+    Restarting,
+    CheckingHealth,
+    AwaitingReconnect,
+    RollingBack,
+}
+
+/// Identity captured by the serving process from its own immutable generation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostUpdateRunningArtifact {
+    pub process_id: u32,
+    pub version: String,
+    pub build: String,
+    pub source_revision: String,
+    pub artifact_digest: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -610,6 +641,10 @@ impl GuardianError {
 /// and exclusively own operation journaling and terminal results.
 #[async_trait]
 pub trait HostUpdateGuardian: Send + Sync {
+    /// Platforms without a process attestation leave this control-only proof absent.
+    fn running_artifact(&self) -> Option<&HostUpdateRunningArtifact> {
+        None
+    }
     fn capability(&self) -> HostUpdateCapability;
     async fn status(&self) -> Result<HostUpdateStatus, GuardianError>;
     async fn check(&self) -> Result<HostUpdateStatus, GuardianError>;

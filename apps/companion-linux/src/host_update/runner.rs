@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use companion_core::host_update::HostUpdatePhase;
+use companion_core::host_update::{HostUpdatePhase, HostUpdateProgress};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 
@@ -71,6 +71,19 @@ pub(super) async fn run_pending(
             }
             ResumeAction::ResumeInstall => {
                 if let Err(failure) = install_and_verify(&root, &state_root, &operation_id).await {
+                    let operation = read_operation(&state_root, &operation_id)?;
+                    // No replacement was activated: fail the install without
+                    // restarting a healthy server or waiting for rollback.
+                    if operation.journal.restart_started_at.is_none() {
+                        transition(
+                            &state_root,
+                            &operation_id,
+                            HostUpdatePhase::Installing,
+                            HostUpdatePhase::Failed,
+                            Some((failure.code, &failure.detail)),
+                        )?;
+                        return Ok(());
+                    }
                     rollback(
                         &root,
                         &state_root,
@@ -149,8 +162,15 @@ async fn install_and_verify(
     })?;
     let archive = download_root.join(format!("{operation_id}.tar.gz"));
     if !archive.is_file() {
-        download(&operation.target.artifact_url, &archive).await?;
+        download(
+            &operation.target.artifact_url,
+            &archive,
+            state_root,
+            operation_id,
+        )
+        .await?;
     }
+    report_progress(state_root, operation_id, HostUpdateProgress::Verifying)?;
     verify_file_digest(&archive, &operation.target.sha256).map_err(|_| {
         RunnerFailure::new(
             "artifact_digest_mismatch",
@@ -159,6 +179,7 @@ async fn install_and_verify(
     })?;
     validate_archive(&archive)?;
     let generation = root.join("generations").join(&operation.target.sha256);
+    report_progress(state_root, operation_id, HostUpdateProgress::Extracting)?;
     if generation.exists() {
         verify_generation(&generation, &operation.target)?;
     } else {
@@ -166,8 +187,10 @@ async fn install_and_verify(
     }
     set_restart_started(state_root, operation_id, &operation.journal.nonce)
         .map_err(|_| RunnerFailure::new("journal_write_failed", "Cannot persist restart state."))?;
+    report_progress(state_root, operation_id, HostUpdateProgress::Restarting)?;
     switch_current(root, &format!("generations/{}", operation.target.sha256))?;
     restart_companion()?;
+    report_progress(state_root, operation_id, HostUpdateProgress::CheckingHealth)?;
     wait_for_exact_target(root, &operation)?;
     transition(
         state_root,
@@ -198,29 +221,34 @@ fn verify_file_digest(path: &Path, expected: &str) -> io::Result<()> {
         .ok_or_else(|| io::Error::other("artifact digest mismatch"))
 }
 
-async fn download(url: &str, target: &Path) -> Result<(), RunnerFailure> {
-    let response = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::limited(3))
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_mins(4))
-        .build()
-        .map_err(|_| {
-            RunnerFailure::new(
-                "download_client_failed",
-                "Cannot initialize the downloader.",
-            )
-        })?
-        .get(url)
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|_| {
-            RunnerFailure::new(
-                "download_failed",
-                "The signed update could not be downloaded.",
-            )
-        })?;
+async fn download(
+    url: &str,
+    target: &Path,
+    state_root: &Path,
+    operation_id: &str,
+) -> Result<(), RunnerFailure> {
+    report_progress(
+        state_root,
+        operation_id,
+        HostUpdateProgress::Downloading {
+            downloaded_bytes: 0,
+            total_bytes: None,
+        },
+    )?;
+    let response = download_response(url, operation_id).await?;
     let temporary = target.with_extension("partial");
+    // A killed downloader may leave a partial file; resume by downloading
+    // afresh, never treating unverified partial bytes as a complete artifact.
+    match fs::remove_file(&temporary) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(_) => {
+            return Err(RunnerFailure::new(
+                "download_storage_failed",
+                "Cannot reset the interrupted download.",
+            ));
+        }
+    }
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -232,9 +260,14 @@ async fn download(url: &str, target: &Path) -> Result<(), RunnerFailure> {
                 "Cannot create the download file.",
             )
         })?;
+    let total_bytes = response.content_length();
+    let mut downloaded_bytes = 0_u64;
+    let mut published_at = std::time::Instant::now();
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| {
+        let chunk = chunk.map_err(|error| {
+            let error = error.without_url();
+            tracing::error!(err = ?error, operation_id, "Signed update download was interrupted");
             RunnerFailure::new("download_failed", "The update download was interrupted.")
         })?;
         file.write_all(&chunk).map_err(|_| {
@@ -243,7 +276,27 @@ async fn download(url: &str, target: &Path) -> Result<(), RunnerFailure> {
                 "Cannot store the update download.",
             )
         })?;
+        downloaded_bytes = downloaded_bytes.saturating_add(chunk.len() as u64);
+        if published_at.elapsed() >= Duration::from_secs(1) {
+            report_progress(
+                state_root,
+                operation_id,
+                HostUpdateProgress::Downloading {
+                    downloaded_bytes,
+                    total_bytes,
+                },
+            )?;
+            published_at = std::time::Instant::now();
+        }
     }
+    report_progress(
+        state_root,
+        operation_id,
+        HostUpdateProgress::Downloading {
+            downloaded_bytes,
+            total_bytes,
+        },
+    )?;
     file.sync_all().map_err(|_| {
         RunnerFailure::new(
             "download_storage_failed",
@@ -265,6 +318,38 @@ async fn download(url: &str, target: &Path) -> Result<(), RunnerFailure> {
         })?;
     }
     Ok(())
+}
+
+async fn download_response(
+    url: &str,
+    operation_id: &str,
+) -> Result<reqwest::Response, RunnerFailure> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_mins(4))
+        .build()
+        .map_err(|error| {
+            // reqwest errors include the request URL; remove it before logging.
+            let error = error.without_url();
+            tracing::error!(err = ?error, operation_id, "Cannot initialize update downloader");
+            RunnerFailure::new(
+                "download_client_failed",
+                "Cannot initialize the downloader.",
+            )
+        })?
+        .get(url)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|error| {
+            let error = error.without_url();
+            tracing::error!(err = ?error, operation_id, "Signed update download request failed");
+            RunnerFailure::new(
+                "download_failed",
+                "The signed update could not be downloaded.",
+            )
+        })
 }
 
 fn validate_archive(archive: &Path) -> Result<(), RunnerFailure> {
@@ -590,14 +675,44 @@ fn transition(
         .journal
         .transition(&nonce, expected, next, unix_millis())?;
     if let Some((code, detail)) = error {
-        operation.journal.error_code = Some(code.chars().take(80).collect());
-        operation.journal.error_message = Some(detail.chars().take(160).collect());
+        if operation.journal.error_code.is_none() {
+            operation.journal.error_code = Some(code.chars().take(80).collect());
+            operation.journal.error_message = Some(detail.chars().take(160).collect());
+        } else {
+            operation.recovery_error = Some(code.chars().take(80).collect());
+        }
     }
+    operation.progress = match next {
+        HostUpdatePhase::RollingBack => Some(HostUpdateProgress::RollingBack),
+        HostUpdatePhase::AwaitingReconnect => Some(HostUpdateProgress::AwaitingReconnect),
+        phase if phase.is_terminal() => None,
+        _ => operation.progress,
+    };
     write_operation(state_root, &operation)?;
     if next == HostUpdatePhase::RollingBack || next.is_terminal() {
         clear_available_release(state_root)?;
     }
     Ok(())
+}
+
+fn report_progress(
+    state_root: &Path,
+    operation_id: &str,
+    progress: HostUpdateProgress,
+) -> Result<(), RunnerFailure> {
+    let write = || -> Result<(), Box<dyn std::error::Error>> {
+        let _lock = store::lock(&state_root.join("guardian.lock"))?;
+        let mut operation = read_operation(state_root, operation_id)?;
+        if operation.journal.phase != HostUpdatePhase::Installing {
+            return Err(io::Error::other("stale update progress").into());
+        }
+        operation.progress = Some(progress);
+        operation.journal.updated_at = unix_millis();
+        write_operation(state_root, &operation)?;
+        Ok(())
+    };
+    write()
+        .map_err(|_| RunnerFailure::new("journal_write_failed", "Cannot persist update progress."))
 }
 
 fn clear_available_release(state_root: &Path) -> io::Result<()> {

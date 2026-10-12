@@ -25,9 +25,9 @@ use companion_core::host_update::{
     HOST_UPDATE_GUARDIAN_CONTRACT_VERSION, HOST_UPDATE_JOURNAL_VERSION,
     HOST_UPDATE_UNOFFICIAL_BUILD_REASON, HostPlatform, HostUpdateCapability, HostUpdateDeadlines,
     HostUpdateGuardian, HostUpdateJournalV1, HostUpdateOperation, HostUpdatePhase,
-    HostUpdateRelayState, HostUpdateStatus, ReconnectReceipt, ReleaseAdmission,
-    ReleaseAdmissionError, ReleaseTargetV1, ReleaseTrust, SignedReleaseDescriptor,
-    admit_signed_release, verify_signed_release_descriptor,
+    HostUpdateProgress, HostUpdateRelayState, HostUpdateRunningArtifact, HostUpdateStatus,
+    ReconnectReceipt, ReleaseAdmission, ReleaseAdmissionError, ReleaseTargetV1, ReleaseTrust,
+    SignedReleaseDescriptor, admit_signed_release, verify_signed_release_descriptor,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -65,6 +65,10 @@ pub(super) struct OperationRecord {
     pub identity_pin: String,
     pub identity_manifest: PathBuf,
     pub previous_generation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<HostUpdateProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -80,6 +84,7 @@ struct GuardianInner {
     relay_probe: Arc<dyn Fn() -> HostUpdateRelayState + Send + Sync>,
     trust: Option<ReleaseTrust>,
     in_process: Mutex<()>,
+    running_artifact: Option<HostUpdateRunningArtifact>,
 }
 
 impl LinuxHostUpdateGuardian {
@@ -172,6 +177,7 @@ impl LinuxHostUpdateGuardian {
                 relay_probe,
                 trust,
                 in_process: Mutex::new(()),
+                running_artifact: running_artifact(),
             }),
         }
     }
@@ -308,7 +314,13 @@ impl LinuxHostUpdateGuardian {
         )
         .map_err(internal)?
         .map(|value| value.available);
-        let active_operation = self.active_operation()?.map(|value| operation_view(&value));
+        // The pointer retains the last outcome after a guardian/phone restart;
+        // only admission uses active_operation() to filter out terminal records.
+        let active_operation =
+            store::read_optional_json::<String>(&self.inner.state_root.join("active.json"))
+                .map_err(internal)?
+                .map(|id| self.read_operation(&id).map(|value| operation_view(&value)))
+                .transpose()?;
         Ok(HostUpdateStatus {
             platform: HostPlatform::LinuxX86_64,
             current_version: current.version,
@@ -324,6 +336,9 @@ impl LinuxHostUpdateGuardian {
 
 #[async_trait]
 impl HostUpdateGuardian for LinuxHostUpdateGuardian {
+    fn running_artifact(&self) -> Option<&HostUpdateRunningArtifact> {
+        self.inner.running_artifact.as_ref()
+    }
     fn capability(&self) -> HostUpdateCapability {
         if let Err(error) = self.bootstrap().and_then(|_| self.current()) {
             return HostUpdateCapability::disabled(error.message);
@@ -426,6 +441,24 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
     ) -> Result<ApplyHostUpdateAccepted, GuardianError> {
         let _process = self.inner.in_process.lock().await;
         let _lock = store::lock(&self.inner.state_root.join("guardian.lock")).map_err(internal)?;
+        if let Some(existing) = find_idempotency(&self.inner.state_root, &command.idempotency_key)?
+        {
+            if existing.journal.initiating_device_id == command.initiating_device_id
+                && existing.journal.target_fingerprint == command.target_fingerprint
+            {
+                if !existing.journal.phase.is_terminal() {
+                    start_runner()?;
+                }
+                return Ok(ApplyHostUpdateAccepted {
+                    operation_id: existing.journal.operation_id,
+                    phase: HostUpdatePhase::Accepted,
+                });
+            }
+            return Err(GuardianError::new(
+                GuardianErrorCode::IdempotencyConflict,
+                "idempotency_key_reused",
+            ));
+        }
         let bootstrap = self.bootstrap()?;
         let current = self.current()?;
         let cached: CachedRelease = store::read_json(&self.inner.state_root.join("available.json"))
@@ -447,21 +480,6 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
             return Err(GuardianError::new(
                 GuardianErrorCode::Locked,
                 "another_update_is_active",
-            ));
-        }
-        if let Some(existing) = find_idempotency(&self.inner.state_root, &command.idempotency_key)?
-        {
-            if existing.journal.initiating_device_id == command.initiating_device_id
-                && existing.journal.target_fingerprint == command.target_fingerprint
-            {
-                return Ok(ApplyHostUpdateAccepted {
-                    operation_id: existing.journal.operation_id,
-                    phase: HostUpdatePhase::Accepted,
-                });
-            }
-            return Err(GuardianError::new(
-                GuardianErrorCode::IdempotencyConflict,
-                "idempotency_key_reused",
             ));
         }
         if cached.available.release_sequence <= self.highest_sequence()? {
@@ -545,6 +563,8 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
             identity_pin: self.inner.identity_pin.clone(),
             identity_manifest: self.inner.identity_manifest.clone(),
             previous_generation,
+            progress: None,
+            recovery_error: None,
         };
         store::write_json(&self.operation_path(&operation_id), &record).map_err(internal)?;
         store::write_json(&self.inner.state_root.join("active.json"), &operation_id)
@@ -584,6 +604,7 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
             .journal
             .accept_reconnect(&nonce, &receipt, unix_millis())
             .map_err(|_| precondition("invalid_reconnect_receipt"))?;
+        operation.progress = None;
         store::write_json(&path, &operation).map_err(internal)?;
         store::write_json(
             &self.inner.state_root.join("highest-sequence.json"),
@@ -605,8 +626,33 @@ fn operation_view(value: &OperationRecord) -> HostUpdateOperation {
         started_at: value.journal.started_at,
         updated_at: value.journal.updated_at,
         error_code: value.journal.error_code.clone(),
-        error_message: value.journal.error_message.clone(),
+        error_message: value.journal.error_message.as_ref().map(|message| {
+            value.recovery_error.as_ref().map_or_else(
+                || message.clone(),
+                |code| format!("{message} Recovery also failed: {code}."),
+            )
+        }),
+        progress: value.progress.clone(),
     }
+}
+
+fn running_artifact() -> Option<HostUpdateRunningArtifact> {
+    // Resolve our own executable, never the mutable current link or another
+    // process's /proc entry (denied by user-service mount namespaces).
+    let executable = fs::canonicalize(std::env::current_exe().ok()?).ok()?;
+    let generation = executable.parent()?.parent()?;
+    let metadata: GenerationMetadataV1 =
+        store::read_json(&generation.join("metadata.json")).ok()?;
+    if metadata.schema_version != 1 || metadata.version != env!("CODEWIDE_COMPANION_VERSION") {
+        return None;
+    }
+    Some(HostUpdateRunningArtifact {
+        process_id: std::process::id(),
+        version: metadata.version,
+        build: metadata.build,
+        source_revision: metadata.source_revision,
+        artifact_digest: metadata.artifact_digest,
+    })
 }
 
 fn find_idempotency(root: &Path, key: &str) -> Result<Option<OperationRecord>, GuardianError> {

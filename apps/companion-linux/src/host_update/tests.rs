@@ -54,6 +54,8 @@ fn operation(id: &str, key: &str, sequence: u64, phase: HostUpdatePhase) -> Oper
         identity_pin: "d".repeat(64),
         identity_manifest: PathBuf::from("/tmp/codewide-test-identity.json"),
         previous_generation: format!("generations/{}", "a".repeat(64)),
+        progress: None,
+        recovery_error: None,
     }
 }
 
@@ -190,5 +192,55 @@ fn incompatible_guardian_state_or_rollback_requires_manual_update() {
     assert_eq!(
         admission_error(ReleaseAdmissionError::Replay).code,
         GuardianErrorCode::PreconditionFailed
+    );
+}
+
+#[tokio::test]
+async fn terminal_outcome_and_lost_acceptance_survive_restart_without_a_cached_release() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    install_generation(root);
+    let state = root.join("host-update-state");
+    let mut record = operation(
+        "upd_00000000000000000000000000000000",
+        "idem_00000000000000000000",
+        42,
+        HostUpdatePhase::Failed,
+    );
+    record.journal.error_code = Some("download_failed".to_owned());
+    record.journal.error_message = Some("The signed update could not be downloaded.".to_owned());
+    store::write_json(
+        &state
+            .join("operations")
+            .join(format!("{}.json", record.journal.operation_id)),
+        &record,
+    )
+    .expect("journal");
+    store::write_json(&state.join("active.json"), &record.journal.operation_id).expect("pointer");
+    let guardian =
+        LinuxHostUpdateGuardian::with_trust(root.to_path_buf(), state, Some(test_trust()));
+    let status = guardian
+        .status()
+        .await
+        .expect("status after process restart");
+    let outcome = status.active_operation.expect("retained terminal outcome");
+    assert_eq!(outcome.phase, HostUpdatePhase::Failed);
+    assert_eq!(outcome.error_code.as_deref(), Some("download_failed"));
+    let replay = guardian
+        .apply(ApplyHostUpdateCommand {
+            target_fingerprint: record.journal.target_fingerprint.clone(),
+            idempotency_key: record.idempotency_key.clone(),
+            initiating_device_id: record.journal.initiating_device_id.clone(),
+        })
+        .await
+        .expect("recover lost 202 after terminal failure");
+    assert_eq!(replay.operation_id, outcome.operation_id);
+    assert_eq!(
+        guardian
+            .operation(&replay.operation_id)
+            .await
+            .expect("durable result")
+            .error_code,
+        outcome.error_code
     );
 }

@@ -11,6 +11,7 @@ import {
 
 const UNAUTHORIZED_STATUS = 401;
 const MAX_ERROR_MESSAGE_LENGTH = 320;
+const DEFAULT_REQUEST_TIMEOUT_MILLISECONDS = 15_000;
 
 /** Narrow private HTTP operations consumed by the Connections resource. */
 export type HostUpdateTransport = {
@@ -56,14 +57,26 @@ export function createHostUpdateTransport(
   {
     basePath = "/v1/host-update",
     parseStatus = parseHostUpdateStatus,
+    requestTimeoutMilliseconds = DEFAULT_REQUEST_TIMEOUT_MILLISECONDS,
     subject = "Companion",
   }: {
     readonly basePath?: string;
     readonly parseStatus?: (value: unknown) => HostUpdateStatus;
+    readonly requestTimeoutMilliseconds?: number;
     readonly subject?: string;
   } = {},
 ): HostUpdateTransport {
-  const request = async (connectionId: string, path: string, init?: RequestInit) => {
+  const request = async ({
+    connectionId,
+    init,
+    path,
+    signal,
+  }: {
+    readonly connectionId: string;
+    readonly init: RequestInit | undefined;
+    readonly path: string;
+    readonly signal: AbortSignal;
+  }) => {
     const connection = authority
       .currentConnections()
       .find((candidate) => candidate.id === connectionId);
@@ -71,15 +84,18 @@ export function createHostUpdateTransport(
       throw new Error("Connection is disabled or missing");
     }
     const origin = await authority.nativeCompanionHttpOrigin(connection.id, connection.endpoint);
+    requireActiveRequest(signal, subject);
     const send = async (forceRefresh: boolean) => {
       const headers = new Headers(init?.headers);
       headers.set(
         "authorization",
         await authority.scopedHttpAuthorization(connection, forceRefresh),
       );
+      requireActiveRequest(signal, subject);
       return fetch(companionHttpUrl(origin, path), {
         ...init,
         headers,
+        signal,
       });
     };
     let response = await send(false);
@@ -97,8 +113,25 @@ export function createHostUpdateTransport(
     path: string,
     init?: RequestInit,
   ): Promise<unknown> => {
-    const value: unknown = await (await request(connectionId, path, init)).json();
-    return value;
+    const controller = new AbortController();
+    const expired = Promise.withResolvers<never>();
+    const timer = setTimeout(() => {
+      controller.abort();
+      expired.reject(new Error(`Could not read ${subject} update status in time. Try again.`));
+    }, requestTimeoutMilliseconds);
+    try {
+      // Native origin/session resolution and body reading can hang too. Bound
+      // the complete request, while aborting fetch and fencing any late send.
+      return await Promise.race([
+        request({ connectionId, init, path, signal: controller.signal }).then(async (response) => {
+          const value: unknown = await response.json();
+          return value;
+        }),
+        expired.promise,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   };
 
   return {
@@ -135,6 +168,12 @@ export function createHostUpdateTransport(
       );
     },
   };
+}
+
+function requireActiveRequest(signal: AbortSignal, subject: string): void {
+  if (signal.aborted) {
+    throw new Error(`${subject} update request timed out`);
+  }
 }
 
 async function responseError(response: Response, subject: string): Promise<HostUpdateHttpError> {

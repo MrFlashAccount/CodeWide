@@ -19,11 +19,7 @@ export function useHostUpdateProjection(
 }
 
 function canReachCompanion(connection: StoredConnection): boolean {
-  if (!connection.enabled) {
-    return false;
-  }
-  if (connection.health !== undefined) {
-    return connection.health === "online";
-  }
-  return connection.state === "live" || connection.state === "syncing";
+  // The authenticated HTTP probe is independent of the App Server/WebSocket
+  // health. Keep reading the guardian while that channel restarts or warms up.
+  return connection.enabled;
 }
