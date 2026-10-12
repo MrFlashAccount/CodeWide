@@ -195,9 +195,12 @@ const enabled = {
 
 /** A turn with no user message: a background task woke the agent. */
 function providerTurnRow(id: string, source: string, status: "completed" | "inProgress"): TurnRow {
-  const row = status === "completed" ? turnRow(id, source) : streamingTurnRow(id, [
-    { id: `${id}-agent`, phase: "final_answer", text: source, type: "agentMessage" },
-  ]);
+  const row =
+    status === "completed"
+      ? turnRow(id, source)
+      : streamingTurnRow(id, [
+          { id: `${id}-agent`, phase: "final_answer", text: source, type: "agentMessage" },
+        ]);
   return row;
 }
 
@@ -240,8 +243,9 @@ describe("continued responses", () => {
       "start",
       "end",
     ]);
-    // While the continuation runs, the head's answer is still the latest one shown.
-    expect(live[1]).toMatchObject({ parts: [expect.objectContaining({ kind: "markdownBlock" })] });
+    // The continuation owns the only answer slot even before it finishes.
+    expect(live[1]).toMatchObject({ parts: [{ kind: "empty" }] });
+    expect(live[2]).toMatchObject({ parts: [expect.objectContaining({ kind: "markdownBlock" })] });
   });
 
   it("keeps a turn without a user message alone when nothing precedes it", () => {

@@ -85,10 +85,11 @@ const FOLDED_PARTS: readonly VirtualizedTurnPart[] = [{ kind: "empty" }];
  * Draws everything from one user message to the next as one agent bubble:
  * a turn without a user message (a background task waking the agent)
  * continues the previous turn's bubble. The bubble reads like one turn: one
- * collapsed history, then the latest answer. Earlier answers fold into that history once the latest turn has
- * finished; the head keeps one slice for it. Row keys and per-turn
- * placement stay as projected, so a live continuation streams into the
- * existing bubble; rows outside a group keep their cached identity.
+ * collapsed history, then the latest turn's answer. Earlier answers fold into
+ * that history as soon as a continuation starts; the head keeps one slice for
+ * it. Row keys and per-turn placement stay as projected, so a live
+ * continuation streams into the existing bubble; rows outside a group keep
+ * their cached identity.
  */
 function groupContinuedResponses(
   items: readonly TimelineItem[],
@@ -111,10 +112,19 @@ function groupContinuedResponses(
       : [];
   });
   const groupSlices = new Map<readonly TimelineTurnItem[], number>();
+  const groupContent = new Map<readonly TimelineTurnItem[], boolean>();
   for (const row of kept) {
     const members = row.kind === "turnSlice" ? groups.get(row.item) : undefined;
     if (members !== undefined) {
       groupSlices.set(members, (groupSlices.get(members) ?? 0) + 1);
+      if (!groupContent.has(members)) {
+        groupContent.set(
+          members,
+          members.some(
+            (member) => projectTurnPresentation(member, null, false, false).hasAgentContent,
+          ),
+        );
+      }
     }
   }
   const seen = new Map<readonly TimelineTurnItem[], number>();
@@ -128,7 +138,11 @@ function groupContinuedResponses(
     return {
       ...row,
       bubble: slicePlacement(index, groupSlices.get(members) ?? 1),
-      group: { memberIndex: members.indexOf(row.item), members },
+      group: {
+        hasVisibleAgentContent: groupContent.get(members) ?? false,
+        memberIndex: members.indexOf(row.item),
+        members,
+      },
     };
   });
 }
