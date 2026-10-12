@@ -449,6 +449,33 @@ impl RolloutStore {
             .collect()
     }
 
+    /// Whether a rollback removed an indexed turn that started in
+    /// `from..before`. The index applies rollbacks wherever they occur in the
+    /// file, so a range without removals reads the same through any prefix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index cannot be read.
+    pub fn has_removed_turns(
+        &self,
+        file_id: &[u8; 32],
+        from: u64,
+        before: u64,
+    ) -> Result<bool, StoreError> {
+        if from >= before {
+            return Ok(false);
+        }
+        let start = offset_key(file_id, from);
+        let end = offset_key(file_id, before - 1);
+        let read = self.database.begin_read()?;
+        let removed = read.open_table(REMOVED_TURNS)?;
+        Ok(removed
+            .range(start.as_slice()..=end.as_slice())?
+            .next()
+            .transpose()?
+            .is_some())
+    }
+
     /// Resolves one turn without scanning the thread history.
     ///
     /// # Errors

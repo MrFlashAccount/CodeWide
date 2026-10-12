@@ -20,7 +20,8 @@ Codex-owned storage:
 
 - `rollout_store.rs` — the rollout tables inside the companion's index database (`RolloutStore`, `ROLLOUT_INDEX_SCHEMA`, `ROLLOUT_LOGIC_VERSION`, `TurnRef`, `RecordRef`, `FileState`); thread metadata and pins are written and read through `HostThreadIndex`.
 - `rollout.rs`, `rollout_monitor.rs`, `rollout_content.rs` — rollout indexing and metadata, the rollout file watcher, canonical command output (`RolloutContentSource`, a `CanonicalContentSource`).
-- `history.rs`, `history_questions.rs`, `history_service.rs` — turn projection from rollouts and history paging.
+- `history.rs`, `history_questions.rs`, `history_service.rs` — turn projection from rollouts and history paging. A paginated fork's pages continue past the start of its own rollout into the history it inherited.
+- `history_base.rs` — the `session_meta.history_base` of a paginated fork: the base thread and the byte offset of the fork point in its rollout. The inherited prefix is read from the base rollout, bounded at that offset; a turn the fork point cut ends there as interrupted.
 - `catalog.rs`, `catalog_visibility.rs`, `catalog_summary.rs` — the session catalog over `CODEX_HOME` rollouts and `state_5.sqlite`.
 - `resources.rs` — thread resources of Codex threads: the shared `agent-resources` reads over projections built from rollout records (compact redb store), plus `companion/threadChangeOutput/read` from the rollout.
 - `message_search/` — full-text search over stored messages: incremental rollout indexing into the shared `agent-search` schema, read through its `query` and `context`.
