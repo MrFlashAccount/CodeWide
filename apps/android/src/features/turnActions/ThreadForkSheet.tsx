@@ -291,7 +291,6 @@ function ForkAgentCard({
         <Text numberOfLines={1} style={styles.forkAgentName}>
           {name}
         </Text>
-        <Text style={styles.forkAgentTag}>{agent.handoff ? "New agent" : "This agent"}</Text>
       </View>
       <Text style={styles.forkAgentOutcome}>{copy.outcome}</Text>
       <Text style={styles.forkAgentDetail}>{copy.detail}</Text>
@@ -398,15 +397,14 @@ function ForkThinking({
   }
   const selected = clampModelEffort(row, selection.effort) ?? row.defaultEffort;
   return (
-    <ForkSection label="Thinking">
-      <ThinkingLevelSlider
-        key={`${row.provider}:${row.id}`}
-        levels={modelEffortLevels(row)}
-        onSelect={onSelect}
-        selected={selected}
-        testID="fork-thinking-level"
-      />
-    </ForkSection>
+    // The slider names itself ("Thinking level"); a section label would repeat it.
+    <ThinkingLevelSlider
+      key={`${row.provider}:${row.id}`}
+      levels={modelEffortLevels(row)}
+      onSelect={onSelect}
+      selected={selected}
+      testID="fork-thinking-level"
+    />
   );
 }
 

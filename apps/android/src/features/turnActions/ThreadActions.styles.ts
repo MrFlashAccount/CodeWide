@@ -71,15 +71,6 @@ export const styles = StyleSheet.create({
     color: colors.text,
     fontWeight: typeWeight.medium,
   },
-  forkAgentTag: {
-    ...typeScale.label,
-    backgroundColor: colors.surfaceContainerHighest,
-    borderRadius: radii.pill,
-    color: colors.textDim,
-    overflow: "hidden",
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.optical,
-  },
   forkButton: {
     alignItems: "center",
     alignSelf: "stretch",
