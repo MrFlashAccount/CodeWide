@@ -7,6 +7,7 @@ import { composerUploads, type ComposerUpload } from "../data/composer-uploads";
 import type { GetTransferAccess, PrivateAssetSource } from "../data/private-transfer";
 import type { StoredDraftAttachment } from "../data/thread-ui-state-types";
 import { spacing } from "../theme";
+import { useAppDialog } from "../ui/AppDialog";
 import { AttachmentCard } from "./AttachmentCard";
 import { isAttachmentVideo, useAttachmentVideoPreview } from "./AttachmentVideoPreview";
 import {
@@ -142,6 +143,7 @@ function openComposerAttachment(options: ComposerAttachmentOpenOptions): void {
 function ComposerCard(props: ComposerCardProps) {
   const { attachment, owner, upload } = props;
   const [failedUri, setFailedUri] = useState<string | null>(null);
+  const dialog = useAppDialog();
   const openImage = useImagePreview();
   const openDocument = useDocumentPreview();
   const openRouteDocument = useContext(ThreadCodeDocumentContext);
@@ -227,6 +229,20 @@ function ComposerCard(props: ComposerCardProps) {
       {...(ready || ((video || attachment.kind === "image") && uri !== null)
         ? { onOpen: open }
         : {})}
+      onErrorDetails={() => {
+        if (upload?.state.status !== "error") {
+          return;
+        }
+        dialog.error(`Could not upload ${attachment.name}`, upload.state.message, [
+          { style: "cancel", text: "Close" },
+          {
+            onPress: () => {
+              composerUploads.retry(owner.scope, attachment.id);
+            },
+            text: "Retry",
+          },
+        ]);
+      }}
       onRemove={() => {
         composerUploads.remove(owner.scope, attachment.id);
         owner.onRemove(attachment.id);

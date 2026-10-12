@@ -19,7 +19,7 @@ use codewide_companion::{
     catalog::SessionCatalog,
     content::{ContentProjector, PrivateContentService},
     dictation::DictationService,
-    file_uploads::WorkspaceUploadStore,
+    file_uploads::FileTransfer,
     files::FileService,
     history::digest_turn,
     history_service::HistoryService,
@@ -1301,17 +1301,15 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         .clone()
         .unwrap_or_else(|| state_directory.join("identity"));
     let identity = CompanionIdentity::load_or_create(&identity_directory)?;
-    // Retain the historical filename: V1 uploads already persist ownership here.
-    let workspace_upload_staging = WorkspaceUploadStore::open(
-        state_directory.join("sync-v2-workspace-uploads.redb"),
-        files.clone(),
-    )?;
-    workspace_upload_staging.start_periodic_gc();
     let token: Arc<str> = Arc::from(token);
     let registry = Arc::new(DeviceRegistry::open(token, options.device_registry, None).await?);
     tunnels.start_revocation_cleanup(registry.subscribe_authorization_changes());
-
-    workspace_upload_staging.start_revocation_cleanup(registry.subscribe_authorization_changes());
+    // Retain the historical filename: V1 uploads already persist ownership here.
+    let file_transfer = FileTransfer::for_devices(
+        files,
+        state_directory.join("sync-v2-workspace-uploads.redb"),
+        &registry,
+    )?;
     let bootstrap_listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     bootstrap_listener.set_nonblocking(true)?;
     let bootstrap_tls_target = bootstrap_listener.local_addr()?;
@@ -1338,7 +1336,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     );
     let services = server::CompanionServices {
         build_shelf: configured_build_shelf()?,
-        files: Some(files),
+        files: Some(file_transfer),
         content: Some(content),
         image_previews: Some(image_previews),
         media: Some(media),
@@ -1358,7 +1356,6 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         inner_tls_target: Some(inner_tls_target),
         inner_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(256))),
         relay: Some(relay),
-        workspace_upload_staging: Some(workspace_upload_staging),
     };
     let bootstrap_tls = codewide_companion::device_tls::bootstrap_config(&identity)?;
     let inner_tls = codewide_companion::device_tls::device_bound_config(

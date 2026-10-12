@@ -14,6 +14,8 @@ export interface AttachmentCardProps {
   readonly icon?: ComponentProps<typeof Ionicons>["name"];
   readonly label: string;
   readonly name: string;
+  /** Opens the complete, copyable upload error; the card shows only a truncated summary. */
+  onErrorDetails?: () => void;
   onOpen?: () => void;
   onRemove?: () => void;
   onRetry?: () => void;
@@ -74,6 +76,11 @@ export function AttachmentCard(props: AttachmentCardProps) {
               <ActivityIndicator color={colors.accent} size="small" />
             </View>
           )}
+          {failed && (
+            <View style={styles.failedBadge}>
+              <Ionicons color={colors.red} name="alert-circle" size={iconSize.inline} />
+            </View>
+          )}
         </View>
         <View style={styles.details}>
           <Text numberOfLines={1} style={styles.name}>
@@ -87,11 +94,23 @@ export function AttachmentCard(props: AttachmentCardProps) {
           <Text numberOfLines={2} style={[styles.subtitle, failed && styles.error]}>
             {subtitle}
           </Text>
-          {failed && (
-            <Text numberOfLines={2} style={styles.subtitle}>
-              {state.message}
-            </Text>
-          )}
+          {failed &&
+            (props.onErrorDetails === undefined ? (
+              <Text numberOfLines={2} selectable style={styles.subtitle}>
+                {state.message}
+              </Text>
+            ) : (
+              <Pressable
+                accessibilityHint="Shows the full error with a copy action"
+                accessibilityLabel={`Upload error details for ${props.name}`}
+                accessibilityRole="button"
+                onPress={props.onErrorDetails}
+              >
+                <Text numberOfLines={2} style={[styles.subtitle, styles.errorDetails]}>
+                  {state.message}
+                </Text>
+              </Pressable>
+            ))}
           {busy && percent !== null && (
             <View
               accessibilityLabel={`${phase} ${props.name}`}
@@ -177,9 +196,17 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   error: { color: colors.red },
+  errorDetails: { textDecorationLine: "underline" },
   excerpt: {
     ...typeScale.caption,
     color: colors.textMuted,
+  },
+  failedBadge: {
+    backgroundColor: colors.surfaceContainerHigh,
+    borderRadius: radii.pill,
+    bottom: spacing.optical,
+    position: "absolute",
+    right: spacing.optical,
   },
   image: {
     height: "100%",

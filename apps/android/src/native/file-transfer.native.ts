@@ -239,7 +239,9 @@ export function startUpload(
         }
         const bodyText = await response.text();
         if (!response.ok) {
-          throw new Error(`Upload failed (${String(response.status)}): ${bodyText.slice(0, 200)}`);
+          throw new Error(
+            `Upload failed (HTTP ${String(response.status)}): ${bodyText.slice(0, 200)}`,
+          );
         }
         const parsedBody = unknownRecord(JSON.parse(bodyText));
         if (
@@ -305,7 +307,11 @@ async function uploadStatus(
     throw new Error("Host returned invalid completed-upload metadata");
   }
   if (!complete && response.status !== 204 && response.status !== 404) {
-    throw new Error(`Upload resume check failed (${String(response.status)})`);
+    // HEAD has no body; Companion mirrors its bounded error message into a header.
+    const reason = response.headers.get("x-codewide-error");
+    throw new Error(
+      `Upload resume check failed (HTTP ${String(response.status)})${reason === null ? "" : `: ${reason}`}`,
+    );
   }
   return { complete, offset };
 }

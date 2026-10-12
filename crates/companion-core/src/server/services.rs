@@ -613,7 +613,7 @@ async fn file_text_read(
     head_only: bool,
     preview: bool,
 ) -> Response {
-    let Some(files) = state.services.files.clone() else {
+    let Some(files) = state.services.file_service() else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if headers.get("origin").is_some()
@@ -662,7 +662,7 @@ async fn file_image_preview_read(
     preview: bool,
 ) -> Response {
     let (Some(files), Some(image_previews)) = (
-        state.services.files.clone(),
+        state.services.file_service(),
         state.services.image_previews.clone(),
     ) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -771,7 +771,7 @@ async fn file_read(
     head_only: bool,
     preview: bool,
 ) -> Response {
-    let Some(files) = state.services.files.clone() else {
+    let Some(files) = state.services.file_service() else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if headers.get("origin").is_some()
@@ -790,7 +790,7 @@ async fn file_upload_status(
     Query(query): Query<FileQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(files) = state.services.files.clone() else {
+    let Some(files) = state.services.file_service() else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if matches!(&state.authorization, Authorization::Registry(_)) {
@@ -810,7 +810,7 @@ async fn file_upload_cancel(
     Query(query): Query<FileQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(files) = state.services.files.clone() else {
+    let Some(files) = state.services.file_service() else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if matches!(&state.authorization, Authorization::Registry(_)) {
@@ -831,7 +831,7 @@ async fn file_upload(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
-    let Some(files) = state.services.files.clone() else {
+    let Some(files) = state.services.file_service() else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if matches!(&state.authorization, Authorization::Registry(_)) {
