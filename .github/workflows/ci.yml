@@ -90,6 +90,9 @@ jobs:
       - name: Validate release compatibility
         run: pnpm release:compatibility
 
+      - name: Run repository-wide gates
+        run: pnpm validate:repo
+
       - name: Check, test, and build affected Linux and Android projects
         run: pnpm nx affected -t check test build --exclude=macos --parallel=3
 
