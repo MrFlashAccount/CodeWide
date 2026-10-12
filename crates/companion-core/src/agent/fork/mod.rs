@@ -19,7 +19,7 @@ use tracing::{error, info, warn};
 use crate::{
     agent::{
         client_wire::{
-            FORK_INITIAL_PROMPT_FIELD, PROVIDER_FIELD,
+            FORK_INITIAL_PROMPT_FIELD, PROVIDER_FIELD, decode,
             gateway::{ClientWireGateway, RpcFailure, Target, default_model},
             observe::{TurnFact, turn_fact},
         },
@@ -332,13 +332,16 @@ fn text_field(params: &Value, field: &str) -> Option<String> {
 }
 
 /// The fork's working directory and settings: the request's `cwd`, `model`
-/// and `permissions`, else the source thread's (the target's default model).
+/// and `permissions`, else the source thread's (the target's default model);
+/// the request's `config.model_reasoning_effort` and `serviceTier`, else the
+/// target's defaults (the source's values belong to another provider).
 async fn fork_settings(
     target: &Arc<dyn AgentProvider>,
     source: &crate::agent::model::AgentThread,
     params: &Value,
 ) -> Result<(String, ThreadSettings), RpcFailure> {
-    let model = match text_field(params, "model") {
+    let requested = decode::requested_settings(params);
+    let model = match requested.model {
         Some(model) => model,
         None => default_model(target).await?,
     };
@@ -351,9 +354,9 @@ async fn fork_settings(
         text_field(params, "cwd").unwrap_or_else(|| source.cwd.clone()),
         ThreadSettings {
             model,
-            effort: None,
+            effort: requested.effort,
             permission_profile,
-            service_tier: None,
+            service_tier: requested.service_tier,
         },
     ))
 }
@@ -655,6 +658,65 @@ mod tests {
         assert_eq!(
             harness.fork.inject("turn/start", turn_start(&forked)),
             turn_start(&forked)
+        );
+        Ok(())
+    }
+
+    /// A same-provider fork reaches the native surface with the Codex
+    /// `ThreadForkParams` execution overrides intact.
+    #[test]
+    fn a_native_fork_keeps_the_model_effort_and_service_tier() {
+        let mut params = json!({"threadId": "t", "model": "m", "serviceTier": "priority",
+            "config": {"model_reasoning_effort": "high"},
+            "codewideAgentProvider": "codex", "codewideInitialPrompt": "x"});
+        strip_extension_fields(&mut params);
+        assert_eq!(
+            params,
+            json!({"threadId": "t", "model": "m", "serviceTier": "priority",
+                "config": {"model_reasoning_effort": "high"}})
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cross_provider_fork_creates_the_target_with_the_requested_effort_and_service_tier()
+    -> TestResult {
+        let harness = harness(true).await?;
+        fork(
+            &harness,
+            &json!({"threadId": SOURCE, "codewideAgentProvider": "claude", "model": "opus",
+                "serviceTier": "priority", "config": {"model_reasoning_effort": "high"}}),
+        )
+        .await
+        .map_err(|failure| failure.message)?;
+        fork(
+            &harness,
+            &json!({"threadId": SOURCE, "codewideAgentProvider": "claude",
+                "serviceTier": "", "config": {"model_reasoning_effort": ""}}),
+        )
+        .await
+        .map_err(|failure| failure.message)?;
+        let settings: Vec<ThreadSettings> = harness
+            .claude
+            .created()
+            .into_iter()
+            .map(|created| created.settings)
+            .collect();
+        assert_eq!(
+            settings,
+            [
+                ThreadSettings {
+                    model: "opus".into(),
+                    effort: Some("high".into()),
+                    permission_profile: ":workspace".into(),
+                    service_tier: Some("priority".into()),
+                },
+                ThreadSettings {
+                    model: "claude-default".into(),
+                    effort: None,
+                    permission_profile: ":workspace".into(),
+                    service_tier: None,
+                },
+            ]
         );
         Ok(())
     }

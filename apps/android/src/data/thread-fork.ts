@@ -8,13 +8,17 @@ export type ThreadForkBoundary =
   | { kind: "before"; turnId: string };
 
 /**
- * Another agent to continue the fork with: a provider from the Companion's
- * provider-aware model catalog and one of its models. `null` keeps the source
- * thread's agent and settings.
+ * The agent and settings the fork continues with: a provider from the
+ * Companion's provider-aware model catalog, one of its models, its thinking
+ * level and service tier. `null` keeps the source thread's agent and settings.
  */
 export type ThreadForkTarget = {
+  /** Thinking level; `null` leaves the model's default (or a model without levels). */
+  readonly effort: string | null;
   readonly model: string;
   readonly provider: AgentProviderId;
+  /** Catalog service tier id (Fast or explicit standard); `null` leaves the server default. */
+  readonly serviceTier: string | null;
 };
 
 export type ThreadForkOptions = {
@@ -48,9 +52,21 @@ export function buildThreadForkParams(
       : boundary.kind === "before"
         ? { beforeTurnId: requiredId(boundary.turnId, "Before turn id") }
         : {}),
-    ...(target === null
-      ? {}
-      : { codewideAgentProvider: target.provider, model: requiredId(target.model, "Model") }),
+    ...(target === null ? {} : forkTargetParams(target)),
+  };
+}
+
+/**
+ * The target's `thread/fork` fields, in the same wire shape as `thread/start`:
+ * the thinking level as the `model_reasoning_effort` config override and the
+ * service tier as `serviceTier`, each only when chosen.
+ */
+function forkTargetParams(target: ThreadForkTarget): Partial<CodewideThreadForkParams> {
+  return {
+    codewideAgentProvider: target.provider,
+    model: requiredId(target.model, "Model"),
+    ...(target.effort === null ? {} : { config: { model_reasoning_effort: target.effort } }),
+    ...(target.serviceTier === null ? {} : { serviceTier: target.serviceTier }),
   };
 }
 

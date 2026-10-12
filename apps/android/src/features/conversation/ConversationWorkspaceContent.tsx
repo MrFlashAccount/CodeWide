@@ -3,7 +3,7 @@ import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import { agentProviders } from "../../data/workspace-runtime";
 import { threadOpenElsewhere } from "../../data/threadDirectInput";
 import { ConversationComposition } from "./ConversationComposition";
-import { forkOffer } from "../turnActions/forkTargets";
+import { forkOffer, type ForkThreadSettings } from "../turnActions/forkTargets";
 import { threadAgentAccounts, threadAgentActions } from "./threadAgentActions";
 import type { RenderConversationWorkspaceContentProps } from "./ConversationWorkspaceContent.types";
 /**
@@ -49,7 +49,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
             : () =>
                 forkOffer(
                   remoteThread,
-                  serverThreadModel(remoteThread),
+                  serverThreadSettings(remoteThread),
                   props.runtime.resources?.turnControls.get(props.activeControlsResourceId ?? "")
                     ?.value?.models ?? [],
                 ),
@@ -196,7 +196,12 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
   );
 }
 
-/** The model the server reports for the thread, the composer chip's settled value. */
-function serverThreadModel(thread: Thread | null): string | null {
-  return thread === null ? null : (projectedThreadExecutionSettings(thread)?.model ?? null);
+/** The settings the server reports for the thread, the composer chips' settled values. */
+function serverThreadSettings(thread: Thread | null): ForkThreadSettings {
+  const settings = thread === null ? null : projectedThreadExecutionSettings(thread);
+  return {
+    effort: settings?.effort ?? null,
+    model: settings?.model ?? null,
+    serviceTier: settings?.serviceTier ?? null,
+  };
 }
