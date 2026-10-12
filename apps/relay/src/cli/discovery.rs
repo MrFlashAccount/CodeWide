@@ -117,51 +117,65 @@ pub fn access_denied(target: &Target) -> codewide_relay::Error {
     )
 }
 
-pub async fn public_address(explicit: Option<&str>, port: u16) -> Result<String> {
+pub async fn public_addresses(explicit: Option<&str>, port: u16) -> Result<Vec<String>> {
     if let Some(address) = explicit {
-        return checked_address(address);
+        return checked_address(address).map(|address| vec![address]);
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(4))
         .redirect(reqwest::redirect::Policy::none())
         .https_only(true)
         .build()?;
-    let result = async {
-        let mut response = client
-            .get("https://api.ipify.org")
-            .send()
-            .await?
-            .error_for_status()?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            if bytes.len() + chunk.len() > 64 {
-                return Err("Public IP response is oversized".into());
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        let address: IpAddr = std::str::from_utf8(&bytes)?.trim().parse()?;
-        Ok::<_, codewide_relay::Error>(std::net::SocketAddr::new(address, port).to_string())
+    let (ipv4, ipv6) = tokio::join!(
+        discover(&client, "https://api.ipify.org", port, false),
+        discover(&client, "https://api6.ipify.org", port, true),
+    );
+    let addresses: Vec<_> = [ipv4.ok(), ipv6.ok()].into_iter().flatten().collect();
+    if addresses.is_empty() {
+        return Err("Cannot detect a public IP. Run pair --address <public-IP:port> (use the external port if your router maps it).".into());
     }
-    .await;
-    result.map_err(|_| "Cannot detect public IP. Run pair --address <public-IP:port> (use the external port if your router maps it).".into())
+    Ok(addresses)
+}
+
+async fn discover(
+    client: &reqwest::Client,
+    endpoint: &str,
+    port: u16,
+    ipv6: bool,
+) -> Result<String> {
+    let mut response = client.get(endpoint).send().await?.error_for_status()?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if bytes.len() + chunk.len() > 64 {
+            return Err("Public IP response is oversized".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let address: IpAddr = std::str::from_utf8(&bytes)?.trim().parse()?;
+    if address.is_ipv6() != ipv6 {
+        return Err("Public IP service returned the wrong address family".into());
+    }
+    Ok(std::net::SocketAddr::new(address, port).to_string())
 }
 
 fn checked_address(value: &str) -> Result<String> {
-    let uri: tokio_tungstenite::tungstenite::http::uri::Authority = value.parse()?;
-    if uri.port_u16().is_none_or(|port| port == 0)
-        || value.contains('@')
-        || value.chars().any(char::is_whitespace)
-    {
-        return Err("Address must be a DNS name or IP with an explicit nonzero port".into());
+    let address: std::net::SocketAddr = value.parse().map_err(
+        |_| "Address must be an IPv4 or bracketed IPv6 address with an explicit nonzero port",
+    )?;
+    if address.port() == 0 {
+        return Err(
+            "Address must be an IPv4 or bracketed IPv6 address with an explicit nonzero port"
+                .into(),
+        );
     }
-    Ok(value.to_owned())
+    Ok(address.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn parses_service_arguments_and_rejects_unsafe_addresses() {
+    fn parses_service_arguments_and_rejects_unsafe_addresses() -> Result<()> {
         assert_eq!(
             state_argument(&["relay", "--state", "/var/lib/relay state"]),
             Some("/var/lib/relay state")
@@ -173,13 +187,15 @@ mod tests {
         for address in [
             "host",
             "host:0",
+            "relay.example:8780",
             "https://host:8780",
             "user@host:8780",
             "host:8780\u{1b}[2J",
         ] {
             assert!(checked_address(address).is_err());
         }
-        assert!(checked_address("[::1]:8780").is_ok());
+        assert_eq!(checked_address("203.0.113.42:8780")?, "203.0.113.42:8780");
+        assert_eq!(checked_address("[2001:db8::1]:8780")?, "[2001:db8::1]:8780");
         let target = Target {
             state: PathBuf::from("/var/lib/codewide-relay"),
             admin_group: Some("codewide-relay".into()),
@@ -187,5 +203,6 @@ mod tests {
         let message = access_denied(&target).to_string();
         assert!(message.contains("codewide-relay group"));
         assert!(!message.contains("sudo"));
+        Ok(())
     }
 }

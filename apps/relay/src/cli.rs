@@ -10,6 +10,7 @@ use codewide_relay::{
     server::{Relay, serve},
     transport_tls::RelayTlsIdentity,
 };
+use socket2::{Domain, Socket, Type};
 use std::{
     io::IsTerminal, os::unix::fs::PermissionsExt, path::PathBuf, process::ExitCode, time::Duration,
 };
@@ -130,9 +131,9 @@ async fn execute(cli: &Cli) -> Result<ExitCode> {
             else {
                 return Err("The Relay service returned an incompatible status response".into());
             };
-            let endpoint = discovery::public_address(cli.address.as_deref(), port).await?;
+            let endpoints = discovery::public_addresses(cli.address.as_deref(), port).await?;
             socket = UnixStream::connect(target.state.join(SOCKET)).await?;
-            return presentation::pair(socket, &endpoint).await;
+            return presentation::pair(socket, &endpoints).await;
         }
         Some(Command::Status) | None => Request::Status,
         Some(Command::Invite { route }) => Request::Invite {
@@ -170,7 +171,7 @@ async fn run_server(cli: &Cli) -> Result<()> {
     let relay =
         Relay::new(registry.clone()).with_updater(codewide_relay::update::RelayUpdater::new(&root));
     let port = cli.port.unwrap_or(8780);
-    let listener = TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await?;
+    let listener = public_listener(port)?;
     let control = ControlServer::bind(
         &root,
         registry,
@@ -199,6 +200,27 @@ async fn run_server(cli: &Cli) -> Result<()> {
     );
     signal_task.abort();
     result.map(|_| ())
+}
+
+fn public_listener(port: u16) -> std::io::Result<TcpListener> {
+    dual_stack_listener(port).or_else(|_| ipv4_listener(port))
+}
+
+fn dual_stack_listener(port: u16) -> std::io::Result<TcpListener> {
+    let ipv6 = Socket::new(Domain::IPV6, Type::STREAM, None)?;
+    ipv6.set_only_v6(false)?;
+    ipv6.bind(&std::net::SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port)).into())?;
+    ipv6.listen(1024)?;
+    ipv6.set_nonblocking(true)?;
+    TcpListener::from_std(ipv6.into())
+}
+
+fn ipv4_listener(port: u16) -> std::io::Result<TcpListener> {
+    let ipv4 = Socket::new(Domain::IPV4, Type::STREAM, None)?;
+    ipv4.bind(&std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, port)).into())?;
+    ipv4.listen(1024)?;
+    ipv4.set_nonblocking(true)?;
+    TcpListener::from_std(ipv4.into())
 }
 
 async fn shutdown_signal() -> std::io::Result<()> {

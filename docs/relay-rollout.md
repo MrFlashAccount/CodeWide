@@ -161,9 +161,9 @@ For macOS, run this on the Relay host:
 codewide-relay
 ```
 
-Choose **Connect a computer** in the menu. The Ratatui panel displays the public
-IP and the running listener's port. In
-CodeWide, open **Advanced → Add Relay**, enter that `IP:port`, then click
+Choose **Connect a computer** in the menu. The Ratatui panel displays every
+detected public IPv4 and IPv6 address with the running listener's port. In
+CodeWide, open **Advanced → Add Relay**, enter either reachable `IP:port`, then click
 **Connect**. Check that the same four symbols appear in CodeWide and the Relay panel, then
 press **Enter** in that terminal. There is no JSON or key to copy. CodeWide
 supplies its computer name as the route label.
@@ -180,8 +180,9 @@ configuration and establishes the pinned, authenticated control connection.
 revokes any uncommitted route. A failed attempt restores the Mac's previous
 Relay configuration. The Relay does not open enrollment after a restart.
 
-Automatic public IP discovery uses HTTPS to `api.ipify.org`; it cannot discover
-an externally remapped port. Supply the reachable endpoint when needed:
+Automatic public IP discovery uses HTTPS to `api.ipify.org` and
+`api6.ipify.org`; a missing address family is omitted. It cannot discover an
+externally remapped port. Supply the reachable endpoint when needed:
 
 ```sh
 codewide-relay pair --address 203.0.113.10:8780

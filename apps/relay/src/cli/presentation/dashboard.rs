@@ -276,16 +276,16 @@ async fn connect(
     interrupt: &mut Signal,
 ) -> Result<Option<ExitCode>> {
     let preparing = async {
-        let endpoint = discovery::public_address(address, port).await?;
+        let endpoints = discovery::public_addresses(address, port).await?;
         let socket = UnixStream::connect(state.join(SOCKET)).await?;
-        Ok::<_, codewide_relay::Error>((endpoint, socket))
+        Ok::<_, codewide_relay::Error>((endpoints, socket))
     };
-    let (endpoint, socket) = tokio::select! {
+    let (endpoints, socket) = tokio::select! {
         _ = terminate.recv() => return Ok(Some(PairExit::Terminated.exit_code())),
         _ = interrupt.recv() => return Ok(Some(PairExit::Interrupted.exit_code())),
         prepared = preparing => prepared?,
     };
-    match pair_on_screen(socket, &endpoint, screen, terminate, interrupt, true).await {
+    match pair_on_screen(socket, &endpoints, screen, terminate, interrupt, true).await {
         Ok(exit @ (PairExit::Interrupted | PairExit::Terminated)) => Ok(Some(exit.exit_code())),
         Ok(PairExit::Cancelled) => Ok(None),
         _ => wait_for_back(terminate, interrupt).await,
