@@ -1,0 +1,300 @@
+//! Classification of the messages of one conversation level into the few
+//! entry kinds the history needs. Structural and total: anything
+//! unrecognized is skipped. Pure.
+//!
+//! - An assistant message, or a user message carrying `tool_result` blocks,
+//!   is a frame for the turn builder (the same classification as live). An
+//!   assistant message that is no model answer (the placeholder Claude writes
+//!   for an interrupted turn) is skipped, so it opens no turn.
+//! - A user message whose `origin` is not a person (`origin.kind` other than
+//!   `human`: task notification, peer message) wakes the agent: it is never
+//!   shown as a user message. A task notification also reports a sub-agent's
+//!   final status. Interactive Claude Code stamps a person's prompts with
+//!   `origin: {kind: "human"}`; SDK-driven sessions store them without one.
+//! - `isQueuedCommand` marks a message Claude delivered while the agent was
+//!   busy (queued prompt, notification): it belongs to the running turn.
+//! - `[Request interrupted by user…]` ends the current turn as interrupted.
+//! - The compact summary marks a compaction; the system message right before
+//!   it is the compact boundary, whose uuid anchors the turn the live
+//!   compaction ran in.
+//! - Meta messages (`isMeta`: injected reminders, skill bodies) and
+//!   command/markup echoes (`<command-name>`, `<local-command-stdout>`,
+//!   `<system-reminder>`…) are hidden; every other top-level user message is
+//!   a prompt, with its text and image blocks.
+//! - Only messages of one conversation level are read: the main conversation
+//!   (`parent_tool_use_id` null, as live) or one sub-agent transcript (its
+//!   spawning tool call). Stored sidecar rows carry no `parent_tool_use_id`;
+//!   the caller reads them as their own level.
+
+use agent_core::model::UserContent;
+use serde_json::Value;
+
+use super::{
+    agents::{TaskNotification, task_notification_of},
+    frames::{ClaudeFrame, classify_frame, origin_kind},
+    json::{JsonRecord, elements, is_true, is_true2, record, record_of, str_of},
+};
+
+/// The prompt that opens a replacement session's history prefix; it is not
+/// the person's first prompt.
+pub const HISTORY_HEADER: &str = "[Historical conversation from this thread]";
+const INTERRUPT_MARKER: &str = "[Request interrupted by user";
+
+/// One classified stored message.
+#[derive(Clone, Debug, PartialEq)]
+pub enum HistoryEntry {
+    Prompt {
+        content: Vec<UserContent>,
+        /// Delivered while the agent was busy: part of the running turn.
+        queued: bool,
+        timestamp_ms: i64,
+        uuid: String,
+    },
+    Interrupt {
+        timestamp_ms: i64,
+        uuid: String,
+    },
+    Wake {
+        /// A task notification's facts, `None` for other wakes.
+        notification: Option<TaskNotification>,
+        queued: bool,
+        timestamp_ms: i64,
+        uuid: String,
+    },
+    Compaction {
+        timestamp_ms: i64,
+        uuid: String,
+    },
+    Frame {
+        frame: ClaudeFrame,
+        timestamp_ms: i64,
+        uuid: String,
+    },
+}
+
+impl HistoryEntry {
+    #[must_use]
+    pub fn uuid(&self) -> &str {
+        match self {
+            Self::Prompt { uuid, .. }
+            | Self::Interrupt { uuid, .. }
+            | Self::Wake { uuid, .. }
+            | Self::Compaction { uuid, .. }
+            | Self::Frame { uuid, .. } => uuid,
+        }
+    }
+
+    #[must_use]
+    pub fn timestamp_ms(&self) -> i64 {
+        match self {
+            Self::Prompt { timestamp_ms, .. }
+            | Self::Interrupt { timestamp_ms, .. }
+            | Self::Wake { timestamp_ms, .. }
+            | Self::Compaction { timestamp_ms, .. }
+            | Self::Frame { timestamp_ms, .. } => *timestamp_ms,
+        }
+    }
+}
+
+/// Command echoes, local command output and injected reminders start with a tag.
+fn is_markup(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    let mut characters = trimmed.chars();
+    if characters.next() != Some('<') {
+        return false;
+    }
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+    characters
+        .find(|character| {
+            !(character.is_ascii_alphanumeric() || *character == '_' || *character == '-')
+        })
+        .is_some_and(|character| character.is_whitespace() || character == '>')
+}
+
+/// Text and image blocks of a stored user message.
+fn user_blocks(content: Option<&Value>) -> Vec<UserContent> {
+    if let Some(text) = content.and_then(Value::as_str) {
+        return vec![UserContent::Text {
+            text: text.to_owned(),
+        }];
+    }
+    elements(content)
+        .iter()
+        .filter_map(|block| {
+            let block = record(block)?;
+            match str_of(block, "type") {
+                Some("text") => Some(UserContent::Text {
+                    text: str_of(block, "text").unwrap_or_default().to_owned(),
+                }),
+                Some("image") => {
+                    let source = record_of(block, "source")?;
+                    let media_type = str_of(source, "media_type").unwrap_or("image/png");
+                    let data = str_of(source, "data").unwrap_or_default();
+                    Some(UserContent::Image {
+                        url: format!("data:{media_type};base64,{data}"),
+                    })
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn has_tool_result(content: Option<&Value>) -> bool {
+    elements(content).iter().any(|block| {
+        record(block).is_some_and(|block| str_of(block, "type") == Some("tool_result"))
+    })
+}
+
+fn first_text(content: &[UserContent]) -> &str {
+    content
+        .iter()
+        .find_map(|block| match block {
+            UserContent::Text { text } => Some(text.as_str()),
+            UserContent::Image { .. } | UserContent::LocalImage { .. } => None,
+        })
+        .unwrap_or_default()
+}
+
+struct StoredMessage<'a> {
+    raw: &'a JsonRecord,
+    timestamp_ms: i64,
+    uuid: &'a str,
+}
+
+/// Parses an RFC 3339 timestamp to milliseconds since the epoch.
+#[must_use]
+pub fn timestamp_ms(text: &str) -> Option<i64> {
+    let parsed =
+        time::OffsetDateTime::parse(text, &time::format_description::well_known::Rfc3339).ok()?;
+    i64::try_from(parsed.unix_timestamp_nanos() / 1_000_000).ok()
+}
+
+/// A message that wakes the agent without a person, or `None` for a person's message.
+fn wake_entry(message: &StoredMessage<'_>, text: &str) -> Option<HistoryEntry> {
+    let origin = origin_kind(message.raw)?;
+    if origin == "human" {
+        return None;
+    }
+    Some(HistoryEntry::Wake {
+        notification: (origin == "task-notification")
+            .then(|| task_notification_of(text))
+            .flatten(),
+        queued: is_true(message.raw, "isQueuedCommand"),
+        timestamp_ms: message.timestamp_ms,
+        uuid: message.uuid.to_owned(),
+    })
+}
+
+fn user_entry(message: &StoredMessage<'_>) -> Option<HistoryEntry> {
+    let body = record_of(message.raw, "message").and_then(|inner| inner.get("content"));
+    if has_tool_result(body) {
+        return Some(HistoryEntry::Frame {
+            frame: classify_frame(&Value::Object(message.raw.clone())),
+            timestamp_ms: message.timestamp_ms,
+            uuid: message.uuid.to_owned(),
+        });
+    }
+    let content = user_blocks(body);
+    let text = first_text(&content);
+    if let Some(wake) = wake_entry(message, text) {
+        return Some(wake);
+    }
+    if text.starts_with(INTERRUPT_MARKER) {
+        return Some(HistoryEntry::Interrupt {
+            timestamp_ms: message.timestamp_ms,
+            uuid: message.uuid.to_owned(),
+        });
+    }
+    if is_true2(message.raw, "isMeta", "is_meta") || is_markup(text) {
+        return None;
+    }
+    let prompt = content
+        .into_iter()
+        .filter(|block| !matches!(block, UserContent::Text { text } if text.starts_with(HISTORY_HEADER)))
+        .collect::<Vec<_>>();
+    if prompt.is_empty() {
+        return None;
+    }
+    Some(HistoryEntry::Prompt {
+        content: prompt,
+        queued: is_true(message.raw, "isQueuedCommand"),
+        timestamp_ms: message.timestamp_ms,
+        uuid: message.uuid.to_owned(),
+    })
+}
+
+/// Which conversation level a message belongs to, as the message says.
+fn level_of(value: &JsonRecord) -> Option<&str> {
+    str_of(value, "parent_tool_use_id")
+}
+
+fn stored_message<'a>(
+    value: &'a Value,
+    parent_tool_use_id: Option<&str>,
+) -> Option<StoredMessage<'a>> {
+    let raw = record(value)?;
+    if level_of(raw) != parent_tool_use_id {
+        return None;
+    }
+    let uuid = str_of(raw, "uuid")?;
+    let timestamp_ms = str_of(raw, "timestamp").and_then(timestamp_ms)?;
+    Some(StoredMessage {
+        raw,
+        timestamp_ms,
+        uuid,
+    })
+}
+
+/// Classifies the messages of one conversation level, oldest first:
+/// `parent_tool_use_id` is `None` for the main conversation, or the tool
+/// call that spawned a sub-agent (SDK-shaped messages). Stored sidecar rows
+/// name no parent and are read with `None`.
+#[must_use]
+pub fn history_entries(messages: &[Value], parent_tool_use_id: Option<&str>) -> Vec<HistoryEntry> {
+    let mut entries = Vec::new();
+    let mut previous_system: Option<String> = None;
+    for value in messages {
+        let Some(message) = stored_message(value, parent_tool_use_id) else {
+            continue;
+        };
+        let entry = classify_stored(&message, previous_system.as_deref());
+        previous_system =
+            (str_of(message.raw, "type") == Some("system")).then(|| message.uuid.to_owned());
+        if let Some(entry) = entry {
+            entries.push(entry);
+        }
+    }
+    entries
+}
+
+fn classify_stored(
+    message: &StoredMessage<'_>,
+    previous_system: Option<&str>,
+) -> Option<HistoryEntry> {
+    match str_of(message.raw, "type") {
+        Some("assistant") => {
+            let frame = classify_frame(&Value::Object(message.raw.clone()));
+            (!matches!(frame, ClaudeFrame::Other { .. })).then(|| HistoryEntry::Frame {
+                frame,
+                timestamp_ms: message.timestamp_ms,
+                uuid: message.uuid.to_owned(),
+            })
+        }
+        Some("user") => {
+            if is_true(message.raw, "isCompactSummary") {
+                return Some(HistoryEntry::Compaction {
+                    timestamp_ms: message.timestamp_ms,
+                    uuid: previous_system.unwrap_or(message.uuid).to_owned(),
+                });
+            }
+            user_entry(message)
+        }
+        _ => None,
+    }
+}

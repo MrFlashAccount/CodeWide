@@ -27,6 +27,7 @@ pub mod store;
 pub mod subagents;
 #[cfg(test)]
 mod test_support;
+pub mod transcript;
 pub mod user_text;
 pub mod watcher;
 

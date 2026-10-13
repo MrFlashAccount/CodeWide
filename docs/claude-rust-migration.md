@@ -121,4 +121,15 @@ value on its own; the destination is fixed.
 ## Ledger
 
 - 2026-10-13: plan written; branch `rust-claude` created from `main`
-  (`95345516`). Stage 1 in progress.
+  (`95345516`).
+- 2026-10-13: Stage 1 done (`4acd24c7`): `crates/agent-index` carved out, Codex
+  plugged in without a reindex; workspace tests, clippy and fmt green. Draft
+  PR #50 tracks the branch.
+- 2026-10-13: Stage 2 done: `crates/agent-provider-claude/src/transcript/`
+  (records, frames, tools, diffs, sub-agents, outcomes, turn builder, entries,
+  segments, turn index, reconstruction). The host's history contract tests
+  pass unchanged on the host's session fixtures (`fixtures/sessions`); the
+  ignored `raw_local_sessions_rebuild_without_panics` smoke test rebuilt 39
+  local raw session files (35 418 rows, 539 turns) with no ordering violation.
+  Rewind (dead `parentUuid` branches) is left to the index (Stage 3
+  tombstones); reconstruction reads file order.
