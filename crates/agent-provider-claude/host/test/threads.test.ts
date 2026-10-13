@@ -403,6 +403,34 @@ describe("sessions open in another Claude process", () => {
     expect(statusUpdates(events, THREAD)).not.toContain("openElsewhere");
     expect(await service.read(THREAD)).toMatchObject({ value: { thread: { status: "active" } } });
   });
+
+  it("does not take its own just-released query for another process", async () => {
+    const { service, queries, events, runningSessions } = harness();
+    createThread(service);
+    startedTurn(await service.startTurn(THREAD, prompt("hello")));
+    queries[0]?.push(frames.init);
+    queries[0]?.push(frames.result());
+    await settle();
+    // The CLI lists the host's own process while its query is open.
+    runningSessions.add(THREAD);
+    await service.read(THREAD);
+    await settle();
+    // A model change closes the idle query so the next turn reopens with it.
+    expect(
+      await service.update(THREAD, {
+        effort: null,
+        model: "opus",
+        permissionProfile: null,
+        serviceTier: null,
+        type: "settings",
+      }),
+    ).toMatchObject({ status: "ok" });
+    await settle();
+    expect(statusUpdates(events, THREAD)).not.toContain("openElsewhere");
+    expect(await service.read(THREAD)).toMatchObject({
+      value: { thread: { status: "notLoaded" } },
+    });
+  });
 });
 
 describe("the model of a session started outside CodeWide", () => {
