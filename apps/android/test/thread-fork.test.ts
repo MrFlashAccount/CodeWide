@@ -7,7 +7,7 @@ describe("buildThreadForkParams", () => {
   it("forks the complete history durably", () => {
     expect(buildThreadForkParams("thread-1", { boundary: { kind: "all" }, ephemeral: false, target: null })).toEqual({
       threadId: "thread-1",
-      excludeTurns: false,
+      excludeTurns: true,
       ephemeral: false,
     });
   });
@@ -16,7 +16,7 @@ describe("buildThreadForkParams", () => {
     expect(buildThreadForkParams("thread-1", { boundary: { kind: "through", turnId: "turn-7" }, ephemeral: false, target: null })).toEqual({
       threadId: "thread-1",
       lastTurnId: "turn-7",
-      excludeTurns: false,
+      excludeTurns: true,
       ephemeral: false,
     });
   });
@@ -25,7 +25,7 @@ describe("buildThreadForkParams", () => {
     expect(buildThreadForkParams("thread-1", { boundary: { kind: "before", turnId: "turn-7" }, ephemeral: true, target: null })).toEqual({
       threadId: "thread-1",
       beforeTurnId: "turn-7",
-      excludeTurns: false,
+      excludeTurns: true,
       ephemeral: true,
     });
   });
@@ -46,13 +46,13 @@ describe("buildThreadForkParams", () => {
       }),
     ).toEqual({
       threadId: "thread-1",
-      excludeTurns: false,
+      excludeTurns: true,
       ephemeral: false,
       codewideAgentProvider: "claude",
       model: "claude-sonnet-4-5",
     });
     const plain = buildThreadForkParams("thread-1", { boundary: { kind: "all" }, ephemeral: false, target: null });
-    expect(JSON.stringify(plain)).toBe('{"ephemeral":false,"excludeTurns":false,"threadId":"thread-1"}');
+    expect(JSON.stringify(plain)).toBe('{"ephemeral":false,"excludeTurns":true,"threadId":"thread-1"}');
   });
 
   it("carries the chosen thinking level and service tier like thread/start", () => {
@@ -67,7 +67,7 @@ describe("buildThreadForkParams", () => {
     ).toEqual({
       threadId: "thread-1",
       lastTurnId: "turn-7",
-      excludeTurns: false,
+      excludeTurns: true,
       ephemeral: false,
       codewideAgentProvider: "codex",
       model: "gpt-5.5",

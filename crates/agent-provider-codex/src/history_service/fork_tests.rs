@@ -346,3 +346,227 @@ async fn a_fork_without_turns_of_its_own_previews_the_inherited_history() -> Tes
     assert!(!service.thread_active(FORK).await?);
     Ok(())
 }
+
+/// Waits until the background index job has indexed `path` to its start.
+async fn indexed_completely(
+    service: &HistoryService,
+    path: &Path,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let file_id = crate::rollout::rollout_file_id(path);
+    for _ in 0..2_000 {
+        if service
+            .store
+            .file_state(&file_id)?
+            .is_some_and(crate::rollout_store::FileState::is_complete)
+        {
+            return Ok(true);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    Ok(false)
+}
+
+#[tokio::test]
+async fn reading_a_fork_indexes_its_base_in_the_background() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    // Larger than the full-scan bootstrap, so a read indexes only the tail.
+    let parent = rollout_path(directory.path(), PARENT)?;
+    append(&parent, &[session_meta(PARENT, None)])?;
+    let filler = "x".repeat(256 * 1024);
+    let mut fork_point = 0;
+    for index in 0..40 {
+        let id = format!("p{index}");
+        fork_point = append(
+            &parent,
+            &[
+                event(&json!({"type": "task_started", "turn_id": id})),
+                event(
+                    &json!({"type": "agent_message", "message": filler, "phase": "final_answer"}),
+                ),
+                event(&json!({"type": "task_complete", "turn_id": id})),
+            ],
+        )?;
+    }
+    write_fork(directory.path(), (PARENT, fork_point), &["f0"])?;
+    let service = service(directory.path())?;
+
+    let first = service
+        .try_turns_page(
+            "thread/turns/list",
+            &json!({"threadId": FORK, "limit": 2, "sortDirection": "desc", "itemsView": "summary"}),
+        )
+        .await
+        .ok_or("turn page was not handled")??;
+    assert_eq!(ids(&first["data"]), ["f0", "p39"]);
+
+    // The base thread itself was never read, yet its rollout is indexed to its start.
+    assert!(indexed_completely(&service, &parent).await?);
+    Ok(())
+}
+
+const REVERTED_ROLLOUT: &str = "019fe7af-0000-7000-8000-000000000004";
+
+/// `thread/revert` keeps the thread id and writes a new rollout
+/// `<thread>_<rollout>.jsonl` whose `history_base` names the thread's earlier
+/// rollout by rollout id, which for a first rollout equals the thread id.
+fn write_reverted_parent(root: &Path) -> Result<u64, Box<dyn std::error::Error>> {
+    let first = rollout_path(root, PARENT)?;
+    append(&first, &[session_meta(PARENT, None)])?;
+    let kept = append(&first, &completed_turns(&["p0", "p1", "p2"]))?;
+    append(&first, &completed_turns(&["p3", "p4"]))?;
+    let sessions = first.parent().ok_or("rollout directory")?;
+    let reverted = sessions.join(format!(
+        "rollout-2026-10-12T00-00-01-{PARENT}_{REVERTED_ROLLOUT}.jsonl"
+    ));
+    append(&reverted, &[session_meta(PARENT, Some((PARENT, kept)))])?;
+    Ok(append(&reverted, &completed_turns(&["r0"]))?)
+}
+
+#[tokio::test]
+async fn a_reverted_thread_continues_its_earlier_rollout() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    write_reverted_parent(directory.path())?;
+    let service = service(directory.path())?;
+
+    let pages = all_pages(&service, PARENT, 10).await?;
+
+    // The thread's own newest rollout names the earlier rollout as its base;
+    // resolving that by thread id would find the newest rollout again.
+    assert_eq!(page_ids(&pages), [vec!["r0", "p2", "p1", "p0"]]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_fork_of_a_reverted_thread_follows_its_rollout_chain() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let fork_point = write_reverted_parent(directory.path())?;
+    write_fork(directory.path(), (REVERTED_ROLLOUT, fork_point), &["f0"])?;
+    let service = service(directory.path())?;
+
+    let pages = all_pages(&service, FORK, 10).await?;
+
+    assert_eq!(page_ids(&pages), [vec!["f0", "r0", "p2", "p1", "p0"]]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_unreadable_base_is_an_error_not_the_start_of_the_history() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir()?;
+    let fork_point = write_parent_forked_mid_turn(directory.path())?;
+    write_fork(directory.path(), (PARENT, fork_point), &["f0"])?;
+    let service = service(directory.path())?;
+    let parent = rollout_path(directory.path(), PARENT)?;
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o000))?;
+    if std::fs::File::open(&parent).is_ok() {
+        // Running as root: permissions cannot make the base unreadable.
+        return Ok(());
+    }
+
+    let params = json!({"threadId": FORK, "limit": 10, "sortDirection": "desc",
+        "itemsView": "summary"});
+    let page = service
+        .try_turns_page("thread/turns/list", &params)
+        .await
+        .ok_or("turn page was not handled")?;
+
+    // A retryable failure must not end the history after the fork's own turns.
+    assert!(page.is_err(), "expected an error, got {page:?}");
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o644))?;
+    let pages = all_pages(&service, FORK, 10).await?;
+    assert_eq!(page_ids(&pages)[0][..2], ["f0", "p5"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_client_headed_by_the_fork_point_syncs_without_a_reset() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let fork_point = write_parent_forked_mid_turn(directory.path())?;
+    write_fork(directory.path(), (PARENT, fork_point), &[])?;
+    let service = service(directory.path())?;
+
+    let first = service.sync_thread_history(FORK, None, 10, None).await?;
+    assert_eq!(first["kind"], "reset");
+    assert_eq!(first["headTurnId"], "p5");
+
+    let idle = service
+        .sync_thread_history(FORK, Some("p5"), 10, None)
+        .await?;
+    assert_eq!(idle["kind"], "current");
+    assert_eq!(idle["headTurnId"], "p5");
+
+    // The fork's first own turn arrives as a delta after the inherited head.
+    let fork = rollout_path(directory.path(), FORK)?;
+    append(&fork, &completed_turns(&["f0"]))?;
+    let delta = service
+        .sync_thread_history(FORK, Some("p5"), 10, None)
+        .await?;
+    assert_eq!(delta["kind"], "delta");
+    assert_eq!(delta["headTurnId"], "f0");
+    assert_eq!(ids(&delta["turns"]), ["f0"]);
+    Ok(())
+}
+
+/// Pages a real fork's whole history and reports timings. Run with
+/// `CODEWIDE_BENCH_CODEX_HOME=~/.codex CODEWIDE_BENCH_THREAD=<id> cargo test -p agent-provider-codex -- --ignored --nocapture bench_real_fork`.
+#[tokio::test]
+#[ignore = "measures a real Codex home"]
+async fn bench_real_fork_history() -> TestResult {
+    let (Ok(home), Ok(thread)) = (
+        std::env::var("CODEWIDE_BENCH_CODEX_HOME"),
+        std::env::var("CODEWIDE_BENCH_THREAD"),
+    ) else {
+        return Ok(());
+    };
+    let index = tempfile::tempdir()?;
+    let service = HistoryService::new(
+        Arc::new(SessionCatalog::scan(Path::new(&home))),
+        Arc::new(crate::test_support::open_rollout_store(
+            index.path().join("index.redb"),
+        )?),
+    );
+    for pass in ["cold", "after background indexing"] {
+        if pass != "cold" {
+            let waited = std::time::Instant::now();
+            let catalog = SessionCatalog::scan(Path::new(&home));
+            let own = catalog.resolve(&thread)?;
+            let mut chain = super::BaseChain::new(&catalog, &own);
+            while let Some(base) = chain.next()? {
+                if !indexed_completely(&service, &base.path).await? {
+                    for _ in 0..600 {
+                        if indexed_completely(&service, &base.path).await? {
+                            break;
+                        }
+                    }
+                }
+            }
+            println!("background indexing finished after {:?}", waited.elapsed());
+        }
+        let started = std::time::Instant::now();
+        let mut slowest = std::time::Duration::ZERO;
+        let mut cursor = Value::Null;
+        let (mut pages, mut turns) = (0, 0);
+        loop {
+            let page_started = std::time::Instant::now();
+            let params = json!({"threadId": thread, "cursor": cursor, "limit": 50,
+                "sortDirection": "desc", "itemsView": "summary"});
+            let page = service
+                .try_turns_page("thread/turns/list", &params)
+                .await
+                .ok_or("turn page was not handled")??;
+            slowest = slowest.max(page_started.elapsed());
+            pages += 1;
+            turns += page["data"].as_array().map_or(0, Vec::len);
+            cursor = page["nextCursor"].clone();
+            if cursor.is_null() || pages > 10_000 {
+                break;
+            }
+        }
+        println!(
+            "{pass}: {turns} turns in {pages} pages, total {:?}, slowest page {slowest:?}",
+            started.elapsed()
+        );
+    }
+    Ok(())
+}

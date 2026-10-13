@@ -21,6 +21,9 @@ pub enum CatalogError {
 pub struct SessionCatalog {
     roots: Vec<PathBuf>,
     paths: RwLock<HashMap<String, PathBuf>>,
+    /// Rollouts found by rollout id. Every rollout of a thread is a distinct
+    /// file; only the newest one is in `paths`.
+    rollouts: RwLock<HashMap<String, PathBuf>>,
     state_db: PathBuf,
     pub(crate) visibility: crate::catalog_visibility::CatalogVisibility,
 }
@@ -79,6 +82,7 @@ impl SessionCatalog {
                 codex_home.join("archived_sessions"),
             ],
             paths: RwLock::new(HashMap::new()),
+            rollouts: RwLock::new(HashMap::new()),
             state_db: codex_home.join("state_5.sqlite"),
             visibility: crate::catalog_visibility::CatalogVisibility::new(
                 codex_home.join("state_5.sqlite"),
@@ -153,6 +157,45 @@ impl SessionCatalog {
             .map_err(|_| CatalogError::Poisoned)?
             .insert(thread_id.to_owned(), candidate.clone());
         Ok(candidate)
+    }
+
+    /// Resolves one rollout file by its rollout id, as Codex resolves a
+    /// paginated fork's `history_base`: a thread's later rollouts (after
+    /// `thread/revert`) continue its earlier ones, so the thread authority
+    /// would name the wrong file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the catalog lock is unavailable or no rollout
+    /// under the active or archived roots has this id.
+    pub fn resolve_rollout(&self, rollout_id: &str) -> Result<PathBuf, CatalogError> {
+        if !valid_thread_id(rollout_id) {
+            return Err(CatalogError::NotFound(rollout_id.to_owned()));
+        }
+        let cached = self
+            .rollouts
+            .read()
+            .map_err(|_| CatalogError::Poisoned)?
+            .get(rollout_id)
+            .cloned();
+        // An archived rollout moves between roots; re-find a stale entry.
+        if let Some(path) = cached.filter(|path| path.is_file()) {
+            return Ok(path);
+        }
+        let path = self
+            .roots
+            .iter()
+            .flat_map(|root| WalkDir::new(root).follow_links(false).into_iter())
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file())
+            .find(|entry| rollout_id_from_path(entry.path()).as_deref() == Some(rollout_id))
+            .map(walkdir::DirEntry::into_path)
+            .ok_or_else(|| CatalogError::NotFound(rollout_id.to_owned()))?;
+        self.rollouts
+            .write()
+            .map_err(|_| CatalogError::Poisoned)?
+            .insert(rollout_id.to_owned(), path.clone());
+        Ok(path)
     }
 
     fn authoritative_path(&self, thread_id: &str) -> Result<Option<PathBuf>, CatalogError> {
@@ -291,6 +334,17 @@ pub(crate) fn thread_id_from_path(path: &Path) -> Option<String> {
     valid_thread_id(&thread_id).then_some(thread_id)
 }
 
+/// The rollout id a canonical rollout filename encodes: the id after `_`
+/// for a later rollout of a reverted thread, otherwise the thread id itself.
+pub(crate) fn rollout_id_from_path(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let stem = name.strip_suffix(".jsonl")?;
+    match stem.split_once('_') {
+        Some((_thread, rollout_id)) => valid_thread_id(rollout_id).then(|| rollout_id.to_owned()),
+        None => thread_id_from_path(path),
+    }
+}
+
 fn valid_thread_id(value: &str) -> bool {
     value.len() == 36
         && value.bytes().enumerate().all(|(index, byte)| match index {
@@ -357,6 +411,40 @@ mod tests {
         assert_eq!(thread_id_from_path(&path).as_deref(), Some(thread));
         assert_eq!(SessionCatalog::empty(root.path()).resolve(thread)?, path);
         assert!(SessionCatalog::scan(root.path()).resolve(writer).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_every_rollout_of_a_reverted_thread_by_rollout_id()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let sessions = root.path().join("sessions/2026/09/04");
+        let archived = root.path().join("archived_sessions");
+        fs::create_dir_all(&sessions)?;
+        fs::create_dir_all(&archived)?;
+        let thread = "01a06e07-16b7-71b0-b87c-6f6c6bc7cb1f";
+        let reverted = "01a06e08-7da9-7a12-adb1-93a380c70d6c";
+        let first = sessions.join(format!("rollout-2026-09-04T23-05-53-{thread}.jsonl"));
+        let later = sessions.join(format!(
+            "rollout-2026-09-04T23-07-25-{thread}_{reverted}.jsonl"
+        ));
+        fs::write(&first, b"")?;
+        fs::write(&later, b"")?;
+        let catalog = SessionCatalog::scan(root.path());
+
+        assert_eq!(rollout_id_from_path(&first).as_deref(), Some(thread));
+        assert_eq!(rollout_id_from_path(&later).as_deref(), Some(reverted));
+        assert_eq!(catalog.resolve_rollout(thread)?, first);
+        assert_eq!(catalog.resolve_rollout(reverted)?, later);
+
+        // Archiving moves the file; a cached path is re-found.
+        let moved = archived.join(later.file_name().ok_or("name")?);
+        fs::rename(&later, &moved)?;
+        assert_eq!(catalog.resolve_rollout(reverted)?, moved);
+        assert!(matches!(
+            catalog.resolve_rollout("01a06e08-0000-7000-8000-0000000000ff"),
+            Err(CatalogError::NotFound(_))
+        ));
         Ok(())
     }
 

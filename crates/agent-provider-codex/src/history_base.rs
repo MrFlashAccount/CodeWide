@@ -21,8 +21,10 @@ const MAX_SESSION_META_BYTES: u64 = 16 * 1024 * 1024;
 /// Where a rollout's own records continue another thread's history.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct HistoryBase {
-    /// The thread whose rollout holds the inherited history.
-    pub(crate) thread_id: String,
+    /// The rollout that holds the inherited history. Codex writes the field
+    /// as `thread_id`, but it names a rollout: after `thread/revert` a thread
+    /// owns several rollouts and the newer one continues the older one.
+    pub(crate) rollout_id: String,
     /// The exclusive end of the inherited records in that rollout. Codex
     /// writes it at a record boundary.
     pub(crate) end_byte_offset: u64,
@@ -74,7 +76,7 @@ fn history_base_from_line(line: &[u8]) -> Option<HistoryBase> {
     }
     let base = record.payload?.history_base?;
     (!base.thread_id.is_empty() && base.end_byte_offset > 0).then_some(HistoryBase {
-        thread_id: base.thread_id,
+        rollout_id: base.thread_id,
         end_byte_offset: base.end_byte_offset,
     })
 }
@@ -99,7 +101,7 @@ mod tests {
         assert_eq!(
             history_base_from_line(&line(&record)),
             Some(HistoryBase {
-                thread_id: "parent".into(),
+                rollout_id: "parent".into(),
                 end_byte_offset: 362_687_652,
             })
         );

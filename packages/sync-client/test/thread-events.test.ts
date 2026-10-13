@@ -2,7 +2,7 @@ import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { describe, expect, it } from "vitest";
 import { commandOutputReferences } from "../src/command-output";
 
-import { projectedQuestionHistory, applyThreadEvent, applyThreadEventsImmutable, applyThreadProjectionPatchesImmutable, MAX_LIVE_FIELD_CHARS, preserveProjectedTurnMetadata, projectedThreadExecutionSettings, projectedTurnMetadata, seedThreadExecutionSettings, threadContainsClientMessage, threadProjectionNeedsAuthoritativeRepair, type TurnUsageProjection } from "../src/index.js";
+import { projectedQuestionHistory, applyThreadEvent, applyThreadEventsImmutable, applyThreadProjectionPatchesImmutable, MAX_LIVE_FIELD_CHARS, preserveProjectedTurnMetadata, projectedThreadExecutionSettings, projectedTurnMetadata, seedThreadExecutionSettings, threadProjectionNeedsAuthoritativeRepair, type TurnUsageProjection } from "../src/index.js";
 
 describe("thread event projection", () => {
   it("preserves rollout question receipts when full App Server history omits the extension", () => {
@@ -102,7 +102,7 @@ describe("thread event projection", () => {
       { type: "reasoning", summary: ["summary"], content: ["detail"] },
       { type: "mcpToolCall", progress: ["Reading 12 files"] },
     ]);
-    expect(threadContainsClientMessage(value, "client-1")).toBe(true);
+    expect(value.turns[0]?.items).toContainEqual(expect.objectContaining({ type: "userMessage", clientId: "client-1" }));
     expect(value.turns[0]).toMatchObject({
       codewide: {
         plan: { explanation: "Ship safely", steps: [{ step: "Test", status: "inProgress" }] },

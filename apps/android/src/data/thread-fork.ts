@@ -45,7 +45,10 @@ export function buildThreadForkParams(
   const target = options.target;
   return {
     ephemeral: options.ephemeral,
-    excludeTurns: false,
+    // The fork is imported as metadata only and pages its history like any other
+    // thread. Codex deprecates full-history fork responses for paginated threads and
+    // rejects them outright for ephemeral forks.
+    excludeTurns: true,
     threadId: normalizedThreadId,
     ...(boundary.kind === "through"
       ? { lastTurnId: requiredId(boundary.turnId, "Last turn id") }
