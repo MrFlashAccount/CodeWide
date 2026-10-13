@@ -18,7 +18,6 @@ use tokio::{
 };
 use tokio_tungstenite::{
     Connector, MaybeTlsStream, WebSocketStream, client_async_tls_with_config,
-    connect_async_tls_with_config,
     tungstenite::{Message, client::IntoClientRequest, http::HeaderValue},
 };
 use tokio_util::sync::CancellationToken;
@@ -201,6 +200,11 @@ impl Adapter {
         }
     }
 
+    /// Opens the control channel and returns the Relay address it reached.
+    ///
+    /// The host resolves through the host resolver (see `codewide-host-resolver`)
+    /// rather than tungstenite's built-in lookup; TLS SNI and `Host` still come
+    /// from the URL. Data attaches reuse the returned address.
     async fn connect_control(&self, path: &str) -> Result<(RelaySocket, SocketAddr)> {
         let url = format!("{}{path}", self.companion_url.trim_end_matches('/'));
         let mut request = url.into_client_request()?;
@@ -208,15 +212,19 @@ impl Adapter {
             "authorization",
             HeaderValue::from_str(&format!("Bearer {}", self.access_token))?,
         );
+        let host = request.uri().host().ok_or_else(crate::denied)?.to_owned();
+        let port = request.uri().port_u16().unwrap_or(443);
         let tls = pinned_client_config(&self.relay_tls_pin_sha256)?;
-        let socket = tokio::time::timeout(
-            DEADLINE,
-            connect_async_tls_with_config(request, None, true, Some(Connector::Rustls(tls))),
-        )
-        .await??
-        .0;
-        let peer = socket.get_ref().get_ref().peer_addr()?;
-        Ok((socket, peer))
+        tokio::time::timeout(DEADLINE, async {
+            let stream = codewide_host_resolver::connect(&host, port, DEADLINE).await?;
+            stream.set_nodelay(true)?;
+            let peer = stream.peer_addr()?;
+            let (socket, _) =
+                client_async_tls_with_config(request, stream, None, Some(Connector::Rustls(tls)))
+                    .await?;
+            Ok::<_, crate::Error>((socket, peer))
+        })
+        .await?
     }
 
     async fn connect_attach(&self, path: &str, relay_peer: SocketAddr) -> Result<RelaySocket> {
@@ -331,6 +339,7 @@ impl Adapter {
             .ok_or_else(crate::denied)?;
         let tls = pinned_client_config(&self.relay_tls_pin_sha256)?;
         let client = reqwest::Client::builder()
+            .dns_resolver(codewide_host_resolver::HostResolver::shared())
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(DEADLINE)

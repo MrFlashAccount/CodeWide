@@ -132,7 +132,13 @@ resolve host names through the host's NSS resolver
 (`getent ahosts`), not the static musl resolver: musl keeps the first answer of
 all nameservers at once, so on an IPv6-only host one nameserver without DNS64
 can hide the only reachable NAT64 addresses of GitHub's IPv4-only release
-assets. Archive validation, extraction and payload-layout validation also stay
+assets. `codewide-host-resolver` (`crates/host-resolver`) owns this lookup. On
+Linux it runs `getent ahosts`, keeps NSS order, and falls back to the built-in
+resolver only when `getent` is missing; IP literals skip the lookup, and other
+platforms use the system resolver without spawning a process. The Companion's
+Relay connections use the same resolver: the control channel, Relay update
+requests, invitation pairing and terminal-confirmed enrollment try the
+resolved addresses in order within their connect budget. Archive validation, extraction and payload-layout validation also stay
 in that replaceable product. The stable bootstrap guardian knows only the fixed
 prepared-generation path, generation metadata, fixed service, health contract,
 and rollback pointer. It must be installed manually to receive guardian fixes;

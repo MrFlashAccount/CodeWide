@@ -494,6 +494,7 @@ impl RelayConfig {
         auth::validate(&bundle.invitation)?;
         let endpoint = pairing_endpoint(&companion_url, &bundle.route_id)?;
         let client = reqwest::Client::builder()
+            .dns_resolver(codewide_host_resolver::HostResolver::shared())
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(15))
             .https_only(true)
