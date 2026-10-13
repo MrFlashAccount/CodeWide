@@ -32,9 +32,11 @@ function harness(initial = summary("worker", { status: { type: "active", activeF
   // WHY: The test exercises the real ordered projection through its catalog-facing
   // ports; unrelated command, account and snapshot operations are not invoked.
   const applyChanged = vi.fn(() => true);
+  const mergeProject = vi.fn();
   const ports = {
     accountRateLimits: {},
     agentProviders: { applyChanged },
+    projects: { mergeProject },
     catalog: { readThreadSummary, refreshConnectionWindows, refreshInvalidatedThread: vi.fn() },
     details: { applyEvents: async () => ({ checkpoint: Promise.resolve(), threads: new Map() }) },
     resources: { threadResources: new Map() },
@@ -55,6 +57,7 @@ function harness(initial = summary("worker", { status: { type: "active", activeF
   return {
     store: createThreadSyncProjection(ports),
     applyChanged,
+    mergeProject,
     refreshConnectionWindows,
     readThreadSummary,
     get,
@@ -147,5 +150,19 @@ it("publishes a durable provider status change to the provider list owner", asyn
     { cursor: 1, payload: { method: "companion/agentProviders/changed", params } },
   ]);
   expect(test.applyChanged).toHaveBeenCalledExactlyOnceWith("server", params);
+  expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
+});
+
+it("merges a project another device pinned or unpinned into the project catalog", async () => {
+  const test = harness();
+  const project = { addedAt: 1, lastUsedAt: 2, name: "repo", path: "/repo", pinned: false };
+  await test.store.applyEvents("server", [
+    { cursor: 1, payload: { method: "companion/project/changed", params: { project } } },
+    { cursor: 2, payload: { method: "companion/project/changed", params: { project: {} } } },
+  ]);
+  expect(test.mergeProject).toHaveBeenCalledExactlyOnceWith(
+    "server",
+    expect.objectContaining({ path: "/repo", pinned: false }),
+  );
   expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
 });

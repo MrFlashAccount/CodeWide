@@ -1731,7 +1731,15 @@ impl SyncHub {
                 return Ok(true);
             };
             match projects.handle(method, params).await {
-                Ok(result) => send_local_rpc_result(socket, id, result).await?,
+                Ok(result) => {
+                    // Every client applies the change, not only the caller.
+                    if let Some(changed) = ProjectService::change_notification(method, &result)
+                        && self.local_events.send(changed).await.is_err()
+                    {
+                        warn!("local replay ingestor closed before a project change was journaled");
+                    }
+                    send_local_rpc_result(socket, id, result).await?;
+                }
                 Err(error) => {
                     send_rpc_error(socket, id.clone(), -32050, &error.to_string()).await?;
                 }
