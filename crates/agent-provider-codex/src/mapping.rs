@@ -77,6 +77,7 @@ pub fn thread(provider: &ProviderId, thread: &Value, archived: bool) -> Option<A
                 .to_owned(),
             service_tier: None,
         },
+        spawn: None,
     })
 }
 

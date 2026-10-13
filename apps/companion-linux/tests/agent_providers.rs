@@ -270,6 +270,7 @@ fn agent_thread(id: AppThreadId, key: i64) -> AgentThread {
             permission_profile: ":workspace".into(),
             service_tier: None,
         },
+        spawn: None,
     }
 }
 

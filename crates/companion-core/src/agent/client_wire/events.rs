@@ -287,7 +287,7 @@ impl EventProjector {
             let params = json!({
                 "threadId": id,
                 "status": items::thread_status(next.status),
-                "canAcceptDirectInput": items::can_accept_direct_input(next.status),
+                "canAcceptDirectInput": items::can_accept_direct_input(thread),
             });
             payloads.push(json!({"method": "thread/status/changed", "params": params}));
         }
@@ -520,6 +520,7 @@ mod tests {
                 permission_profile: ":workspace".into(),
                 service_tier: None,
             },
+            spawn: None,
         }
     }
 
