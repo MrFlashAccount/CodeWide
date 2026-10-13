@@ -6,6 +6,7 @@ import { ImagePreviewHost } from "../src/rendering/ImagePreviewHost";
 import { DocumentPreviewHost } from "../src/rendering/DocumentPreviewHost";
 import { AppFullscreenOverlayProvider } from "../src/ui/AppFullscreenOverlay";
 import { AppNoticeProvider } from "../src/ui/AppNotice";
+import { urlTransport } from "../src/native/urlTransport";
 
 // Native private-file downloads are outside this layout test; retain the real
 // image resource lifecycle and supply the resulting local preview URI.
@@ -68,7 +69,7 @@ it("shows an attached SVG in the image gallery", async () => {
             <DocumentPreviewHost>
               <UserMessageContent
                 content={[{ type: "mention", name: "drawing.svg", path: "/tmp/drawing.svg" }]}
-                getTransferAccess={async () => ({ authorization: "test", baseUrl: "https://example.test" })}
+                getTransferAccess={async () => ({ authorization: "test", baseUrl: "https://example.test", transport: urlTransport, })}
               />
             </DocumentPreviewHost>
           </ImagePreviewHost>

@@ -40,7 +40,7 @@ class CodexConnectionService : Service() {
   private lateinit var credentialsStore: NativeSessionCredentialsStore
   private lateinit var portForwardManager: NativePortForwardManager
   private lateinit var terminalSessionManager: NativeTerminalSessionManager
-  private lateinit var companionHttpProxy: NativeCompanionHttpProxy
+  private lateinit var companionHttp: NativeCompanionHttp
   private lateinit var processExitTelemetry: NativeProcessExitTelemetry
   private lateinit var diagnosticUploader: NativeDiagnosticUploader
   private lateinit var connectivityManager: ConnectivityManager
@@ -99,6 +99,11 @@ class CodexConnectionService : Service() {
     .readTimeout(CREDENTIAL_HTTP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
     .writeTimeout(CREDENTIAL_HTTP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
     .build()
+  // Transfers stream large bodies, so they bound only silence on the wire, not total duration.
+  private val transferHttpClient = httpClient.newBuilder()
+    .readTimeout(TRANSFER_IDLE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+    .writeTimeout(TRANSFER_IDLE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+    .build()
 
   override fun onCreate() {
     super.onCreate()
@@ -112,7 +117,11 @@ class CodexConnectionService : Service() {
     diagnosticUploader.start()
     portForwardManager = NativePortForwardManager(this, credentialsStore, httpClient)
     terminalSessionManager = NativeTerminalSessionManager(credentialsStore, credentialHttpClient, httpClient, cacheDir)
-    companionHttpProxy = NativeCompanionHttpProxy(credentialsStore)
+    companionHttp = NativeCompanionHttp(
+      credentials = credentialsStore::get,
+      clientFor = { saved -> InnerTlsTransport.client(transferHttpClient, saved, "transfer") },
+      files = ContentResolverCompanionHttpFiles(contentResolver),
+    )
     connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     val initialNetwork = connectivityManager.activeNetwork
     if (initialNetwork == null) networkState.absent() else networkState.available(initialNetwork)
@@ -163,7 +172,7 @@ class CodexConnectionService : Service() {
         sessions.clear()
         portForwardManager.close()
         terminalSessionManager.destroy()
-        companionHttpProxy.close()
+        companionHttp.close()
         runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
         httpClient.dispatcher.executorService.shutdown()
         if (instance === this) instance = null
@@ -204,8 +213,16 @@ class CodexConnectionService : Service() {
     updateNotification()
   }
 
-  @Synchronized
-  fun companionHttpOrigin(connectionId: String): String = companionHttpProxy.origin(connectionId)
+  internal fun companionHttpRequest(request: CompanionHttpRequest, completion: (Result<CompanionHttpResult>) -> Unit) {
+    companionHttp.execute(request, completion)
+  }
+
+  internal fun proceedCompanionAddress(address: CompanionAddress, request: Request): Response =
+    companionHttp.proceed(address, request)
+
+  fun cancelCompanionHttpRequest(requestId: String) {
+    companionHttp.cancel(requestId)
+  }
 
   @Synchronized
   internal fun publishStartupTiming(timing: NativeStartupTiming) {
@@ -475,7 +492,7 @@ class CodexConnectionService : Service() {
     commandStore.deleteConnection(connectionId)
     portForwardManager.removeConnection(connectionId)
     terminalSessionManager.closeConnection(connectionId)
-    companionHttpProxy.remove(connectionId)
+    companionHttp.remove(connectionId)
     updateNotification()
   }
 
@@ -484,13 +501,13 @@ class CodexConnectionService : Service() {
     sessions.remove(connectionId)?.close("connection_disabled")
     portForwardManager.suspendConnection(connectionId)
     terminalSessionManager.closeConnection(connectionId)
-    companionHttpProxy.remove(connectionId)
+    companionHttp.remove(connectionId)
     updateNotification()
   }
 
   /**
    * Replaces credentials only after every capability derived from the old authority is closed.
-   * The service monitor also excludes concurrent lease, proxy, port and terminal creation.
+   * The service monitor also excludes concurrent lease, transfer client, port and terminal creation.
    */
   @Synchronized
   internal fun replaceSavedServerAuthority(replacement: StoredNativeSession) {
@@ -507,7 +524,7 @@ class CodexConnectionService : Service() {
         legacySession = { sessions.remove(savedServerId)?.close("authority_replaced") },
         portForwards = { portForwardManager.suspendConnection(savedServerId) },
         terminalSessions = { terminalSessionManager.closeConnection(savedServerId) },
-        httpProxy = { companionHttpProxy.remove(savedServerId) },
+        companionHttp = { companionHttp.remove(savedServerId) },
       ),
     )
     updateNotification()
@@ -1485,6 +1502,7 @@ class CodexConnectionService : Service() {
     private const val ACTIVITY_CHANNEL_ID = "codewide_turn_updates"
     private const val NOTIFICATION_ID = 4107
     private const val CREDENTIAL_HTTP_TIMEOUT_MS = 12_000L
+    private const val TRANSFER_IDLE_TIMEOUT_MS = 30_000L
     private const val STALE_CONNECT_WAKE_MS = 8_000L
     private const val CONNECT_WATCHDOG_MS = 20_000L
     private const val OUTBOX_RECONCILE_DELAY_MS = 2_000L

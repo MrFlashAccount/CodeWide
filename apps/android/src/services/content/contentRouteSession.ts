@@ -1,14 +1,12 @@
 import type { RenderContentReference } from "@codewide/renderers";
+import type { GetTransferAccess } from "../../data/private-transfer";
 import { RouteSessionRegistry, ROUTE_SESSION_TTL_MS } from "../routeSessionPolicy";
 import { sameRouteSessionOwner, type V1RouteSessionOwner } from "../threads/threadRouteParams";
 
 const MAX_CONTENT_SESSIONS = 4;
 
 export type LargeContentRouteRequest = {
-  readonly getTransferAccess: (forceRefresh?: boolean) => Promise<{
-    readonly authorization: string;
-    readonly baseUrl: string;
-  }>;
+  readonly getTransferAccess: GetTransferAccess;
   readonly pointer: string;
   readonly presentation: "markdown" | "terminal" | "text";
   readonly reference: RenderContentReference;

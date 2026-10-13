@@ -5,6 +5,7 @@ import { SkillsPicker } from "../src/features/composer/skills/SkillsPicker";
 import { parseCatalogSkills, assignSkillPlugins } from "../src/data/skill-catalog-adapter";
 import { SkillPluginIcon } from "../src/ui/SkillPluginIcon";
 import { listRowHeight } from "../src/ui/AppListRow.types";
+import { urlTransport } from "../src/native/urlTransport";
 
 // WHY: Node cannot mount the Expo sheet window; the actual list and row sizing remain under test.
 jest.mock("@expo/ui/community/bottom-sheet", () => {
@@ -73,7 +74,7 @@ it("distinguishes loading, unavailable and an empty enabled catalog", () => {
 
 it("loads plugin SVG artwork through authenticated host transfer, not a phone file path", async () => {
   const fetch = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M0 0L24 24" /></svg>', { headers: { "content-type": "image/svg+xml" } }));
-  const getAccess = jest.fn(async () => ({ baseUrl: "https://companion.example", authorization: "Bearer test" }));
+  const getAccess = jest.fn(async () => ({ baseUrl: "https://companion.example", transport: urlTransport, authorization: "Bearer test" }));
   render(<SkillPluginIcon plugin={{ id: "svg-plugin", label: "Example", icon: { kind: "path", path: "/plugins/example/logo.svg" } }} getTransferAccess={getAccess} />);
   await waitFor(() => expect(fetch).toHaveBeenCalled());
   expect(getAccess).toHaveBeenCalled();

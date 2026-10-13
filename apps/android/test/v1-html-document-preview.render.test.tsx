@@ -4,9 +4,10 @@ import { attachmentPresentationTarget } from "../src/features/attachments/thread
 import { documentPreviewSurface } from "../src/rendering/document-preview";
 import { HtmlDocumentPreview } from "../src/rendering/DocumentPreviewHost";
 import { latestWebViewProps } from "./mocks/ReactNativeWebView";
+import { urlTransport } from "../src/native/urlTransport";
 
 const getTransferAccess = () =>
-  Promise.resolve({ authorization: "Bearer test", baseUrl: "https://example.test" });
+  Promise.resolve({ authorization: "Bearer test", baseUrl: "https://example.test", transport: urlTransport, });
 
 it("keeps interactive HTML scrolling inside its WebView gesture boundary", () => {
   render(<HtmlDocumentPreview source="<iframe srcdoc='<main>Visualization</main>'></iframe>" />);

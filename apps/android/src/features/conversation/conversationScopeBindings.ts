@@ -37,7 +37,6 @@ export function createConversationScopeBindings(
       onClearGoal: undefined,
       onCompact: undefined,
       onContinueTurn: undefined,
-      onCreateTunnel: undefined,
       onEditQueued: undefined,
       onGetGoal: undefined,
       onInterrupt: undefined,
@@ -50,7 +49,6 @@ export function createConversationScopeBindings(
       onMoveQueued: undefined,
       onRespondToRequest: undefined,
       onRetryFailedMessage: undefined,
-      onRevokeTunnel: undefined,
       onSend: scope.onSend,
       onSetGoal: undefined,
       onSetGoalStatus: undefined,
@@ -78,7 +76,6 @@ export function createConversationScopeBindings(
       onClearGoal: undefined,
       onCompact: undefined,
       onContinueTurn: undefined,
-      onCreateTunnel: undefined,
       onEditQueued: undefined,
       onGetGoal: undefined,
       onInterrupt: undefined,
@@ -90,7 +87,6 @@ export function createConversationScopeBindings(
       onMoveQueued: undefined,
       onRespondToRequest: undefined,
       onRetryFailedMessage: undefined,
-      onRevokeTunnel: undefined,
       onSend: undefined,
       onSetGoal: undefined,
       onSetGoalStatus: undefined,
@@ -114,8 +110,6 @@ export function createConversationScopeBindings(
     onContinueTurn: async (sourceTurnId: string): Promise<void> => {
       await features.composer.continueTurn(activeConnectionId, activeRemoteThreadId, sourceTurnId);
     },
-    onCreateTunnel: async (port: number, ttlSeconds: number) =>
-      features.ports.createLocalhostTunnel(activeConnectionId, port, ttlSeconds),
     onEditQueued: queueCommands.onEditQueued,
     onGetGoal: goalCommands.onGetGoal,
     onInterrupt: async (turnId: string) => {
@@ -137,9 +131,6 @@ export function createConversationScopeBindings(
     onRespondToRequest: features.requests.respondToServerRequest,
     onRetryFailedMessage: async (commandId: string) => {
       await features.composer.retryFailedMessage(activeConnectionId, commandId);
-    },
-    onRevokeTunnel: async (tunnelId: string) => {
-      await features.ports.revokeLocalhostTunnel(activeConnectionId, tunnelId);
     },
     onSend: async (text: string, mode: SendMode, options: TurnSendOptions) =>
       features.composer.sendText(activeConnectionId, activeRemoteThreadId, text, mode, options),

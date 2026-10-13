@@ -360,9 +360,6 @@ describe("CodeWide effect ownership", () => {
     expect(ownerComposerMenuComposition).toContain(
       "const terminals = useBackgroundTerminalsRow( request.resources, request.backgroundTerminalsResourceId, );",
     );
-    expect(ownerComposerMenuComposition).toContain(
-      "const tunnel = useTunnelRow(request.resources, request.tunnelResourceId);",
-    );
   });
 
   it("keeps active-thread selection below the workspace shell and out of the sidebar list", () => {

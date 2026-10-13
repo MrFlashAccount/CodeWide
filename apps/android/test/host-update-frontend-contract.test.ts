@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { StoredConnection } from "../src/data/connection-profile-types";
 import { createHostUpdateTransport } from "../src/features/connections/hostUpdateTransport";
+import { urlTransport } from "../src/native/urlTransport";
 
 const connectionFiles = [
   "ConnectionFeature.tsx",
@@ -47,9 +48,9 @@ describe("Android host update ownership", () => {
     vi.useRealTimers();
   });
 
-  it("bounds a hung native origin and never sends a late apply after timeout", async () => {
+  it("bounds a hung session authorization and never sends a late apply after timeout", async () => {
     vi.useFakeTimers();
-    const origin = Promise.withResolvers<string>();
+    const authorization = Promise.withResolvers<string>();
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
     const connection: StoredConnection = {
@@ -58,13 +59,13 @@ describe("Android host update ownership", () => {
     };
     const transport = createHostUpdateTransport({
       currentConnections: () => [connection],
-      nativeCompanionHttpOrigin: () => origin.promise,
-      scopedHttpAuthorization: async () => "Bearer scoped",
+      connectionTransport: () => ({ baseUrl: "https://pinned.example/cap", transport: urlTransport }),
+      scopedHttpAuthorization: async () => authorization.promise,
     }, { requestTimeoutMilliseconds: 10 });
     const outcome = transport.apply("server", "fingerprint", "key").catch(error => error);
     await vi.advanceTimersByTimeAsync(10);
     expect(await outcome).toEqual(expect.objectContaining({ message: expect.stringContaining("in time") }));
-    origin.resolve("https://pinned.example/cap");
+    authorization.resolve("Bearer scoped");
     await Promise.resolve();
     await Promise.resolve();
     expect(fetch).not.toHaveBeenCalled();
@@ -79,7 +80,7 @@ describe("Android host update ownership", () => {
     };
     const transport = createHostUpdateTransport({
       currentConnections: () => [connection],
-      nativeCompanionHttpOrigin: async () => "https://pinned.example/cap",
+      connectionTransport: () => ({ baseUrl: "https://pinned.example/cap", transport: urlTransport }),
       scopedHttpAuthorization: async () => "Bearer scoped",
     }, { requestTimeoutMilliseconds: 10 });
     const outcome = transport.readOperation("server", "operation-00000000000000000000").catch(error => error);
@@ -118,7 +119,7 @@ describe("Android host update ownership", () => {
       const transport = createHostUpdateTransport(
         {
           currentConnections: () => [connection],
-          nativeCompanionHttpOrigin: async () => "https://pinned.example/cap",
+          connectionTransport: () => ({ baseUrl: "https://pinned.example/cap", transport: urlTransport }),
           scopedHttpAuthorization: async () => "Bearer scoped",
         },
         basePath === undefined ? {} : { basePath },
@@ -143,7 +144,7 @@ describe("Android host update ownership", () => {
       ]);
     }
     expect(transportSource).toContain("scopedHttpAuthorization");
-    expect(transportSource).toContain("nativeCompanionHttpOrigin");
+    expect(transportSource).toContain("connectionTransport(connection)");
     expect(transportSource).not.toMatch(/artifactUrl|downloadUrl|targetUrl/u);
   });
 });

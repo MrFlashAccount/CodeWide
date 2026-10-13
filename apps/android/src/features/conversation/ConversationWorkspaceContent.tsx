@@ -110,15 +110,12 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         onSetGoalStatus: gated.onSetGoalStatus,
       }}
       ports={{
-        onCreateTunnel: props.conversationActions.onCreateTunnel,
         onOpenBrowser: props.onOpenBrowser,
         onOpenLoopbackLink: props.openActiveLoopbackLink,
-        onRevokeTunnel: props.conversationActions.onRevokeTunnel,
         portForwardingConnectionId:
           props.native && props.activeConnectionId !== "" ? props.activeConnectionId : null,
         portForwardingServerName:
           props.servers.find((server) => server.id === props.activeConnectionId)?.name ?? "Server",
-        tunnelResourceId: props.activeTunnelResourceId,
       }}
       projects={{
         discoveredProjects: props.activeDiscoveredProjects,

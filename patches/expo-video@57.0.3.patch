@@ -36,3 +36,26 @@ index 5cfdf596c5e0d4f3ecfbf96074d732e25e18b23c..623a2b8ddd9dd6ced0a6afc1bc6d0039
    const parsedSource = typeof source === 'string' ? { uri: source } : source;
  
    return new VideoPlayerWeb(parsedSource);
+diff --git a/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt b/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
+--- a/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
++++ b/android/src/main/java/expo/modules/video/utils/DataSourceUtils.kt
+@@ -13,7 +13,7 @@
+ import androidx.media3.exoplayer.source.MediaSource
+ import expo.modules.video.records.VideoSource
+ import expo.modules.video.managers.VideoManager
+-import okhttp3.OkHttpClient
++import com.facebook.react.modules.network.OkHttpClientProvider
+ 
+ @OptIn(UnstableApi::class)
+ fun buildBaseDataSourceFactory(context: Context, videoSource: VideoSource): DataSource.Factory {
+@@ -26,7 +26,9 @@
+ 
+ @OptIn(UnstableApi::class)
+ fun buildOkHttpDataSourceFactory(context: Context, videoSource: VideoSource): OkHttpDataSource.Factory {
+-  val client = OkHttpClient.Builder().build()
++  // CodeWide routes its Companion media addresses through the application's
++  // pinned client factory; every other URL keeps React Native's default client.
++  val client = OkHttpClientProvider.createClient()
+ 
+   // If the application name has ANY non-ASCII characters, we need to strip them out. This is because using non-ASCII characters
+   // in the User-Agent header can cause issues with getting the media to play.

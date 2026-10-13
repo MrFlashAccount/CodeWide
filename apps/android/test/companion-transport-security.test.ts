@@ -5,22 +5,25 @@ import { describe, expect, it } from "vitest";
 const read = (relative: string): string => readFileSync(new URL(relative, import.meta.url), "utf8");
 
 describe("companion transport trust boundary", () => {
-  it("routes every React Native companion HTTP surface through the native pinned origin", () => {
-    const workspace = read("../src/features/ports/workspaceAdapter.ts");
-    expect(workspace).toContain("nativeCompanionHttpOrigin");
-    expect(workspace).not.toContain("companionHttpUrl(connection.endpoint");
-    // Both tunnel operations, private transfers and telemetry keep the pinned native origin.
+  it("routes every React Native companion HTTP surface through the native pinned transport", () => {
+    // Private transfers, telemetry and host updates use the per-connection platform transport.
     for (const [path, calls] of [
-      ["../src/features/ports/workspaceAdapter.ts", 2],
       ["../src/data/private-transfer.ts", 1],
       ["../src/data/workspace-telemetry.ts", 1],
+      ["../src/features/connections/hostUpdateTransport.ts", 1],
     ] as const) {
       const owner = read(path);
-      expect(
-        owner.match(/nativeCompanionHttpOrigin\(connection\.id, connection\.endpoint\)/gu),
-      ).toHaveLength(calls);
+      expect(owner.match(/[cC]onnectionTransport\(connection\)/gu)).toHaveLength(calls);
       expect(owner).not.toContain("companionHttpUrl(connection.endpoint");
+      expect(owner).not.toMatch(/(?<![.\w])(?<!async )fetch\(/u);
     }
+    const nativeTransport = read("../src/native/companionTransport.native.ts");
+    expect(nativeTransport).toContain("companionHttpRequest");
+    expect(nativeTransport).not.toMatch(/(?<![.\w])(?<!async )fetch\(/u);
+    const service = read(
+      "../android/app/src/main/java/dev/codewide/app/remote/CodexConnectionService.kt",
+    );
+    expect(service).toContain('InnerTlsTransport.client(transferHttpClient, saved, "transfer")');
 
     const privateTransfer = read("../src/data/private-transfer.ts");
     expect(privateTransfer).toContain('from "./companion-http-url"');
@@ -39,11 +42,19 @@ describe("companion transport trust boundary", () => {
     );
     expect(pinnedTls).not.toContain("CertificatePinner.Builder()");
 
-    const nativeProxy = read(
-      "../android/app/src/main/java/dev/codewide/app/remote/NativeCompanionHttpProxy.kt",
+    // Media views reach Companion through the pinned client inside React Native's own HTTP
+    // clients; there is no loopback listener for Companion traffic.
+    const routing = read(
+      "../android/app/src/main/java/dev/codewide/app/remote/CompanionAddressRouting.kt",
     );
-    expect(nativeProxy).toContain("InnerTlsTransport.openSocket");
-    expect(nativeProxy).not.toContain("SSLSocket");
+    expect(routing).toContain("OkHttpClientProvider.setOkHttpClientFactory");
+    expect(routing).toContain("service.proceedCompanionAddress(address, request)");
+    expect(
+      read("../android/app/src/main/java/dev/codewide/app/MainApplication.kt"),
+    ).toContain("installCompanionAddressRouting(this)");
+    expect(read("../../../patches/expo-video@57.0.3.patch")).toContain(
+      "+  val client = OkHttpClientProvider.createClient()",
+    );
 
     const innerTls = read(
       "../android/app/src/main/java/dev/codewide/app/remote/InnerTlsTransport.kt",

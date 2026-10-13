@@ -4,7 +4,6 @@ import type { AttachmentsWorkspaceCapabilities } from "../attachments/workspaceC
 import type { ChangesWorkspaceCapabilities } from "../changes/workspaceCapabilities";
 import type { ComposerWorkspaceCapabilities } from "../composer/workspaceCapabilities";
 import type { GoalWorkspaceCapabilities } from "../goal/workspaceCapabilities";
-import type { PortsWorkspaceCapabilities } from "../ports/workspaceCapabilities";
 import type { ProjectsWorkspaceCapabilities } from "../projects/workspaceCapabilities";
 import type { QueueWorkspaceCapabilities } from "../queue/workspaceCapabilities";
 import type { RequestsWorkspaceCapabilities } from "../requests/workspaceCapabilities";
@@ -21,7 +20,6 @@ export type ConversationWorkspaceFeatures = {
   composer: ComposerWorkspaceCapabilities;
   conversation: ConversationWorkspaceCapabilities;
   goal: GoalWorkspaceCapabilities;
-  ports: PortsWorkspaceCapabilities;
   projects: ProjectsWorkspaceCapabilities;
   queue: QueueWorkspaceCapabilities;
   requests: RequestsWorkspaceCapabilities;

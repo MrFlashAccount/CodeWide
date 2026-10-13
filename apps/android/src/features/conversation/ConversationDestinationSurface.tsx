@@ -23,7 +23,6 @@ export function renderConversationDestinationSurface(props: {
   activeProjectError: ReturnType<typeof useActiveProjectSelection>["activeProjectError"];
   activeProjects: ReturnType<typeof useActiveProjectSelection>["activeProjects"];
   activeThreadResourceId: string | null;
-  activeTunnelResourceId: string | null;
   activeWorkspaceSupport: ReturnType<typeof useActiveProjectSelection>["activeWorkspaceSupport"];
   addActiveProject: ReturnType<typeof useActiveProjectSelection>["addActiveProject"];
   changeEmptyThreadProject: ReturnType<
@@ -75,7 +74,6 @@ export function renderConversationDestinationSurface(props: {
               activeProjects: props.activeProjects,
               activeThread: props.scope.activeThread,
               activeThreadResourceId: props.activeThreadResourceId,
-              activeTunnelResourceId: props.activeTunnelResourceId,
               activeWorkspaceSupport: props.activeWorkspaceSupport,
               addActiveProject: props.addActiveProject,
               changeEmptyThreadProject: props.changeEmptyThreadProject,

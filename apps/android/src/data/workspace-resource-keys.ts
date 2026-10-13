@@ -10,7 +10,3 @@ export function turnControlsResourceKey(connectionId: string, cwd: string): stri
 export function threadResourceKey(connectionId: string, threadId: string): string {
   return `${connectionId}\u0000${threadId}`;
 }
-
-export function tunnelResourceKey(connectionId: string): string {
-  return connectionId;
-}

@@ -8,12 +8,13 @@ import { styles } from "./ProtocolBlock.styles";
 import { protocolCopyText } from "./protocolCopyText";
 import { isToolActivityKind, protocolIcon } from "./protocolKind";
 import { ProtocolBody } from "./ToolContent";
+import type { TransferAccess } from "../../../data/private-transfer";
 
 /** Default protocol card presentation after the declared kinds have dispatched. */
 export function renderProtocolFallback(
   block: RenderBlock,
   displayTitle: string,
-  getTransferAccess: (() => Promise<{ authorization: string; baseUrl: string }>) | undefined,
+  getTransferAccess: (() => Promise<TransferAccess>) | undefined,
 ) {
   return (
     <Card

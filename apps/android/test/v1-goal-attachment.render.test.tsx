@@ -8,6 +8,7 @@ import {
   type ImagePreviewController,
 } from "../src/rendering/imagePreviewController";
 import { AppRootProviders } from "../src/ui/AppRootProviders";
+import { urlTransport } from "../src/native/urlTransport";
 
 it("renders Goal as a removable composer attachment without a second editor", () => {
   const close = jest.fn();
@@ -36,7 +37,7 @@ it("renders Goal inside the same horizontal attachment strip as files", () => {
     <AppRootProviders>
       <ComposerAttachmentTray
         attachments={[attachment]}
-        getAccess={async () => ({ authorization: "test", baseUrl: "https://example.test" })}
+        getAccess={async () => ({ authorization: "test", baseUrl: "https://example.test", transport: urlTransport, })}
         onRemove={jest.fn()}
         scope="test-scope"
         startAttachment={<ComposerGoalAttachment onClose={jest.fn()} />}
@@ -54,7 +55,7 @@ it("keeps image detail available when a composer attachment uses a local thumbna
   const open = jest.fn();
   const getAccess = jest.fn(async () => ({
     authorization: "test",
-    baseUrl: "https://example.test",
+    baseUrl: "https://example.test", transport: urlTransport,
   }));
   const imagePreview: ImagePreviewController = {
     createSession: () => <></>,

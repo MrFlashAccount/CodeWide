@@ -20,6 +20,7 @@ import { AppText as Text } from "../../../ui/Typography";
 import { WaveText } from "../../../ui/WaveText";
 import { usePersistentExpansion } from "./Card";
 import { styles } from "./UserMessageContent.styles";
+import type { TransferAccess } from "../../../data/private-transfer";
 
 export const USER_MESSAGE_COLLAPSED_LINES = 25;
 
@@ -27,7 +28,7 @@ export const USER_MESSAGE_COLLAPSED_CHARS = 1800;
 
 export interface UserMessageContentProps {
   content: unknown[];
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
   localAttachments?: readonly StoredDraftAttachment[];
   pendingText?: boolean;
   projectedAttachments?: unknown;
@@ -195,7 +196,7 @@ export function UserImageGallery({
   separatedFromBody = false,
 }: {
   attachments: UserMessageAttachment[];
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
   separatedFromBody?: boolean;
 }) {
   const tiles = attachments.map((attachment, index) => (

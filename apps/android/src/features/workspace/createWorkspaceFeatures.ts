@@ -25,7 +25,6 @@ import { createGoalWorkspaceAdapter } from "../goal/workspaceAdapter";
 import { createGlobalSupervisorFeature } from "../globalSupervisor";
 import { bindGlobalVoiceOverlayActions } from "../globalSupervisor/globalVoiceOverlayBinding";
 import { createGlobalSupervisorWorkspaceAdapter } from "../globalSupervisor/workspaceAdapter";
-import { createPortsWorkspaceAdapter } from "../ports/workspaceAdapter";
 import { createProjectsWorkspaceAdapter } from "../projects/workspaceAdapter";
 import { createQueueWorkspaceAdapter } from "../queue/workspaceAdapter";
 import { createRequestsWorkspaceAdapter } from "../requests/workspaceAdapter";
@@ -113,11 +112,6 @@ function createWorkspaceFeatures() {
     refreshAccountRateLimits: refreshAccountRateLimits,
     rpcAfterAttach: rpcAfterAttach,
   });
-  const ports = createPortsWorkspaceAdapter({
-    currentConnections: currentConnections,
-    getResources: () => workspaceRuntime.resourceDatabase,
-    scopedHttpAuthorization: scopedHttpAuthorization,
-  });
   const requests = createRequestsWorkspaceAdapter({
     delivery: commandDelivery,
     getPendingRequests: () => workspaceRuntime.snapshot.pendingRequests,
@@ -158,7 +152,6 @@ function createWorkspaceFeatures() {
     conversation,
     globalSupervisor,
     goal,
-    ports,
     projects,
     queue,
     requests,

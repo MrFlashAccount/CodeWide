@@ -95,7 +95,6 @@ function openPortsRoute(input: ConversationToolRouteInput): void {
     kind: "ports",
     resources: props.composer.workspaceResources,
     serverName: props.ports.portForwardingServerName,
-    tunnelResourceId: props.ports.tunnelResourceId,
     ...(props.ports.onOpenBrowser === undefined ? {} : { openBrowser: props.ports.onOpenBrowser }),
   });
 }
@@ -108,7 +107,6 @@ function openRuntimeRoute(input: ConversationToolRouteInput): void {
     kind: "runtime",
     resources: props.composer.workspaceResources,
     serverName: props.ports.portForwardingServerName,
-    tunnelResourceId: props.ports.tunnelResourceId,
     ...(props.ports.onOpenBrowser === undefined ? {} : { openBrowser: props.ports.onOpenBrowser }),
     ...(props.terminal.onListTerminals === undefined
       ? {}
@@ -116,12 +114,6 @@ function openRuntimeRoute(input: ConversationToolRouteInput): void {
     ...(props.terminal.onTerminateTerminal === undefined
       ? {}
       : { terminateTerminal: props.terminal.onTerminateTerminal }),
-    ...(props.ports.onCreateTunnel === undefined
-      ? {}
-      : { createTunnel: props.ports.onCreateTunnel }),
-    ...(props.ports.onRevokeTunnel === undefined
-      ? {}
-      : { revokeTunnel: props.ports.onRevokeTunnel }),
   });
 }
 

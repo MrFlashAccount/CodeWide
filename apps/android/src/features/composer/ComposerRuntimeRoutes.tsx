@@ -3,7 +3,7 @@ import { SegmentedControl } from "@expo/ui/community/segmented-control";
 import { StyleSheet } from "react-native";
 
 import type { ComposerToolRouteRequest } from "../../services/composer/composerToolRouteSession";
-import { useBackgroundTerminalsRow, useTunnelRow } from "../../data/use-workspace-resource-row";
+import { useBackgroundTerminalsRow } from "../../data/use-workspace-resource-row";
 import { AppSheet } from "../../ui/AppSheet";
 import { PortsFeature } from "../ports/PortsFeature";
 import { useNativeForwardingAdapter } from "../ports/nativeForwardingAdapter";
@@ -43,7 +43,6 @@ export function ComposerPortsRoute({
   readonly request: Extract<ComposerToolRouteRequest, { readonly kind: "ports" }>;
   readonly visible: boolean;
 }): React.JSX.Element {
-  const resource = useTunnelRow(request.resources, request.tunnelResourceId);
   const forwarding = useNativeForwardingAdapter(
     request.connectionId,
     request.serverName,
@@ -51,13 +50,7 @@ export function ComposerPortsRoute({
   );
   return (
     <ToolSheet onClose={onClose} performanceSurface="ports" visible={visible}>
-      <PortsFeature
-        mode="forwarding"
-        onClose={onClose}
-        {...(request.openBrowser === undefined ? {} : { onOpenBrowser: request.openBrowser })}
-        portForwarding={forwarding}
-        resource={resource}
-      />
+      <PortsFeature portForwarding={forwarding} />
     </ToolSheet>
   );
 }
@@ -69,7 +62,7 @@ const styles = StyleSheet.create({
   },
 });
 
-/** Presents retained background terminals and tunnels without tying them to route lifetime. */
+/** Presents retained background terminals and port forwards without tying them to route lifetime. */
 export function ComposerRuntimeRoute({
   onClose,
   request,
@@ -83,7 +76,6 @@ export function ComposerRuntimeRoute({
     request.resources,
     request.backgroundTerminalsResourceId,
   );
-  const tunnel = useTunnelRow(request.resources, request.tunnelResourceId);
   const forwarding = useNativeForwardingAdapter(
     request.connectionId,
     request.serverName,
@@ -92,9 +84,7 @@ export function ComposerRuntimeRoute({
   const [section, setSection] = useState<"terminals" | "ports">(
     request.listTerminals === undefined ? "ports" : "terminals",
   );
-  const supportsSectionSelection =
-    request.listTerminals !== undefined &&
-    (forwarding !== undefined || request.createTunnel !== undefined);
+  const supportsSectionSelection = request.listTerminals !== undefined && forwarding !== undefined;
   return (
     <ToolSheet
       onClose={onClose}
@@ -113,7 +103,6 @@ export function ComposerRuntimeRoute({
         request={request}
         section={section}
         terminals={terminals}
-        tunnel={tunnel}
       />
     </ToolSheet>
   );
@@ -156,14 +145,12 @@ function RuntimeSectionContent({
   request,
   section,
   terminals,
-  tunnel,
 }: {
   readonly forwarding: ReturnType<typeof useNativeForwardingAdapter>;
   readonly onClose: () => void;
   readonly request: RuntimeRouteRequest;
   readonly section: RuntimeSection;
   readonly terminals: ReturnType<typeof useBackgroundTerminalsRow>;
-  readonly tunnel: ReturnType<typeof useTunnelRow>;
 }): React.JSX.Element {
   if (section === "terminals" && request.listTerminals !== undefined) {
     return (
@@ -179,17 +166,7 @@ function RuntimeSectionContent({
       />
     );
   }
-  return (
-    <PortsFeature
-      mode="runtime"
-      onClose={onClose}
-      {...(request.openBrowser === undefined ? {} : { onOpenBrowser: request.openBrowser })}
-      portForwarding={forwarding}
-      resource={tunnel}
-      {...(request.createTunnel === undefined ? {} : { onCreate: request.createTunnel })}
-      {...(request.revokeTunnel === undefined ? {} : { onRevoke: request.revokeTunnel })}
-    />
-  );
+  return <PortsFeature portForwarding={forwarding} />;
 }
 
 function ToolSheet({

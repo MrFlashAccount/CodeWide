@@ -1,4 +1,5 @@
 import { checkAborted } from "../native/check-aborted";
+import { urlTransport } from "../native/urlTransport";
 import { recoverPrivateAsset } from "./private-asset-recovery";
 import { materializePrivateImageUri } from "./private-image-cache";
 import {
@@ -51,6 +52,7 @@ export async function materializePrivateAsset(
         headers: request.headers,
         options: { identity: request.cacheIdentity, scope: request.cacheScope },
         signal,
+        transport: request.transport,
         uri: request.uri,
       });
     },
@@ -67,6 +69,7 @@ async function materializeDirectAsset(
       headers: source.headers ?? {},
       options: { identity: source.uri, scope: "direct" },
       signal,
+      transport: urlTransport,
       uri: source.uri,
     });
   }

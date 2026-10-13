@@ -1,8 +1,4 @@
-import {
-  threadResourceKey,
-  tunnelResourceKey,
-  turnControlsResourceKey,
-} from "../../data/workspace-resource-keys";
+import { threadResourceKey, turnControlsResourceKey } from "../../data/workspace-resource-keys";
 import { v1ThreadRouteParams } from "../../services/threads/threadRouteParams";
 import { useTurnChangesLoader } from "../changes/turnChanges";
 import { useGoalCommands } from "../goal/goalCommands";
@@ -54,8 +50,6 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
     scope.activeConnectionId === "" || scope.activeRemoteThreadId === null
       ? null
       : threadResourceKey(scope.activeConnectionId, scope.activeRemoteThreadId);
-  const activeTunnelResourceId =
-    scope.activeConnectionId === "" ? null : tunnelResourceKey(scope.activeConnectionId);
   const activePendingRequests = props.pendingRequests.filter(
     (request) =>
       request.connectionId === scope.activeConnectionId &&
@@ -192,7 +186,6 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
     activeProjectError: projectSelection.activeProjectError,
     activeProjects: projectSelection.activeProjects,
     activeThreadResourceId,
-    activeTunnelResourceId,
     activeWorkspaceSupport: projectSelection.activeWorkspaceSupport,
     addActiveProject: projectSelection.addActiveProject,
     changeEmptyThreadProject: projectSelection.changeEmptyThreadProject,
