@@ -142,6 +142,12 @@ value on its own; the destination is fixed.
   33 identical; 4 compacted sessions now keep their history before the
   compaction (the host's read stops there); 2 sessions show a synthetic API
   error message (`rate_limit`, `authentication_failed`) the SDK's read drops.
-  Claude index logic version 6. Remaining in stage 3: turns as byte ranges on
-  the shared core (paged reads of huge sessions), the host's native-session
-  operations removed.
+  Claude index logic version 6.
+- 2026-10-14: Stage 3b (Claude turns as byte ranges on the shared core)
+  deferred. A full read of the largest local session (18 MB, 75 turns, 7
+  sub-agents) takes 164 ms in a release build, and Claude Code itself keeps a
+  session in memory and skips everything before the last compaction above
+  5 MiB on load, so multi-gigabyte Claude sessions do not occur in practice;
+  the gigabyte case is Codex's, which the shared core already serves. Revisit
+  when a Claude session read exceeds ~1 s (`time_the_largest_local_session_read`).
+  The host's `nativeSession.*` operations go with the host in stage 4.

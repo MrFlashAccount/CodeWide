@@ -415,3 +415,29 @@ async fn native_parity_with_the_hosts_reads() -> Result<(), Box<dyn std::error::
     println!("same={same} differ={differ} missing={missing}");
     Ok(())
 }
+
+/// Times a full read of the largest local session (manual).
+#[tokio::test]
+#[ignore = "reads the developer's own Claude store"]
+async fn time_the_largest_local_session_read() -> Result<(), Box<dyn std::error::Error>> {
+    let home = std::env::var("HOME")?;
+    let root = Path::new(&home).join(".claude/projects");
+    let largest = files::sessions(&root)
+        .into_iter()
+        .max_by_key(|file| file.size)
+        .ok_or("no sessions")?;
+    let reader = LocalSessions::new(
+        root,
+        Path::new(&home).join(".local/state/codewide/companion/claude-journal"),
+    );
+    let started = std::time::Instant::now();
+    let read = reader.read(&largest.session_id).await?;
+    println!(
+        "bytes={} turns={} subagents={} elapsed_ms={}",
+        largest.size,
+        read.turns.len(),
+        read.subagents.len(),
+        started.elapsed().as_millis()
+    );
+    Ok(())
+}
