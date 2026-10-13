@@ -79,7 +79,6 @@ export function ResourceComposerMenu({
   const view = newChat
     ? newChatControlsView(controls, draft)
     : existingThreadControlsView({
-        activeTurnId: state.activeTurnId,
         agent: readThreadAgent(props.thread),
         controls,
         overlay: state.overlay,
