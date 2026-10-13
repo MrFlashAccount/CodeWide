@@ -28,8 +28,8 @@ use tokio::{
 use super::{
     command::QueryOptions,
     protocol::{
-        ControlRequest, Inbound, classify_line, control_request_line, control_response_line,
-        initialize_request, user_message_line,
+        ControlRequest, Inbound, Priority, classify_line, control_request_line,
+        control_response_line, initialize_request, usage_request, user_message_line,
     },
 };
 
@@ -100,12 +100,10 @@ impl ClaudeProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            // Sessions CodeWide drives are recorded as programmatic, as under
+            // the Agent SDK, so they never pass for a person's own sessions.
+            .env("CLAUDE_CODE_ENTRYPOINT", "sdk-ts")
             .kill_on_drop(true);
-        if std::env::var_os("CLAUDE_CODE_ENTRYPOINT").is_none() {
-            // Sessions CodeWide drives are programmatic, as they were under
-            // the Agent SDK; a person's sessions stay interactive.
-            command.env("CLAUDE_CODE_ENTRYPOINT", "sdk-ts");
-        }
         let mut child = command.spawn()?;
         let stdin = child.stdin.take();
         let stdout = child.stdout.take().ok_or(ProcessError::Ended)?;
@@ -191,8 +189,24 @@ impl ClaudeProcess {
     /// # Errors
     ///
     /// Returns a write failure or the end of the process.
-    pub async fn send_user(&self, content: &Value, uuid: &str) -> Result<(), ProcessError> {
-        self.write_line(&user_message_line(content, uuid)).await
+    pub async fn send_user(
+        &self,
+        content: &Value,
+        uuid: Option<&str>,
+        priority: Priority,
+    ) -> Result<(), ProcessError> {
+        self.write_line(&user_message_line(content, uuid, priority))
+            .await
+    }
+
+    /// Reads the plan's rate limits (`get_usage`); its shape is Claude's
+    /// and validated by the reader.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::request`].
+    pub async fn read_usage(&self) -> Result<Value, ProcessError> {
+        self.request(&usage_request()).await
     }
 
     /// Answers one of Claude's control requests.

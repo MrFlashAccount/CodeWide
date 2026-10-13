@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use super::{
     command::{QueryOptions, SessionIdentity, profile_options},
     process::{ClaudeProcess, ProcessError, ProcessEvent},
-    protocol::ControlRequest,
+    protocol::{ControlRequest, Priority},
 };
 
 /// Answers the first control request, asks to run a tool, records every
@@ -85,7 +85,7 @@ async fn drives_the_control_protocol_and_reports_the_exit() {
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     process
-        .send_user(&json!("hello"), "u1")
+        .send_user(&json!("hello"), Some("u1"), Priority::Queued)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     assert!(matches!(

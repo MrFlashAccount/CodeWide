@@ -44,6 +44,8 @@ pub enum ControlRequest {
         input: JsonRecord,
         tool_use_id: Option<String>,
         decision_reason: Option<String>,
+        /// Permission updates Claude proposes for "always allow".
+        suggestions: Vec<Value>,
     },
     /// A JSON-RPC message for an in-process MCP server.
     McpMessage { server_name: String, message: Value },
@@ -105,6 +107,11 @@ fn control_request(request: &JsonRecord) -> ControlRequest {
                 input: record_of(request, "input").cloned().unwrap_or_default(),
                 tool_use_id: str_of(request, "tool_use_id").map(ToOwned::to_owned),
                 decision_reason: str_of(request, "decision_reason").map(ToOwned::to_owned),
+                suggestions: request
+                    .get("permission_suggestions")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
             },
             None => ControlRequest::Other {
                 subtype: "can_use_tool".into(),
@@ -128,8 +135,13 @@ fn control_request(request: &JsonRecord) -> ControlRequest {
 /// How the companion answers `can_use_tool`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PermissionDecision {
-    /// Run the tool with this input.
-    Allow { input: JsonRecord },
+    /// Run the tool with this input; `updated_permissions` (Claude's
+    /// suggestions with a `session` destination) also allows it for the
+    /// rest of the session.
+    Allow {
+        input: JsonRecord,
+        updated_permissions: Option<Vec<Value>>,
+    },
     /// Refuse it; `interrupt` also ends the turn.
     Deny { message: String, interrupt: bool },
 }
@@ -139,7 +151,16 @@ impl PermissionDecision {
     #[must_use]
     pub fn to_response(&self, tool_use_id: Option<&str>) -> Value {
         let mut response = match self {
-            Self::Allow { input } => json!({"behavior": "allow", "updatedInput": input}),
+            Self::Allow {
+                input,
+                updated_permissions,
+            } => {
+                let mut allow = json!({"behavior": "allow", "updatedInput": input});
+                if let Some(updates) = updated_permissions {
+                    allow["updatedPermissions"] = json!(updates);
+                }
+                allow
+            }
             Self::Deny { message, interrupt } => {
                 json!({"behavior": "deny", "message": message, "interrupt": interrupt})
             }
@@ -179,18 +200,53 @@ pub fn initialize_request(sdk_mcp_servers: &[&str]) -> Value {
     }
 }
 
-/// A user message: `content` is a string or Messages API content blocks;
-/// `uuid` is the id Claude persists it under.
+/// Claude's suggested permission updates, kept for the rest of the session
+/// only (an "allow for this session" answer).
 #[must_use]
-pub fn user_message_line(content: &Value, uuid: &str) -> String {
-    json!({
+pub fn session_scoped(suggestions: &[Value]) -> Vec<Value> {
+    suggestions
+        .iter()
+        .map(|update| {
+            let mut update = update.clone();
+            if let Some(record) = update.as_object_mut() {
+                record.insert("destination".into(), json!("session"));
+            }
+            update
+        })
+        .collect()
+}
+
+/// When an offered message is read: `Now` interrupts the running model
+/// request (a steer), `Queued` waits for the turn to reach it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Priority {
+    Queued,
+    Now,
+}
+
+/// A user message: `content` is a string or Messages API content blocks;
+/// `uuid` is the id Claude persists it under (a fresh one when `None`).
+#[must_use]
+pub fn user_message_line(content: &Value, uuid: Option<&str>, priority: Priority) -> String {
+    let mut message = json!({
         "type": "user",
         "message": {"role": "user", "content": content},
         "parent_tool_use_id": null,
         "session_id": "",
-        "uuid": uuid,
-    })
-    .to_string()
+    });
+    if let Some(uuid) = uuid {
+        message["uuid"] = json!(uuid);
+    }
+    if priority == Priority::Now {
+        message["priority"] = json!("now");
+    }
+    message.to_string()
+}
+
+/// The plan rate-limit read (`get_usage`), without the behaviour hints.
+#[must_use]
+pub fn usage_request() -> Value {
+    json!({"subtype": "get_usage", "skip_behaviors": true})
 }
 
 #[cfg(test)]
@@ -243,6 +299,7 @@ mod tests {
     fn writes_the_sdks_shapes() {
         let allow = PermissionDecision::Allow {
             input: serde_json::from_value(json!({"command": "ls"})).unwrap_or_default(),
+            updated_permissions: None,
         };
         assert_eq!(
             allow.to_response(Some("toolu_1")),
@@ -256,10 +313,22 @@ mod tests {
         let line: Value =
             serde_json::from_str(&control_response_line("r1", Err("refused"))).unwrap_or_default();
         assert_eq!(line["response"]["subtype"], "error");
-        let user: Value =
-            serde_json::from_str(&user_message_line(&json!("hi"), "u1")).unwrap_or_default();
+        let user: Value = serde_json::from_str(&user_message_line(
+            &json!("hi"),
+            Some("u1"),
+            Priority::Queued,
+        ))
+        .unwrap_or_default();
         assert_eq!(user["message"]["content"], "hi");
         assert_eq!(user["uuid"], "u1");
+        assert!(user.get("priority").is_none());
+        let steer: Value =
+            serde_json::from_str(&user_message_line(&json!("now"), None, Priority::Now))
+                .unwrap_or_default();
+        assert_eq!(steer["priority"], "now");
+        assert!(steer.get("uuid").is_none());
+        let scoped = session_scoped(&[json!({"type": "addRules", "destination": "localSettings"})]);
+        assert_eq!(scoped[0]["destination"], "session");
         assert_eq!(
             initialize_request(&["codewide"])["sdkMcpServers"][0],
             "codewide"
