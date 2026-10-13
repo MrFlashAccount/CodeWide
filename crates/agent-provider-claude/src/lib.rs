@@ -14,6 +14,7 @@
 
 pub mod agent_sdk;
 pub mod catalog;
+pub mod cli;
 pub mod config;
 pub mod discovery;
 pub mod indexer;

@@ -151,3 +151,12 @@ value on its own; the destination is fixed.
   the gigabyte case is Codex's, which the shared core already serves. Revisit
   when a Claude session read exceeds ~1 s (`time_the_largest_local_session_read`).
   The host's `nativeSession.*` operations go with the host in stage 4.
+- 2026-10-14: Stage 4a done: `src/cli/` drives `claude` without the SDK.
+  `command.rs` builds the SDK's streamed-query command line per permission
+  profile; `protocol.rs` classifies and writes the stream-json control
+  envelopes; `process.rs` runs one process (requests `codewide-<n>` with
+  answers, Claude's requests and messages as ordered events, stderr tail,
+  close with a kill after a grace period); `mcp.rs` serves the client tools
+  as the in-process `codewide` MCP server. Tested against a fake `claude`
+  shell script; no live turn has run yet. Next: the session lifecycle
+  (`host/src/session.ts`, `service.ts`) on top of it.
