@@ -32,8 +32,8 @@ export function renderPerformanceSampleDetails(
           value={percent(current.cpuPercent)}
         />
         <MetricTile
-          detail={`PSS sample ${bytes(current.pssBytes)}`}
-          label="Memory RSS"
+          detail={`PSS ${bytes(current.pssBytes)} · swap ${bytes(current.swapPssBytes)}`}
+          label="Kernel RSS"
           value={bytes(current.rssBytes)}
         />
         <MetricTile
@@ -86,14 +86,17 @@ export function renderPerformanceSampleDetails(
       </View>
 
       <View style={styles.memoryRow}>
-        <Text style={styles.memoryLabel}>RSS {bytes(current.rssBytes)}</Text>
+        <Text style={styles.memoryLabel}>Kernel RSS {bytes(current.rssBytes)}</Text>
+        <Text style={styles.memoryLabel}>PSS {bytes(current.pssBytes)}</Text>
+        <Text style={styles.memoryLabel}>Swap PSS {bytes(current.swapPssBytes)}</Text>
+        <Text style={styles.memoryLabel}>Sample age {duration(current.memorySampleAgeMs)}</Text>
         <Text style={styles.memoryLabel}>
           Java {bytes(current.javaHeapBytes)} / {bytes(current.javaHeapLimitBytes)}
         </Text>
         <Text style={styles.memoryLabel}>Native heap {bytes(current.nativeHeapBytes)}</Text>
       </View>
       <View style={styles.memoryBreakdown}>
-        <Text style={styles.chartSubtitle}>PSS breakdown</Text>
+        <Text style={styles.chartSubtitle}>Android memory categories</Text>
         <View style={styles.memoryRow}>
           <Text style={styles.memoryLabel}>Java {bytes(current.javaHeapPssBytes)}</Text>
           <Text style={styles.memoryLabel}>Native {bytes(current.nativeHeapPssBytes)}</Text>

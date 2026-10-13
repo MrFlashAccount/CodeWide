@@ -17,6 +17,10 @@ const hudLayout = readFileSync(
   new URL("../src/features/diagnostics/navigationPerformanceHudLayout.ts", import.meta.url),
   "utf8",
 );
+const sampleDetails = readFileSync(
+  new URL("../src/features/diagnostics/PerformanceSampleDetails.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("performance sampler lifetime", () => {
   it("keeps frame and CPU sampling frequent without walking process memory every second", () => {
@@ -28,10 +32,22 @@ describe("performance sampler lifetime", () => {
     expect(nativeModule).toContain(
       "nextMemorySampleElapsedMs = elapsedMs + MEMORY_SAMPLE_PERIOD_MS",
     );
-    expect(nativeModule).toContain('File("/proc/self/statm").readText()');
-    expect(nativeModule).toContain("rssBytes = rssBytes");
+    expect(nativeModule).toContain("ProcessMemoryRollupReader.read()");
+    expect(nativeModule).toContain("rssBytes = memory.rssBytes");
+    expect(nativeModule).toContain("memorySampleAgeMs = elapsedMs - memory.capturedAtElapsedMs");
+    expect(nativeModule).not.toContain('File("/proc/self/statm").readText()');
     expect(nativeModule).toContain("snapshotMap(includeHistory = false)");
     expect(bridge).toContain("appendRecentMetric(snapshot.recent, current)");
+  });
+
+  it("labels comparable kernel memory and exposes swap separately", () => {
+    expect(nativeModule).toContain("pssBytes = rollup.pssBytes");
+    expect(nativeModule).toContain("rssBytes = rollup.rssBytes");
+    expect(nativeModule).toContain("swapPssBytes = rollup.swapPssBytes");
+    expect(sampleDetails).toContain('label="Kernel RSS"');
+    expect(sampleDetails).toContain("Sample age");
+    expect(sampleDetails).toContain("Swap PSS");
+    expect(sampleDetails).not.toContain("PSS sample");
   });
 
   it("runs Hermes sampling only after an explicit one-shot request", () => {
