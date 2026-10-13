@@ -55,6 +55,83 @@ function transcript(sessionId: string, entrypoint: string): string {
     .join("\n");
 }
 
+const COMPACTED = "55555555-5555-4555-8555-555555555555";
+/** The compacted session lives in a configuration directory of its own, so the listing tests see only their sessions. */
+const COMPACTED_CWD = "/compacted";
+
+/** A session compacted once: a prompt and answer, the boundary, the summary and a later prompt. */
+function compactedTranscript(): string {
+  const base = {
+    cwd: COMPACTED_CWD,
+    entrypoint: "cli",
+    isSidechain: false,
+    sessionId: COMPACTED,
+    userType: "external",
+    version: "2.1.296",
+  };
+  const id = (n: number): string => `55555555-0000-4000-8000-00000000000${String(n)}`;
+  const at = (second: number): string => `2026-10-01T10:00:0${String(second)}.000Z`;
+  const answer = (uuid: string, parentUuid: string, text: string, second: number) => ({
+    ...base,
+    message: {
+      content: [{ text, type: "text" }],
+      id: `msg_${uuid}`,
+      model: "m",
+      role: "assistant",
+      type: "message",
+    },
+    parentUuid,
+    timestamp: at(second),
+    type: "assistant",
+    uuid,
+  });
+  return [
+    {
+      ...base,
+      message: { content: "Before compaction", role: "user" },
+      parentUuid: null,
+      timestamp: at(1),
+      type: "user",
+      uuid: id(1),
+    },
+    answer(id(2), id(1), "old answer", 2),
+    {
+      ...base,
+      compactMetadata: {
+        preservedMessages: { anchorUuid: id(4), uuids: [id(2)] },
+        trigger: "manual",
+      },
+      content: "Conversation compacted",
+      logicalParentUuid: id(2),
+      parentUuid: null,
+      subtype: "compact_boundary",
+      timestamp: at(3),
+      type: "system",
+      uuid: id(3),
+    },
+    {
+      ...base,
+      isCompactSummary: true,
+      message: { content: "Summary", role: "user" },
+      parentUuid: id(3),
+      timestamp: at(4),
+      type: "user",
+      uuid: id(4),
+    },
+    {
+      ...base,
+      message: { content: "After compaction", role: "user" },
+      parentUuid: id(4),
+      timestamp: at(5),
+      type: "user",
+      uuid: id(5),
+    },
+    answer(id(6), id(5), "new answer", 6),
+  ]
+    .map((entry) => JSON.stringify(entry))
+    .join("\n");
+}
+
 describe("Claude session store through the Agent SDK", () => {
   const previous = process.env["CLAUDE_CONFIG_DIR"];
 
@@ -68,6 +145,43 @@ describe("Claude session store through the Agent SDK", () => {
       `${transcript(PROGRAMMATIC, "sdk-ts")}\n`,
     );
     process.env["CLAUDE_CONFIG_DIR"] = configDirectory;
+  });
+
+  it("reads a compacted session's whole history, the SDK's own read only its newest part", async () => {
+    const configDirectory = mkdtempSync(join(tmpdir(), "claude-agent-host-compacted-"));
+    const project = join(configDirectory, "projects", "-compacted");
+    mkdirSync(project, { recursive: true });
+    writeFileSync(join(project, `${COMPACTED}.jsonl`), `${compactedTranscript()}\n`);
+    const shared = process.env["CLAUDE_CONFIG_DIR"];
+    process.env["CLAUDE_CONFIG_DIR"] = configDirectory;
+    try {
+      const sdk = await loadAgentSdk(null);
+      const texts = (messages: readonly unknown[]): readonly string[] =>
+        messages.flatMap((entry) => {
+          const message: unknown =
+            typeof entry === "object" && entry !== null ? Reflect.get(entry, "message") : null;
+          const content: unknown =
+            typeof message === "object" && message !== null
+              ? Reflect.get(message, "content")
+              : null;
+          return typeof content === "string" ? [content] : [];
+        });
+      const location = { cwd: COMPACTED_CWD, sessionId: COMPACTED };
+      expect(texts(await sdk.getSessionMessages(COMPACTED, { dir: COMPACTED_CWD }))).not.toContain(
+        "Before compaction",
+      );
+      const messages = await createSdkSessionStore(sdk).messages(location);
+      expect(texts(messages)).toEqual(["Before compaction", "Summary", "After compaction"]);
+      expect(
+        await createSdkSessionStore(sdk).messages({
+          cwd: COMPACTED_CWD,
+          sessionId: "44444444-4444-4444-8444-444444444444",
+        }),
+      ).toEqual([]);
+    } finally {
+      if (shared === undefined) delete process.env["CLAUDE_CONFIG_DIR"];
+      else process.env["CLAUDE_CONFIG_DIR"] = shared;
+    }
   });
 
   afterAll(() => {

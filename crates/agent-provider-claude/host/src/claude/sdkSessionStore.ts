@@ -6,9 +6,15 @@
  * a path into it, never reads credentials and only reads conversations,
  * titles and listings. Writes are limited to `renameSession` and
  * `deleteSession`, issued by explicit thread operations.
+ *
+ * A session's messages are its whole history: the SDK's own read stops at
+ * the last compaction, so the rows are read through `importSessionToStore`,
+ * linked across compactions (`compactionLinks.ts`) and read back through the
+ * SDK's `sessionStore` option, which applies the same branch rules.
  */
 
-import type { SDKSessionInfo } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKSessionInfo, SessionKey, SessionStoreEntry } from "@anthropic-ai/claude-agent-sdk";
+import { linkAcrossCompactions } from "./compactionLinks.js";
 import type { AgentSdk } from "./sdkModule.js";
 import type {
   SessionListQuery,
@@ -18,6 +24,12 @@ import type {
   SessionStore,
   StoredSession,
 } from "./port.js";
+
+/**
+ * The SDK's session store contract is asynchronous; the stores this module
+ * hands it keep rows in memory and complete at once.
+ */
+const IN_MEMORY: Promise<void> = Promise.resolve();
 
 const nonEmpty = (value: string | undefined): string | null =>
   value === undefined || value.length === 0 ? null : value;
@@ -65,10 +77,57 @@ async function subagentMessages(
   return sdk.getSubagentMessages(location.sessionId, location.agentId, directoryOf(location));
 }
 
+/** The main transcript's rows as Claude stored them, or `null` for a session Claude does not have. */
+async function storedRows(
+  sdk: AgentSdk,
+  location: SessionLocation,
+): Promise<SessionStoreEntry[] | null> {
+  const rows: SessionStoreEntry[] = [];
+  const capture = {
+    append: async (key: SessionKey, entries: SessionStoreEntry[]): Promise<void> => {
+      if (key.subpath === undefined) {
+        rows.push(...entries);
+      }
+      await IN_MEMORY;
+    },
+    load: async (): Promise<null> => {
+      await IN_MEMORY;
+      return null;
+    },
+  };
+  try {
+    await sdk.importSessionToStore(location.sessionId, capture, {
+      ...directoryOf(location),
+      includeSubagents: false,
+    });
+  } catch (error) {
+    // The import throws for a session Claude does not have; the session
+    // read answers it with no messages.
+    if ((await info(sdk, location)) === null) {
+      return null;
+    }
+    throw error;
+  }
+  return rows;
+}
+
 async function messages(sdk: AgentSdk, location: SessionLocation): Promise<readonly unknown[]> {
+  const rows = await storedRows(sdk, location);
+  if (rows === null) {
+    return [];
+  }
+  const linked = linkAcrossCompactions(rows);
   return sdk.getSessionMessages(location.sessionId, {
     ...directoryOf(location),
     includeSystemMessages: true,
+    sessionStore: {
+      // Reading never writes: nothing to mirror.
+      append: async (): Promise<void> => IN_MEMORY,
+      load: async (): Promise<SessionStoreEntry[]> => {
+        await IN_MEMORY;
+        return linked;
+      },
+    },
   });
 }
 
