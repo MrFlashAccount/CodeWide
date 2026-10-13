@@ -1011,6 +1011,9 @@ fn latest_thread_state(
                 own_path: &path,
             }
             .below_own(1)
+            // A preview is best effort; the history read reports the failure.
+            .ok()
+            .flatten()
             .and_then(|inherited| inherited.turns.first().and_then(summary_preview)),
             active: false,
         };
@@ -1470,11 +1473,11 @@ impl<'a> BaseChain<'a> {
         let Some(base) = read_history_base(&self.current).map_err(IndexError::from)? else {
             return Ok(None);
         };
-        let path = match self.catalog.resolve(&base.thread_id) {
+        let path = match self.catalog.resolve_rollout(&base.rollout_id) {
             Ok(path) => path,
             Err(CatalogError::NotFound(_)) => {
                 tracing::warn!(
-                    base_thread_id = base.thread_id,
+                    base_rollout_id = base.rollout_id,
                     "inherited history of a paginated fork is unavailable: its base rollout is missing"
                 );
                 return Ok(None);
@@ -1483,7 +1486,7 @@ impl<'a> BaseChain<'a> {
         };
         if !self.visited.insert(path.clone()) {
             tracing::warn!(
-                base_thread_id = base.thread_id,
+                base_rollout_id = base.rollout_id,
                 "paginated fork history bases form a cycle; older bases are skipped"
             );
             return Ok(None);
@@ -1638,9 +1641,11 @@ struct ForkContinuation<'a> {
 }
 
 impl ForkContinuation<'_> {
-    /// Up to `limit` inherited turns, newest first. A base that cannot be
-    /// read leaves the fork's own history intact.
-    fn below_own(&self, limit: usize) -> Option<InheritedPage> {
+    /// Up to `limit` inherited turns, newest first. A base that is gone for
+    /// good (deleted, rewritten or shorter than the fork point) ends the
+    /// history after the fork's own turns; a retryable failure is returned so
+    /// the caller does not mistake it for the start of the history.
+    fn below_own(&self, limit: usize) -> Result<Option<InheritedPage>, HistoryServiceError> {
         let start = InheritedStart::Below {
             depth: NonZeroUsize::MIN,
             before: None,
@@ -1656,26 +1661,59 @@ impl ForkContinuation<'_> {
             limit,
         );
         match page {
-            Ok(page) => page,
-            Err(error) => {
+            Ok(page) => Ok(page),
+            Err(error) if base_unavailable(&error) => {
                 let thread_id = self.thread_id;
-                tracing::warn!(thread_id, %error, "inherited history of a paginated fork is unreadable");
-                None
+                tracing::warn!(thread_id, %error, "inherited history of a paginated fork is unavailable");
+                Ok(None)
             }
+            Err(error) => Err(error),
         }
+    }
+
+    /// The newest inherited turn: the turn the fork point closes.
+    fn inherited_head(&self) -> Result<Option<String>, HistoryServiceError> {
+        Ok(self.below_own(1)?.and_then(|page| {
+            page.turns
+                .first()
+                .and_then(|turn| turn.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        }))
     }
 
     /// Fills a newest-first page that reached the start of the thread's own
     /// rollout up to `limit` turns and returns its older cursor. `offset`
     /// counts turns returned by earlier pages.
-    fn complete(&self, turns: &mut Vec<Value>, limit: usize, offset: usize) -> Option<String> {
-        let inherited = self.below_own(limit.saturating_sub(turns.len()))?;
+    fn complete(
+        &self,
+        turns: &mut Vec<Value>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Option<String>, HistoryServiceError> {
+        let Some(inherited) = self.below_own(limit.saturating_sub(turns.len()))? else {
+            return Ok(None);
+        };
         let returned = offset
             .saturating_add(turns.len())
             .saturating_add(inherited.turns.len());
         let older_cursor = inherited.older_cursor(self.thread_id, returned);
         turns.extend(inherited.turns);
-        older_cursor
+        Ok(older_cursor)
+    }
+}
+
+/// Whether a base failure means the inherited history is gone for good rather
+/// than temporarily unreadable. Retrying cannot restore it, and reporting it as
+/// a changed source would make the client reload forever.
+fn base_unavailable(error: &HistoryServiceError) -> bool {
+    match error {
+        HistoryServiceError::HistorySourceChanged
+        | HistoryServiceError::Catalog(CatalogError::NotFound(_)) => true,
+        HistoryServiceError::Rollout(IndexError::Io(error)) => {
+            error.kind() == std::io::ErrorKind::NotFound
+        }
+        _ => false,
     }
 }
 
@@ -1735,6 +1773,7 @@ fn semantic_history_page(
                     }
                     .below_own(request.limit - turns.len())
                 })
+                .transpose()?
                 .flatten();
             match inherited {
                 Some(inherited) => {
@@ -1859,7 +1898,7 @@ fn turns_page(
             thread_id,
             own_path: &path,
         };
-        next_cursor = bases.complete(&mut data, limit, logical_offset);
+        next_cursor = bases.complete(&mut data, limit, logical_offset)?;
     }
     if not_loaded {
         data.iter_mut().for_each(drop_loaded_items);
@@ -2063,9 +2102,35 @@ fn sync_history_with_source(
             thread_id,
             own_path: &path,
         };
-        older_cursor = bases.complete(&mut turns, limit, 0);
+        let anchor = after_turn_id.filter(|id| Some(*id) != active_turn_id);
+        if let Some(anchor) = anchor
+            && bases.inherited_head()?.as_deref() == Some(anchor)
+        {
+            return Ok(own_turns_after_fork_point(
+                anchor,
+                head_turn_id,
+                turns,
+                &witness,
+            ));
+        }
+        older_cursor = bases.complete(&mut turns, limit, 0)?;
     }
-    // A fork without sealed turns of its own is headed by its inherited history.
+    Ok(reset_response(
+        head_turn_id,
+        turns,
+        older_cursor.as_deref(),
+        &witness,
+    ))
+}
+
+/// A canonical reset: the newest turns, oldest first. A fork without sealed
+/// turns of its own is headed by its inherited history.
+fn reset_response(
+    head_turn_id: Option<String>,
+    mut turns: Vec<Value>,
+    older_cursor: Option<&str>,
+    witness: &str,
+) -> Value {
     let head_turn_id = head_turn_id.or_else(|| {
         turns
             .first()
@@ -2074,19 +2139,39 @@ fn sync_history_with_source(
             .map(str::to_owned)
     });
     turns.reverse();
-    Ok(json!({
+    json!({
         "kind": "reset",
         "headTurnId": head_turn_id,
         "turns": turns,
         "hasMore": false,
         "olderCursor": older_cursor,
         "sourceWitness": witness,
-    }))
+    })
 }
 
 struct LatestReset {
     turns: Vec<TurnRef>,
     older_cursor: Option<String>,
+}
+
+/// A client headed by the fork point already holds everything inherited, so
+/// a sync sends only the fork's own turns (`own`, newest first) instead of
+/// re-reading the base for a reset.
+fn own_turns_after_fork_point(
+    anchor: &str,
+    head_turn_id: Option<String>,
+    mut own: Vec<Value>,
+    witness: &str,
+) -> Value {
+    own.reverse();
+    json!({
+        "kind": if own.is_empty() { "current" } else { "delta" },
+        "headTurnId": head_turn_id.unwrap_or_else(|| anchor.to_owned()),
+        "turns": own,
+        "hasMore": false,
+        "olderCursor": Value::Null,
+        "sourceWitness": witness,
+    })
 }
 
 fn latest_reset(
