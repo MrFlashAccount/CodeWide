@@ -1107,6 +1107,100 @@ pub fn current_indexed_coverage_from_file(
     .then_some(state))
 }
 
+/// Coverage of a file's frozen prefix `[0, end)`, such as a paginated fork's
+/// base. The checkpoint proves the indexed bytes unchanged even while the
+/// file keeps growing past them, so a live base thread does not invalidate
+/// the history its forks inherited.
+///
+/// # Errors
+///
+/// Returns an error when the file or the index cannot be read.
+pub fn frozen_indexed_coverage_from_file(
+    store: &IndexStore,
+    path: &Path,
+    file: &File,
+    end: u64,
+) -> Result<Option<FileState>, IndexError> {
+    let Some(state) = store.file_state(&file_id(path))? else {
+        return Ok(None);
+    };
+    let metadata = file.metadata()?;
+    let (device, inode) = file_identity(&metadata);
+    let durable_bytes = durable_end(file, metadata.len())?;
+    Ok((state.indexed_bytes >= end
+        && file_state_matches(file, state, device, inode, durable_bytes)?)
+    .then_some(state))
+}
+
+/// The newest indexed turns that start before `before` inside a frozen
+/// prefix `[0, end)`. A turn may run past `end`; the caller closes it there.
+///
+/// # Errors
+///
+/// Returns an error when the file or the index cannot be read.
+pub fn frozen_indexed_turns_from_file(
+    store: &IndexStore,
+    path: &Path,
+    file: &File,
+    end: u64,
+    before: u64,
+    limit: usize,
+) -> Result<Option<IndexedTurnPage>, IndexError> {
+    let Some(state) = frozen_indexed_coverage_from_file(store, path, file, end)? else {
+        return Ok(None);
+    };
+    let before = before.min(end);
+    if before <= state.indexed_from && !state.is_complete() {
+        return Ok(None);
+    }
+    let id = file_id(path);
+    let mut turns = store.turns_desc(&id, Some(before), limit)?;
+    turns.retain(|turn| turn.start_offset >= state.indexed_from);
+    if turns.is_empty() && !state.is_complete() {
+        return Ok(None);
+    }
+    if turns.iter().any(|turn| {
+        (turn.end_offset != 0 && turn.start_offset >= turn.end_offset)
+            || turn.end_offset > state.indexed_bytes
+    }) {
+        return Ok(None);
+    }
+    if store.file_state(&id)? != Some(state) {
+        return Ok(None);
+    }
+    Ok(Some(IndexedTurnPage {
+        has_more: !state.is_complete() && turns.len() < limit,
+        turns,
+    }))
+}
+
+/// Resolves a turn inside a frozen prefix `[0, end)` from the index.
+///
+/// # Errors
+///
+/// Returns an error when the file or the index cannot be read.
+pub fn frozen_indexed_anchor_from_file(
+    store: &IndexStore,
+    path: &Path,
+    file: &File,
+    end: u64,
+    turn_id: &str,
+) -> Result<Option<TurnRef>, IndexError> {
+    let Some(state) = frozen_indexed_coverage_from_file(store, path, file, end)? else {
+        return Ok(None);
+    };
+    let id = file_id(path);
+    let anchor = store.turn_by_id(&id, turn_id)?.filter(|turn| {
+        turn.start_offset >= state.indexed_from
+            && turn.start_offset < end
+            && turn.end_offset <= state.indexed_bytes
+    });
+    if store.file_state(&id)? != Some(state) {
+        return Ok(None);
+    }
+    Ok(anchor)
+}
+
 /// Whether `file` still matches `witness`: its bytes unchanged and no
 /// rollback appended after them.
 ///

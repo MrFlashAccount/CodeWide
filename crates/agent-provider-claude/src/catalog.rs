@@ -174,6 +174,7 @@ pub fn row(
             origin,
             status,
             settings,
+            spawn: None,
         },
     })
 }

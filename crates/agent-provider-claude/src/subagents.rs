@@ -10,7 +10,8 @@
 
 use agent_core::model::{
     AgentItem, AgentThread, AgentTurn, AppThreadId, NativeSessionReadResult, ProviderId,
-    SubagentStatus, ThreadOrigin, ThreadSettings, ThreadStatus, TurnStatus, UserContent,
+    SubagentStatus, ThreadOrigin, ThreadSettings, ThreadSpawn, ThreadStatus, TurnStatus,
+    UserContent,
 };
 use companion_host::thread_index::IndexedThreadMetadata;
 use serde::{Deserialize, Serialize};
@@ -177,7 +178,22 @@ impl ChildThread {
                 permission_profile: ":read-only".into(),
                 service_tier: None,
             },
+            spawn: Some(ThreadSpawn {
+                parent_thread_id: self.spawning_thread(),
+                agent_nickname: self.subagent.description.clone(),
+                agent_role: self.subagent.agent_type.clone(),
+            }),
         }
+    }
+
+    /// The thread whose agent started this one: the parent thread, or the
+    /// child thread of the sub-agent that spawned it.
+    fn spawning_thread(&self) -> AppThreadId {
+        self.subagent
+            .parent_agent_id
+            .as_deref()
+            .and_then(|agent_id| child_thread_id(&self.parent, agent_id))
+            .unwrap_or_else(|| self.parent.clone())
     }
 
     /// The turn still running in the transcript, if any.

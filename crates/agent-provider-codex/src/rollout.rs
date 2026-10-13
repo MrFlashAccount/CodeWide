@@ -228,6 +228,39 @@ pub(crate) fn current_indexed_coverage_from_file(
     scan::current_indexed_coverage_from_file(store, path, file, file_bytes)
 }
 
+/// See [`scan::frozen_indexed_coverage_from_file`].
+pub(crate) fn frozen_indexed_coverage_from_file(
+    store: &RolloutStore,
+    path: &Path,
+    file: &File,
+    end: u64,
+) -> Result<Option<FileState>, IndexError> {
+    scan::frozen_indexed_coverage_from_file(store, path, file, end)
+}
+
+/// See [`scan::frozen_indexed_turns_from_file`].
+pub(crate) fn frozen_indexed_turns_from_file(
+    store: &RolloutStore,
+    path: &Path,
+    file: &File,
+    end: u64,
+    before: u64,
+    limit: usize,
+) -> Result<Option<IndexedTurnPage>, IndexError> {
+    scan::frozen_indexed_turns_from_file(store, path, file, end, before, limit)
+}
+
+/// See [`scan::frozen_indexed_anchor_from_file`].
+pub(crate) fn frozen_indexed_anchor_from_file(
+    store: &RolloutStore,
+    path: &Path,
+    file: &File,
+    end: u64,
+    turn_id: &str,
+) -> Result<Option<TurnRef>, IndexError> {
+    scan::frozen_indexed_anchor_from_file(store, path, file, end, turn_id)
+}
+
 /// Discovers the newest turn spans directly from the durable JSONL tail.
 ///
 /// # Errors
@@ -420,8 +453,8 @@ mod tests {
     use agent_index::{Boundary, IndexSource};
 
     use super::{
-        ROLLOUTS, classify_record, current_indexed_turns_from_file, index_rollout,
-        index_rollout_metadata, index_rollout_through_anchor, rollout_file_id,
+        ROLLOUTS, classify_record, current_indexed_turns_from_file, frozen_indexed_turns_from_file,
+        index_rollout, index_rollout_metadata, index_rollout_through_anchor, rollout_file_id,
         rollout_witness_from_file, rollout_witness_matches, scan_tail_turns_from_file,
         scan_turns_after_from_file, scan_turns_before_from_file,
     };
@@ -791,6 +824,69 @@ mod tests {
             vec!["child", "grandchild"]
         );
         assert_eq!(descendants[0].agent_nickname.as_deref(), Some("Worker"));
+        Ok(())
+    }
+
+    fn write_turns(path: &std::path::Path, ids: &[String], padding: usize) -> std::io::Result<u64> {
+        let mut writer = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        let filler = "x".repeat(padding);
+        for id in ids {
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"task_started","turn_id":"{id}"}}}}"#
+            )?;
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"agent_message","message":"{filler}","phase":"final_answer"}}}}"#
+            )?;
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"task_complete","turn_id":"{id}"}}}}"#
+            )?;
+        }
+        writer.sync_all()?;
+        Ok(std::fs::metadata(path)?.len())
+    }
+
+    fn ids(prefix: &str, range: std::ops::Range<usize>) -> Vec<String> {
+        range.map(|index| format!("{prefix}{index}")).collect()
+    }
+
+    #[test]
+    fn a_frozen_prefix_stays_indexed_while_its_rollout_keeps_growing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let end = write_turns(&path, &ids("t", 0..3), 16)?;
+        let store = crate::test_support::open_rollout_store(directory.path().join("index.redb"))?;
+        index_rollout(&store, &path)?;
+        // The base thread goes on after the fork point without being reindexed yet.
+        let grown = write_turns(&path, &ids("t", 3..4), 16)?;
+        let file = std::fs::File::open(&path)?;
+
+        assert!(current_indexed_turns_from_file(&store, &path, &file, grown, None, 10)?.is_none());
+        let page = frozen_indexed_turns_from_file(&store, &path, &file, end, end, 10)?
+            .ok_or("frozen prefix should be served from the index")?;
+        assert_eq!(
+            page.turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
+            ["t2", "t1", "t0"]
+        );
+        assert!(!page.has_more);
+
+        // A rewrite of the indexed bytes is never trusted.
+        let rewritten = std::fs::read(&path)?
+            .iter()
+            .map(|byte| if *byte == b'x' { b'y' } else { *byte })
+            .collect::<Vec<_>>();
+        std::fs::write(&path, rewritten)?;
+        let file = std::fs::File::open(&path)?;
+        assert!(frozen_indexed_turns_from_file(&store, &path, &file, end, end, 10)?.is_none());
         Ok(())
     }
 }

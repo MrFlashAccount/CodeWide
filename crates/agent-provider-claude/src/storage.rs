@@ -548,6 +548,7 @@ mod tests {
                 permission_profile: ":read-only".into(),
                 service_tier: None,
             },
+            spawn: None,
         };
         let mut threads = vec![
             host_row("terminal", "hello"),

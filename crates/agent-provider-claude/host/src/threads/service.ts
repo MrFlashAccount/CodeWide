@@ -227,6 +227,9 @@ export class ThreadService {
       historyLines: async (entry) =>
         historyLines(await this.history.turns(this.subjectOf(entry.state))),
       project: (entry) => this.project(entry),
+      released: (entry) => {
+        this.openElsewhere.released(currentSessionId(entry.state));
+      },
       sessionReady: (entry) => {
         this.onSessionReady(entry);
       },

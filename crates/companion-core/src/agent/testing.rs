@@ -121,6 +121,7 @@ pub(crate) fn thread(provider: &'static str, id: &str, key: i64) -> AgentThread 
             permission_profile: ":workspace".into(),
             service_tier: None,
         },
+        spawn: None,
     }
 }
 

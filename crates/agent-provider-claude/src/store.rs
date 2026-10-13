@@ -43,7 +43,9 @@ const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// turns in their own table. 3: each session's newest conversation message
 /// ([`StoredSession::newest_message`]). 4: thread metadata of a session
 /// without its own `cwd` (republishes threads the earlier guard skipped).
-pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 4;
+/// 5: a compacted session's whole history (the host read only the part after
+/// the last compaction, so compacted threads lost their earlier turns).
+pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 5;
 
 /// The Claude tables' schema in the host index.
 pub const CLAUDE_INDEX_SCHEMA: ClaudeIndexSchema = ClaudeIndexSchema;
@@ -663,6 +665,14 @@ mod tests {
         let provider = agent_core::model::ProviderId::from_static("claude");
         let thread = child.thread(&provider);
         assert_eq!(thread.name.as_deref(), Some("Check the build"));
+        assert_eq!(
+            thread.spawn,
+            Some(agent_core::model::ThreadSpawn {
+                parent_thread_id: AppThreadId::from_static("thread-s"),
+                agent_nickname: Some("Check the build".into()),
+                agent_role: Some("Explore".into()),
+            })
+        );
         assert_eq!(thread.status, agent_core::model::ThreadStatus::Active);
         assert_eq!(thread.preview, "Run the build");
 
