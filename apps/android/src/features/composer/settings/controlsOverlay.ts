@@ -6,8 +6,9 @@
  * still reports the value it was shown over (`baseline`); the echo of the
  * choice confirms it, and any other server change — from another device, or
  * a later revert — replaces it. A rejected command removes its entries, so
- * the chip reverts. A confirmed entry remains only to say that a choice made
- * during a running turn applies from the next turn.
+ * the chip reverts. The server does not report when a choice takes effect
+ * (a model change made during a turn applies at the next one), so the
+ * composer infers nothing about it: an answered choice is simply shown.
  */
 
 import type { ProjectedThreadExecutionSettings } from "@codewide/sync-client";
@@ -23,14 +24,10 @@ export type ComposerControlEntry = {
    * made, then the chosen value once the server echoed it.
    */
   readonly baseline: string | null;
-  /** Server value when the choice was made. */
-  readonly from: string | null;
   /** Ownership token: a later choice of the same field replaces this one. */
   readonly mutation: number;
   /** `sending`: queued or in flight; `accepted`: the server answered the command. */
   readonly status: "accepted" | "sending";
-  /** The turn that was running when the choice was made; `null` when idle. */
-  readonly turnId: string | null;
   readonly value: string | null;
 };
 
@@ -52,7 +49,6 @@ export type ComposerControlChanges = Readonly<Partial<Record<ComposerControlFiel
 
 /** What the owner knew about the thread when the choice was made. */
 export type ComposerControlBaseline = {
-  readonly activeTurnId: string | null;
   readonly server: Readonly<Record<ComposerControlField, string | null>>;
 };
 
@@ -75,10 +71,8 @@ export function overlayWithChanges(
       ? overlay[field]
       : {
           baseline: baseline.server[field],
-          from: baseline.server[field],
           mutation,
           status: "sending",
-          turnId: baseline.activeTurnId,
           value,
         };
   };
@@ -150,10 +144,8 @@ export function serverControlValue(
 /** The server values a new local choice is compared against. */
 export function controlBaseline(
   server: ProjectedThreadExecutionSettings | null,
-  activeTurnId: string | null,
 ): ComposerControlBaseline {
   return {
-    activeTurnId,
     server: {
       effort: serverControlValue(server, "effort"),
       model: serverControlValue(server, "model"),
@@ -205,8 +197,6 @@ function overlayAfterServerChange(
 
 /** The settings owner's state: what the composer knows of the thread's settings. */
 export type ComposerControlsState = {
-  /** The thread's running turn when `server` was observed. */
-  readonly activeTurnId: string | null;
   readonly overlay: ComposerControlsOverlay;
   /** The thread's server settings as last observed by the composer. */
   readonly server: ProjectedThreadExecutionSettings | null;
@@ -233,17 +223,12 @@ function sameServerSettings(
 export function reconcileControlsState(
   state: ComposerControlsState,
   server: ProjectedThreadExecutionSettings | null,
-  activeTurnId: string | null,
 ): ComposerControlsState {
   const overlay = overlayAfterServerChange(state.overlay, server);
-  if (
-    overlay === state.overlay &&
-    activeTurnId === state.activeTurnId &&
-    sameServerSettings(state.server, server)
-  ) {
+  if (overlay === state.overlay && sameServerSettings(state.server, server)) {
     return state;
   }
-  return { activeTurnId, overlay, server };
+  return { overlay, server };
 }
 
 /** The `thread/settings/update` fields of `changes`. */

@@ -9,7 +9,6 @@ import type { Observable } from "@legendapp/state";
 import { useSelector } from "@legendapp/state/react";
 import { View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { activeTurnId } from "../../../data/thread-lifecycle";
 import { readThreadAgent } from "../../../data/threadAgent";
 import type { LoadTurnControls, TurnControlsValue } from "../../../data/turn-controls-types";
 import { useTurnControlsRow } from "../../../data/use-workspace-resource-row";
@@ -109,7 +108,6 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
         serviceTier: props.selectedServiceTier,
       })
     : existingThreadControlsView({
-        activeTurnId: activeTurnId(remoteThread),
         agent: readThreadAgent(remoteThread),
         controls,
         overlay,
@@ -130,9 +128,9 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
     ) : (
       <ProviderIcon provider={modelProvider} />
     );
+  // A choice shimmers until the server answers it.
   const modelTextPending =
     initialLoading || view.model.pending || view.effort.pending || view.serviceTier.pending;
-  const modelNextTurn = view.model.nextTurn || view.effort.nextTurn || view.serviceTier.nextTurn;
   const fastTier = fastServiceTier(view.modelEntry?.serviceTiers);
   const fast = fastTier !== undefined && isFastServiceTier(view.serviceTier.value, fastTier);
   const permissionLabel = permissionsDisplayLabel(view.permissions.value, serverExecution, pending);
@@ -146,7 +144,6 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
         text={modelText}
       />
       {fast && <Ionicons color={colors.text} name="flash" size={iconSize.inline} />}
-      {modelNextTurn && <NextTurnMarker testID="composer-model-next-turn" />}
     </>
   );
   const permissionsText = initialLoading ? "Loading access…" : permissionLabel;
@@ -158,7 +155,6 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
         testID="composer-permissions-label"
         text={permissionsText}
       />
-      {view.permissions.nextTurn && <NextTurnMarker testID="composer-permissions-next-turn" />}
     </>
   );
   return (
@@ -172,7 +168,7 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
           accessibilityLabel={
             initialLoading
               ? "Loading model"
-              : `Model and thinking: ${modelLabel}, ${view.effort.value ?? "not specified"}${nextTurnSuffix(modelNextTurn)}`
+              : `Model and thinking: ${modelLabel}, ${view.effort.value ?? "not specified"}`
           }
           agentScope={modelAgentScope(catalog, newChat)}
           error={effectiveError}
@@ -202,11 +198,7 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
         </View>
       ) : (
         <PermissionsMenu
-          accessibilityLabel={
-            initialLoading
-              ? "Loading access"
-              : `Permissions: ${permissionLabel}${nextTurnSuffix(view.permissions.nextTurn)}`
-          }
+          accessibilityLabel={initialLoading ? "Loading access" : `Permissions: ${permissionLabel}`}
           error={effectiveError}
           loading={initialLoading}
           onClose={() => {
@@ -228,19 +220,6 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
       )}
     </>
   );
-}
-
-/** A subtle mark on a chip whose value takes effect when the next turn starts. */
-function NextTurnMarker({ testID }: { readonly testID: string }) {
-  return (
-    <View accessibilityLabel="Applies from the next turn" accessible testID={testID}>
-      <InlineIcon color={colors.textMuted} name="time-outline" role="label" />
-    </View>
-  );
-}
-
-function nextTurnSuffix(nextTurn: boolean): string {
-  return nextTurn ? ", applies from the next turn" : "";
 }
 
 /** The access chip's text. */

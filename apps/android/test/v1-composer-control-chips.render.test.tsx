@@ -362,8 +362,8 @@ describe("Codex thread", () => {
     );
     expect(accessLabel(view)).toHaveTextContent("Full access");
     expect(accessLabel(view)).not.toHaveProp("accessibilityLabel");
-    // Codex applies access to subsequent turns; the thread is idle, so no marker.
-    expect(view.queryByTestId("composer-permissions-next-turn")).toBeNull();
+    // Codex applies access to subsequent turns; the thread is idle, so it is in effect.
+    expect(accessLabel(view)).not.toHaveProp("accessibilityLabel");
   });
 
   it("keeps a queued change pending while the command waits for a connection", async () => {
@@ -558,7 +558,7 @@ describe("Claude thread", () => {
     expect(view.getByTestId("menu-model")).toHaveTextContent("haiku/none");
   });
 
-  it("marks a mid-turn read-only change as applying from the next turn", async () => {
+  it("settles a change made during a running turn once the server answers", async () => {
     const resources = resourcesWith(multiProvider);
     const remoteThread = thread(
       { effort: "high", model: "opus", permissions: ":workspace" },
@@ -577,16 +577,19 @@ describe("Claude thread", () => {
     await waitFor(() => {
       expect(accessLabel(view)).toHaveTextContent("Workspace");
     });
-    await press(view, "Choose full access");
-    // Claude switches workspace and full access inside the running turn.
-    expect(view.queryByTestId("composer-permissions-next-turn")).toBeNull();
-
+    // The server does not report when a change takes effect: once it has
+    // answered, the choice is shown settled, with no next-turn state.
     await press(view, "Choose read only");
-    expect(view.getByTestId("composer-permissions-next-turn")).toBeTruthy();
-    expect(view.getByLabelText("Permissions: Read only, applies from the next turn")).toBeTruthy();
+    await waitFor(() => {
+      expect(accessLabel(view)).not.toHaveProp("accessibilityLabel");
+    });
+    expect(accessLabel(view)).toHaveTextContent("Read only");
+    expect(view.getByLabelText("Permissions: Read only")).toBeTruthy();
 
     await press(view, "Apply Opus max");
-    expect(view.getByTestId("composer-model-next-turn")).toBeTruthy();
+    await waitFor(() => {
+      expect(modelLabel(view)).not.toHaveProp("accessibilityLabel");
+    });
     expect(modelLabel(view)).toHaveTextContent("opus · Max");
   });
 });
