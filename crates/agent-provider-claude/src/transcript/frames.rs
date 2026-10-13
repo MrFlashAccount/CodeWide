@@ -476,11 +476,17 @@ fn result_frame(value: &JsonRecord) -> ClaudeFrame {
 /// Classifies one raw message. Never fails.
 #[must_use]
 pub fn classify_frame(value: &Value) -> ClaudeFrame {
-    let Some(message) = record(value) else {
-        return ClaudeFrame::Other {
+    match record(value) {
+        Some(message) => classify_message(message),
+        None => ClaudeFrame::Other {
             kind: "invalid".into(),
-        };
-    };
+        },
+    }
+}
+
+/// Classifies one message object. Never fails.
+#[must_use]
+pub fn classify_message(message: &JsonRecord) -> ClaudeFrame {
     match str_of(message, "type").unwrap_or("unknown") {
         "assistant" => assistant_frame(message),
         "user" => user_frame(message),

@@ -52,6 +52,9 @@ pub struct ClaudeStorageHost {
     /// Claude's session store; `None` disables the watcher (the backfill and
     /// finished turns still index).
     pub projects_root: Option<PathBuf>,
+    /// The Claude host's journal (`--journal-directory`): its thread
+    /// metadata, read with Claude's session files.
+    pub journal_directory: PathBuf,
     /// Preview authorization of thread resources.
     pub files: Arc<dyn PreviewFiles>,
     /// The workspace VCS overlay of thread resources.
@@ -173,6 +176,7 @@ pub struct ClaudeStorage {
     finished: Mutex<Option<mpsc::Sender<AppThreadId>>>,
     relist: Mutex<Option<mpsc::Sender<()>>>,
     projects_root: Option<PathBuf>,
+    journal_directory: PathBuf,
     history_changes: mpsc::Sender<HistoryChange>,
     history_changes_rx: Mutex<Option<mpsc::Receiver<HistoryChange>>>,
 }
@@ -199,18 +203,24 @@ impl ClaudeStorage {
             finished: Mutex::new(None),
             relist: Mutex::new(None),
             projects_root: host.projects_root,
+            journal_directory: host.journal_directory,
             history_changes,
             history_changes_rx: Mutex::new(Some(history_changes_rx)),
         })
     }
 
-    /// Starts the watcher and the indexer over the host's session reads.
-    /// Must be called inside a Tokio runtime, once.
-    pub fn start(
-        &self,
-        sessions: Arc<dyn NativeSessions>,
-        status: watch::Receiver<ProviderStatus>,
-    ) {
+    /// Starts the watcher and the indexer. Sessions are read from Claude's
+    /// files ([`crate::native::LocalSessions`]); `host` reads them through
+    /// the Claude host only when no session store is known. Must be called
+    /// inside a Tokio runtime, once.
+    pub fn start(&self, host: Arc<dyn NativeSessions>, status: watch::Receiver<ProviderStatus>) {
+        let sessions: Arc<dyn NativeSessions> = match &self.projects_root {
+            Some(root) => Arc::new(crate::native::LocalSessions::new(
+                root.clone(),
+                self.journal_directory.clone(),
+            )),
+            None => host,
+        };
         let (finished, finished_rx) = mpsc::channel(FINISHED_CHANNEL_CAPACITY);
         *self.finished.lock().unwrap_or_else(PoisonError::into_inner) = Some(finished);
         let (relist, relist_rx) = mpsc::channel(1);
@@ -409,6 +419,7 @@ mod tests {
             threads: Arc::new(MemoryThreadIndex::default()),
             search_path: directory.join("search.sqlite"),
             projects_root: None,
+            journal_directory: directory.join("journal"),
             files: Arc::new(crate::test_support::RecordingPreviewFiles),
             vcs: None,
         })?)

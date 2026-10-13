@@ -51,6 +51,7 @@ impl ProviderHost {
             threads: self.index.clone(),
             search_path: self.state_directory.join("claude-message-search.sqlite"),
             projects_root: config.projects_root(),
+            journal_directory: config.journal_directory.clone(),
             files: self.files.clone(),
             vcs: self.vcs.clone(),
         }

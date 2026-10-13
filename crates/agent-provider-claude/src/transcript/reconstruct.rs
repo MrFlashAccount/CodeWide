@@ -20,13 +20,13 @@ use std::collections::{HashMap, HashSet};
 use agent_core::model::{
     AgentItem, AgentTurn, AppThreadId, ClientMessageId, TurnId, TurnOrigin, UserContent,
 };
-use serde_json::Value;
 
 use super::{
     agents::{NotifiedStatuses, SubagentItem},
     builder::{TurnBuilder, TurnBuilderContext, UserMessage},
     entries::{HistoryEntry, history_entries},
     frames::ClaudeFrame,
+    json::JsonRecord,
     result::TurnOutcome,
     segments::{HistorySegment, SegmentHints, history_segments},
     turn_index::{PromptRole, TurnOutcomeRecord, TurnRecord},
@@ -334,7 +334,7 @@ fn with_notified_statuses(turns: Vec<AgentTurn>, entries: &[HistoryEntry]) -> Ve
 /// chain (oldest first) and the companion's turn index.
 #[must_use]
 pub fn reconstruct_turns(
-    messages: &[Value],
+    messages: &[&JsonRecord],
     records: &[TurnRecord],
     context: &HistoryContext,
 ) -> Vec<AgentTurn> {
@@ -359,7 +359,7 @@ pub struct TurnEnd {
 /// point a fork through that turn copies the session to. Same segmentation
 /// and identities as [`reconstruct_turns`].
 #[must_use]
-pub fn turn_ends(messages: &[Value], records: &[TurnRecord]) -> Vec<TurnEnd> {
+pub fn turn_ends(messages: &[&JsonRecord], records: &[TurnRecord]) -> Vec<TurnEnd> {
     let hints = segment_hints(records);
     history_segments(history_entries(messages, None), &hints)
         .iter()
@@ -376,10 +376,9 @@ pub fn turn_ends(messages: &[Value], records: &[TurnRecord]) -> Vec<TurnEnd> {
 /// The tool call that spawned a sub-agent, read from its first stored message
 /// (SDK-shaped messages; sidecar rows name none).
 #[must_use]
-pub fn subagent_parent(messages: &[Value]) -> Option<&str> {
+pub fn subagent_parent<'a>(messages: &[&'a JsonRecord]) -> Option<&'a str> {
     messages
         .first()
-        .and_then(Value::as_object)
         .and_then(|first| super::json::str_of(first, "parent_tool_use_id"))
 }
 
@@ -389,7 +388,7 @@ pub fn subagent_parent(messages: &[Value]) -> Option<&str> {
 /// progress.
 #[must_use]
 pub fn reconstruct_subagent_turns(
-    messages: &[Value],
+    messages: &[&JsonRecord],
     context: &HistoryContext,
     running: bool,
 ) -> Vec<AgentTurn> {

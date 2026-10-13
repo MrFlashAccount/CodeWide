@@ -15,10 +15,31 @@ use serde_json::{Value, json};
 
 use super::{
     frames::{ClaudeFrame, classify_frame},
-    reconstruct::{HistoryContext, reconstruct_subagent_turns, reconstruct_turns},
+    reconstruct::{self, HistoryContext},
     tools::{keep_tail, split_mcp_tool_name},
     turn_index::{PromptRecord, PromptRole, TurnOutcomeRecord, TurnRecord},
 };
+
+/// The stored messages of a fixture, as the reconstruction reads them.
+fn records(messages: &[Value]) -> Vec<&super::json::JsonRecord> {
+    messages.iter().filter_map(Value::as_object).collect()
+}
+
+fn reconstruct_turns(
+    messages: &[Value],
+    index: &[TurnRecord],
+    context: &HistoryContext,
+) -> Vec<AgentTurn> {
+    reconstruct::reconstruct_turns(&records(messages), index, context)
+}
+
+fn reconstruct_subagent_turns(
+    messages: &[Value],
+    context: &HistoryContext,
+    running: bool,
+) -> Vec<AgentTurn> {
+    reconstruct::reconstruct_subagent_turns(&records(messages), context, running)
+}
 
 fn fixture(name: &str) -> Result<Value, Box<dyn std::error::Error>> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -766,7 +787,9 @@ fn raw_local_sessions_rebuild_without_panics() -> Result<(), Box<dyn std::error:
                 .collect::<Vec<_>>();
             rows += rows_of_file.len();
             files += 1;
-            let turns = reconstruct_turns(&rows_of_file, &[], &context());
+            let branch = super::chain::active_branch(&rows_of_file);
+            let messages = branch.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+            let turns = reconstruct::reconstruct_turns(&messages, &[], &context());
             turns_total += turns.len();
             violations.extend(ordering_violations(&turns));
         }

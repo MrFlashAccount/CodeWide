@@ -15,6 +15,7 @@
 
 pub mod agents;
 pub mod builder;
+pub mod chain;
 pub mod client_tools;
 pub mod diffs;
 pub mod entries;

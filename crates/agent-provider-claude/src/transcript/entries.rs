@@ -31,7 +31,7 @@ use serde_json::Value;
 
 use super::{
     agents::{TaskNotification, task_notification_of},
-    frames::{ClaudeFrame, classify_frame, origin_kind},
+    frames::{ClaudeFrame, classify_message, origin_kind},
     json::{JsonRecord, elements, is_true, is_true2, record, record_of, str_of},
 };
 
@@ -195,7 +195,7 @@ fn user_entry(message: &StoredMessage<'_>) -> Option<HistoryEntry> {
     let body = record_of(message.raw, "message").and_then(|inner| inner.get("content"));
     if has_tool_result(body) {
         return Some(HistoryEntry::Frame {
-            frame: classify_frame(&Value::Object(message.raw.clone())),
+            frame: classify_message(message.raw),
             timestamp_ms: message.timestamp_ms,
             uuid: message.uuid.to_owned(),
         });
@@ -211,7 +211,10 @@ fn user_entry(message: &StoredMessage<'_>) -> Option<HistoryEntry> {
             uuid: message.uuid.to_owned(),
         });
     }
-    if is_true2(message.raw, "isMeta", "is_meta") || is_markup(text) {
+    if is_true2(message.raw, "isMeta", "is_meta")
+        || is_true(message.raw, "isVisibleInTranscriptOnly")
+        || is_markup(text)
+    {
         return None;
     }
     let prompt = content
@@ -235,10 +238,9 @@ fn level_of(value: &JsonRecord) -> Option<&str> {
 }
 
 fn stored_message<'a>(
-    value: &'a Value,
+    raw: &'a JsonRecord,
     parent_tool_use_id: Option<&str>,
 ) -> Option<StoredMessage<'a>> {
-    let raw = record(value)?;
     if level_of(raw) != parent_tool_use_id {
         return None;
     }
@@ -256,7 +258,10 @@ fn stored_message<'a>(
 /// call that spawned a sub-agent (SDK-shaped messages). Stored sidecar rows
 /// name no parent and are read with `None`.
 #[must_use]
-pub fn history_entries(messages: &[Value], parent_tool_use_id: Option<&str>) -> Vec<HistoryEntry> {
+pub fn history_entries(
+    messages: &[&JsonRecord],
+    parent_tool_use_id: Option<&str>,
+) -> Vec<HistoryEntry> {
     let mut entries = Vec::new();
     let mut previous_system: Option<String> = None;
     for value in messages {
@@ -279,7 +284,7 @@ fn classify_stored(
 ) -> Option<HistoryEntry> {
     match str_of(message.raw, "type") {
         Some("assistant") => {
-            let frame = classify_frame(&Value::Object(message.raw.clone()));
+            let frame = classify_message(message.raw);
             (!matches!(frame, ClaudeFrame::Other { .. })).then(|| HistoryEntry::Frame {
                 frame,
                 timestamp_ms: message.timestamp_ms,

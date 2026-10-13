@@ -133,3 +133,15 @@ value on its own; the destination is fixed.
   local raw session files (35 418 rows, 539 turns) with no ordering violation.
   Rewind (dead `parentUuid` branches) is left to the index (Stage 3
   tombstones); reconstruction reads file order.
+- 2026-10-14: `main` merged into the branch (#49, #51–#53). The frozen-prefix
+  readers #49 added to `rollout.rs` now live in `agent-index` with rollout
+  wrappers.
+- 2026-10-14: Stage 3a done: the index reads Claude's files itself
+  (`src/native/`, `transcript/chain.rs`) instead of the host's
+  `nativeSession.*`. Parity with the host's reads on the 39 local sessions:
+  33 identical; 4 compacted sessions now keep their history before the
+  compaction (the host's read stops there); 2 sessions show a synthetic API
+  error message (`rate_limit`, `authentication_failed`) the SDK's read drops.
+  Claude index logic version 6. Remaining in stage 3: turns as byte ranges on
+  the shared core (paged reads of huge sessions), the host's native-session
+  operations removed.

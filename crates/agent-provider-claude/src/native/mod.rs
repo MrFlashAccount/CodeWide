@@ -1,0 +1,334 @@
+//! Claude's sessions read by the companion itself: the native index's
+//! source, in place of the Claude host's `nativeSession.list` and
+//! `nativeSession.read`.
+//!
+//! A listing reads only the head and tail of each session file
+//! (`meta.rs`); a read parses one file, keeps its active branch
+//! (`transcript::chain`) and rebuilds its turns and its sub-agents' turns
+//! with the same reconstruction live turns use. What Claude's files cannot
+//! tell (which `CodeWide` thread a session belongs to, its list metadata,
+//! its turn index and a running turn's snapshot) comes from the host's own
+//! files (`host_state.rs`). Ids depend only on that input, so reading
+//! unchanged input twice yields equal results.
+
+pub mod files;
+pub mod host_state;
+pub mod meta;
+
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
+
+use agent_core::{
+    model::{
+        AgentTurn, AppThreadId, ERROR_INVALID_REQUEST, NativeSession, NativeSessionListParams,
+        NativeSessionListResult, NativeSessionReadResult, NativeSubagent, RpcError,
+        native_session_not_found_message,
+    },
+    provider::ProviderError,
+};
+use async_trait::async_trait;
+use serde_json::Value;
+
+use crate::{
+    indexer::NativeSessions,
+    transcript::{
+        chain::active_branch,
+        json::{JsonRecord, str_of},
+        reconstruct::{
+            HistoryContext, reconstruct_subagent_turns, reconstruct_turns, running_agents,
+        },
+        turn_index::TurnRecord,
+    },
+};
+
+use self::{
+    files::SessionFile,
+    host_state::{HostThread, HostThreads},
+    meta::SessionMeta,
+};
+
+const MAX_PAGE: usize = 500;
+const CURSOR_PREFIX: &str = "v1:";
+
+/// Claude's local session store and the host's thread metadata.
+#[derive(Clone)]
+pub struct LocalSessions {
+    inner: Arc<Paths>,
+}
+
+struct Paths {
+    projects_root: PathBuf,
+    journal_directory: PathBuf,
+}
+
+impl LocalSessions {
+    #[must_use]
+    pub fn new(projects_root: PathBuf, journal_directory: PathBuf) -> Self {
+        Self {
+            inner: Arc::new(Paths {
+                projects_root,
+                journal_directory,
+            }),
+        }
+    }
+}
+
+fn worker_error(error: &tokio::task::JoinError) -> ProviderError {
+    ProviderError::Protocol(format!("Claude session read failed: {error}"))
+}
+
+fn not_found(session_id: &str) -> ProviderError {
+    ProviderError::Rejected(RpcError::new(
+        ERROR_INVALID_REQUEST,
+        native_session_not_found_message(session_id),
+    ))
+}
+
+fn io_error(error: &std::io::Error) -> ProviderError {
+    ProviderError::Protocol(format!("Claude session file cannot be read: {error}"))
+}
+
+#[async_trait]
+impl NativeSessions for LocalSessions {
+    async fn list(
+        &self,
+        params: NativeSessionListParams,
+    ) -> Result<NativeSessionListResult, ProviderError> {
+        let paths = self.inner.clone();
+        tokio::task::spawn_blocking(move || list(&paths, &params))
+            .await
+            .map_err(|error| worker_error(&error))?
+    }
+
+    async fn read(&self, session_id: &str) -> Result<NativeSessionReadResult, ProviderError> {
+        let paths = self.inner.clone();
+        let session_id = session_id.to_owned();
+        tokio::task::spawn_blocking(move || read(&paths, &session_id))
+            .await
+            .map_err(|error| worker_error(&error))?
+    }
+}
+
+/// A listed session: its file and its listing facts.
+struct Listed {
+    file: SessionFile,
+    meta: SessionMeta,
+}
+
+fn listed(file: SessionFile) -> Option<Listed> {
+    let (head, tail) = files::head_and_tail(&file.path).ok()?;
+    let meta = meta::session_meta(&head, &tail)?;
+    Some(Listed { file, meta })
+}
+
+fn list(
+    paths: &Paths,
+    params: &NativeSessionListParams,
+) -> Result<NativeSessionListResult, ProviderError> {
+    let offset = match params.cursor.as_deref() {
+        None => 0,
+        Some(cursor) => cursor
+            .strip_prefix(CURSOR_PREFIX)
+            .and_then(|offset| offset.parse::<usize>().ok())
+            .ok_or_else(|| {
+                ProviderError::Rejected(RpcError::new(
+                    agent_core::model::ERROR_INVALID_PARAMS,
+                    "invalid native session cursor",
+                ))
+            })?,
+    };
+    let limit = usize::try_from(params.limit)
+        .unwrap_or(MAX_PAGE)
+        .clamp(1, MAX_PAGE);
+    let mut sessions = files::sessions(&paths.projects_root)
+        .into_iter()
+        .filter_map(listed)
+        .filter(|session| params.dir.is_none() || session.meta.cwd == params.dir)
+        .collect::<Vec<_>>();
+    let present = sessions
+        .iter()
+        .map(|session| session.file.session_id.clone())
+        .collect::<HashSet<_>>();
+    // A session another one continues is that session's history.
+    sessions.retain(|session| {
+        session
+            .meta
+            .continued_in
+            .as_ref()
+            .is_none_or(|next| !present.contains(next))
+    });
+    sessions.sort_by(|left, right| {
+        right
+            .file
+            .modified_ms
+            .cmp(&left.file.modified_ms)
+            .then_with(|| left.file.session_id.cmp(&right.file.session_id))
+    });
+    let threads = HostThreads::read(&paths.journal_directory);
+    let total = sessions.len();
+    let page = sessions
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .filter_map(|session| {
+            native_session(
+                &session.file,
+                session.meta,
+                threads.owner_of(&session.file.session_id),
+            )
+        })
+        .collect();
+    Ok(NativeSessionListResult {
+        next_cursor: (offset + limit < total).then(|| format!("{CURSOR_PREFIX}{}", offset + limit)),
+        sessions: page,
+    })
+}
+
+fn native_session(
+    file: &SessionFile,
+    meta: SessionMeta,
+    owner: Option<&HostThread>,
+) -> Option<NativeSession> {
+    let app_thread_id = match owner {
+        Some(owner) => owner.app_thread_id.clone(),
+        None => AppThreadId::parse(&file.session_id)?,
+    };
+    Some(NativeSession {
+        app_thread_id,
+        codewide: owner.map(|owner| owner.codewide.clone()),
+        created_at_ms: meta.created_at_ms,
+        cwd: meta.cwd,
+        file_size: i64::try_from(file.size).ok(),
+        first_prompt: meta.first_prompt,
+        interactive: meta.interactive,
+        last_modified_ms: file.modified_ms,
+        session_id: file.session_id.clone(),
+        summary: meta.summary,
+        title: meta.title,
+    })
+}
+
+fn read(paths: &Paths, session_id: &str) -> Result<NativeSessionReadResult, ProviderError> {
+    let file = files::find_session(&paths.projects_root, session_id)
+        .ok_or_else(|| not_found(session_id))?;
+    let (head, tail) = files::head_and_tail(&file.path).map_err(|error| io_error(&error))?;
+    let meta = meta::session_meta(&head, &tail).ok_or_else(|| not_found(session_id))?;
+    let rows = files::rows(&file.path).map_err(|error| io_error(&error))?;
+    let threads = HostThreads::read(&paths.journal_directory);
+    let owner = threads.owner_of(session_id);
+    let context = HistoryContext {
+        app_thread_id: match owner {
+            Some(owner) => owner.app_thread_id.clone(),
+            None => AppThreadId::parse(session_id).ok_or_else(|| not_found(session_id))?,
+        },
+        cwd: owner.map_or_else(
+            || meta.cwd.clone().unwrap_or_default(),
+            |owner| owner.cwd.clone(),
+        ),
+    };
+    let records = owner.map_or(&[][..], |owner| owner.turns.as_slice());
+    let branch = active_branch(&rows);
+    let messages = branch.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+    let active = owner
+        .filter(|owner| owner.is_current(session_id))
+        .and_then(HostThread::active_turn);
+    let turns = with_active_turn(
+        reconstruct_turns(&messages, records, &context),
+        active,
+        records,
+    );
+    let subagents = native_subagents(&file, &turns, &context);
+    let session = native_session(&file, meta, owner).ok_or_else(|| not_found(session_id))?;
+    Ok(NativeSessionReadResult {
+        session,
+        subagents,
+        turns,
+    })
+}
+
+/// Places the snapshot of the turn running in the session into the rebuilt
+/// history: in place of the turn with its id, else after the history (a
+/// provider turn not in the turn index replaces the last such turn).
+fn with_active_turn(
+    mut turns: Vec<AgentTurn>,
+    active: Option<AgentTurn>,
+    records: &[TurnRecord],
+) -> Vec<AgentTurn> {
+    let Some(active) = active else {
+        return turns;
+    };
+    if let Some(index) = turns.iter().position(|turn| turn.turn_id == active.turn_id) {
+        turns[index] = active;
+        return turns;
+    }
+    let last_is_unindexed_wake = turns.last().is_some_and(|last| {
+        active.origin == agent_core::model::TurnOrigin::Provider
+            && last.origin == agent_core::model::TurnOrigin::Provider
+            && !records
+                .iter()
+                .any(|record| record.turn_id == last.turn_id.as_str())
+    });
+    if last_is_unindexed_wake {
+        turns.pop();
+    }
+    turns.push(active);
+    turns
+}
+
+/// The rows of a sub-agent transcript in file order: every row of its own
+/// conversation level is a side-chain row.
+fn transcript_rows(rows: &[Value]) -> Vec<&JsonRecord> {
+    rows.iter()
+        .filter_map(Value::as_object)
+        .filter(|row| matches!(str_of(row, "type"), Some("user" | "assistant" | "system")))
+        .filter(|row| str_of(row, "uuid").is_some())
+        .collect()
+}
+
+/// Each sub-agent transcript as neutral turns; a sub-agent its spawning item
+/// (in the main conversation or another sub-agent) reports `running` keeps
+/// its last turn in progress.
+fn native_subagents(
+    session: &SessionFile,
+    turns: &[AgentTurn],
+    context: &HistoryContext,
+) -> Vec<NativeSubagent> {
+    let transcripts = files::subagents(session)
+        .into_iter()
+        .filter_map(|subagent| {
+            let rows = files::rows(&subagent.path).ok()?;
+            let sidecar = files::subagent_sidecar(&subagent);
+            Some((subagent.agent_id, rows, sidecar))
+        })
+        .collect::<Vec<_>>();
+    let settled = transcripts
+        .iter()
+        .map(|(_, rows, _)| reconstruct_subagent_turns(&transcript_rows(rows), context, false))
+        .collect::<Vec<_>>();
+    let mut running = running_agents(turns).into_iter().collect::<HashSet<_>>();
+    for subagent_turns in &settled {
+        running.extend(running_agents(subagent_turns));
+    }
+    transcripts
+        .iter()
+        .zip(settled)
+        .map(|((agent_id, rows, sidecar), settled)| NativeSubagent {
+            agent_id: agent_id.clone(),
+            parent_agent_id: sidecar.parent_agent_id.clone(),
+            parent_tool_use_id: sidecar.tool_use_id.clone(),
+            turns: if running.contains(agent_id) {
+                reconstruct_subagent_turns(&transcript_rows(rows), context, true)
+            } else {
+                settled
+            },
+        })
+        .collect()
+}
+
+/// The projects root and journal of a test: one session and its sidecars.
+#[cfg(test)]
+pub(crate) fn fixture_paths(root: &std::path::Path) -> (PathBuf, PathBuf) {
+    (root.join("projects"), root.join("journal"))
+}
+
+#[cfg(test)]
+mod tests;
