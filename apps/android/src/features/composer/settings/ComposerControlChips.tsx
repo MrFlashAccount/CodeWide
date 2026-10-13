@@ -130,9 +130,15 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
     ) : (
       <ProviderIcon provider={modelProvider} />
     );
-  const modelTextPending =
-    initialLoading || view.model.pending || view.effort.pending || view.serviceTier.pending;
   const modelNextTurn = view.model.nextTurn || view.effort.nextTurn || view.serviceTier.nextTurn;
+  // A choice shimmers until it takes effect: while the server has not answered,
+  // and, chosen during a turn, until the next turn starts.
+  const modelTextPending =
+    initialLoading ||
+    view.model.pending ||
+    view.effort.pending ||
+    view.serviceTier.pending ||
+    modelNextTurn;
   const fastTier = fastServiceTier(view.modelEntry?.serviceTiers);
   const fast = fastTier !== undefined && isFastServiceTier(view.serviceTier.value, fastTier);
   const permissionLabel = permissionsDisplayLabel(view.permissions.value, serverExecution, pending);
@@ -146,7 +152,6 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
         text={modelText}
       />
       {fast && <Ionicons color={colors.text} name="flash" size={iconSize.inline} />}
-      {modelNextTurn && <NextTurnMarker testID="composer-model-next-turn" />}
     </>
   );
   const permissionsText = initialLoading ? "Loading access…" : permissionLabel;
@@ -154,11 +159,10 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
     <>
       <InlineIcon color={colors.textMuted} name="shield-checkmark-outline" role="label" />
       <ComposerContextLabel
-        loading={initialLoading || view.permissions.pending}
+        loading={initialLoading || view.permissions.pending || view.permissions.nextTurn}
         testID="composer-permissions-label"
         text={permissionsText}
       />
-      {view.permissions.nextTurn && <NextTurnMarker testID="composer-permissions-next-turn" />}
     </>
   );
   return (
@@ -227,15 +231,6 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
         />
       )}
     </>
-  );
-}
-
-/** A subtle mark on a chip whose value takes effect when the next turn starts. */
-function NextTurnMarker({ testID }: { readonly testID: string }) {
-  return (
-    <View accessibilityLabel="Applies from the next turn" accessible testID={testID}>
-      <InlineIcon color={colors.textMuted} name="time-outline" role="label" />
-    </View>
   );
 }
 
