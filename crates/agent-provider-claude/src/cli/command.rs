@@ -21,7 +21,9 @@ pub struct ProfileOptions {
     /// Claude settings files the session loads; empty loads none.
     pub setting_sources: &'static [&'static str],
     pub allow_dangerously_skip_permissions: bool,
-    /// Only the MCP servers passed on the command line.
+    /// Only the MCP servers passed on the command line. This stands for the
+    /// host's `mcpServers: {}` of `:read-only` too: with it, the session
+    /// loads no MCP server but the client tool server.
     pub strict_mcp_config: bool,
     /// Built-in tools the session may use; `None` keeps Claude's preset.
     pub tools: Option<&'static [&'static str]>,
@@ -31,33 +33,60 @@ const ALL_SOURCES: [&str; 3] = ["user", "project", "local"];
 /// The built-in tools of the read-only profile.
 pub const READ_ONLY_TOOLS: [&str; 4] = ["Read", "Glob", "Grep", "LS"];
 
+/// A built-in permission profile. The Codex id `:danger-full-access` is an
+/// alias of Claude's `:full-access`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PermissionProfile {
+    ReadOnly,
+    Workspace,
+    FullAccess,
+}
+
+impl PermissionProfile {
+    /// The profile of a profile id; `None` for an unknown id.
+    #[must_use]
+    pub fn parse(id: &str) -> Option<Self> {
+        match id {
+            ":read-only" => Some(Self::ReadOnly),
+            ":workspace" => Some(Self::Workspace),
+            ":full-access" | ":danger-full-access" => Some(Self::FullAccess),
+            _ => None,
+        }
+    }
+
+    /// How the profile runs Claude.
+    #[must_use]
+    pub fn options(self) -> ProfileOptions {
+        match self {
+            Self::ReadOnly => ProfileOptions {
+                permission_mode: "default",
+                setting_sources: &[],
+                allow_dangerously_skip_permissions: false,
+                strict_mcp_config: true,
+                tools: Some(&READ_ONLY_TOOLS),
+            },
+            Self::Workspace => ProfileOptions {
+                permission_mode: "acceptEdits",
+                setting_sources: &ALL_SOURCES,
+                allow_dangerously_skip_permissions: false,
+                strict_mcp_config: false,
+                tools: None,
+            },
+            Self::FullAccess => ProfileOptions {
+                permission_mode: "bypassPermissions",
+                setting_sources: &ALL_SOURCES,
+                allow_dangerously_skip_permissions: true,
+                strict_mcp_config: false,
+                tools: None,
+            },
+        }
+    }
+}
+
 /// The options of a built-in permission profile; `None` for an unknown id.
 #[must_use]
 pub fn profile_options(profile: &str) -> Option<ProfileOptions> {
-    match profile {
-        ":read-only" => Some(ProfileOptions {
-            permission_mode: "default",
-            setting_sources: &[],
-            allow_dangerously_skip_permissions: false,
-            strict_mcp_config: true,
-            tools: Some(&READ_ONLY_TOOLS),
-        }),
-        ":workspace" => Some(ProfileOptions {
-            permission_mode: "acceptEdits",
-            setting_sources: &ALL_SOURCES,
-            allow_dangerously_skip_permissions: false,
-            strict_mcp_config: false,
-            tools: None,
-        }),
-        ":full-access" | ":danger-full-access" => Some(ProfileOptions {
-            permission_mode: "bypassPermissions",
-            setting_sources: &ALL_SOURCES,
-            allow_dangerously_skip_permissions: true,
-            strict_mcp_config: false,
-            tools: None,
-        }),
-        _ => None,
-    }
+    PermissionProfile::parse(profile).map(PermissionProfile::options)
 }
 
 /// Which session the process runs.

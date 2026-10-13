@@ -19,6 +19,7 @@ pub mod config;
 pub mod discovery;
 pub mod indexer;
 pub mod legacy_install;
+pub mod live;
 pub mod native;
 pub mod preflight;
 pub mod preview;
