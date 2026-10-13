@@ -35,6 +35,10 @@ const MAX_RETRY_MILLISECONDS = 8000;
 // Demand older than this rereads the server: Companion or Relay may have been
 // updated or restarted while no settings surface observed the connection.
 const STATUS_FRESH_MILLISECONDS = 30_000;
+// One hour, matching the Linux guardian's retention of a terminal outcome:
+// after this a status read without that outcome no longer keeps the locally
+// shown result.
+const RETAINED_TERMINAL_MILLISECONDS = 3_600_000;
 const NOT_FOUND_STATUS = 404;
 
 type TransportFailureInput = {
@@ -84,6 +88,12 @@ export function createHostUpdateResource({
           canCheck: false,
           disconnected: record.intent !== null,
         };
+    const terminal = projected.phase !== null && isTerminalHostUpdatePhase(projected.phase);
+    if (!terminal) {
+      record.terminalShownAt = null;
+    } else if (record.view.phase !== projected.phase || record.terminalShownAt === null) {
+      record.terminalShownAt = now();
+    }
     record.view = projected;
     snapshot$.byConnection.assign({ [connectionId]: projected });
   };
@@ -153,11 +163,14 @@ export function createHostUpdateResource({
     record.intent = intentAfterStatus(record.intent, status);
     const view = hostUpdateStatusView(status);
     // Some older guardians omit completed operations from status. A status
-    // refresh must not erase the terminal result we just read by operation id.
+    // refresh must not erase the terminal result we just read by operation id,
+    // but that result expires like the guardian's own retention.
     const terminal =
       status.activeOperation === null &&
       record.view.phase !== null &&
-      isTerminalHostUpdatePhase(record.view.phase);
+      isTerminalHostUpdatePhase(record.view.phase) &&
+      record.terminalShownAt !== null &&
+      now() - record.terminalShownAt < RETAINED_TERMINAL_MILLISECONDS;
     publish(
       connectionId,
       record,

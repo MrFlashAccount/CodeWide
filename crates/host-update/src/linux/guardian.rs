@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use super::{
-    GenerationMetadataV1, LinuxProduct, OperationRecord, host_resolver,
+    GenerationMetadataV1, LinuxProduct, OperationRecord, host_resolver, outcome,
     prepare::{activation_target, prepare_generation},
     runner::{RunnerFailure, transition},
     running_artifact, store, unix_millis,
@@ -299,13 +299,16 @@ impl LinuxHostUpdateGuardian {
         // A version installed outside the guardian can overtake the cached
         // target; never offer what apply would reject as a downgrade.
         .filter(|available| is_newer_version(&available.target.version, &current.version));
-        // The pointer retains the last outcome after a guardian/phone restart;
-        // only admission uses active_operation() to filter out terminal records.
-        let active_operation =
-            store::read_optional_json::<String>(&self.inner.state_root.join("active.json"))
-                .map_err(internal)?
-                .map(|id| self.read_operation(&id).map(|value| operation_view(&value)))
-                .transpose()?;
+        // The pointer retains a recent, still-relevant outcome across a
+        // guardian/phone restart; see `outcome` for its lifecycle. Admission
+        // uses active_operation() and ignores terminal records regardless.
+        let active_operation = outcome::reported_operation(
+            &self.inner.state_root,
+            &current.artifact_digest,
+            unix_millis(),
+        )
+        .map_err(internal)?
+        .map(|value| operation_view(&value));
         Ok(HostUpdateStatus {
             platform: self.inner.product.platform,
             current_version: current.version,

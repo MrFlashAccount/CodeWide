@@ -17,7 +17,7 @@
 mod generation;
 mod guardian;
 mod health;
-mod host_resolver;
+mod outcome;
 mod prepare;
 mod runner;
 mod store;
@@ -31,6 +31,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+// Release hosts resolve through the host's NSS resolver, not musl's.
+use codewide_host_resolver as host_resolver;
 use serde::{Deserialize, Serialize};
 
 use crate::{

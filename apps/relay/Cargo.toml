@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+codewide-host-resolver = { path = "../../crates/host-resolver" }
 codewide-host-update = { path = "../../crates/host-update", features = ["linux-guardian"] }
 axum = { version = "0.8.4", features = ["ws"] }
 base64 = "0.22.1"

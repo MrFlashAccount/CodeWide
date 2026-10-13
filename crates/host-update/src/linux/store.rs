@@ -21,19 +21,33 @@ impl Drop for StoreLock {
 }
 
 pub(super) fn lock(path: &Path) -> io::Result<StoreLock> {
+    let file = open_lock(path)?;
+    file.lock_exclusive()?;
+    Ok(StoreLock { file })
+}
+
+/// Takes the lock only when no other holder has it; `None` means contended.
+pub(super) fn try_lock(path: &Path) -> io::Result<Option<StoreLock>> {
+    let file = open_lock(path)?;
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(Some(StoreLock { file })),
+        Err(error) if error.kind() == fs2::lock_contended_error().kind() => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn open_lock(path: &Path) -> io::Result<File> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "lock has no parent"))?;
     private_directory(parent)?;
-    let file = OpenOptions::new()
+    OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .mode(0o600)
-        .open(path)?;
-    file.lock_exclusive()?;
-    Ok(StoreLock { file })
+        .open(path)
 }
 
 pub(super) fn read_json<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
@@ -112,5 +126,15 @@ mod tests {
             .open(path)
             .expect("second file handle");
         assert!(contender.try_lock_exclusive().is_err());
+    }
+
+    #[test]
+    fn try_lock_reports_contention_without_waiting() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("guardian.lock");
+        let held = lock(&path).expect("first lock");
+        assert!(try_lock(&path).expect("contended attempt").is_none());
+        drop(held);
+        assert!(try_lock(&path).expect("free attempt").is_some());
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::linux::outcome::TERMINAL_OUTCOME_TTL_MS;
 use crate::linux::test_support::{TEST_PRODUCT, guardian as test_guardian};
 use crate::{HostPlatform, ReleaseTargetV1};
 
@@ -224,34 +225,60 @@ fn incompatible_guardian_state_or_rollback_requires_manual_update() {
     );
 }
 
-#[tokio::test]
-async fn terminal_outcome_and_lost_acceptance_survive_restart_without_a_cached_release() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let root = directory.path();
-    install_generation(root);
-    let state = root.join("host-update-state");
+/// Digest of the generation laid out by [`install_generation`].
+fn installed_digest() -> String {
+    "c".repeat(64)
+}
+
+/// A failure recorded against the installed generation at `updated_at`.
+fn failure_of_installed(updated_at: u64) -> OperationRecord {
     let mut record = operation(
         "upd_00000000000000000000000000000000",
         "idem_00000000000000000000",
         42,
         HostUpdatePhase::Failed,
     );
+    record.journal.current_digest = installed_digest();
+    record.journal.updated_at = updated_at;
     record.journal.error_code = Some("download_failed".to_owned());
     record.journal.error_message = Some("The signed update could not be downloaded.".to_owned());
+    record
+}
+
+/// Persists `record` and points `active.json` at it, as apply does.
+fn point_at(state: &Path, record: &OperationRecord) {
     store::write_json(
         &state
             .join("operations")
             .join(format!("{}.json", record.journal.operation_id)),
-        &record,
+        record,
     )
     .expect("journal");
     store::write_json(&state.join("active.json"), &record.journal.operation_id).expect("pointer");
+}
+
+/// Installs one generation, points at `record` and returns the reported operation.
+async fn reported_after_restart(
+    root: &Path,
+    record: &OperationRecord,
+) -> (LinuxHostUpdateGuardian, Option<HostUpdateOperation>) {
+    install_generation(root);
+    let state = root.join("host-update-state");
+    point_at(&state, record);
     let guardian = test_guardian(root.to_path_buf(), state, Some(test_trust()));
     let status = guardian
         .status()
         .await
         .expect("status after process restart");
-    let outcome = status.active_operation.expect("retained terminal outcome");
+    (guardian, status.active_operation)
+}
+
+#[tokio::test]
+async fn recent_relevant_outcome_and_lost_acceptance_survive_restart_without_a_cached_release() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let record = failure_of_installed(unix_millis());
+    let (guardian, reported) = reported_after_restart(directory.path(), &record).await;
+    let outcome = reported.expect("retained terminal outcome");
     assert_eq!(outcome.phase, HostUpdatePhase::Failed);
     assert_eq!(outcome.error_code.as_deref(), Some("download_failed"));
     let replay = guardian
@@ -271,6 +298,114 @@ async fn terminal_outcome_and_lost_acceptance_survive_restart_without_a_cached_r
             .error_code,
         outcome.error_code
     );
+}
+
+#[tokio::test]
+async fn expired_outcome_is_dropped_and_its_pointer_removed_but_stays_readable_by_id() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let record = failure_of_installed(unix_millis() - TERMINAL_OUTCOME_TTL_MS - 60_000);
+    let (guardian, reported) = reported_after_restart(directory.path(), &record).await;
+    assert_eq!(reported, None);
+    assert!(
+        !directory
+            .path()
+            .join("host-update-state/active.json")
+            .exists()
+    );
+    let replay = guardian
+        .apply(ApplyHostUpdateCommand {
+            target_fingerprint: record.journal.target_fingerprint.clone(),
+            idempotency_key: record.idempotency_key.clone(),
+            initiating_device_id: record.journal.initiating_device_id.clone(),
+        })
+        .await
+        .expect("idempotent replay after cleanup");
+    assert_eq!(replay.operation_id, record.journal.operation_id);
+}
+
+#[tokio::test]
+async fn outcome_of_a_replaced_generation_is_dropped_at_once() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    // A fresh rollback failure of 1.0.0 -> 1.1.0, after which a different
+    // generation was installed manually.
+    let mut record = failure_of_installed(unix_millis());
+    record.journal.current_digest = "a".repeat(64);
+    record.journal.error_code = Some("rollback_health_failed".to_owned());
+    let (guardian, reported) = reported_after_restart(directory.path(), &record).await;
+    assert_eq!(reported, None);
+    assert!(
+        !directory
+            .path()
+            .join("host-update-state/active.json")
+            .exists()
+    );
+    assert_eq!(
+        guardian
+            .status()
+            .await
+            .expect("repeated status")
+            .active_operation,
+        None
+    );
+}
+
+#[tokio::test]
+async fn in_flight_operation_is_always_reported() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    // Neither generation is installed and the journal is old: in-flight state
+    // is never subject to outcome retention.
+    let record = operation(
+        "upd_00000000000000000000000000000000",
+        "idem_00000000000000000000",
+        42,
+        HostUpdatePhase::RollingBack,
+    );
+    let (_guardian, reported) = reported_after_restart(directory.path(), &record).await;
+    assert_eq!(
+        reported.expect("in-flight operation").phase,
+        HostUpdatePhase::RollingBack
+    );
+    assert!(
+        directory
+            .path()
+            .join("host-update-state/active.json")
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn committed_outcome_is_retained_while_its_target_is_installed() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let mut record = operation(
+        "upd_00000000000000000000000000000000",
+        "idem_00000000000000000000",
+        42,
+        HostUpdatePhase::Committed,
+    );
+    record.journal.target_digest = installed_digest();
+    record.journal.updated_at = unix_millis();
+    let (_guardian, reported) = reported_after_restart(directory.path(), &record).await;
+    assert_eq!(
+        reported.expect("committed outcome").phase,
+        HostUpdatePhase::Committed
+    );
+}
+
+#[tokio::test]
+async fn pointer_to_a_missing_operation_is_removed_instead_of_failing_status() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    install_generation(root);
+    let state = root.join("host-update-state");
+    store::write_json(
+        &state.join("active.json"),
+        &"upd_00000000000000000000000000000000",
+    )
+    .expect("pointer");
+    let guardian = test_guardian(root.to_path_buf(), state.clone(), Some(test_trust()));
+    let status = guardian.status().await.expect("status");
+    assert_eq!(status.active_operation, None);
+    assert!(!state.join("active.json").exists());
 }
 
 #[tokio::test]

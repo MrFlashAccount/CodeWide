@@ -897,11 +897,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "codewide-host-resolver"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "tokio",
+]
+
+[[package]]
 name = "codewide-host-update"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "codewide-host-resolver",
  "flate2",
  "fs2",
  "futures-util",
@@ -929,6 +938,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "clap",
+ "codewide-host-resolver",
  "codewide-host-update",
  "console",
  "crossterm",
@@ -997,6 +1007,7 @@ dependencies = [
  "blake3",
  "bytes",
  "clap",
+ "codewide-host-resolver",
  "codewide-host-update",
  "codewide-relay",
  "companion-host",

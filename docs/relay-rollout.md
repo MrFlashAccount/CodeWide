@@ -296,7 +296,10 @@ codewide-companion relay pair 203.0.113.10:8780
 ```
 
 The address is the Relay's reachable DNS name or `IP:port`, never a Companion
-address or an SSH config alias. Include the port explicitly. The
+address or an SSH config alias. Include the port explicitly. A Linux
+Companion resolves the DNS name like the host's own tools (`getent ahosts`,
+in NSS order), so a DNS64 nameserver listed first in `resolv.conf` is honored
+on IPv6-only hosts. The
 one-line invitation contains the route ID, one-time token, and Relay TLS
 certificate pin. Companion verifies the pin before sending the invitation.
 The pairing API then consumes the invitation and issues the route-specific
