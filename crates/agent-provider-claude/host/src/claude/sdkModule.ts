@@ -15,6 +15,7 @@ import type {
   getSessionInfo,
   getSessionMessages,
   getSubagentMessages,
+  importSessionToStore,
   listSessions,
   listSubagents,
   query,
@@ -31,6 +32,7 @@ export interface AgentSdk {
   readonly getSessionInfo: typeof getSessionInfo;
   readonly getSessionMessages: typeof getSessionMessages;
   readonly getSubagentMessages: typeof getSubagentMessages;
+  readonly importSessionToStore: typeof importSessionToStore;
   readonly listSessions: typeof listSessions;
   readonly listSubagents: typeof listSubagents;
   readonly query: typeof query;
@@ -46,6 +48,7 @@ const FUNCTIONS = [
   "getSessionInfo",
   "getSessionMessages",
   "getSubagentMessages",
+  "importSessionToStore",
   "listSessions",
   "listSubagents",
   "query",
