@@ -128,6 +128,8 @@ export interface ThreadPort {
   readonly emitThreadUpdated: () => void;
   /** User messages and final answers of the thread's stored history, oldest first. */
   readonly historyLines: () => Promise<readonly string[]>;
+  /** Called when this session's query ended or was closed: the host no longer runs it. */
+  readonly released: () => void;
   /** Called once Claude has created the current session (its `init` frame arrived). */
   readonly sessionReady: () => void;
   readonly state: () => ThreadState;
@@ -758,6 +760,7 @@ export class ClaudeSession {
     this.query = null;
     this.generation += 1;
     query.close();
+    this.thread.released();
     this.deps.liveSessions.count -= 1;
     this.log("info", "claude session released", { liveSessions: this.deps.liveSessions.count });
   }
@@ -765,6 +768,7 @@ export class ClaudeSession {
   private onQueryEnded(error: Error | null): void {
     this.query = null;
     this.generation += 1;
+    this.thread.released();
     this.deps.liveSessions.count -= 1;
     this.log(error === null ? "info" : "warn", "claude session ended", {
       liveSessions: this.deps.liveSessions.count,

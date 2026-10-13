@@ -22,6 +22,8 @@ export interface ThreadEntry {
 export interface EntryHooks {
   readonly historyLines: (entry: ThreadEntry) => Promise<readonly string[]>;
   readonly project: (entry: ThreadEntry) => AgentThread;
+  /** The entry's query ended or was closed. */
+  readonly released: (entry: ThreadEntry) => void;
   readonly sessionReady: (entry: ThreadEntry) => void;
 }
 
@@ -92,6 +94,9 @@ export class ThreadRegistry {
           this.deps.emit({ thread: this.hooks.project(entryOf()), type: "thread.updated" });
         },
         historyLines: async () => this.hooks.historyLines(entryOf()),
+        released: () => {
+          this.hooks.released(entryOf());
+        },
         sessionReady: () => {
           this.hooks.sessionReady(entryOf());
         },

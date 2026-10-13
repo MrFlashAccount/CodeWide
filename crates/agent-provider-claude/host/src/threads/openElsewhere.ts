@@ -6,7 +6,11 @@
  * thread `openElsewhere`.
  *
  * The running set comes from `RunningSessions`; a session this host's own
- * live query runs is not held elsewhere. A read younger than `MAX_AGE_MS` is
+ * live query runs is not held elsewhere. The CLI also lists this host's own
+ * process, so a session the host has just released (a model change closes
+ * the idle query, an idle release ends it) stays out of every read that
+ * started before, or within `RELEASE_GRACE_MS` after, the release: such a
+ * read may still show the exiting process. A read younger than `MAX_AGE_MS` is
  * reused (a monotonic age, not thread time). While any session is held the set is re-read every `pollMs`, so a
  * release reaches clients without a new read. A failed read keeps the last
  * known set.
@@ -17,6 +21,8 @@ import type { RunningSessions } from "../claude/port.js";
 import type { Logger } from "../log.js";
 
 const MAX_AGE_MS = 2000;
+/** How long the CLI may still list a process this host has just closed. */
+const RELEASE_GRACE_MS = 3000;
 
 export interface OpenElsewhereDeps {
   /** Receives the sessions whose held state changed with a read. */
@@ -31,6 +37,8 @@ export interface OpenElsewhereDeps {
 export class OpenElsewhere {
   private readonly deps: OpenElsewhereDeps;
   private running: ReadonlySet<string> = new Set();
+  /** When this host last released each session, in monotonic milliseconds. */
+  private readonly releasedAtMs = new Map<string, number>();
   private readAtMs: number | null = null;
   private inFlight: Promise<void> | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -65,6 +73,18 @@ export class OpenElsewhere {
     return this.isHeld(sessionId);
   }
 
+  /**
+   * This host's own query of `sessionId` ended. Its process may still be in
+   * the last read and in reads that start before it exits; neither proves
+   * that another process holds the session.
+   */
+  public released(sessionId: string): void {
+    this.releasedAtMs.set(sessionId, performance.now());
+    if (this.running.has(sessionId)) {
+      this.running = new Set([...this.running].filter((id) => id !== sessionId));
+    }
+  }
+
   public shutdown(): void {
     this.stopped = true;
     this.clearPoll();
@@ -79,8 +99,9 @@ export class OpenElsewhere {
 
   private async readOnce(): Promise<void> {
     const before = this.heldSessions();
+    const startedAtMs = performance.now();
     try {
-      this.running = await this.deps.running.list();
+      this.running = this.withoutOwnReleases(await this.deps.running.list(), startedAtMs);
     } catch (error) {
       this.deps.logger.log("warn", "claude running sessions read failed", {
         err: error instanceof Error ? error : new Error(String(error)),
@@ -103,6 +124,23 @@ export class OpenElsewhere {
     if (changed.size > 0) {
       this.deps.changed(changed);
     }
+  }
+
+  /** `listed` without the sessions this host released too recently for a read started at `startedAtMs`. */
+  private withoutOwnReleases(
+    listed: ReadonlySet<string>,
+    startedAtMs: number,
+  ): ReadonlySet<string> {
+    const settledBeforeMs = startedAtMs - RELEASE_GRACE_MS;
+    for (const [sessionId, releasedAtMs] of this.releasedAtMs) {
+      if (releasedAtMs < settledBeforeMs) {
+        this.releasedAtMs.delete(sessionId);
+      }
+    }
+    if (this.releasedAtMs.size === 0) {
+      return listed;
+    }
+    return new Set([...listed].filter((sessionId) => !this.releasedAtMs.has(sessionId)));
   }
 
   private heldSessions(): ReadonlySet<string> {
