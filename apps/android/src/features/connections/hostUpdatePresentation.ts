@@ -54,7 +54,7 @@ export function hostUpdateGuidance(
   if (update.errorMessage !== null) {
     return {
       kind: "failure",
-      text: `${update.phase === "rolledBack" ? "Update rolled back" : "Update failed"}: ${update.errorMessage}`,
+      text: `${capitalized(failureLabel(update.phase))}: ${update.errorMessage}`,
     };
   }
   return phaseGuidance(update.phase, subject) ?? availabilityGuidance(update, subject);
@@ -124,12 +124,20 @@ function hostUpdateSummary(update: HostUpdateView): HostUpdateSummary {
     return muted(progressText(update.progress));
   }
   if (update.errorMessage !== null) {
-    return {
-      text: update.phase === "rolledBack" ? "update rolled back" : "update failed",
-      tone: "error",
-    };
+    return { text: failureLabel(update.phase), tone: "error" };
   }
   return phaseSummary(update.phase) ?? availabilitySummary(update);
+}
+
+/**
+ * Names what failed. Without a phase no update ran: a status read, check or
+ * apply request was refused or could not reach the server.
+ */
+function failureLabel(phase: HostUpdateView["phase"]): string {
+  if (phase === null) {
+    return "update request failed";
+  }
+  return phase === "rolledBack" ? "update rolled back" : "update failed";
 }
 
 function phaseSummary(phase: HostUpdateView["phase"]): HostUpdateSummary | null {

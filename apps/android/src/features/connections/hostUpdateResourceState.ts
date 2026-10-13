@@ -41,6 +41,8 @@ export type HostUpdateResourceRecord = {
   /** Start of the latest server read; `null` before the first one. */
   lastReadAt: number | null;
   retryAttempt: number;
+  /** When the displayed terminal phase was first published; `null` while none is shown. */
+  terminalShownAt: number | null;
   timer: ReturnType<typeof setTimeout> | null;
   view: HostUpdateView;
 };
@@ -181,6 +183,7 @@ export function createHostUpdateResourceRecord(connected: boolean): HostUpdateRe
     intent: null,
     lastReadAt: null,
     retryAttempt: 0,
+    terminalShownAt: null,
     timer: null,
     view: INITIAL_HOST_UPDATE_VIEW,
   };

@@ -185,6 +185,24 @@ it("offers an accessible check action after a stale target", () => {
   expect(view.getByText(/available release changed/u)).toBeTruthy();
 });
 
+it("names a failed request without claiming that an update failed", () => {
+  const view = render(
+    <Fixture
+      update={{
+        ...available(),
+        availability: "error",
+        canApply: false,
+        canCheck: true,
+        errorCode: "relay_update_failed",
+        errorMessage: "Could not connect to the Relay.",
+        phase: null,
+      }}
+    />,
+  );
+  expect(view.getByText("Update request failed: Could not connect to the Relay.")).toBeTruthy();
+  expect(view.queryByText(/Update failed/u)).toBeNull();
+});
+
 function Fixture({
   onApply = async () => undefined,
   onCheck = async () => undefined,

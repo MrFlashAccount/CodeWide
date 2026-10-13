@@ -109,6 +109,47 @@ describe("Companion host update resource", () => {
     harness.resource.forget("server");
   });
 
+  it("lets a retained terminal failure expire like the guardian's retention", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.statuses.set("server", status("linux-x86-64"));
+    harness.resource.observe("server", true);
+    await settle();
+    await harness.resource.apply("server", TARGET_FINGERPRINT);
+    const id = harness.view("server").operationId;
+    if (id === null) throw new Error("Missing accepted operation");
+    harness.operations.set("server", operation(id, "failed", "download_failed", "The signed update could not be downloaded."));
+    await vi.advanceTimersByTimeAsync(1);
+
+    harness.advance(59 * 60_000);
+    harness.resource.observe("server", true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.view("server")).toMatchObject({ phase: "failed", errorCode: "download_failed" });
+
+    harness.advance(60_000);
+    harness.resource.observe("server", true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.view("server")).toMatchObject({ phase: null, errorCode: null, errorMessage: null });
+    harness.resource.forget("server");
+  });
+
+  it("drops a retained terminal failure when the user checks again", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.statuses.set("server", status("linux-x86-64"));
+    harness.resource.observe("server", true);
+    await settle();
+    await harness.resource.apply("server", TARGET_FINGERPRINT);
+    const id = harness.view("server").operationId;
+    if (id === null) throw new Error("Missing accepted operation");
+    harness.operations.set("server", operation(id, "failed", "download_failed", "The signed update could not be downloaded."));
+    await vi.advanceTimersByTimeAsync(1);
+
+    await harness.resource.check("server");
+    expect(harness.view("server")).toMatchObject({ phase: null, errorCode: null, errorMessage: null });
+    harness.resource.forget("server");
+  });
+
   it("publishes received download progress and replaces it with the durable failure", async () => {
     vi.useFakeTimers();
     const harness = createHarness();
