@@ -16,6 +16,18 @@ afterEach(() => {
 });
 
 describe("Legend remote project catalog", () => {
+  it("publishes a new catalog map for each change, so memoized project lists see it", async () => {
+    const model = createRemoteProjectCatalogModel({ cache: { read: async () => [], write: async () => undefined } });
+    const pinned = { ...project("/repo"), pinned: true };
+    await model.resource("server", "live", async () => [pinned]).peek();
+    const before = model.snapshot$.projectsByConnection.peek();
+    model.mergeProject("server", { ...pinned, pinned: false });
+    const after = model.snapshot$.projectsByConnection.peek();
+    expect(after).not.toBe(before);
+    expect(after.server?.map((entry) => entry.pinned)).toEqual([false]);
+    model.clear();
+  });
+
   it("keeps an acknowledgement published before the first catalog demand", async () => {
     const model = createRemoteProjectCatalogModel({
       cache: {
