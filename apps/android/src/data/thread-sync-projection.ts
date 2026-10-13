@@ -11,6 +11,8 @@ import type { AgentProvidersResource } from "./agentProvidersResource";
 import type { AccountRateLimitsDatabase } from "./account-rate-limits-database";
 import type { createCatalogRuntime } from "./catalog-runtime";
 import { reconcileDeliveredCommandReceipts } from "./command-delivery";
+import type { RemoteProjectCatalogModel } from "./remote-project-catalog-model";
+import { parseAddedRemoteProject, PROJECT_CHANGED_METHOD } from "./remote-projects";
 import { operationConfirmsDeliveredCommand } from "./command-receipt-evidence";
 import { hasAppServerAcceptedPendingDelivery, parseHostQueueSnapshot } from "./queue-event";
 import { subagentActivity } from "./subagent-loader";
@@ -31,6 +33,7 @@ export function createThreadSyncProjection({
   agentProviders,
   catalog,
   details,
+  projects,
   resources,
   summaries,
   sync,
@@ -39,6 +42,8 @@ export function createThreadSyncProjection({
   agentProviders: Pick<AgentProvidersResource, "applyChanged">;
   catalog: ReturnType<typeof createCatalogRuntime>;
   details: ThreadDetailDatabase;
+  /** The project catalog every device's project lists read. */
+  projects: Pick<RemoteProjectCatalogModel, "mergeProject">;
   resources: WorkspaceResourceDatabase;
   summaries: ThreadSummaryDatabase;
   sync: ReturnType<typeof createThreadSyncRuntime>;
@@ -79,6 +84,9 @@ export function createThreadSyncProjection({
           // oxlint-disable-next-line typescript/no-unsafe-type-assertion
           const accountPool = params as AccountPoolSnapshot;
           accountRateLimits.putAccountPool(connectionId, accountPool);
+        }
+        if (event.payload.method === PROJECT_CHANGED_METHOD) {
+          applyProjectChange(projects, connectionId, event.payload.params);
         }
         if (
           event.payload.method === AGENT_PROVIDERS_CHANGED_METHOD &&
@@ -228,4 +236,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function asRecord(value: unknown): Record<string, unknown> | null {
   return isRecord(value) ? value : null;
+}
+
+/** Merges a project another device (or this one) added, pinned or unpinned. */
+function applyProjectChange(
+  projects: Pick<RemoteProjectCatalogModel, "mergeProject">,
+  connectionId: string,
+  params: unknown,
+): void {
+  try {
+    projects.mergeProject(connectionId, parseAddedRemoteProject(params));
+  } catch {
+    // The parser's message names only the invalid field; the payload stays out of logs.
+    appLogger.warn({ event: "project.changed.invalid" });
+  }
 }

@@ -68,6 +68,7 @@ import {
 } from "./serverRequestDelivery";
 import { readGlobalSupervisorWorkCatalog } from "./globalSupervisorWorkCatalog";
 import { createThreadSyncProjection } from "./thread-sync-projection";
+import { remoteProjectCatalogModel } from "./remoteProjectCatalog";
 import {
   clearConnectionLiveActivity,
   createThreadLiveActivityProjection,
@@ -327,6 +328,7 @@ async function startWorkspaceRuntime(): Promise<void> {
             agentProviders,
             catalog: workspaceCatalog,
             details,
+            projects: remoteProjectCatalogModel,
             resources,
             summaries,
             sync: workspaceThreadSync,
