@@ -17,6 +17,9 @@ use tokio::{
 
 const PROJECT_REGISTRY_VERSION: u8 = 1;
 
+/// Journaled when a project is added, pinned or unpinned; carries the project.
+pub const PROJECT_CHANGED_METHOD: &str = "companion/project/changed";
+
 #[derive(Clone)]
 pub struct ProjectService {
     state_path: PathBuf,
@@ -75,6 +78,17 @@ impl ProjectService {
             state: std::sync::Arc::new(Mutex::new(state)),
             observed: std::sync::Arc::new(Mutex::new(HashMap::new())),
         }))
+    }
+
+    /// The journaled notification that tells every client a project changed
+    /// (added, pinned or unpinned), so no device waits for its next list read.
+    /// `None` for a method that changes nothing.
+    #[must_use]
+    pub fn change_notification(method: &str, result: &Value) -> Option<Value> {
+        let project = result
+            .get("project")
+            .filter(|_| method == "companion/project/add")?;
+        Some(json!({"method": PROJECT_CHANGED_METHOD, "params": {"project": project}}))
     }
 
     #[must_use]
@@ -369,6 +383,25 @@ mod tests {
         fs::write(&file, b"file").await?;
         assert!(project_browser_home(Some(&file)).await.is_err());
         assert!(ProjectService::handles("companion/project/home"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_pin_change_is_journaled_for_every_client() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = tempfile::tempdir()?;
+        let directory = temp.path().join("pinned");
+        fs::create_dir(&directory).await?;
+        let service = ProjectService::open(temp.path().join("state/projects.json")).await?;
+        let params = json!({ "path": directory.to_string_lossy(), "pinned": false });
+        let result = service.handle("companion/project/add", &params).await?;
+        let changed = ProjectService::change_notification("companion/project/add", &result)
+            .ok_or("an unpin must be journaled")?;
+        assert_eq!(changed["method"], PROJECT_CHANGED_METHOD);
+        assert_eq!(changed["params"]["project"], result["project"]);
+        assert_eq!(changed["params"]["project"]["pinned"], false);
+        let listed = service.handle("companion/project/list", &json!({})).await?;
+        assert!(ProjectService::change_notification("companion/project/list", &listed).is_none());
         Ok(())
     }
 

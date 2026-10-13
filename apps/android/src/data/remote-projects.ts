@@ -49,6 +49,9 @@ export function parseRemoteProjects(value: unknown): RemoteProject[] {
   return source.data.map((item) => parseRemoteProject(item));
 }
 
+/** Journaled when a project is added, pinned or unpinned; its params carry the project. */
+export const PROJECT_CHANGED_METHOD = "companion/project/changed";
+
 export function parseAddedRemoteProject(value: unknown): RemoteProject {
   const source = record(value);
   return parseRemoteProject(source?.project);
