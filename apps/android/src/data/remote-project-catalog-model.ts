@@ -128,6 +128,21 @@ export function createRemoteProjectCatalogModel(
     errorsByConnection: {},
     projectsByConnection: {},
   });
+  // Each change publishes new maps: render memoization (React Compiler) keys
+  // on their identity, and an in-place `assign` would keep serving the stale
+  // project list until some other input changed.
+  const publishProjects = (connectionId: string, projects: RemoteProject[]): void => {
+    snapshot$.projectsByConnection.set({
+      ...snapshot$.projectsByConnection.peek(),
+      [connectionId]: projects,
+    });
+  };
+  const publishError = (connectionId: string, error: string | null): void => {
+    snapshot$.errorsByConnection.set({
+      ...snapshot$.errorsByConnection.peek(),
+      [connectionId]: error,
+    });
+  };
   const resources = new Map<string, ProjectResource>();
   const retainCounts = new Map<string, number>();
 
@@ -200,8 +215,8 @@ export function createRemoteProjectCatalogModel(
         // confirmation, normal remote changes become authoritative again.
         confirmAcknowledgedProjects(projects, current);
         const resolvedProjects = mergeAcknowledgedProjects(projects, current.acknowledgedProjects);
-        snapshot$.projectsByConnection.assign({ [connectionId]: resolvedProjects });
-        snapshot$.errorsByConnection.assign({ [connectionId]: null });
+        publishProjects(connectionId, resolvedProjects);
+        publishError(connectionId, null);
         persistProjects(connectionId, resolvedProjects);
         return true;
       })
@@ -214,9 +229,10 @@ export function createRemoteProjectCatalogModel(
         ) {
           current.loadingRevision = null;
           current.failed = true;
-          snapshot$.errorsByConnection.assign({
-            [connectionId]: error instanceof Error ? error.message : "Could not load projects",
-          });
+          publishError(
+            connectionId,
+            error instanceof Error ? error.message : "Could not load projects",
+          );
           scheduleRetry(connectionId, current, false);
         }
         return false;
@@ -232,9 +248,7 @@ export function createRemoteProjectCatalogModel(
       return false;
     }
     if (cached.length > 0 && record.authoritativeGeneration === null) {
-      snapshot$.projectsByConnection.assign({
-        [connectionId]: mergeAcknowledgedProjects(cached, record.acknowledgedProjects),
-      });
+      publishProjects(connectionId, mergeAcknowledgedProjects(cached, record.acknowledgedProjects));
     }
     if (record.loadingRevision === "cache") {
       record.loadingRevision = null;
@@ -315,13 +329,11 @@ export function createRemoteProjectCatalogModel(
         project,
       });
       const existing = snapshot$.projectsByConnection.peek()[connectionId] ?? [];
-      snapshot$.projectsByConnection.assign({
-        [connectionId]: [
-          project,
-          ...existing.filter((candidate) => candidate.path !== project.path),
-        ],
-      });
-      snapshot$.errorsByConnection.assign({ [connectionId]: null });
+      publishProjects(connectionId, [
+        project,
+        ...existing.filter((candidate) => candidate.path !== project.path),
+      ]);
+      publishError(connectionId, null);
       persistProjects(connectionId, snapshot$.projectsByConnection.peek()[connectionId] ?? []);
     },
     resource(connectionId, revision, loader) {
