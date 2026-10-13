@@ -37,18 +37,19 @@ fi
 artifact_name="codewide-relay-$TARGET"
 artifact="$DIST_ROOT/$artifact_name"
 checksum="$artifact.sha256"
-updater_name="codewide-relay-updater-$TARGET"
-updater="$DIST_ROOT/$updater_name"
-updater_checksum="$updater.sha256"
+# The signed remote-update target: one immutable generation payload.
+bundle_name="$artifact_name.tar.gz"
+bundle="$DIST_ROOT/$bundle_name"
+bundle_checksum="$bundle.sha256"
 source_revision=$(git -C "$REPO_ROOT" rev-parse HEAD)
 mkdir -p "$DIST_ROOT"
 build_root=$(mktemp -d "$TMP_ROOT/codewide-relay-linux-build.XXXXXX")
 
 temporary=$(mktemp "$DIST_ROOT/.codewide-relay.XXXXXX")
-updater_temporary=
+bundle_temporary=
 cleanup() {
   rm -f -- "$temporary"
-  if [ -n "$updater_temporary" ]; then rm -f -- "$updater_temporary"; fi
+  if [ -n "$bundle_temporary" ]; then rm -f -- "$bundle_temporary"; fi
   case "$build_root" in
     "$TMP_ROOT"/codewide-relay-linux-build.*) rm -rf -- "$build_root" ;;
     *) printf 'Refusing to remove unexpected directory: %s\n' "$build_root" >&2 ;;
@@ -74,11 +75,7 @@ docker run --rm \
   sh -eu -c '
     cargo build --locked --release -p codewide-relay --bins --target x86_64-unknown-linux-musl
     /build-target/x86_64-unknown-linux-musl/release/codewide-relay --version > /output/relay-version
-    if [ -n "${CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID:-}" ] || [ -n "${CODEWIDE_HOST_UPDATE_SIGNING_PUBLIC_KEY_SPKI:-}" ]; then
-      /build-target/x86_64-unknown-linux-musl/release/codewide-relay-updater --print-trust >/dev/null
-    fi
     install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-relay /output/codewide-relay
-    install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-relay-updater /output/codewide-relay-updater
     # The GitHub cache archiver runs as the host user, not container root.
     if [ -n "$CODEWIDE_CACHE_OWNER" ]; then
       chown -R "$CODEWIDE_CACHE_OWNER" /usr/local/cargo/registry /usr/local/cargo/git /build-target
@@ -86,21 +83,27 @@ docker run --rm \
   '
 
 install -m 0755 "$build_root/codewide-relay" "$temporary"
-updater_temporary=$(mktemp "$DIST_ROOT/.codewide-relay-updater.XXXXXX")
 if ! file "$temporary" | grep -E 'statically linked|static-pie linked' >/dev/null; then
   printf '%s\n' 'Relay release artifact is not statically linked.' >&2
   exit 1
 fi
-install -m 0755 "$build_root/codewide-relay-updater" "$updater_temporary"
+mkdir -p "$build_root/bundle/$artifact_name/bin"
+install -m 0755 "$build_root/codewide-relay" "$build_root/bundle/$artifact_name/bin/codewide-relay"
+bundle_temporary=$(mktemp "$DIST_ROOT/.codewide-relay-bundle.XXXXXX")
+# No pipeline: a failing tar must fail the build, not publish an empty bundle.
+tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+  -cf "$build_root/bundle.tar" -C "$build_root/bundle" "$artifact_name"
+gzip -n -c "$build_root/bundle.tar" >"$bundle_temporary"
+chmod 0644 "$bundle_temporary"
 mv -f -- "$temporary" "$artifact"
 temporary=
-mv -f -- "$updater_temporary" "$updater"
-updater_temporary=
+mv -f -- "$bundle_temporary" "$bundle"
+bundle_temporary=
 
 (
   cd "$DIST_ROOT"
   sha256sum "$artifact_name" >"$artifact_name.sha256"
-  sha256sum "$updater_name" >"$updater_name.sha256"
+  sha256sum "$bundle_name" >"$bundle_name.sha256"
 )
 
 reported_version=$(cat "$build_root/relay-version")
@@ -109,6 +112,6 @@ case "$reported_version" in
   *) printf '%s\n' 'Relay release artifact reported an invalid version.' >&2; exit 1 ;;
 esac
 binary_sha256=$(awk '{print $1}' "$checksum")
-updater_sha256=$(awk '{print $1}' "$updater_checksum")
-printf '{"artifact":"%s","updaterArtifact":"%s","target":"%s","version":"%s","sourceRevision":"%s","sha256":"%s","updaterSha256":"%s"}\n' \
-  "$artifact" "$updater" "$TARGET" "$binary_version" "$source_revision" "$binary_sha256" "$updater_sha256"
+bundle_sha256=$(awk '{print $1}' "$bundle_checksum")
+printf '{"artifact":"%s","bundle":"%s","target":"%s","version":"%s","sourceRevision":"%s","sha256":"%s","bundleSha256":"%s"}\n' \
+  "$artifact" "$bundle" "$TARGET" "$binary_version" "$source_revision" "$binary_sha256" "$bundle_sha256"

@@ -108,6 +108,7 @@ validate_release_payload() {
   test -x apps/companion-linux/deploy/memory-watch.sh
   test -r apps/companion-linux/deploy/codewide-companion.service
   test -r apps/companion-linux/deploy/codewide-companion-update.service
+  test -r apps/companion-linux/deploy/codewide-companion-update.path
   test -r apps/companion-linux/deploy/codewide-companion-memory-watch.service
   test -r apps/companion-linux/deploy/codewide-companion-memory-watch.timer
 }
@@ -122,6 +123,7 @@ finish_release() {
     restore_target update-config "$BOOTSTRAP_ROOT/config.json" 0600
     restore_target unit "$UNIT_ROOT/codewide-companion.service" 0644
     restore_target update-unit "$UNIT_ROOT/codewide-companion-update.service" 0644
+    restore_target update-path "$UNIT_ROOT/codewide-companion-update.path" 0644
     restore_target memory-watch-unit "$UNIT_ROOT/codewide-companion-memory-watch.service" 0644
     restore_target memory-watch-timer "$UNIT_ROOT/codewide-companion-memory-watch.timer" 0644
     restore_current_link
@@ -183,6 +185,7 @@ backup_target "$BOOTSTRAP_ROOT/codewide-companion-update-guardian" update-guardi
 backup_target "$BOOTSTRAP_ROOT/config.json" update-config
 backup_target "$UNIT_ROOT/codewide-companion.service" unit
 backup_target "$UNIT_ROOT/codewide-companion-update.service" update-unit
+backup_target "$UNIT_ROOT/codewide-companion-update.path" update-path
 backup_target "$UNIT_ROOT/codewide-companion-memory-watch.service" memory-watch-unit
 backup_target "$UNIT_ROOT/codewide-companion-memory-watch.timer" memory-watch-timer
 

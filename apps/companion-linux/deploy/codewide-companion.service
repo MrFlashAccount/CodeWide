@@ -21,7 +21,6 @@ RestartSec=2s
 TimeoutStartSec=30s
 TimeoutStopSec=15s
 NoNewPrivileges=true
-CapabilityBoundingSet=
 AmbientCapabilities=
 KeyringMode=private
 # Host-file previews must resolve the same /tmp and /var/tmp as agent processes.

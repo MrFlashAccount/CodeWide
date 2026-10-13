@@ -16,6 +16,9 @@ user_bin=$HOME/.local/bin
 user_state_root=${XDG_STATE_HOME:-$HOME/.local/state}/codewide/relay
 user_state_backup=${XDG_STATE_HOME:-$HOME/.local/state}/codewide/relay-before-system-migration
 user_unit_root=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
+user_install_root=${CODEWIDE_RELAY_INSTALL_ROOT:-$HOME/.local/lib/codewide-relay}
+user_install_root_existed=0
+[ -e "$user_install_root" ] && user_install_root_existed=1
 system_backup_root=$system_state_root/system-to-user-v1
 cutover_started=0
 user_state_installed=0
@@ -125,6 +128,7 @@ cleanup() {
 rollback() {
   printf '%s\n' 'Relay migration failed; restoring the legacy system deployment.' >&2
   systemctl --user disable --now codewide-relay-update.path >/dev/null 2>&1 || :
+  systemctl --user disable codewide-relay-update.service >/dev/null 2>&1 || :
   systemctl --user disable --now codewide-relay.service >/dev/null 2>&1 || :
   rm -f -- \
     "$user_unit_root/codewide-relay.service" \
@@ -133,6 +137,7 @@ rollback() {
     "$user_bin/codewide-relay" \
     "$user_bin/codewide-relay-updater"
   systemctl --user daemon-reload >/dev/null 2>&1 || :
+  if [ "$user_install_root_existed" = 0 ]; then rm -rf -- "$user_install_root"; fi
   if [ "$user_state_installed" = 1 ]; then rm -rf -- "$user_state_root"; fi
   if [ "$previous_user_state_moved" = 1 ] && [ -e "$user_state_backup" ]; then
     mv -- "$user_state_backup" "$user_state_root"

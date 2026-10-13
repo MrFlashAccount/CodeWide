@@ -1,6 +1,7 @@
 const COMPANION_UNIT: &str = include_str!("../deploy/codewide-companion.service");
 const MEMORY_WATCH_UNIT: &str = include_str!("../deploy/codewide-companion-memory-watch.service");
 const UPDATE_UNIT: &str = include_str!("../deploy/codewide-companion-update.service");
+const UPDATE_PATH: &str = include_str!("../deploy/codewide-companion-update.path");
 const INSTALL_SCRIPT: &str = include_str!("../deploy/install.sh");
 const VERIFY_SCRIPT: &str = include_str!("../deploy/verify.sh");
 const RELEASE_SCRIPT: &str = include_str!("../../../scripts/release-companion");
@@ -27,11 +28,21 @@ fn companion_service_relaxes_only_what_claude_is_proven_to_need() {
     for expected in [
         "ProtectSystem=full",
         "NoNewPrivileges=true",
-        "CapabilityBoundingSet=",
         "RestrictNamespaces=user mnt pid net ipc uts cgroup",
         "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
     ] {
         assert!(unit.contains(&expected), "the unit sets {expected}");
+    }
+}
+
+#[test]
+fn user_units_never_shrink_the_capability_bounding_set() {
+    // A per-user manager has no effective capabilities, so it cannot drop the
+    // bounding set: `CapabilityBoundingSet=` fails every start with
+    // 218/CAPABILITIES (systemd 252 and 255). The process already has no
+    // capabilities and NoNewPrivileges keeps it that way.
+    for unit in [COMPANION_UNIT, UPDATE_UNIT, MEMORY_WATCH_UNIT] {
+        assert!(!unit.contains("CapabilityBoundingSet"));
     }
 }
 
@@ -91,14 +102,35 @@ fn managed_install_uses_immutable_generations_and_a_stable_guardian() {
     assert!(UPDATE_UNIT.contains("ReadOnlyPaths=%h/.local/lib/codewide/bootstrap"));
     assert!(COMPANION_UNIT.contains("ReadOnlyPaths=%h/.local/lib/codewide/generations"));
     assert!(INSTALL_SCRIPT.contains("CODEWIDE_COMPANION_UPDATE_GUARDIAN_BINARY"));
+    assert!(UPDATE_PATH.contains("activation-request.json"));
+    assert!(UPDATE_PATH.contains("PathExists="));
+    assert!(UPDATE_PATH.contains("Unit=codewide-companion-update.service"));
+    assert!(INSTALL_SCRIPT.contains("enable --now codewide-companion-update.path"));
+    assert!(UPDATE_UNIT.contains("IPAddressDeny=any"));
+    assert!(!UPDATE_UNIT.contains("network-online.target"));
 }
 
 #[test]
 fn remote_runner_has_no_caller_controlled_download_or_state_restore() {
-    let guardian = include_str!("../src/host_update.rs");
-    let runner = include_str!("../src/host_update/runner.rs");
+    let guardian = include_str!("../../../crates/host-update/src/linux/guardian.rs");
+    let prepare = include_str!("../../../crates/host-update/src/linux/prepare.rs");
+    let runner = include_str!("../../../crates/host-update/src/linux/runner.rs");
     assert!(guardian.contains("cached.available.target"));
-    assert!(runner.contains("operation.target.artifact_url"));
+    assert!(guardian.contains("prepare_generation"));
+    assert!(prepare.contains("artifact_url"));
+    assert!(prepare.contains("validate_archive"));
+    assert!(!guardian.contains("Command::new(\"systemctl\")"));
+    for forbidden in [
+        "artifact_url",
+        "ReleaseTargetV1",
+        "SignedReleaseDescriptor",
+        "reqwest",
+        "validate_archive",
+        "verify_file_digest",
+    ] {
+        assert!(!runner.contains(forbidden), "runner contains {forbidden}");
+    }
+    assert!(runner.contains("LinuxActivationProduct"));
     assert!(!runner.contains("ApplyHostUpdateCommand"));
     assert!(!runner.contains("restore_state"));
 }

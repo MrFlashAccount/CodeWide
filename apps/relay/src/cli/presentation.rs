@@ -103,7 +103,7 @@ pub fn reply(reply: Reply, json: bool) -> Result<()> {
                 "This route was already absent."
             }
         ),
-        Reply::Error { .. } | Reply::Pairing { .. } => {
+        Reply::Error { .. } | Reply::Pairing { .. } | Reply::Attestation { .. } => {
             return Err("Unexpected Relay control response".into());
         }
     }

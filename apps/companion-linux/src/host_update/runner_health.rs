@@ -1,4 +1,4 @@
-//! Exact process, identity, upstream, and Relay health proof for update outcomes.
+//! Exact process, identity, upstream, and Relay health proof of the Companion.
 
 use std::{
     fs,
@@ -6,8 +6,12 @@ use std::{
     process::{Command, Stdio},
 };
 
-use super::{GenerationMetadataV1, OperationRecord, store};
-use companion_core::host_update::HostUpdateRunningArtifact;
+use codewide_host_update::{
+    HostUpdateRunningArtifact,
+    linux::{GenerationMetadataV1, ServiceHealth, ServiceHealthContext, SystemdScope, main_pid},
+};
+
+use super::COMPANION;
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,48 +21,26 @@ struct ProcessHealth {
     relay_online: bool,
 }
 
-pub(super) fn target_is_ready(root: &Path, operation: &OperationRecord) -> bool {
-    let Ok(metadata) =
-        store::read_json::<GenerationMetadataV1>(&root.join("current/metadata.json"))
-    else {
-        return false;
-    };
-    if metadata.version != operation.target.version
-        || metadata.build != operation.target.build
-        || metadata.source_revision != operation.target.source_revision
-        || metadata.artifact_digest != operation.target.sha256
-        || identity_pin(&operation.identity_manifest).as_deref()
-            != Some(operation.identity_pin.as_str())
-    {
-        return false;
-    }
-    process_is_ready(root, &metadata, operation)
+pub(super) struct CompanionHealth {
+    pub root: PathBuf,
 }
 
-pub(super) fn rollback_is_ready(root: &Path, operation: &OperationRecord) -> bool {
-    store::read_json::<GenerationMetadataV1>(&root.join("current/metadata.json")).is_ok_and(
-        |metadata| {
-            metadata.artifact_digest == operation.current.artifact_digest
-                && metadata.version == operation.current.version
-                && metadata.build == operation.current.build
-                && metadata.source_revision == operation.current.source_revision
-        },
-    ) && identity_pin(&operation.identity_manifest).as_deref()
-        == Some(operation.identity_pin.as_str())
-        && process_is_ready(root, &operation.current, operation)
-}
-
-fn process_is_ready(
-    root: &Path,
-    expected: &GenerationMetadataV1,
-    operation: &OperationRecord,
-) -> bool {
-    if let Some(health) = process_health() {
-        return process_health_matches(&health, expected, main_pid(), relay_required(operation));
+impl ServiceHealth for CompanionHealth {
+    fn identity_pin(&self, context: &ServiceHealthContext) -> Option<String> {
+        identity_pin(&context.identity_manifest)
     }
-    // Legacy payloads have no self-attestation endpoint. Preserve their exact
-    // executable proof when /proc is accessible; never accept readiness alone.
-    running_companion_is_current(root) && health_is_ready() && relay_requirement_is_ready(operation)
+
+    fn serves(&self, expected: &GenerationMetadataV1, context: &ServiceHealthContext) -> bool {
+        let pid = main_pid(SystemdScope::User, COMPANION.activation.service_unit);
+        if let Some(health) = process_health() {
+            return process_health_matches(&health, expected, pid, relay_required(context));
+        }
+        // Legacy payloads have no self-attestation endpoint. Preserve their exact
+        // executable proof when /proc is accessible; never accept readiness alone.
+        running_companion_is_current(&self.root, pid)
+            && health_is_ready()
+            && relay_requirement_is_ready(context)
+    }
 }
 
 fn process_health_matches(
@@ -82,8 +64,8 @@ fn artifact_matches(artifact: &HostUpdateRunningArtifact, expected: &GenerationM
         && artifact.artifact_digest == expected.artifact_digest
 }
 
-fn relay_required(operation: &OperationRecord) -> bool {
-    operation.journal.pre_update_relay.enabled && operation.journal.pre_update_relay.upstream_live
+fn relay_required(context: &ServiceHealthContext) -> bool {
+    context.pre_update_relay.enabled && context.pre_update_relay.upstream_live
 }
 
 fn process_health() -> Option<ProcessHealth> {
@@ -104,38 +86,19 @@ fn process_health() -> Option<ProcessHealth> {
     serde_json::from_slice(&output.stdout).ok()
 }
 
-fn relay_requirement_is_ready(operation: &OperationRecord) -> bool {
-    !operation.journal.pre_update_relay.enabled
-        || !operation.journal.pre_update_relay.upstream_live
+fn relay_requirement_is_ready(context: &ServiceHealthContext) -> bool {
+    !context.pre_update_relay.enabled
+        || !context.pre_update_relay.upstream_live
         || relay_is_online()
 }
 
-fn running_companion_is_current(root: &Path) -> bool {
-    let Some(pid) = main_pid() else {
+fn running_companion_is_current(root: &Path, pid: Option<u32>) -> bool {
+    let Some(pid) = pid else {
         return false;
     };
     let expected = fs::canonicalize(root.join("current/bin/codewide-companion"));
     let running = fs::canonicalize(format!("/proc/{pid}/exe"));
     matches!((expected, running), (Ok(expected), Ok(running)) if expected == running)
-}
-
-fn main_pid() -> Option<u32> {
-    let output = Command::new("systemctl")
-        .args([
-            "--user",
-            "show",
-            "--property",
-            "MainPID",
-            "--value",
-            "codewide-companion.service",
-        ])
-        .output();
-    output
-        .ok()
-        .filter(|value| value.status.success())
-        .and_then(|value| String::from_utf8(value.stdout).ok())
-        .and_then(|value| value.trim().parse::<u32>().ok())
-        .filter(|pid| *pid != 0)
 }
 
 fn health_is_ready() -> bool {

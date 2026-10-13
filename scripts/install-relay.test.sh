@@ -21,7 +21,6 @@ if [ -z "${CODEWIDE_RELAY_TEST_DIST_DIR:-}" ]; then
     "$REPO_ROOT/scripts/build-relay-linux" >/dev/null
 fi
 asset=codewide-relay-x86_64-unknown-linux-musl
-updater_asset=codewide-relay-updater-x86_64-unknown-linux-musl
 version=$("$DIST_ROOT/$asset" --version | awk '{print $2}')
 INSTALL_ROOT="$TEST_ROOT/bin with spaces"
 
@@ -38,12 +37,10 @@ test "$(PATH="$INSTALL_ROOT:$PATH" sh -c 'codewide-relay --version')" = "codewid
 grep -F 'Service activation skipped.' "$TEST_ROOT/install.log" >/dev/null
 test "$(stat -c '%a' "$INSTALL_ROOT")" = 755
 test "$(stat -c '%a' "$INSTALL_ROOT/codewide-relay")" = 755
-test "$(stat -c '%a' "$INSTALL_ROOT/codewide-relay-updater")" = 755
 installed_sha256=$(sha256sum "$INSTALL_ROOT/codewide-relay" | awk '{print $1}')
 release_sha256=$(awk '{print $1}' "$DIST_ROOT/$asset.sha256")
 test "$installed_sha256" = "$release_sha256"
-test "$(sha256sum "$INSTALL_ROOT/codewide-relay-updater" | awk '{print $1}')" = \
-  "$(awk '{print $1}' "$DIST_ROOT/$updater_asset.sha256")"
+test ! -e "$INSTALL_ROOT/codewide-relay-updater"
 
 TAMPERED_ROOT="$TEST_ROOT/tampered"
 mkdir -p "$TAMPERED_ROOT"

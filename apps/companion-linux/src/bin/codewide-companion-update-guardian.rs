@@ -27,11 +27,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .thread_name("codewide-update")
         .build()?
         .block_on(codewide_companion::host_update::run_pending(
-            cli.install_root.unwrap_or_else(
-                codewide_companion::host_update::LinuxHostUpdateGuardian::default_root,
-            ),
-            cli.state_root.unwrap_or_else(
-                codewide_companion::host_update::LinuxHostUpdateGuardian::default_state_root,
-            ),
+            cli.install_root
+                .unwrap_or_else(codewide_companion::host_update::default_root),
+            cli.state_root
+                .unwrap_or_else(codewide_companion::host_update::default_state_root),
         ))
 }

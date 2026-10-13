@@ -31,12 +31,15 @@ frames remain inner-TLS ciphertext.
 dist/relay/codewide-relay-x86_64-unknown-linux-musl --version
 ```
 
-The build emits the Linux binary and its SHA-256 manifest under `dist/relay/`.
+The build emits the Linux binary, the generation bundle
+`codewide-relay-x86_64-unknown-linux-musl.tar.gz` (one directory holding
+`bin/codewide-relay`), and a SHA-256 manifest for each under `dist/relay/`.
+The signed release manifest targets the bundle.
 The current release target is statically linked Linux `x86_64`, built in a
 digest-pinned musl container so the same artifact runs on glibc and musl hosts.
 ARM64 is rejected explicitly until a matching release artifact exists.
 
-After those two files are published under the matching GitHub Release tag,
+After those files are published under the matching GitHub Release tag,
 install and verify the binary without cloning the repository:
 
 ```sh
@@ -66,6 +69,42 @@ Relay's identity or routes. Ambiguous system/user services and a running
 unmanaged foreground daemon are rejected before installation rather than
 replaced silently.
 
+### Generations and remote updates
+
+A user service is installed exactly like the Linux Companion, through the shared
+`codewide-host-update` guardian:
+
+- `~/.local/lib/codewide-relay/generations/<bundle sha256>/` holds one immutable
+  Relay with its `metadata.json`;
+- `~/.local/lib/codewide-relay/current` is a relative link to the active
+  generation, and `~/.local/bin/codewide-relay` points through it;
+- `~/.local/lib/codewide-relay/bootstrap/codewide-relay-update-guardian` is a
+  stable copy of the installed Relay that runs `update-run` from
+  `codewide-relay-update.service`. Remote updates never replace it; rerun the
+  installer to refresh it;
+- `codewide-relay-update.path` watches only the fixed
+  `<state>/host-update/activation-request.json` marker and starts the guardian.
+
+A paired Companion checks and applies a signed release through
+`/relay/update/<route>`. While the Relay keeps serving, the Relay itself
+admits the signed descriptor, downloads and digest-checks the bundle, validates
+and extracts it, verifies the payload, and fsyncs a complete local generation
+under `preparations/<operationId>`. Only then does it publish the fixed marker;
+no update request invokes `systemctl`. The network-dark, package-format-blind
+guardian accepts only that prepared generation, atomically publishes it under
+`generations/`, switches `current` with one `rename(2)`, and restarts the fixed
+service. It does not know a release URL, signature, archive, or download
+protocol. The update commits once the restarted Relay attests the
+exact generation over its control socket, keeps its TLS identity, and the
+initiating Companion reconnects. Otherwise the guardian switches `current`
+back to the previous generation and restarts it. Interrupted operations resume
+from the durable journal in `<state>/host-update`; product startup resumes
+preparation, and the path unit resumes activation while the marker exists.
+
+The first bundle release is a manual baseline: install it with the installer.
+Later releases certify its digest and update remotely. A legacy system service
+receives no remote updates until it is migrated to a user service.
+
 ### Migrating a legacy system service
 
 An existing machine-wide Relay cannot become rootless without one privileged
@@ -88,7 +127,7 @@ After success, the previous system unit and executable remain in
 `/var/lib/codewide-relay/system-to-user-v1`, while pre-existing user state is
 kept at
 `${XDG_STATE_HOME:-$HOME/.local/state}/codewide/relay-before-system-migration`.
-Future runs of `install/relay` and signed automatic updates operate entirely in
+Future runs of `install/relay` and signed remote updates operate entirely in
 user scope and do not request `sudo`.
 
 Run the `pair` command printed by the installer to connect a Mac. The public

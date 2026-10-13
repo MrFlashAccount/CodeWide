@@ -207,7 +207,11 @@ function signedHostUpdateManifest(
   const relay = requiredProduct(products, "relay");
   const linuxAsset = requiredProductAsset(linux, (name) => name.endsWith(".tar.gz"));
   const macosAsset = requiredProductAsset(macos, (name) => name.endsWith(".dmg"));
-  const relayAsset = requiredProductAsset(relay, (name) => name === "codewide-relay-x86_64-unknown-linux-musl");
+  // Remote Relay updates install one immutable generation bundle.
+  const relayAsset = requiredProductAsset(
+    relay,
+    (name) => name === "codewide-relay-x86_64-unknown-linux-musl.tar.gz",
+  );
   const expectedPreviousVersions = new Map<string, string>([
     ["linux-x86-64", requiredPlanTarget(plan, "companion-linux").previousVersion],
     ["macos-universal", requiredPlanTarget(plan, "macos").previousVersion],
@@ -440,9 +444,9 @@ function productFiles(
           filename: "codewide-relay-x86_64-unknown-linux-musl",
         },
         {
-          name: "codewide-relay-updater-x86_64-unknown-linux-musl",
+          name: "codewide-relay-x86_64-unknown-linux-musl.tar.gz",
           artifact: `codewide-relay-${version}-linux-x86_64`,
-          filename: "codewide-relay-updater-x86_64-unknown-linux-musl",
+          filename: "codewide-relay-x86_64-unknown-linux-musl.tar.gz",
         },
       ];
     case "companion-linux": {

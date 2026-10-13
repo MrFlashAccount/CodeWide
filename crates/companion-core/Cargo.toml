@@ -10,6 +10,7 @@ description = "Shared CodeWide Companion runtime and domain owners"
 default = []
 
 [dependencies]
+codewide-host-update = { path = "../host-update" }
 agent-core = { path = "../agent-core" }
 agent-provider-claude = { path = "../agent-provider-claude" }
 agent-provider-codex = { path = "../agent-provider-codex" }

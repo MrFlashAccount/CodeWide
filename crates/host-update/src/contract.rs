@@ -1,6 +1,6 @@
-//! Shared contracts for authenticated, guardian-owned Companion host updates.
+//! Shared contracts for authenticated, guardian-owned host updates.
 //!
-//! The core owns wire shapes, release admission, and fenced phase semantics.
+//! The contract owns wire shapes, release admission, and fenced phase semantics.
 //! Platform guardians own downloads, the durable journal, activation, health
 //! proof, rollback, and terminal outcomes.
 
@@ -350,6 +350,13 @@ fn stable_version(value: &str) -> Result<[u64; 3], ReleaseAdmissionError> {
         .map_err(|_| ReleaseAdmissionError::InvalidTarget)
 }
 
+/// Whether `target` is a strictly newer stable version than `current`.
+/// Malformed versions are never newer.
+#[must_use]
+pub fn is_newer_version(target: &str, current: &str) -> bool {
+    compare_stable_versions(target, current).is_ok_and(|order| order == std::cmp::Ordering::Greater)
+}
+
 fn compare_stable_versions(
     target: &str,
     current: &str,
@@ -663,5 +670,4 @@ pub trait HostUpdateGuardian: Send + Sync {
 
 pub type SharedHostUpdateGuardian = Arc<dyn HostUpdateGuardian>;
 #[cfg(test)]
-#[path = "host_update/tests.rs"]
 mod tests;

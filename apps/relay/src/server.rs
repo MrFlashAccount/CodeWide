@@ -375,6 +375,7 @@ fn update_error(error: &RelayUpdateError) -> Response {
         "operation_not_found" => StatusCode::NOT_FOUND,
         "update_locked" => StatusCode::LOCKED,
         "invalid_request" => StatusCode::BAD_REQUEST,
+        "idempotency_conflict" | "operation_conflict" => StatusCode::CONFLICT,
         "precondition_failed" | "manual_update_required" | "release_not_admissible" => {
             StatusCode::PRECONDITION_FAILED
         }

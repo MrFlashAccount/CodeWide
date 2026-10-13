@@ -78,6 +78,39 @@ enum Command {
     /// Print the state directory selected from the active service for the installer.
     #[command(hide = true)]
     BootstrapInfo,
+    /// Print this executable's version, build and source revision as JSON.
+    #[command(hide = true)]
+    BuildInfo,
+    /// Run one queued remote update; started by the stable bootstrap copy.
+    #[command(hide = true)]
+    UpdateRun {
+        /// Install root holding `generations/`, `current` and `bootstrap/`.
+        #[arg(long)]
+        install_root: PathBuf,
+    },
+}
+
+/// Build provenance in a fixed field order: the installer matches this exact
+/// line before it records a generation's metadata.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildInfo {
+    schema_version: u16,
+    version: &'static str,
+    build: &'static str,
+    source_revision: &'static str,
+}
+
+impl BuildInfo {
+    fn current() -> Self {
+        let source_revision = env!("CODEWIDE_RELAY_SOURCE_REVISION");
+        Self {
+            schema_version: 1,
+            version: env!("CODEWIDE_RELAY_VERSION"),
+            build: &source_revision[..12],
+            source_revision,
+        }
+    }
 }
 
 pub async fn run() -> ExitCode {
@@ -100,6 +133,23 @@ async fn execute(cli: &Cli) -> Result<ExitCode> {
         || (cli.command.is_none() && cli.port.is_some() && !interactive)
     {
         return run_server(cli).await.map(|()| ExitCode::SUCCESS);
+    }
+    if matches!(cli.command, Some(Command::BuildInfo)) {
+        println!("{}", serde_json::to_string(&BuildInfo::current())?);
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(Command::UpdateRun { install_root }) = &cli.command {
+        let state = cli
+            .state
+            .clone()
+            .ok_or("update-run needs the Relay --state directory")?;
+        codewide_relay::update::run_pending(
+            install_root.clone(),
+            state.join(codewide_relay::update::GUARDIAN_STATE),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        return Ok(ExitCode::SUCCESS);
     }
     if matches!(cli.command, Some(Command::Pair)) && (cli.json || !interactive) {
         return Err("pair needs an interactive terminal to confirm the matching symbols. For scripts or older clients, use invite.".into());
@@ -146,7 +196,12 @@ async fn execute(cli: &Cli) -> Result<ExitCode> {
         Some(Command::Revoke { route }) => Request::Revoke {
             route: route.clone(),
         },
-        Some(Command::BootstrapInfo | Command::Serve) => return Ok(ExitCode::SUCCESS),
+        Some(
+            Command::BootstrapInfo
+            | Command::BuildInfo
+            | Command::UpdateRun { .. }
+            | Command::Serve,
+        ) => return Ok(ExitCode::SUCCESS),
     };
     write_frame(&mut socket, &request).await?;
     let reply = tokio::time::timeout(Duration::from_secs(5), read_frame(&mut socket)).await??;
@@ -168,8 +223,9 @@ async fn run_server(cli: &Cli) -> Result<()> {
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o710))?;
     }
     let identity = RelayTlsIdentity::load_or_create(&root)?;
-    let relay =
-        Relay::new(registry.clone()).with_updater(codewide_relay::update::RelayUpdater::new(&root));
+    let relay = Relay::new(registry.clone()).with_updater(
+        codewide_relay::update::RelayUpdater::new(&root, identity.pin()),
+    );
     let port = cli.port.unwrap_or(8780);
     let listener = public_listener(port)?;
     let control = ControlServer::bind(
@@ -228,5 +284,22 @@ async fn shutdown_signal() -> std::io::Result<()> {
     tokio::select! {
         result = tokio::signal::ctrl_c() => result,
         _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BuildInfo;
+
+    #[test]
+    fn build_info_keeps_the_installer_field_order() -> Result<(), serde_json::Error> {
+        let line = serde_json::to_string(&BuildInfo::current())?;
+        let prefix = format!(
+            r#"{{"schemaVersion":1,"version":"{}","build":""#,
+            env!("CODEWIDE_RELAY_VERSION")
+        );
+        assert!(line.starts_with(&prefix), "{line}");
+        assert!(line.contains(r#"","sourceRevision":""#));
+        Ok(())
     }
 }

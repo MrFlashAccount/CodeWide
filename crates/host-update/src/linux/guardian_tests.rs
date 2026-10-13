@@ -1,4 +1,6 @@
 use super::*;
+use crate::linux::test_support::{TEST_PRODUCT, guardian as test_guardian};
+use crate::{HostPlatform, ReleaseTargetV1};
 
 fn operation(id: &str, key: &str, sequence: u64, phase: HostUpdatePhase) -> OperationRecord {
     OperationRecord {
@@ -54,6 +56,10 @@ fn operation(id: &str, key: &str, sequence: u64, phase: HostUpdatePhase) -> Oper
         identity_pin: "d".repeat(64),
         identity_manifest: PathBuf::from("/tmp/codewide-test-identity.json"),
         previous_generation: format!("generations/{}", "a".repeat(64)),
+        release: None,
+        artifact_size: None,
+        activation_admitted: None,
+        activation_target: None,
         progress: None,
         recovery_error: None,
     }
@@ -63,7 +69,7 @@ fn operation(id: &str, key: &str, sequence: u64, phase: HostUpdatePhase) -> Oper
 fn flat_mutable_install_requires_manual_bootstrap() {
     let directory = tempfile::tempdir().expect("temporary directory");
     fs::write(directory.path().join("codewide-companion"), b"legacy").expect("legacy binary");
-    let guardian = LinuxHostUpdateGuardian::with_trust(
+    let guardian = test_guardian(
         directory.path().to_path_buf(),
         directory.path().join("host-update-state"),
         Some(test_trust()),
@@ -78,7 +84,7 @@ fn flat_mutable_install_requires_manual_bootstrap() {
 fn build_without_embedded_trust_is_not_remotely_updatable() {
     let directory = tempfile::tempdir().expect("temporary directory");
     install_generation(directory.path());
-    let guardian = LinuxHostUpdateGuardian::with_trust(
+    let guardian = test_guardian(
         directory.path().to_path_buf(),
         directory.path().join("host-update-state"),
         None,
@@ -96,7 +102,7 @@ fn embedded_trust_needs_only_the_installed_guardian_not_an_installer_config() {
     let directory = tempfile::tempdir().expect("temporary directory");
     install_generation(directory.path());
     assert!(!directory.path().join("bootstrap/config.json").exists());
-    let guardian = LinuxHostUpdateGuardian::with_trust(
+    let guardian = test_guardian(
         directory.path().to_path_buf(),
         directory.path().join("host-update-state"),
         Some(test_trust()),
@@ -120,7 +126,7 @@ fn install_generation(root: &std::path::Path) {
     let bootstrap = root.join("bootstrap");
     fs::create_dir_all(&bootstrap).expect("bootstrap directory");
     fs::set_permissions(&bootstrap, fs::Permissions::from_mode(0o700)).expect("bootstrap mode");
-    let guardian = bootstrap.join("codewide-companion-update-guardian");
+    let guardian = bootstrap.join(TEST_PRODUCT.bootstrap_guardian);
     fs::write(&guardian, b"guardian").expect("guardian binary");
     fs::set_permissions(&guardian, fs::Permissions::from_mode(0o755)).expect("guardian mode");
     let generation = root.join("generations").join(&digest);
@@ -157,16 +163,7 @@ fn idempotency_and_sequence_survive_guardian_restart() {
         &record,
     )
     .expect("operation journal");
-    let guardian = LinuxHostUpdateGuardian::new(
-        directory.path().to_path_buf(),
-        state.clone(),
-        "pin".to_owned(),
-        HostUpdateRelayState {
-            configured: false,
-            enabled: false,
-            upstream_live: false,
-        },
-    );
+    let guardian = test_guardian(directory.path().to_path_buf(), state.clone(), None);
     assert_eq!(guardian.highest_sequence().expect("sequence"), 42);
     assert_eq!(
         find_idempotency(&state, "idem_00000000000000000000")
@@ -176,6 +173,38 @@ fn idempotency_and_sequence_survive_guardian_restart() {
             .operation_id,
         record.journal.operation_id
     );
+}
+
+#[test]
+fn preparation_failure_does_not_consume_the_release_sequence() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let state = directory.path().join("bootstrap/state");
+    let mut rejected = operation(
+        "upd_00000000000000000000000000000000",
+        "idem_00000000000000000000",
+        42,
+        HostUpdatePhase::Failed,
+    );
+    rejected.activation_admitted = Some(false);
+    store::write_json(
+        &state
+            .join("operations")
+            .join(format!("{}.json", rejected.journal.operation_id)),
+        &rejected,
+    )
+    .expect("operation journal");
+    let guardian = test_guardian(directory.path().to_path_buf(), state.clone(), None);
+    assert_eq!(guardian.highest_sequence().expect("sequence"), 0);
+
+    rejected.activation_admitted = Some(true);
+    store::write_json(
+        &state
+            .join("operations")
+            .join(format!("{}.json", rejected.journal.operation_id)),
+        &rejected,
+    )
+    .expect("admitted operation journal");
+    assert_eq!(guardian.highest_sequence().expect("sequence"), 42);
 }
 
 #[test]
@@ -217,8 +246,7 @@ async fn terminal_outcome_and_lost_acceptance_survive_restart_without_a_cached_r
     )
     .expect("journal");
     store::write_json(&state.join("active.json"), &record.journal.operation_id).expect("pointer");
-    let guardian =
-        LinuxHostUpdateGuardian::with_trust(root.to_path_buf(), state, Some(test_trust()));
+    let guardian = test_guardian(root.to_path_buf(), state, Some(test_trust()));
     let status = guardian
         .status()
         .await
@@ -243,4 +271,42 @@ async fn terminal_outcome_and_lost_acceptance_survive_restart_without_a_cached_r
             .error_code,
         outcome.error_code
     );
+}
+
+#[tokio::test]
+async fn status_never_offers_a_cached_target_that_is_not_newer_than_current() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let root = directory.path();
+    install_generation(root);
+    let state = root.join("host-update-state");
+    let guardian = test_guardian(root.to_path_buf(), state.clone(), Some(test_trust()));
+    for (cached_version, offered) in [("1.0.1", true), ("1.0.0", false), ("0.9.9", false)] {
+        let mut target = operation("upd_0", "idem_0", 1, HostUpdatePhase::Accepted).target;
+        target.version = cached_version.to_owned();
+        store::write_json(
+            &state.join("available.json"),
+            &CachedRelease {
+                envelope: SignedReleaseDescriptor {
+                    schema_version: 1,
+                    key_id: "test-key".to_owned(),
+                    algorithm: "ES256".to_owned(),
+                    payload: "payload".to_owned(),
+                    signature: "signature".to_owned(),
+                },
+                available: AvailableHostUpdate {
+                    target,
+                    target_fingerprint: "c".repeat(64),
+                    release_sequence: 2,
+                    expires_at: u64::MAX,
+                },
+            },
+        )
+        .expect("cached release");
+        let status = guardian.status().await.expect("status");
+        assert_eq!(
+            status.available_target.is_some(),
+            offered,
+            "cached {cached_version}"
+        );
+    }
 }
