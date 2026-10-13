@@ -347,6 +347,63 @@ async fn a_fork_without_turns_of_its_own_previews_the_inherited_history() -> Tes
     Ok(())
 }
 
+/// Waits until the background index job has indexed `path` to its start.
+async fn indexed_completely(
+    service: &HistoryService,
+    path: &Path,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let file_id = crate::rollout::rollout_file_id(path);
+    for _ in 0..2_000 {
+        if service
+            .store
+            .file_state(&file_id)?
+            .is_some_and(crate::rollout_store::FileState::is_complete)
+        {
+            return Ok(true);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    Ok(false)
+}
+
+#[tokio::test]
+async fn reading_a_fork_indexes_its_base_in_the_background() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    // Larger than the full-scan bootstrap, so a read indexes only the tail.
+    let parent = rollout_path(directory.path(), PARENT)?;
+    append(&parent, &[session_meta(PARENT, None)])?;
+    let filler = "x".repeat(256 * 1024);
+    let mut fork_point = 0;
+    for index in 0..40 {
+        let id = format!("p{index}");
+        fork_point = append(
+            &parent,
+            &[
+                event(&json!({"type": "task_started", "turn_id": id})),
+                event(
+                    &json!({"type": "agent_message", "message": filler, "phase": "final_answer"}),
+                ),
+                event(&json!({"type": "task_complete", "turn_id": id})),
+            ],
+        )?;
+    }
+    write_fork(directory.path(), (PARENT, fork_point), &["f0"])?;
+    let service = service(directory.path())?;
+
+    let first = service
+        .try_turns_page(
+            "thread/turns/list",
+            &json!({"threadId": FORK, "limit": 2, "sortDirection": "desc", "itemsView": "summary"}),
+        )
+        .await
+        .ok_or("turn page was not handled")??;
+    assert_eq!(ids(&first["data"]), ["f0", "p39"]);
+
+    // The base thread itself was never read, yet its rollout is indexed to its start.
+    assert!(indexed_completely(&service, &parent).await?);
+    Ok(())
+}
+
 const REVERTED_ROLLOUT: &str = "019fe7af-0000-7000-8000-000000000004";
 
 /// `thread/revert` keeps the thread id and writes a new rollout
@@ -469,7 +526,23 @@ async fn bench_real_fork_history() -> TestResult {
             index.path().join("index.redb"),
         )?),
     );
-    for pass in ["cold", "warm"] {
+    for pass in ["cold", "after background indexing"] {
+        if pass != "cold" {
+            let waited = std::time::Instant::now();
+            let catalog = SessionCatalog::scan(Path::new(&home));
+            let own = catalog.resolve(&thread)?;
+            let mut chain = super::BaseChain::new(&catalog, &own);
+            while let Some(base) = chain.next()? {
+                if !indexed_completely(&service, &base.path).await? {
+                    for _ in 0..600 {
+                        if indexed_completely(&service, &base.path).await? {
+                            break;
+                        }
+                    }
+                }
+            }
+            println!("background indexing finished after {:?}", waited.elapsed());
+        }
         let started = std::time::Instant::now();
         let mut slowest = std::time::Duration::ZERO;
         let mut cursor = Value::Null;

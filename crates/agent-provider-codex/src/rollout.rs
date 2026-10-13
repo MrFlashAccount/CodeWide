@@ -384,22 +384,6 @@ pub fn backfill_rollout_prefix(
     store: &RolloutStore,
     path: &Path,
 ) -> Result<IndexReport, IndexError> {
-    backfill_rollout_prefix_before(store, path, u64::MAX, PREFIX_BACKFILL_TURNS)
-}
-
-/// Extends prefix coverage in one reverse pass from the current coverage
-/// start until `turns` turns that start before `before` are indexed, or the
-/// rollout start is reached. Indexed bytes are not read again.
-///
-/// # Errors
-///
-/// Returns an error when the rollout or its index cannot be read or written.
-pub(crate) fn backfill_rollout_prefix_before(
-    store: &RolloutStore,
-    path: &Path,
-    before: u64,
-    turns: usize,
-) -> Result<IndexReport, IndexError> {
     let started = Instant::now();
     let hot = index_rollout(store, path)?;
     if hot.complete {
@@ -436,13 +420,11 @@ pub(crate) fn backfill_rollout_prefix_before(
     // Backfill replays rollback records atomically with their tombstones, so
     // discovery needs only the adjacent physical range, not the whole tail.
     let mut indexed_from = 0;
-    let mut remaining = turns.max(1);
+    let mut remaining = PREFIX_BACKFILL_TURNS;
     visit_task_boundaries_reverse(&file, previous_from, 0, |offset, _, boundary| {
         if matches!(boundary, TaskBoundary::Started(_)) {
             indexed_from = offset;
-            if offset < before {
-                remaining -= 1;
-            }
+            remaining -= 1;
         }
         remaining > 0
     })?;
@@ -1899,11 +1881,11 @@ mod tests {
     use std::io::Write;
 
     use super::{
-        TaskBoundary, backfill_rollout_prefix_before, classify_record,
-        current_indexed_turns_from_file, frozen_indexed_turns_from_file, index_rollout,
-        index_rollout_metadata, index_rollout_through_anchor, rollout_file_id,
-        rollout_witness_from_file, rollout_witness_matches, scan_tail_turns_from_file,
-        scan_turns_after_from_file, scan_turns_before_from_file, task_boundary,
+        TaskBoundary, classify_record, current_indexed_turns_from_file,
+        frozen_indexed_turns_from_file, index_rollout, index_rollout_metadata,
+        index_rollout_through_anchor, rollout_file_id, rollout_witness_from_file,
+        rollout_witness_matches, scan_tail_turns_from_file, scan_turns_after_from_file,
+        scan_turns_before_from_file, task_boundary,
     };
     use crate::history::project_summary_turn;
     use crate::rollout_store::TurnRef;
@@ -2330,41 +2312,6 @@ mod tests {
         std::fs::write(&path, rewritten)?;
         let file = std::fs::File::open(&path)?;
         assert!(frozen_indexed_turns_from_file(&store, &path, &file, end, end, 10)?.is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn a_prefix_backfill_indexes_a_deep_page_in_one_pass() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("rollout.jsonl");
-        // Larger than the full-scan bootstrap, so indexing starts at the tail.
-        let end = write_turns(&path, &ids("t", 0..40), 256 * 1024)?;
-        let store = crate::test_support::open_rollout_store(directory.path().join("index.redb"))?;
-        index_rollout(&store, &path)?;
-        let file = std::fs::File::open(&path)?;
-        let deep = scan_tail_turns_from_file(&file, end, None, 21)?
-            .turns
-            .last()
-            .map(|turn| turn.start_offset)
-            .ok_or("turn t19 is missing")?;
-        assert!(
-            frozen_indexed_turns_from_file(&store, &path, &file, end, deep, 5)?
-                .is_none_or(|page| page.has_more)
-        );
-
-        backfill_rollout_prefix_before(&store, &path, deep, 5)?;
-
-        let page = frozen_indexed_turns_from_file(&store, &path, &file, end, deep, 5)?
-            .ok_or("deep page should be indexed")?;
-        assert_eq!(
-            page.turns
-                .iter()
-                .map(|turn| turn.id.as_str())
-                .collect::<Vec<_>>(),
-            ["t18", "t17", "t16", "t15", "t14"]
-        );
-        assert!(!page.has_more);
         Ok(())
     }
 }

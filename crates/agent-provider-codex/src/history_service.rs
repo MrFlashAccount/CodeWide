@@ -22,14 +22,13 @@ use crate::{
     },
     history_base::read_history_base,
     rollout::{
-        IndexError, RolloutWitness, backfill_rollout_prefix, backfill_rollout_prefix_before,
-        current_indexed_anchor_from_file, current_indexed_coverage_from_file,
-        current_indexed_turns_from_file, frozen_indexed_anchor_from_file,
-        frozen_indexed_coverage_from_file, frozen_indexed_turns_from_file, index_rollout,
-        index_rollout_through_anchor, rollout_file_id, rollout_witness_from_file,
-        rollout_witness_matches, scan_frozen_tail_turns_from_file,
-        scan_frozen_turns_before_from_file, scan_tail_turns_from_file, scan_turns_after_from_file,
-        scan_turns_before_from_file,
+        IndexError, RolloutWitness, backfill_rollout_prefix, current_indexed_anchor_from_file,
+        current_indexed_coverage_from_file, current_indexed_turns_from_file,
+        frozen_indexed_anchor_from_file, frozen_indexed_coverage_from_file,
+        frozen_indexed_turns_from_file, index_rollout, index_rollout_through_anchor,
+        rollout_file_id, rollout_witness_from_file, rollout_witness_matches,
+        scan_frozen_tail_turns_from_file, scan_frozen_turns_before_from_file,
+        scan_tail_turns_from_file, scan_turns_after_from_file, scan_turns_before_from_file,
     },
     rollout_monitor::{self, RolloutChange},
     rollout_store::{RolloutStore, TurnRef},
@@ -377,17 +376,19 @@ impl HistoryService {
         tokio::spawn(async move {
             loop {
                 let indexed_thread_id = thread_id.clone();
-                let catalog = catalog.clone();
-                let store = store.clone();
+                let step_catalog = catalog.clone();
+                let step_store = store.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    let path = catalog
+                    let path = step_catalog
                         .resolve(&indexed_thread_id)
                         .map_err(|error| error.to_string())?;
-                    let hot = index_rollout(&store, &path).map_err(|error| error.to_string())?;
+                    let hot =
+                        index_rollout(&step_store, &path).map_err(|error| error.to_string())?;
                     if hot.complete || hot.indexed_records > 0 {
                         Ok::<_, String>(hot)
                     } else {
-                        backfill_rollout_prefix(&store, &path).map_err(|error| error.to_string())
+                        backfill_rollout_prefix(&step_store, &path)
+                            .map_err(|error| error.to_string())
                     }
                 })
                 .await;
@@ -418,6 +419,7 @@ impl HistoryService {
                     tokio::time::sleep(Duration::from_millis(5)).await;
                     continue;
                 }
+                index_inherited_history(&catalog, &store, &thread_id).await;
 
                 let repeat = {
                     let mut jobs = jobs
@@ -1438,6 +1440,69 @@ struct BaseSegment {
     end: u64,
 }
 
+/// Eagerly indexes every base rollout a paginated fork inherits from, with the
+/// same low-priority steps as the thread's own rollout. The base thread's own
+/// index job covers it only when that thread is read or written; a reverted
+/// thread's earlier rollout has no job of its own.
+async fn index_inherited_history(
+    catalog: &Arc<SessionCatalog>,
+    store: &Arc<RolloutStore>,
+    thread_id: &str,
+) {
+    let chain_catalog = catalog.clone();
+    let chain_thread_id = thread_id.to_owned();
+    let bases = tokio::task::spawn_blocking(move || {
+        let own = chain_catalog
+            .resolve(&chain_thread_id)
+            .map_err(|error| error.to_string())?;
+        let mut chain = BaseChain::new(&chain_catalog, &own);
+        let mut paths = Vec::new();
+        while let Some(base) = chain.next().map_err(|error| error.to_string())? {
+            paths.push(base.path);
+        }
+        Ok::<_, String>(paths)
+    })
+    .await;
+    let bases = match bases {
+        Ok(Ok(bases)) => bases,
+        Ok(Err(error)) => {
+            tracing::warn!(thread_id, reason = %error, "inherited history bases are unreadable");
+            return;
+        }
+        Err(error) => {
+            tracing::warn!(thread_id, reason = %error, "inherited history indexing task failed");
+            return;
+        }
+    };
+    for path in bases {
+        loop {
+            let step_store = store.clone();
+            let step_path = path.clone();
+            let step = tokio::task::spawn_blocking(move || {
+                let hot = index_rollout(&step_store, &step_path)?;
+                if hot.complete || hot.indexed_records > 0 {
+                    Ok(hot)
+                } else {
+                    backfill_rollout_prefix(&step_store, &step_path)
+                }
+            })
+            .await;
+            match step {
+                Ok(Ok(report)) if report.complete => break,
+                Ok(Ok(_)) => tokio::time::sleep(Duration::from_millis(5)).await,
+                Ok(Err(error)) => {
+                    tracing::warn!(thread_id, %error, "inherited history indexing failed");
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(thread_id, reason = %error, "inherited history indexing task failed");
+                    return;
+                }
+            }
+        }
+    }
+}
+
 /// The most nested bases followed; each paginated fork of a fork adds one.
 const MAX_BASE_DEPTH: usize = 64;
 
@@ -1553,33 +1618,6 @@ impl InheritedPage {
 /// to older base. Returns `None` when the start names no base or no base
 /// holds the anchor. Each base is read under its own index lane; the caller
 /// must not hold the lane of the thread's own rollout.
-/// Bounded attempts to index a base page while its live thread keeps
-/// appending; each attempt re-reads only the unindexed prefix.
-const MAX_BASE_BACKFILL_PASSES: usize = 3;
-
-/// Indexes a base rollout far enough that the page of `wanted` turns before
-/// `before` (default: the fork point) comes from the shared index, so paging
-/// deep into a large base does not rescan the base from its end.
-fn index_base_page(
-    store: &RolloutStore,
-    base: &BaseSegment,
-    before: Option<u64>,
-    wanted: usize,
-) -> Result<(), HistoryServiceError> {
-    index_rollout(store, &base.path)?;
-    let before = before.map_or(base.end, |offset| offset.min(base.end));
-    for _ in 0..MAX_BASE_BACKFILL_PASSES {
-        let file = File::open(&base.path).map_err(IndexError::from)?;
-        if frozen_indexed_turns_from_file(store, &base.path, &file, base.end, before, wanted)?
-            .is_some_and(|page| !page.has_more)
-        {
-            return Ok(());
-        }
-        backfill_rollout_prefix_before(store, &base.path, before, wanted)?;
-    }
-    Ok(())
-}
-
 fn inherited_page(
     catalog: &SessionCatalog,
     store: &RolloutStore,
@@ -1608,13 +1646,7 @@ fn inherited_page(
         first_source: None,
     };
     loop {
-        let wanted = limit.saturating_sub(page.turns.len()).saturating_add(1);
-        match anchor {
-            Some(anchor_id) => {
-                index_rollout_through_anchor(store, &base.path, anchor_id, wanted)?;
-            }
-            None => index_base_page(store, &base, before, wanted)?,
-        }
+        index_rollout(store, &base.path)?;
         let lane = store.rollout_index_lock(rollout_file_id(&base.path));
         let guard = lane
             .lock()
