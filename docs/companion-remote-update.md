@@ -85,11 +85,30 @@ accepted -> installing -> targetReady -> awaitingReconnect -> committed
 accepted/installing -> failed (only before activating a replacement)
 ```
 
-Linux status retains the most recent terminal operation in `activeOperation`;
-only admission filters out terminal records when checking the single-active
-lock. This lets a restarted phone recover the actual outcome. Replaying an
-apply idempotency key finds its journal before requiring a fresh release check,
+Linux status always reports an in-flight operation in `activeOperation`. It
+also retains the most recent terminal operation so a phone that reconnects
+after the restart learns the actual outcome, but only while that outcome is
+current:
+
+- it is at most one hour old by its journal `updatedAt` (several times the
+  12-minute rollback deadline);
+- it still describes the installed generation: `committed` while the target
+  digest is installed, `rolledBack` while the pre-update digest is installed,
+  and `failed` while either of the operation's two digests is installed (a
+  failed rollback may leave the target linked).
+
+An expired or superseded outcome, for example after a manual reinstall, and a
+pointer whose operation record is missing or undecodable are hidden at once.
+Status then removes `active.json` under a non-blocking attempt on the guardian
+lock, after confirming the pointer still names the same operation, so it never
+deletes a pointer written by a newer apply; a contended lock defers removal to
+the next status read. The operation stays readable by id. Admission ignores
+terminal records when checking the single-active lock. Replaying an apply
+idempotency key finds its journal before requiring a fresh release check,
 including when the original HTTP acknowledgement was lost.
+
+The macOS guardian never reports a terminal operation in status; its outcome is
+read by operation id.
 
 An additive `progress` field reports download bytes/optional total, verification,
 extraction, restart, readiness, reconnect confirmation, and rollback. Progress is

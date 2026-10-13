@@ -18,6 +18,7 @@ mod generation;
 mod guardian;
 mod health;
 mod host_resolver;
+mod outcome;
 mod prepare;
 mod runner;
 mod store;
