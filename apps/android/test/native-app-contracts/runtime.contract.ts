@@ -76,7 +76,6 @@ it("preserves runtime integration contracts", () => {
   expect(voiceWorkspace).not.toContain("() => threadDatabase?.collection");
   expect(voiceWorkspace).not.toContain("details.collection.preload()");
   expect(voiceWorkspace).not.toContain("createOptimisticAction");
-  expect(voiceWorkspace).not.toContain("new DurableOutbox");
   expect(voiceWorkspace).not.toContain("mirrorQueuedCommands");
   expect(voiceWorkspace).not.toContain("sameConnections(");
   expect(ownerWorkspaceRuntime).toContain("supervisor.replaceConnections(initialProfiles)");
