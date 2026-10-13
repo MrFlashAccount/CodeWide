@@ -665,6 +665,14 @@ mod tests {
         let provider = agent_core::model::ProviderId::from_static("claude");
         let thread = child.thread(&provider);
         assert_eq!(thread.name.as_deref(), Some("Check the build"));
+        assert_eq!(
+            thread.spawn,
+            Some(agent_core::model::ThreadSpawn {
+                parent_thread_id: AppThreadId::from_static("thread-s"),
+                agent_nickname: Some("Check the build".into()),
+                agent_role: Some("Explore".into()),
+            })
+        );
         assert_eq!(thread.status, agent_core::model::ThreadStatus::Active);
         assert_eq!(thread.preview, "Run the build");
 

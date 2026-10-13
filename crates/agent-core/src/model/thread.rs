@@ -38,6 +38,18 @@ pub struct ThreadSettings {
     pub service_tier: Option<String>,
 }
 
+/// Who spawned a sub-agent's read-only thread (added within v1).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSpawn {
+    /// The thread whose agent started this one.
+    pub parent_thread_id: AppThreadId,
+    /// The name the spawning call gave the agent, when it gave one.
+    pub agent_nickname: Option<String>,
+    /// The agent's type, when the spawning call named one.
+    pub agent_role: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentThread {
@@ -53,6 +65,10 @@ pub struct AgentThread {
     pub origin: ThreadOrigin,
     pub status: ThreadStatus,
     pub settings: ThreadSettings,
+    /// Present only on a sub-agent's thread: its parent drives it, so it
+    /// takes no direct input. Optional on the wire (added within v1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn: Option<ThreadSpawn>,
 }
 
 /// The provider native thread a turn or item belongs to: with in-thread

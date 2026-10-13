@@ -162,6 +162,9 @@ const thread = obj({
   provider: str,
   recencyAt: nullable(int),
   settings,
+  spawn: optional(
+    obj({ agentNickname: nullable(str), agentRole: nullable(str), parentThreadId: str }),
+  ),
   status: literal("idle", "active", "notLoaded", "failed", "openElsewhere"),
   updatedAt: int,
 });

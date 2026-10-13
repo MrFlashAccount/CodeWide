@@ -50,6 +50,16 @@ export interface ThreadSettings {
   readonly serviceTier: string | null;
 }
 
+/** Who spawned a sub-agent's read-only thread (added within v1). */
+export interface ThreadSpawn {
+  /** The name the spawning call gave the agent, when it gave one. */
+  readonly agentNickname: string | null;
+  /** The type of the agent, when the spawning call named one. */
+  readonly agentRole: string | null;
+  /** The thread whose agent started this one. */
+  readonly parentThreadId: AppThreadId;
+}
+
 export interface AgentThread {
   readonly appThreadId: AppThreadId;
   readonly archived: boolean;
@@ -62,6 +72,8 @@ export interface AgentThread {
   readonly provider: ProviderId;
   readonly recencyAt: number | null;
   readonly settings: ThreadSettings;
+  /** Present only on a sub-agent's thread: its parent drives it, so it takes no direct input. */
+  readonly spawn?: ThreadSpawn;
   readonly status: ThreadStatus;
   readonly updatedAt: number;
 }

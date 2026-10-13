@@ -24,7 +24,7 @@ pub fn thread(thread: &AgentThread, provider: &WireProvider, turns: &[Value]) ->
         "extra": null,
         "sessionId": thread.app_thread_id.as_str(),
         "forkedFromId": null,
-        "parentThreadId": null,
+        "parentThreadId": thread.spawn.as_ref().map(|spawn| spawn.parent_thread_id.as_str()),
         "preview": thread.preview,
         "ephemeral": false,
         "section": null,
@@ -46,10 +46,10 @@ pub fn thread(thread: &AgentThread, provider: &WireProvider, turns: &[Value]) ->
         "cliVersion": provider.descriptor.version,
         "originator": null,
         "source": "appServer",
-        "canAcceptDirectInput": can_accept_direct_input(thread.status),
+        "canAcceptDirectInput": can_accept_direct_input(thread),
         "threadSource": null,
-        "agentNickname": null,
-        "agentRole": null,
+        "agentNickname": thread.spawn.as_ref().and_then(|spawn| spawn.agent_nickname.as_deref()),
+        "agentRole": thread.spawn.as_ref().and_then(|spawn| spawn.agent_role.as_deref()),
         "gitInfo": null,
         "name": thread.name,
         "daybreakEnabled": null,
@@ -59,14 +59,15 @@ pub fn thread(thread: &AgentThread, provider: &WireProvider, turns: &[Value]) ->
     projected
 }
 
-/// Whether this companion can run a turn in the thread: `false` only while
-/// another process holds it. A neutral provider reports a held thread as
-/// `OpenElsewhere`, so an unloaded thread is held by no one and a turn loads
-/// it here. Every status therefore names the lock explicitly: the client
-/// keeps the last value it received, and a released thread must clear it.
+/// Whether this companion can run a turn in the thread: `false` while
+/// another process holds it, and for a sub-agent's thread, which its parent
+/// drives. A neutral provider reports a held thread as `OpenElsewhere`, so an
+/// unloaded thread is held by no one and a turn loads it here. Every status
+/// therefore names the lock explicitly: the client keeps the last value it
+/// received, and a released thread must clear it.
 #[must_use]
-pub const fn can_accept_direct_input(status: ThreadStatus) -> bool {
-    !matches!(status, ThreadStatus::OpenElsewhere)
+pub const fn can_accept_direct_input(thread: &AgentThread) -> bool {
+    !matches!(thread.status, ThreadStatus::OpenElsewhere) && thread.spawn.is_none()
 }
 
 /// Projects a thread lifecycle status. A thread open elsewhere runs nothing
@@ -455,6 +456,70 @@ mod tests {
             provenance: None,
             usage,
         }
+    }
+
+    fn claude_wire() -> WireProvider {
+        WireProvider {
+            descriptor: crate::agent::model::ProviderDescriptor {
+                id: crate::agent::model::ProviderId::from_static("claude"),
+                display_name: "Claude".into(),
+                model_provider: "anthropic".into(),
+                version: String::new(),
+            },
+            capabilities: crate::agent::model::CapabilitySet::none(
+                crate::agent::model::StartWhileActiveMode::Busy,
+            ),
+            primary_id: crate::agent::model::ProviderId::from_static("codex"),
+            multi_provider: true,
+        }
+    }
+
+    fn neutral_thread(spawn: Option<crate::agent::model::ThreadSpawn>) -> AgentThread {
+        AgentThread {
+            app_thread_id: AppThreadId::from_static("parent:agent:a1"),
+            provider: crate::agent::model::ProviderId::from_static("claude"),
+            cwd: "/w".into(),
+            name: Some("Check the build".into()),
+            preview: String::new(),
+            created_at: 1,
+            updated_at: 2,
+            recency_at: None,
+            archived: false,
+            origin: crate::agent::model::ThreadOrigin::External,
+            status: ThreadStatus::Active,
+            settings: crate::agent::model::ThreadSettings {
+                model: "default".into(),
+                effort: None,
+                permission_profile: ":read-only".into(),
+                service_tier: None,
+            },
+            spawn,
+        }
+    }
+
+    /// A sub-agent's thread is the parent's child on the wire, so the client
+    /// files it under its parent and keeps the composer closed; a root
+    /// thread names no parent and accepts input.
+    #[test]
+    fn a_sub_agent_thread_names_its_parent_and_takes_no_direct_input() {
+        let child = thread(
+            &neutral_thread(Some(crate::agent::model::ThreadSpawn {
+                parent_thread_id: AppThreadId::from_static("parent"),
+                agent_nickname: Some("Check the build".into()),
+                agent_role: Some("Explore".into()),
+            })),
+            &claude_wire(),
+            &[],
+        );
+        assert_eq!(child["parentThreadId"], "parent");
+        assert_eq!(child["agentNickname"], "Check the build");
+        assert_eq!(child["agentRole"], "Explore");
+        assert_eq!(child["canAcceptDirectInput"], false);
+
+        let root = thread(&neutral_thread(None), &claude_wire(), &[]);
+        assert_eq!(root["parentThreadId"], Value::Null);
+        assert_eq!(root["agentNickname"], Value::Null);
+        assert_eq!(root["canAcceptDirectInput"], true);
     }
 
     #[test]
