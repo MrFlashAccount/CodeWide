@@ -111,9 +111,10 @@ it("uses a single compact project row without a path or navigation chevron", () 
   expect(view.queryByText("/repo")).toBeNull();
 });
 
-it("shows a pinned project's server like a thread's, only when given", () => {
+it("leads a pinned project with one icon: its server when given, else the folder", () => {
   const view = render(<SidebarProjectRow project={project} onPress={jest.fn()} />);
   expect(view.queryByLabelText("Server Buddy")).toBeNull();
+  expect(view.queryByText("folder-outline")).toBeVisible();
   view.rerender(
     <SidebarProjectRow
       project={project}
@@ -122,6 +123,7 @@ it("shows a pinned project's server like a thread's, only when given", () => {
     />,
   );
   expect(view.getByLabelText("Server Buddy")).toBeVisible();
+  expect(view.queryByText("folder-outline")).toBeNull();
 });
 
 it("keeps a failed pin update visible instead of pretending it was saved", async () => {

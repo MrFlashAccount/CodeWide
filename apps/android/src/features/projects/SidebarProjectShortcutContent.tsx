@@ -14,16 +14,20 @@ type ShortcutContentProps = {
   readonly server?: SidebarProjectServer | undefined;
 };
 
-/** Keeps the shortcut's text, folder and unread indicator stable during commands. */
+/**
+ * Keeps the shortcut's text, leading icon and unread indicator stable during
+ * commands. One leading icon: the server's across several servers, else the folder.
+ */
 export function SidebarProjectShortcutContent(props: ShortcutContentProps): React.JSX.Element {
   return (
     <>
-      {props.server !== undefined && (
+      {props.server === undefined ? (
+        <InlineIcon {...folderIcon} />
+      ) : (
         <View accessibilityLabel={`Server ${props.server.name}`} accessible>
           <ServerIcon iconId={props.server.iconId} metric="body" />
         </View>
       )}
-      <InlineIcon {...folderIcon} />
       <ProjectIdentity {...props} />
       <View style={styles.unreadSlot}>
         {props.project.unread && (
