@@ -265,6 +265,7 @@ fn public_listener(port: u16) -> std::io::Result<TcpListener> {
 fn dual_stack_listener(port: u16) -> std::io::Result<TcpListener> {
     let ipv6 = Socket::new(Domain::IPV6, Type::STREAM, None)?;
     ipv6.set_only_v6(false)?;
+    ipv6.set_reuse_address(true)?;
     ipv6.bind(&std::net::SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port)).into())?;
     ipv6.listen(1024)?;
     ipv6.set_nonblocking(true)?;
@@ -273,6 +274,7 @@ fn dual_stack_listener(port: u16) -> std::io::Result<TcpListener> {
 
 fn ipv4_listener(port: u16) -> std::io::Result<TcpListener> {
     let ipv4 = Socket::new(Domain::IPV4, Type::STREAM, None)?;
+    ipv4.set_reuse_address(true)?;
     ipv4.bind(&std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, port)).into())?;
     ipv4.listen(1024)?;
     ipv4.set_nonblocking(true)?;
@@ -289,7 +291,12 @@ async fn shutdown_signal() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::BuildInfo;
+    use super::{BuildInfo, public_listener};
+    use socket2::SockRef;
+    #[cfg(target_os = "linux")]
+    use std::net::Ipv4Addr;
+    #[cfg(target_os = "linux")]
+    use tokio::{io::AsyncReadExt, net::TcpStream};
 
     #[test]
     fn build_info_keeps_the_installer_field_order() -> Result<(), serde_json::Error> {
@@ -300,6 +307,33 @@ mod tests {
         );
         assert!(line.starts_with(&prefix), "{line}");
         assert!(line.contains(r#"","sourceRevision":""#));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn public_listener_keeps_the_restart_port_reusable() -> std::io::Result<()> {
+        let listener = public_listener(0)?;
+
+        assert!(SockRef::from(&listener).reuse_address()?);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn public_listener_rebinds_after_an_active_connection() -> std::io::Result<()> {
+        let previous = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).await?;
+        let port = previous.local_addr()?.port();
+        let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).await?;
+        let (server, _) = previous.accept().await?;
+
+        drop(server);
+        let mut end = [0_u8; 1];
+        assert_eq!(client.read(&mut end).await?, 0);
+        drop(client);
+        drop(previous);
+
+        let replacement = public_listener(port)?;
+        assert_eq!(replacement.local_addr()?.port(), port);
         Ok(())
     }
 }
