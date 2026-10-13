@@ -86,16 +86,39 @@ pub fn settings_profile(payload: &Value) -> Option<(&str, &str)> {
         return None;
     }
     let params = payload.get("params")?;
+    let settings = params.get("threadSettings")?;
     Some((
         params.get("threadId").and_then(Value::as_str)?,
-        params
-            .pointer("/threadSettings/activePermissionProfile/id")
-            .and_then(Value::as_str)?,
+        effective_profile(settings, "sandboxPolicy")?,
     ))
 }
 
+/// The thread's named profile, else the built-in profile its sandbox policy
+/// is. A thread that runs on the configured sandbox mode, not a named
+/// profile, reports `activePermissionProfile: null` with the policy it
+/// actually runs under; an external sandbox has no built-in equivalent.
+fn effective_profile<'a>(holder: &'a Value, sandbox_field: &str) -> Option<&'a str> {
+    if let Some(id) = holder
+        .pointer("/activePermissionProfile/id")
+        .and_then(Value::as_str)
+    {
+        return Some(id);
+    }
+    match holder
+        .get(sandbox_field)
+        .and_then(|sandbox| sandbox.get("type"))
+        .and_then(Value::as_str)?
+    {
+        "readOnly" => Some(":read-only"),
+        "workspaceWrite" => Some(":workspace"),
+        "dangerFullAccess" => Some(":danger-full-access"),
+        _ => None,
+    }
+}
+
 /// The effective permission profile id an RPC result reports for the thread
-/// it returns (`thread/start`, `thread/resume`, `thread/fork`).
+/// it returns (`thread/start`, `thread/resume`, `thread/fork`): its named
+/// profile, else the built-in profile of its sandbox policy.
 #[must_use]
 pub fn result_profile<'a>(method: &str, result: &'a Value) -> Option<(&'a str, &'a str)> {
     if !matches!(method, "thread/start" | "thread/resume" | "thread/fork") {
@@ -103,9 +126,7 @@ pub fn result_profile<'a>(method: &str, result: &'a Value) -> Option<(&'a str, &
     }
     Some((
         result.pointer("/thread/id").and_then(Value::as_str)?,
-        result
-            .pointer("/activePermissionProfile/id")
-            .and_then(Value::as_str)?,
+        effective_profile(result, "sandbox")?,
     ))
 }
 

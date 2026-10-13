@@ -58,6 +58,34 @@ pub fn child_profile(parent: Option<&str>, requested: Option<&str>) -> Result<St
     }
 }
 
+/// Full access under each provider's name for it: Claude has both,
+/// Codex only `:danger-full-access`. Both lift every check.
+const FULL_ACCESS: [&str; 2] = [":full-access", ":danger-full-access"];
+
+/// The child's profile in the target provider's own catalog: the same id
+/// when the target has it, else the target's id for the same access
+/// (full access is spelled differently across providers). An empty catalog
+/// (the provider lists none) keeps the id.
+///
+/// # Errors
+/// Returns the message the model sees when the target has no such profile.
+pub fn for_target(profile: &str, available: &[&str]) -> Result<String, String> {
+    if available.is_empty() || available.contains(&profile) {
+        return Ok(profile.to_owned());
+    }
+    if FULL_ACCESS.contains(&profile)
+        && let Some(equivalent) = FULL_ACCESS
+            .iter()
+            .find(|candidate| available.contains(candidate))
+    {
+        return Ok((*equivalent).to_owned());
+    }
+    Err(format!(
+        "the target provider has no permission profile {profile}; it offers {}",
+        available.join(", ")
+    ))
+}
+
 /// Effective profiles of threads, observed on the client wire.
 #[derive(Default)]
 pub struct ProfileObservations {
@@ -135,6 +163,50 @@ mod tests {
             child_profile(Some("team"), Some(READ_ONLY)),
             Ok(READ_ONLY.into())
         );
+    }
+
+    #[test]
+    fn full_access_takes_the_target_providers_name() {
+        let codex = [":read-only", ":workspace", ":danger-full-access"];
+        let claude = [
+            ":read-only",
+            ":workspace",
+            ":full-access",
+            ":danger-full-access",
+        ];
+        assert_eq!(
+            for_target(":full-access", &codex),
+            Ok(":danger-full-access".into())
+        );
+        assert_eq!(for_target(":workspace", &codex), Ok(":workspace".into()));
+        assert_eq!(
+            for_target(":full-access", &claude),
+            Ok(":full-access".into())
+        );
+        assert_eq!(for_target("team", &[]), Ok("team".into()));
+        assert!(for_target("team", &codex).is_err());
+        assert!(for_target(":workspace", &[":read-only"]).is_err());
+    }
+
+    #[test]
+    fn a_thread_on_its_configured_sandbox_has_the_matching_built_in_profile() {
+        let observed = ProfileObservations::default();
+        observed.observe_rpc_result(
+            "thread/resume",
+            &json!({"thread": {"id": "t"}, "activePermissionProfile": null,
+                "sandbox": {"type": "dangerFullAccess"}}),
+        );
+        assert_eq!(observed.get("t").as_deref(), Some(":danger-full-access"));
+        observed.observe_event(&json!({"method": "thread/settings/updated", "params": {
+            "threadId": "t", "threadSettings": {"activePermissionProfile": null,
+                "sandboxPolicy": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false}}}}));
+        assert_eq!(observed.get("t").as_deref(), Some(":workspace"));
+        observed.observe_rpc_result(
+            "thread/start",
+            &json!({"thread": {"id": "u"}, "activePermissionProfile": null,
+                "sandbox": {"type": "externalSandbox", "networkAccess": "restricted"}}),
+        );
+        assert_eq!(observed.get("u"), None, "an external sandbox stays unknown");
     }
 
     #[test]

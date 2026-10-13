@@ -26,6 +26,15 @@ use crate::{
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 const PARENT: &str = "parent-thread";
+const CLAUDE_PARENT: &str = "claude-parent-thread";
+/// The built-in profiles each provider lists (Codex 0.162 and the Claude host).
+const CODEX_PROFILES: [&str; 3] = [":read-only", ":workspace", ":danger-full-access"];
+const CLAUDE_PROFILES: [&str; 4] = [
+    ":read-only",
+    ":workspace",
+    ":full-access",
+    ":danger-full-access",
+];
 
 fn capabilities(host_minted: bool) -> CapabilitySet {
     let mut capabilities = CapabilitySet::none(StartWhileActiveMode::Busy);
@@ -52,8 +61,19 @@ async fn harness(parent_profile: &str) -> Result<Harness, Box<dyn std::error::Er
     parent.cwd = "/repo".into();
     parent.settings.model = "gpt-parent".into();
     parent.settings.permission_profile = parent_profile.into();
-    let codex = Arc::new(ScriptedProvider::new("codex", capabilities(false)).with_thread(parent));
-    let claude = Arc::new(ScriptedProvider::new("claude", capabilities(true)));
+    let codex = Arc::new(
+        ScriptedProvider::new("codex", capabilities(false))
+            .with_profiles(&CODEX_PROFILES)
+            .with_thread(parent),
+    );
+    let mut claude_parent = thread("claude", CLAUDE_PARENT, 5);
+    claude_parent.cwd = "/repo".into();
+    claude_parent.settings.permission_profile = ":full-access".into();
+    let claude = Arc::new(
+        ScriptedProvider::new("claude", capabilities(true))
+            .with_profiles(&CLAUDE_PROFILES)
+            .with_thread(claude_parent),
+    );
     let codex_dyn: Arc<dyn AgentProvider> = codex.clone();
     let claude_dyn: Arc<dyn AgentProvider> = claude.clone();
     let registry = Arc::new(ProviderRegistry::new(
@@ -66,6 +86,13 @@ async fn harness(parent_profile: &str) -> Result<Harness, Box<dyn std::error::Er
         .bind(
             &AppThreadId::from_static(PARENT),
             &ProviderId::from_static("codex"),
+            BindingOrigin::Created,
+        )
+        .await?;
+    bindings
+        .bind(
+            &AppThreadId::from_static(CLAUDE_PARENT),
+            &ProviderId::from_static("claude"),
             BindingOrigin::Created,
         )
         .await?;
@@ -269,6 +296,67 @@ async fn an_unknown_parent_profile_allows_only_read_only_children() -> TestResul
     )
     .await;
     assert!(success);
+    Ok(())
+}
+
+/// A Codex thread on its configured sandbox mode reports no named profile,
+/// only its sandbox policy; a Claude agent it spawns inherits that access.
+#[tokio::test]
+async fn a_codex_parent_on_its_configured_sandbox_passes_its_access_to_a_claude_agent() -> TestResult
+{
+    let harness = harness("").await?;
+    harness.service.observe_rpc_result(
+        "thread/resume",
+        &json!({"thread": {"id": PARENT}, "activePermissionProfile": null,
+            "sandbox": {"type": "dangerFullAccess"}}),
+    );
+    let (success, spawned) = call(
+        &harness.service,
+        "codex",
+        PARENT,
+        "codewide_spawn_agent",
+        json!({"prompt": "p", "provider": "claude"}),
+    )
+    .await;
+    assert!(success, "{spawned}");
+    assert_eq!(
+        harness.claude.created()[0].settings.permission_profile,
+        ":danger-full-access"
+    );
+    Ok(())
+}
+
+/// Claude spells full access `:full-access`; Codex has only
+/// `:danger-full-access`, which a Codex agent of a full-access Claude thread gets.
+#[tokio::test]
+async fn a_full_access_claude_parent_gives_a_codex_agent_codex_full_access() -> TestResult {
+    let harness = harness(":workspace").await?;
+    let (success, spawned) = call(
+        &harness.service,
+        "claude",
+        CLAUDE_PARENT,
+        "codewide_spawn_agent",
+        json!({"prompt": "p", "provider": "codex"}),
+    )
+    .await;
+    assert!(success, "{spawned}");
+    assert_eq!(
+        harness.codex.created()[0].settings.permission_profile,
+        ":danger-full-access"
+    );
+    let (success, spawned) = call(
+        &harness.service,
+        "claude",
+        CLAUDE_PARENT,
+        "codewide_spawn_agent",
+        json!({"prompt": "p", "provider": "codex", "permissionProfile": ":workspace"}),
+    )
+    .await;
+    assert!(success, "{spawned}");
+    assert_eq!(
+        harness.codex.created()[1].settings.permission_profile,
+        ":workspace"
+    );
     Ok(())
 }
 
