@@ -3,7 +3,7 @@ import type { RenderBlock } from "@codewide/renderers";
 import { commandOutputReferences, type ActivityFootprint } from "@codewide/sync-client";
 import { useContext, useState } from "react";
 import { Pressable, View } from "react-native";
-import type { GetTransferAccess } from "../../../data/private-transfer";
+import type { GetTransferAccess, TransferAccess } from "../../../data/private-transfer";
 import { useEphemeralAsyncResource } from "../../../rendering/async-resource-store";
 import {
   commandActivityInput,
@@ -35,7 +35,7 @@ export function CommandExecutionProtocolBlock({
   getTransferAccess,
 }: {
   block: RenderBlock;
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
 }) {
   const activeToolCall = useContext(ActiveToolCallContext);
   const command = commandActivityInput(block.raw, block.title);

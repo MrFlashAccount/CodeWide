@@ -14,7 +14,6 @@ import type { QueuedPrompt } from "../../data/thread-delivery-state";
 import type {
   BackgroundTerminalValue,
   ThreadGoalInput,
-  TunnelValue,
   WorkspaceResourceDatabase,
 } from "../../data/workspace-resource-database";
 import type { ComposerDraftPreferencesSource } from "../../features/composer/ComposerMenu";
@@ -80,13 +79,11 @@ type PortsRouteRequest = {
   ) => void;
   readonly resources: WorkspaceResourceDatabase | null;
   readonly serverName: string;
-  readonly tunnelResourceId: string | null;
 };
 
 type RuntimeRouteRequest = {
   readonly backgroundTerminalsResourceId: string | null;
   readonly connectionId: string | null;
-  readonly createTunnel?: (port: number, ttlSeconds: number) => Promise<TunnelValue>;
   readonly kind: "runtime";
   readonly listTerminals?: () => Promise<BackgroundTerminalValue[]>;
   readonly openBrowser?: (
@@ -95,10 +92,8 @@ type RuntimeRouteRequest = {
     headers?: Readonly<Record<string, string>>,
   ) => void;
   readonly resources: WorkspaceResourceDatabase | null;
-  readonly revokeTunnel?: (tunnelId: string) => Promise<void>;
   readonly serverName: string;
   readonly terminateTerminal?: (processId: string) => Promise<boolean>;
-  readonly tunnelResourceId: string | null;
 };
 
 export type ComposerToolRouteRequest =

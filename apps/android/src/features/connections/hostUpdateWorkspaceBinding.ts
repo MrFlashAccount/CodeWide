@@ -2,7 +2,7 @@ import { randomUUID } from "expo-crypto";
 
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { createWorkspaceSession } from "../../data/workspace-session";
-import { nativeCompanionHttpOrigin } from "../../native/native-transport";
+import { companionConnectionTransport } from "../../native/companionTransport";
 import { createHostUpdateResource } from "./hostUpdateResource";
 import type { HostUpdateResource } from "./hostUpdateResourceState";
 import { createHostUpdateTransport } from "./hostUpdateTransport";
@@ -21,8 +21,8 @@ export function createConnectionHostUpdateResource({
   return createHostUpdateResource({
     createIdempotencyKey: randomUUID,
     transport: createHostUpdateTransport({
+      connectionTransport: companionConnectionTransport,
       currentConnections,
-      nativeCompanionHttpOrigin,
       scopedHttpAuthorization,
     }),
   });
@@ -44,8 +44,8 @@ export function createConnectionRelayUpdateResource({
     subject: "Relay",
     transport: createHostUpdateTransport(
       {
+        connectionTransport: companionConnectionTransport,
         currentConnections,
-        nativeCompanionHttpOrigin,
         scopedHttpAuthorization,
       },
       {

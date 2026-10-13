@@ -5,13 +5,14 @@ import { OpenableImage, ScopedPrivateAssetImage } from "./ImageProtocolBlock";
 import { styles } from "./ToolContent.styles";
 
 import type { ReactElement } from "react";
+import type { TransferAccess } from "../../../data/private-transfer";
 /** Renders image variants without taking ownership of protocol body disclosure. */
 export function renderToolImage(
   item: Record<string, unknown>,
   type: string,
   index: number,
   key: string,
-  getTransferAccess: (() => Promise<{ authorization: string; baseUrl: string }>) | undefined,
+  getTransferAccess: (() => Promise<TransferAccess>) | undefined,
   renderFallback: (value: unknown) => ReactElement,
 ) {
   const projectedAsset = privateImageAssetProjection(item.codewideAsset);

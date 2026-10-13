@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { pickDownloadDirectory, startPreviewDownload } from "../src/native/file-transfer.native";
+import { urlTransport } from "../src/native/urlTransport";
 
 const storage = vi.hoisted(() => ({
   files: new Map<string, Uint8Array>(),
@@ -65,7 +66,7 @@ vi.mock("react-native", async () => {
   } } };
 });
 
-const getAccess = async () => ({ baseUrl: "https://example.test", authorization: "test" });
+const getAccess = async () => ({ baseUrl: "https://example.test", transport: urlTransport, authorization: "test" });
 const filename = "image.png";
 
 function serve(bytes: Uint8Array, beforeBody: () => void = () => undefined, hashOverride?: string) {

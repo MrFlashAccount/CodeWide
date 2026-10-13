@@ -1,9 +1,21 @@
 import { cachedAttachmentFetch } from "../native/attachment-cache/cached-transfer";
+import type {
+  CompanionConnectionTransport,
+  CompanionTransport,
+  CompanionTransportInit,
+} from "../native/companionTransportContract";
+import { urlTransport } from "../native/urlTransport";
 import { companionHttpUrl } from "./companion-http-url";
 import type { StoredConnection } from "./connection-profile-types";
 import { unknownRecord } from "./unknownRecord";
 
-export type TransferAccess = { authorization: string; baseUrl: string; cacheScope?: string };
+/** One authenticated Companion address space; `baseUrl` is meaningful only to `transport`. */
+export type TransferAccess = {
+  authorization: string;
+  baseUrl: string;
+  cacheScope?: string;
+  transport: CompanionTransport;
+};
 export type GetTransferAccess = (forceRefresh?: boolean) => Promise<TransferAccess>;
 
 export type PrivateAssetSource =
@@ -28,7 +40,7 @@ export type PrivateAssetTextResult = {
   truncated: boolean;
 };
 
-type TransferRequest = { init?: RequestInit; uri: string };
+type TransferRequest = { init?: CompanionTransportInit; uri: string };
 
 export const MAX_PRIVATE_ASSET_TEXT_PAGE_BYTES = Number("2097152");
 const UNSUPPORTED_MEDIA_STATUS = 415;
@@ -54,7 +66,7 @@ export async function fetchAuthenticatedTransfer(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const access = await getAccess(attempt > 0);
     const request = createRequest(access);
-    const response = await fetch(request.uri, {
+    const response = await access.transport.fetch(request.uri, {
       ...request.init,
       headers: mergeHeaders({ authorization: access.authorization }, request.init?.headers),
     });
@@ -69,17 +81,18 @@ export async function fetchAuthenticatedTransfer(
 export async function fetchPrivateAsset(
   source: PrivateAssetSource,
   getAccess: GetTransferAccess | null,
-  init: RequestInit = {},
+  init: CompanionTransportInit = {},
 ): Promise<Response> {
   if (source.kind === "direct") {
-    return cachedAttachmentFetch(
-      source.uri,
-      {
+    return cachedAttachmentFetch({
+      init: {
         ...init,
         headers: mergeHeaders(source.headers, init.headers),
       },
-      { identity: source.uri, scope: "direct" },
-    );
+      options: { identity: source.uri, scope: "direct" },
+      transport: urlTransport,
+      uri: source.uri,
+    });
   }
   if (getAccess === null) {
     throw new Error("Private asset access is unavailable");
@@ -88,17 +101,18 @@ export async function fetchPrivateAsset(
     source.kind === "remote" ? await materializeRemoteAsset(source.url, getAccess) : source;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const access = await getAccess(attempt > 0);
-    const response = await cachedAttachmentFetch(
-      privateAssetUrl(resolved, access),
-      {
+    const response = await cachedAttachmentFetch({
+      init: {
         ...init,
         headers: mergeHeaders({ authorization: access.authorization }, init.headers),
       },
-      {
+      options: {
         identity: resolvedPrivateAssetCacheKey(resolved),
         scope: access.cacheScope ?? access.baseUrl,
       },
-    );
+      transport: access.transport,
+      uri: privateAssetUrl(resolved, access),
+    });
     if (attempt === 0 && isAuthorizationStatus(response.status)) {
       continue;
     }
@@ -111,7 +125,7 @@ export async function fetchScopedUpload(
   rootId: string,
   path: string,
   getAccess: GetTransferAccess,
-  init: RequestInit,
+  init: CompanionTransportInit,
 ): Promise<Response> {
   return fetchAuthenticatedTransfer(getAccess, (access) => ({
     init,
@@ -196,7 +210,7 @@ async function fetchPrivateTextResponse({
 }): Promise<Response> {
   const range = `bytes=${String(offset)}-${String(offset + limit - 1)}`;
   if (source.kind === "direct") {
-    return fetch(source.uri, {
+    return urlTransport.fetch(source.uri, {
       headers: mergeHeaders(source.headers, textRequestHeaders(accept, range)),
       ...(signal === undefined ? {} : { signal }),
     });
@@ -285,6 +299,7 @@ export async function resolvePrivateAssetRequest(
   cacheIdentity: string;
   cacheScope: string;
   headers: Record<string, string>;
+  transport: CompanionTransport;
   uri: string;
 }> {
   const resolved =
@@ -297,6 +312,7 @@ export async function resolvePrivateAssetRequest(
         : `${resolvedPrivateAssetCacheKey(resolved)}:image:${imageVariant}`,
     cacheScope: access.cacheScope ?? access.baseUrl,
     headers: { authorization: access.authorization },
+    transport: access.transport,
     uri:
       imageVariant === "original"
         ? privateAssetUrl(resolved, access)
@@ -561,17 +577,17 @@ function parseContentRange(
   return { endExclusive: end + 1, total };
 }
 
-/** Existing profile and native HTTP authorization owners used by private consumers. */
+/** Existing profile, platform transport and HTTP authorization owners used by private consumers. */
 export type PrivateTransferAuthority = {
+  connectionTransport: (connection: StoredConnection) => CompanionConnectionTransport;
   currentConnections: () => StoredConnection[];
-  nativeCompanionHttpOrigin: (connectionId: string, endpoint: string) => Promise<string>;
   scopedHttpAuthorization: (connection: StoredConnection, forceRefresh: boolean) => Promise<string>;
 };
 
 /** Returns qualified access without retaining credentials in the feature. */
 export function createPrivateTransferAccess({
+  connectionTransport,
   currentConnections,
-  nativeCompanionHttpOrigin,
   scopedHttpAuthorization,
 }: PrivateTransferAuthority) {
   const transferAccess = async (
@@ -582,11 +598,12 @@ export function createPrivateTransferAccess({
     if (connection === undefined) {
       throw new Error("Connection not found");
     }
-    const origin = await nativeCompanionHttpOrigin(connection.id, connection.endpoint);
+    const { baseUrl, transport } = connectionTransport(connection);
     return {
       authorization: await scopedHttpAuthorization(connection, forceRefresh),
-      baseUrl: companionHttpUrl(origin, "/"),
+      baseUrl,
       cacheScope: connection.id,
+      transport,
     };
   };
   return transferAccess;

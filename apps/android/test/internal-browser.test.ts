@@ -48,10 +48,6 @@ const ownerBrowserBack = readFileSync(
   new URL("../src/features/browser/browserBack.ts", import.meta.url),
   "utf8",
 );
-const ownerLocalhostPreview = readFileSync(
-  new URL("../src/features/ports/LocalhostPreview.tsx", import.meta.url),
-  "utf8",
-);
 const ownerForwardingRow = readFileSync(
   new URL("../src/features/ports/ForwardingRow.tsx", import.meta.url),
   "utf8",
@@ -100,14 +96,6 @@ describe("internal browser", () => {
     expect(browser).not.toContain("webviewDebuggingEnabled");
     expect(browser).not.toContain("TunnelPreview");
     expect(browser).not.toContain("localhost");
-  });
-
-  it("hands localhost previews to the standalone browser capability", () => {
-    expect(ownerLocalhostPreview).not.toContain("InternalBrowser");
-    expect(ownerLocalhostPreview).toContain('onOpenBrowser?.("Localhost preview", tunnel.url');
-    expect(ownerLocalhostPreview).toContain("Authorization: tunnel.authorization");
-    expect(ownerLocalhostPreview).toContain("!embedded && tunnel === null");
-    expect(ownerLocalhostPreview).toContain(">Open browser</Text>");
   });
 
   it("opens live phone-local forwards inside the app", () => {

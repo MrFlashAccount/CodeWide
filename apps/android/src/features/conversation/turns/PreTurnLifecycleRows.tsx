@@ -10,6 +10,7 @@ import { ProtocolBlock } from "../protocol/ProtocolBlock";
 import { styles } from "./PreTurnLifecycleRows.styles";
 import { ExpansionItemKeyContext } from "./turnContexts";
 import { preTurnBlockUsesDisclosure } from "./turnProjection";
+import type { TransferAccess } from "../../../data/private-transfer";
 
 export function PreTurnLifecycleRows({
   blocks,
@@ -19,7 +20,7 @@ export function PreTurnLifecycleRows({
   turnStatus,
 }: {
   blocks: RenderBlock[];
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   turnKey: string;
   turnStatus: "completed" | "interrupted" | "failed" | "inProgress";

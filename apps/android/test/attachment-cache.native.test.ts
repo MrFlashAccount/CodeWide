@@ -52,6 +52,13 @@ import {
   cachedAttachmentSourceFromResponse,
 } from "../src/native/attachment-cache/cached-transfer.native";
 import { ExpoAttachmentStorage } from "../src/native/attachment-cache/storage.native";
+import { urlTransport } from "../src/native/urlTransport.native";
+
+const transport = urlTransport;
+
+async function fetchCached(uri: string, init: { headers?: Record<string, string>; signal?: AbortSignal }, options: { identity: string; scope: string }) {
+  return cachedAttachmentFetch({ init, options, transport, uri });
+}
 
 function server(initial: string) {
   let body = initial;
@@ -98,6 +105,7 @@ describe("native attachment cache", () => {
     const source = await cachedAttachmentSourceFromResponse({
       headers: {},
       options: { identity: "content:image:preview", scope: "server" },
+      transport,
       uri: "https://example.test/image?variant=preview",
     });
 
@@ -117,13 +125,13 @@ describe("native attachment cache", () => {
     const options = { scope: "server", identity: "native-abort-report.md" };
     const init = { signal: controller.signal, headers: { range: "bytes=0-2097151" } };
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const response = await cachedAttachmentFetch("https://example.test/report.md", init, options);
+      const response = await fetchCached("https://example.test/report.md", init, options);
       expect(response.status).toBe(206);
       expect(await response.text()).toBe(body);
     }
     expect(remote.gets()).toBe(1);
     controller.abort();
-    await expect(cachedAttachmentFetch("https://example.test/report.md", init, options)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(fetchCached("https://example.test/report.md", init, options)).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("retains native media until cancellation without requiring browser-only signal methods", async () => {
@@ -137,6 +145,7 @@ describe("native attachment cache", () => {
       headers: {},
       options,
       signal: controller.signal,
+      transport,
       uri: "https://example.test/image",
     });
     expect(await readFile(fileURLToPath(source.uri), "utf8")).toBe("image bytes");
@@ -145,11 +154,13 @@ describe("native attachment cache", () => {
       headers: {},
       options,
       signal: controller.signal,
+      transport,
       uri: "https://example.test/image",
     })).rejects.toMatchObject({ name: "AbortError" });
     const reopened = await cachedAttachmentSource({
       headers: {},
       options,
+      transport,
       uri: "https://example.test/image",
     });
     expect(reopened.uri).toBe(source.uri);
@@ -162,11 +173,11 @@ describe("native attachment cache", () => {
       const remote = server(body);
       const options = { scope: "server", identity: name };
       const uri = `https://example.test/${name}`;
-      expect(await (await cachedAttachmentFetch(uri, {}, options)).text()).toBe(body);
-      expect(await (await cachedAttachmentFetch(uri, {}, options)).text()).toBe(body);
+      expect(await (await fetchCached(uri, {}, options)).text()).toBe(body);
+      expect(await (await fetchCached(uri, {}, options)).text()).toBe(body);
       expect(remote.gets()).toBe(1);
       remote.update(body + " changed");
-      expect(await (await cachedAttachmentFetch(uri, {}, options)).text()).toBe(body + " changed");
+      expect(await (await fetchCached(uri, {}, options)).text()).toBe(body + " changed");
       expect(remote.gets()).toBe(2);
     }
   });
@@ -176,25 +187,25 @@ describe("native attachment cache", () => {
     const options = { scope: "server", identity: "range" };
     const init = { headers: { range: "bytes=2-5" } };
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const response = await cachedAttachmentFetch("https://example.test/range", init, options);
+      const response = await fetchCached("https://example.test/range", init, options);
       expect(response.status).toBe(206);
       expect(response.headers.get("content-range")).toBe("bytes 2-5/10");
       expect(await response.text()).toBe("2345");
     }
     expect(remote.gets()).toBe(1);
-    expect(await (await cachedAttachmentFetch("https://example.test/range", {}, options)).text()).toBe("0123456789");
+    expect(await (await fetchCached("https://example.test/range", {}, options)).text()).toBe("0123456789");
     expect(remote.gets()).toBe(2);
   });
 
   it("isolates saved servers and reuses files across rotating local transport URLs", async () => {
     const remote = server("same");
-    await cachedAttachmentFetch("https://example.test/old", {}, { scope: "one", identity: "file" });
-    await cachedAttachmentFetch("https://example.test/new", {}, { scope: "one", identity: "file" });
+    await fetchCached("https://example.test/old", {}, { scope: "one", identity: "file" });
+    await fetchCached("https://example.test/new", {}, { scope: "one", identity: "file" });
     expect(remote.gets()).toBe(1);
-    await cachedAttachmentFetch("https://example.test/new", {}, { scope: "two", identity: "file" });
+    await fetchCached("https://example.test/new", {}, { scope: "two", identity: "file" });
     expect(remote.gets()).toBe(2);
     remote.deny();
-    expect((await cachedAttachmentFetch("https://example.test/new", {}, { scope: "one", identity: "file" })).status).toBe(403);
+    expect((await fetchCached("https://example.test/new", {}, { scope: "one", identity: "file" })).status).toBe(403);
   });
 
   it("does not publish an interrupted download and successfully retries", async () => {
@@ -204,15 +215,36 @@ describe("native attachment cache", () => {
     await expect(cachedAttachmentSource({
       headers: {},
       options,
+      transport,
       uri: "https://example.test/image",
     })).rejects.toThrow("connection reset");
     const source = await cachedAttachmentSource({
       headers: {},
       options,
+      transport,
       uri: "https://example.test/image",
     });
     expect(await readFile(fileURLToPath(source.uri), "utf8")).toBe("image bytes");
     expect(remote.gets()).toBe(2);
+    expect((await readdir(fileURLToPath(environment.directory + "codewide-attachments-v1/"))).some((name) => name.endsWith(".partial"))).toBe(false);
+  });
+
+  it("returns exact binary bytes for a response without a content revision and never caches it", async () => {
+    const bytes = Uint8Array.from([0, 255, 128, 10, 13, 0]);
+    let gets = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_uri: string, init?: RequestInit) => {
+      if (init?.method === "HEAD") return new Response(null, { headers: { "content-length": "6" } });
+      gets += 1;
+      return new Response(bytes, { headers: { "content-type": "application/octet-stream" } });
+    }));
+    const options = { scope: "server", identity: "no-revision" };
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await fetchCached("https://example.test/blob", {}, options);
+      expect(response.status).toBe(200);
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+    }
+    expect(gets).toBe(2);
     expect((await readdir(fileURLToPath(environment.directory + "codewide-attachments-v1/"))).some((name) => name.endsWith(".partial"))).toBe(false);
   });
 

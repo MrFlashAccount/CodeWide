@@ -12,6 +12,7 @@ import {
   ExpansionItemKeyContext,
   TurnActivityContentContext,
 } from "./turnContexts";
+import type { TransferAccess } from "../../../data/private-transfer";
 
 /** Keeps detailed historical activity outside the conversation scroll owner. */
 export function ActivityDetailSheet({
@@ -24,7 +25,7 @@ export function ActivityDetailSheet({
   visible,
 }: {
   blocks: readonly RenderBlock[];
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
   onClose: () => void;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   turnKey: string;
@@ -82,7 +83,7 @@ function ActivityDetailList({
   turnStatus,
 }: {
   blocks: readonly RenderBlock[];
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   turnKey: string;
   turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
@@ -121,7 +122,7 @@ function ActivityDetailRow({
 }: {
   active: boolean;
   block: RenderBlock;
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   turnKey: string;
 }): ReactElement {
@@ -138,7 +139,7 @@ function ActivityDetailRow({
 
 type ActivityDetailRowContentProps = {
   block: RenderBlock;
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
   itemKey: string;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
 };

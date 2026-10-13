@@ -1,22 +1,20 @@
 import type { RenderBlock } from "@codewide/renderers";
 import type { StyleProp, ViewStyle } from "react-native";
-import type { PrivateAssetSource } from "../../../data/private-transfer";
+import type { PrivateAssetSource, TransferAccess } from "../../../data/private-transfer";
 
 export type ImageProtocolBlockInput = {
   block: RenderBlock;
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
 };
 
 export type ImageProtocolContentInput = {
   block: RenderBlock;
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
 };
 
 export type ScopedRemoteImageInput = {
   containerStyle?: StyleProp<ViewStyle>;
-  getTransferAccess: (
-    forceRefresh?: boolean,
-  ) => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess: (forceRefresh?: boolean) => Promise<TransferAccess>;
   groupId?: string | null;
   order?: number;
   path: string;
@@ -25,9 +23,7 @@ export type ScopedRemoteImageInput = {
 
 export type ScopedPrivateAssetImageInput = {
   containerStyle?: StyleProp<ViewStyle>;
-  getTransferAccess: (
-    forceRefresh?: boolean,
-  ) => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess: (forceRefresh?: boolean) => Promise<TransferAccess>;
   groupId?: string | null;
   label: string;
   order?: number;

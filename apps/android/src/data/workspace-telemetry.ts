@@ -1,20 +1,21 @@
+import type { CompanionConnectionTransport } from "../native/companionTransportContract";
 import { companionHttpUrl } from "./companion-http-url";
 import type { StoredConnection } from "./connection-profile-types";
 import type { TelemetryBatch } from "./telemetry";
 
 /** Existing session and live-authority access; batching remains telemetry-owned. */
 export type WorkspaceTelemetryAuthority = {
+  connectionTransport: (connection: StoredConnection) => CompanionConnectionTransport;
   currentConnections: () => StoredConnection[];
   isRpcAvailable: (connectionId: string) => boolean;
-  nativeCompanionHttpOrigin: (connectionId: string, endpoint: string) => Promise<string>;
   scopedHttpAuthorization: (connection: StoredConnection, forceRefresh: boolean) => Promise<string>;
 };
 
 /** Upload through current authenticated authority and retry one rejected session. */
 export function createWorkspaceTelemetryUpload({
+  connectionTransport,
   currentConnections,
   isRpcAvailable,
-  nativeCompanionHttpOrigin,
   scopedHttpAuthorization,
 }: WorkspaceTelemetryAuthority) {
   async function uploadTelemetryBatch(connectionId: string, batch: TelemetryBatch): Promise<void> {
@@ -25,9 +26,9 @@ export function createWorkspaceTelemetryUpload({
     if (!isRpcAvailable(connectionId)) {
       throw new Error("Telemetry waits for an authenticated connection");
     }
-    const origin = await nativeCompanionHttpOrigin(connection.id, connection.endpoint);
+    const { baseUrl, transport } = connectionTransport(connection);
     const send = async (forceRefresh: boolean) =>
-      fetch(companionHttpUrl(origin, "/v1/telemetry/events"), {
+      transport.fetch(companionHttpUrl(baseUrl, "/v1/telemetry/events"), {
         body: JSON.stringify(batch),
         headers: {
           authorization: await scopedHttpAuthorization(connection, forceRefresh),

@@ -1,5 +1,9 @@
 import { companionHttpUrl } from "../../data/companion-http-url";
 import type { StoredConnection } from "../../data/connection-profile-types";
+import type {
+  CompanionConnectionTransport,
+  CompanionTransportInit,
+} from "../../native/companionTransportContract";
 import {
   parseApplyHostUpdateAccepted,
   parseHostUpdateOperation,
@@ -43,15 +47,15 @@ export class HostUpdateHttpError extends Error {
 }
 
 type HostUpdateTransportAuthority = {
+  readonly connectionTransport: (connection: StoredConnection) => CompanionConnectionTransport;
   readonly currentConnections: () => StoredConnection[];
-  readonly nativeCompanionHttpOrigin: (connectionId: string, endpoint: string) => Promise<string>;
   readonly scopedHttpAuthorization: (
     connection: StoredConnection,
     forceRefresh?: boolean,
   ) => Promise<string>;
 };
 
-/** Uses the existing pinned native HTTP origin and refreshable device session. */
+/** Uses the platform Companion transport and refreshable device session. */
 export function createHostUpdateTransport(
   authority: HostUpdateTransportAuthority,
   {
@@ -73,7 +77,7 @@ export function createHostUpdateTransport(
     signal,
   }: {
     readonly connectionId: string;
-    readonly init: RequestInit | undefined;
+    readonly init: CompanionTransportInit | undefined;
     readonly path: string;
     readonly signal: AbortSignal;
   }) => {
@@ -83,7 +87,7 @@ export function createHostUpdateTransport(
     if (connection === undefined || !connection.enabled) {
       throw new Error("Connection is disabled or missing");
     }
-    const origin = await authority.nativeCompanionHttpOrigin(connection.id, connection.endpoint);
+    const { baseUrl, transport } = authority.connectionTransport(connection);
     requireActiveRequest(signal, subject);
     const send = async (forceRefresh: boolean) => {
       const headers = new Headers(init?.headers);
@@ -92,7 +96,7 @@ export function createHostUpdateTransport(
         await authority.scopedHttpAuthorization(connection, forceRefresh),
       );
       requireActiveRequest(signal, subject);
-      return fetch(companionHttpUrl(origin, path), {
+      return transport.fetch(companionHttpUrl(baseUrl, path), {
         ...init,
         headers,
         signal,
@@ -111,7 +115,7 @@ export function createHostUpdateTransport(
   const jsonRequest = async (
     connectionId: string,
     path: string,
-    init?: RequestInit,
+    init?: CompanionTransportInit,
   ): Promise<unknown> => {
     const controller = new AbortController();
     const expired = Promise.withResolvers<never>();

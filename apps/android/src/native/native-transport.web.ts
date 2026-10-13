@@ -83,18 +83,6 @@ export async function listNativeConnectionConfigs(): Promise<NativeConnectionCon
   await RESOLVED_VOID_PROMISE;
   return [];
 }
-export async function nativeCompanionHttpOrigin(
-  _connectionId: string,
-  endpoint: string,
-): Promise<string> {
-  await RESOLVED_VOID_PROMISE;
-  const url = new URL(endpoint);
-  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
-  url.pathname = "/";
-  url.search = "";
-  url.hash = "";
-  return url.toString().replace(/\/$/u, "");
-}
 export async function purgeLegacyDerivedStorage(): Promise<number> {
   await RESOLVED_VOID_PROMISE;
   return 0;

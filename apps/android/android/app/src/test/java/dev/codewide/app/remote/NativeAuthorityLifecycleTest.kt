@@ -73,7 +73,7 @@ class NativeAuthorityLifecycleTest {
           },
           portForwards = { retired += "port-forwards" },
           terminalSessions = { retired += "terminal-sessions" },
-          httpProxy = { retired += "http-proxy" },
+          companionHttp = { retired += "companion-http" },
         ),
       )
     }
@@ -84,7 +84,7 @@ class NativeAuthorityLifecycleTest {
         "legacy-session",
         "port-forwards",
         "terminal-sessions",
-        "http-proxy",
+        "companion-http",
       ),
       retired,
     )

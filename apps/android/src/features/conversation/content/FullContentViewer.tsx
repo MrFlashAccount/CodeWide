@@ -4,7 +4,11 @@ import { renderFullContentViewerBody } from "./FullContentViewerBody";
 import type { RenderBlock, RenderContentReference } from "@codewide/renderers";
 import { useContext, useId, useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
-import { readPrivateAssetText, type PrivateAssetTextResult } from "../../../data/private-transfer";
+import {
+  type PrivateAssetTextResult,
+  readPrivateAssetText,
+  type TransferAccess,
+} from "../../../data/private-transfer";
 import { useEvent } from "../../../react/useEvent";
 import { useEphemeralAsyncResource } from "../../../rendering/async-resource-store";
 import { colors } from "../../../theme";
@@ -102,9 +106,7 @@ export function LargeContentControls({
   getTransferAccess,
 }: {
   block: RenderBlock;
-  getTransferAccess?: (
-    forceRefresh?: boolean,
-  ) => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: (forceRefresh?: boolean) => Promise<TransferAccess>;
 }) {
   const open = useContext(LargeContentViewerContext);
   const references = (() => {

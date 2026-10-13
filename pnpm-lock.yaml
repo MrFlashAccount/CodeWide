@@ -32,7 +32,7 @@ patchedDependencies:
     hash: 56cb490e5b40d69cad31ff54d9f2800cb1db5ed9f817e573adaae32c0b292b20
     path: patches/expo-status-bar@57.0.1.patch
   expo-video@57.0.3:
-    hash: 53bee4e62cd1eedabb39f1e7f8690260780b93b5374c136b838a52e4e6fabb81
+    hash: 6472dd7dbc197c7c00d2cc34886c98fce069dc878a9b5c4bff7489c6758e40e6
     path: patches/expo-video@57.0.3.patch
   react-native-enriched-markdown@1.0.2:
     hash: 0fb6e4ec3b5f52ef932710d5650ed8e92eb74e79e990532d48b4ecadf719066b
@@ -206,7 +206,7 @@ importers:
         version: 57.0.13(expo-dev-client@57.0.11(expo@57.0.11)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3)))(expo@57.0.11)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       expo-video:
         specifier: ~57.0.3
-        version: 57.0.3(patch_hash=53bee4e62cd1eedabb39f1e7f8690260780b93b5374c136b838a52e4e6fabb81)(expo@57.0.11)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
+        version: 57.0.3(patch_hash=6472dd7dbc197c7c00d2cc34886c98fce069dc878a9b5c4bff7489c6758e40e6)(expo@57.0.11)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       mermaid:
         specifier: 11.16.1
         version: 11.16.1
@@ -13974,7 +13974,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  expo-video@57.0.3(patch_hash=53bee4e62cd1eedabb39f1e7f8690260780b93b5374c136b838a52e4e6fabb81)(expo@57.0.11)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3):
+  expo-video@57.0.3(patch_hash=6472dd7dbc197c7c00d2cc34886c98fce069dc878a9b5c4bff7489c6758e40e6)(expo@57.0.11)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3):
     dependencies:
       expo: 57.0.11(@babel/core@7.29.7)(@expo/dom-webview@57.0.1)(@expo/metro-runtime@57.0.8)(expo-router@57.0.11)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-webview@13.16.1(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7)(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)(typescript@7.0.2)
       react: 19.2.3

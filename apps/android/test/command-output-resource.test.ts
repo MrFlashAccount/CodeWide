@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { CommandOutputReference } from "@codewide/sync-client";
 
 import { commandOutputRevision, readCommandOutput } from "../src/rendering/command-output-resource";
+import { urlTransport } from "../src/native/urlTransport";
 
 function reference(text: string): CommandOutputReference {
   return { id: createHash("sha256").update(text).digest("hex"), byteLength: Buffer.byteLength(text),
@@ -40,7 +41,7 @@ describe("lazy command output", () => {
     await once(server, "listening");
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("Test listener has no TCP address");
-    const getTransferAccess = async () => ({ baseUrl: `http://127.0.0.1:${address.port}`, authorization: "test" });
+    const getTransferAccess = async () => ({ baseUrl: `http://127.0.0.1:${address.port}`, transport: urlTransport, authorization: "test" });
     const request = { scope: crypto.randomUUID(), references: [first], byteLimit: 64 * 1024, getTransferAccess };
     // React Native installs abort-controller 3: it supports cancellation but
     // does not implement the newer throwIfAborted convenience method.
@@ -79,7 +80,7 @@ describe("lazy command output", () => {
       scope: "cancelled-output",
       references: [reference("cancelled")],
       byteLimit: 1024,
-      getTransferAccess: async () => { transfers += 1; return { baseUrl: "http://unused.invalid", authorization: "test" }; },
+      getTransferAccess: async () => { transfers += 1; return { baseUrl: "http://unused.invalid", transport: urlTransport, authorization: "test" }; },
     }, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
     expect(transfers).toBe(0);
   });

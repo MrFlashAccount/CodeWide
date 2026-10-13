@@ -8,6 +8,7 @@ import {
 } from "../protocol/ImageProtocolBlock";
 import { styles } from "./UserMessageContent.styles";
 import { UserImageTileFrame } from "./UserImageTileFrame";
+import type { TransferAccess } from "../../../data/private-transfer";
 
 /** Renders one gallery asset while preserving its qualified preview identity. */
 export function UserImageTile({
@@ -18,9 +19,7 @@ export function UserImageTile({
 }: {
   readonly attachment: UserMessageAttachment;
   readonly attachmentCount: number;
-  readonly getTransferAccess:
-    | (() => Promise<{ authorization: string; baseUrl: string }>)
-    | undefined;
+  readonly getTransferAccess: (() => Promise<TransferAccess>) | undefined;
   readonly index: number;
 }) {
   const hero = attachmentCount === 1;
@@ -38,9 +37,7 @@ function renderUserImageTileContent({
   index,
 }: {
   readonly attachment: UserMessageAttachment;
-  readonly getTransferAccess:
-    | (() => Promise<{ authorization: string; baseUrl: string }>)
-    | undefined;
+  readonly getTransferAccess: (() => Promise<TransferAccess>) | undefined;
   readonly index: number;
 }) {
   const source = attachment.source;

@@ -560,14 +560,32 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   }
 
   @ReactMethod
-  fun companionHttpOrigin(connectionId: String, promise: Promise) {
-    try {
-      require(connectionId.isNotBlank()) { "Connection id is required" }
-      val service = CodexConnectionService.instance ?: error("Connection service is not running")
-      promise.resolve(service.companionHttpOrigin(connectionId))
+  fun companionHttpRequest(requestJson: String, promise: Promise) {
+    val request = try {
+      CompanionHttpBridge.parse(requestJson)
     } catch (error: Throwable) {
-      promise.reject("COMPANION_HTTP_PROXY_FAILED", "Could not open the pinned companion HTTP transport", error)
+      promise.reject("COMPANION_HTTP_INPUT", "Companion HTTP request is invalid", error)
+      return
     }
+    val service = CodexConnectionService.instance
+    if (service == null) {
+      promise.reject("COMPANION_HTTP_UNAVAILABLE", "Connection service is not running")
+      return
+    }
+    service.companionHttpRequest(request) { result ->
+      result.fold(
+        onSuccess = { promise.resolve(CompanionHttpBridge.encode(it)) },
+        onFailure = { error ->
+          val code = if (error is IOException && error.message == "Canceled") "COMPANION_HTTP_ABORTED" else "COMPANION_HTTP_FAILED"
+          promise.reject(code, "Companion HTTP ${request.method} failed: ${error.javaClass.simpleName}: ${error.message}", error)
+        },
+      )
+    }
+  }
+
+  @ReactMethod
+  fun companionHttpCancel(requestId: String) {
+    CodexConnectionService.instance?.cancelCompanionHttpRequest(requestId)
   }
 
   @ReactMethod

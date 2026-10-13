@@ -1,31 +1,24 @@
 import type { RenderBlock } from "@codewide/renderers";
+import type { TransferAccess } from "../../../data/private-transfer";
 
 export type ToolCallProtocolBlockInput = {
   block: RenderBlock;
-  getTransferAccess?: (
-    forceRefresh?: boolean,
-  ) => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: (forceRefresh?: boolean) => Promise<TransferAccess>;
 };
 
 export type ToolCallProtocolDetailsInput = {
   block: RenderBlock;
-  getTransferAccess?: (
-    forceRefresh?: boolean,
-  ) => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: (forceRefresh?: boolean) => Promise<TransferAccess>;
 };
 
 export type ToolCallResultContentInput = {
   block: RenderBlock;
-  getTransferAccess?: (
-    forceRefresh?: boolean,
-  ) => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: (forceRefresh?: boolean) => Promise<TransferAccess>;
   section: string;
 };
 
 export type ToolRichContentInput = {
-  getTransferAccess?: (
-    forceRefresh?: boolean,
-  ) => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: (forceRefresh?: boolean) => Promise<TransferAccess>;
   items: unknown[];
   section: string;
 };
