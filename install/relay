@@ -383,6 +383,13 @@ unit_argument() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/%/%%/g; s/\$/$$/g'
 }
 
+# A path-valued setting (ConditionPathExists=, PathExists=) takes the rest of
+# the line verbatim: quotes would become part of the path, and `$` is not
+# expanded there. Only specifiers apply, so only `%` is escaped.
+unit_path_value() {
+  printf '%s' "$1" | sed 's/%/%%/g'
+}
+
 write_unit() {
   mkdir -p -- "$unit_root"
   unit_staged=$(mktemp "$unit_root/.codewide-relay.unit.XXXXXX")
@@ -407,7 +414,7 @@ write_update_units() {
   if [ -f "$update_service" ]; then cp -p "$update_service" "$temporary_root/previous-update.service"; fi
   if [ -f "$update_path" ]; then cp -p "$update_path" "$temporary_root/previous-update.path"; fi
   service_staged=$(mktemp "$temporary_root/codewide-relay-update.service.XXXXXX")
-  printf '%s\n' '[Unit]' 'Description=CodeWide Relay update guardian' "ConditionPathExists=\"$(unit_argument "$state_root/host-update/activation-request.json")\"" '' '[Service]' 'Type=oneshot' 'UMask=0077' \
+  printf '%s\n' '[Unit]' 'Description=CodeWide Relay update guardian' "ConditionPathExists=$(unit_path_value "$state_root/host-update/activation-request.json")" '' '[Service]' 'Type=oneshot' 'UMask=0077' \
     "ExecStart=\"$(unit_argument "$(command -v env)")\" -- \"$(unit_argument "$guardian_path")\" update-run --install-root \"$(unit_argument "$install_root")\" --state \"$(unit_argument "$state_root")\"" \
     'Restart=on-failure' 'RestartSec=2s' 'TimeoutStartSec=15min' 'NoNewPrivileges=true' 'PrivateTmp=false' \
     'ProtectSystem=full' 'ProtectHome=read-only' \
@@ -418,7 +425,7 @@ write_update_units() {
   mv -f -- "$service_staged" "$update_service"
   path_staged=$(mktemp "$temporary_root/codewide-relay-update.path.XXXXXX")
   printf '%s\n' '[Unit]' 'Description=Activate a prepared CodeWide Relay update' '' '[Path]' \
-    "PathExists=\"$(unit_argument "$state_root/host-update/activation-request.json")\"" \
+    "PathExists=$(unit_path_value "$state_root/host-update/activation-request.json")" \
     'Unit=codewide-relay-update.service' 'MakeDirectory=true' '' '[Install]' 'WantedBy=default.target' >"$path_staged"
   chmod 0644 "$path_staged"
   mv -f -- "$path_staged" "$update_path"
