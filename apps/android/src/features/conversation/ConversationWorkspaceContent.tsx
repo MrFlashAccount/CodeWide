@@ -1,7 +1,7 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import { agentProviders } from "../../data/workspace-runtime";
-import { threadOpenElsewhere } from "../../data/threadDirectInput";
+import { threadRefusesDirectInput } from "../../data/threadDirectInput";
 import { ConversationComposition } from "./ConversationComposition";
 import { forkOffer, type ForkThreadSettings } from "../turnActions/forkTargets";
 import { threadAgentAccounts, threadAgentActions } from "./threadAgentActions";
@@ -181,8 +181,20 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         newChat: props.newChatDraft !== null,
         onBack: props.desktop ? undefined : props.closeActiveConversation,
         onViewedLatest: props.markActiveThreadRead,
-        // A thread another process holds opens read-only until it lets go.
-        readOnly: threadOpenElsewhere(remoteThread),
+        // A thread another process holds opens read-only until it lets go; a
+        // sub-agent, driven by its parent agent, is always read-only.
+        readOnly: threadRefusesDirectInput(remoteThread),
+        recheckThread:
+          props.activeConnectionId === "" || remoteThread === null
+            ? undefined
+            : async () => {
+                await props.features.conversation.readThread(
+                  props.activeConnectionId,
+                  remoteThread.id,
+                  undefined,
+                  true,
+                );
+              },
         server: props.servers.find((server) => server.id === props.activeConnectionId),
         thread: visibleThread,
         unread: props.activeThread?.unread ?? 0,

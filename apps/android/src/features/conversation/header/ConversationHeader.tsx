@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, View } from "react-native";
 import { contextUsageFromProjection } from "../../../data/account-rate-limits";
+import { threadOpenElsewhere } from "../../../data/threadDirectInput";
 import { DEFAULT_SERVER_ICON_ID } from "../../../data/serverIcons";
 import { colors, iconSize } from "../../../theme";
 import { InlineEmoji } from "../../../ui/InlineIcon";
@@ -52,6 +53,7 @@ export function ConversationHeader({
   threadChatModel,
   threadSearchVisible,
 }: ConversationHeaderProps) {
+  const openElsewhere = threadOpenElsewhere(remoteThread);
   return (
     <View style={styles.conversationHeader} testID="conversation-header">
       {compact && (
@@ -135,12 +137,14 @@ export function ConversationHeader({
           </Pressable>
         </WorkspaceAccountUsageMenu>
       )}
-      {!readOnly && !newChat && (
+      {/* A thread another app holds keeps its menu; other read-only threads (sub-agents) have none. */}
+      {(!readOnly || openElsewhere) && !newChat && (
         <ThreadHeaderMenu
           archived={archived}
           key={thread.id}
           onOpenMenu={dismissComposerKeyboardForOverlay}
           onRenameRequest={openThreadRename}
+          openElsewhere={openElsewhere}
           pinned={pinned}
           threadId={thread.id}
           {...(onTogglePin === undefined ? {} : { onTogglePin })}
@@ -151,11 +155,11 @@ export function ConversationHeader({
             : onArchive === undefined
               ? {}
               : { onArchive })}
-          {...(onCompact === undefined ? {} : { onCompact })}
+          {...(onCompact === undefined || openElsewhere ? {} : { onCompact })}
           {...(onFork === undefined ? {} : { onFork })}
           {...(forkOffer === undefined ? {} : { forkOffer })}
           {...(forkPicker === undefined ? {} : { forkPicker })}
-          {...(deleteThread === undefined ? {} : { onDelete: deleteThread })}
+          {...(deleteThread === undefined || openElsewhere ? {} : { onDelete: deleteThread })}
         />
       )}
       {/* Outside the menu gate: a message's "Fork" opens the sheet in a read-only thread too. */}
