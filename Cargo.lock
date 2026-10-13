@@ -31,6 +31,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-index"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "companion-host",
+ "memchr",
+ "notify",
+ "redb",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "agent-provider-claude"
 version = "0.1.0"
 dependencies = [
@@ -62,6 +79,7 @@ name = "agent-provider-codex"
 version = "0.1.0"
 dependencies = [
  "agent-core",
+ "agent-index",
  "agent-resources",
  "agent-search",
  "agent-transport",

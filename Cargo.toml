@@ -3,6 +3,7 @@ members = [
     "apps/companion-linux",
     "apps/relay",
     "crates/agent-core",
+    "crates/agent-index",
     "crates/agent-provider-claude",
     "crates/agent-provider-codex",
     "crates/agent-resources",

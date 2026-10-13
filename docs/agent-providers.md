@@ -9,6 +9,7 @@ Local ownership rules live with their source zones; this document routes to them
 - [`packages/agent-protocol/CONTEXT.md`](../packages/agent-protocol/CONTEXT.md) — the `codewide-agent` protocol contract, version policy and fixtures.
 - [`crates/agent-core/CONTEXT.md`](../crates/agent-core/CONTEXT.md) — the neutral model (Rust mirror), the `AgentProvider` trait, `NativeSurface` storage traits, neutral usage accounting, `wire-request-ids-v0`.
 - [`crates/agent-search/CONTEXT.md`](../crates/agent-search/CONTEXT.md) — the stored-message full-text search schema and query shared by provider adapters (`companion/search`).
+- [`crates/agent-index/CONTEXT.md`](../crates/agent-index/CONTEXT.md) — the shared offset index of transcript files (witnesses, turn ranges, incremental scans, watcher), generic over the adapter's record format.
 - [`crates/agent-resources/CONTEXT.md`](../crates/agent-resources/CONTEXT.md) — the provider-neutral thread resource model, projection and service shared by provider adapters.
 - [`crates/companion-host/CONTEXT.md`](../crates/companion-host/CONTEXT.md) — narrow host contracts the companion hands to adapter crates.
 - [`crates/companion-core/src/agent/CONTEXT.md`](../crates/companion-core/src/agent/CONTEXT.md) — provider layer bounded context in the companion (registry, bindings, client wire, crate graph), no-go imports, compatibility surfaces.
@@ -38,7 +39,7 @@ Android (Codex-shaped client wire, capability gating)
        └─ agent/client_wire  — the only neutral ↔ client-wire translation
             └─ agent/registry + agent/bindings — routing by binding and capability
                  ├─ AgentProvider ─ crates/agent-provider-codex  ─ Codex App Server (in-process adapter)
-                 │                   └─ rollout storage + index, message search ─ crates/agent-search
+                 │                   └─ rollout storage + index (crates/agent-index), message search ─ crates/agent-search
                  └─ AgentProvider ─ crates/agent-provider-claude ─ codewide-agent v1 over stdio (crates/agent-transport)
                                      ├─ Claude native index (state.redb tables, watcher), message search ─ crates/agent-search
                                      └─ host/ (Claude agent host) ─ Agent SDK ─ user's claude CLI
@@ -47,7 +48,7 @@ Android (Codex-shaped client wire, capability gating)
 
 The registry is built by `crates/companion-core/src/agent/providers/mod.rs` (`build_registry`), the only code outside an adapter crate that maps configured provider ids to adapters. The neutral types and the `AgentProvider` trait live in `crates/agent-core`; the JSONL/WebSocket transports, including the supervised stdio child (`spawn_supervised_stdio`), live in `crates/agent-transport`.
 
-Forbidden edges: provider-id branches in `client_wire` or SyncHub; `registry`, `bindings` or `client_wire` depending on an adapter crate (`agent-provider-codex`, `agent-provider-claude`); SyncHub (`sync.rs`, `sync/*`, `thread_view.rs`, `sync_pending.rs`) reaching Codex storage in `crates/agent-provider-codex` (`history_service`, `resources`, `account_pool`, `rollout*`, `catalog*`, `message_search`) instead of the `NativeSurface` storage traits of the capability owner; `agent-core`, `agent-transport` or an adapter crate depending on `companion-core`; `agent-provider-claude` depending on `agent-provider-codex` or `companion-host`; the client reaching the Claude agent host directly.
+Forbidden edges: provider-id branches in `client_wire` or SyncHub; `registry`, `bindings` or `client_wire` depending on an adapter crate (`agent-provider-codex`, `agent-provider-claude`); SyncHub (`sync.rs`, `sync/*`, `thread_view.rs`, `sync_pending.rs`) reaching Codex storage in `crates/agent-provider-codex` (`history_service`, `resources`, `account_pool`, `rollout*`, `catalog*`, `message_search`) instead of the `NativeSurface` storage traits of the capability owner; `agent-core`, `agent-transport` or an adapter crate depending on `companion-core`; `agent-index` depending on `agent-core`, an adapter crate or `companion-core`; `agent-provider-claude` depending on `agent-provider-codex` or `companion-host`; the client reaching the Claude agent host directly.
 
 ## Ubiquitous language
 

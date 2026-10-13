@@ -18,8 +18,8 @@ Adapter:
 
 Codex-owned storage:
 
-- `rollout_store.rs` — the rollout tables inside the companion's index database (`RolloutStore`, `ROLLOUT_INDEX_SCHEMA`, `ROLLOUT_LOGIC_VERSION`, `TurnRef`, `RecordRef`, `FileState`); thread metadata and pins are written and read through `HostThreadIndex`.
-- `rollout.rs`, `rollout_monitor.rs`, `rollout_content.rs` — rollout indexing and metadata, the rollout file watcher, canonical command output (`RolloutContentSource`, a `CanonicalContentSource`).
+- `rollout_store.rs` — the rollout tables inside the companion's index database: `RolloutStore` is the shared `agent_index::IndexStore` attached with the rollout table names (`ROLLOUT_INDEX_SCHEMA`, `ROLLOUT_LOGIC_VERSION`; `TurnRef`, `RecordRef`, `FileState` re-exported), plus the content locator the content service decodes; thread metadata and pins are written and read through `HostThreadIndex`.
+- `rollout.rs`, `rollout_monitor.rs`, `rollout_content.rs` — the rollout record format as an `agent_index::IndexSource` (`CodexRollouts`: record tags, task boundaries, rollbacks, realtime transcript items, `session_meta` metadata, proven command output) with the rollout-named scan and read entry points the rest of the crate uses; the rollout file watcher over `agent_index::monitor`; canonical command output (`RolloutContentSource`, a `CanonicalContentSource`). The index mechanics live in `crates/agent-index`.
 - `history.rs`, `history_questions.rs`, `history_service.rs` — turn projection from rollouts and history paging. A paginated fork's pages continue past the start of its own rollout into the history it inherited.
 - `history_base.rs` — the `session_meta.history_base` of a paginated fork: the base thread and the byte offset of the fork point in its rollout. The inherited prefix is read from the base rollout, bounded at that offset; a turn the fork point cut ends there as interrupted.
 - `catalog.rs`, `catalog_visibility.rs`, `catalog_summary.rs` — the session catalog over `CODEX_HOME` rollouts and `state_5.sqlite`.

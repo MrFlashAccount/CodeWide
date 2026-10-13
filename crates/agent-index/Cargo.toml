@@ -1,0 +1,24 @@
+[package]
+name = "agent-index"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Shared offset index of append-only agent transcripts: file witnesses, turn ranges, incremental scans and a file watcher, generic over the provider's record format."
+
+[dependencies]
+companion-host = { path = "../companion-host" }
+blake3 = "1.8.2"
+memchr = "2.7.5"
+notify = "8.2.0"
+redb = { version = "4.1.0", features = ["cache_metrics"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.143"
+thiserror = "2.0.16"
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1.41"
+
+[dev-dependencies]
+tempfile = "3.21.0"
+
+[lints]
+workspace = true

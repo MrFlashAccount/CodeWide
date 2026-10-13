@@ -1,17 +1,16 @@
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+//! Watches canonical rollout files written by other Codex App Server
+//! processes. App Server notifications are connection-local, so the rollout
+//! directory is the only shared invalidation boundary between the companion,
+//! Codex CLI and Codex Desktop. The watching itself is the shared index's
+//! (`agent_index::monitor`); this module names rollouts by thread id.
 
-use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use std::path::PathBuf;
+
+use agent_index::monitor::{FileChange, WatchRoot};
 use tokio::sync::mpsc;
-use tracing::warn;
 
 use crate::catalog::thread_id_from_path;
 
-const CHANGE_DEBOUNCE: Duration = Duration::from_millis(180);
 const CHANGE_CHANNEL_CAPACITY: usize = 2_048;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -21,100 +20,47 @@ pub struct RolloutChange {
     pub archived: bool,
 }
 
-/// Watches canonical rollout files written by other Codex App Server
-/// processes. App Server notifications are connection-local, so the rollout
-/// directory is the only shared invalidation boundary between the companion,
-/// Codex CLI and Codex Desktop.
+impl From<FileChange> for RolloutChange {
+    fn from(change: FileChange) -> Self {
+        Self {
+            thread_id: change.key,
+            path: change.path,
+            archived: change.archived,
+        }
+    }
+}
+
+/// Watches the rollout roots: the live sessions first, the archived
+/// sessions second.
 ///
 /// # Errors
 ///
 /// Returns the platform watcher error when an existing rollout root cannot be
 /// observed.
 pub fn spawn(roots: Vec<PathBuf>) -> Result<mpsc::Receiver<RolloutChange>, notify::Error> {
-    let (sender, receiver) = mpsc::channel(CHANGE_CHANNEL_CAPACITY);
-    let watched_roots = roots
+    let roots = roots
         .into_iter()
         .enumerate()
-        .filter(|(_index, root)| root.is_dir())
-        // FSEvents reports resolved paths (for example /private/var instead
-        // of /var). Keep roots and changes in the same namespace so archived
-        // rollouts cannot be misclassified as active after a symlink hop.
-        .map(|(index, root)| root.canonicalize().map(|root| (root, index == 1)))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(notify::Error::io)?;
-    if watched_roots.is_empty() {
-        return Ok(receiver);
-    }
-
-    let pending = Arc::new(Mutex::new(HashMap::<String, RolloutChange>::new()));
-    let callback_roots = watched_roots.clone();
-    let callback_pending = pending.clone();
-    let callback_sender = sender.clone();
-    let runtime = tokio::runtime::Handle::current();
-    let mut watcher = RecommendedWatcher::new(
-        move |result: notify::Result<notify::Event>| match result {
-            Ok(event) if relevant_kind(event.kind) => {
-                for path in event.paths {
-                    let path = path.canonicalize().unwrap_or(path);
-                    let Some(thread_id) = thread_id_from_path(&path) else {
-                        continue;
-                    };
-                    let archived = callback_roots
-                        .iter()
-                        .find(|(root, _archived)| path.starts_with(root))
-                        .is_some_and(|(_root, archived)| *archived);
-                    let change = RolloutChange {
-                        thread_id: thread_id.clone(),
-                        path,
-                        archived,
-                    };
-                    let should_schedule = match callback_pending.lock() {
-                        Ok(mut pending) => pending.insert(thread_id.clone(), change).is_none(),
-                        Err(poisoned) => poisoned
-                            .into_inner()
-                            .insert(thread_id.clone(), change)
-                            .is_none(),
-                    };
-                    if !should_schedule {
-                        continue;
-                    }
-                    let pending = callback_pending.clone();
-                    let sender = callback_sender.clone();
-                    runtime.spawn(async move {
-                        tokio::time::sleep(CHANGE_DEBOUNCE).await;
-                        let change = match pending.lock() {
-                            Ok(mut pending) => pending.remove(&thread_id),
-                            Err(poisoned) => poisoned.into_inner().remove(&thread_id),
-                        };
-                        if let Some(change) = change {
-                            let _ = sender.send(change).await;
-                        }
-                    });
-                }
-            }
-            Ok(_) => {}
-            Err(error) => warn!(%error, "canonical rollout watcher failed"),
-        },
-        Config::default(),
-    )?;
-    for (root, _archived) in &watched_roots {
-        watcher.watch(root, RecursiveMode::Recursive)?;
-    }
-
+        .map(|(index, path)| WatchRoot {
+            path,
+            archived: index == 1,
+        })
+        .collect();
+    let mut changes = agent_index::monitor::spawn(roots, thread_id_from_path)?;
+    let (sender, receiver) = mpsc::channel(CHANGE_CHANNEL_CAPACITY);
     tokio::spawn(async move {
-        sender.closed().await;
-        drop(watcher);
+        while let Some(change) = changes.recv().await {
+            if sender.send(RolloutChange::from(change)).await.is_err() {
+                return;
+            }
+        }
     });
     Ok(receiver)
 }
 
-fn relevant_kind(kind: EventKind) -> bool {
-    matches!(kind, EventKind::Create(_) | EventKind::Modify(_))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::{io::Write, path::Path};
+    use std::{io::Write, path::Path, time::Duration};
 
     use super::*;
 
@@ -170,13 +116,6 @@ mod tests {
         assert_eq!(change.path, path.canonicalize()?);
         assert!(change.archived);
         Ok(())
-    }
-
-    #[test]
-    fn ignores_access_events() {
-        assert!(!relevant_kind(EventKind::Access(
-            notify::event::AccessKind::Any
-        )));
     }
 
     #[test]
