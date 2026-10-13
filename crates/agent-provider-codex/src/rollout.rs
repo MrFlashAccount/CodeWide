@@ -384,6 +384,22 @@ pub fn backfill_rollout_prefix(
     store: &RolloutStore,
     path: &Path,
 ) -> Result<IndexReport, IndexError> {
+    backfill_rollout_prefix_before(store, path, u64::MAX, PREFIX_BACKFILL_TURNS)
+}
+
+/// Extends prefix coverage in one reverse pass from the current coverage
+/// start until `turns` turns that start before `before` are indexed, or the
+/// rollout start is reached. Indexed bytes are not read again.
+///
+/// # Errors
+///
+/// Returns an error when the rollout or its index cannot be read or written.
+pub(crate) fn backfill_rollout_prefix_before(
+    store: &RolloutStore,
+    path: &Path,
+    before: u64,
+    turns: usize,
+) -> Result<IndexReport, IndexError> {
     let started = Instant::now();
     let hot = index_rollout(store, path)?;
     if hot.complete {
@@ -420,11 +436,13 @@ pub fn backfill_rollout_prefix(
     // Backfill replays rollback records atomically with their tombstones, so
     // discovery needs only the adjacent physical range, not the whole tail.
     let mut indexed_from = 0;
-    let mut remaining = PREFIX_BACKFILL_TURNS;
+    let mut remaining = turns.max(1);
     visit_task_boundaries_reverse(&file, previous_from, 0, |offset, _, boundary| {
         if matches!(boundary, TaskBoundary::Started(_)) {
             indexed_from = offset;
-            remaining -= 1;
+            if offset < before {
+                remaining -= 1;
+            }
         }
         remaining > 0
     })?;
@@ -1114,6 +1132,88 @@ pub(crate) fn current_indexed_coverage_from_file(
     .then_some(state))
 }
 
+/// Coverage of a rollout's frozen prefix `[0, end)`, such as a paginated
+/// fork's base. The checkpoint proves the indexed bytes unchanged even while
+/// the rollout keeps growing past them, so a live base thread does not
+/// invalidate the history its forks inherited.
+pub(crate) fn frozen_indexed_coverage_from_file(
+    store: &RolloutStore,
+    path: &Path,
+    file: &File,
+    end: u64,
+) -> Result<Option<FileState>, IndexError> {
+    let Some(state) = store.file_state(&rollout_file_id(path))? else {
+        return Ok(None);
+    };
+    let metadata = file.metadata()?;
+    let (device, inode) = file_identity(&metadata);
+    let durable_bytes = durable_end(file, metadata.len())?;
+    Ok((state.indexed_bytes >= end
+        && file_state_matches(file, state, device, inode, durable_bytes)?)
+    .then_some(state))
+}
+
+/// The newest indexed turns that start before `before` inside a frozen
+/// prefix `[0, end)`. A turn may run past `end`; the caller closes it there.
+pub(crate) fn frozen_indexed_turns_from_file(
+    store: &RolloutStore,
+    path: &Path,
+    file: &File,
+    end: u64,
+    before: u64,
+    limit: usize,
+) -> Result<Option<IndexedTurnPage>, IndexError> {
+    let Some(state) = frozen_indexed_coverage_from_file(store, path, file, end)? else {
+        return Ok(None);
+    };
+    let before = before.min(end);
+    if before <= state.indexed_from && !state.is_complete() {
+        return Ok(None);
+    }
+    let file_id = rollout_file_id(path);
+    let mut turns = store.turns_desc(&file_id, Some(before), limit)?;
+    turns.retain(|turn| turn.start_offset >= state.indexed_from);
+    if turns.is_empty() && !state.is_complete() {
+        return Ok(None);
+    }
+    if turns.iter().any(|turn| {
+        (turn.end_offset != 0 && turn.start_offset >= turn.end_offset)
+            || turn.end_offset > state.indexed_bytes
+    }) {
+        return Ok(None);
+    }
+    if store.file_state(&file_id)? != Some(state) {
+        return Ok(None);
+    }
+    Ok(Some(IndexedTurnPage {
+        has_more: !state.is_complete() && turns.len() < limit,
+        turns,
+    }))
+}
+
+/// Resolves a turn inside a frozen prefix `[0, end)` from the index.
+pub(crate) fn frozen_indexed_anchor_from_file(
+    store: &RolloutStore,
+    path: &Path,
+    file: &File,
+    end: u64,
+    turn_id: &str,
+) -> Result<Option<TurnRef>, IndexError> {
+    let Some(state) = frozen_indexed_coverage_from_file(store, path, file, end)? else {
+        return Ok(None);
+    };
+    let file_id = rollout_file_id(path);
+    let anchor = store.turn_by_id(&file_id, turn_id)?.filter(|turn| {
+        turn.start_offset >= state.indexed_from
+            && turn.start_offset < end
+            && turn.end_offset <= state.indexed_bytes
+    });
+    if store.file_state(&file_id)? != Some(state) {
+        return Ok(None);
+    }
+    Ok(anchor)
+}
+
 /// Discovers the newest turn spans directly from the durable JSONL tail.
 ///
 /// This is the cold-start path: it can render the latest page before a full
@@ -1799,7 +1899,8 @@ mod tests {
     use std::io::Write;
 
     use super::{
-        TaskBoundary, classify_record, current_indexed_turns_from_file, index_rollout,
+        TaskBoundary, backfill_rollout_prefix_before, classify_record,
+        current_indexed_turns_from_file, frozen_indexed_turns_from_file, index_rollout,
         index_rollout_metadata, index_rollout_through_anchor, rollout_file_id,
         rollout_witness_from_file, rollout_witness_matches, scan_tail_turns_from_file,
         scan_turns_after_from_file, scan_turns_before_from_file, task_boundary,
@@ -2166,6 +2267,104 @@ mod tests {
             vec!["child", "grandchild"]
         );
         assert_eq!(descendants[0].agent_nickname.as_deref(), Some("Worker"));
+        Ok(())
+    }
+
+    fn write_turns(path: &std::path::Path, ids: &[String], padding: usize) -> std::io::Result<u64> {
+        let mut writer = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        let filler = "x".repeat(padding);
+        for id in ids {
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"task_started","turn_id":"{id}"}}}}"#
+            )?;
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"agent_message","message":"{filler}","phase":"final_answer"}}}}"#
+            )?;
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"task_complete","turn_id":"{id}"}}}}"#
+            )?;
+        }
+        writer.sync_all()?;
+        Ok(std::fs::metadata(path)?.len())
+    }
+
+    fn ids(prefix: &str, range: std::ops::Range<usize>) -> Vec<String> {
+        range.map(|index| format!("{prefix}{index}")).collect()
+    }
+
+    #[test]
+    fn a_frozen_prefix_stays_indexed_while_its_rollout_keeps_growing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let end = write_turns(&path, &ids("t", 0..3), 16)?;
+        let store = crate::test_support::open_rollout_store(directory.path().join("index.redb"))?;
+        index_rollout(&store, &path)?;
+        // The base thread goes on after the fork point without being reindexed yet.
+        let grown = write_turns(&path, &ids("t", 3..4), 16)?;
+        let file = std::fs::File::open(&path)?;
+
+        assert!(current_indexed_turns_from_file(&store, &path, &file, grown, None, 10)?.is_none());
+        let page = frozen_indexed_turns_from_file(&store, &path, &file, end, end, 10)?
+            .ok_or("frozen prefix should be served from the index")?;
+        assert_eq!(
+            page.turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
+            ["t2", "t1", "t0"]
+        );
+        assert!(!page.has_more);
+
+        // A rewrite of the indexed bytes is never trusted.
+        let rewritten = std::fs::read(&path)?
+            .iter()
+            .map(|byte| if *byte == b'x' { b'y' } else { *byte })
+            .collect::<Vec<_>>();
+        std::fs::write(&path, rewritten)?;
+        let file = std::fs::File::open(&path)?;
+        assert!(frozen_indexed_turns_from_file(&store, &path, &file, end, end, 10)?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn a_prefix_backfill_indexes_a_deep_page_in_one_pass() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        // Larger than the full-scan bootstrap, so indexing starts at the tail.
+        let end = write_turns(&path, &ids("t", 0..40), 256 * 1024)?;
+        let store = crate::test_support::open_rollout_store(directory.path().join("index.redb"))?;
+        index_rollout(&store, &path)?;
+        let file = std::fs::File::open(&path)?;
+        let deep = scan_tail_turns_from_file(&file, end, None, 21)?
+            .turns
+            .last()
+            .map(|turn| turn.start_offset)
+            .ok_or("turn t19 is missing")?;
+        assert!(
+            frozen_indexed_turns_from_file(&store, &path, &file, end, deep, 5)?
+                .is_none_or(|page| page.has_more)
+        );
+
+        backfill_rollout_prefix_before(&store, &path, deep, 5)?;
+
+        let page = frozen_indexed_turns_from_file(&store, &path, &file, end, deep, 5)?
+            .ok_or("deep page should be indexed")?;
+        assert_eq!(
+            page.turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
+            ["t18", "t17", "t16", "t15", "t14"]
+        );
+        assert!(!page.has_more);
         Ok(())
     }
 }

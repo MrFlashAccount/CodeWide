@@ -450,3 +450,50 @@ async fn a_client_headed_by_the_fork_point_syncs_without_a_reset() -> TestResult
     assert_eq!(ids(&delta["turns"]), ["f0"]);
     Ok(())
 }
+
+/// Pages a real fork's whole history and reports timings. Run with
+/// `CODEWIDE_BENCH_CODEX_HOME=~/.codex CODEWIDE_BENCH_THREAD=<id> cargo test -p agent-provider-codex -- --ignored --nocapture bench_real_fork`.
+#[tokio::test]
+#[ignore = "measures a real Codex home"]
+async fn bench_real_fork_history() -> TestResult {
+    let (Ok(home), Ok(thread)) = (
+        std::env::var("CODEWIDE_BENCH_CODEX_HOME"),
+        std::env::var("CODEWIDE_BENCH_THREAD"),
+    ) else {
+        return Ok(());
+    };
+    let index = tempfile::tempdir()?;
+    let service = HistoryService::new(
+        Arc::new(SessionCatalog::scan(Path::new(&home))),
+        Arc::new(crate::test_support::open_rollout_store(
+            index.path().join("index.redb"),
+        )?),
+    );
+    for pass in ["cold", "warm"] {
+        let started = std::time::Instant::now();
+        let mut slowest = std::time::Duration::ZERO;
+        let mut cursor = Value::Null;
+        let (mut pages, mut turns) = (0, 0);
+        loop {
+            let page_started = std::time::Instant::now();
+            let params = json!({"threadId": thread, "cursor": cursor, "limit": 50,
+                "sortDirection": "desc", "itemsView": "summary"});
+            let page = service
+                .try_turns_page("thread/turns/list", &params)
+                .await
+                .ok_or("turn page was not handled")??;
+            slowest = slowest.max(page_started.elapsed());
+            pages += 1;
+            turns += page["data"].as_array().map_or(0, Vec::len);
+            cursor = page["nextCursor"].clone();
+            if cursor.is_null() || pages > 10_000 {
+                break;
+            }
+        }
+        println!(
+            "{pass}: {turns} turns in {pages} pages, total {:?}, slowest page {slowest:?}",
+            started.elapsed()
+        );
+    }
+    Ok(())
+}

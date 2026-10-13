@@ -22,8 +22,10 @@ use crate::{
     },
     history_base::read_history_base,
     rollout::{
-        IndexError, RolloutWitness, backfill_rollout_prefix, current_indexed_anchor_from_file,
-        current_indexed_coverage_from_file, current_indexed_turns_from_file, index_rollout,
+        IndexError, RolloutWitness, backfill_rollout_prefix, backfill_rollout_prefix_before,
+        current_indexed_anchor_from_file, current_indexed_coverage_from_file,
+        current_indexed_turns_from_file, frozen_indexed_anchor_from_file,
+        frozen_indexed_coverage_from_file, frozen_indexed_turns_from_file, index_rollout,
         index_rollout_through_anchor, rollout_file_id, rollout_witness_from_file,
         rollout_witness_matches, scan_frozen_tail_turns_from_file,
         scan_frozen_turns_before_from_file, scan_tail_turns_from_file, scan_turns_after_from_file,
@@ -1261,15 +1263,9 @@ impl<'a> HistoryReader<'a> {
         limit: usize,
     ) -> Result<(Vec<TurnRef>, bool), HistoryServiceError> {
         let before = before.map_or(end, |offset| offset.min(end));
-        let file_bytes = self.file.metadata().map_err(IndexError::from)?.len();
-        if let Some(indexed) = current_indexed_turns_from_file(
-            self.store,
-            self.path,
-            &self.file,
-            file_bytes,
-            Some(before),
-            limit,
-        )? && !indexed.has_more
+        if let Some(indexed) =
+            frozen_indexed_turns_from_file(self.store, self.path, &self.file, end, before, limit)?
+            && !indexed.has_more
         {
             // A short page without more rows reached the start of the rollout.
             let from = if indexed.turns.len() < limit {
@@ -1309,17 +1305,15 @@ impl<'a> HistoryReader<'a> {
         anchor_id: &str,
         limit: usize,
     ) -> Result<Option<(Vec<TurnRef>, bool)>, HistoryServiceError> {
-        let file_bytes = self.file.metadata().map_err(IndexError::from)?.len();
-        if let Some(anchor) = current_indexed_anchor_from_file(
-            self.store, self.path, &self.file, file_bytes, anchor_id,
-        )? && anchor.start_offset < end
+        if let Some(anchor) =
+            frozen_indexed_anchor_from_file(self.store, self.path, &self.file, end, anchor_id)?
         {
             return self
                 .frozen_latest(end, Some(anchor.start_offset), limit)
                 .map(Some);
         }
         // Complete coverage without a rollback proves the anchor is not here.
-        if current_indexed_coverage_from_file(self.store, self.path, &self.file, file_bytes)?
+        if frozen_indexed_coverage_from_file(self.store, self.path, &self.file, end)?
             .is_some_and(crate::rollout_store::FileState::is_complete)
             && !self
                 .store
@@ -1559,6 +1553,33 @@ impl InheritedPage {
 /// to older base. Returns `None` when the start names no base or no base
 /// holds the anchor. Each base is read under its own index lane; the caller
 /// must not hold the lane of the thread's own rollout.
+/// Bounded attempts to index a base page while its live thread keeps
+/// appending; each attempt re-reads only the unindexed prefix.
+const MAX_BASE_BACKFILL_PASSES: usize = 3;
+
+/// Indexes a base rollout far enough that the page of `wanted` turns before
+/// `before` (default: the fork point) comes from the shared index, so paging
+/// deep into a large base does not rescan the base from its end.
+fn index_base_page(
+    store: &RolloutStore,
+    base: &BaseSegment,
+    before: Option<u64>,
+    wanted: usize,
+) -> Result<(), HistoryServiceError> {
+    index_rollout(store, &base.path)?;
+    let before = before.map_or(base.end, |offset| offset.min(base.end));
+    for _ in 0..MAX_BASE_BACKFILL_PASSES {
+        let file = File::open(&base.path).map_err(IndexError::from)?;
+        if frozen_indexed_turns_from_file(store, &base.path, &file, base.end, before, wanted)?
+            .is_some_and(|page| !page.has_more)
+        {
+            return Ok(());
+        }
+        backfill_rollout_prefix_before(store, &base.path, before, wanted)?;
+    }
+    Ok(())
+}
+
 fn inherited_page(
     catalog: &SessionCatalog,
     store: &RolloutStore,
@@ -1587,7 +1608,13 @@ fn inherited_page(
         first_source: None,
     };
     loop {
-        index_rollout(store, &base.path)?;
+        let wanted = limit.saturating_sub(page.turns.len()).saturating_add(1);
+        match anchor {
+            Some(anchor_id) => {
+                index_rollout_through_anchor(store, &base.path, anchor_id, wanted)?;
+            }
+            None => index_base_page(store, &base, before, wanted)?,
+        }
         let lane = store.rollout_index_lock(rollout_file_id(&base.path));
         let guard = lane
             .lock()
