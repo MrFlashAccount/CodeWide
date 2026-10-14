@@ -25,6 +25,7 @@ pub mod preflight;
 pub mod preview;
 pub mod resources;
 pub mod search;
+pub mod state;
 pub mod storage;
 pub mod store;
 pub mod subagents;

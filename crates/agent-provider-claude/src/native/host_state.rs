@@ -2,68 +2,32 @@
 //! which sessions a `CodeWide` thread consists of, its list metadata, its
 //! turn index and the snapshot of a turn still running.
 //!
-//! The host writes `<journal dir>/threads/<app thread id>/state.json`
-//! (`ThreadState` v2, `host/src/state/threadState.ts`) and, while a turn
-//! runs, `active-turn.json` next to it. This module only reads them; a file
-//! it cannot parse is skipped and logged, never repaired.
+//! The format is owned by [`crate::state`] (`ThreadState` v2 in
+//! `<journal dir>/threads/<app thread id>/state.json` and, while a turn
+//! runs, `active-turn.json` next to it). The index only reads them, never
+//! converts a v1 journal; a file it cannot read is skipped and logged, never
+//! repaired.
 
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, io, path::Path};
 
-use agent_core::model::{
-    AgentTurn, AppThreadId, NativeSessionCodewide, NativeThreadOrigin, NativeThreadPresence,
-    NativeTitleOverride, ThreadSettings,
-};
-use serde::Deserialize;
+use agent_core::model::{AgentTurn, AppThreadId, NativeSessionCodewide, NativeThreadOrigin};
 use tracing::warn;
 
-use crate::transcript::turn_index::TurnRecord;
-
-const STATE_FILE: &str = "state.json";
-const ACTIVE_TURN_FILE: &str = "active-turn.json";
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-enum StateOrigin {
-    Created,
-    Discovered,
-}
-
-/// The fields of a host `ThreadState` the index needs.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ThreadStateFile {
-    app_thread_id: String,
-    created_at: i64,
-    cwd: String,
-    origin: StateOrigin,
-    pending_settings: Option<ThreadSettings>,
-    presence: NativeThreadPresence,
-    recency_at: Option<i64>,
-    session_ids: Vec<String>,
-    settings: ThreadSettings,
-    title: NativeTitleOverride,
-    turns: Vec<TurnRecord>,
-    updated_at: i64,
-}
-
-#[derive(Deserialize)]
-struct ActiveTurnFile {
-    turn: AgentTurn,
-}
+use crate::{
+    state::{SessionChain, ThreadDirectory, ThreadState, ThreadStateOrigin},
+    transcript::turn_index::TurnRecord,
+};
 
 /// One `CodeWide` thread the host keeps metadata for.
 #[derive(Clone, Debug)]
 pub struct HostThread {
     pub app_thread_id: AppThreadId,
     /// Session chain, oldest first; the last is the current session.
-    pub session_ids: Vec<String>,
+    pub session_ids: SessionChain,
     pub cwd: String,
     pub codewide: NativeSessionCodewide,
     pub turns: Vec<TurnRecord>,
-    directory: PathBuf,
+    directory: ThreadDirectory,
 }
 
 impl HostThread {
@@ -71,9 +35,8 @@ impl HostThread {
     /// left one.
     #[must_use]
     pub fn active_turn(&self) -> Option<AgentTurn> {
-        let text = std::fs::read(self.directory.join(ACTIVE_TURN_FILE)).ok()?;
-        match serde_json::from_slice::<ActiveTurnFile>(&text) {
-            Ok(file) => Some(file.turn),
+        match self.directory.read_active_turn() {
+            Ok(turn) => turn,
             Err(err) => {
                 warn!(err = %err, thread_id = %self.app_thread_id, "Claude host active turn is unreadable");
                 None
@@ -84,9 +47,7 @@ impl HostThread {
     /// Whether `session_id` is the session the thread talks to now.
     #[must_use]
     pub fn is_current(&self, session_id: &str) -> bool {
-        self.session_ids
-            .last()
-            .is_some_and(|current| current == session_id)
+        self.session_ids.current() == session_id
     }
 }
 
@@ -102,28 +63,29 @@ impl HostThreads {
     #[must_use]
     pub fn read(journal_directory: &Path) -> Self {
         let mut threads = Self::default();
-        let Ok(entries) = std::fs::read_dir(journal_directory.join("threads")) else {
-            return threads;
+        let directories = match ThreadDirectory::list(journal_directory) {
+            Ok(directories) => directories,
+            Err(err) => {
+                if err.kind() != io::ErrorKind::NotFound {
+                    warn!(err = %err, "Claude host thread directory is unreadable");
+                }
+                return threads;
+            }
         };
-        for entry in entries.flatten() {
-            let directory = entry.path();
-            let Ok(text) = std::fs::read(directory.join(STATE_FILE)) else {
-                continue;
-            };
-            let state = match serde_json::from_slice::<ThreadStateFile>(&text) {
-                Ok(state) => state,
+        for directory in directories {
+            let state = match directory.read_state() {
+                Ok(Some(state)) => state,
+                Ok(None) => continue,
                 Err(err) => {
-                    warn!(err = %err, directory = %directory.display(), "Claude host thread state is unreadable");
+                    warn!(err = %err, thread_id = %directory.app_thread_id(), "Claude host thread state is unreadable");
                     continue;
                 }
             };
-            let Some(thread) = host_thread(state, directory) else {
-                continue;
-            };
-            for session_id in &thread.session_ids {
+            let thread = host_thread(state, directory);
+            for session_id in thread.session_ids.iter() {
                 threads
                     .by_session
-                    .insert(session_id.clone(), thread.clone());
+                    .insert(session_id.to_owned(), thread.clone());
             }
         }
         threads
@@ -136,33 +98,35 @@ impl HostThreads {
     }
 }
 
-fn host_thread(state: ThreadStateFile, directory: PathBuf) -> Option<HostThread> {
-    let app_thread_id = AppThreadId::parse(&state.app_thread_id)?;
-    Some(HostThread {
-        app_thread_id,
+fn host_thread(state: ThreadState, directory: ThreadDirectory) -> HostThread {
+    let settings = state.pending_settings.unwrap_or(state.settings);
+    HostThread {
+        app_thread_id: state.app_thread_id,
         session_ids: state.session_ids,
         cwd: state.cwd.clone(),
         codewide: NativeSessionCodewide {
             created_at: state.created_at,
             cwd: state.cwd,
             origin: match state.origin {
-                StateOrigin::Created => NativeThreadOrigin::Interactive,
-                StateOrigin::Discovered => NativeThreadOrigin::External,
+                ThreadStateOrigin::Created => NativeThreadOrigin::Interactive,
+                ThreadStateOrigin::Discovered => NativeThreadOrigin::External,
             },
             presence: state.presence,
             recency_at: state.recency_at,
-            settings: state.pending_settings.unwrap_or(state.settings),
+            settings,
             title: state.title,
             updated_at: state.updated_at,
         },
         turns: state.turns,
         directory,
-    })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    use agent_core::model::{NativeThreadPresence, NativeTitleOverride};
 
     use super::*;
 
@@ -173,13 +137,16 @@ mod tests {
         std::fs::create_dir_all(&directory)?;
         let settings = json!({"model": "opus", "effort": null, "permissionProfile": ":workspace", "serviceTier": null});
         std::fs::write(
-            directory.join(STATE_FILE),
+            directory.join("state.json"),
             serde_json::to_vec(&json!({
                 "appThreadId": "thread-1", "createdAt": 10, "cwd": "/work", "origin": "created",
                 "pendingSettings": null, "presence": {"type": "listed", "archived": true},
                 "recencyAt": 30, "sessionIds": ["s-old", "s-new"], "sessionStarted": true,
                 "settings": settings, "title": {"type": "cleared", "hiddenTitle": "Old"},
-                "totalCost": {"type": "known", "usd": 0}, "totalUsage": {}, "usageBaseline": {},
+                "totalCost": {"type": "known", "usd": 0},
+                "totalUsage": {"inputTokens": 0, "cachedInputTokens": 0, "outputTokens": 0,
+                    "reasoningOutputTokens": 0, "totalTokens": 0},
+                "usageBaseline": {"type": "unknown"},
                 "turns": [{"anchors": ["u1"], "completedAt": 20, "origin": "user",
                     "outcome": {"status": "completed"},
                     "prompts": [{"clientMessageId": "c1", "role": "first", "uuid": "u1"}],
@@ -188,14 +155,14 @@ mod tests {
             }))?,
         )?;
         std::fs::write(
-            directory.join(ACTIVE_TURN_FILE),
+            directory.join("active-turn.json"),
             serde_json::to_vec(
                 &json!({"version": 2, "turn": {"turnId": "turn-2", "status": "inProgress",
                 "origin": "user", "startedAt": 40, "completedAt": null, "error": null, "items": []}}),
             )?,
         )?;
         std::fs::create_dir_all(journal.path().join("threads/broken"))?;
-        std::fs::write(journal.path().join("threads/broken").join(STATE_FILE), b"{")?;
+        std::fs::write(journal.path().join("threads/broken/state.json"), b"{")?;
 
         let threads = HostThreads::read(journal.path());
         let thread = threads.owner_of("s-old").ok_or("chain session")?;
