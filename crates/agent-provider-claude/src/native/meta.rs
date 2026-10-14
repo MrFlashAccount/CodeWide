@@ -119,7 +119,8 @@ fn first_field(text: &str, name: &str) -> Option<String> {
     field_values(text, name).next()
 }
 
-fn last_field(text: &str, name: &str) -> Option<String> {
+/// The newest `name` string in `text`.
+pub(super) fn last_field(text: &str, name: &str) -> Option<String> {
     field_values(text, name).last()
 }
 
@@ -141,7 +142,7 @@ fn last_typed_field(text: &str, kind: &str, field: &str) -> Option<String> {
 /// The first prompt a person wrote: the first user row with text that is
 /// neither a tool result, injected context, a compact summary, a command
 /// echo nor markup. A command without other text shows its name.
-fn first_prompt(head: &str) -> Option<String> {
+pub(super) fn first_prompt(head: &str) -> Option<String> {
     let mut command_fallback = None;
     for line in head.split('\n') {
         if !(line.contains("\"type\":\"user\"") || line.contains("\"type\": \"user\""))

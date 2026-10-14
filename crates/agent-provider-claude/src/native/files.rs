@@ -42,7 +42,8 @@ pub struct SubagentSidecar {
     pub parent_agent_id: Option<String>,
 }
 
-fn is_session_id(name: &str) -> bool {
+/// Whether `name` is shaped like a session uuid (8-4-4-4-12 hex digits).
+pub(super) fn is_session_id(name: &str) -> bool {
     let parts = name.split('-').map(str::len).collect::<Vec<_>>();
     parts == [8, 4, 4, 4, 12]
         && name
