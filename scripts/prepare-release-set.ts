@@ -259,7 +259,9 @@ function signedHostUpdateManifest(
         sourceRevision: macos.sourceRevision,
         artifactUrl: `${artifactPrefix}${macosAsset.name}`,
         sha256: macosAsset.sha256,
-        bootstrapVersion: 1,
+        // Sparkle installs macOS releases; version 2 keeps the earlier external
+        // guardian, which accepts only version 1, from attempting them.
+        bootstrapVersion: 2,
         journalVersion: 1,
         stateEpoch: 1,
         rollbackCompatibleFrom: rollbackDigest(rollback, "macos-universal"),

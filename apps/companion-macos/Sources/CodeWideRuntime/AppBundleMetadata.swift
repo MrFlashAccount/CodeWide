@@ -4,6 +4,10 @@ import Foundation
 struct AppBundleMetadata {
     let bundleURL: URL
     let version: String
+    /// `CFBundleVersion`; remote updates match it against the confirmed target.
+    let build: String
+    /// The source revision the release build embedded.
+    let sourceRevision: String
 
     static func currentExecutableURL() throws -> URL {
         var capacity: UInt32 = 0
@@ -52,7 +56,12 @@ struct AppBundleMetadata {
         else {
             throw MetadataError.invalidInfoPlist(infoURL)
         }
-        return Self(bundleURL: bundleURL, version: version)
+        return Self(
+            bundleURL: bundleURL,
+            version: version,
+            build: info["CFBundleVersion"] as? String ?? "",
+            sourceRevision: info["CodeWideSourceRevision"] as? String ?? ""
+        )
     }
 
     enum MetadataError: LocalizedError {

@@ -19,7 +19,8 @@ func nativeManagementCrossesXPCIntoTheRustCore() async throws {
 
     let core = try CoreHost(
         stateDirectory: state.path, codexHome: codex.path,
-        appVersion: "1.0.0", hostVersion: "1.0.0", computerName: "XPC test", listenAddress: "127.0.0.1:0"
+        appVersion: "1.0.0", appBuild: "200001.0.0", sourceRevision: String(repeating: "a", count: 40),
+        hostVersion: "1.0.0", computerName: "XPC test", listenAddress: "127.0.0.1:0"
     )
     let service = RuntimeService(
         core: core,

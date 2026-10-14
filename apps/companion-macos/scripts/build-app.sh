@@ -11,8 +11,7 @@ host_update_key_id=${CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID:-}
 app_dir=${CODEWIDE_APP_OUTPUT:-"$mac_root/.build/app/CodeWide.app"}
 source_revision=${CODEWIDE_SOURCE_REVISION:-$(git -C "$repo_root" rev-parse HEAD)}
 # The GitHub release tag this build is published under (the release workflow's
-# RELEASE_TAG). The update guardian proves the installed app against that
-# release's manifest; local builds have none.
+# RELEASE_TAG), recorded in Info.plist; local builds have none.
 release_tag=${CODEWIDE_RELEASE_TAG:-${RELEASE_TAG:-}}
 e2e_namespace=${CODEWIDE_E2E_NAMESPACE:-0}
 
@@ -22,14 +21,12 @@ case "$e2e_namespace" in
     runtime_identifier=dev.codewide.runtime
     runtime_mach_service=dev.codewide.runtime.control
     runtime_plist_name=dev.codewide.runtime.plist
-    guardian_identifier=dev.codewide.update-guardian
     ;;
   1)
     app_identifier=dev.codewide.app.e2e
     runtime_identifier=dev.codewide.runtime.e2e
     runtime_mach_service=dev.codewide.runtime.control.e2e
     runtime_plist_name=dev.codewide.runtime.e2e.plist
-    guardian_identifier=dev.codewide.update-guardian.e2e
     ;;
   *)
     echo "CODEWIDE_E2E_NAMESPACE must be 0 or 1." >&2
@@ -91,7 +88,6 @@ build_product() {
 
 build_product CodeWide
 build_product CodeWideRuntime
-build_product CodeWideUpdateGuardian
 bin_dir=$(swift build --package-path "$mac_root" -c release \
   --arch arm64 --show-bin-path)
 
@@ -101,17 +97,13 @@ resources_dir="$contents/Resources"
 frameworks_dir="$contents/Frameworks"
 agents_dir="$contents/Library/LaunchAgents"
 helpers_dir="$contents/Helpers"
-updater_bootstrap_dir="$resources_dir/UpdaterBootstrap"
 e2e_unregister_helper="$helpers_dir/CodeWideE2EUnregister"
 rm -rf -- "$app_dir"
 mkdir -p "$macos_dir" "$resources_dir" "$frameworks_dir" "$agents_dir" \
-  "$helpers_dir" "$updater_bootstrap_dir"
+  "$helpers_dir"
 
 cp "$bin_dir/CodeWide" "$macos_dir/CodeWide"
 cp "$bin_dir/CodeWideRuntime" "$macos_dir/CodeWideRuntime"
-cp "$bin_dir/CodeWideUpdateGuardian" "$updater_bootstrap_dir/CodeWideUpdateGuardian"
-printf '{"schemaVersion":1,"keyId":"%s","publicKeySPKI":"%s"}\n' \
-  "$host_update_key_id" "$host_update_public_key" > "$updater_bootstrap_dir/trust.json"
 cp "$mac_root/Resources/Info.plist" "$contents/Info.plist"
 runtime_plist="$agents_dir/$runtime_plist_name"
 cp "$mac_root/Resources/dev.codewide.runtime.plist" "$runtime_plist"
@@ -212,11 +204,7 @@ plutil -replace SUPublicEDKey -string "$public_key" "$contents/Info.plist"
 plutil -replace Label -string "$runtime_identifier" "$runtime_plist"
 plutil -replace MachServices -json "{\"$runtime_mach_service\":true}" "$runtime_plist"
 
-chmod 755 "$macos_dir/CodeWide" "$macos_dir/CodeWideRuntime" \
-  "$updater_bootstrap_dir/CodeWideUpdateGuardian"
-chmod 600 "$updater_bootstrap_dir/trust.json"
-codesign --force --sign - --identifier "$guardian_identifier" \
-  "$updater_bootstrap_dir/CodeWideUpdateGuardian"
+chmod 755 "$macos_dir/CodeWide" "$macos_dir/CodeWideRuntime"
 codesign --force --sign - --identifier "$runtime_identifier" "$macos_dir/CodeWideRuntime"
 if [ "$e2e_namespace" = 1 ]; then
   chmod 755 "$e2e_unregister_helper"

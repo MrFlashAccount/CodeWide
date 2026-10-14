@@ -15,7 +15,8 @@ import Testing
     func open(_ version: String) throws -> CoreHost {
         try CoreHost(
             stateDirectory: state.path, codexHome: codex.path,
-            appVersion: version, hostVersion: version, computerName: "Native test", listenAddress: "127.0.0.1:0"
+            appVersion: version, appBuild: "200098.0.0", sourceRevision: String(repeating: "a", count: 40),
+            hostVersion: version, computerName: "Native test", listenAddress: "127.0.0.1:0"
         )
     }
 

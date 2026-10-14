@@ -107,8 +107,8 @@ terminal records when checking the single-active lock. Replaying an apply
 idempotency key finds its journal before requiring a fresh release check,
 including when the original HTTP acknowledgement was lost.
 
-The macOS guardian never reports a terminal operation in status; its outcome is
-read by operation id.
+On macOS a terminal outcome stays in status for one hour, then is read by
+operation id.
 
 An additive `progress` field reports download bytes/optional total, verification,
 extraction, restart, readiness, reconnect confirmation, and rollback. Progress is
@@ -193,9 +193,9 @@ An official build still needs its installed guardian, otherwise it reports
 
 - Linux: the bootstrap guardian and a signed generation layout under the install
   root. `bootstrap/config.json` is no longer read for trust.
-- macOS: the Swift guardian and the `trust.json` copied from the signed app
-  bundle. The release workflow passes the key to the Rust FFI build and to its
-  Nx cache inputs, so a cached archive cannot lose it.
+- macOS: no external guardian; the runtime verifies the manifest with the key
+  the release workflow passes to the Rust FFI build and its Nx cache inputs,
+  so a cached archive cannot lose it, and the menu app installs with Sparkle.
 
 ## Baseline and activation gate
 
@@ -203,14 +203,13 @@ The first signed host-update release has no signed predecessor digest and is a
 manual baseline. Install it normally on each host. A later release can certify
 that baseline digest and become remotely admissible.
 
-The macOS guardian establishes its receipt from the signed manifest that lists
-the installed app: the latest release when the app is current, otherwise the
-release named by the bundle's `CodeWideReleaseTag` (`release-YYYY-MM-DD.N`,
-embedded by `build-app.sh` from `RELEASE_TAG`), falling back to
-`v<version>` for apps built before the tag was embedded. A latest release that
-is the installed version, or one already accepted, is "up to date", not a
-failure. A finished operation stays readable by id but is no longer reported
-as the active one.
+macOS deliberately departs from the safety invariant above: Sparkle installs
+the bundle atomically but cannot roll back a release that installs and then
+fails to serve devices. The runtime therefore neither tracks the installed
+artifact digest nor requires `rollbackCompatibleFrom`; it admits the single
+newer `macos-universal` target with the same state epoch, journal version and
+a bootstrap version of at most 2. See
+[macos-companion.md](macos-companion.md#updates-and-state).
 
 Shipping these core routes does not enable apply. Each platform must first ship
 an external guardian and prove power/process interruption recovery, exact target

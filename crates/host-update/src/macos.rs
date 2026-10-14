@@ -21,23 +21,23 @@ use std::{
 };
 
 use async_trait::async_trait;
-use companion_core::{
-    host_update::{
-        ApplyHostUpdateAccepted, ApplyHostUpdateCommand, AvailableHostUpdate, GuardianError,
-        GuardianErrorCode, HOST_UPDATE_API_VERSION, HOST_UPDATE_BOOTSTRAP_VERSION,
-        HOST_UPDATE_GUARDIAN_CONTRACT_VERSION, HOST_UPDATE_JOURNAL_VERSION,
-        HOST_UPDATE_UNOFFICIAL_BUILD_REASON, HostPlatform, HostUpdateCapability,
-        HostUpdateDeadlines, HostUpdateGuardian, HostUpdateJournalV1, HostUpdateOperation,
-        HostUpdatePhase, HostUpdateProgress, HostUpdateRelayState, HostUpdateStatus,
-        ReconnectReceipt, ReleaseDescriptorV1, ReleaseTargetV1, ReleaseTrust,
-        SignedReleaseDescriptor, is_newer_version, target_fingerprint,
-        verify_signed_release_descriptor,
-    },
-    relay::{RelayConnectionStatus, RelayRuntime},
-};
 use rand::TryRngCore as _;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::sync::Mutex;
+
+use crate::{
+    ApplyHostUpdateAccepted, ApplyHostUpdateCommand, AvailableHostUpdate, GuardianError,
+    GuardianErrorCode, HOST_UPDATE_API_VERSION, HOST_UPDATE_BOOTSTRAP_VERSION,
+    HOST_UPDATE_GUARDIAN_CONTRACT_VERSION, HOST_UPDATE_JOURNAL_VERSION,
+    HOST_UPDATE_UNOFFICIAL_BUILD_REASON, HostPlatform, HostUpdateCapability, HostUpdateDeadlines,
+    HostUpdateGuardian, HostUpdateJournalV1, HostUpdateOperation, HostUpdatePhase,
+    HostUpdateProgress, HostUpdateRelayState, HostUpdateStatus, ReconnectReceipt,
+    ReleaseDescriptorV1, ReleaseTargetV1, ReleaseTrust, SignedReleaseDescriptor, is_newer_version,
+    target_fingerprint, verify_signed_release_descriptor,
+};
+
+/// Reads the current Relay state for the operation record.
+pub type RelayProbe = Box<dyn Fn() -> HostUpdateRelayState + Send + Sync>;
 
 const DEFAULT_MANIFEST_URL: &str =
     "https://github.com/MrFlashAccount/CodeWide/releases/latest/download/release-manifest.json";
@@ -54,18 +54,18 @@ const RECONNECT_BUDGET_MS: u64 = 25 * 60_000;
 
 /// The installed release, read by the Swift runtime from its own bundle.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct InstalledRelease {
-    pub(crate) version: String,
-    pub(crate) build: String,
-    pub(crate) source_revision: String,
+pub struct InstalledRelease {
+    pub version: String,
+    pub build: String,
+    pub source_revision: String,
 }
 
 /// Remote updater of the macOS runtime.
-pub(crate) struct MacosSparkleUpdater {
+pub struct MacosSparkleUpdater {
     state_root: PathBuf,
     installed: InstalledRelease,
     trust: Option<ReleaseTrust>,
-    relay: OnceLock<RelayRuntime>,
+    relay: OnceLock<RelayProbe>,
     /// When this process started; a reconnect must be newer than the restart.
     started_at: u64,
     lock: Mutex<()>,
@@ -109,7 +109,8 @@ enum InstallEventKind {
 }
 
 impl MacosSparkleUpdater {
-    pub(crate) fn new(updater_root: &Path, installed: InstalledRelease) -> Arc<Self> {
+    #[must_use]
+    pub fn new(updater_root: &Path, installed: InstalledRelease) -> Arc<Self> {
         Arc::new(Self {
             state_root: updater_root.join("v2"),
             installed,
@@ -120,9 +121,10 @@ impl MacosSparkleUpdater {
         })
     }
 
-    /// Supplies the Relay whose state each accepted operation records.
-    pub(crate) fn observe_relay(&self, relay: RelayRuntime) {
-        let _ = self.relay.set(relay);
+    /// Supplies the Relay state each accepted operation records. The
+    /// runtime's Relay exists only after the updater was handed to it.
+    pub fn observe_relay(&self, probe: RelayProbe) {
+        let _ = self.relay.set(probe);
     }
 
     fn trust(&self) -> Result<&ReleaseTrust, GuardianError> {
@@ -150,21 +152,14 @@ impl MacosSparkleUpdater {
     }
 
     fn relay_state(&self) -> HostUpdateRelayState {
-        self.relay
-            .get()
-            .and_then(|relay| relay.status().ok())
-            .map_or(
-                HostUpdateRelayState {
-                    configured: false,
-                    enabled: false,
-                    upstream_live: false,
-                },
-                |status| HostUpdateRelayState {
-                    configured: status.configured,
-                    enabled: status.enabled,
-                    upstream_live: matches!(status.connection, RelayConnectionStatus::Online),
-                },
-            )
+        self.relay.get().map_or(
+            HostUpdateRelayState {
+                configured: false,
+                enabled: false,
+                upstream_live: false,
+            },
+            |probe| probe(),
+        )
     }
 
     fn installed_is(&self, target: &ReleaseTargetV1) -> bool {
@@ -677,5 +672,5 @@ fn internal(error: impl std::fmt::Display) -> GuardianError {
 
 #[cfg(test)]
 #[allow(clippy::expect_used)]
-#[path = "macos_host_update_tests.rs"]
+#[path = "macos_tests.rs"]
 mod tests;

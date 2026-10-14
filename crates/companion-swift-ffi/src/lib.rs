@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use codewide_host_update::HostUpdateRelayState;
 use companion_core::runtime_host::{
     RuntimeHealth, RuntimeHost, RuntimeHostError, RuntimePhase, UpdateStatus,
 };
@@ -15,14 +16,31 @@ use companion_core::{
         AppServerConnection, ManagedRuntime, ManagedRuntimeConfig, PairingPresentation,
         relay_connection_label,
     },
-    relay::{RelayEnrollmentStatus, RelayStatus},
+    relay::{RelayConnectionStatus, RelayEnrollmentStatus, RelayRuntime, RelayStatus},
     secure_store::SecretStoragePolicy,
     upstream::probe_app_server_version,
 };
 
+/// Relay state recorded by each accepted remote update.
+fn relay_probe(relay: RelayRuntime) -> codewide_host_update::macos::RelayProbe {
+    Box::new(move || {
+        relay.status().map_or(
+            HostUpdateRelayState {
+                configured: false,
+                enabled: false,
+                upstream_live: false,
+            },
+            |status| HostUpdateRelayState {
+                configured: status.configured,
+                enabled: status.enabled,
+                upstream_live: matches!(status.connection, RelayConnectionStatus::Online),
+            },
+        )
+    })
+}
+
 mod codex_installation;
 mod logging;
-mod macos_host_update;
 
 pub use codex_installation::FfiCodexInstallation;
 use codex_installation::{inspect_codex_installation, start_codex_app_server};
@@ -151,7 +169,7 @@ impl CoreHost {
         listen_address: String,
     ) -> Result<Arc<Self>, CompanionFfiError> {
         logging::install(Path::new(&state_directory));
-        let installed = macos_host_update::InstalledRelease {
+        let installed = codewide_host_update::macos::InstalledRelease {
             version: app_version.clone(),
             build: app_build,
             source_revision,
@@ -169,7 +187,8 @@ impl CoreHost {
             .parent()
             .ok_or_else(|| CompanionFfiError::runtime("Companion state directory has no parent"))?
             .join("Updater");
-        let updates = macos_host_update::MacosSparkleUpdater::new(&updater_root, installed);
+        let updates =
+            codewide_host_update::macos::MacosSparkleUpdater::new(&updater_root, installed);
         let config = ManagedRuntimeConfig::desktop(
             state_directory.into(),
             codex_home.clone(),
@@ -181,7 +200,7 @@ impl CoreHost {
         let companion = executor
             .block_on(ManagedRuntime::start(config))
             .map_err(CompanionFfiError::runtime)?;
-        updates.observe_relay(companion.relay_runtime());
+        updates.observe_relay(relay_probe(companion.relay_runtime()));
         Ok(Arc::new(Self {
             lifecycle: Mutex::new(lifecycle),
             companion,

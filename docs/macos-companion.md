@@ -54,65 +54,35 @@ The app does not automatically install local checks. No-update results and
 cancellation do not appear as errors or reconnect a healthy runtime. Both the
 appcast and archive are protected by Sparkle Ed25519 signatures.
 
-Phone-confirmed updates use a separate guardian transaction. The first signed
-app installs an immutable V1 executable and trust record outside the payload:
+Phone-confirmed updates are installed by Sparkle as well. The runtime owns the
+device-facing contract (`/v1/host-update`): it checks the ES256-signed release
+manifest with the key embedded at build time, offers the single newer
+`macos-universal` target, and on apply journals one operation under
+`~/Library/Application Support/CodeWide/Updater/v2/` before acknowledging it.
+It then writes a command with the exact target version and build to
+`Updater/v2/commands/`. The menu app polls that spool and runs Sparkle with a
+custom `SPUUserDriver` that chooses Install only when the selected version,
+build and Sparkle signature status match the command. It reports `installing`
+before the runtime stops through its update XPC stop, or `failed` with
+Sparkle's error.
 
-- `~/Library/Application Support/CodeWide/Updater/bootstrap-v1/` contains the
-  guardian executable, pinned P-256 release key and canonical app location;
-- `~/Library/Application Support/CodeWide/Updater/v1/` contains the private
-  request spool, guardian-owned journal, terminal outcomes and runtime
-  observations;
-- `~/Library/LaunchAgents/dev.codewide.update-guardian.plist` keeps the
-  guardian available after an app crash, logout or login.
+Sparkle verifies the archive with its own Ed25519 key, replaces the bundle
+atomically and relaunches the app, so the disk holds either the complete
+previous or the complete new release. The restarted runtime recognizes itself
+as the confirmed target and moves the operation to `awaitingReconnect`; commit
+requires a fresh reconnect receipt from the initiating device. A Sparkle
+failure or a missed install deadline records `failed` and leaves the previous
+version running. There is no rollback after a successful install: a release
+that installs but cannot serve devices needs a manual reinstall on the host.
 
-The payload never replaces bootstrap code or trust. If bootstrap is missing,
-partial, moved, not private/user-owned, or contract-incompatible, remote apply
-stays disabled with `manual_bootstrap_required`. A capability receipt is
-published only after the guardian verifies signed release metadata, downloads
-the current release DMG, checks its SHA-256 and code signature, mounts it
-read-only, and proves its deterministic bundle tree equals the installed app.
-The tree digest includes normalized relative NFC paths, entry kind, symlink
-target, POSIX mode and regular-file bytes. It excludes the bundle root name,
-filesystem inode/timestamps/owner/group, extended attributes and quarantine.
-Unreadable or unsupported entries fail closed.
+Releases mark the macOS target with bootstrap version 2. Apps up to 0.6.5
+shipped an external update guardian under `Updater/bootstrap-v1` with the
+`dev.codewide.update-guardian` LaunchAgent; it accepts only version 1 and so
+never attempts these releases. On launch the app boots that agent out and
+deletes its files, unless its journal shows a transaction in progress.
 
-Before acknowledging apply, the guardian checks target freshness, exact
-rollback digest and state epoch, live runtime/upstream/Relay prerequisites, and
-performs a real reversible sibling rename probe. It then fsyncs context,
-journal and idempotency records. The guardian copies and fsyncs an exact
-same-filesystem sibling `.app` snapshot before asking the canonical LSUIElement
-app to run the exact-target Sparkle flow. Sparkle remains the only forward
-installer. A custom `SPUUserDriver` chooses Install only when the selected
-version/build and Sparkle signature status match the phone-confirmed target;
-neither the menu app nor Sparkle owns the rollback snapshot.
-The runtime exits through a guardian-specific XPC stop that does not write the
-legacy `pending_update`/`last_update` checkpoint, so those fields remain local
-manual-Sparkle diagnostics and never compete with the guardian journal.
-
-After relaunch, the guardian verifies the installed code signature, exact
-version/build/source revision/tree, running core and upstream, unchanged
-identity and device registry, and Relay recovery when Relay was live before the
-update. Commit requires a fresh reconnect receipt from the initiating device
-for that operation. The registry proof canonicalizes device order and excludes
-only `lastSeenAt` plus unclaimed pairing challenges, which legitimately change
-during reconnect; device ids, names, credential hashes, public keys, creation
-times and any future stable fields remain protected. The durable `committed`
-journal transition precedes idempotent receipt publication, so a crash cannot
-overwrite the rollback receipt while the operation is still rollback-eligible.
-Install, launch, health, Relay or reconnect timeout enters
-rollback. Rollback fences the app/runtime and waits for Sparkle/installer bundle
-ownership to end, atomically restores the sibling snapshot, fsyncs its parent,
-launches that exact URL, re-registers the runtime, and verifies old runtime,
-upstream, identity and Relay health before recording `rolledBack`. Late
-receipts cannot commit after rollback starts. Only the application bundle is
-restored: Companion state, keys, devices, Relay configuration and Codex
-selection are never rolled back. Terminal results survive app and guardian
-restart and remain readable by the restored app.
-
-The existing manual Sparkle button remains a local Sparkle operation. It still
-uses the runtime checkpoint, but it is intentionally not represented as a
-guardian-owned remote transaction and does not rely on undocumented Sparkle
-backup retention.
+The manual Sparkle button remains a local Sparkle operation. It uses the
+runtime checkpoint and is not represented as a remote operation.
 
 The release workflow builds an ad-hoc universal bundle on macOS 26, generates a
 signed appcast, then performs a real Sparkle update from a disposable baseline
@@ -191,9 +161,8 @@ actual sync WebSockets; the final disconnect updates durable last-seen
 state. Revoke removes authorization, closes subscribed live transports, and
 purges device-owned transient runtime state.
 
-There is no implicit user-requested downgrade. A remote transaction may restore
-only its exact guardian-certified predecessor bundle; unrelated downgrade and
-state restoration remain forbidden.
+There is no implicit user-requested downgrade. Remote updates only move to a
+newer signed release; downgrade and state restoration remain forbidden.
 
 ## Build
 
