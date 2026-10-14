@@ -35,7 +35,6 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
             .assign(to: &$canCheckForUpdates)
         if startingUpdater {
             controller.startUpdater()
-            #if !CODEWIDE_E2E_NAMESPACE
             if checkAdmission.mode == .installationTest {
                 // Sparkle permits an immediate check before its next runloop cycle.
                 // Dispatching later lets the scheduler or a menu probe claim the session.
@@ -43,7 +42,6 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
                     controller.updater.checkForUpdatesInBackground()
                 }
             }
-            #endif
         }
     }
 

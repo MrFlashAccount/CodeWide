@@ -12,3 +12,6 @@ pub use contract::*;
 
 #[cfg(feature = "linux-guardian")]
 pub mod linux;
+
+#[cfg(feature = "macos-sparkle")]
+pub mod macos;

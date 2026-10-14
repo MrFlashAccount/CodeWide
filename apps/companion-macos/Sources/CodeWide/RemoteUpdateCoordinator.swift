@@ -3,8 +3,9 @@ import Darwin
 import Foundation
 @preconcurrency import Sparkle
 
-/// Bridges a durable phone-confirmed operation into Sparkle. Sparkle remains
-/// the sole forward installer; this object never moves application bundles.
+/// Installs a release confirmed on a paired device with Sparkle. The runtime
+/// owns the operation and its journal; this object only executes the command
+/// it wrote and reports whether Sparkle started or failed the installation.
 @MainActor
 final class RemoteUpdateCoordinator {
     private let runtime: RuntimeConnection
@@ -22,43 +23,41 @@ final class RemoteUpdateCoordinator {
         guard pollTask == nil else { return }
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.poll()
+                self?.poll()
                 try? await Task.sleep(for: .seconds(1))
             }
         }
     }
 
-    private func poll() async {
+    private func poll() {
         guard session == nil else { return }
-        let commands = HostUpdateIPC.commands(updaterRoot: updaterRoot)
+        let commands = RemoteUpdateSpool.commands(updaterRoot: updaterRoot)
         guard let urls = try? FileManager.default.contentsOfDirectory(
             at: commands,
             includingPropertiesForKeys: [.isRegularFileKey]
         ) else { return }
+        let installedVersion = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString"
+        ) as? String
         for url in urls where url.pathExtension == "json" && !url.lastPathComponent.hasSuffix(".event.json") {
             guard let command = try? JSONDecoder().decode(
-                GuardianAppCommand.self,
+                RemoteUpdateCommand.self,
                 from: Data(contentsOf: url)
             ), command.operationId != handledOperationID,
-               command.canonicalAppPath == Bundle.main.bundleURL.resolvingSymlinksInPath().path else {
+               // The relaunched target leaves its command for the runtime to
+               // retire once it recognizes itself.
+               command.targetVersion != installedVersion else {
                 continue
             }
             handledOperationID = command.operationId
-            let currentVersion = Bundle.main.object(
-                forInfoDictionaryKey: "CFBundleShortVersionString"
-            ) as? String
-            if currentVersion == command.target.version {
-                await reportTargetReady(command)
-            } else {
-                beginSparkle(command)
-            }
+            beginSparkle(command)
             break
         }
     }
 
-    private func beginSparkle(_ command: GuardianAppCommand) {
+    private func beginSparkle(_ command: RemoteUpdateCommand) {
+        let writer = RemoteUpdateEventWriter(root: updaterRoot, command: command)
         do {
-            let writer = GuardianAppEventWriter(root: updaterRoot, command: command)
             let session = try RemoteSparkleSession(
                 command: command,
                 runtime: runtime,
@@ -68,45 +67,24 @@ final class RemoteUpdateCoordinator {
             self.session = session
             session.start()
         } catch {
-            try? GuardianAppEventWriter(root: updaterRoot, command: command)
-                .write(kind: "failed", error: error.localizedDescription)
+            try? writer.write(.failed, error: error.localizedDescription)
             session = nil
         }
     }
-
-    private func reportTargetReady(_ command: GuardianAppCommand) async {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(90))
-        while ContinuousClock.now < deadline {
-            await runtime.refresh()
-            let upstreamLive = runtime.appServer.map {
-                if case .available = $0.state { return true }
-                return false
-            } ?? false
-            if runtime.health?.phase == "running", upstreamLive, runtime.relay != nil {
-                try? GuardianAppEventWriter(root: updaterRoot, command: command)
-                    .write(kind: "targetReady")
-                return
-            }
-            try? await Task.sleep(for: .seconds(1))
-        }
-        try? GuardianAppEventWriter(root: updaterRoot, command: command)
-            .write(kind: "failed", error: "target_runtime_timeout")
-    }
 }
 
-private struct GuardianAppEventWriter {
+private struct RemoteUpdateEventWriter {
     let root: URL
-    let command: GuardianAppCommand
+    let command: RemoteUpdateCommand
 
-    func write(kind: String, error: String? = nil) throws {
-        let event = GuardianAppEvent(
+    func write(_ kind: RemoteUpdateEvent.Kind, error: String? = nil) throws {
+        let event = RemoteUpdateEvent(
             operationId: command.operationId,
             nonce: command.nonce,
             kind: kind,
-            targetVersion: command.target.version,
             errorMessage: error
         )
-        let directory = HostUpdateIPC.commands(updaterRoot: root)
+        let directory = RemoteUpdateSpool.commands(updaterRoot: root)
         let destination = directory.appending(path: "\(command.operationId).event.json")
         let temporary = directory.appending(path: ".\(command.operationId).\(UUID().uuidString).tmp")
         guard FileManager.default.createFile(
@@ -135,25 +113,25 @@ private struct GuardianAppEventWriter {
 
 @MainActor
 private final class RemoteSparkleSession: NSObject, SPUUpdaterDelegate {
-    private let command: GuardianAppCommand
+    private let command: RemoteUpdateCommand
     private let runtime: RuntimeConnection
-    private let writer: GuardianAppEventWriter
+    private let writer: RemoteUpdateEventWriter
     private let finished: () -> Void
     private let userDriver: RemoteSparkleUserDriver
     private var updater: SPUUpdater!
     private var preparing = false
 
     init(
-        command: GuardianAppCommand,
+        command: RemoteUpdateCommand,
         runtime: RuntimeConnection,
-        writer: GuardianAppEventWriter,
+        writer: RemoteUpdateEventWriter,
         finished: @escaping () -> Void
     ) throws {
         self.command = command
         self.runtime = runtime
         self.writer = writer
         self.finished = finished
-        userDriver = RemoteSparkleUserDriver(target: command.target, writer: writer)
+        userDriver = RemoteSparkleUserDriver(command: command, writer: writer)
         super.init()
         updater = SPUUpdater(
             hostBundle: .main,
@@ -181,7 +159,7 @@ private final class RemoteSparkleSession: NSObject, SPUUpdaterDelegate {
             displayVersion: updateItem.displayVersionString,
             build: updateItem.versionString,
             signatureValidated: updateItem.signingValidationStatus == .succeeded,
-            target: command.target
+            command: command
         ) else {
             throw RemoteUpdateError.wrongSignedTarget
         }
@@ -211,7 +189,7 @@ private final class RemoteSparkleSession: NSObject, SPUUpdaterDelegate {
         error: Error?
     ) {
         guard let error else { return }
-        try? writer.write(kind: "failed", error: error.localizedDescription)
+        try? writer.write(.failed, error: error.localizedDescription)
         runtime.resumeAfterUpdateFailure()
         finished()
     }
@@ -222,20 +200,20 @@ private final class RemoteSparkleSession: NSObject, SPUUpdaterDelegate {
                   displayVersion: item.displayVersionString,
                   build: item.versionString,
                   signatureValidated: item.signingValidationStatus == .succeeded,
-                  target: command.target
+                  command: command
               ) else {
-            try? writer.write(kind: "failed", error: "sparkle_wrong_target")
+            try? writer.write(.failed, error: "sparkle_wrong_target")
             return
         }
         preparing = true
         Task {
             do {
+                try writer.write(.installing)
                 try await runtime.stopForGuardianUpdate()
-                try writer.write(kind: "installing")
                 install()
             } catch {
                 preparing = false
-                try? writer.write(kind: "failed", error: error.localizedDescription)
+                try? writer.write(.failed, error: error.localizedDescription)
                 runtime.resumeAfterUpdateFailure()
                 finished()
             }
@@ -245,11 +223,11 @@ private final class RemoteSparkleSession: NSObject, SPUUpdaterDelegate {
 
 @MainActor
 private final class RemoteSparkleUserDriver: NSObject, SPUUserDriver {
-    private let target: ReleaseTargetPayload
-    private let writer: GuardianAppEventWriter
+    private let command: RemoteUpdateCommand
+    private let writer: RemoteUpdateEventWriter
 
-    init(target: ReleaseTargetPayload, writer: GuardianAppEventWriter) {
-        self.target = target
+    init(command: RemoteUpdateCommand, writer: RemoteUpdateEventWriter) {
+        self.command = command
         self.writer = writer
     }
 
@@ -272,9 +250,9 @@ private final class RemoteSparkleUserDriver: NSObject, SPUUserDriver {
                   displayVersion: appcastItem.displayVersionString,
                   build: appcastItem.versionString,
                   signatureValidated: appcastItem.signingValidationStatus == .succeeded,
-                  target: target
+                  command: command
               ) else {
-            try? writer.write(kind: "failed", error: "sparkle_wrong_signed_target")
+            try? writer.write(.failed, error: "sparkle_wrong_signed_target")
             reply(.dismiss)
             return
         }
@@ -284,11 +262,11 @@ private final class RemoteSparkleUserDriver: NSObject, SPUUserDriver {
     func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {}
     func showUpdateReleaseNotesFailedToDownloadWithError(_ error: Error) {}
     func showUpdateNotFoundWithError(_ error: Error, acknowledgement: @escaping () -> Void) {
-        try? writer.write(kind: "failed", error: "sparkle_target_not_found")
+        try? writer.write(.failed, error: "sparkle_target_not_found")
         acknowledgement()
     }
     func showUpdaterError(_ error: Error, acknowledgement: @escaping () -> Void) {
-        try? writer.write(kind: "failed", error: error.localizedDescription)
+        try? writer.write(.failed, error: error.localizedDescription)
         acknowledgement()
     }
     func showDownloadInitiated(cancellation: @escaping () -> Void) {}
@@ -310,16 +288,18 @@ private final class RemoteSparkleUserDriver: NSObject, SPUUserDriver {
     func dismissUpdateInstallation() {}
 }
 
+/// Sparkle may install only the exact release the device confirmed, and only
+/// when Sparkle verified its signature.
 enum RemoteSparkleAdmission {
     static func accepts(
         displayVersion: String,
         build: String,
         signatureValidated: Bool,
-        target: ReleaseTargetPayload
+        command: RemoteUpdateCommand
     ) -> Bool {
         signatureValidated
-            && displayVersion == target.version
-            && build == target.build
+            && displayVersion == command.targetVersion
+            && build == command.targetBuild
     }
 }
 
@@ -329,7 +309,7 @@ private enum RemoteUpdateError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .eventWriteFailed: "Cannot report remote update progress to the guardian."
+        case .eventWriteFailed: "Cannot report remote update progress to the runtime."
         case .wrongSignedTarget: "Sparkle selected a release different from the confirmed target."
         }
     }

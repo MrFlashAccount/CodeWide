@@ -234,10 +234,18 @@ pub fn admit_signed_release(
     {
         return Err(ReleaseAdmissionError::RollbackIncompatible);
     }
-    let fingerprint = hex::encode(Sha256::digest(
-        serde_json::to_vec(&target).map_err(|_| ReleaseAdmissionError::MalformedPayload)?,
-    ));
+    let fingerprint = target_fingerprint(&target)?;
     Ok((descriptor, target, fingerprint))
+}
+
+/// The identity a device confirms when it applies `target`.
+///
+/// # Errors
+/// Returns `MalformedPayload` when the target cannot be serialized.
+pub fn target_fingerprint(target: &ReleaseTargetV1) -> Result<String, ReleaseAdmissionError> {
+    Ok(hex::encode(Sha256::digest(
+        serde_json::to_vec(target).map_err(|_| ReleaseAdmissionError::MalformedPayload)?,
+    )))
 }
 
 /// Verifies the immutable trust and freshness of a signed release descriptor.

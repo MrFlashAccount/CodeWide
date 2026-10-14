@@ -11,6 +11,8 @@ default = []
 # Linux preparation plus the network-dark activation guardian: durable journal,
 # immutable generations, atomic activation, health proof and rollback.
 linux-guardian = ["dep:codewide-host-resolver", "dep:fs2", "dep:futures-util", "dep:libc", "dep:rand", "dep:reqwest", "dep:rustix", "dep:tokio", "dep:tracing", "dep:walkdir"]
+# The macOS runtime side of remote updates installed by Sparkle in the menu app.
+macos-sparkle = ["dep:rand", "dep:reqwest", "dep:tokio", "dep:tracing"]
 
 [dependencies]
 async-trait = "0.1.89"

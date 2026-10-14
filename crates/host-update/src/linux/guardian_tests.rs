@@ -445,3 +445,38 @@ async fn status_never_offers_a_cached_target_that_is_not_newer_than_current() {
         );
     }
 }
+
+#[tokio::test]
+async fn artifact_size_reads_the_head_content_length_header() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("HTTP fixture");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("request");
+        let mut request = [0_u8; 1024];
+        let mut request_bytes = 0;
+        while !request[..request_bytes]
+            .windows(4)
+            .any(|end| end == b"\r\n\r\n")
+        {
+            let received = stream
+                .read(&mut request[request_bytes..])
+                .await
+                .expect("read request");
+            assert_ne!(received, 0, "request ended before complete HTTP headers");
+            request_bytes += received;
+        }
+        assert!(request.starts_with(b"HEAD /artifact "));
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 52516144\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("headers");
+    });
+    let size = artifact_size(&format!("http://{address}/artifact"))
+        .await
+        .expect("advertised size");
+    server.await.expect("fixture completes");
+    assert_eq!(size, 52_516_144);
+}

@@ -254,7 +254,6 @@ jobs:
           apps/companion-macos/scripts/build-app.sh
           test "$(lipo -archs apps/companion-macos/.build/app/CodeWide.app/Contents/MacOS/CodeWide)" = arm64
           test "$(lipo -archs apps/companion-macos/.build/app/CodeWide.app/Contents/MacOS/CodeWideRuntime)" = arm64
-          test "$(lipo -archs apps/companion-macos/.build/app/CodeWide.app/Contents/Resources/UpdaterBootstrap/CodeWideUpdateGuardian)" = arm64
           apps/companion-macos/scripts/build-dmg.sh "$CODEWIDE_VERSION"
 
       - name: Save native compilation cache before update validation

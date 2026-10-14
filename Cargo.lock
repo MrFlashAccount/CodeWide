@@ -1092,11 +1092,8 @@ dependencies = [
 name = "companion-swift-ffi"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "base64 0.22.1",
+ "codewide-host-update",
  "companion-core",
- "p256",
- "rand 0.9.5",
  "semver",
  "serde",
  "serde_json",

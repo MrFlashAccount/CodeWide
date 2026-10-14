@@ -26,10 +26,8 @@ final class CodeWideApp: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installApplicationMenu()
-        do {
-            try GuardianBootstrapInstaller().installIfNeeded()
-        } catch {
-            logger.error("Update guardian bootstrap failed: \(error.localizedDescription, privacy: .private)")
+        if !LegacyUpdateGuardianRemoval().run() {
+            logger.notice("Legacy update guardian is still in a transaction; removal deferred")
         }
         let runtime = RuntimeConnection()
         let updates = UpdateController(runtime: runtime)
