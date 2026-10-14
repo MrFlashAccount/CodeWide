@@ -71,9 +71,9 @@ impl ActivityItem {
     }
 }
 
-/// A background task's report (Claude `codewideTaskNotification`) is a message
-/// to the agent, not work the agent did, so it never counts as activity.
-const TASK_NOTIFICATION_KIND: &str = "codewideTaskNotification";
+/// A background task's report is a message to the agent, not work the agent
+/// did, so it never counts as activity.
+const TASK_NOTIFICATION_KIND: &str = crate::wire_items::TASK_NOTIFICATION_ITEM_TYPE;
 
 /// Whether an item belongs to the lifecycle before the turn's user message.
 /// A turn without one (a background task woke the agent) has no such

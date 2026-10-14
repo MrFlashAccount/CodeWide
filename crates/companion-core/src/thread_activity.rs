@@ -205,7 +205,7 @@ fn reduce(state: &mut ThreadState, method: &str, params: &Map<String, Value>) {
             if item
                 .and_then(|item| item.get("type"))
                 .and_then(Value::as_str)
-                == Some("codewideTaskNotification")
+                == Some(companion_host::wire_items::TASK_NOTIFICATION_ITEM_TYPE)
             {
                 return;
             }

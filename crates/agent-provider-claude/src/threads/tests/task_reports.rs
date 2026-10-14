@@ -10,7 +10,10 @@ use agent_core::model::{
 };
 use serde_json::{Value, json};
 
-use super::{Harness, Options, THREAD, TestResult, create_thread, frames, harness, settle, start};
+use super::{
+    Harness, Options, TERMINAL, THREAD, TestResult, create_thread, frames, harness, settle, start,
+    stored_answer, stored_prompt, threads::turns_params, write_session,
+};
 
 fn task_started(fields: &Value) -> Value {
     let mut frame = json!({"type": "system", "subtype": "task_started"});
@@ -51,6 +54,7 @@ fn types(turn: &AgentTurn) -> Vec<&'static str> {
             AgentItem::Command { .. } => "command",
             AgentItem::Subagent { .. } => "subagent",
             AgentItem::TaskNotification { .. } => "taskNotification",
+            AgentItem::Compaction { .. } => "compaction",
             _ => "other",
         })
         .collect()
@@ -378,6 +382,58 @@ async fn reports_waiting_while_idle_follow_the_next_user_turns_prompt() -> TestR
     Ok(())
 }
 
+/// History stores a report that waited for `/compact` after the compact
+/// boundary; live delivers it there too, not before the compaction.
+#[tokio::test]
+async fn reports_waiting_for_a_compaction_follow_its_boundary() -> TestResult {
+    let harness = thread().await?;
+    start(&harness.service, THREAD, "First").await?;
+    let query = harness.runtime.query(0)?;
+    query.push(frames::init()).await;
+    query.push(frames::text("m1", "One.")).await;
+    query.push(frames::result()).await;
+    settle().await;
+    query
+        .push(task_notification(
+            &json!({"task_id": "btest", "tool_use_id": "toolu_old",
+            "summary": "Background command \"npm test\" completed (exit code 0)"}),
+        ))
+        .await;
+    settle().await;
+    harness.service.compact(&super::id(THREAD)?).await?;
+    settle().await;
+    query
+        .push(json!({"type": "system", "subtype": "status", "status": "compacting"}))
+        .await;
+    query
+        .push(json!({"type": "system", "subtype": "compact_boundary",
+            "uuid": "c0de0c0d-5e55-4c0a-9a7c-00000000b0d1"}))
+        .await;
+    query.push(frames::result()).await;
+    settle().await;
+
+    let turns = harness.completions();
+    assert_eq!(
+        turns.iter().map(types).collect::<Vec<_>>(),
+        [
+            vec!["userMessage", "agentMessage"],
+            vec!["compaction", "taskNotification"],
+        ]
+    );
+    assert_eq!(
+        reports(&turns[1]),
+        [(
+            TaskNotificationDelivery::MidTurn,
+            "command",
+            "npm test",
+            TaskNotificationStatus::Completed
+        )]
+    );
+    assert_eq!(event_violations(&harness.events()), Vec::<String>::new());
+    harness.close().await;
+    Ok(())
+}
+
 #[tokio::test]
 async fn reports_waiting_when_the_query_ends_are_dropped() -> TestResult {
     let harness = thread().await?;
@@ -406,6 +462,78 @@ async fn reports_waiting_when_the_query_ends_are_dropped() -> TestResult {
         [
             vec!["userMessage", "agentMessage"],
             vec!["userMessage", "agentMessage"],
+        ]
+    );
+    harness.close().await;
+    Ok(())
+}
+
+/// A terminal session whose first turn starts a background agent and whose
+/// second the agent's report woke, read as a `summary` page: the launch and
+/// the report stay beside the messages, other activity does not.
+#[tokio::test]
+async fn a_summary_history_page_keeps_agent_launches_and_task_reports() -> TestResult {
+    let harness = harness(Options::default())?;
+    let row = |uuid: &str, kind: &str, message: Value| {
+        json!({"type": kind, "uuid": uuid, "sessionId": TERMINAL,
+            "timestamp": "2026-10-01T10:00:02.000Z", "isSidechain": false, "message": message})
+    };
+    let mut wake = row(
+        "n-1",
+        "user",
+        json!({"role": "user", "content": "<task-notification>\n<task-id>a0000000000000001</task-id>\n<tool-use-id>toolu_agent</tool-use-id>\n<status>completed</status>\n<summary>Agent \"Review the diff\" finished</summary>\n<result>Two issues.</result>\n</task-notification>"}),
+    );
+    wake["origin"] = json!({"kind": "task-notification"});
+    write_session(
+        &harness.projects(),
+        "/repo",
+        TERMINAL,
+        &[
+            stored_prompt(
+                TERMINAL,
+                "/repo",
+                "p-1",
+                "Review the diff in the background.",
+            ),
+            row(
+                "a-1",
+                "assistant",
+                json!({"id": "msg_a-1", "role": "assistant", "content": [{"type": "tool_use",
+                    "id": "toolu_agent", "name": "Agent", "input": {"description": "Review the diff",
+                    "prompt": "Review it.", "run_in_background": true}}]}),
+            ),
+            row(
+                "r-1",
+                "user",
+                json!({"role": "user", "content": [{"type": "tool_result",
+                    "tool_use_id": "toolu_agent", "content": "Async agent launched successfully."}]}),
+            ),
+            row(
+                "a-2",
+                "assistant",
+                json!({"id": "msg_a-2", "role": "assistant", "content": [{"type": "tool_use",
+                    "id": "toolu_ls", "name": "Bash", "input": {"command": "ls"}}]}),
+            ),
+            row(
+                "r-2",
+                "user",
+                json!({"role": "user", "content": [{"type": "tool_result",
+                    "tool_use_id": "toolu_ls", "content": "src"}]}),
+            ),
+            stored_answer(TERMINAL, "a-3", "Started.", "claude-sonnet-4-6"),
+            wake,
+            stored_answer(TERMINAL, "a-4", "It found two issues.", "claude-sonnet-4-6"),
+        ],
+        1_760_000_200_000,
+    )?;
+    let mut params = turns_params(TERMINAL)?;
+    params.items_view = agent_core::model::ItemsView::Summary;
+    let (page, _) = harness.service.turns(params, false).await?;
+    assert_eq!(
+        page.turns.iter().map(types).collect::<Vec<_>>(),
+        [
+            vec!["userMessage", "subagent", "agentMessage"],
+            vec!["taskNotification", "agentMessage"],
         ]
     );
     harness.close().await;

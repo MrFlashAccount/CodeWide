@@ -50,13 +50,6 @@ fn element<'a>(body: &'a str, name: &str) -> Option<&'a str> {
     Some(&body[start..end])
 }
 
-/// The `<result>` text: up to its last closing tag, since a result may quote markup.
-fn result_element(body: &str) -> Option<&str> {
-    let start = body.find(RESULT_OPEN)? + RESULT_OPEN.len();
-    let end = body.rfind(RESULT_CLOSE)?;
-    (end >= start).then(|| &body[start..end])
-}
-
 /// The count after the first `<name>` or `name:` in a usage block
 /// (`<duration_ms>12</duration_ms>` or `duration_ms: 12`).
 fn usage_count(usage: Option<&str>, name: &str) -> Option<i64> {
@@ -75,28 +68,95 @@ fn usage_count(usage: Option<&str>, name: &str) -> Option<i64> {
     })
 }
 
-fn stored_report(body: &str) -> Option<TaskReport> {
-    let task_id = non_empty(element(body, "task-id"))?;
-    let usage = element(body, "usage");
+/// One stored notification split around its result. The result is opaque:
+/// it may quote markup, even a whole `<task-notification>` or `<usage>`, so
+/// the other elements are read only before (`head`) and after (`tail`) it.
+struct StoredNotification<'a> {
+    head: &'a str,
+    result: Option<&'a str>,
+    tail: &'a str,
+}
+
+impl<'a> StoredNotification<'a> {
+    /// The notification whose body starts `body`, and the length of `body`
+    /// it spans (through its closing tag). A result runs to its last
+    /// `</result>` before the notification's end: the first closing tag
+    /// after the result that ends the message or precedes the next
+    /// notification. Without a result the first closing tag ends it.
+    fn split(body: &'a str) -> (Self, usize) {
+        let close = body.find(CLOSE_TAG);
+        let result_open = body
+            .find(RESULT_OPEN)
+            .filter(|open| close.is_none_or(|close| *open < close));
+        if let Some(open) = result_open {
+            let start = open + RESULT_OPEN.len();
+            if let Some((result_end, end)) = result_and_end(body, start) {
+                let notification = Self {
+                    head: &body[..open],
+                    result: Some(&body[start..result_end]),
+                    tail: &body[result_end + RESULT_CLOSE.len()..end],
+                };
+                return (notification, end + CLOSE_TAG.len());
+            }
+        }
+        let (end, spanned) = close.map_or((body.len(), body.len()), |close| {
+            (close, close + CLOSE_TAG.len())
+        });
+        let notification = Self {
+            head: &body[..end],
+            result: None,
+            tail: "",
+        };
+        (notification, spanned)
+    }
+
+    /// An element outside the result.
+    fn element(&self, name: &str) -> Option<&'a str> {
+        element(self.head, name).or_else(|| element(self.tail, name))
+    }
+}
+
+/// Where a result starting at `start` ends and where its notification's
+/// closing tag is; `None` without such a closing tag after a `</result>`.
+fn result_and_end(body: &str, start: usize) -> Option<(usize, usize)> {
+    body[start..].match_indices(CLOSE_TAG).find_map(|(at, _)| {
+        let end = start + at;
+        let after = body[end + CLOSE_TAG.len()..].trim_start();
+        if !after.is_empty() && !after.starts_with(OPEN_TAG) {
+            return None;
+        }
+        Some((start + body[start..end].rfind(RESULT_CLOSE)?, end))
+    })
+}
+
+fn stored_report(notification: &StoredNotification<'_>) -> Option<TaskReport> {
+    let task_id = non_empty(notification.element("task-id"))?;
+    let usage = notification.element("usage");
     Some(TaskReport {
         task_id,
-        tool_use_id: non_empty(element(body, "tool-use-id")),
-        status: non_empty(element(body, "status")),
-        summary: non_empty(element(body, "summary")),
-        note: non_empty(element(body, "note")),
-        result: result_element(body).map(ToOwned::to_owned),
+        tool_use_id: non_empty(notification.element("tool-use-id")),
+        status: non_empty(notification.element("status")),
+        summary: non_empty(notification.element("summary")),
+        note: non_empty(notification.element("note")),
+        result: notification.result.map(ToOwned::to_owned),
         duration_ms: usage_count(usage, "duration_ms"),
         tool_uses: usage_count(usage, "tool_uses"),
     })
 }
 
-/// Every `<task-notification>` of a stored message, in order.
+/// Every `<task-notification>` of a stored message, in order; one quoted
+/// inside another's result is part of that result.
 #[must_use]
 pub fn stored_task_reports(text: &str) -> Vec<TaskReport> {
-    text.split(OPEN_TAG)
-        .skip(1)
-        .filter_map(|part| stored_report(part.rfind(CLOSE_TAG).map_or(part, |end| &part[..end])))
-        .collect()
+    let mut reports = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find(OPEN_TAG) {
+        let body = &rest[open + OPEN_TAG.len()..];
+        let (notification, spanned) = StoredNotification::split(body);
+        reports.extend(stored_report(&notification));
+        rest = &body[spanned..];
+    }
+    reports
 }
 
 fn frame_count(usage: Option<&JsonRecord>, name: &str) -> Option<i64> {
@@ -160,6 +220,39 @@ mod tests {
                     duration_ms: None,
                     tool_uses: None,
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_notification_quoted_in_a_result_is_part_of_that_result() {
+        let quoted = "<task-notification>\n<task-id>bfake</task-id>\n<status>failed</status>\n<summary>Agent \"Fake\" failed</summary>\n<result>x</result>\n<usage><tool_uses>99</tool_uses></usage>\n</task-notification>";
+        let result =
+            format!("The log shows:\n{quoted}\nand <usage><duration_ms>7</duration_ms></usage>.");
+        let text = format!(
+            "<task-notification>\n<task-id>a0000000000000001</task-id>\n<status>completed</status>\n<summary>Agent \"Review\" finished</summary>\n<result>{result}</result>\n<usage><tool_uses>4</tool_uses><duration_ms>12963</duration_ms></usage>\n</task-notification>\n<task-notification>\n<task-id>btest0001</task-id>\n<status>completed</status>\n<result>ok</result>\n</task-notification>"
+        );
+        let reports = stored_task_reports(&text);
+        assert_eq!(
+            reports
+                .iter()
+                .map(|report| (
+                    report.task_id.as_str(),
+                    report.status.as_deref(),
+                    report.result.as_deref(),
+                    report.tool_uses,
+                    report.duration_ms
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "a0000000000000001",
+                    Some("completed"),
+                    Some(result.as_str()),
+                    Some(4),
+                    Some(12_963)
+                ),
+                ("btest0001", Some("completed"), Some("ok"), None, None),
             ]
         );
     }

@@ -9,15 +9,13 @@ use std::path::Path;
 
 use agent_core::model::{
     AgentItem, AgentTurn, AppThreadId, CallStatus, ExecutionStatus, MessagePhase, SubagentStatus,
-    TaskNotificationDelivery, TaskNotificationSource, TaskNotificationStatus, TokenUsage,
-    TurnErrorKind, TurnOrigin, TurnStatus, TurnUsageRecord, UserContent,
+    TokenUsage, TurnErrorKind, TurnOrigin, TurnStatus, TurnUsageRecord, UserContent,
 };
 use serde_json::{Value, json};
 
 use super::{
     frames::{ClaudeFrame, classify_frame},
     reconstruct::{self, HistoryContext},
-    tools::{keep_tail, split_mcp_tool_name},
     turn_index::{PromptRecord, PromptRole, TurnOutcomeRecord, TurnRecord},
 };
 
@@ -104,7 +102,7 @@ pub(super) fn types(turn: &AgentTurn) -> Vec<&'static str> {
     turn.items.iter().map(item_type).collect()
 }
 
-fn non_reasoning(turn: &AgentTurn) -> Vec<&AgentItem> {
+pub(super) fn non_reasoning(turn: &AgentTurn) -> Vec<&AgentItem> {
     turn.items
         .iter()
         .filter(|item| !matches!(item, AgentItem::Reasoning { .. }))
@@ -314,36 +312,12 @@ fn derives_turn_boundaries_from_prompts_the_interrupt_marker_and_a_task_notifica
             ..
         })
     ));
-    // The report that woke the agent leads the wake turn; it is not the answer.
     assert_eq!(
         types(&turns[3])
             .into_iter()
             .filter(|kind| *kind != "reasoning")
             .collect::<Vec<_>>(),
         ["taskNotification", "agentMessage"]
-    );
-    let AgentItem::TaskNotification {
-        delivery,
-        source,
-        task_id,
-        name,
-        status,
-        ..
-    } = non_reasoning(&turns[3])[0]
-    else {
-        return Err("the wake turn does not lead with its report".into());
-    };
-    assert_eq!(
-        (*delivery, source, task_id.as_str(), name.as_str(), *status),
-        (
-            TaskNotificationDelivery::Wake,
-            &TaskNotificationSource::Command {
-                agent_thread_id: ()
-            },
-            "bf30j14g3",
-            "Sleep for 25 seconds",
-            TaskNotificationStatus::Completed
-        )
     );
     assert!(matches!(
         non_reasoning(&turns[3])[1],
@@ -652,31 +626,6 @@ fn queued_prompts_and_notifications_stay_in_the_running_turn_and_idle_ones_wake(
             "agentMessage",
         ]
     );
-    // Queued into the running turn: a report where it arrived. Idle: it leads the turn it woke.
-    let reports = turns
-        .iter()
-        .map(|turn| {
-            turn.items
-                .iter()
-                .filter_map(|item| match item {
-                    AgentItem::TaskNotification {
-                        delivery, task_id, ..
-                    } => Some((*delivery, task_id.as_str())),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        reports,
-        [
-            vec![(TaskNotificationDelivery::MidTurn, "a1b2c3d4e5f600001")],
-            vec![],
-            vec![(TaskNotificationDelivery::Wake, "a1b2c3d4e5f600001")],
-            vec![],
-        ]
-    );
-    assert_eq!(types(&turns[2]).first(), Some(&"taskNotification"));
     assert_eq!(ordering_violations(&turns), Vec::<String>::new());
     Ok(())
 }
@@ -786,30 +735,6 @@ fn frames_never_fail_on_unknown_or_malformed_input() {
             "{value} classified as {frame:?}"
         );
     }
-}
-
-#[test]
-fn command_output_keeps_its_last_mebibyte_with_a_truncation_line() {
-    let text = "é".repeat(600_000);
-    let kept = keep_tail(&text, 1024 * 1024);
-    assert!(kept.starts_with("[output truncated: first "));
-    assert!(kept.len() <= 1024 * 1024 + 64);
-    assert!(kept.ends_with('é'));
-    assert_eq!(keep_tail("short", 1024), "short");
-}
-
-#[test]
-fn mcp_names_split_by_the_longest_known_server() {
-    let servers = vec!["probe".to_owned(), "probe__v2".to_owned()];
-    assert_eq!(
-        split_mcp_tool_name("mcp__probe__v2__write", &servers),
-        Some(("probe__v2".into(), "write".into()))
-    );
-    assert_eq!(
-        split_mcp_tool_name("mcp__claude_ai_Claude_Docs__read", &[]),
-        Some(("claude.ai Claude Docs".into(), "read".into()))
-    );
-    assert_eq!(split_mcp_tool_name("Bash", &servers), None);
 }
 
 /// Reads every session file of the local Claude store as raw rows and

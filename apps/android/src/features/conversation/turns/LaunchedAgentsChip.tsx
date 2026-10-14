@@ -1,20 +1,16 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import { createElement, useContext } from "react";
-import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import type { LaunchedAgent } from "../../../rendering/launchedAgents";
 import { colors, iconSize } from "../../../theme";
 import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
 import { ContentMenu } from "../../../ui/ContentMenu";
+import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "./AgentChip.styles";
 import { SubagentNavigationContext } from "./turnContexts";
-
-const MENU_MAX_WIDTH = 400;
-const MENU_WIDTH_GUTTER = 24;
-const MENU_MAX_HEIGHT = 440;
-const MENU_HEIGHT_GUTTER = 96;
 
 /**
  * The subagents a finished turn started, as one chip in its bubble: the
@@ -28,9 +24,12 @@ export function LaunchedAgentsChip({
   readonly agents: readonly LaunchedAgent[];
 }): React.JSX.Element | null {
   const [open, setOpen] = useRecyclingState(false);
-  const { height, width } = useWindowDimensions();
+  const menu = useAnchoredMenuSize();
   const toggleOpen = useEvent(() => {
     setOpen((current) => !current);
+  });
+  const close = useEvent(() => {
+    setOpen(false);
   });
   if (agents.length === 0) {
     return null;
@@ -53,15 +52,9 @@ export function LaunchedAgentsChip({
         open={open}
         placement="bottom"
         trigger={trigger}
-        width={Math.max(1, Math.min(MENU_MAX_WIDTH, width - MENU_WIDTH_GUTTER))}
+        width={menu.width}
       >
-        <LaunchedAgentsList
-          agents={agents}
-          maxHeight={Math.max(1, Math.min(MENU_MAX_HEIGHT, height - MENU_HEIGHT_GUTTER))}
-          onNavigate={() => {
-            setOpen(false);
-          }}
-        />
+        <LaunchedAgentsList agents={agents} maxHeight={menu.maxHeight} onNavigate={close} />
       </ContentMenu>
     </View>
   );
@@ -141,7 +134,7 @@ function LaunchedAgentRow({
   });
   return (
     <Pressable
-      accessibilityLabel={`Open ${agent.name}`}
+      accessibilityLabel={navigates ? `Open ${agent.name}` : agent.name}
       accessibilityRole="button"
       disabled={!navigates}
       onPress={press}

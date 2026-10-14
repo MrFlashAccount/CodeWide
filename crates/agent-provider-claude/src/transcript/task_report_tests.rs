@@ -14,7 +14,10 @@ use serde_json::{Value, json};
 use super::{
     chain::active_branch,
     reconstruct::{TurnEnd, turn_ends},
-    tests::{context, item_type, ordering_violations, reconstruct_turns, records, types},
+    tests::{
+        context, item_type, messages, non_reasoning, ordering_violations, reconstruct_turns,
+        records, types,
+    },
     turn_index::{PromptRecord, PromptRole, TurnOutcomeRecord, TurnRecord},
 };
 
@@ -466,6 +469,123 @@ fn a_queued_report_attachment_is_a_mid_turn_report() {
         reports(&turns),
         [vec![(TaskNotificationDelivery::MidTurn, "btest0001")]]
     );
+}
+
+/// A report woke the agent and the user interrupted it before any message:
+/// live, that provider turn ran with the report leading it until the
+/// interrupt. History keeps it as an interrupted provider turn that ends at
+/// the marker, with the report, and a plain peer wake rebuilds the same turns.
+#[test]
+fn a_wake_interrupted_before_any_message_keeps_its_reports() {
+    let session = |kind: &str| {
+        let mut store = Store { seconds: 0 };
+        vec![
+            store.prompt("u1", "Start."),
+            store.text("a1", "Started."),
+            store.wake("n1", &test_report(), kind, false),
+            store.prompt("i1", "[Request interrupted by user]"),
+            store.prompt("u2", "Next."),
+            store.text("a2", "Done."),
+        ]
+    };
+    let turns = reconstruct_turns(&session("task-notification"), &[], &context());
+    assert_eq!(
+        identities(&turns),
+        [
+            (
+                TurnId::from_static("u1"),
+                TurnOrigin::User,
+                TurnStatus::Completed
+            ),
+            (
+                TurnId::from_static("i1"),
+                TurnOrigin::Provider,
+                TurnStatus::Interrupted
+            ),
+            (
+                TurnId::from_static("u2"),
+                TurnOrigin::User,
+                TurnStatus::Completed
+            ),
+        ]
+    );
+    assert_eq!(
+        reports(&turns),
+        [
+            vec![],
+            vec![(TaskNotificationDelivery::Wake, "btest0001")],
+            vec![],
+        ]
+    );
+    assert_eq!(types(&turns[1]), ["taskNotification"]);
+    assert_eq!(
+        ends(&session("task-notification"), &[])
+            .iter()
+            .map(|end| end.last_uuid.as_str())
+            .collect::<Vec<_>>(),
+        ["a1", "i1", "a2"]
+    );
+    let plain = reconstruct_turns(&session("peer"), &[], &context());
+    assert_eq!(identities(&plain), identities(&turns));
+    assert_eq!(ordering_violations(&turns), Vec::<String>::new());
+}
+
+/// Recorded sessions: the report that woke the agent leads the wake turn and
+/// is not its answer; a report queued into a running turn stays where it
+/// arrived, and the same task's later idle report leads the turn it woke.
+#[test]
+fn recorded_sessions_place_reports_where_claude_delivered_them() -> TestResult {
+    let turns = reconstruct_turns(
+        &messages("background_wake_steer_interrupt")?,
+        &[],
+        &context(),
+    );
+    let wake = non_reasoning(&turns[3]);
+    let AgentItem::TaskNotification {
+        delivery,
+        source,
+        task_id,
+        name,
+        status,
+        ..
+    } = wake[0]
+    else {
+        return Err("the wake turn does not lead with its report".into());
+    };
+    assert_eq!(
+        (*delivery, source, task_id.as_str(), name.as_str(), *status),
+        (
+            TaskNotificationDelivery::Wake,
+            &TaskNotificationSource::Command {
+                agent_thread_id: ()
+            },
+            "bf30j14g3",
+            "Sleep for 25 seconds",
+            TaskNotificationStatus::Completed
+        )
+    );
+    assert!(matches!(
+        wake[1],
+        AgentItem::AgentMessage { phase: MessagePhase::Final, text, .. } if text == "DONE"
+    ));
+
+    let turns = reconstruct_turns(
+        &messages("interactive_terminal_subagents")?,
+        &[],
+        &context(),
+    );
+    assert_eq!(
+        reports(&turns),
+        [
+            vec![(TaskNotificationDelivery::MidTurn, "a1b2c3d4e5f600001")],
+            vec![],
+            vec![(TaskNotificationDelivery::Wake, "a1b2c3d4e5f600001")],
+            vec![],
+        ]
+    );
+    assert_eq!(types(&turns[2]).first(), Some(&"taskNotification"));
+    assert_eq!(ordering_violations(&turns), Vec::<String>::new());
+    Ok(())
 }
 
 /// Local check against a real session file; nothing of it is kept:

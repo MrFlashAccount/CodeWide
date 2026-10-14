@@ -1,19 +1,15 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { createElement, useContext, useState } from "react";
-import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import type { RunningAgent } from "../../../rendering/runningAgents";
 import { colors, iconSize } from "../../../theme";
 import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
 import { ContentMenu } from "../../../ui/ContentMenu";
+import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
 import { AppText as Text } from "../../../ui/Typography";
 import { SubagentNavigationContext } from "../turns/turnContexts";
 import { styles } from "./RunningAgentsMenu.styles";
-
-const MENU_MAX_WIDTH = 400;
-const MENU_WIDTH_GUTTER = 24;
-const MENU_MAX_HEIGHT = 440;
-const MENU_HEIGHT_GUTTER = 96;
 
 /**
  * The subagents still working, as one chip above the composer next to the
@@ -26,9 +22,12 @@ export function RunningAgentsMenu({
   readonly agents: readonly RunningAgent[];
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  const { height, width } = useWindowDimensions();
+  const menu = useAnchoredMenuSize();
   const toggleOpen = useEvent(() => {
     setOpen((current) => !current);
+  });
+  const close = useEvent(() => {
+    setOpen(false);
   });
   const label =
     agents.length === 1 ? (agents[0]?.name ?? "Subagent") : `${String(agents.length)} agents`;
@@ -45,26 +44,20 @@ export function RunningAgentsMenu({
       open={open}
       placement="top"
       trigger={trigger}
-      width={Math.max(1, Math.min(MENU_MAX_WIDTH, width - MENU_WIDTH_GUTTER))}
+      width={menu.width}
     >
       <ScrollView
         contentContainerStyle={styles.list}
         nestedScrollEnabled
         showsVerticalScrollIndicator={false}
-        style={{ maxHeight: Math.max(1, Math.min(MENU_MAX_HEIGHT, height - MENU_HEIGHT_GUTTER)) }}
+        style={{ maxHeight: menu.maxHeight }}
         testID="running-agents-list"
       >
         <Text accessibilityRole="header" style={styles.listTitle}>
           Working now
         </Text>
         {agents.map((agent) => (
-          <RunningAgentRow
-            agent={agent}
-            key={agent.agentThreadId}
-            onNavigate={() => {
-              setOpen(false);
-            }}
-          />
+          <RunningAgentRow agent={agent} key={agent.agentThreadId} onNavigate={close} />
         ))}
       </ScrollView>
     </ContentMenu>
@@ -127,7 +120,7 @@ function RunningAgentRow({
   });
   return (
     <Pressable
-      accessibilityLabel={`Open ${agent.name}`}
+      accessibilityLabel={openThread === null ? agent.name : `Open ${agent.name}`}
       accessibilityRole="button"
       disabled={openThread === null}
       onPress={press}

@@ -1,13 +1,14 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRecyclingState } from "@legendapp/list/react-native";
-import { createElement, useContext } from "react";
-import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
+import { createElement, useContext, useState } from "react";
+import { Pressable, ScrollView, View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
 import { colors, iconSize } from "../../../theme";
 import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
 import { ContentMenu } from "../../../ui/ContentMenu";
+import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "./AgentChip.styles";
 import {
@@ -17,11 +18,6 @@ import {
   reportOutcome,
 } from "./taskNotificationPresentation";
 import { SubagentNavigationContext } from "./turnContexts";
-
-const MENU_MAX_WIDTH = 400;
-const MENU_WIDTH_GUTTER = 24;
-const MENU_MAX_HEIGHT = 440;
-const MENU_HEIGHT_GUTTER = 96;
 
 const BADGE_ICON = {
   done: "checkmark-circle",
@@ -48,9 +44,12 @@ export function TaskNotificationLine({
   readonly reports: readonly TaskNotificationReport[];
 }): React.JSX.Element | null {
   const [open, setOpen] = useRecyclingState(false);
-  const { height, width } = useWindowDimensions();
+  const menu = useAnchoredMenuSize();
   const toggleOpen = useEvent(() => {
     setOpen((current) => !current);
+  });
+  const close = useEvent(() => {
+    setOpen(false);
   });
   if (reports.length === 0) {
     return null;
@@ -70,15 +69,9 @@ export function TaskNotificationLine({
         open={open}
         placement="bottom"
         trigger={trigger}
-        width={Math.max(1, Math.min(MENU_MAX_WIDTH, width - MENU_WIDTH_GUTTER))}
+        width={menu.width}
       >
-        <ReportList
-          maxHeight={Math.max(1, Math.min(MENU_MAX_HEIGHT, height - MENU_HEIGHT_GUTTER))}
-          onNavigate={() => {
-            setOpen(false);
-          }}
-          reports={reports}
-        />
+        <ReportList maxHeight={menu.maxHeight} onNavigate={close} reports={reports} />
       </ContentMenu>
     </View>
   );
@@ -161,7 +154,8 @@ function ReportRow({
   readonly report: TaskNotificationReport;
 }): React.JSX.Element {
   const openThread = useContext(SubagentNavigationContext);
-  const [expanded, setExpanded] = useRecyclingState(false);
+  // The list renders in the anchored popover, outside any recycled list cell.
+  const [expanded, setExpanded] = useState(false);
   const outcome = reportOutcome(report);
   const agentThreadId = report.agentThreadId;
   const navigates = agentThreadId !== null && openThread !== null;
@@ -179,6 +173,7 @@ function ReportRow({
       <Pressable
         accessibilityLabel={`${reportName(report)}, ${details}`}
         accessibilityRole="button"
+        {...(navigates || report.result === null ? {} : { accessibilityState: { expanded } })}
         disabled={!navigates && report.result === null}
         onPress={press}
         style={({ pressed }) => [styles.row, pressed && styles.pressed]}

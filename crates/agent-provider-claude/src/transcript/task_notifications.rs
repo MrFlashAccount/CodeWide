@@ -14,6 +14,7 @@
 //!   previous session ended, `interim` when the note says the result may be
 //!   interim, else the reported status when it is a known one, else
 //!   `unknown`.
+//! - name: bounded like other labels ([`TASK_NAME_MAX_UNITS`]).
 //! - result: the report's text, trimmed and bounded (live frames carry none).
 //! - an agent's thread is the sub-agent child thread (`crate::subagents`).
 //!
@@ -29,6 +30,9 @@ use crate::subagents::child_thread_id;
 
 /// Result text kept on an item, in UTF-16 code units.
 pub const TASK_RESULT_MAX_UNITS: usize = 8000;
+/// A name is a label: at most this many UTF-16 code units, as a preview. A
+/// summary that names no agent or command is the name as a whole.
+pub const TASK_NAME_MAX_UNITS: usize = 200;
 
 const FALLBACK_NAME: &str = "Background task";
 const AGENT_PREFIX: &str = "Agent \"";
@@ -136,16 +140,20 @@ fn reported_status(report: &TaskReport) -> TaskNotificationStatus {
 #[must_use]
 pub fn bounded_result(text: Option<&str>) -> Option<String> {
     let trimmed = text.map(str::trim).filter(|text| !text.is_empty())?;
+    Some(utf16_prefix(trimmed, TASK_RESULT_MAX_UNITS).to_owned())
+}
+
+/// The longest prefix of `text` of at most `max_units` UTF-16 units that
+/// ends on a character boundary.
+fn utf16_prefix(text: &str, max_units: usize) -> &str {
     let mut units = 0;
-    let mut end = trimmed.len();
-    for (at, character) in trimmed.char_indices() {
+    for (at, character) in text.char_indices() {
         units += character.len_utf16();
-        if units > TASK_RESULT_MAX_UNITS {
-            end = at;
-            break;
+        if units > max_units {
+            return &text[..at];
         }
     }
-    Some(trimmed[..end].to_owned())
+    text
 }
 
 /// Where and as what a report is delivered.
@@ -176,7 +184,7 @@ pub fn task_notification_item(report: &TaskReport, delivered: Delivered<'_>) -> 
         delivery: delivered.delivery,
         source,
         task_id: report.task_id.clone(),
-        name: delivered.identity.name,
+        name: utf16_prefix(&delivered.identity.name, TASK_NAME_MAX_UNITS).to_owned(),
         status: reported_status(report),
         duration_ms: report.duration_ms,
         tool_uses: report.tool_uses,
@@ -302,6 +310,34 @@ mod tests {
             Some(TaskNotificationSource::Command {
                 agent_thread_id: ()
             })
+        );
+    }
+
+    #[test]
+    fn an_unrecognised_summary_names_the_report_within_the_label_bound() {
+        let app_thread_id = AppThreadId::from_static("0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e");
+        let long = report(&format!(
+            "Monitor {}",
+            "\u{1F600}".repeat(TASK_NAME_MAX_UNITS)
+        ));
+        let name = match task_notification_item(
+            &long,
+            Delivered {
+                app_thread_id: &app_thread_id,
+                delivery: TaskNotificationDelivery::Wake,
+                identity: reported_identity(&long),
+                item_id: ItemId::from_static("turn:notification:0"),
+            },
+        ) {
+            AgentItem::TaskNotification { name, .. } => name,
+            _ => String::new(),
+        };
+        assert_eq!(
+            name,
+            format!(
+                "Monitor {}",
+                "\u{1F600}".repeat((TASK_NAME_MAX_UNITS - 8) / 2)
+            )
         );
     }
 

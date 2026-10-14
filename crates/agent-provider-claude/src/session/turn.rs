@@ -17,7 +17,8 @@
 //!   runs, a `midTurn` item at once (a `wake` item while a provider turn has
 //!   nothing yet); while idle it waits and the next turn delivers it once,
 //!   as `wake` items leading a provider turn or `midTurn` items after a user
-//!   turn's prompt. A report never starts a turn: Claude's output does.
+//!   turn's prompt (after the boundary of a `/compact` turn). A report never
+//!   starts a turn: Claude's output does.
 //! - A lost session is replaced once per turn by a new session whose first
 //!   offer carries a bounded history prefix; a second loss fails the turn.
 //! - The turn index entry is written when a turn starts, on a steer and when
@@ -101,8 +102,10 @@ const INVALID_UUID: &str = "the session's uuid generator produced an invalid id"
 struct TurnStart {
     first_offer: Option<Vec<Value>>,
     origin: TurnOrigin,
-    /// How the turn delivers the task reports that arrived while idle.
-    waiting_reports: TaskNotificationDelivery,
+    /// How the turn delivers the task reports that arrived while idle when
+    /// it begins; `None`: they keep waiting (`/compact` delivers them after
+    /// its boundary, where the stored history has them).
+    waiting_reports: Option<TaskNotificationDelivery>,
     prompts: Vec<PromptRecord>,
     turn_id: TurnId,
     user_message: Option<(Option<ClientMessageId>, Vec<UserContent>)>,
@@ -184,7 +187,9 @@ impl Session {
         self.begin_turn(TurnStart {
             first_offer: Some(first_offer.clone()),
             origin,
-            waiting_reports: TaskNotificationDelivery::MidTurn,
+            waiting_reports: user_message
+                .is_some()
+                .then_some(TaskNotificationDelivery::MidTurn),
             prompts: vec![PromptRecord {
                 client_message_id: client_message_id.map(ClientMessageId::into_string),
                 role: PromptRole::First,
@@ -245,7 +250,9 @@ impl Session {
         }
         self.state.updated_at = seconds(now);
         self.record_active_turn(TurnOutcomeRecord::InProgress, None);
-        let waiting = self.task_reports.take_waiting();
+        let waiting = start
+            .waiting_reports
+            .map(|delivery| (delivery, self.task_reports.take_waiting()));
         let Some(active) = &mut self.active else {
             return;
         };
@@ -255,12 +262,14 @@ impl Session {
                 content,
             },
         ));
-        for delivered in waiting {
-            events.extend(active.builder.add_task_notification(
-                &delivered.report,
-                start.waiting_reports,
-                delivered.identity,
-            ));
+        if let Some((delivery, waiting)) = waiting {
+            for delivered in waiting {
+                events.extend(active.builder.add_task_notification(
+                    &delivered.report,
+                    delivery,
+                    delivered.identity,
+                ));
+            }
         }
         let snapshot = active.builder.snapshot();
         self.write_active_turn(Some(&snapshot));
@@ -522,7 +531,7 @@ impl Session {
         self.begin_turn(TurnStart {
             first_offer: None,
             origin: TurnOrigin::Provider,
-            waiting_reports: TaskNotificationDelivery::Wake,
+            waiting_reports: Some(TaskNotificationDelivery::Wake),
             prompts: Vec::new(),
             turn_id,
             user_message: None,
@@ -581,6 +590,16 @@ impl Session {
         }
         active.builder.set_now(now);
         events.extend(active.builder.on_frame(frame));
+        if matches!(frame, ClaudeFrame::CompactBoundary { .. }) {
+            // Reports that waited for a `/compact` turn follow its boundary.
+            for delivered in self.task_reports.take_waiting() {
+                events.extend(active.builder.add_task_notification(
+                    &delivered.report,
+                    TaskNotificationDelivery::MidTurn,
+                    delivered.identity,
+                ));
+            }
+        }
         self.emit_all(events).await;
     }
 

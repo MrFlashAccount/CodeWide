@@ -2,11 +2,7 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { connectionId, normalizeThreadItem } from "@codewide/domain";
 import { toRenderBlock, type RenderBlock } from "@codewide/renderers";
-import {
-  projectedActivityMetrics,
-  projectedQuestionHistory,
-  projectedTurnMetadata,
-} from "@codewide/sync-client";
+import { projectedQuestionHistory, projectedTurnMetadata } from "@codewide/sync-client";
 import { turnLaunchedAgents } from "../../../rendering/launchedAgents";
 import { turnTaskNotifications } from "../../../rendering/taskNotifications";
 import { selectTurnRenderWindow } from "../../../rendering/thread-render-window";
@@ -431,14 +427,15 @@ function prepareTurnPresentation(turn: TurnRow) {
     rawTurn.status !== "inProgress" &&
     hasCompletedTurnHistory(rawTurn, renderWindow.collapsedActivityIndexes);
   // A background task woke the agent and it produced nothing: no answer, no
-  // activity, no artifacts. Unloaded content without Companion activity
-  // totals is unknown, not empty.
+  // activity, no artifacts. Unloaded content is empty only when a wake report
+  // proves a Companion that counts a wake's work: older ones counted none.
+  const taskNotifications = turnTaskNotifications(rawTurn);
   const isEmptyWake =
     rawTurn.status === "completed" &&
     renderWindow.userItemIndexes.length === 0 &&
     showEmptyResponsePlaceholder &&
     !hasCompletedHistory &&
-    (rawTurn.itemsView === "full" || projectedActivityMetrics(rawTurn) !== null);
+    (rawTurn.itemsView === "full" || taskNotifications.wake.length > 0);
   const hasDisclosedBubbleActivity =
     preTurnBlocks.some(preTurnBlockUsesDisclosure) ||
     hasCompletedHistory ||
@@ -490,7 +487,7 @@ function prepareTurnPresentation(turn: TurnRow) {
     preTurnBlocks,
     rawTurn,
     showEmptyResponsePlaceholder,
-    taskNotifications: turnTaskNotifications(rawTurn),
+    taskNotifications,
     userBlocks,
     visibleLiveActivitySequence,
   };

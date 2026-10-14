@@ -6,7 +6,8 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     bottom: spacing.sm,
     flexDirection: "row",
-    flexWrap: "wrap",
+    // The bottom inset reserves one row; chips shrink instead of wrapping over content.
+    flexWrap: "nowrap",
     gap: spacing.xs,
     justifyContent: "center",
     left: 0,

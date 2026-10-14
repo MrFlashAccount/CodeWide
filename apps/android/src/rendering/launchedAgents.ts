@@ -20,6 +20,11 @@ export type LaunchedAgent = {
   readonly name: string;
 };
 
+/** Whether a turn item launches subagents (a `spawnAgent` call). */
+export function isAgentLaunchItem(item: Turn["items"][number]): boolean {
+  return item.type === "collabAgentToolCall" && item.tool === "spawnAgent";
+}
+
 /** The subagents a turn started, in launch order, from its `spawnAgent` calls. */
 export function turnLaunchedAgents(turn: Turn): readonly LaunchedAgent[] {
   const cached = cache.get(turn.items);

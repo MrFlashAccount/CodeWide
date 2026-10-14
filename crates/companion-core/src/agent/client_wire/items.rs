@@ -2,7 +2,8 @@
 //! shapes). Pure functions; the only place these shapes are produced for a
 //! non-native provider.
 
-use agent_core::usage::TurnUsageProjection;
+use agent_core::{model::turns::in_summary_view, usage::TurnUsageProjection};
+use companion_host::wire_items::TASK_NOTIFICATION_ITEM_TYPE;
 use serde_json::{Value, json};
 
 use super::WireProvider;
@@ -99,10 +100,8 @@ const fn items_view(view: ItemsView) -> &'static str {
     }
 }
 
-/// Projects one turn with the requested items view. `summary` keeps the
-/// user messages and the final answer, which is what delivery reconciliation
-/// and the thread preview read, and the background task reports, which are
-/// shown outside the turn's collapsed body.
+/// Projects one turn with the requested items view; `summary` keeps the
+/// items the neutral summary rule keeps ([`in_summary_view`]).
 #[must_use]
 pub fn turn(turn: &AgentTurn, view: ItemsView) -> Value {
     let items = match view {
@@ -110,17 +109,7 @@ pub fn turn(turn: &AgentTurn, view: ItemsView) -> Value {
         ItemsView::Summary => turn
             .items
             .iter()
-            .filter(|item| {
-                matches!(
-                    item,
-                    AgentItem::UserMessage { .. }
-                        | AgentItem::TaskNotification { .. }
-                        | AgentItem::AgentMessage {
-                            phase: MessagePhase::Final,
-                            ..
-                        }
-                )
-            })
+            .filter(|item| in_summary_view(item))
             .map(item)
             .collect(),
         ItemsView::Full => turn.items.iter().map(item).collect(),
@@ -454,7 +443,7 @@ pub fn item(item: &AgentItem) -> Value {
             result,
             ..
         } => json!({
-            "type": "codewideTaskNotification",
+            "type": TASK_NOTIFICATION_ITEM_TYPE,
             "id": item_id.as_str(),
             "delivery": task_notification_delivery(*delivery),
             "kind": source.kind(),
@@ -737,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn the_summary_view_keeps_task_reports_with_the_messages() {
+    fn the_summary_view_keeps_task_reports_and_agent_launches_with_the_messages() {
         let mut finished = finished_turn(None);
         finished.items = vec![
             report(
@@ -747,13 +736,24 @@ mod tests {
                 },
                 TaskNotificationStatus::Completed,
             ),
-            subagent(SubagentStatus::Completed, None),
+            AgentItem::Plan {
+                item_id: crate::agent::model::ItemId::from_static("plan"),
+                provenance: None,
+                text: "Check".into(),
+            },
+            subagent(SubagentStatus::Running, None),
         ];
         let projected = turn(&finished, ItemsView::Summary);
         let types: Vec<_> = projected["items"]
             .as_array()
             .map(|items| items.iter().map(|item| item["type"].clone()).collect())
             .unwrap_or_default();
-        assert_eq!(types, vec![json!("codewideTaskNotification")]);
+        assert_eq!(
+            types,
+            vec![
+                json!("codewideTaskNotification"),
+                json!("collabAgentToolCall")
+            ]
+        );
     }
 }

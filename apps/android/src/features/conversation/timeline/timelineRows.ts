@@ -109,7 +109,9 @@ function joinPendingLine(
     return row;
   }
   if (isReportLead(row)) {
-    return { ...row, notifications: [...pending.notifications, ...row.notifications] };
+    // The line keeps its first wake's row: its key, date and place stay put
+    // while later wakes join it.
+    return { ...pending, notifications: [...pending.notifications, ...row.notifications] };
   }
   merged.push(pending);
   return row;

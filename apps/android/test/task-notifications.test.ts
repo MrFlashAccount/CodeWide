@@ -4,6 +4,7 @@ import { projectTimelineRows } from "../src/features/conversation/timeline/timel
 import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
 import { reportLineSummary } from "../src/features/conversation/turns/taskNotificationPresentation";
 import { projectTurnPresentation } from "../src/features/conversation/turns/turnProjection";
+import { compactCompletedTurnForStorage } from "../src/data/thread-detail-projection";
 import { turnLaunchedAgents } from "../src/rendering/launchedAgents";
 import { selectRunningAgents } from "../src/rendering/runningAgents";
 import { turnTaskNotifications } from "../src/rendering/taskNotifications";
@@ -246,5 +247,59 @@ describe("launched agents", () => {
       ["code reviewer", "t2"],
       ["Check the build", null],
     ]);
+  });
+});
+
+describe("wake lines and stored turns", () => {
+  it("keeps the first wake's row when later wakes join its line", () => {
+    const first = turn("first", [report("a")]);
+    const alone = projectTimelineRows([first], options);
+    const joined = projectTimelineRows([first, turn("second", [report("b")])], options);
+
+    expect(joined).toHaveLength(1);
+    expect(joined[0]?.key).toBe(alone[0]?.key);
+    expect(joined[0]?.item).toBe(first);
+  });
+
+  it("keeps a wake line apart from the person's turn that follows it", () => {
+    const rows = projectTimelineRows(
+      [turn("wake", [report("a")]), turn("person", [prompt("person"), answer("person")])],
+      options,
+    );
+
+    expect(rows.map((row) => [row.kind, row.item.id])).toEqual([
+      ["turnLead", "wake"],
+      ["turnLead", "person"],
+      ["turnSlice", "person"],
+    ]);
+  });
+
+  it("does not hide a summarised wake from a Companion that sent no reports", () => {
+    const unknown: TurnItem = {
+      ...turn("old", []),
+      turn: { ...turn("old", []).turn, itemsView: "summary" },
+    };
+
+    expect(projectTimelineRows([unknown], options).length).toBeGreaterThan(0);
+  });
+
+  it("keeps reports and subagent launches when a finished turn is stored compactly", () => {
+    const launch = {
+      agentsStates: {},
+      codewideDescription: "Map sources",
+      id: "launch",
+      receiverThreadIds: ["t1"],
+      tool: "spawnAgent",
+      type: "collabAgentToolCall",
+    };
+    const command = { command: "ls", id: "command", status: "completed", type: "commandExecution" };
+    const stored = compactCompletedTurnForStorage(
+      turn("wake", [report("a"), launch, command, answer("wake")]).turn,
+    );
+
+    expect(stored.itemsView).toBe("summary");
+    expect(turnTaskNotifications(stored).wake.map((entry) => entry.id)).toEqual(["a"]);
+    expect(turnLaunchedAgents(stored).map((agent) => agent.name)).toEqual(["Map sources"]);
+    expect(stored.items.some((item) => item.id === "command")).toBe(false);
   });
 });

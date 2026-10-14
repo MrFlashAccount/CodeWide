@@ -66,7 +66,7 @@ export function reportDetails(report: TaskNotificationReport): string {
     parts.push(formatDuration(report.durationMs));
   }
   if (report.toolUses !== null) {
-    parts.push(`${String(report.toolUses)} actions`);
+    parts.push(`${String(report.toolUses)} ${report.toolUses === 1 ? "action" : "actions"}`);
   }
   return parts.join(" · ");
 }

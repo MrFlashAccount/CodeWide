@@ -8,7 +8,9 @@
 //! - a wake message starts a provider turn, unless Claude queued it while a
 //!   turn ran (a notification delivered into the running turn); consecutive
 //!   wakes before the turn's first message start one turn;
-//! - an interrupt marker ends the current turn as interrupted;
+//! - an interrupt marker ends the current turn as interrupted; a turn that
+//!   only wakes opened ends at the marker (its id and fork end), so a wake
+//!   interrupted before any message stays a turn;
 //! - an agent frame or a compaction with no open turn starts a provider turn
 //!   (for example, a background task finishing after the turn ended).
 //!
@@ -150,6 +152,21 @@ impl Segmenter<'_> {
             }));
     }
 
+    /// An interrupt marker ends the open turn as interrupted. A turn woken
+    /// but interrupted before any message of its own ends at the marker,
+    /// which becomes its only entry: live, that turn ran (its wake reports
+    /// lead it) until the interrupt, so history keeps it, with its reports,
+    /// as an interrupted provider turn instead of dropping it.
+    fn interrupt(&mut self, marker: HistoryEntry) {
+        if let Some(index) = self.open.take() {
+            let segment = &mut self.segments[index];
+            segment.interrupted = true;
+            if segment.entries.is_empty() {
+                segment.entries.push(marker);
+            }
+        }
+    }
+
     fn add(&mut self, entry: HistoryEntry) {
         let uuid = entry.uuid().to_owned();
         if let Some(indexed_start) = self.hints.starts.get(&uuid).copied() {
@@ -173,11 +190,7 @@ impl Segmenter<'_> {
             HistoryEntry::Wake {
                 queued, reports, ..
             } => self.wake(queued, reports),
-            HistoryEntry::Interrupt { .. } => {
-                if let Some(index) = self.open.take() {
-                    self.segments[index].interrupted = true;
-                }
-            }
+            HistoryEntry::Interrupt { .. } => self.interrupt(entry),
             HistoryEntry::Compaction { .. } | HistoryEntry::Frame { .. } => {
                 self.append(entry, TurnOrigin::Provider);
             }
