@@ -1,8 +1,8 @@
 //! The Claude session index: tables the Claude adapter derives from Claude's
 //! native session store inside the companion's host index database.
 //!
-//! Every row is a neutral read the Claude host returned for one session
-//! (`session.read`). The tables are disposable: [`CLAUDE_INDEX_SCHEMA`]
+//! Every row is a neutral read of one session from Claude's files
+//! (`native::LocalSessions`). The tables are disposable: [`CLAUDE_INDEX_SCHEMA`]
 //! drops them when the companion schema asks for a rebuild or when
 //! [`CLAUDE_INDEX_LOGIC_VERSION`] changes, and the indexer reads every
 //! session again. Thread metadata stays companion state, published through
@@ -45,7 +45,9 @@ const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// without its own `cwd` (republishes threads the earlier guard skipped).
 /// 5: a compacted session's whole history (the host read only the part after
 /// the last compaction, so compacted threads lost their earlier turns).
-pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 5;
+/// 6: sessions read from Claude's files by the companion (`native`), not
+/// through the Claude host.
+pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 6;
 
 /// The Claude tables' schema in the host index.
 pub const CLAUDE_INDEX_SCHEMA: ClaudeIndexSchema = ClaudeIndexSchema;

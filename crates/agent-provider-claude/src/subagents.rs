@@ -1,8 +1,8 @@
 //! Sub-agent child threads of indexed Claude sessions.
 //!
-//! The Claude host names the read-only thread of a sub-agent's transcript
+//! The transcript layer names the read-only thread of a sub-agent's transcript
 //! `<app thread id>:agent:<agent id>` on the spawning `subagent` item
-//! (`host/src/mapping/subagents.ts`); this module owns the Rust side of that
+//! (`transcript/agents.rs`); this module owns the Rust side of that
 //! id format, the facts the index keeps per sub-agent, and the neutral
 //! thread and companion thread-index row of a child thread. A child thread is
 //! never listed in `thread.list`; it is reached through its parent's

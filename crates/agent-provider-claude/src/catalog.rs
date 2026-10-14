@@ -35,6 +35,20 @@ pub struct ListRow {
     pub thread: AgentThread,
 }
 
+impl ListRow {
+    /// A row of `thread`: `search_text` is what a search term is matched
+    /// against (name, else first prompt); a `shell` has no user message yet
+    /// and is listed only among archived threads.
+    #[must_use]
+    pub fn new(thread: AgentThread, search_text: String, shell: bool) -> Self {
+        Self {
+            search_text,
+            shell,
+            thread,
+        }
+    }
+}
+
 /// Groups indexed sessions by thread, oldest session first.
 #[must_use]
 pub fn threads(sessions: &[StoredSession]) -> Vec<IndexedThread<'_>> {
@@ -196,7 +210,7 @@ fn name(thread: &IndexedThread<'_>, codewide: Option<&NativeSessionCodewide>) ->
 }
 
 /// Settings of a thread `CodeWide` has never configured.
-fn discovered_settings() -> ThreadSettings {
+pub(crate) fn discovered_settings() -> ThreadSettings {
     ThreadSettings {
         model: "default".into(),
         effort: None,

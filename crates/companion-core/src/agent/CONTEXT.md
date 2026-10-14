@@ -16,7 +16,7 @@ companion-host         → (redb, no agent crate)
 agent-search           → (SQLite, no agent crate)
 agent-resources        → agent-core, companion-host
 agent-provider-codex   → agent-core, agent-transport, companion-host, agent-search, agent-resources
-agent-provider-claude  → agent-core, agent-transport, companion-host, agent-search, agent-resources
+agent-provider-claude  → agent-core, companion-host, agent-search, agent-resources
 companion-core         → all of the above
 ```
 
@@ -26,7 +26,7 @@ companion-core         → all of the above
 - [`crates/agent-search`](../../../agent-search/CONTEXT.md) — the stored-message search index format and reads shared by the adapters.
 - [`crates/agent-resources`](../../../agent-resources/CONTEXT.md) — the thread resource model, projection and reads shared by the adapters.
 - [`crates/agent-provider-codex`](../../../agent-provider-codex/CONTEXT.md) — the Codex adapter and the Codex-owned storage.
-- [`crates/agent-provider-claude`](../../../agent-provider-claude/CONTEXT.md) — the Claude adapter (Rust) and its index of Claude's session store; its TypeScript host lives in `crates/agent-provider-claude/host/`.
+- [`crates/agent-provider-claude`](../../../agent-provider-claude/CONTEXT.md) — the Claude adapter (Rust): drives the user's `claude` CLI over stream-json and reads and writes Claude's session store; it keeps an index of that store.
 
 No adapter crate depends on `companion-core`; `companion-core` depends on both adapter crates only to wire them in.
 

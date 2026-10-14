@@ -8,6 +8,7 @@ description = "Codex agent provider adapter and Codex-owned storage for CodeWide
 
 [dependencies]
 agent-core = { path = "../agent-core" }
+agent-index = { path = "../agent-index" }
 agent-resources = { path = "../agent-resources" }
 agent-search = { path = "../agent-search" }
 agent-transport = { path = "../agent-transport" }

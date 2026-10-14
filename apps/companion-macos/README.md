@@ -38,10 +38,9 @@ Shared Companion behavior and durable domain state belong in
 - `scripts`: binding generation, bundle construction, DMG creation, boundary
   validation, and update E2E.
 
-`build-app.sh` also builds the Claude agent host with Bun into
-`Contents/Resources/claude-agent-host`. The runtime finds it there and runs
-Claude without any setup when a signed-in `claude` is found; the Claude Agent
-SDK is downloaded from npm on the first start (it is not redistributed).
+The runtime runs Claude without any setup when a signed-in `claude` is found:
+the companion drives the user's `claude` CLI directly, so the app bundle
+carries nothing for Claude.
 Runtime logs are in
 `~/Library/Logs/CodeWide/companion.log`.
 
