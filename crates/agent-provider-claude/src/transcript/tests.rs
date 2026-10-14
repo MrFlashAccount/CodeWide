@@ -16,16 +16,15 @@ use serde_json::{Value, json};
 use super::{
     frames::{ClaudeFrame, classify_frame},
     reconstruct::{self, HistoryContext},
-    tools::{keep_tail, split_mcp_tool_name},
     turn_index::{PromptRecord, PromptRole, TurnOutcomeRecord, TurnRecord},
 };
 
 /// The stored messages of a fixture, as the reconstruction reads them.
-fn records(messages: &[Value]) -> Vec<&super::json::JsonRecord> {
+pub(super) fn records(messages: &[Value]) -> Vec<&super::json::JsonRecord> {
     messages.iter().filter_map(Value::as_object).collect()
 }
 
-fn reconstruct_turns(
+pub(super) fn reconstruct_turns(
     messages: &[Value],
     index: &[TurnRecord],
     context: &HistoryContext,
@@ -48,7 +47,7 @@ fn fixture(name: &str) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(serde_json::from_slice(&std::fs::read(path)?)?)
 }
 
-fn messages(name: &str) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+pub(super) fn messages(name: &str) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
     fixture(name)?
         .get("messages")
         .and_then(Value::as_array)
@@ -73,14 +72,14 @@ fn prompt_uuid(messages: &[Value], needle: &str) -> Result<String, Box<dyn std::
         .ok_or_else(|| format!("no prompt containing {needle}").into())
 }
 
-fn context() -> HistoryContext {
+pub(super) fn context() -> HistoryContext {
     HistoryContext {
         app_thread_id: AppThreadId::from_static("0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"),
         cwd: "/workspace".into(),
     }
 }
 
-fn item_type(item: &AgentItem) -> &'static str {
+pub(super) fn item_type(item: &AgentItem) -> &'static str {
     match item {
         AgentItem::UserMessage { .. } => "userMessage",
         AgentItem::AgentMessage { .. } => "agentMessage",
@@ -94,15 +93,16 @@ fn item_type(item: &AgentItem) -> &'static str {
         AgentItem::Plan { .. } => "plan",
         AgentItem::Compaction { .. } => "compaction",
         AgentItem::Subagent { .. } => "subagent",
+        AgentItem::TaskNotification { .. } => "taskNotification",
         AgentItem::CapabilityItem { .. } => "capabilityItem",
     }
 }
 
-fn types(turn: &AgentTurn) -> Vec<&'static str> {
+pub(super) fn types(turn: &AgentTurn) -> Vec<&'static str> {
     turn.items.iter().map(item_type).collect()
 }
 
-fn non_reasoning(turn: &AgentTurn) -> Vec<&AgentItem> {
+pub(super) fn non_reasoning(turn: &AgentTurn) -> Vec<&AgentItem> {
     turn.items
         .iter()
         .filter(|item| !matches!(item, AgentItem::Reasoning { .. }))
@@ -133,7 +133,7 @@ fn user_texts(turns: &[AgentTurn]) -> Vec<String> {
 }
 
 /// Neutral ordering rules that hold for every rebuilt turn.
-fn ordering_violations(turns: &[AgentTurn]) -> Vec<String> {
+pub(super) fn ordering_violations(turns: &[AgentTurn]) -> Vec<String> {
     let mut violations = Vec::new();
     for turn in turns {
         if turn.origin == TurnOrigin::User
@@ -317,10 +317,10 @@ fn derives_turn_boundaries_from_prompts_the_interrupt_marker_and_a_task_notifica
             .into_iter()
             .filter(|kind| *kind != "reasoning")
             .collect::<Vec<_>>(),
-        ["agentMessage"]
+        ["taskNotification", "agentMessage"]
     );
     assert!(matches!(
-        non_reasoning(&turns[3])[0],
+        non_reasoning(&turns[3])[1],
         AgentItem::AgentMessage { phase: MessagePhase::Final, text, .. } if text == "DONE"
     ));
     assert_eq!(ordering_violations(&turns), Vec::<String>::new());
@@ -622,6 +622,7 @@ fn queued_prompts_and_notifications_stay_in_the_running_turn_and_idle_ones_wake(
             "agentMessage",
             "userMessage",
             "subagent",
+            "taskNotification",
             "agentMessage",
         ]
     );
@@ -734,30 +735,6 @@ fn frames_never_fail_on_unknown_or_malformed_input() {
             "{value} classified as {frame:?}"
         );
     }
-}
-
-#[test]
-fn command_output_keeps_its_last_mebibyte_with_a_truncation_line() {
-    let text = "é".repeat(600_000);
-    let kept = keep_tail(&text, 1024 * 1024);
-    assert!(kept.starts_with("[output truncated: first "));
-    assert!(kept.len() <= 1024 * 1024 + 64);
-    assert!(kept.ends_with('é'));
-    assert_eq!(keep_tail("short", 1024), "short");
-}
-
-#[test]
-fn mcp_names_split_by_the_longest_known_server() {
-    let servers = vec!["probe".to_owned(), "probe__v2".to_owned()];
-    assert_eq!(
-        split_mcp_tool_name("mcp__probe__v2__write", &servers),
-        Some(("probe__v2".into(), "write".into()))
-    );
-    assert_eq!(
-        split_mcp_tool_name("mcp__claude_ai_Claude_Docs__read", &[]),
-        Some(("claude.ai Claude Docs".into(), "read".into()))
-    );
-    assert_eq!(split_mcp_tool_name("Bash", &servers), None);
 }
 
 /// Reads every session file of the local Claude store as raw rows and

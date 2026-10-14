@@ -268,6 +268,7 @@ async fn ask_permission(
             .as_array()
             .cloned()
             .unwrap_or_default(),
+        agent_id: options["agentID"].as_str().map(ToOwned::to_owned),
     };
     let answered = script.answered.notified();
     tokio::pin!(answered);

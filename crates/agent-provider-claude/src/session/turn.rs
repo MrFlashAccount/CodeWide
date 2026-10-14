@@ -12,14 +12,21 @@
 //!   Open requests are resolved before `turn.completed`.
 //! - A provider-started turn (background task wake) is a separate turn with
 //!   origin `provider` and no user message.
+//! - A background task report delivered to this conversation
+//!   (`task_reports.rs`) becomes a `taskNotification` item: while a turn
+//!   runs, a `midTurn` item at once (a `wake` item while a provider turn has
+//!   nothing yet); while idle it waits and the next turn delivers it once,
+//!   as `wake` items leading a provider turn or `midTurn` items after a user
+//!   turn's prompt (after the boundary of a `/compact` turn). A report never
+//!   starts a turn: Claude's output does.
 //! - A lost session is replaced once per turn by a new session whose first
 //!   offer carries a bounded history prefix; a second loss fails the turn.
 //! - The turn index entry is written when a turn starts, on a steer and when
 //!   it ends; the in-flight snapshot whenever an item starts or completes.
 
 use agent_core::model::{
-    ClientMessageId, RequestResolution, TokenUsage, TurnError, TurnErrorKind, TurnId, TurnOrigin,
-    TurnStartResult, TurnUsageRecord, UserContent,
+    ClientMessageId, RequestResolution, TaskNotificationDelivery, TokenUsage, TurnError,
+    TurnErrorKind, TurnId, TurnOrigin, TurnStartResult, TurnUsageRecord, UserContent,
 };
 use serde_json::{Value, json};
 use tokio::time::Instant;
@@ -44,6 +51,7 @@ use crate::{
         builder::{LiveUsage, TurnBuilder, TurnBuilderContext, UserMessage},
         frames::{ClaudeFrame, ResultFrame, StreamEvent, classify_frame},
         result::{TurnOutcome, is_interruption, is_lost_session, turn_outcome},
+        task_reports::TaskReport,
     },
 };
 
@@ -94,6 +102,10 @@ const INVALID_UUID: &str = "the session's uuid generator produced an invalid id"
 struct TurnStart {
     first_offer: Option<Vec<Value>>,
     origin: TurnOrigin,
+    /// How the turn delivers the task reports that arrived while idle when
+    /// it begins; `None`: they keep waiting (`/compact` delivers them after
+    /// its boundary, where the stored history has them).
+    waiting_reports: Option<TaskNotificationDelivery>,
     prompts: Vec<PromptRecord>,
     turn_id: TurnId,
     user_message: Option<(Option<ClientMessageId>, Vec<UserContent>)>,
@@ -175,6 +187,9 @@ impl Session {
         self.begin_turn(TurnStart {
             first_offer: Some(first_offer.clone()),
             origin,
+            waiting_reports: user_message
+                .is_some()
+                .then_some(TaskNotificationDelivery::MidTurn),
             prompts: vec![PromptRecord {
                 client_message_id: client_message_id.map(ClientMessageId::into_string),
                 role: PromptRole::First,
@@ -235,15 +250,27 @@ impl Session {
         }
         self.state.updated_at = seconds(now);
         self.record_active_turn(TurnOutcomeRecord::InProgress, None);
+        let waiting = start
+            .waiting_reports
+            .map(|delivery| (delivery, self.task_reports.take_waiting()));
         let Some(active) = &mut self.active else {
             return;
         };
-        let events = active.builder.begin(start.user_message.as_ref().map(
+        let mut events = active.builder.begin(start.user_message.as_ref().map(
             |(client_message_id, content)| UserMessage {
                 client_message_id: client_message_id.clone(),
                 content,
             },
         ));
+        if let Some((delivery, waiting)) = waiting {
+            for delivered in waiting {
+                events.extend(active.builder.add_task_notification(
+                    &delivered.report,
+                    delivery,
+                    delivered.identity,
+                ));
+            }
+        }
         let snapshot = active.builder.snapshot();
         self.write_active_turn(Some(&snapshot));
         self.publish_status();
@@ -403,13 +430,15 @@ impl Session {
                 self.result_seen();
             }
             // Sub-agent progress updates the active turn's item; it never wakes a turn.
-            ClaudeFrame::Task(_) => {
+            ClaudeFrame::TaskStarted(started) => {
+                self.task_reports.started(started);
                 let events = match &mut self.active {
                     Some(active) => active.builder.on_frame(&frame),
                     None => Vec::new(),
                 };
                 self.emit_all(events).await;
             }
+            ClaudeFrame::TaskNotification(report) => self.on_task_report(&frame, report).await,
             ClaudeFrame::Other { .. } => {}
             ClaudeFrame::Assistant(_)
             | ClaudeFrame::CompactBoundary { .. }
@@ -417,6 +446,40 @@ impl Session {
             | ClaudeFrame::Stream { .. }
             | ClaudeFrame::User(_) => self.on_content(&frame).await,
         }
+    }
+
+    /// A task report: the active turn's sub-agent item takes its status, and
+    /// a report delivered to this conversation becomes an item now (a turn
+    /// runs) or when the next turn begins. It never wakes a turn by itself:
+    /// Claude's own output for the wake does.
+    async fn on_task_report(&mut self, frame: &ClaudeFrame, report: &TaskReport) {
+        let delivered = self.task_reports.delivered(report, |tool_use_id| {
+            self.active
+                .as_ref()
+                .is_some_and(|active| active.builder.is_open_tool_call(tool_use_id))
+        });
+        let Some(active) = &mut self.active else {
+            if let Some(delivered) = delivered {
+                self.task_reports.wait(delivered);
+            }
+            return;
+        };
+        let mut events = active.builder.on_frame(frame);
+        if let Some(delivered) = delivered {
+            // A provider turn that has nothing yet is the turn the report wakes.
+            let delivery =
+                if active.builder.origin() == TurnOrigin::Provider && active.builder.is_empty() {
+                    TaskNotificationDelivery::Wake
+                } else {
+                    TaskNotificationDelivery::MidTurn
+                };
+            events.extend(active.builder.add_task_notification(
+                &delivered.report,
+                delivery,
+                delivered.identity,
+            ));
+        }
+        self.emit_all(events).await;
     }
 
     /// Lets the rate-limit owner read usage through this query when a read is due.
@@ -468,6 +531,7 @@ impl Session {
         self.begin_turn(TurnStart {
             first_offer: None,
             origin: TurnOrigin::Provider,
+            waiting_reports: Some(TaskNotificationDelivery::Wake),
             prompts: Vec::new(),
             turn_id,
             user_message: None,
@@ -526,6 +590,16 @@ impl Session {
         }
         active.builder.set_now(now);
         events.extend(active.builder.on_frame(frame));
+        if matches!(frame, ClaudeFrame::CompactBoundary { .. }) {
+            // Reports that waited for a `/compact` turn follow its boundary.
+            for delivered in self.task_reports.take_waiting() {
+                events.extend(active.builder.add_task_notification(
+                    &delivered.report,
+                    TaskNotificationDelivery::MidTurn,
+                    delivered.identity,
+                ));
+            }
+        }
         self.emit_all(events).await;
     }
 

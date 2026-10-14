@@ -12,7 +12,6 @@ import { chronologicalTurnSequence } from "../../../rendering/turn-sequence";
 import { AppText as Text } from "../../../ui/Typography";
 import { ProtocolBlock } from "../protocol/ProtocolBlock";
 import { usePersistentExpansion } from "./Card";
-import { foldsAnswerIntoHistory } from "./turnBubbleGroup";
 import { hasCompletedTurnHistory } from "./completedHistoryVisibility";
 import { styles } from "./CompletedTurnHistory.styles";
 import { TurnActivity, TurnActivitySegment } from "./TurnActivity";
@@ -87,8 +86,6 @@ export function CollapsedTurnActivity(props: CollapsedTurnActivityProps) {
   );
 }
 
-type HistoryTurn = CompletedTurnHistoryProps["item"];
-
 export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
   const rawTurn = props.item.turn;
   const [expanded, setExpanded] = usePersistentExpansion(
@@ -97,40 +94,34 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
   );
   const [loading, setLoading] = useRecyclingState(false);
   const [error, setError] = useRecyclingState<string | null>(null);
+  // Keyed by turn: a recycled row may show another turn.
   const requestedTurnsRef = useRef(new Set<string>());
   const isExpanded = props.forceExpanded || expanded;
-  const turns = historyTurns(props);
-  const activitySummary = combinedActivitySummary(turns);
-  const historyBlocks = isExpanded
-    ? turns.flatMap((turn) => expandedHistoryBlocks(turn, foldsAnswer(props, turn)))
-    : [];
-  const sequence = chronologicalTurnSequence(historyBlocks);
+  const activitySummary = turnActivitySummary(props.item);
+  const sequence = chronologicalTurnSequence(isExpanded ? expandedHistoryBlocks(props.item) : []);
   const load = () => {
     const onLoadItems = props.onLoadItems;
-    const pending = turns.filter(
-      (turn) => turn.turn.itemsView !== "full" && !requestedTurnsRef.current.has(turn.turn.id),
-    );
-    if (onLoadItems === undefined || pending.length === 0) {
+    if (
+      onLoadItems === undefined ||
+      rawTurn.itemsView === "full" ||
+      requestedTurnsRef.current.has(rawTurn.id)
+    ) {
       return;
     }
-    for (const turn of pending) {
-      requestedTurnsRef.current.add(turn.turn.id);
-    }
+    requestedTurnsRef.current.add(rawTurn.id);
     setLoading(true);
     setError(null);
-    void Promise.all(pending.map(async (turn) => onLoadItems(turn.turn.id)))
+    onLoadItems(rawTurn.id)
       .catch((error: unknown) => {
-        for (const turn of pending) {
-          requestedTurnsRef.current.delete(turn.turn.id);
-        }
+        requestedTurnsRef.current.delete(rawTurn.id);
         setError(error instanceof Error ? error.message : "Could not load activity");
       })
       .finally(() => {
         setLoading(false);
       });
   };
-  // An empty group is never drawn: nothing counted, recorded or folded.
-  if (!turns.some((turn) => turnHasHistory(turn) || foldsAnswer(props, turn))) {
+  // An empty history is never drawn: nothing counted or recorded.
+  if (!turnHasHistory(props.item)) {
     return null;
   }
   return (
@@ -144,9 +135,9 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
           : error !== null
             ? "Activity unavailable"
             : turnActivityLabel(
-                activitySummary.kinds,
+                activitySummary?.kinds ?? [],
                 props.compact,
-                positiveCount(activitySummary.count),
+                positiveCount(activitySummary?.count),
               )
       }
       loading={loading}
@@ -157,7 +148,7 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
           load();
         }
       }}
-      outputFootprint={activitySummary.outputFootprint}
+      outputFootprint={activitySummary?.outputFootprint ?? null}
     >
       {error !== null && <Text style={styles.agentPlaceholder}>{error}</Text>}
       {sequence.map((part) =>
@@ -185,15 +176,7 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
   );
 }
 
-/** The finished turns whose activity this history shows, oldest first. */
-function historyTurns(props: CompletedTurnHistoryProps): readonly HistoryTurn[] {
-  if (props.bubbleTurns === undefined) {
-    return [props.item];
-  }
-  return props.bubbleTurns.filter(
-    (turn) => turn === props.item || turn.turn.status !== "inProgress",
-  );
-}
+type HistoryTurn = CompletedTurnHistoryProps["item"];
 
 function turnHasHistory(turn: HistoryTurn): boolean {
   return hasCompletedTurnHistory(
@@ -202,25 +185,12 @@ function turnHasHistory(turn: HistoryTurn): boolean {
   );
 }
 
-/** Whether this history also shows the turn's own answer (an earlier answer of a continued bubble). */
-function foldsAnswer(props: CompletedTurnHistoryProps, turn: HistoryTurn): boolean {
-  return props.bubbleTurns !== undefined && foldsAnswerIntoHistory(props.bubbleTurns, turn);
-}
-
-function expandedHistoryBlocks(
-  turn: HistoryTurn,
-  withAnswer: boolean,
-): ReturnType<typeof projectThreadItem>[] {
+function expandedHistoryBlocks(turn: HistoryTurn): ReturnType<typeof projectThreadItem>[] {
   const rawTurn = turn.turn;
   if (rawTurn.itemsView !== "full") {
     return [];
   }
-  const window = selectTurnRenderWindow(rawTurn);
-  const indexes =
-    withAnswer && window.latestAgentIndex >= 0
-      ? [...window.collapsedActivityIndexes, window.latestAgentIndex].sort((a, b) => a - b)
-      : window.collapsedActivityIndexes;
-  const blocks = indexes.flatMap((index) => {
+  const blocks = selectTurnRenderWindow(rawTurn).collapsedActivityIndexes.flatMap((index) => {
     const rawItem = rawTurn.items[index];
     return rawItem === undefined ? [] : [projectThreadItem(turn, rawItem, index)];
   });
@@ -235,36 +205,9 @@ type HistorySummary = {
 };
 
 /**
- * The Companion's activity totals of the shown turns. Several turns of one
- * bubble add up; a footprint cost is known only when every turn knows it.
- */
-function combinedActivitySummary(turns: readonly HistoryTurn[]): {
-  readonly count: number | undefined;
-  readonly kinds: readonly string[];
-  readonly outputFootprint: ActivityFootprint | null;
-} {
-  const summaries = turns.flatMap((turn) => {
-    const summary = turnActivitySummary(turn);
-    return summary === null ? [] : [summary];
-  });
-  if (summaries.length === 0) {
-    return { count: undefined, kinds: [], outputFootprint: null };
-  }
-  return {
-    count: summaries.reduce((sum, summary) => sum + summary.count, 0),
-    kinds: [...new Set(summaries.flatMap((summary) => summary.kinds))],
-    outputFootprint: summaries.reduce<ActivityFootprint | null>(
-      (total, summary, index) =>
-        index === 0 ? total : addFootprint(total, summary.outputFootprint),
-      summaries[0]?.outputFootprint ?? null,
-    ),
-  };
-}
-
-/**
- * One turn's totals. The Companion counts the work of a turn without a user
- * message as pre-turn lifecycle and reports no activity for it; the bubble
- * draws that work as the response, so it counts the turn's own history items.
+ * The turn's Companion activity totals. Older Companions counted the work of
+ * a turn without a user message as pre-turn lifecycle and reported no
+ * activity for it; such a turn counts its own history items instead.
  */
 function turnActivitySummary(turn: HistoryTurn): HistorySummary | null {
   const summary = projectedActivityMetrics(turn.turn)?.total;
@@ -279,24 +222,6 @@ function turnActivitySummary(turn: HistoryTurn): HistorySummary | null {
     return summary ?? null;
   }
   return { count: kinds.length, kinds, outputFootprint: summary?.outputFootprint ?? null };
-}
-
-function addFootprint(
-  total: ActivityFootprint | null,
-  next: ActivityFootprint | null,
-): ActivityFootprint | null {
-  if (total === null || next === null) {
-    return null;
-  }
-  return {
-    ...total,
-    bytes: total.bytes + next.bytes,
-    estimatedInputCostUsd:
-      total.estimatedInputCostUsd === null || next.estimatedInputCostUsd === null
-        ? null
-        : total.estimatedInputCostUsd + next.estimatedInputCostUsd,
-    estimatedTokens: total.estimatedTokens + next.estimatedTokens,
-  };
 }
 
 function collapsedActivityLabel(

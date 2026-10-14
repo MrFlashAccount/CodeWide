@@ -3,6 +3,8 @@ import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { connectionId, normalizeThreadItem } from "@codewide/domain";
 import { toRenderBlock, type RenderBlock } from "@codewide/renderers";
 import { projectedQuestionHistory, projectedTurnMetadata } from "@codewide/sync-client";
+import { turnLaunchedAgents } from "../../../rendering/launchedAgents";
+import { turnTaskNotifications } from "../../../rendering/taskNotifications";
 import { selectTurnRenderWindow } from "../../../rendering/thread-render-window";
 import type { TurnSequencePart } from "../../../rendering/turn-sequence";
 import { isToolActivityKind } from "../protocol/protocolKind";
@@ -410,8 +412,8 @@ function prepareTurnPresentation(turn: TurnRow) {
         item.delivery === "async" &&
         (item.questions?.length ?? 0) > 0,
     );
-  // This is presentation fallback copy, not an agent message. Grouped turns
-  // decide later whether their combined bubble is still empty.
+  // Explicit compaction completes successfully without generating an answer.
+  // Its lifecycle row is the result; failed/interrupted turns still need their warning.
   const completedCompaction =
     rawTurn.status === "completed" &&
     rawTurn.items.some((item) => item.type === "contextCompaction");
@@ -424,6 +426,16 @@ function prepareTurnPresentation(turn: TurnRow) {
   const hasCompletedHistory =
     rawTurn.status !== "inProgress" &&
     hasCompletedTurnHistory(rawTurn, renderWindow.collapsedActivityIndexes);
+  // A background task woke the agent and it produced nothing: no answer, no
+  // activity, no artifacts. Unloaded content is empty only when a wake report
+  // proves a Companion that counts a wake's work: older ones counted none.
+  const taskNotifications = turnTaskNotifications(rawTurn);
+  const isEmptyWake =
+    rawTurn.status === "completed" &&
+    renderWindow.userItemIndexes.length === 0 &&
+    showEmptyResponsePlaceholder &&
+    !hasCompletedHistory &&
+    (rawTurn.itemsView === "full" || taskNotifications.wake.length > 0);
   const hasDisclosedBubbleActivity =
     preTurnBlocks.some(preTurnBlockUsesDisclosure) ||
     hasCompletedHistory ||
@@ -468,11 +480,14 @@ function prepareTurnPresentation(turn: TurnRow) {
     copyText,
     hasAgentContent,
     hasGeneratedAgentResponse,
+    isEmptyWake,
     latestAgentBlock,
+    launchedAgents: turnLaunchedAgents(rawTurn),
     liveMarkdownProjections,
     preTurnBlocks,
     rawTurn,
     showEmptyResponsePlaceholder,
+    taskNotifications,
     userBlocks,
     visibleLiveActivitySequence,
   };

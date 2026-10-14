@@ -8,6 +8,8 @@
 mod forks;
 mod golden;
 mod sessions;
+mod subagent_requests;
+mod task_reports;
 mod threads;
 
 use std::{
@@ -34,6 +36,7 @@ use crate::{
     cli::{
         command::{QueryOptions, SessionIdentity},
         process::{ProcessError, ProcessEvent},
+        protocol::ControlRequest,
     },
     native::{files, write::project_dir_name},
     runtime::running_sessions::{RunningSessions, RunningSessionsError},
@@ -126,6 +129,8 @@ pub(super) struct FakeQuery {
     pub options: QueryOptions,
     pub offers: Mutex<Vec<Offer>>,
     pub modes: Mutex<Vec<&'static str>>,
+    /// The session's answers to Claude's control requests, in order.
+    pub answers: Mutex<Vec<(String, Result<Value, String>)>>,
     pub closed: AtomicBool,
     events: mpsc::Sender<ProcessEvent>,
     file: PathBuf,
@@ -162,6 +167,21 @@ impl FakeQuery {
         let _ = self.events.send(ProcessEvent::Message(frame)).await;
     }
 
+    /// Claude asks the session `request` under `request_id`.
+    pub async fn request(&self, request_id: &str, request: ControlRequest) {
+        let _ = self
+            .events
+            .send(ProcessEvent::Request {
+                request_id: request_id.to_owned(),
+                request,
+            })
+            .await;
+    }
+
+    pub fn answers(&self) -> Vec<(String, Result<Value, String>)> {
+        lock(&self.answers).clone()
+    }
+
     /// The process ends cleanly.
     pub async fn end(&self) {
         let _ = self.events.send(ProcessEvent::Exited { error: None }).await;
@@ -192,7 +212,9 @@ impl Query for FakeQuery {
         lock(&self.offers).push(offer);
     }
 
-    fn respond(&self, _: String, _: Result<Value, String>) {}
+    fn respond(&self, request_id: String, outcome: Result<Value, String>) {
+        lock(&self.answers).push((request_id, outcome));
+    }
 
     fn interrupt(&self) -> BoxFuture<'static, Result<(), ProcessError>> {
         Box::pin(async { Ok(()) })
@@ -260,6 +282,7 @@ impl QueryRuntime for FakeRuntime {
             options: options.clone(),
             offers: Mutex::new(Vec::new()),
             modes: Mutex::new(Vec::new()),
+            answers: Mutex::new(Vec::new()),
             closed: AtomicBool::new(false),
             events,
             file,

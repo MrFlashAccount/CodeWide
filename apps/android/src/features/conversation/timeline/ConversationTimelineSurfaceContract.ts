@@ -1,4 +1,5 @@
 import type { LiveTurnPlan } from "../../../rendering/live-turn-plan";
+import type { RunningAgent } from "../../../rendering/runningAgents";
 import type { ReactElement, ReactNode } from "react";
 import type { TimelineItem } from "./timelineTypes";
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
@@ -29,6 +30,8 @@ export type ConversationTimelineSurfaceProps = {
   positionSearchTurn: () => void;
   readOnly: boolean;
   remoteThread: Thread | null | undefined;
+  /** Subagents still working; shown as one chip next to the plan. */
+  runningAgents: readonly RunningAgent[];
   threadSearchActive: boolean;
   threadSearchVisible: boolean;
   timeline: TimelineItem[];

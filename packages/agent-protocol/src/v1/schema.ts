@@ -189,7 +189,30 @@ const withProvenance = (
   Object.fromEntries(
     Object.entries(variants).map(([name, fields]) => [name, { ...fields, provenance }]),
   );
-const item = tagged(
+/** Runs `check`, then `rule` on a value that is an object. */
+const refined =
+  (
+    check: Check,
+    rule: (value: Readonly<Record<string, unknown>>, path: string, errors: string[]) => void,
+  ): Check =>
+  (value, path, errors) => {
+    check(value, path, errors);
+    if (isRecord(value)) {
+      rule(value, path, errors);
+    }
+  };
+/** Only an agent's report names a thread: other kinds carry `agentThreadId: null`. */
+const onlyAgentReportsNameAThread = (
+  value: Readonly<Record<string, unknown>>,
+  path: string,
+  errors: string[],
+): void => {
+  const kind = value["kind"];
+  if (value["type"] === "taskNotification" && kind !== "agent" && value["agentThreadId"] !== null) {
+    errors.push(`${path}.agentThreadId: expected null for kind ${String(kind)}`);
+  }
+};
+const taggedItem = tagged(
   "type",
   withProvenance({
     agentMessage: { itemId: str, phase: literal("commentary", "final"), text: str },
@@ -229,6 +252,18 @@ const item = tagged(
       result: nullable(str),
       status: literal("running", "completed", "failed", "stopped"),
     },
+    taskNotification: {
+      agentThreadId: nullable(str),
+      delivery: literal("wake", "midTurn"),
+      durationMs: nullable(int),
+      itemId: str,
+      kind: literal("agent", "command", "other"),
+      name: str,
+      result: nullable(str),
+      status: literal("completed", "failed", "killed", "stopped", "interim", "lost", "unknown"),
+      taskId: str,
+      toolUses: nullable(int),
+    },
     toolCall: {
       arguments: json,
       durationMs: nullable(int),
@@ -246,6 +281,7 @@ const item = tagged(
     },
   }),
 );
+const item = refined(taggedItem, onlyAgentReportsNameAThread);
 const tokenUsage = obj({
   cachedInputTokens: int,
   cacheWriteInputTokens: optional(int),

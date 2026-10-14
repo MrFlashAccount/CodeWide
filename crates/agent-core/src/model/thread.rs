@@ -185,6 +185,74 @@ pub enum SubagentStatus {
     Stopped,
 }
 
+/// How a background task's report reached the agent (added within v1):
+/// `Wake` started a provider-origin turn and leads its items; `MidTurn` was
+/// delivered into a running turn, at its item position.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskNotificationDelivery {
+    Wake,
+    MidTurn,
+}
+
+/// A background task's reported outcome (added within v1). `Interim`: the
+/// agent may report again and its result may be partial; `Lost`: the task did
+/// not finish before the previous session ended; `Unknown`: no recognised
+/// status.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskNotificationStatus {
+    Completed,
+    Failed,
+    Killed,
+    Stopped,
+    Interim,
+    Lost,
+    Unknown,
+}
+
+/// What reported (wire field `kind`). Only an agent can name its read-only
+/// thread; the other kinds always carry `agentThreadId: null` (`()` encodes
+/// that null).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum TaskNotificationSource {
+    Agent {
+        agent_thread_id: Option<AppThreadId>,
+    },
+    Command {
+        agent_thread_id: (),
+    },
+    Other {
+        agent_thread_id: (),
+    },
+}
+
+impl TaskNotificationSource {
+    /// The reporting agent's thread, when the source is a known agent.
+    #[must_use]
+    pub const fn agent_thread_id(&self) -> Option<&AppThreadId> {
+        match self {
+            Self::Agent { agent_thread_id } => agent_thread_id.as_ref(),
+            Self::Command { .. } | Self::Other { .. } => None,
+        }
+    }
+
+    /// The wire `kind`.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Agent { .. } => "agent",
+            Self::Command { .. } => "command",
+            Self::Other { .. } => "other",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FileChangeKind {
@@ -331,6 +399,22 @@ pub enum AgentItem {
         result: Option<String>,
         status: SubagentStatus,
     },
+    /// A background task's report the provider delivered to the agent
+    /// (added within v1). Every field is always present; absent facts are null.
+    TaskNotification {
+        item_id: ItemId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provenance: Option<Provenance>,
+        delivery: TaskNotificationDelivery,
+        #[serde(flatten)]
+        source: TaskNotificationSource,
+        task_id: String,
+        name: String,
+        status: TaskNotificationStatus,
+        duration_ms: Option<i64>,
+        tool_uses: Option<i64>,
+        result: Option<String>,
+    },
     CapabilityItem {
         item_id: ItemId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -358,6 +442,7 @@ impl AgentItem {
             | Self::Plan { provenance, .. }
             | Self::Compaction { provenance, .. }
             | Self::Subagent { provenance, .. }
+            | Self::TaskNotification { provenance, .. }
             | Self::CapabilityItem { provenance, .. } => provenance.as_ref(),
         }
     }
@@ -376,6 +461,7 @@ impl AgentItem {
         | Self::Plan { provenance, .. }
         | Self::Compaction { provenance, .. }
         | Self::Subagent { provenance, .. }
+        | Self::TaskNotification { provenance, .. }
         | Self::CapabilityItem { provenance, .. }) = self;
         if provenance.is_none() {
             *provenance = Some(origin.clone());
@@ -397,6 +483,7 @@ impl AgentItem {
             | Self::Plan { item_id, .. }
             | Self::Compaction { item_id, .. }
             | Self::Subagent { item_id, .. }
+            | Self::TaskNotification { item_id, .. }
             | Self::CapabilityItem { item_id, .. } => item_id,
         }
     }
@@ -572,4 +659,63 @@ pub struct PlanStep {
         skip_serializing_if = "Option::is_none"
     )]
     pub active_form: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{AgentItem, AppThreadId, TaskNotificationSource};
+
+    fn notification(kind: &str, agent_thread_id: &serde_json::Value) -> serde_json::Value {
+        json!({
+            "type": "taskNotification",
+            "itemId": "turn:notification:0",
+            "delivery": "wake",
+            "kind": kind,
+            "taskId": "a05d989c3914f829e",
+            "name": "Find the failing test",
+            "agentThreadId": agent_thread_id,
+            "status": "completed",
+            "durationMs": null,
+            "toolUses": null,
+            "result": null,
+        })
+    }
+
+    #[test]
+    fn only_an_agent_report_names_a_thread() -> Result<(), serde_json::Error> {
+        let agent: AgentItem = serde_json::from_value(notification("agent", &json!("t:agent:a1")))?;
+        let AgentItem::TaskNotification { source, .. } = &agent else {
+            panic!("expected a task notification, got {agent:?}");
+        };
+        assert_eq!(source.kind(), "agent");
+        assert_eq!(
+            source.agent_thread_id().map(AppThreadId::as_str),
+            Some("t:agent:a1")
+        );
+        assert_eq!(
+            serde_json::to_value(&agent)?,
+            notification("agent", &json!("t:agent:a1"))
+        );
+
+        let command: AgentItem = serde_json::from_value(notification("command", &json!(null)))?;
+        assert!(matches!(
+            command,
+            AgentItem::TaskNotification {
+                source: TaskNotificationSource::Command { .. },
+                ..
+            }
+        ));
+        assert_eq!(
+            serde_json::to_value(&command)?,
+            notification("command", &json!(null))
+        );
+
+        assert!(
+            serde_json::from_value::<AgentItem>(notification("command", &json!("t:agent:a1")))
+                .is_err()
+        );
+        Ok(())
+    }
 }

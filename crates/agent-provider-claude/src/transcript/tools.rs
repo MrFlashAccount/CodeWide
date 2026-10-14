@@ -529,3 +529,32 @@ pub fn todo_plan(input: &JsonRecord) -> Vec<PlanStep> {
 pub fn block_item_id(message_id: &str, block_index: usize) -> Option<ItemId> {
     ItemId::parse(&format!("{message_id}:{block_index}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{keep_tail, split_mcp_tool_name};
+
+    #[test]
+    fn command_output_keeps_its_last_mebibyte_with_a_truncation_line() {
+        let text = "é".repeat(600_000);
+        let kept = keep_tail(&text, 1024 * 1024);
+        assert!(kept.starts_with("[output truncated: first "));
+        assert!(kept.len() <= 1024 * 1024 + 64);
+        assert!(kept.ends_with('é'));
+        assert_eq!(keep_tail("short", 1024), "short");
+    }
+
+    #[test]
+    fn mcp_names_split_by_the_longest_known_server() {
+        let servers = vec!["probe".to_owned(), "probe__v2".to_owned()];
+        assert_eq!(
+            split_mcp_tool_name("mcp__probe__v2__write", &servers),
+            Some(("probe__v2".into(), "write".into()))
+        );
+        assert_eq!(
+            split_mcp_tool_name("mcp__claude_ai_Claude_Docs__read", &[]),
+            Some(("claude.ai Claude Docs".into(), "read".into()))
+        );
+        assert_eq!(split_mcp_tool_name("Bash", &servers), None);
+    }
+}

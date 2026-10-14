@@ -341,14 +341,14 @@ function responsePositioningIsEnabled(props: TimelineViewportProps): boolean {
 }
 
 function timelineRowStartsAgentResponse(row: TimelineRow): boolean {
-  return row.kind === "turnSlice" && isLeadingTimelinePlacement(row.bubble);
+  return row.kind === "turnSlice" && isLeadingTimelinePlacement(row.placement);
 }
 
 function timelineRowStartsTurn(row: TimelineRow): boolean {
   if (row.kind === "turnLead") {
     return true;
   }
-  return row.kind === "turnSlice" && !row.followsLead && isLeadingTimelinePlacement(row.bubble);
+  return row.kind === "turnSlice" && !row.followsLead && isLeadingTimelinePlacement(row.placement);
 }
 
 function isLeadingTimelinePlacement(placement: "end" | "middle" | "single" | "start"): boolean {

@@ -27,6 +27,7 @@ use super::{
     handle::{Command, SessionStatus},
     ports::{SessionDeps, SessionOutput},
     query::Query,
+    task_reports::LiveTaskReports,
     turn::ActiveTurn,
 };
 use crate::{
@@ -102,6 +103,8 @@ pub(super) struct Session {
     pub active: Option<ActiveTurn>,
     pub pending: HashMap<String, PendingRequest>,
     pub background_tasks: usize,
+    /// Background tasks of the open query and their reports waiting for a turn.
+    pub task_reports: LiveTaskReports,
     /// The context size of the session's latest top-level model request.
     pub last_request: Option<TokenUsage>,
     /// The context window Claude last reported for the thread's model.
@@ -139,6 +142,7 @@ impl Session {
             active: None,
             pending: HashMap::new(),
             background_tasks: 0,
+            task_reports: LiveTaskReports::default(),
             last_request: None,
             context_window: None,
             mcp_servers: Vec::new(),
@@ -411,6 +415,7 @@ impl Session {
             return;
         };
         self.generation += 1;
+        self.task_reports.forget();
         query.handle.close();
         self.released().await;
         info!(
@@ -435,6 +440,7 @@ impl Session {
             return;
         }
         self.generation += 1;
+        self.task_reports.forget();
         self.released().await;
         match &error {
             None => info!(app_thread_id = %self.app_thread_id, "claude session ended"),

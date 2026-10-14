@@ -6,6 +6,7 @@ import {
   ownerOptimisticTurn,
   ownerPreTurnLifecycleRows,
   ownerTurnProjection,
+  ownerActivitySegmentKind,
   ownerTurnActivity,
   ownerTurnActivityStyles,
   ownerUserMessageContent,
@@ -106,7 +107,7 @@ it("preserves conversation turns integration contracts", () => {
   expect(ownerDisclosureState).toMatch(/const PERSISTENT_EXPANSION_STATE_LIMIT = 4_?096/u);
   expect(ownerCard).toContain("writePersistentExpansionState(localKey, resolved)");
   expect(ownerTurnTimelineItem).toContain("function TurnTimelineItem({");
-  expect(ownerTurnActivity).toMatch(
+  expect(ownerActivitySegmentKind).toMatch(
     /if \(blocks\.length > 0 && blocks\.every\(\(block\) => block\.kind === "reasoning"\)\)/u,
   );
   expect(ownerTurnActivity).toContain('testID="thinking-status-section"');

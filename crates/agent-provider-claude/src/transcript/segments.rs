@@ -6,18 +6,39 @@
 //!   or a resent first prompt inside the current turn, or Claude queued it
 //!   while a turn ran (a prompt typed while the agent was busy);
 //! - a wake message starts a provider turn, unless Claude queued it while a
-//!   turn ran (a notification delivered into the running turn);
-//! - an interrupt marker ends the current turn as interrupted;
+//!   turn ran (a notification delivered into the running turn); consecutive
+//!   wakes before the turn's first message start one turn;
+//! - an interrupt marker ends the current turn as interrupted; a turn that
+//!   only wakes opened ends at the marker (its id and fork end), so a wake
+//!   interrupted before any message stays a turn;
 //! - an agent frame or a compaction with no open turn starts a provider turn
 //!   (for example, a background task finishing after the turn ended).
+//!
+//! Background task reports are kept beside the entries, never in them, so a
+//! turn's id, start anchor and last stored message are those of its own
+//! messages whether or not reports woke it or arrived during it:
+//! - the reports of the wakes that start a provider turn lead it (`wake`);
+//! - wakes buffered before a turn that a prompt or an indexed user turn
+//!   starts were delivered inside that turn (`midTurn`, after its prompt);
+//! - a report Claude queued into a running turn sits at its position there
+//!   (`midTurn`).
 //!
 //! Pure; no I/O.
 
 use std::collections::{HashMap, HashSet};
 
-use agent_core::model::TurnOrigin;
+use agent_core::model::{TaskNotificationDelivery, TurnOrigin};
 
-use super::entries::HistoryEntry;
+use super::{entries::HistoryEntry, task_reports::TaskReport};
+
+/// A background task report delivered in a turn.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SegmentReport {
+    pub delivery: TaskNotificationDelivery,
+    pub report: TaskReport,
+    /// Index of the entry the report precedes; `entries.len()` after the last.
+    pub position: usize,
+}
 
 #[derive(Debug)]
 pub struct HistorySegment {
@@ -26,6 +47,8 @@ pub struct HistorySegment {
     /// Ended by an interrupt marker.
     pub interrupted: bool,
     pub origin: TurnOrigin,
+    /// Task reports delivered in the turn, ordered by position.
+    pub reports: Vec<SegmentReport>,
 }
 
 /// What the turn index tells the segmentation.
@@ -37,6 +60,9 @@ pub struct SegmentHints {
     pub starts: HashMap<String, TurnOrigin>,
 }
 
+/// Where the prompt of a user turn ends: reports carried into it follow it.
+const AFTER_PROMPT: usize = 1;
+
 struct Segmenter<'a> {
     segments: Vec<HistorySegment>,
     /// Index of the open segment in `segments`.
@@ -45,20 +71,99 @@ struct Segmenter<'a> {
 }
 
 impl Segmenter<'_> {
-    fn start(&mut self, origin: TurnOrigin, first: Option<HistoryEntry>) {
+    /// The open segment while it has no message yet (wakes collect in it).
+    fn open_without_messages(&self) -> Option<usize> {
+        self.open
+            .filter(|index| self.segments[*index].entries.is_empty())
+    }
+
+    /// Wake reports of a turn that has no message yet, as the turn that does
+    /// start delivers them: a provider turn is woken by them; a user turn got
+    /// them after its prompt.
+    fn carried(&mut self, origin: TurnOrigin) -> Vec<SegmentReport> {
+        let Some(previous) = self.open_without_messages() else {
+            return Vec::new();
+        };
+        let reports = std::mem::take(&mut self.segments[previous].reports);
+        match origin {
+            TurnOrigin::Provider => reports,
+            TurnOrigin::User => reports
+                .into_iter()
+                .map(|report| SegmentReport {
+                    delivery: TaskNotificationDelivery::MidTurn,
+                    position: AFTER_PROMPT,
+                    ..report
+                })
+                .collect(),
+        }
+    }
+
+    fn start(&mut self, origin: TurnOrigin, first: Option<HistoryEntry>) -> usize {
+        let reports = self.carried(origin);
         self.segments.push(HistorySegment {
             entries: first.into_iter().collect(),
             interrupted: false,
             origin,
+            reports,
         });
-        self.open = Some(self.segments.len() - 1);
+        let index = self.segments.len() - 1;
+        self.open = Some(index);
+        index
     }
 
     /// Appends to the open turn, or starts a turn of `origin` with the entry.
     fn append(&mut self, entry: HistoryEntry, origin: TurnOrigin) {
         match self.open {
             Some(index) => self.segments[index].entries.push(entry),
-            None => self.start(origin, Some(entry)),
+            None => {
+                self.start(origin, Some(entry));
+            }
+        }
+    }
+
+    /// A wake starts a provider turn unless Claude delivered it into a
+    /// running turn; a turn that has no message yet keeps collecting wakes.
+    fn wake(&mut self, queued: bool, reports: Vec<TaskReport>) {
+        if queued
+            && let Some(index) = self.open
+            && !self.segments[index].entries.is_empty()
+        {
+            let segment = &mut self.segments[index];
+            let position = segment.entries.len();
+            segment
+                .reports
+                .extend(reports.into_iter().map(|report| SegmentReport {
+                    delivery: TaskNotificationDelivery::MidTurn,
+                    report,
+                    position,
+                }));
+            return;
+        }
+        let woken = match self.open_without_messages() {
+            Some(index) => index,
+            None => self.start(TurnOrigin::Provider, None),
+        };
+        self.segments[woken]
+            .reports
+            .extend(reports.into_iter().map(|report| SegmentReport {
+                delivery: TaskNotificationDelivery::Wake,
+                report,
+                position: 0,
+            }));
+    }
+
+    /// An interrupt marker ends the open turn as interrupted. A turn woken
+    /// but interrupted before any message of its own ends at the marker,
+    /// which becomes its only entry: live, that turn ran (its wake reports
+    /// lead it) until the interrupt, so history keeps it, with its reports,
+    /// as an interrupted provider turn instead of dropping it.
+    fn interrupt(&mut self, marker: HistoryEntry) {
+        if let Some(index) = self.open.take() {
+            let segment = &mut self.segments[index];
+            segment.interrupted = true;
+            if segment.entries.is_empty() {
+                segment.entries.push(marker);
+            }
         }
     }
 
@@ -82,16 +187,10 @@ impl Segmenter<'_> {
                     self.start(TurnOrigin::User, Some(entry));
                 }
             }
-            HistoryEntry::Wake { queued, .. } => {
-                if !queued || self.open.is_none() {
-                    self.start(TurnOrigin::Provider, None);
-                }
-            }
-            HistoryEntry::Interrupt { .. } => {
-                if let Some(index) = self.open.take() {
-                    self.segments[index].interrupted = true;
-                }
-            }
+            HistoryEntry::Wake {
+                queued, reports, ..
+            } => self.wake(queued, reports),
+            HistoryEntry::Interrupt { .. } => self.interrupt(entry),
             HistoryEntry::Compaction { .. } | HistoryEntry::Frame { .. } => {
                 self.append(entry, TurnOrigin::Provider);
             }

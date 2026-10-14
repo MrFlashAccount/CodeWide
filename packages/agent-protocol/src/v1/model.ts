@@ -144,6 +144,55 @@ export type CallStatus = "inProgress" | "completed" | "failed";
  */
 export type SubagentStatus = "running" | "completed" | "failed" | "stopped";
 
+/**
+ * How a background task's report reached the agent (added within v1):
+ * `wake` — it started a provider-origin turn and leads that turn's items;
+ * `midTurn` — it was delivered into a running turn, at its item position.
+ */
+export type TaskNotificationDelivery = "wake" | "midTurn";
+
+/**
+ * A background task's reported outcome (added within v1): the task's own
+ * final status, `interim` when the agent may report again (its result may be
+ * partial), `lost` when the task did not finish before the previous session
+ * ended, `unknown` when the report names no recognised status.
+ */
+export type TaskNotificationStatus =
+  | "completed"
+  | "failed"
+  | "killed"
+  | "stopped"
+  | "interim"
+  | "lost"
+  | "unknown";
+
+/**
+ * What reported: a sub-agent, whose read-only thread is known once the
+ * provider names the agent, or a background command or other task, which
+ * has no thread.
+ */
+export type TaskNotificationSource =
+  | { readonly agentThreadId: AppThreadId | null; readonly kind: "agent" }
+  | { readonly agentThreadId: null; readonly kind: "command" | "other" };
+
+/** The fields of a `taskNotification` item besides its source. */
+export interface TaskNotificationFields {
+  readonly delivery: TaskNotificationDelivery;
+  /** Wall time the task reported, when known. */
+  readonly durationMs: number | null;
+  readonly itemId: ItemId;
+  /** Display name: the agent's description, the command's description, else the report summary. */
+  readonly name: string;
+  /** The report's result text (bounded), when it carries one. */
+  readonly result: string | null;
+  readonly status: TaskNotificationStatus;
+  /** The provider's task id; for an agent, its agent id. */
+  readonly taskId: string;
+  /** Tool calls the task made, when known. */
+  readonly toolUses: number | null;
+  readonly type: "taskNotification";
+}
+
 export type FileChangeKind = "add" | "delete" | "update";
 
 export interface FileChange {
@@ -247,6 +296,12 @@ export type AgentItemBody =
       readonly status: SubagentStatus;
       readonly type: "subagent";
     }
+  /**
+   * A background task's report (added within v1): a sub-agent or background
+   * command finished, or reported an interim result, and the provider
+   * delivered it to the agent.
+   */
+  | (TaskNotificationFields & TaskNotificationSource)
   | {
       readonly capability: string;
       readonly itemId: ItemId;

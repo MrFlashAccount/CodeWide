@@ -1,4 +1,6 @@
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.155.1/v2";
+import { isAgentLaunchItem } from "../rendering/launchedAgents";
+import { isTaskNotificationItem } from "../rendering/taskNotifications";
 import {
   projectedTurnMetadata,
   reconcileTurnItems,
@@ -676,12 +678,15 @@ export function compactCompletedTurnForStorage(turn: Turn): Turn {
   // is lifecycle evidence, not the chat boundary: compacting around it would
   // discard the visible answer and produce "Completed without final response".
   const finalAgentIndex = explicitFinalAgentIndex >= 0 ? explicitFinalAgentIndex : latestAgentIndex;
-  const retained = turn.items.filter(
-    (item, index) => item.type === "userMessage" || index === finalAgentIndex,
-  );
-  const kinds = turn.items.flatMap((item, index) =>
-    item.type === "userMessage" || index === finalAgentIndex ? [] : [item.type],
-  );
+  // Background task reports and subagent launches are small and drawn outside
+  // the collapsed history (reason lines, agent chips), so they stay resident.
+  const retains = (item: Turn["items"][number], index: number): boolean =>
+    item.type === "userMessage" ||
+    index === finalAgentIndex ||
+    isTaskNotificationItem(item) ||
+    isAgentLaunchItem(item);
+  const retained = turn.items.filter(retains);
+  const kinds = turn.items.flatMap((item, index) => (retains(item, index) ? [] : [item.type]));
   if (kinds.length === 0) {
     return turn;
   }

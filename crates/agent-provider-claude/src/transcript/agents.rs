@@ -7,8 +7,9 @@
 //! - the spawning call's result names the agent (`tool_use_result.agentId`
 //!   live, the `agentId: <id>` line of the result text in both); a background
 //!   launch keeps it `Running`, a foreground result completes it;
-//! - a task notification (`<task-notification>` message in history, a
-//!   `task_notification` system frame live) carries the final status.
+//! - a task report (`<task-notification>` message in history, a
+//!   `task_notification` system frame live, both read by `task_reports`)
+//!   carries the final status.
 //!
 //! Child thread id: `<app thread id>:agent:<agent id>` (`crate::subagents`).
 //! Pure.
@@ -21,6 +22,7 @@ use serde_json::Value;
 use super::{
     frames::ToolResultBlock,
     json::{JsonRecord, is_true, record, str_of},
+    task_reports::TaskReport,
 };
 use crate::subagents::{child_thread_id, parse_child_thread_id};
 
@@ -212,45 +214,6 @@ pub fn notified_status(status: Option<&str>) -> Option<SubagentStatus> {
     }
 }
 
-/// The facts of a stored `<task-notification>` message.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TaskNotification {
-    pub status: Option<SubagentStatus>,
-    pub task_id: String,
-    pub tool_use_id: Option<String>,
-}
-
-fn tagged<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
-    let open = format!("<{tag}>");
-    let close = format!("</{tag}>");
-    let start = text.find(&open)? + open.len();
-    let end = text[start..].find(&close)? + start;
-    Some(&text[start..end])
-}
-
-fn is_identifier(value: &str) -> bool {
-    !value.is_empty()
-        && value.chars().all(|character| {
-            character.is_ascii_alphanumeric() || character == '_' || character == '-'
-        })
-}
-
-/// The notification's facts, or `None` for text without a task id.
-#[must_use]
-pub fn task_notification_of(text: &str) -> Option<TaskNotification> {
-    let task_id = tagged(text, "task-id").filter(|id| is_identifier(id))?;
-    Some(TaskNotification {
-        status: notified_status(
-            tagged(text, "status")
-                .filter(|status| status.chars().all(|c| c.is_ascii_lowercase() || c == '_')),
-        ),
-        task_id: task_id.to_owned(),
-        tool_use_id: tagged(text, "tool-use-id")
-            .filter(|id| is_identifier(id))
-            .map(ToOwned::to_owned),
-    })
-}
-
 /// The item with a later status; a turn ending under a running foreground agent stops it.
 #[must_use]
 pub fn with_status(item: SubagentItem, status: SubagentStatus) -> SubagentItem {
@@ -271,12 +234,12 @@ pub struct NotifiedStatuses {
 }
 
 impl NotifiedStatuses {
-    pub fn record(&mut self, notification: &TaskNotification) {
-        let Some(status) = notification.status else {
+    pub fn record(&mut self, report: &TaskReport) {
+        let Some(status) = notified_status(report.status.as_deref()) else {
             return;
         };
-        self.by_agent.insert(notification.task_id.clone(), status);
-        if let Some(tool_use_id) = &notification.tool_use_id {
+        self.by_agent.insert(report.task_id.clone(), status);
+        if let Some(tool_use_id) = &report.tool_use_id {
             self.by_tool_use.insert(tool_use_id.clone(), status);
         }
     }

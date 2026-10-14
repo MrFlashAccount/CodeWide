@@ -8,11 +8,15 @@
 //!   for an interrupted turn) is skipped, so it opens no turn.
 //! - A user message whose `origin` is not a person (`origin.kind` other than
 //!   `human`: task notification, peer message) wakes the agent: it is never
-//!   shown as a user message. A task notification also reports a sub-agent's
+//!   shown as a user message. A task notification carries the background
+//!   task reports (shown as `taskNotification` items) and a sub-agent's
 //!   final status. Interactive Claude Code stamps a person's prompts with
 //!   `origin: {kind: "human"}`; SDK-driven sessions store them without one.
 //! - `isQueuedCommand` marks a message Claude delivered while the agent was
 //!   busy (queued prompt, notification): it belongs to the running turn.
+//!   `chain` turns a `queued_command` attachment Claude delivered into such a
+//!   message (a task report's `commandMode: task-notification` gives its
+//!   origin).
 //! - `[Request interrupted by user…]` ends the current turn as interrupted.
 //! - The compact summary marks a compaction; the system message right before
 //!   it is the compact boundary, whose uuid anchors the turn the live
@@ -30,9 +34,9 @@ use agent_core::model::UserContent;
 use serde_json::Value;
 
 use super::{
-    agents::{TaskNotification, task_notification_of},
     frames::{ClaudeFrame, classify_message, origin_kind},
     json::{JsonRecord, elements, is_true, is_true2, record, record_of, str_of},
+    task_reports::{TaskReport, stored_task_reports},
 };
 
 /// The prompt that opens a replacement session's history prefix; it is not
@@ -55,8 +59,9 @@ pub enum HistoryEntry {
         uuid: String,
     },
     Wake {
-        /// A task notification's facts, `None` for other wakes.
-        notification: Option<TaskNotification>,
+        /// The background task reports it carries; empty for other wakes (peer messages).
+        reports: Vec<TaskReport>,
+        /// Delivered while the agent was busy: part of the running turn.
         queued: bool,
         timestamp_ms: i64,
         uuid: String,
@@ -182,9 +187,11 @@ fn wake_entry(message: &StoredMessage<'_>, text: &str) -> Option<HistoryEntry> {
         return None;
     }
     Some(HistoryEntry::Wake {
-        notification: (origin == "task-notification")
-            .then(|| task_notification_of(text))
-            .flatten(),
+        reports: if origin == "task-notification" {
+            stored_task_reports(text)
+        } else {
+            Vec::new()
+        },
         queued: is_true(message.raw, "isQueuedCommand"),
         timestamp_ms: message.timestamp_ms,
         uuid: message.uuid.to_owned(),

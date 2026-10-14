@@ -65,7 +65,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
   });
   const timelinePositioned = read.timeline.length === 0 || props.viewport.timelineDidLoad;
   const liveStatusVisible =
-    read.presentation.liveTurnPlan !== null &&
+    (read.presentation.liveTurnPlan !== null || read.presentation.runningAgents.length > 0) &&
     timelinePositioned &&
     !read.searchProjection.threadSearchActive;
   const timelineContent = (
@@ -157,6 +157,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       positionSearchTurn={read.searchActions.positionSearchTurn}
       readOnly
       remoteThread={props.remoteThread}
+      runningAgents={read.presentation.runningAgents}
       threadSearchVisible={read.search.threadSearchVisible}
       timeline={read.timeline}
       timelineContent={timelineContent}

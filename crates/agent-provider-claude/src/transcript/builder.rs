@@ -8,7 +8,10 @@
 //!    message is held back and released as `commentary` when another item
 //!    starts, or as `final` when the turn completes successfully;
 //! 5. `item.completed` carries the full item; deltas only reference started,
-//!    still-open items of the matching type.
+//!    still-open items of the matching type;
+//! 6. a background task report is a complete item at its delivery position
+//!    and does not release the held agent message: it is not the agent's
+//!    output, so the answer before it can still be the final one.
 //!
 //! Holds state but performs no I/O; the caller decides what to do with the
 //! events it returns. The caller also owns the clock: `set_now` before each
@@ -23,10 +26,7 @@ use agent_core::model::{
 };
 
 use super::{
-    agents::{SubagentItem, notified_status, with_agent, with_status},
-    frames::{
-        AssistantBlock, AssistantFrame, BlockKind, ClaudeFrame, StreamEvent, TaskFrame, UserFrame,
-    },
+    frames::{AssistantBlock, AssistantFrame, BlockKind, ClaudeFrame, StreamEvent, UserFrame},
     json::JsonRecord,
     result::TurnOutcome,
     tools::{
@@ -34,6 +34,8 @@ use super::{
         execution_status, fail_open_item, image_view_for, start_item, todo_plan, tool_disposition,
     },
 };
+
+mod task_items;
 
 const MS_PER_SECOND: i64 = 1000;
 
@@ -82,6 +84,8 @@ pub struct TurnBuilder {
     current_message_id: Option<String>,
     held_agent_message: Option<ItemId>,
     user_message_count: usize,
+    /// Task reports of this turn so far; numbers their items.
+    notification_count: usize,
     /// Compactions of this turn so far; numbers their items.
     compaction_count: usize,
     open_compaction: Option<AgentItem>,
@@ -114,6 +118,7 @@ impl TurnBuilder {
             current_message_id: None,
             held_agent_message: None,
             user_message_count: 0,
+            notification_count: 0,
             compaction_count: 0,
             open_compaction: None,
             last_assistant_error: None,
@@ -481,39 +486,6 @@ impl TurnBuilder {
         self.declined.insert(tool_use_id.to_owned());
     }
 
-    /// A sub-agent of this turn started or finished: its item learns the agent
-    /// thread and its final status. No event: the spawning call's completion
-    /// or the turn's completion carries the item.
-    fn on_task(&mut self, frame: &TaskFrame) {
-        let Some(item_id) = frame.tool_use_id.as_deref().and_then(ItemId::parse) else {
-            return;
-        };
-        let Some(slot) = self.slots.get_mut(&item_id) else {
-            return;
-        };
-        let Some(subagent) = SubagentItem::from_item(&slot.item) else {
-            return;
-        };
-        match &frame.status {
-            None => {
-                slot.item =
-                    with_agent(subagent, &self.context.app_thread_id, &frame.task_id).into_item();
-            }
-            Some(status) => {
-                if let Some(status) = notified_status(Some(status))
-                    && slot.completed
-                {
-                    slot.item = with_status(subagent, status).into_item();
-                }
-            }
-        }
-        // The slot's item lost its provenance stamp in the rebuild.
-        let provenance = self.provenance.clone();
-        if let Some(slot) = self.slots.get_mut(&item_id) {
-            slot.item.stamp(&provenance);
-        }
-    }
-
     /// Claude started compacting: the item runs until the compact boundary.
     /// Its id is the turn's compaction ordinal, so a replay of the stored
     /// history, which keeps only the boundary, gives the same item the same id.
@@ -557,8 +529,12 @@ impl TurnBuilder {
             ClaudeFrame::User(frame) => self.on_user(frame),
             ClaudeFrame::Compacting => self.start_compaction(),
             ClaudeFrame::CompactBoundary { .. } => self.complete_compaction(),
-            ClaudeFrame::Task(frame) => {
-                self.on_task(frame);
+            ClaudeFrame::TaskStarted(frame) => {
+                self.on_task_started(frame);
+                Vec::new()
+            }
+            ClaudeFrame::TaskNotification(report) => {
+                self.on_task_reported(report);
                 Vec::new()
             }
             ClaudeFrame::Init { .. }
@@ -732,7 +708,7 @@ impl TurnBuilder {
         events
     }
 
-    /// Whether any item has been started (a wake turn with no items is dropped).
+    /// Whether no item has started yet: a task report then leads the turn.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.order.is_empty()

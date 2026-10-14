@@ -26,6 +26,7 @@ export function conversationStatusLayout(
   const liveStatusVisible = shouldShowConversationStatus({
     hasGoal: currentGoal !== null,
     hasLiveTurnPlan: timelineRead.conversationPresentationBinding.liveTurnPlan !== null,
+    hasRunningAgents: timelineRead.conversationPresentationBinding.runningAgents.length > 0,
     searchActive,
     timelinePositioned: timelineRead.timelinePositioned,
   });
@@ -47,13 +48,15 @@ export function conversationStatusLayout(
 export function shouldShowConversationStatus({
   hasGoal,
   hasLiveTurnPlan,
+  hasRunningAgents,
   searchActive,
   timelinePositioned,
 }: {
   readonly hasGoal: boolean;
   readonly hasLiveTurnPlan: boolean;
+  readonly hasRunningAgents: boolean;
   readonly searchActive: boolean;
   readonly timelinePositioned: boolean;
 }): boolean {
-  return (hasGoal || hasLiveTurnPlan) && timelinePositioned && !searchActive;
+  return (hasGoal || hasLiveTurnPlan || hasRunningAgents) && timelinePositioned && !searchActive;
 }

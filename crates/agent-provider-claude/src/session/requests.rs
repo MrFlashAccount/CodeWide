@@ -11,6 +11,11 @@
 //! - Any failure denies and ends the turn's tool call (`cancelled`); an
 //!   `error` answer from the client never allows.
 //! - Open requests are resolved before `turn.completed`.
+//! - A sub-agent's call (`agent_id`) is an item of the sub-agent's own
+//!   transcript, never of this conversation's turn: its result reaches only
+//!   the sub-agent, so such an item would stay open until the turn ends. It
+//!   wakes a provider turn only when that turn must carry something for it:
+//!   a question or approval for the user, or a client tool call.
 
 use agent_core::model::{
     AgentEvent, ItemId, NativeRequestId, RequestResolution, RuntimeRequest, RuntimeResponse,
@@ -40,8 +45,18 @@ use crate::{
     },
 };
 
+/// Whose tool call a `can_use_tool` request asks about.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ToolCaller {
+    /// The main conversation: the call is an item of the active turn.
+    Conversation,
+    /// A sub-agent: the call belongs to the sub-agent's transcript.
+    Subagent,
+}
+
 /// A `can_use_tool` request.
 struct ToolRequest {
+    caller: ToolCaller,
     request_id: String,
     tool_name: String,
     input: JsonRecord,
@@ -59,12 +74,17 @@ impl Session {
                 tool_use_id,
                 decision_reason,
                 suggestions,
+                agent_id,
             } => {
                 let Some(tool_use_id) = tool_use_id else {
                     self.answer(request_id, Err("can_use_tool names no tool use".into()));
                     return;
                 };
                 self.can_use_tool(ToolRequest {
+                    caller: match agent_id {
+                        Some(_) => ToolCaller::Subagent,
+                        None => ToolCaller::Conversation,
+                    },
                     request_id,
                     tool_name,
                     input,
@@ -99,7 +119,9 @@ impl Session {
     }
 
     async fn can_use_tool(&mut self, request: ToolRequest) {
-        self.active_or_wake().await;
+        if request.caller == ToolCaller::Conversation {
+            self.active_or_wake().await;
+        }
         let Some(item_id) = ItemId::parse(&request.tool_use_id) else {
             self.decide(
                 request.request_id,
@@ -109,6 +131,8 @@ impl Session {
             return;
         };
         if self.owns_client_tool(&request.tool_name) {
+            // A client tool call runs in a turn, whoever makes it.
+            self.active_or_wake().await;
             self.start_tool(&request).await;
             self.decide(
                 request.request_id,
@@ -150,7 +174,11 @@ impl Session {
             .is_some_and(|tool| self.query_tools.iter().any(|spec| spec.name == tool))
     }
 
+    /// Starts the call's item in the active turn; a sub-agent's call has none here.
     async fn start_tool(&mut self, request: &ToolRequest) {
+        if request.caller == ToolCaller::Subagent {
+            return;
+        }
         let now = self.now_ms();
         let events = match &mut self.active {
             Some(active) => {
@@ -203,13 +231,16 @@ impl Session {
         .await;
     }
 
-    /// Shows the request to the user; [`Self::respond`] answers it.
+    /// Shows the request to the user in the active turn, woken for a
+    /// sub-agent's request that arrives while idle; [`Self::respond`]
+    /// answers it.
     async fn open_request(
         &mut self,
         request: ToolRequest,
         runtime_request: RuntimeRequest,
         kind: PendingKind,
     ) {
+        self.active_or_wake().await;
         let Some(turn_id) = self
             .active
             .as_ref()
