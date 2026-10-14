@@ -16,6 +16,10 @@ export const ownerTurnActivity = readFileSync(
   new URL("../../src/features/conversation/turns/TurnActivity.tsx", import.meta.url),
   "utf8",
 );
+export const ownerActivitySegmentKind = readFileSync(
+  new URL("../../src/features/conversation/turns/activitySegmentKind.ts", import.meta.url),
+  "utf8",
+);
 export const ownerTurnActivityStyles = readFileSync(
   new URL("../../src/features/conversation/turns/TurnActivity.styles.ts", import.meta.url),
   "utf8",

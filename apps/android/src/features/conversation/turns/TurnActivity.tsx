@@ -25,6 +25,7 @@ import {
   ForceExpandCardsContext,
   TurnActivityContentContext,
 } from "./turnContexts";
+import { activitySegmentKind } from "./activitySegmentKind";
 import { turnActivityLabel } from "./turnProjection";
 import type { TransferAccess } from "../../../data/private-transfer";
 
@@ -262,23 +263,6 @@ function RevealedActivityBlock({
       {content}
     </ExpansionItemKeyContext.Provider>
   );
-}
-
-function activitySegmentKind(
-  blocks: readonly RenderBlock[],
-): "agentNavigation" | "disclosure" | "thinking" {
-  if (blocks.length > 0 && blocks.every((block) => block.kind === "reasoning")) {
-    return "thinking";
-  }
-  if (
-    blocks.length > 0 &&
-    blocks.every(
-      (block) => block.kind === "collabAgentToolCall" || block.kind === "subAgentActivity",
-    )
-  ) {
-    return "agentNavigation";
-  }
-  return "disclosure";
 }
 
 export interface TurnActivityProps {

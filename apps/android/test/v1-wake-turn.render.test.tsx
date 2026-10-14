@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react-native";
+import { render, within } from "@testing-library/react-native";
 import { View } from "react-native";
 import { projectTimelineRows } from "../src/features/conversation/timeline/timelineRows";
 import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
@@ -307,4 +307,32 @@ it("keeps a running turn's launch rows without a launch chip", () => {
   const view = render(timelineSurface([running]));
 
   expect(view.queryByTestId("launched-agents-chip")).toBeNull();
+});
+
+it("folds a running turn's current tool calls into one row showing only the running one", () => {
+  const running = completedTurn(
+    "busy",
+    [
+      {
+        clientId: null,
+        content: [{ text: "Build it", text_elements: [], type: "text" }],
+        id: "busy-prompt",
+        type: "userMessage",
+      },
+      answer("busy-progress", "Starting the build."),
+      command("done-1"),
+      command("done-2"),
+      { ...command("running"), command: "pnpm build", status: "inProgress" },
+    ],
+    { completedAt: null, status: "inProgress" },
+  );
+  const view = render(timelineSurface([running]));
+
+  expect(view.getByTestId("active-turn-activity")).toBeOnTheScreen();
+  expect(view.getByText(/· 3/u)).toBeOnTheScreen();
+  const current = within(view.getByTestId("active-turn-current-actions"));
+  expect(current.getAllByText(/pnpm build/u).length).toBeGreaterThan(0);
+  expect(current.queryAllByText(/printf done/u)).toHaveLength(0);
+  // The progress text before the tool calls stays visible.
+  expect(view.getAllByText("Rendered Markdown block").length).toBeGreaterThan(0);
 });
