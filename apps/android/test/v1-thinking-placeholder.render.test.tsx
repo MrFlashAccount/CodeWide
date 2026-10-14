@@ -70,8 +70,6 @@ function turnView(turn: TurnItem, virtualized: boolean) {
         followsLead={row.followsLead}
         forceExpanded={false}
         parts={row.parts}
-        bubble={row.bubble}
-        group={row.group}
         placement={row.placement}
         presentation={projectTurnPresentation(turn, null, false, false)}
       />

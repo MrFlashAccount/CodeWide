@@ -1,6 +1,6 @@
 import { projectCompleteMarkdown } from "@codewide/rendering-core";
 import { markdownDocumentBlocks } from "../../../rendering/markdown-document-blocks";
-import { foldsAnswerIntoHistory, type TurnBubbleGroup } from "../turns/turnBubbleGroup";
+import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
 import { projectTurnPresentation } from "../turns/turnProjection";
 import type { VirtualizedTurnPart, VirtualizedTurnPlacement } from "../turns/virtualizedTurnTypes";
 import { timelineItemKey } from "./timelineProjection";
@@ -19,19 +19,17 @@ export type TimelineRow =
       item: Extract<TimelineItem, { kind: "turn" }>;
       key: string;
       kind: "turnLead";
+      /** Background task reports drawn as one line outside the bubble; empty for a person's turn. */
+      notifications: readonly TaskNotificationReport[];
       timelineIndex: number;
     }
   | {
-      /** The slice's place in its response bubble; differs from `placement` only in a group. */
-      bubble: VirtualizedTurnPlacement;
       followsLead: boolean;
-      /** The turns drawn as this bubble, or `null` for a turn drawn alone. */
-      group: TurnBubbleGroup | null;
       item: Extract<TimelineItem, { kind: "turn" }>;
       key: string;
       kind: "turnSlice";
       parts: readonly VirtualizedTurnPart[];
-      /** The slice's place within its own turn. */
+      /** The slice's place within its turn's bubble. */
       placement: VirtualizedTurnPlacement;
       timelineIndex: number;
     };
@@ -71,118 +69,54 @@ export function projectTimelineRows(
       rows.push(...projectTimelineItemRows(item, timelineIndex, options));
     }
   }
-  const grouped = groupContinuedResponses(items, rows);
-  timelineRowsCache.set(items, { key: cacheKey, rows: grouped });
-  return grouped;
+  const merged = mergeEmptyWakeLeads(rows);
+  timelineRowsCache.set(items, { key: cacheKey, rows: merged });
+  return merged;
 }
 
+type TimelineLeadRow = Extract<TimelineRow, { kind: "turnLead" }>;
 type TimelineTurnItem = Extract<TimelineItem, { kind: "turn" }>;
 
-/** A head slice whose answer moved into the bubble's history keeps only that history. */
-const FOLDED_PARTS: readonly VirtualizedTurnPart[] = [{ kind: "empty" }];
-
 /**
- * Draws everything from one user message to the next as one agent bubble:
- * a turn without a user message (a background task waking the agent)
- * continues the previous turn's bubble. The bubble reads like one turn: one
- * collapsed history, then the latest turn's answer. Earlier answers fold into
- * that history as soon as a continuation starts; the head keeps one slice for
- * it. Row keys and per-turn placement stay as projected, so a live
- * continuation streams into the existing bubble; rows outside a group keep
- * their cached identity.
+ * Wakes that produced nothing draw only their reason line. Consecutive ones
+ * (several background tasks finishing at once) read as one line, joined with
+ * the next wake's line when that one answers. Only lines merge; no turn
+ * content moves between turns.
  */
-function groupContinuedResponses(
-  items: readonly TimelineItem[],
-  rows: TimelineRow[],
-): TimelineRow[] {
-  const groups = continuedResponseGroups(items, rows);
-  if (groups.size === 0) {
-    return rows;
-  }
-  const kept = rows.flatMap((row) => {
-    const members = row.kind === "turnSlice" ? groups.get(row.item) : undefined;
-    if (row.kind !== "turnSlice" || members === undefined) {
-      return [row];
-    }
-    if (!foldsAnswerIntoHistory(members, row.item)) {
-      return [row];
-    }
-    return row.item === members[0] && isLeadingSlice(row.placement)
-      ? [{ ...row, parts: FOLDED_PARTS, placement: "single" as const }]
-      : [];
-  });
-  const groupSlices = new Map<readonly TimelineTurnItem[], number>();
-  const groupContent = new Map<readonly TimelineTurnItem[], boolean>();
-  for (const row of kept) {
-    const members = row.kind === "turnSlice" ? groups.get(row.item) : undefined;
-    if (members !== undefined) {
-      groupSlices.set(members, (groupSlices.get(members) ?? 0) + 1);
-      if (!groupContent.has(members)) {
-        groupContent.set(
-          members,
-          members.some(
-            (member) => projectTurnPresentation(member, null, false, false).hasAgentContent,
-          ),
-        );
-      }
+function mergeEmptyWakeLeads(rows: readonly TimelineRow[]): TimelineRow[] {
+  const merged: TimelineRow[] = [];
+  let pending: TimelineLeadRow | null = null;
+  for (const [index, row] of rows.entries()) {
+    const current = joinPendingLine(merged, pending, row);
+    pending = isReportLead(current) && rows[index + 1]?.item !== row.item ? current : null;
+    if (pending === null) {
+      merged.push(current);
     }
   }
-  const seen = new Map<readonly TimelineTurnItem[], number>();
-  return kept.map((row) => {
-    const members = row.kind === "turnSlice" ? groups.get(row.item) : undefined;
-    if (row.kind !== "turnSlice" || members === undefined) {
-      return row;
-    }
-    const index = seen.get(members) ?? 0;
-    seen.set(members, index + 1);
-    return {
-      ...row,
-      bubble: slicePlacement(index, groupSlices.get(members) ?? 1),
-      group: {
-        hasVisibleAgentContent: groupContent.get(members) ?? false,
-        memberIndex: members.indexOf(row.item),
-        members,
-      },
-    };
-  });
-}
-
-/** The agent bubble ends only at a user message: a turn without one continues it. */
-function hasUserMessage(item: TimelineTurnItem): boolean {
-  return item.turn.items.some((turnItem) => turnItem.type === "userMessage");
-}
-
-function isLeadingSlice(placement: VirtualizedTurnPlacement): boolean {
-  return placement === "single" || placement === "start";
-}
-
-function continuedResponseGroups(
-  items: readonly TimelineItem[],
-  rows: readonly TimelineRow[],
-): Map<TimelineItem, readonly TimelineTurnItem[]> {
-  const withLead = new Set(rows.flatMap((row) => (row.kind === "turnLead" ? [row.item] : [])));
-  const groups = new Map<TimelineItem, readonly TimelineTurnItem[]>();
-  let current: TimelineTurnItem[] = [];
-  const close = () => {
-    if (current.length > 1) {
-      for (const member of current) {
-        groups.set(member, current);
-      }
-    }
-  };
-  for (const item of items) {
-    if (item.kind !== "turn") {
-      close();
-      current = [];
-    } else if (current.length > 0 && !withLead.has(item) && !hasUserMessage(item)) {
-      current.push(item);
-    } else {
-      close();
-      current = [item];
-    }
+  if (pending !== null) {
+    merged.push(pending);
   }
-  close();
-  return groups;
+  return merged;
+}
+
+/** Prepends a held line to the next reason line, or emits it before any other row. */
+function joinPendingLine(
+  merged: TimelineRow[],
+  pending: TimelineLeadRow | null,
+  row: TimelineRow,
+): TimelineRow {
+  if (pending === null) {
+    return row;
+  }
+  if (isReportLead(row)) {
+    return { ...row, notifications: [...pending.notifications, ...row.notifications] };
+  }
+  merged.push(pending);
+  return row;
+}
+
+function isReportLead(row: TimelineRow): row is TimelineLeadRow {
+  return row.kind === "turnLead" && row.notifications.length > 0;
 }
 
 function projectTimelineItemRows(
@@ -211,31 +145,67 @@ function createTimelineItemRows(
   const searchFocus =
     options.searchMessageItemId === null ? null : { itemId: options.searchMessageItemId };
   const presentation = projectTurnPresentation(item, searchFocus, false, false);
+  const notifications = leadNotifications(presentation);
+  const lead: TimelineLeadRow = {
+    item,
+    key: `${timelineItemKey(item)}\u0000lead`,
+    kind: "turnLead",
+    notifications,
+    timelineIndex,
+  };
+  if (presentation.isEmptyWake) {
+    return notifications.length === 0 ? [] : [lead];
+  }
+  const followsLead = hasTurnLead(presentation) || notifications.length > 0;
+  const slices = turnSlices({ followsLead, item, options, presentation, timelineIndex });
+  return followsLead ? [lead, ...slices] : slices;
+}
+
+function turnSlices({
+  followsLead,
+  item,
+  options,
+  presentation,
+  timelineIndex,
+}: {
+  followsLead: boolean;
+  item: TimelineTurnItem;
+  options: TimelineRowsOptions;
+  presentation: ReturnType<typeof projectTurnPresentation>;
+  timelineIndex: number;
+}): TimelineRow[] {
   const parts = projectTurnParts(presentation);
   const split = shouldSplitTurn({ options, parts, presentation });
   const slices = split ? parts.map((part) => [part]) : [parts];
   const baseKey = timelineItemKey(item);
-  const followsLead = hasTurnLead(presentation);
-  return [
-    ...(followsLead
-      ? [{ item, key: `${baseKey}\u0000lead`, kind: "turnLead" as const, timelineIndex }]
-      : []),
-    ...slices.map((slice, index) => ({
-      bubble: slicePlacement(index, slices.length),
-      followsLead,
-      group: null,
-      item,
-      key: index === 0 ? baseKey : `${baseKey}\u0000slice:${virtualizedPartKey(slice[0])}`,
-      kind: "turnSlice" as const,
-      parts: slice,
-      placement: slicePlacement(index, slices.length),
-      timelineIndex,
-    })),
-  ];
+  return slices.map((slice, index) => ({
+    followsLead,
+    item,
+    key: index === 0 ? baseKey : `${baseKey}\u0000slice:${virtualizedPartKey(slice[0])}`,
+    kind: "turnSlice" as const,
+    parts: slice,
+    placement: slicePlacement(index, slices.length),
+    timelineIndex,
+  }));
 }
 
 function timelineRowsOptionsKey(options: TimelineRowsOptions): string {
   return `${String(options.enabled)}:${String(options.threadSearchActive)}:${options.searchMessageItemId ?? ""}`;
+}
+
+/**
+ * The reports a wake turn draws before its bubble: those that woke it and
+ * those that arrived while it answered. A person's turn draws its mid-turn
+ * reports after its bubble instead.
+ */
+function leadNotifications(
+  presentation: ReturnType<typeof projectTurnPresentation>,
+): readonly TaskNotificationReport[] {
+  const { midTurn, wake } = presentation.taskNotifications;
+  if (presentation.userBlocks.length > 0 || (wake.length === 0 && midTurn.length === 0)) {
+    return [];
+  }
+  return midTurn.length === 0 ? wake : [...wake, ...midTurn];
 }
 
 function hasTurnLead(presentation: ReturnType<typeof projectTurnPresentation>): boolean {

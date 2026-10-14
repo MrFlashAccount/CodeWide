@@ -18,9 +18,9 @@ import { styles as markdownStyles } from "../content/AgentResponseMarkdown.style
 import { AgentResponseMarkdown } from "../content/AgentResponseMarkdown";
 import { ThinkingStatus } from "../protocol/ThinkingStatus";
 import { CollapsedTurnActivity, CompletedTurnHistory } from "./CompletedTurnHistory";
+import { LaunchedAgentsChip } from "./LaunchedAgentsChip";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
 import { TurnActivitySegment } from "./TurnActivity";
-import type { TurnBubbleGroup } from "./turnBubbleGroup";
 import type { projectTurnPresentation } from "./turnProjection";
 import { styles } from "./TurnTimelineItem.styles";
 import type { TurnTimelineItemProps } from "./TurnTimelineItem.types";
@@ -32,8 +32,6 @@ type VirtualizedAgentTurnBodyProps = {
   compact: boolean;
   forceExpanded: boolean;
   getTransferAccess: TurnTimelineItemProps["getTransferAccess"];
-  /** The turns sharing this bubble, or `null` for a turn drawn alone. */
-  group: TurnBubbleGroup | null;
   onFixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
   onLoadItems: TurnTimelineItemProps["onLoadItems"];
   parts: readonly VirtualizedTurnPart[];
@@ -55,12 +53,7 @@ export function VirtualizedAgentTurnBody(props: VirtualizedAgentTurnBodyProps): 
   );
 }
 
-function VirtualizedTurnLead(props: VirtualizedAgentTurnBodyProps): ReactElement | null {
-  // A continuation's activity is part of the group's one history at the top
-  // of the bubble.
-  if (props.group !== null && props.group.memberIndex > 0) {
-    return null;
-  }
+function VirtualizedTurnLead(props: VirtualizedAgentTurnBodyProps): ReactElement {
   const preTurn =
     props.presentation.preTurnBlocks.length === 0 ? null : (
       <PreTurnLifecycleRows
@@ -81,18 +74,21 @@ function VirtualizedTurnLead(props: VirtualizedAgentTurnBodyProps): ReactElement
       {props.presentation.rawTurn.status === "inProgress" ? null : (
         <VirtualizedTurnHistory {...props} />
       )}
+      {/* A running turn shows its launch rows; a finished one folds them into its history. */}
+      {props.presentation.rawTurn.status === "inProgress" ? null : (
+        <LaunchedAgentsChip agents={props.presentation.launchedAgents} />
+      )}
     </>
   );
 }
 
-/** The finished turn's collapsed activity, joined by its bubble's continuations. */
+/** The finished turn's collapsed activity. */
 function VirtualizedTurnHistory(props: VirtualizedAgentTurnBodyProps): ReactElement {
   return (
     <CompletedTurnHistory
       compact={props.compact}
       forceExpanded={props.forceExpanded}
       item={props.turn}
-      {...(props.group === null ? {} : { bubbleTurns: props.group.members })}
       {...(props.getTransferAccess === undefined
         ? {}
         : { getTransferAccess: props.getTransferAccess })}
@@ -288,7 +284,7 @@ function renderActivityPart(
 }
 
 function VirtualizedTurnTail(props: VirtualizedAgentTurnBodyProps): ReactElement {
-  const placeholder = showsEmptyResponsePlaceholder(props) ? (
+  const placeholder = props.presentation.showEmptyResponsePlaceholder ? (
     <Text style={styles.agentPlaceholder}>
       {props.presentation.rawTurn.status === "interrupted"
         ? "Stopped before response was generated"
@@ -306,18 +302,6 @@ function VirtualizedTurnTail(props: VirtualizedAgentTurnBodyProps): ReactElement
       {placeholder}
       {thinking}
     </>
-  );
-}
-
-/** One fallback belongs to the combined bubble, never to each empty member turn. */
-function showsEmptyResponsePlaceholder(props: VirtualizedAgentTurnBodyProps): boolean {
-  if (!props.presentation.showEmptyResponsePlaceholder) {
-    return false;
-  }
-  const group = props.group;
-  return (
-    group === null ||
-    (group.memberIndex === group.members.length - 1 && !group.hasVisibleAgentContent)
   );
 }
 
