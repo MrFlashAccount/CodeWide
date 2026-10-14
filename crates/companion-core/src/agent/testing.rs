@@ -331,6 +331,8 @@ pub(crate) struct ScriptedProvider {
     pub(crate) interrupted: Mutex<Vec<TurnInterruptParams>>,
     pub(crate) updated: Mutex<Vec<ThreadUpdateParams>>,
     pub(crate) forked: Mutex<Vec<ThreadForkParams>>,
+    /// Ids of `catalog.permissionProfiles`; empty lists none.
+    profiles: Vec<&'static str>,
     next_id: std::sync::atomic::AtomicU64,
     status: watch::Sender<ProviderStatus>,
 }
@@ -361,9 +363,16 @@ impl ScriptedProvider {
             interrupted: Mutex::new(Vec::new()),
             updated: Mutex::new(Vec::new()),
             forked: Mutex::new(Vec::new()),
+            profiles: Vec::new(),
             next_id: std::sync::atomic::AtomicU64::new(1),
             status,
         }
+    }
+
+    /// Lists these permission profile ids in `catalog.permissionProfiles`.
+    pub(crate) fn with_profiles(mut self, profiles: &[&'static str]) -> Self {
+        self.profiles = profiles.to_vec();
+        self
     }
 
     /// Adds an existing thread.
@@ -476,7 +485,15 @@ impl AgentProvider for ScriptedProvider {
 
     async fn catalog_permission_profiles(&self) -> Result<PermissionProfileCatalog, ProviderError> {
         Ok(PermissionProfileCatalog {
-            profiles: Vec::new(),
+            profiles: self
+                .profiles
+                .iter()
+                .map(|id| crate::agent::model::PermissionProfileEntry {
+                    id: (*id).to_owned(),
+                    display_name: (*id).to_owned(),
+                    description: String::new(),
+                })
+                .collect(),
         })
     }
 
