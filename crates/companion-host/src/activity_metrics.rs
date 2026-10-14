@@ -71,6 +71,18 @@ impl ActivityItem {
     }
 }
 
+/// A background task's report (Claude `codewideTaskNotification`) is a message
+/// to the agent, not work the agent did, so it never counts as activity.
+const TASK_NOTIFICATION_KIND: &str = "codewideTaskNotification";
+
+/// Whether an item belongs to the lifecycle before the turn's user message.
+/// A turn without one (a background task woke the agent) has no such
+/// boundary: all of its work is the response, including items marked pre-turn
+/// while no user message had arrived yet.
+fn is_pre_turn(index: usize, item: &ActivityItem, first_user: Option<usize>) -> bool {
+    first_user.is_some_and(|first| index < first || item.pre_turn)
+}
+
 impl ActivityState {
     #[must_use]
     pub fn from_turn(turn: &Value) -> Self {
@@ -111,15 +123,12 @@ impl ActivityState {
 
     #[must_use]
     pub fn projection(&self) -> Value {
-        let first_user = self
-            .items
-            .iter()
-            .position(|i| i.kind == "userMessage")
-            .unwrap_or(usize::MAX);
-        let last = self
-            .items
-            .iter()
-            .rposition(|i| i.kind != "userMessage" && i.phase != AgentPhase::Question);
+        let first_user = self.items.iter().position(|i| i.kind == "userMessage");
+        let last = self.items.iter().rposition(|i| {
+            i.kind != "userMessage"
+                && i.kind != TASK_NOTIFICATION_KIND
+                && i.phase != AgentPhase::Question
+        });
         let final_agent = self
             .items
             .iter()
@@ -140,6 +149,7 @@ impl ActivityState {
             .enumerate()
             .filter(|(index, item)| {
                 item.kind != "userMessage"
+                    && item.kind != TASK_NOTIFICATION_KIND
                     && item.phase != AgentPhase::Question
                     && (item.kind != "agentMessage" || item.text)
                     && (item.kind != "reasoning" || (self.active && Some(*index) == last))
@@ -148,7 +158,7 @@ impl ActivityState {
         let history: Vec<_> = visible
             .iter()
             .filter(|(index, item)| {
-                Some(*index) != final_agent && *index >= first_user && !item.pre_turn
+                Some(*index) != final_agent && !is_pre_turn(*index, item, first_user)
             })
             .map(|(_, i)| *i)
             .collect();
@@ -182,12 +192,12 @@ impl ActivityState {
     fn ranges(
         &self,
         visible: &[(usize, &ActivityItem)],
-        first_user: usize,
+        first_user: Option<usize>,
         final_agent: Option<usize>,
     ) -> Vec<Value> {
         let active_tools: Vec<_> = visible
             .iter()
-            .filter(|(index, i)| *index >= first_user && !i.pre_turn && i.kind != "agentMessage")
+            .filter(|(index, i)| !is_pre_turn(*index, i, first_user) && i.kind != "agentMessage")
             .map(|(_, i)| i.id.as_str())
             .collect();
         let live_ids = &active_tools[active_tools.len().saturating_sub(LIVE_ACTIVITY_WINDOW)..];
@@ -198,7 +208,7 @@ impl ActivityState {
             if !self.active && Some(*index) == final_agent {
                 continue;
             }
-            let pre_turn = *index < first_user || item.pre_turn;
+            let pre_turn = is_pre_turn(*index, item, first_user);
             if previous_scope.is_some_and(|scope| scope != pre_turn) {
                 push_ranges(&mut ranges, &group, self.input_price, self.active, live_ids);
                 group.clear();
@@ -458,6 +468,50 @@ mod tests {
         assert_eq!(metrics["ranges"][0]["firstItemId"], "pre");
         assert_eq!(metrics["ranges"][0]["lastItemId"], "pre");
         assert_eq!(metrics["ranges"][1]["firstItemId"], "response");
+    }
+
+    #[test]
+    fn a_turn_without_a_user_message_counts_its_work_as_the_response() {
+        let mut marked = command("marked", "abcd");
+        marked["codewidePreTurn"] = json!(true);
+        let metrics = ActivityState::from_turn(&turn(
+            &[
+                command("wake", "abcd"),
+                marked,
+                json!({"id":"final","type":"agentMessage","text":"done","phase":"final_answer"}),
+            ],
+            "completed",
+        ))
+        .projection();
+        assert_eq!(metrics["total"]["count"], 2);
+        assert_eq!(metrics["ranges"][0]["firstItemId"], "wake");
+        assert_eq!(metrics["ranges"][0]["lastItemId"], "marked");
+    }
+
+    #[test]
+    fn task_reports_are_not_activity() {
+        let report =
+            |id: &str| json!({"id": id, "type": "codewideTaskNotification", "delivery": "wake"});
+        let metrics = ActivityState::from_turn(&turn(
+            &[
+                report("wake"),
+                command("work", "abcd"),
+                report("mid"),
+                json!({"id":"final","type":"agentMessage","text":"done","phase":"final_answer"}),
+            ],
+            "completed",
+        ))
+        .projection();
+        assert_eq!(metrics["total"]["count"], 1);
+        assert_eq!(metrics["total"]["kinds"], json!(["commandExecution"]));
+        assert_eq!(metrics["ranges"].as_array().map(Vec::len), Some(1));
+        assert_eq!(metrics["ranges"][0]["firstItemId"], "work");
+        assert_eq!(metrics["ranges"][0]["lastItemId"], "work");
+
+        let only_reports =
+            ActivityState::from_turn(&turn(&[report("wake")], "completed")).projection();
+        assert_eq!(only_reports["total"]["count"], 0);
+        assert_eq!(only_reports["ranges"], json!([]));
     }
 
     #[test]

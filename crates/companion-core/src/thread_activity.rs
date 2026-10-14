@@ -199,11 +199,18 @@ fn reduce(state: &mut ThreadState, method: &str, params: &Map<String, Value>) {
             }
         }
         "item/started" => {
+            let item = params.get("item").and_then(Value::as_object);
+            // A background task report arriving mid-turn is not the agent's own
+            // work: the current activity stays.
+            if item
+                .and_then(|item| item.get("type"))
+                .and_then(Value::as_str)
+                == Some("codewideTaskNotification")
+            {
+                return;
+            }
             state.reasoning = None;
-            state.current = params
-                .get("item")
-                .and_then(Value::as_object)
-                .and_then(item_activity);
+            state.current = item.and_then(item_activity);
         }
         "item/reasoning/summaryPartAdded" => {
             if let Some((item_id, summary_index)) = reasoning_part_id(params) {
@@ -469,6 +476,21 @@ mod tests {
             Some(Value::Null),
             "an item without a label is newer than the previous signal"
         );
+    }
+
+    #[test]
+    fn a_task_report_keeps_the_current_activity() {
+        let mut tracker = LiveActivityTracker::default();
+        let running = observe(
+            &mut tracker,
+            &started(&json!({"type": "commandExecution", "id": "c", "command": "cargo test"})),
+        );
+        assert!(running.is_some());
+        let report = observe(
+            &mut tracker,
+            &started(&json!({"type": "codewideTaskNotification", "id": "r"})),
+        );
+        assert_eq!(report, None);
     }
 
     #[test]

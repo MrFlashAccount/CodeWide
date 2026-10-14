@@ -6,6 +6,9 @@
 //! - `json` — structural access to records under both field spellings.
 //! - `frames` — one message → `ClaudeFrame` (never fails).
 //! - `tools`, `diffs`, `agents`, `client_tools` — tool calls → neutral items.
+//! - `task_reports`, `task_notifications` — background task reports (stored
+//!   `<task-notification>` messages, live `task_notification` frames) →
+//!   neutral `taskNotification` items.
 //! - `result` — the `result` frame → turn outcome.
 //! - `builder` — `TurnBuilder`: one neutral turn from frames, with the
 //!   ordering invariants of the protocol.
@@ -24,9 +27,13 @@ pub mod json;
 pub mod reconstruct;
 pub mod result;
 pub mod segments;
+pub mod task_notifications;
+pub mod task_reports;
 pub mod tools;
 pub mod turn_index;
 
+#[cfg(test)]
+mod task_report_tests;
 #[cfg(test)]
 mod tests;
 

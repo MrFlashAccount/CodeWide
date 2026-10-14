@@ -8,7 +8,10 @@
 //!    message is held back and released as `commentary` when another item
 //!    starts, or as `final` when the turn completes successfully;
 //! 5. `item.completed` carries the full item; deltas only reference started,
-//!    still-open items of the matching type.
+//!    still-open items of the matching type;
+//! 6. a background task report is a complete item at its delivery position
+//!    and does not release the held agent message: it is not the agent's
+//!    output, so the answer before it can still be the final one.
 //!
 //! Holds state but performs no I/O; the caller decides what to do with the
 //! events it returns. The caller also owns the clock: `set_now` before each
@@ -18,17 +21,21 @@ use std::collections::HashMap;
 
 use agent_core::model::{
     AgentEvent, AgentItem, AgentTurn, AppThreadId, CallStatus, ClientMessageId, ExecutionStatus,
-    ItemDelta, ItemId, MessagePhase, Provenance, ProviderId, ProviderThreadRef, TokenUsage, TurnId,
-    TurnOrigin, TurnStatus, TurnUsageRecord, UserContent,
+    ItemDelta, ItemId, MessagePhase, Provenance, ProviderId, ProviderThreadRef,
+    TaskNotificationDelivery, TokenUsage, TurnId, TurnOrigin, TurnStatus, TurnUsageRecord,
+    UserContent,
 };
 
 use super::{
     agents::{SubagentItem, notified_status, with_agent, with_status},
     frames::{
-        AssistantBlock, AssistantFrame, BlockKind, ClaudeFrame, StreamEvent, TaskFrame, UserFrame,
+        AssistantBlock, AssistantFrame, BlockKind, ClaudeFrame, StreamEvent, TaskStartedFrame,
+        UserFrame,
     },
     json::JsonRecord,
     result::TurnOutcome,
+    task_notifications::{Delivered, TaskIdentity, task_notification_item},
+    task_reports::TaskReport,
     tools::{
         ToolCallInput, ToolContext, ToolDisposition, ToolOutcome, block_item_id, complete_item,
         execution_status, fail_open_item, image_view_for, start_item, todo_plan, tool_disposition,
@@ -82,6 +89,8 @@ pub struct TurnBuilder {
     current_message_id: Option<String>,
     held_agent_message: Option<ItemId>,
     user_message_count: usize,
+    /// Task reports of this turn so far; numbers their items.
+    notification_count: usize,
     /// Compactions of this turn so far; numbers their items.
     compaction_count: usize,
     open_compaction: Option<AgentItem>,
@@ -114,6 +123,7 @@ impl TurnBuilder {
             current_message_id: None,
             held_agent_message: None,
             user_message_count: 0,
+            notification_count: 0,
             compaction_count: 0,
             open_compaction: None,
             last_assistant_error: None,
@@ -481,35 +491,87 @@ impl TurnBuilder {
         self.declined.insert(tool_use_id.to_owned());
     }
 
-    /// A sub-agent of this turn started or finished: its item learns the agent
-    /// thread and its final status. No event: the spawning call's completion
-    /// or the turn's completion carries the item.
-    fn on_task(&mut self, frame: &TaskFrame) {
-        let Some(item_id) = frame.tool_use_id.as_deref().and_then(ItemId::parse) else {
-            return;
+    /// A background task report delivered in this turn: `wake` reports lead
+    /// a provider turn, `midTurn` ones sit where they arrived. Its id is the
+    /// turn's report ordinal, so a replay of the stored history gives it the
+    /// same id. It does not release the held agent message.
+    pub fn add_task_notification(
+        &mut self,
+        report: &TaskReport,
+        delivery: TaskNotificationDelivery,
+        identity: TaskIdentity,
+    ) -> Vec<AgentEvent> {
+        let Some(item_id) = ItemId::parse(&format!(
+            "{}:notification:{}",
+            self.context.turn_id, self.notification_count
+        )) else {
+            return Vec::new();
         };
-        let Some(slot) = self.slots.get_mut(&item_id) else {
-            return;
-        };
-        let Some(subagent) = SubagentItem::from_item(&slot.item) else {
-            return;
-        };
-        match &frame.status {
-            None => {
-                slot.item =
-                    with_agent(subagent, &self.context.app_thread_id, &frame.task_id).into_item();
-            }
-            Some(status) => {
-                if let Some(status) = notified_status(Some(status))
-                    && slot.completed
-                {
-                    slot.item = with_status(subagent, status).into_item();
-                }
-            }
-        }
-        // The slot's item lost its provenance stamp in the rebuild.
+        self.notification_count += 1;
+        let item = self.stamped(task_notification_item(
+            report,
+            Delivered {
+                app_thread_id: &self.context.app_thread_id,
+                delivery,
+                identity,
+                item_id: item_id.clone(),
+            },
+        ));
+        self.slots.insert(
+            item_id.clone(),
+            ItemSlot {
+                completed: true,
+                item: item.clone(),
+            },
+        );
+        self.order.push(item_id);
+        vec![self.event_started(item.clone()), self.event_completed(item)]
+    }
+
+    /// Whether a tool call of this turn has started and not returned yet.
+    #[must_use]
+    pub fn is_open_tool_call(&self, tool_use_id: &str) -> bool {
+        self.tools.contains_key(tool_use_id)
+            && ItemId::parse(tool_use_id)
+                .is_none_or(|item_id| self.slots.get(&item_id).is_none_or(|slot| !slot.completed))
+    }
+
+    /// The sub-agent item a task's spawning call started in this turn.
+    fn subagent_slot(
+        &mut self,
+        tool_use_id: Option<&str>,
+    ) -> Option<(&mut ItemSlot, SubagentItem)> {
+        let item_id = tool_use_id.and_then(ItemId::parse)?;
+        let slot = self.slots.get_mut(&item_id)?;
+        let subagent = SubagentItem::from_item(&slot.item)?;
+        Some((slot, subagent))
+    }
+
+    /// A sub-agent of this turn started: its item learns the agent thread.
+    /// No event: the spawning call's completion carries the item.
+    fn on_task_started(&mut self, frame: &TaskStartedFrame) {
+        let app_thread_id = self.context.app_thread_id.clone();
         let provenance = self.provenance.clone();
-        if let Some(slot) = self.slots.get_mut(&item_id) {
+        if let Some((slot, subagent)) = self.subagent_slot(frame.tool_use_id.as_deref()) {
+            slot.item = with_agent(subagent, &app_thread_id, &frame.task_id).into_item();
+            // The rebuilt item lost its provenance stamp.
+            slot.item.stamp(&provenance);
+        }
+    }
+
+    /// A sub-agent of this turn reported: a returned spawning call's item
+    /// takes its final status. No event: the turn's completion carries the
+    /// item. The report's own item is the caller's to add
+    /// ([`Self::add_task_notification`]).
+    fn on_task_reported(&mut self, report: &TaskReport) {
+        let provenance = self.provenance.clone();
+        let Some(status) = notified_status(report.status.as_deref()) else {
+            return;
+        };
+        if let Some((slot, subagent)) = self.subagent_slot(report.tool_use_id.as_deref())
+            && slot.completed
+        {
+            slot.item = with_status(subagent, status).into_item();
             slot.item.stamp(&provenance);
         }
     }
@@ -557,8 +619,12 @@ impl TurnBuilder {
             ClaudeFrame::User(frame) => self.on_user(frame),
             ClaudeFrame::Compacting => self.start_compaction(),
             ClaudeFrame::CompactBoundary { .. } => self.complete_compaction(),
-            ClaudeFrame::Task(frame) => {
-                self.on_task(frame);
+            ClaudeFrame::TaskStarted(frame) => {
+                self.on_task_started(frame);
+                Vec::new()
+            }
+            ClaudeFrame::TaskNotification(report) => {
+                self.on_task_reported(report);
                 Vec::new()
             }
             ClaudeFrame::Init { .. }
@@ -732,7 +798,7 @@ impl TurnBuilder {
         events
     }
 
-    /// Whether any item has been started (a wake turn with no items is dropped).
+    /// Whether no item has started yet: a task report then leads the turn.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.order.is_empty()

@@ -229,6 +229,18 @@ const item = tagged(
       result: nullable(str),
       status: literal("running", "completed", "failed", "stopped"),
     },
+    taskNotification: {
+      agentThreadId: nullable(str),
+      delivery: literal("wake", "midTurn"),
+      durationMs: nullable(int),
+      itemId: str,
+      kind: literal("agent", "command", "other"),
+      name: str,
+      result: nullable(str),
+      status: literal("completed", "failed", "killed", "stopped", "interim", "lost", "unknown"),
+      taskId: str,
+      toolUses: nullable(int),
+    },
     toolCall: {
       arguments: json,
       durationMs: nullable(int),

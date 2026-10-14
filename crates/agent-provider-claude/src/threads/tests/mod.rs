@@ -8,6 +8,7 @@
 mod forks;
 mod golden;
 mod sessions;
+mod task_reports;
 mod threads;
 
 use std::{

@@ -9,7 +9,8 @@ use std::path::Path;
 
 use agent_core::model::{
     AgentItem, AgentTurn, AppThreadId, CallStatus, ExecutionStatus, MessagePhase, SubagentStatus,
-    TokenUsage, TurnErrorKind, TurnOrigin, TurnStatus, TurnUsageRecord, UserContent,
+    TaskNotificationDelivery, TaskNotificationSource, TaskNotificationStatus, TokenUsage,
+    TurnErrorKind, TurnOrigin, TurnStatus, TurnUsageRecord, UserContent,
 };
 use serde_json::{Value, json};
 
@@ -21,11 +22,11 @@ use super::{
 };
 
 /// The stored messages of a fixture, as the reconstruction reads them.
-fn records(messages: &[Value]) -> Vec<&super::json::JsonRecord> {
+pub(super) fn records(messages: &[Value]) -> Vec<&super::json::JsonRecord> {
     messages.iter().filter_map(Value::as_object).collect()
 }
 
-fn reconstruct_turns(
+pub(super) fn reconstruct_turns(
     messages: &[Value],
     index: &[TurnRecord],
     context: &HistoryContext,
@@ -48,7 +49,7 @@ fn fixture(name: &str) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(serde_json::from_slice(&std::fs::read(path)?)?)
 }
 
-fn messages(name: &str) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+pub(super) fn messages(name: &str) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
     fixture(name)?
         .get("messages")
         .and_then(Value::as_array)
@@ -73,14 +74,14 @@ fn prompt_uuid(messages: &[Value], needle: &str) -> Result<String, Box<dyn std::
         .ok_or_else(|| format!("no prompt containing {needle}").into())
 }
 
-fn context() -> HistoryContext {
+pub(super) fn context() -> HistoryContext {
     HistoryContext {
         app_thread_id: AppThreadId::from_static("0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"),
         cwd: "/workspace".into(),
     }
 }
 
-fn item_type(item: &AgentItem) -> &'static str {
+pub(super) fn item_type(item: &AgentItem) -> &'static str {
     match item {
         AgentItem::UserMessage { .. } => "userMessage",
         AgentItem::AgentMessage { .. } => "agentMessage",
@@ -94,11 +95,12 @@ fn item_type(item: &AgentItem) -> &'static str {
         AgentItem::Plan { .. } => "plan",
         AgentItem::Compaction { .. } => "compaction",
         AgentItem::Subagent { .. } => "subagent",
+        AgentItem::TaskNotification { .. } => "taskNotification",
         AgentItem::CapabilityItem { .. } => "capabilityItem",
     }
 }
 
-fn types(turn: &AgentTurn) -> Vec<&'static str> {
+pub(super) fn types(turn: &AgentTurn) -> Vec<&'static str> {
     turn.items.iter().map(item_type).collect()
 }
 
@@ -133,7 +135,7 @@ fn user_texts(turns: &[AgentTurn]) -> Vec<String> {
 }
 
 /// Neutral ordering rules that hold for every rebuilt turn.
-fn ordering_violations(turns: &[AgentTurn]) -> Vec<String> {
+pub(super) fn ordering_violations(turns: &[AgentTurn]) -> Vec<String> {
     let mut violations = Vec::new();
     for turn in turns {
         if turn.origin == TurnOrigin::User
@@ -312,15 +314,39 @@ fn derives_turn_boundaries_from_prompts_the_interrupt_marker_and_a_task_notifica
             ..
         })
     ));
+    // The report that woke the agent leads the wake turn; it is not the answer.
     assert_eq!(
         types(&turns[3])
             .into_iter()
             .filter(|kind| *kind != "reasoning")
             .collect::<Vec<_>>(),
-        ["agentMessage"]
+        ["taskNotification", "agentMessage"]
+    );
+    let AgentItem::TaskNotification {
+        delivery,
+        source,
+        task_id,
+        name,
+        status,
+        ..
+    } = non_reasoning(&turns[3])[0]
+    else {
+        return Err("the wake turn does not lead with its report".into());
+    };
+    assert_eq!(
+        (*delivery, source, task_id.as_str(), name.as_str(), *status),
+        (
+            TaskNotificationDelivery::Wake,
+            &TaskNotificationSource::Command {
+                agent_thread_id: ()
+            },
+            "bf30j14g3",
+            "Sleep for 25 seconds",
+            TaskNotificationStatus::Completed
+        )
     );
     assert!(matches!(
-        non_reasoning(&turns[3])[0],
+        non_reasoning(&turns[3])[1],
         AgentItem::AgentMessage { phase: MessagePhase::Final, text, .. } if text == "DONE"
     ));
     assert_eq!(ordering_violations(&turns), Vec::<String>::new());
@@ -622,9 +648,35 @@ fn queued_prompts_and_notifications_stay_in_the_running_turn_and_idle_ones_wake(
             "agentMessage",
             "userMessage",
             "subagent",
+            "taskNotification",
             "agentMessage",
         ]
     );
+    // Queued into the running turn: a report where it arrived. Idle: it leads the turn it woke.
+    let reports = turns
+        .iter()
+        .map(|turn| {
+            turn.items
+                .iter()
+                .filter_map(|item| match item {
+                    AgentItem::TaskNotification {
+                        delivery, task_id, ..
+                    } => Some((*delivery, task_id.as_str())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reports,
+        [
+            vec![(TaskNotificationDelivery::MidTurn, "a1b2c3d4e5f600001")],
+            vec![],
+            vec![(TaskNotificationDelivery::Wake, "a1b2c3d4e5f600001")],
+            vec![],
+        ]
+    );
+    assert_eq!(types(&turns[2]).first(), Some(&"taskNotification"));
     assert_eq!(ordering_violations(&turns), Vec::<String>::new());
     Ok(())
 }

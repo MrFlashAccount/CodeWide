@@ -9,8 +9,9 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use super::json::{
-    JsonRecord, arr_of, elements, int_of, is_true, record, record_of, str_of, str_of2,
+use super::{
+    json::{JsonRecord, arr_of, elements, int_of, is_true, record, record_of, str_of, str_of2},
+    task_reports::{TaskReport, live_task_report},
 };
 
 /// One content block of an assistant message snapshot.
@@ -94,13 +95,17 @@ pub enum StreamEvent {
     Other,
 }
 
-/// A task Claude started or finished (`task_started`, `task_notification`).
+/// A background task Claude started (`task_started`).
 #[derive(Clone, Debug, PartialEq)]
-pub struct TaskFrame {
-    /// The notification's raw status; `None` for a start.
-    pub status: Option<String>,
+pub struct TaskStartedFrame {
+    /// The `Agent` call's description for a sub-agent, the command's for a shell task.
+    pub description: Option<String>,
+    /// Owned by a sub-agent: its reports go to that sub-agent, not to this conversation.
+    pub nested: bool,
     /// For a sub-agent, its agent id.
     pub task_id: String,
+    /// `local_agent`, `local_bash`, ...
+    pub task_type: Option<String>,
     /// The spawning call.
     pub tool_use_id: Option<String>,
 }
@@ -168,7 +173,9 @@ pub enum ClaudeFrame {
     BackgroundTasks {
         count: usize,
     },
-    Task(TaskFrame),
+    TaskStarted(TaskStartedFrame),
+    /// A task reported (`task_notification`): finished, stopped or an interim result.
+    TaskNotification(TaskReport),
     RateLimit {
         status: Option<String>,
         info: Value,
@@ -339,21 +346,36 @@ fn system_frame(value: &JsonRecord) -> ClaudeFrame {
         "background_tasks_changed" => ClaudeFrame::BackgroundTasks {
             count: arr_of(value, "tasks").len(),
         },
-        "task_started" | "task_notification" => match str_of(value, "task_id") {
-            Some(task_id) => ClaudeFrame::Task(TaskFrame {
-                status: (subtype == "task_notification")
-                    .then(|| str_of(value, "status").unwrap_or("unknown").to_owned()),
-                task_id: task_id.to_owned(),
-                tool_use_id: str_of(value, "tool_use_id").map(ToOwned::to_owned),
-            }),
+        "task_started" => task_started_frame(value),
+        "task_notification" => match live_task_report(value) {
+            Some(report) => ClaudeFrame::TaskNotification(report),
             None => ClaudeFrame::Other {
-                kind: format!("system:{subtype}"),
+                kind: "system:task_notification".into(),
             },
         },
         other => ClaudeFrame::Other {
             kind: format!("system:{other}"),
         },
     }
+}
+
+/// The spawn depth of a task the main conversation started.
+const TOP_LEVEL_SPAWN_DEPTH: i64 = 1;
+
+fn task_started_frame(value: &JsonRecord) -> ClaudeFrame {
+    let Some(task_id) = str_of(value, "task_id") else {
+        return ClaudeFrame::Other {
+            kind: "system:task_started".into(),
+        };
+    };
+    ClaudeFrame::TaskStarted(TaskStartedFrame {
+        description: str_of(value, "description").map(ToOwned::to_owned),
+        nested: is_true(value, "owned_by_subagent")
+            || int_of(value, "spawn_depth").is_some_and(|depth| depth > TOP_LEVEL_SPAWN_DEPTH),
+        task_id: task_id.to_owned(),
+        task_type: str_of(value, "task_type").map(ToOwned::to_owned),
+        tool_use_id: str_of(value, "tool_use_id").map(ToOwned::to_owned),
+    })
 }
 
 /// Whether `value` is the placeholder Claude Code writes for an interrupted

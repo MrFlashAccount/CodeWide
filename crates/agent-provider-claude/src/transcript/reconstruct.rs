@@ -2,8 +2,10 @@
 //! neutral turns and items the live path emits.
 //!
 //! Each derived turn segment is replayed through the live `TurnBuilder`, so
-//! item ids (`{message.id}:{block}`, `tool_use.id`, `{turnId}:user:{n}`),
-//! item types, ordering and the final-answer rule are identical to live. The
+//! item ids (`{message.id}:{block}`, `tool_use.id`, `{turnId}:user:{n}`,
+//! `{turnId}:notification:{n}`), item types, ordering and the final-answer
+//! rule are identical to live. A segment's background task reports are
+//! replayed before the entry they precede. The
 //! turn index adds what the store lacks: turn ids and origins of
 //! companion-driven turns, their outcomes (failed, interrupted) and the
 //! `clientMessageId` of each prompt. A turn the companion did not drive (for
@@ -28,7 +30,8 @@ use super::{
     frames::ClaudeFrame,
     json::JsonRecord,
     result::TurnOutcome,
-    segments::{HistorySegment, SegmentHints, history_segments},
+    segments::{HistorySegment, SegmentHints, SegmentReport, history_segments},
+    task_notifications::reported_identity,
     turn_index::{PromptRole, TurnOutcomeRecord, TurnRecord},
 };
 
@@ -234,6 +237,16 @@ impl SegmentReplay {
         }
     }
 
+    /// A background task report delivered in the turn; the store names the
+    /// task only by its summary.
+    fn report(&mut self, report: &SegmentReport) {
+        self.builder.add_task_notification(
+            &report.report,
+            report.delivery,
+            reported_identity(&report.report),
+        );
+    }
+
     fn finish(mut self, outcome: &TurnOutcome) -> AgentTurn {
         self.builder.finish(outcome, None).1
     }
@@ -256,7 +269,9 @@ fn with_record(mut turn: AgentTurn, record: Option<&TurnRecord>) -> AgentTurn {
     turn
 }
 
-/// Replays every entry of a segment; the caller finishes the turn.
+/// Replays every entry of a segment, each task report before the entry it
+/// precedes (wake reports right after the turn begins); the caller finishes
+/// the turn.
 fn replay_entries(
     segment: &HistorySegment,
     record: Option<&TurnRecord>,
@@ -269,15 +284,23 @@ fn replay_entries(
         context,
         first.map_or(0, HistoryEntry::timestamp_ms),
     );
-    let consumed_first = replay.begin(first);
-    let rest = if consumed_first {
-        &segment.entries[1..]
-    } else {
-        &segment.entries[..]
+    let mut reports = segment.reports.iter().peekable();
+    let mut report_up_to = |replay: &mut SegmentReplay, position: usize| {
+        while let Some(report) = reports.next_if(|report| report.position <= position) {
+            replay.report(report);
+        }
     };
-    for entry in rest {
+    let consumed_first = replay.begin(first);
+    for (position, entry) in segment
+        .entries
+        .iter()
+        .enumerate()
+        .skip(usize::from(consumed_first))
+    {
+        report_up_to(&mut replay, position);
         replay.apply(entry);
     }
+    report_up_to(&mut replay, segment.entries.len());
     replay
 }
 
@@ -298,18 +321,16 @@ fn replay_running_segment(segment: &HistorySegment, context: &HistoryContext) ->
     replay_entries(segment, None, context).snapshot()
 }
 
-/// Sub-agent items carry the final status a later task notification of the
+/// Sub-agent items carry the final status a later task report of the
 /// same conversation level reported (a background agent finishes after the
 /// turn that started it).
 fn with_notified_statuses(turns: Vec<AgentTurn>, entries: &[HistoryEntry]) -> Vec<AgentTurn> {
     let mut statuses = NotifiedStatuses::default();
     for entry in entries {
-        if let HistoryEntry::Wake {
-            notification: Some(notification),
-            ..
-        } = entry
-        {
-            statuses.record(notification);
+        if let HistoryEntry::Wake { reports, .. } = entry {
+            for report in reports {
+                statuses.record(report);
+            }
         }
     }
     turns

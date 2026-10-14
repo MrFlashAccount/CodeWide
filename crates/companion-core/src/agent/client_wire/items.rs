@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use super::WireProvider;
 use crate::agent::model::{
     AgentItem, AgentThread, AgentTurn, AppThreadId, CallStatus, ClientMessageId, ExecutionStatus,
-    FileChange, FileChangeKind, ItemsView, MessagePhase, SubagentStatus, ThreadStatus, TurnStatus,
-    UserContent, WebSearchAction,
+    FileChange, FileChangeKind, ItemsView, MessagePhase, SubagentStatus, TaskNotificationDelivery,
+    TaskNotificationStatus, ThreadStatus, TurnStatus, UserContent, WebSearchAction,
 };
 
 /// Marker namespace of a capability item projected as a generic tool call.
@@ -101,7 +101,8 @@ const fn items_view(view: ItemsView) -> &'static str {
 
 /// Projects one turn with the requested items view. `summary` keeps the
 /// user messages and the final answer, which is what delivery reconciliation
-/// and the thread preview read.
+/// and the thread preview read, and the background task reports, which are
+/// shown outside the turn's collapsed body.
 #[must_use]
 pub fn turn(turn: &AgentTurn, view: ItemsView) -> Value {
     let items = match view {
@@ -113,6 +114,7 @@ pub fn turn(turn: &AgentTurn, view: ItemsView) -> Value {
                 matches!(
                     item,
                     AgentItem::UserMessage { .. }
+                        | AgentItem::TaskNotification { .. }
                         | AgentItem::AgentMessage {
                             phase: MessagePhase::Final,
                             ..
@@ -198,6 +200,25 @@ const fn subagent_agent_status(status: SubagentStatus) -> &'static str {
         SubagentStatus::Completed => "completed",
         SubagentStatus::Failed => "errored",
         SubagentStatus::Stopped => "interrupted",
+    }
+}
+
+const fn task_notification_delivery(delivery: TaskNotificationDelivery) -> &'static str {
+    match delivery {
+        TaskNotificationDelivery::Wake => "wake",
+        TaskNotificationDelivery::MidTurn => "midTurn",
+    }
+}
+
+const fn task_notification_status(status: TaskNotificationStatus) -> &'static str {
+    match status {
+        TaskNotificationStatus::Completed => "completed",
+        TaskNotificationStatus::Failed => "failed",
+        TaskNotificationStatus::Killed => "killed",
+        TaskNotificationStatus::Stopped => "stopped",
+        TaskNotificationStatus::Interim => "interim",
+        TaskNotificationStatus::Lost => "lost",
+        TaskNotificationStatus::Unknown => "unknown",
     }
 }
 
@@ -383,6 +404,7 @@ pub fn item(item: &AgentItem) -> Value {
             item_id,
             provenance,
             agent_thread_id,
+            description,
             model,
             prompt,
             result,
@@ -415,8 +437,35 @@ pub fn item(item: &AgentItem) -> Value {
                 "model": model,
                 "reasoningEffort": null,
                 "agentsStates": states,
+                "codewideDescription": description,
             })
         }
+        // A CodeWide extension the client renders outside the turn's bubble;
+        // an older client shows it as an unsupported block.
+        AgentItem::TaskNotification {
+            item_id,
+            delivery,
+            source,
+            task_id,
+            name,
+            status,
+            duration_ms,
+            tool_uses,
+            result,
+            ..
+        } => json!({
+            "type": "codewideTaskNotification",
+            "id": item_id.as_str(),
+            "delivery": task_notification_delivery(*delivery),
+            "kind": source.kind(),
+            "taskId": task_id,
+            "name": name,
+            "agentThreadId": source.agent_thread_id().map(AppThreadId::as_str),
+            "status": task_notification_status(*status),
+            "durationMs": duration_ms,
+            "toolUses": tool_uses,
+            "result": result,
+        }),
         AgentItem::CapabilityItem {
             item_id,
             capability,
@@ -587,6 +636,7 @@ mod tests {
         assert_eq!(running["senderThreadId"], "parent");
         assert_eq!(running["receiverThreadIds"], json!(["parent:agent:a1"]));
         assert_eq!(running["prompt"], "Run the build");
+        assert_eq!(running["codewideDescription"], "Check the build");
         assert_eq!(
             running["agentsStates"]["parent:agent:a1"]["status"],
             "running"
@@ -606,5 +656,104 @@ mod tests {
         assert_eq!(unnamed["status"], "interrupted");
         assert_eq!(unnamed["receiverThreadIds"], json!([]));
         assert_eq!(unnamed["agentsStates"], json!({}));
+    }
+
+    fn report(
+        delivery: TaskNotificationDelivery,
+        source: crate::agent::model::TaskNotificationSource,
+        status: TaskNotificationStatus,
+    ) -> AgentItem {
+        AgentItem::TaskNotification {
+            item_id: crate::agent::model::ItemId::from_static("turn:notification:0"),
+            provenance: None,
+            delivery,
+            source,
+            task_id: "a1".into(),
+            name: "Check the build".into(),
+            status,
+            duration_ms: Some(12_963),
+            tool_uses: Some(2),
+            result: Some("Build passes".into()),
+        }
+    }
+
+    #[test]
+    fn a_task_report_is_a_codewide_item_with_every_field_present() {
+        use crate::agent::model::TaskNotificationSource;
+
+        let agent = item(&report(
+            TaskNotificationDelivery::Wake,
+            TaskNotificationSource::Agent {
+                agent_thread_id: Some(AppThreadId::from_static("parent:agent:a1")),
+            },
+            TaskNotificationStatus::Interim,
+        ));
+        assert_eq!(
+            agent,
+            json!({
+                "type": "codewideTaskNotification",
+                "id": "turn:notification:0",
+                "delivery": "wake",
+                "kind": "agent",
+                "taskId": "a1",
+                "name": "Check the build",
+                "agentThreadId": "parent:agent:a1",
+                "status": "interim",
+                "durationMs": 12_963,
+                "toolUses": 2,
+                "result": "Build passes",
+            })
+        );
+
+        let mut command = report(
+            TaskNotificationDelivery::MidTurn,
+            TaskNotificationSource::Command {
+                agent_thread_id: (),
+            },
+            TaskNotificationStatus::Lost,
+        );
+        if let AgentItem::TaskNotification {
+            duration_ms,
+            tool_uses,
+            result,
+            ..
+        } = &mut command
+        {
+            *duration_ms = None;
+            *tool_uses = None;
+            *result = None;
+        }
+        let command = item(&command);
+        assert_eq!(command["delivery"], "midTurn");
+        assert_eq!(command["kind"], "command");
+        assert_eq!(command["status"], "lost");
+        for field in ["agentThreadId", "durationMs", "toolUses", "result"] {
+            assert_eq!(
+                command.get(field),
+                Some(&Value::Null),
+                "{field} must stay null"
+            );
+        }
+    }
+
+    #[test]
+    fn the_summary_view_keeps_task_reports_with_the_messages() {
+        let mut finished = finished_turn(None);
+        finished.items = vec![
+            report(
+                TaskNotificationDelivery::Wake,
+                crate::agent::model::TaskNotificationSource::Other {
+                    agent_thread_id: (),
+                },
+                TaskNotificationStatus::Completed,
+            ),
+            subagent(SubagentStatus::Completed, None),
+        ];
+        let projected = turn(&finished, ItemsView::Summary);
+        let types: Vec<_> = projected["items"]
+            .as_array()
+            .map(|items| items.iter().map(|item| item["type"].clone()).collect())
+            .unwrap_or_default();
+        assert_eq!(types, vec![json!("codewideTaskNotification")]);
     }
 }
