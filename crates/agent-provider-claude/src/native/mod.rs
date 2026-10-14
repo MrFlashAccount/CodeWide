@@ -261,7 +261,7 @@ fn read(paths: &Paths, session_id: &str) -> Result<NativeSessionReadResult, Prov
 /// Places the snapshot of the turn running in the session into the rebuilt
 /// history: in place of the turn with its id, else after the history (a
 /// provider turn not in the turn index replaces the last such turn).
-fn with_active_turn(
+pub(crate) fn with_active_turn(
     mut turns: Vec<AgentTurn>,
     active: Option<AgentTurn>,
     records: &[TurnRecord],
