@@ -17,6 +17,10 @@ import { updateThreadSummaryView, reprojectThreadSummaryChanges } from "./thread
 
 export { projectThreadSummaryView } from "./thread-summary-view";
 
+type SummaryChange =
+  | { type: "insert" | "update"; value: StoredThreadSummary }
+  | { key: string; type: "delete" };
+
 export type ThreadSummaryViewSnapshot = LoadedThreadSummaryView & {
   error: string | null;
   phase: "idle" | "loading" | "ready" | "error";
@@ -58,9 +62,7 @@ type ThreadSummaryResourceRecord = {
   hasReadySnapshot: boolean;
   initialFailed: boolean;
   loadingRevision: string | null;
-  pendingChanges: Array<
-    { type: "insert" | "update"; value: StoredThreadSummary } | { key: string; type: "delete" }
-  >;
+  pendingChanges: SummaryChange[];
   ready$: Observable<boolean> | null;
   requestRevision: string;
   retryAttempt: number;
@@ -73,6 +75,9 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
   const generations = new Map<string, number>();
   const retainCounts = new Map<string, number>();
   const resources = new Map<string, ThreadSummaryResourceRecord>();
+  // A refresh reads SQLite outside the write queue. Changes published after
+  // `startView` may be missing from that snapshot, so its commit replays them.
+  const refreshChanges = new Map<string, { changes: SummaryChange[]; generation: number }>();
   let closed = false;
 
   // Views are atomic snapshots: consumers subscribe to the root, and this owner
@@ -98,6 +103,7 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
     requests.delete(key);
     generations.delete(key);
     retainCounts.delete(key);
+    refreshChanges.delete(key);
   };
 
   const beginResourceLoad = async (
@@ -213,15 +219,23 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
       requests.clear();
       generations.clear();
       retainCounts.clear();
+      refreshChanges.clear();
     },
     commitView(request, generation, loaded) {
       const key = threadSummaryViewKey(request);
       if (closed || generations.get(key) !== generation) {
         return false;
       }
+      const inFlight = refreshChanges.get(key);
+      refreshChanges.delete(key);
       const node = view$(request);
       const previous = node.peek();
-      const content = reconcileSummaryContent(previous, loaded);
+      const content = reconcileSummaryContent(
+        previous,
+        inFlight === undefined || inFlight.generation !== generation
+          ? loaded
+          : reprojectThreadSummaryChanges(loaded, inFlight.changes, request),
+      );
       const contentChanged = summaryContentChanged(previous, content);
       const next = replaceEqualDeep<ThreadSummaryViewSnapshot>(previous, {
         error: null,
@@ -240,6 +254,7 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
       if (closed || generations.get(key) !== generation) {
         return;
       }
+      refreshChanges.delete(key);
       const node = view$(request);
       const previous = node.peek();
       const next = replaceEqualDeep<ThreadSummaryViewSnapshot>(previous, {
@@ -264,6 +279,12 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
           const resource = resources.get(key);
           if (resource !== undefined && resource.loadingRevision !== null) {
             resource.pendingChanges.push(...changes);
+          }
+          const refresh = refreshChanges.get(key);
+          if (refresh !== undefined && refresh.generation === generations.get(key)) {
+            refresh.changes.push(...changes);
+          } else {
+            refreshChanges.delete(key);
           }
           const previous = node.peek();
           // A pending request can change membership before its replacement rows
@@ -368,6 +389,7 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
       const generation = (generations.get(key) ?? 0) + 1;
       generations.set(key, generation);
       requests.set(key, request);
+      refreshChanges.set(key, { changes: [], generation });
       const node = view$(request);
       const previous = node.peek();
       const next = replaceEqualDeep<ThreadSummaryViewSnapshot>(previous, {
