@@ -35,6 +35,7 @@ pub mod subagents;
 mod test_support;
 pub mod transcript;
 pub mod user_text;
+pub mod uuid;
 pub mod watcher;
 
 use std::collections::BTreeMap;

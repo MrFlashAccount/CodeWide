@@ -195,13 +195,12 @@ struct Plan {
 /// # Errors
 ///
 /// [`ForkError::NoMessages`] when the source (or the cut) holds no message,
-/// [`ForkError::MessageNotFound`] when no row is `up_to`, and the error
-/// `mint` returns.
+/// [`ForkError::MessageNotFound`] when no row is `up_to`.
 pub(super) fn forked_rows(
     source: ForkSource,
     up_to: Option<&str>,
     stamp: &ForkStamp<'_>,
-    mint: &mut dyn FnMut() -> Result<String, std::io::Error>,
+    mint: &mut dyn FnMut() -> String,
 ) -> Result<Vec<JsonRecord>, ForkError> {
     let Plan { ids, rows: plans } = plan(&source.transcript, up_to, mint)?;
     let mut rows = Vec::with_capacity(plans.len() + 5);
@@ -226,7 +225,7 @@ pub(super) fn forked_rows(
             ("type", Value::from("content-replacement")),
             ("sessionId", Value::from(stamp.session_id)),
             ("replacements", Value::Array(source.content_replacements)),
-            ("uuid", Value::from(mint()?)),
+            ("uuid", Value::from(mint())),
             ("timestamp", Value::from(stamp.now)),
         ]));
     }
@@ -248,7 +247,7 @@ pub(super) fn forked_rows(
         ("type", Value::from("custom-title")),
         ("sessionId", Value::from(stamp.session_id)),
         ("customTitle", Value::from(stamp.title)),
-        ("uuid", Value::from(mint()?)),
+        ("uuid", Value::from(mint())),
         ("timestamp", Value::from(stamp.now)),
     ]));
     Ok(rows)
@@ -273,7 +272,7 @@ fn is_progress(row: &JsonRecord) -> bool {
 fn plan(
     transcript: &[JsonRecord],
     up_to: Option<&str>,
-    mint: &mut dyn FnMut() -> Result<String, std::io::Error>,
+    mint: &mut dyn FnMut() -> String,
 ) -> Result<Plan, ForkError> {
     if transcript.is_empty() {
         return Err(ForkError::NoMessages);
@@ -289,7 +288,7 @@ fn plan(
     let mut by_uuid = HashMap::new();
     for position in &selected {
         let row = &transcript[*position];
-        let new = mint()?;
+        let new = mint();
         let copied = !is_progress(row);
         ids.entry(uuid(row).to_owned())
             .and_modify(|remap| {

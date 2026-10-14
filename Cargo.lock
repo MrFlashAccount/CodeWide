@@ -60,6 +60,7 @@ dependencies = [
  "companion-host",
  "flate2",
  "notify",
+ "rand 0.9.5",
  "redb",
  "reqwest",
  "rusqlite",

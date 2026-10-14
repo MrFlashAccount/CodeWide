@@ -30,8 +30,7 @@ pub struct ProfileOptions {
 }
 
 const ALL_SOURCES: [&str; 3] = ["user", "project", "local"];
-/// The built-in tools of the read-only profile.
-pub const READ_ONLY_TOOLS: [&str; 4] = ["Read", "Glob", "Grep", "LS"];
+pub use crate::transcript::tools::READ_ONLY_TOOLS;
 
 /// A built-in permission profile. The Codex id `:danger-full-access` is an
 /// alias of Claude's `:full-access`.

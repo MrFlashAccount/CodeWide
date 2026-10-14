@@ -504,26 +504,11 @@ pub const fn initial_thread_cost(total: &TokenUsage) -> ThreadCost {
 const DEFAULT_WINDOW: i64 = 1_000_000;
 const HAIKU_4_5_WINDOW: i64 = 200_000;
 
-/// A model id as price and window tables key it: trimmed, lower-case, without
-/// a trailing `[...]` variant suffix such as `[1m]`.
-fn canonical_model_id(model: &str) -> String {
-    let id = model.trim().to_lowercase();
-    let Some(body) = id.strip_suffix(']') else {
-        return id;
-    };
-    // The suffix starts at the first `[` after the last `]` of the body.
-    let search_from = body.rfind(']').map_or(0, |close| close + 1);
-    match body[search_from..].find('[') {
-        Some(open) => body[..search_from + open].to_owned(),
-        None => id,
-    }
-}
-
 /// The context window of a model, used for live context fill before a
 /// result has reported one; `None` when the id is not a Claude model.
 #[must_use]
 pub fn model_context_window(model: &str) -> Option<i64> {
-    let id = canonical_model_id(model);
+    let id = crate::runtime::prices::canonical_model_id(model);
     if !id.starts_with("claude-") {
         return None;
     }

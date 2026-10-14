@@ -32,8 +32,6 @@ const RECORD_EXTENSION: &str = "jsonl";
 /// Project directory names longer than this end in a hash of the path.
 const PROJECT_NAME_MAX: usize = 200;
 const SIDECAR_TITLE_FILE: &str = "custom-title.json";
-const RANDOM_SOURCE: &str = "/dev/urandom";
-const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 /// Which session a write is for, and the working directory whose project
 /// holds it when known.
@@ -182,8 +180,7 @@ pub fn fork(
         .ok()
         .and_then(|text| fork_copy::sidecar_title(&text));
     let title = fork_copy::fork_title(fork_copy::source_title(&head, &tail, sidecar).as_deref());
-    let mut uuids = Uuids::open()?;
-    let session_id = uuids.next()?;
+    let session_id = crate::uuid::random_uuid();
     let now = iso_now();
     let stamp = ForkStamp {
         session_id: &session_id,
@@ -191,7 +188,12 @@ pub fn fork(
         now: &now,
         title: &title,
     };
-    let rows = fork_copy::forked_rows(source, up_to_message_id, &stamp, &mut || uuids.next())?;
+    let rows = fork_copy::forked_rows(
+        source,
+        up_to_message_id,
+        &stamp,
+        &mut crate::uuid::random_uuid,
+    )?;
     let project = path.parent().unwrap_or(projects_root);
     write_new(
         &project.join(format!("{session_id}.{RECORD_EXTENSION}")),
@@ -327,35 +329,6 @@ fn base36(mut value: u64) -> String {
         .rev()
         .map(|digit| char::from(*digit))
         .collect()
-}
-
-/// Random (version 4) uuids, as `crypto.randomUUID` makes them.
-struct Uuids(BufReader<File>);
-
-impl Uuids {
-    fn open() -> Result<Self, std::io::Error> {
-        Ok(Self(BufReader::new(File::open(RANDOM_SOURCE)?)))
-    }
-
-    fn next(&mut self) -> Result<String, std::io::Error> {
-        let mut bytes = [0_u8; 16];
-        self.0.read_exact(&mut bytes)?;
-        bytes[6] = (bytes[6] & 0x0f) | 0x40;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
-        let mut hex = String::with_capacity(32);
-        for byte in bytes {
-            hex.push(char::from(HEX_DIGITS[usize::from(byte >> 4)]));
-            hex.push(char::from(HEX_DIGITS[usize::from(byte & 0x0f)]));
-        }
-        Ok(format!(
-            "{}-{}-{}-{}-{}",
-            &hex[..8],
-            &hex[8..12],
-            &hex[12..16],
-            &hex[16..20],
-            &hex[20..]
-        ))
-    }
 }
 
 /// The current UTC time as JavaScript's `toISOString` writes it.
