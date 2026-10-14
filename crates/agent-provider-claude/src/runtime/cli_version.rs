@@ -94,7 +94,7 @@ pub async fn read_claude_version(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::test_scripts::fake_claude;
+    use crate::test_scripts::fake_claude;
 
     #[test]
     fn the_version_is_extracted_from_the_human_readable_output() {

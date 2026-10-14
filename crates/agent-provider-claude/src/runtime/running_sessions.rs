@@ -96,7 +96,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::runtime::test_scripts::fake_claude;
+    use crate::test_scripts::fake_claude;
 
     #[test]
     fn every_entrys_session_id_is_taken_and_entries_without_one_are_skipped() {

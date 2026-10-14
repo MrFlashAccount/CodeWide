@@ -197,7 +197,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::runtime::test_scripts::fake_claude;
+    use crate::test_scripts::fake_claude;
 
     #[test]
     fn a_first_party_login_carries_its_plan_and_label() {

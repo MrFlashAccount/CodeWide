@@ -1,6 +1,6 @@
 //! A fake `claude` (a POSIX shell script) driven through [`ClaudeProcess`].
 
-use std::{os::unix::fs::PermissionsExt, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -10,6 +10,7 @@ use super::{
     process::{ClaudeProcess, ProcessError, ProcessEvent},
     protocol::{ControlRequest, Priority},
 };
+use crate::test_scripts::fake_claude;
 
 /// Answers the first control request, asks to run a tool, records every
 /// line it reads into `stdin.log`, and ends when its input ends.
@@ -29,12 +30,8 @@ echo "bye from claude" >&2
 "#;
 
 fn fake(directory: &Path, script: &str) -> QueryOptions {
-    let executable = directory.join("claude");
-    std::fs::write(&executable, script).unwrap_or_else(|error| panic!("{error}"));
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
-        .unwrap_or_else(|error| panic!("{error}"));
     QueryOptions {
-        executable,
+        executable: fake_claude(directory, script),
         cwd: directory.to_owned(),
         model: "opus".into(),
         effort: None,

@@ -30,6 +30,8 @@ pub mod storage;
 pub mod store;
 pub mod subagents;
 #[cfg(test)]
+mod test_scripts;
+#[cfg(test)]
 mod test_support;
 pub mod threads;
 pub mod transcript;

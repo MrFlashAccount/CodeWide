@@ -234,10 +234,13 @@ async fn write_in_order(
 
 #[cfg(test)]
 mod tests {
-    use std::{os::unix::fs::PermissionsExt, path::Path, time::Duration};
+    use std::{path::Path, time::Duration};
 
     use super::*;
-    use crate::cli::command::{SessionIdentity, profile_options};
+    use crate::{
+        cli::command::{SessionIdentity, profile_options},
+        test_scripts::fake_claude,
+    };
 
     /// Answers `initialize`, then reads until its input ends and records
     /// that it ended on its own.
@@ -249,12 +252,8 @@ echo ended > ended.log
 "#;
 
     fn options(directory: &Path) -> QueryOptions {
-        let executable = directory.join("claude");
-        std::fs::write(&executable, FAKE_CLAUDE).unwrap_or_else(|error| panic!("{error}"));
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
-            .unwrap_or_else(|error| panic!("{error}"));
         QueryOptions {
-            executable,
+            executable: fake_claude(directory, FAKE_CLAUDE),
             cwd: directory.to_owned(),
             model: "opus".into(),
             effort: None,
