@@ -509,6 +509,35 @@ describe("Legend thread summary model", () => {
     expect(model.view$(request).peek().recent[0]?.preview).toBe("streamed");
   });
 
+  it("does not let a refresh read overwrite live updates published while it was in flight", () => {
+    const model = createThreadSummaryModel();
+    const staleRows = [
+      summary("running", { recencyAt: 2 }),
+      summary("read", { recencyAt: 1, unread: 1 }),
+    ];
+    model.commitView(request, model.startView(request), projectThreadSummaryView(staleRows, request));
+
+    const refresh = model.startView(request);
+    model.publish([
+      {
+        type: "update",
+        value: summary("running", { recencyAt: 2, status: { activeFlags: [], type: "active" } }),
+      },
+      { type: "update", value: summary("read", { recencyAt: 1, unread: 0 }) },
+    ]);
+    // The SQLite snapshot was taken before both writes reached the table.
+    expect(model.commitView(request, refresh, projectThreadSummaryView(staleRows, request))).toBe(
+      true,
+    );
+
+    const recent = model.view$(request).peek().recent;
+    expect(recent.map((row) => [row.remoteThreadId, row.status.type, row.unread])).toEqual([
+      ["running", "active", 0],
+      ["read", "idle", 0],
+    ]);
+    model.close();
+  });
+
   it("rejects an obsolete SQLite result", () => {
     const model = createThreadSummaryModel();
     const stale = model.startView(request);
