@@ -67,6 +67,11 @@ pub enum SessionIdentity {
     New(String),
     /// An existing session, continued.
     Resume(String),
+    /// No session: a short-lived process that only answers `initialize`
+    /// and control requests (the runtime probe). The process runs no model
+    /// and offers no tools, so `model`, `effort` and `client_tools` are not
+    /// passed.
+    Probe,
 }
 
 /// Everything one `claude` process of a session is started with.
@@ -86,7 +91,32 @@ pub struct QueryOptions {
 
 const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
+/// The probe runs with Claude's default permission mode, no settings files
+/// and only the MCP servers on its command line (none), as the Agent SDK
+/// probe did (`host/src/claude/sdkRuntime.ts`).
+const PROBE_PROFILE: ProfileOptions = ProfileOptions {
+    permission_mode: "default",
+    setting_sources: &[],
+    allow_dangerously_skip_permissions: false,
+    strict_mcp_config: true,
+    tools: None,
+};
+
 impl QueryOptions {
+    /// The options of a runtime probe ([`SessionIdentity::Probe`]) in `cwd`.
+    #[must_use]
+    pub fn probe(executable: PathBuf, cwd: PathBuf) -> Self {
+        Self {
+            executable,
+            cwd,
+            model: String::new(),
+            effort: None,
+            profile: PROBE_PROFILE,
+            identity: SessionIdentity::Probe,
+            client_tools: false,
+        }
+    }
+
     /// The arguments after the executable.
     #[must_use]
     pub fn args(&self) -> Vec<OsString> {
@@ -103,6 +133,7 @@ impl QueryOptions {
         .into_iter()
         .map(OsString::from)
         .collect();
+        let session = self.identity != SessionIdentity::Probe;
         if let Some(effort) = self
             .effort
             .as_deref()
@@ -110,19 +141,23 @@ impl QueryOptions {
         {
             push(&mut args, "--effort", effort);
         }
-        push(&mut args, "--model", &self.model);
-        args.push("--permission-prompt-tool=stdio".into());
+        if session {
+            push(&mut args, "--model", &self.model);
+            args.push("--permission-prompt-tool=stdio".into());
+        }
         match &self.identity {
             SessionIdentity::New(id) => push(&mut args, "--session-id", id),
             SessionIdentity::Resume(id) => push(&mut args, "--resume", id),
+            SessionIdentity::Probe => {}
         }
         match self.profile.tools {
             Some(tools) => push(&mut args, "--tools", &tools.join(",")),
-            None => args.push("--tools=default".into()),
+            None if session => args.push("--tools=default".into()),
+            None => {}
         }
         // Under a strict MCP configuration (read-only) this is the only
         // MCP server the session loads.
-        if self.client_tools {
+        if self.client_tools && session {
             let config = json!({"mcpServers": {CLIENT_TOOL_SERVER: {"type": "sdk", "name": CLIENT_TOOL_SERVER}}});
             push(&mut args, "--mcp-config", &config.to_string());
         }
@@ -139,14 +174,16 @@ impl QueryOptions {
             args.push("--allow-dangerously-skip-permissions".into());
         }
         args.push("--include-partial-messages".into());
-        push(&mut args, "--add-dir", &self.cwd.to_string_lossy());
+        if session {
+            push(&mut args, "--add-dir", &self.cwd.to_string_lossy());
+        }
         args
     }
 
     /// The MCP servers the `initialize` request declares as in-process.
     #[must_use]
     pub fn sdk_mcp_servers(&self) -> Vec<&'static str> {
-        if self.client_tools {
+        if self.client_tools && self.identity != SessionIdentity::Probe {
             vec![CLIENT_TOOL_SERVER]
         } else {
             Vec::new()
@@ -227,5 +264,30 @@ mod tests {
         assert_eq!(after(&args, "--permission-mode"), Some("bypassPermissions"));
         assert!(args.contains(&"--allow-dangerously-skip-permissions".to_owned()));
         assert!(profile_options(":custom").is_none());
+    }
+
+    #[test]
+    fn a_probe_passes_the_sdk_probe_flags_and_no_session() {
+        let probe = QueryOptions::probe("/usr/bin/claude".into(), "/work".into());
+        assert_eq!(
+            text(&probe.args()),
+            [
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--input-format",
+                "stream-json",
+                "--thinking=adaptive",
+                "--thinking-display",
+                "summarized",
+                "--setting-sources",
+                "",
+                "--strict-mcp-config",
+                "--permission-mode",
+                "default",
+                "--include-partial-messages",
+            ]
+        );
+        assert!(probe.sdk_mcp_servers().is_empty());
     }
 }
