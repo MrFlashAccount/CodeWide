@@ -543,6 +543,13 @@ impl ManagedRuntime {
         Ok(self.relay.status()?)
     }
 
+    /// Shared handle to the Relay runtime for platform adapters that observe
+    /// Relay state outside this runtime, such as the host update guardian.
+    #[must_use]
+    pub fn relay_runtime(&self) -> RelayRuntime {
+        self.relay.clone()
+    }
+
     /// Reads Relay-owned self-update state through the pinned management route.
     /// # Errors
     /// Rejects missing Relay configuration or a failed authenticated request.

@@ -1097,6 +1097,7 @@ dependencies = [
  "companion-core",
  "p256",
  "rand 0.9.5",
+ "reqwest",
  "semver",
  "serde",
  "serde_json",
