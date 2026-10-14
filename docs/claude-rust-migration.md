@@ -99,7 +99,7 @@ Sub-agent sidecars are files of their own with their own turns.
 | 1 | `crates/agent-index` carved out of the Codex crate; Codex plugs in with identical tables, encodings, cursors and witnesses (no reindex) | every Codex test unchanged; `pnpm test:companion`, clippy, fmt |
 | 2 | Claude transcript module in Rust: records, frames, turn builder, segments, summaries; raw-JSONL fixtures from sanitized local sessions; the host's history contract tests ported | fixture parity with the host on the same sessions |
 | 3 | Claude index on the core; `thread.list`/`thread.read`/`thread.turns` from turn ranges; sidecars as child threads; host state files read for thread identity; `nativeSession.*` RPC removed from the host | existing Claude index tests ported; paging of a multi-GB synthetic session stays bounded |
-| 4 | Live turns in Rust over stream-json: spawn, `initialize`, `can_use_tool`, `interrupt`, `set_permission_mode`; client tools as a stdio MCP server the companion exposes; `openElsewhere` from `claude agents --json`; host, SDK download, bun build and install lock removed | the host's recorded stream fixtures replay to the committed neutral golden files |
+| 4 | Live turns in Rust over stream-json: spawn, `initialize`, `can_use_tool`, `interrupt`, `set_permission_mode`; client tools as an in-process MCP server (`type: "sdk"`) answered over the control protocol (`mcp_message`); `openElsewhere` from `claude agents --json`; host, SDK download, bun build and install lock removed | the host's recorded stream fixtures replay to the committed neutral golden files |
 | 5 | One full-text index written by the core loop for both providers; `search_routing::merged`, the Codex search worker and `claude-message-search.sqlite` removed | search contract tests of `agent-search` and both providers |
 | 6 | Live events for threads held by another process (`companion/thread/progress` / `invalidated`) from the file tail for both providers | externally driven session updates an open conversation |
 
@@ -160,3 +160,26 @@ value on its own; the destination is fixed.
   as the in-process `codewide` MCP server. Tested against a fake `claude`
   shell script; no live turn has run yet. Next: the session lifecycle
   (`host/src/session.ts`, `service.ts`) on top of it.
+- 2026-10-14: Stage 4 done: live turns run in Rust. `src/cli/` drives
+  `claude`; `src/session/` runs one actor per live thread (state, query,
+  active turn); `src/threads/` is the thread service (create, fork, read,
+  list, turns, update, compact, turn operations, startup); `src/state/` owns
+  `state.json` (ThreadState v2) and `active-turn.json` in the host's format,
+  so existing threads keep their ids; `src/native/write.rs` writes Claude's
+  store (rename, removal, fork); `src/runtime/` probes account, models and
+  usage and reads `claude agents --json` for `openElsewhere`. All 35 recorded
+  transcripts (`fixtures/replay/*.ndjson`) replay to the host's golden
+  events (`fixtures/golden/*.neutral.jsonl`; time fields blanked;
+  `thread.updated` checked separately for `simple` and `multi_turn`). The host
+  package, the Bun build, binary embedding, the SDK download and the CI Bun
+  setup are removed; `legacy_install.rs` deletes the former host's files on
+  start. A smoke run against a real `claude` 2.1.296 passes (initialize,
+  catalog, thread start, read, interrupt, sync; no model call). No paid live
+  turn has run yet.
+- 2026-10-14: Stage 4 deviations from the host: the proxy environment comes
+  from the user's `settings.json` `env` only; the managed policy tier is left
+  to `claude`, which loads it at every start (an inference, not verified
+  against Claude Code source). A fork looks a session up in its working
+  directory's project, else in every project, instead of probing git
+  worktrees. Client tools are global (the companion's `ClientToolHost`), not
+  per thread; the `clientTools` params are not used.

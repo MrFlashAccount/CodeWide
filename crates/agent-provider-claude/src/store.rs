@@ -1,8 +1,8 @@
 //! The Claude session index: tables the Claude adapter derives from Claude's
 //! native session store inside the companion's host index database.
 //!
-//! Every row is a neutral read the Claude host returned for one session
-//! (`session.read`). The tables are disposable: [`CLAUDE_INDEX_SCHEMA`]
+//! Every row is a neutral read of one session from Claude's files
+//! (`native::LocalSessions`). The tables are disposable: [`CLAUDE_INDEX_SCHEMA`]
 //! drops them when the companion schema asks for a rebuild or when
 //! [`CLAUDE_INDEX_LOGIC_VERSION`] changes, and the indexer reads every
 //! session again. Thread metadata stays companion state, published through

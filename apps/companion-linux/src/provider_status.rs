@@ -78,7 +78,7 @@ enum ProviderState {
     },
     /// `false` in the configuration turns the provider off.
     Disabled,
-    /// No entry and no shipped host or no `claude`: the companion runs no Claude.
+    /// No entry and no `claude` found: the companion runs no Claude.
     Off {
         reason: String,
     },
@@ -273,7 +273,7 @@ mod tests {
 
     use super::*;
 
-    /// A machine that offers Claude nothing: no shipped host, no `claude`,
+    /// A machine that offers Claude nothing: no `claude`,
     /// no login shell.
     fn no_machine(
         state_directory: &Path,

@@ -4,7 +4,7 @@
 //!
 //! The watcher only compares each session record's size and modification
 //! time; it never opens a record or interprets Claude's format. Reading a
-//! changed session is the Claude host's job (`nativeSession.read`). A
+//! changed session is the indexer's job (`native::LocalSessions`). A
 //! filesystem notification triggers a debounced rescan; a periodic rescan
 //! covers a store created later and missed notifications. Sub-agent
 //! transcripts (`<project>/<session id>/subagents/*.jsonl`) grow while their

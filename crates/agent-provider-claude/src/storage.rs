@@ -52,7 +52,7 @@ pub struct ClaudeStorageHost {
     /// Claude's session store; `None` disables the watcher (the backfill and
     /// finished turns still index).
     pub projects_root: Option<PathBuf>,
-    /// The Claude host's journal (`--journal-directory`): its thread
+    /// The thread state directory (`<state dir>/claude-journal`): its thread
     /// metadata, read with Claude's session files.
     pub journal_directory: PathBuf,
     /// Preview authorization of thread resources.
@@ -75,9 +75,9 @@ pub enum ClaudeStorageError {
 pub struct Freshness {
     active: Mutex<HashSet<AppThreadId>>,
     stale: Mutex<HashSet<AppThreadId>>,
-    /// The listed facts of every session match the host's last listing.
+    /// The listed facts of every session match the last listing of Claude's files.
     catalog_current: AtomicBool,
-    /// The last thread status the host reported, by thread.
+    /// The last thread status the thread service reported, by thread.
     statuses: Mutex<HashMap<AppThreadId, ThreadStatus>>,
 }
 
@@ -86,7 +86,7 @@ impl Freshness {
         self.catalog_current.store(current, Ordering::Release);
     }
 
-    /// The catalog answers only while it matches the host's listing and no
+    /// The catalog answers only while it matches the latest listing and no
     /// thread's index lags behind a live turn or a pending re-read.
     fn catalog_is_fresh(&self) -> bool {
         self.catalog_current.load(Ordering::Acquire)
@@ -145,7 +145,7 @@ impl Freshness {
             .remove(thread);
     }
 
-    /// Whether a live turn of `thread` runs in the host.
+    /// Whether a live turn of `thread` runs.
     pub(crate) fn is_running(&self, thread: &AppThreadId) -> bool {
         self.active
             .lock()
