@@ -46,6 +46,9 @@ pub enum ControlRequest {
         decision_reason: Option<String>,
         /// Permission updates Claude proposes for "always allow".
         suggestions: Vec<Value>,
+        /// The sub-agent whose call this is (`agent_id`); `None` for a call
+        /// of the main conversation.
+        agent_id: Option<String>,
     },
     /// A JSON-RPC message for an in-process MCP server.
     McpMessage { server_name: String, message: Value },
@@ -112,6 +115,7 @@ fn control_request(request: &JsonRecord) -> ControlRequest {
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default(),
+                agent_id: str_of(request, "agent_id").map(ToOwned::to_owned),
             },
             None => ControlRequest::Other {
                 subtype: "can_use_tool".into(),
@@ -259,8 +263,16 @@ mod tests {
         );
         assert!(matches!(
             request,
-            Inbound::ControlRequest { ref request_id, request: ControlRequest::CanUseTool { ref tool_name, ref tool_use_id, .. } }
-                if request_id == "r1" && tool_name == "Bash" && tool_use_id.as_deref() == Some("toolu_1")
+            Inbound::ControlRequest { ref request_id, request: ControlRequest::CanUseTool { ref tool_name, ref tool_use_id, ref agent_id, .. } }
+                if request_id == "r1" && tool_name == "Bash" && tool_use_id.as_deref() == Some("toolu_1") && agent_id.is_none()
+        ));
+        let subagent_request = classify_line(
+            r#"{"type":"control_request","request_id":"r2","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"toolu_2","agent_id":"a0001"}}"#,
+        );
+        assert!(matches!(
+            subagent_request,
+            Inbound::ControlRequest { request: ControlRequest::CanUseTool { ref agent_id, .. }, .. }
+                if agent_id.as_deref() == Some("a0001")
         ));
         assert_eq!(
             classify_line(
