@@ -498,23 +498,7 @@ impl HostUpdateGuardian for LinuxHostUpdateGuardian {
         {
             return Err(precondition("cached_release_mismatch"));
         }
-        let content_length = reqwest::Client::builder()
-            .dns_resolver(std::sync::Arc::new(host_resolver::HostResolver))
-            .timeout(std::time::Duration::from_secs(15))
-            .redirect(reqwest::redirect::Policy::limited(3))
-            .build()
-            .map_err(internal)?
-            .head(&cached.available.target.artifact_url)
-            .send()
-            .await
-            .map_err(|_| precondition("artifact_size_unavailable"))?
-            .error_for_status()
-            .map_err(|_| precondition("artifact_size_unavailable"))?
-            .content_length()
-            .ok_or_else(|| precondition("artifact_size_unavailable"))?;
-        if content_length == 0 {
-            return Err(precondition("artifact_size_unsupported"));
-        }
+        let content_length = artifact_size(&cached.available.target.artifact_url).await?;
         let required_bytes = content_length
             .saturating_mul(4)
             .saturating_add(128 * 1024 * 1024)
@@ -723,6 +707,35 @@ fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |value| value.as_secs())
+}
+
+/// Reads the advertised artifact size from a `HEAD` response.
+///
+/// `reqwest::Response::content_length` reports the size of the received body,
+/// which is always zero for `HEAD`, so the header is parsed directly.
+async fn artifact_size(url: &str) -> Result<u64, GuardianError> {
+    let response = reqwest::Client::builder()
+        .dns_resolver(std::sync::Arc::new(host_resolver::HostResolver))
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .build()
+        .map_err(internal)?
+        .head(url)
+        .send()
+        .await
+        .map_err(|_| precondition("artifact_size_unavailable"))?
+        .error_for_status()
+        .map_err(|_| precondition("artifact_size_unavailable"))?;
+    let size = response
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| precondition("artifact_size_unavailable"))?;
+    if size == 0 {
+        return Err(precondition("artifact_size_unsupported"));
+    }
+    Ok(size)
 }
 
 fn free_bytes(path: &Path) -> std::io::Result<u64> {
