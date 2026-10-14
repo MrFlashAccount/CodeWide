@@ -10,10 +10,18 @@
 //! its turn index and a running turn's snapshot) comes from the host's own
 //! files (`host_state.rs`). Ids depend only on that input, so reading
 //! unchanged input twice yields equal results.
+//!
+//! Writes to Claude's store (`write.rs`: rename, removal, fork) follow the
+//! Agent SDK's session mutations on local files; `fork_cut.rs` decides which
+//! sessions of a thread's chain a fork copies, and through which message.
 
 pub mod files;
+mod fork_branch;
+mod fork_copy;
+pub mod fork_cut;
 pub mod host_state;
 pub mod meta;
+pub mod write;
 
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
@@ -38,6 +46,11 @@ use crate::{
         },
         turn_index::TurnRecord,
     },
+};
+
+pub use self::{
+    fork_cut::{ChainSession, ForkCut, SessionCut, fork_cut},
+    write::{ForkError, Removal, RenameError, SessionLocation},
 };
 
 use self::{
@@ -332,3 +345,5 @@ pub(crate) fn fixture_paths(root: &std::path::Path) -> (PathBuf, PathBuf) {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod write_tests;
