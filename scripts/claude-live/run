@@ -1,0 +1,108 @@
+#!/bin/sh
+# Live scenarios of the Claude provider against the user's real `claude`.
+#
+# Usage: scripts/claude-live/run [--out DIR] [--keep-sessions] [scenario...]
+#
+# Not part of any automatic suite: every turn is a real model call on the
+# user's Claude login (a recorder in front of `claude` removes API-key
+# variables). Each scenario of the `claude_live` example runs in its own
+# process with a clean environment, as a companion service has. The run
+# directory (default `${TMPDIR:-/tmp}/codewide-claude-live/<commit>`) gets
+# `wire/` (argv, environment and stdin/stdout of every `claude` invocation),
+# `events/` (neutral events, logs and status per scenario) and `work/`.
+# The recordings hold model output and hook output: keep them local.
+#
+# Compare two runs, e.g. before and after a `claude` upgrade:
+#   python3 scripts/claude-live/compare.py <run A> <run B>
+#
+# Environment: CODEWIDE_LIVE_CLAUDE selects the `claude` executable
+# (default: the one on PATH).
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+repo=$(cd "$here/../.." && pwd)
+out=
+keep_sessions=false
+while [ $# -gt 0 ]; do
+	case $1 in
+	--out)
+		out=$2
+		shift 2
+		;;
+	--keep-sessions)
+		keep_sessions=true
+		shift
+		;;
+	--help | -h)
+		sed -n '2,20s/^# \{0,1\}//p' "$0"
+		exit 0
+		;;
+	--*)
+		echo "unknown option $1" >&2
+		exit 2
+		;;
+	*) break ;;
+	esac
+done
+
+claude=${CODEWIDE_LIVE_CLAUDE:-$(command -v claude || true)}
+if [ -z "$claude" ]; then
+	echo "claude is not on PATH; set CODEWIDE_LIVE_CLAUDE" >&2
+	exit 2
+fi
+claude=$(readlink -f "$claude")
+if [ -z "$out" ]; then
+	out=${TMPDIR:-/tmp}/codewide-claude-live/$(git -C "$repo" rev-parse --short HEAD)
+fi
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+rm -rf "$out/wire" "$out/events" "$out/work"
+mkdir -p "$out/bin" "$out/wire" "$out/events" "$out/work"
+
+sed -e "1s|.*|#!/usr/bin/env -S python3 -I|" -e "s|__REAL__|$claude|" -e "s|__OUT__|$out/wire|" \
+	"$here/recorder.py" >"$out/bin/claude"
+chmod +x "$out/bin/claude"
+
+cd "$repo"
+cargo build -q -p codewide-companion --example claude_live
+binary=$(cargo metadata --format-version 1 --no-deps |
+	python3 -I -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')/debug/examples/claude_live
+if [ $# -eq 0 ]; then
+	set -- $("$binary" --list)
+fi
+
+config=$(printf '{"claudeExecutable":"%s"}' "$out/bin/claude")
+failed=0
+for scenario in "$@"; do
+	# Nothing inherited from the shell, or from a Claude Code session this
+	# may run in: its CLAUDE_* variables would change how `claude` behaves.
+	if env -i HOME="$HOME" USER="${USER:-}" LOGNAME="${USER:-}" LANG="${LANG:-C.UTF-8}" PATH="$PATH" \
+		XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" HTTP_PROXY="${HTTP_PROXY:-}" \
+		HTTPS_PROXY="${HTTPS_PROXY:-}" NO_PROXY="${NO_PROXY:-}" \
+		CODEWIDE_LIVE_CONFIG="$config" CODEWIDE_LIVE_OUT="$out/events" CODEWIDE_LIVE_WORK="$out/work" \
+		RUST_LOG="${RUST_LOG:-info}" \
+		"$binary" "$scenario" >"$out/events/$scenario.log" 2>&1; then
+		echo pass >"$out/events/$scenario.status"
+		echo "pass  $scenario"
+	else
+		echo fail >"$out/events/$scenario.status"
+		echo "FAIL  $scenario  ($out/events/$scenario.log)"
+		failed=$((failed + 1))
+	fi
+done
+
+if [ "$keep_sessions" = false ]; then
+	# Claude stores a session under its working directory with every
+	# character that is not a letter or digit replaced by `-`.
+	projects=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects
+	for work in "$out"/work/*; do
+		[ -d "$work" ] || continue
+		slug=$(printf '%s' "$work" | sed 's/[^A-Za-z0-9]/-/g')
+		if [ -d "$projects/$slug" ]; then
+			rm -rf "${projects:?}/$slug"
+		fi
+	done
+fi
+
+echo "run: $out"
+[ "$failed" -eq 0 ]

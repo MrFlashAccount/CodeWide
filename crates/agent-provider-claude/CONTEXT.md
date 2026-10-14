@@ -67,4 +67,9 @@ The Rust `AgentProvider` implementation for Claude. It owns the Claude configura
 - A `claude` process that exits during a turn fails only that turn ("Claude process exited unexpectedly"); its open requests are resolved first and the next turn resumes the session. A lost session is replaced once per turn by a new session with a bounded history prefix; a second loss fails the turn.
 - An interrupt answers at once; without an `aborted_*` result within 5 s the process is closed and the turn finalized as interrupted.
 - A companion restart finalizes a turn left in progress (`active-turn.json`) as interrupted on load.
+- On companion shutdown (`AgentProvider::shutdown`) every session is closed at once and the adapter waits up to 10 s until the `claude` processes have read the end of their input and exited on their own; a process still running is killed when the runtime drops.
 - No live-session cap.
+
+## Live check
+
+`pnpm claude:live` (`scripts/claude-live/run`) drives the `claude_live` example of `apps/companion-linux` through the user's real `claude` on their Claude login: turns, approvals, a client tool, interrupt, steer, a permission switch, user input, compaction, a restart and a sub-agent, each in its own process with a clean environment and a recorder in front of `claude` (argv, environment, every stdin and stdout line). It runs only on request. `scripts/claude-live/compare.py <run A> <run B>` compares two runs' command lines, environments, written lines and control traffic, e.g. before and after a `claude` upgrade.

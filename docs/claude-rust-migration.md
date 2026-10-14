@@ -183,3 +183,19 @@ value on its own; the destination is fixed.
   directory's project, else in every project, instead of probing git
   worktrees. Client tools are global (the companion's `ClientToolHost`), not
   per thread; the `clientTools` params are not used.
+- 2026-10-14: Live wire check against a real `claude` 2.1.296 on a Claude
+  login: the same 12 scenarios (turns, approval accept and decline, a client
+  tool, interrupt mid-tool, steer, permission switch, user input,
+  compaction, restart with resume, background sub-agent) ran through the
+  former host over the Agent SDK 0.3.295 and through the Rust provider, with
+  a recorder in front of `claude`. All pass on both; command lines,
+  `initialize`, the lines written to stdin and the control traffic match.
+  Fixed after it: user messages no longer carry `session_id: ""`, and a
+  companion shutdown closes every session and waits for `claude` to exit on
+  its own (it was killed with the runtime). Remaining deviations: the Rust
+  provider does not set `CLAUDE_CODE_SDK_READS_SESSION_STATE` or
+  `CLAUDE_AGENT_SDK_VERSION` (without the first, `claude` emits no
+  `session_state_changed`, which only the SDK's own run bookkeeping read),
+  and the client-tool MCP server answers its handshake live instead of the
+  SDK's `sdkMcpServerManifests` in `initialize`. The check is kept as
+  `pnpm claude:live` (`scripts/claude-live/`), run on request only.
