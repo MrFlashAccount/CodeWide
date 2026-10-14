@@ -163,7 +163,13 @@ impl Session {
                 .active
                 .as_ref()
                 .and_then(|active| active.interrupt_deadline);
+            // Claude's output first, then finished background work, then
+            // commands: a command sees every event Claude wrote before it
+            // was handled, so its answer reflects them.
             tokio::select! {
+                biased;
+                event = next_event(self.query.as_mut()) => self.on_query_event(event).await,
+                Some(done) = internal.recv() => self.on_internal(done).await,
                 command = commands.recv() => {
                     let Some(command) = command else {
                         self.dispose().await;
@@ -171,8 +177,6 @@ impl Session {
                     };
                     self.on_command(command).await;
                 }
-                event = next_event(self.query.as_mut()) => self.on_query_event(event).await,
-                Some(done) = internal.recv() => self.on_internal(done).await,
                 () = sleep_until(interrupt_deadline) => self.on_interrupt_timeout().await,
                 () = sleep_until(self.idle_deadline) => self.on_idle_timer().await,
             }

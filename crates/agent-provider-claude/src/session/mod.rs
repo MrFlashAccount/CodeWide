@@ -11,3 +11,6 @@ pub mod query;
 mod requests;
 mod settings;
 pub mod turn;
+
+#[cfg(test)]
+mod replay_tests;

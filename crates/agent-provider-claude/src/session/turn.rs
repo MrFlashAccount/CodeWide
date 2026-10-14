@@ -279,10 +279,15 @@ impl Session {
         expected: &TurnId,
         message: SteerMessage,
     ) -> Result<TurnId, String> {
-        let uuid = self.new_uuid();
         let Some(query) = self.query.as_ref().map(|query| query.handle.clone()) else {
             return Err(EXPECTED_TURN_NOT_ACTIVE.into());
         };
+        if !self.active.as_ref().is_some_and(|active| {
+            active.builder.turn_id() == expected && !active.interrupt_requested
+        }) {
+            return Err(EXPECTED_TURN_NOT_ACTIVE.into());
+        }
+        let uuid = self.new_uuid();
         let Some(active) = self
             .active
             .as_mut()
