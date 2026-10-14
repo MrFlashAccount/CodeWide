@@ -1,5 +1,5 @@
 //! Projects the Claude host's committed neutral replay streams
-//! (`crates/agent-provider-claude/host/test/golden/*.neutral.jsonl`) onto the client wire
+//! (`crates/agent-provider-claude/fixtures/golden/*.neutral.jsonl`) onto the client wire
 //! and checks them with a port of the client's authoritative-repair
 //! predicate (`packages/sync-client/src/thread-events.ts`,
 //! `threadProjectionNeedsAuthoritativeRepair`) plus the neutral ordering
@@ -22,7 +22,7 @@ use crate::{
 };
 
 fn golden_directory() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../agent-provider-claude/host/test/golden")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../agent-provider-claude/fixtures/golden")
 }
 
 fn claude_wire() -> WireProvider {

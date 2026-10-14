@@ -42,15 +42,21 @@ pub struct SessionChange {
 /// `<CLAUDE_CONFIG_DIR or ~/.claude>/projects`; `None` without either.
 #[must_use]
 pub fn projects_root() -> Option<PathBuf> {
-    let config = std::env::var_os("CLAUDE_CONFIG_DIR")
+    config_directory().map(|config| config.join("projects"))
+}
+
+/// Claude's configuration directory of the companion's environment:
+/// `CLAUDE_CONFIG_DIR`, else `~/.claude`.
+#[must_use]
+pub fn config_directory() -> Option<PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .or_else(|| {
             std::env::var_os("HOME")
                 .filter(|value| !value.is_empty())
                 .map(|home| PathBuf::from(home).join(".claude"))
-        })?;
-    Some(config.join("projects"))
+        })
 }
 
 /// Observes every session record directly under a project directory of

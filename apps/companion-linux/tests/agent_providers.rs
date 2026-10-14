@@ -1465,13 +1465,12 @@ async fn send_value(
     Ok(())
 }
 
-/// Real sidecar smoke without any model call. Run with
-/// `CODEWIDE_SMOKE_NODE=<node> CODEWIDE_SMOKE_SIDECAR=<dist/main.js>
-/// CODEWIDE_SMOKE_CLAUDE=<claude> cargo test -p codewide-companion --test
-/// agent_providers -- --ignored real_sidecar`.
+/// Real `claude` smoke without any model call. Run with
+/// `CODEWIDE_SMOKE_CLAUDE=<claude> cargo test -p codewide-companion --test
+/// agent_providers -- --ignored real_claude`.
 #[tokio::test]
-#[ignore = "needs a built sidecar, Node and the claude CLI on the host"]
-async fn real_sidecar_serves_threads_catalogs_and_degradation_without_a_turn() -> TestResult {
+#[ignore = "needs the claude CLI on the host"]
+async fn real_claude_serves_threads_catalogs_and_degradation_without_a_turn() -> TestResult {
     use codewide_companion::agent::{
         providers::claude::{ClaudeConfig, ClaudeProvider, config::ClaudeDefaults},
         registry::ProviderRegistry,
@@ -1490,8 +1489,6 @@ async fn real_sidecar_serves_threads_catalogs_and_degradation_without_a_turn() -
     wait_for_live(&upstream).await?;
     let claude = ClaudeProvider::spawn(&ClaudeConfig::parse(
         &json!({
-            "runtimeExecutable": variable("CODEWIDE_SMOKE_NODE")?,
-            "sidecarEntry": variable("CODEWIDE_SMOKE_SIDECAR")?,
             "claudeExecutable": variable("CODEWIDE_SMOKE_CLAUDE")?,
             "journalDirectory": directory.path().join("journal"),
         }),

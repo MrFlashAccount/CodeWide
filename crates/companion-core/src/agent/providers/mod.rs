@@ -37,9 +37,6 @@ pub struct ProviderHost {
     pub files: Arc<dyn PreviewFiles>,
     /// The workspace VCS overlay of thread resources.
     pub vcs: Option<Arc<dyn WorkspaceVcs>>,
-    /// The Claude agent host executable shipped with this companion; with
-    /// it Claude runs without a `providers.claude` entry.
-    pub claude_host: Option<PathBuf>,
 }
 
 impl ProviderHost {
@@ -62,7 +59,7 @@ impl ProviderHost {
 /// missing file means Codex only; an unreadable or invalid file is logged
 /// once at `error` and also means Codex only, so a bad configuration can
 /// never take the primary provider down.
-pub async fn load_registry(
+pub fn load_registry(
     state_directory: &Path,
     codex: Arc<codex::CodexProvider>,
     host: Option<&ProviderHost>,
@@ -75,8 +72,10 @@ pub async fn load_registry(
             None
         }
     };
-    let agent_sdk = install_agent_sdk(config.as_ref(), host).await;
-    let registry = build_registry(config, codex, host, agent_sdk.as_deref());
+    if let Some(host) = host {
+        remove_former_claude_host(host);
+    }
+    let registry = build_registry(config, codex, host);
     let enabled = registry
         .enabled()
         .map(|provider| provider.descriptor().id.to_string())
@@ -85,94 +84,31 @@ pub async fn load_registry(
     registry
 }
 
-/// What the machine offers Claude for `entry`: the companion's shipped host,
-/// the user's `claude` and login-shell `PATH`, and the journal under the
-/// companion's state directory.
+/// What the machine offers Claude for `entry`: the user's `claude` and
+/// login-shell `PATH`, and the thread state under the companion's state
+/// directory.
 fn claude_defaults(
     entry: &serde_json::Value,
     host: Option<&ProviderHost>,
-    agent_sdk: Option<PathBuf>,
 ) -> claude::config::ClaudeDefaults {
     claude::config::ClaudeDefaults::discover(
         entry,
-        host.and_then(|host| host.claude_host.clone()),
-        agent_sdk,
         host.map_or_else(PathBuf::new, |host| {
             host.state_directory.join("claude-journal")
         }),
     )
 }
 
-/// Whether Claude will run a self-contained host, which loads the Agent SDK
-/// the companion installs: the shipped one without an entry, or an entry
-/// that names no script host and no SDK of its own.
-fn needs_agent_sdk(entry: Option<&serde_json::Value>, host: &ProviderHost) -> bool {
-    match entry {
-        None => host.claude_host.is_some(),
-        Some(serde_json::Value::Bool(false)) => false,
-        Some(entry) => {
-            entry.get("runtimeExecutable").is_none()
-                && entry.get("agentSdk").is_none()
-                && (host.claude_host.is_some() || entry.get("hostExecutable").is_some())
-        }
-    }
-}
-
-const AGENT_SDK_DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(2);
-
-/// Installs the pinned Agent SDK under the state directory when Claude needs
-/// it (a download on the first start only), after removing the former
-/// installer's host directories the entry no longer uses. A failure is
-/// logged once and leaves Claude off until the next start.
-async fn install_agent_sdk(
-    config: Option<&AgentProvidersConfig>,
-    host: Option<&ProviderHost>,
-) -> Option<PathBuf> {
-    let host = host?;
-    let entry = config.and_then(|config| {
-        config
-            .entries
-            .iter()
-            .find(|(id, _)| id.as_str() == claude::PROVIDER_ID)
-            .map(|(_, entry)| entry)
-    });
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        let removed = claude::legacy_install::remove_unreferenced(
-            &claude::legacy_install::legacy_install_directories(&home),
-            entry,
-        );
-        if removed > 0 {
-            info!(
-                removed,
-                "removed the former Claude installer's host directories"
-            );
-        }
-    }
-    if !needs_agent_sdk(entry, host) {
-        return None;
-    }
-    let client = match reqwest::Client::builder()
-        .timeout(AGENT_SDK_DOWNLOAD_TIMEOUT)
-        .build()
-    {
-        Ok(client) => client,
-        Err(err) => {
-            error!(err = %err, "the Claude Agent SDK cannot be downloaded: no HTTP client");
-            return None;
-        }
-    };
-    let root = host.state_directory.join("claude-agent-sdk");
-    let pin = &claude::agent_sdk::AGENT_SDK;
-    match claude::agent_sdk::ensure_agent_sdk(&root, pin, &client).await {
-        Ok(entry) => Some(entry),
-        Err(err) => {
-            error!(
-                err = ?err,
-                version = pin.version,
-                "the Claude Agent SDK could not be installed; Claude is off until the next start"
-            );
-            None
-        }
+/// Removes the files of the former Claude agent host (the installer's
+/// directories, the unpacked host, the downloaded Agent SDK).
+fn remove_former_claude_host(host: &ProviderHost) {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let removed = claude::legacy_install::remove(&claude::legacy_install::former_host_directories(
+        home.as_deref(),
+        &host.state_directory,
+    ));
+    if removed > 0 {
+        info!(removed, "removed the former Claude agent host's files");
     }
 }
 
@@ -188,15 +124,11 @@ fn spawn_claude(
     }
 }
 
-/// Claude without a `providers.claude` entry: only a companion that ships
-/// the host runs it, and only when the user's `claude` is found.
-fn automatic_claude(
-    host: Option<&ProviderHost>,
-    agent_sdk: Option<PathBuf>,
-) -> Option<Arc<dyn AgentProvider>> {
-    host?.claude_host.as_ref()?;
+/// Claude without a `providers.claude` entry: it runs when the user's
+/// `claude` is found.
+fn automatic_claude(host: Option<&ProviderHost>) -> Option<Arc<dyn AgentProvider>> {
     let empty = serde_json::Value::Object(serde_json::Map::new());
-    match claude::ClaudeConfig::automatic(&claude_defaults(&empty, host, agent_sdk)) {
+    match claude::ClaudeConfig::automatic(&claude_defaults(&empty, host)) {
         Ok(config) => Some(spawn_claude(&config, host)),
         Err(err) => {
             info!(err = %err, "Claude is not enabled");
@@ -214,7 +146,6 @@ pub fn build_registry(
     config: Option<AgentProvidersConfig>,
     codex: Arc<codex::CodexProvider>,
     host: Option<&ProviderHost>,
-    agent_sdk: Option<&Path>,
 ) -> Arc<ProviderRegistry> {
     let codex_id = ProviderId::from_static(codex::PROVIDER_ID);
     let config = config.unwrap_or_else(|| AgentProvidersConfig::primary_only(codex_id.clone()));
@@ -224,9 +155,7 @@ pub fn build_registry(
         .entries
         .iter()
         .any(|(id, _)| id.as_str() == claude::PROVIDER_ID);
-    if !claude_configured
-        && let Some(provider) = automatic_claude(host, agent_sdk.map(Path::to_path_buf))
-    {
+    if !claude_configured && let Some(provider) = automatic_claude(host) {
         providers.push(provider);
     }
     for (id, entry) in &config.entries {
@@ -238,10 +167,7 @@ pub fn build_registry(
                 disabled.push(id.clone());
             }
             claude::PROVIDER_ID => {
-                match claude::ClaudeConfig::parse(
-                    entry,
-                    &claude_defaults(entry, host, agent_sdk.map(Path::to_path_buf)),
-                ) {
+                match claude::ClaudeConfig::parse(entry, &claude_defaults(entry, host)) {
                     Ok(claude_config) => providers.push(spawn_claude(&claude_config, host)),
                     Err(err) => {
                         error!(provider = %id, err = %err, "agent provider is disabled: invalid configuration");
@@ -295,13 +221,9 @@ mod tests {
     use crate::upstream::UpstreamHandle;
 
     fn claude_entry(directory: &Path) -> Result<serde_json::Value, std::io::Error> {
-        let script = directory.join("host.sh");
-        std::fs::write(&script, "sleep 5\n")?;
         let claude = directory.join("claude");
         std::fs::write(&claude, "")?;
         Ok(serde_json::json!({
-            "runtimeExecutable": "/bin/sh",
-            "sidecarEntry": script,
             "claudeExecutable": claude,
             "journalDirectory": directory.join("journal"),
         }))
@@ -322,7 +244,7 @@ mod tests {
             }))?
             .as_slice(),
         )?;
-        let registry = build_registry(Some(config), codex, None, None);
+        let registry = build_registry(Some(config), codex, None);
         assert_eq!(registry.primary_id().as_str(), codex::PROVIDER_ID);
         assert!(registry.is_multi_provider());
         assert!(

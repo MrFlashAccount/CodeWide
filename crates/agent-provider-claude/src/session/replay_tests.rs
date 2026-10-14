@@ -53,7 +53,7 @@ const THREAD: &str = "00000000-0000-4000-8000-0000000000aa";
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("host/test")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures")
 }
 
 /// The shared transcript cursor.
@@ -761,7 +761,7 @@ fn golden(scenario: &str) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
 }
 
 fn scenarios() -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let mut names: Vec<String> = std::fs::read_dir(fixtures().join("fixtures"))?
+    let mut names: Vec<String> = std::fs::read_dir(fixtures().join("replay"))?
         .filter_map(Result::ok)
         .filter_map(|entry| {
             entry
@@ -779,11 +779,7 @@ fn scenarios() -> Result<Vec<String>, Box<dyn std::error::Error>> {
 async fn every_recorded_transcript_replays_to_its_golden_events() -> TestResult {
     let mut failures = Vec::new();
     for scenario in scenarios()? {
-        let entries = load(
-            &fixtures()
-                .join("fixtures")
-                .join(format!("{scenario}.ndjson")),
-        )?;
+        let entries = load(&fixtures().join("replay").join(format!("{scenario}.ndjson")))?;
         let replayed = match replay(entries).await {
             Ok(replayed) => replayed,
             Err(error) => {
@@ -820,7 +816,7 @@ async fn every_recorded_transcript_replays_to_its_golden_events() -> TestResult 
 #[tokio::test]
 async fn replaces_a_lost_session_once_with_a_bounded_history_prefix() -> TestResult {
     let replayed = replay(load(
-        &fixtures().join("fixtures/codewide_lost_session.ndjson"),
+        &fixtures().join("replay/codewide_lost_session.ndjson"),
     )?)
     .await?;
     let identities: Vec<_> = replayed

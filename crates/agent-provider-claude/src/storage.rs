@@ -209,18 +209,28 @@ impl ClaudeStorage {
         })
     }
 
-    /// Starts the watcher and the indexer. Sessions are read from Claude's
-    /// files ([`crate::native::LocalSessions`]); `host` reads them through
-    /// the Claude host only when no session store is known. Must be called
-    /// inside a Tokio runtime, once.
-    pub fn start(&self, host: Arc<dyn NativeSessions>, status: watch::Receiver<ProviderStatus>) {
-        let sessions: Arc<dyn NativeSessions> = match &self.projects_root {
-            Some(root) => Arc::new(crate::native::LocalSessions::new(
-                root.clone(),
-                self.journal_directory.clone(),
-            )),
-            None => host,
+    /// Starts the watcher and the indexer over Claude's files
+    /// ([`crate::native::LocalSessions`]). Without a known session store
+    /// nothing is indexed. Must be called inside a Tokio runtime, once.
+    pub fn start(&self, status: watch::Receiver<ProviderStatus>) {
+        let Some(root) = &self.projects_root else {
+            warn!("Claude's session store is unknown; Claude sessions are not indexed");
+            return;
         };
+        let sessions = Arc::new(crate::native::LocalSessions::new(
+            root.clone(),
+            self.journal_directory.clone(),
+        ));
+        self.start_with(sessions, status);
+    }
+
+    /// Starts the watcher (when the session store is known) and the indexer
+    /// over `sessions`.
+    pub(crate) fn start_with(
+        &self,
+        sessions: Arc<dyn NativeSessions>,
+        status: watch::Receiver<ProviderStatus>,
+    ) {
         let (finished, finished_rx) = mpsc::channel(FINISHED_CHANNEL_CAPACITY);
         *self.finished.lock().unwrap_or_else(PoisonError::into_inner) = Some(finished);
         let (relist, relist_rx) = mpsc::channel(1);
@@ -620,7 +630,7 @@ mod tests {
         let mut programmatic = session_read("sdk", "sdk", 30, &["probe"]);
         programmatic.session.interactive = false;
         let (_status, status) = watch::channel(ProviderStatus::Live);
-        storage.start(
+        storage.start_with(
             Arc::new(ListedSessions(vec![terminal, programmatic])),
             status,
         );

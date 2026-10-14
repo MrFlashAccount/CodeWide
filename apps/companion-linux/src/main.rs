@@ -48,7 +48,6 @@ use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
 use tracing::{info, warn};
 
-mod claude_host;
 mod local_control;
 mod provider_status;
 
@@ -1283,10 +1282,8 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
             state_directory: state_directory.clone(),
             files: files.clone(),
             vcs: Some(vcs.clone()),
-            claude_host: claude_host::installed(&state_directory),
         }),
-    )
-    .await;
+    );
     let mut sync = SyncHub::with_registry(registry, store.clone(), options.enable_mutations)
         .with_content_projector(projector)
         .with_dictation(dictation)

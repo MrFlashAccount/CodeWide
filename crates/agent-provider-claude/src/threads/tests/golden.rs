@@ -23,7 +23,7 @@ const TIME_FIELDS: [&str; 6] = [
 ];
 
 fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("host/test")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures")
 }
 
 fn load(path: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
@@ -101,11 +101,7 @@ fn offer_text(entry: &Value) -> String {
 /// Replays one recorded transcript through the service; returns every
 /// published event.
 async fn replay(scenario: &str) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
-    let entries = load(
-        &fixtures()
-            .join("fixtures")
-            .join(format!("{scenario}.ndjson")),
-    )?;
+    let entries = load(&fixtures().join("replay").join(format!("{scenario}.ndjson")))?;
     let harness = harness(Options {
         ticking_clock: true,
         ..Options::default()

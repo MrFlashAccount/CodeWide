@@ -244,6 +244,21 @@ impl ThreadService {
         Ok(events)
     }
 
+    /// A position in the output stream after every event emitted so far,
+    /// for a fenced read answered elsewhere (the index).
+    ///
+    /// # Errors
+    /// When the output stream has ended.
+    pub async fn fence(&self) -> Result<FenceReceiver, ProviderError> {
+        let (sender, receiver) = oneshot::channel();
+        self.inner
+            .outputs
+            .send(SessionOutput::Fence(sender))
+            .await
+            .map_err(|_| ProviderError::Disconnected("Claude thread service has stopped".into()))?;
+        Ok(receiver)
+    }
+
     /// Ends every live session and the open-elsewhere polling.
     pub async fn shutdown(&self) {
         self.inner.open_elsewhere.shutdown();

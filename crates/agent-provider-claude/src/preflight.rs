@@ -1,8 +1,8 @@
-//! Offline check of a parsed `providers.claude` entry: whether the host child
-//! could start under the environment the adapter gives it. It reads file
-//! metadata and at most the first line of each executable (to resolve a
-//! `#!` interpreter on the host child's `PATH`); it starts no process and
-//! makes no network or model call.
+//! Offline check of a parsed `providers.claude` entry: whether `claude` could
+//! start under the environment the adapter gives it. It reads file metadata
+//! and at most the first line of the executable (to resolve a `#!`
+//! interpreter on the children's `PATH`); it starts no process and makes no
+//! network or model call.
 
 use std::{
     ffi::OsStr,
@@ -11,19 +11,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::config::{ClaudeConfig, HostLaunch};
+use crate::config::ClaudeConfig;
 
 const SHEBANG_LIMIT: u64 = 256;
 
-/// One reason the host child would fail to start.
+/// One reason `claude` would fail to start.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PreflightProblem {
     /// The file is missing, not a regular file, or not executable.
     NotExecutable { field: &'static str },
-    /// The sidecar entry is missing or not a regular file.
-    NotAFile { field: &'static str },
     /// The `#!` interpreter of an executable is not found (`/usr/bin/env`
-    /// interpreters are resolved on the host child's `PATH`).
+    /// interpreters are resolved on the children's `PATH`).
     InterpreterNotFound {
         field: &'static str,
         interpreter: String,
@@ -39,9 +37,6 @@ impl std::fmt::Display for PreflightProblem {
                     "providers.claude.{field} is not an executable file"
                 )
             }
-            Self::NotAFile { field } => {
-                write!(formatter, "providers.claude.{field} is not a file")
-            }
             Self::InterpreterNotFound { field, interpreter } => write!(
                 formatter,
                 "providers.claude.{field} needs `{interpreter}`, which is not found on the host PATH"
@@ -50,40 +45,23 @@ impl std::fmt::Display for PreflightProblem {
     }
 }
 
-/// Checks the entry under the host child's environment; `inherited_path` is
+/// Checks the entry under the children's environment; `inherited_path` is
 /// the companion's own `PATH` (used when the entry configures none).
 #[must_use]
 pub fn preflight(config: &ClaudeConfig, inherited_path: Option<&OsStr>) -> Vec<PreflightProblem> {
-    let search_path = config.host_search_path(inherited_path);
-    let mut executables = match &config.host {
-        HostLaunch::Executable { executable, .. } => vec![("hostExecutable", executable)],
-        HostLaunch::Script { runtime, .. } => vec![("runtimeExecutable", runtime)],
-    };
-    executables.push(("claudeExecutable", &config.claude_executable));
-    let mut problems = Vec::new();
-    for (field, executable) in executables {
-        if !is_executable(executable) {
-            problems.push(PreflightProblem::NotExecutable { field });
-            continue;
-        }
-        if let Some(interpreter) = shebang_interpreter(executable)
-            && !interpreter_resolves(&interpreter, &search_path)
+    let field = "claudeExecutable";
+    let executable = &config.claude_executable;
+    if !is_executable(executable) {
+        return vec![PreflightProblem::NotExecutable { field }];
+    }
+    match shebang_interpreter(executable) {
+        Some(interpreter)
+            if !interpreter_resolves(&interpreter, &config.search_path(inherited_path)) =>
         {
-            problems.push(PreflightProblem::InterpreterNotFound { field, interpreter });
+            vec![PreflightProblem::InterpreterNotFound { field, interpreter }]
         }
+        _ => Vec::new(),
     }
-    match &config.host {
-        HostLaunch::Script { entry, .. } if !entry.is_file() => {
-            problems.push(PreflightProblem::NotAFile {
-                field: "sidecarEntry",
-            });
-        }
-        HostLaunch::Executable { agent_sdk, .. } if !agent_sdk.is_file() => {
-            problems.push(PreflightProblem::NotAFile { field: "agentSdk" });
-        }
-        HostLaunch::Script { .. } | HostLaunch::Executable { .. } => {}
-    }
-    problems
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -134,50 +112,28 @@ mod tests {
     }
 
     #[test]
-    fn resolves_env_interpreters_on_the_host_path() -> Result<(), Box<dyn std::error::Error>> {
+    fn resolves_env_interpreters_on_the_children_path() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let node = root.path().join("runtime/bin/node");
+        let node = root.path().join("npm/bin/node");
         let claude = root.path().join("npm/bin/claude");
-        let entry = root.path().join("host/dist/main.js");
         executable(&node, "\u{7f}ELF")?;
         executable(&claude, "#!/usr/bin/env node\nrequire('x')\n")?;
-        std::fs::create_dir_all(entry.parent().ok_or("no parent")?)?;
-        std::fs::write(&entry, "")?;
         let config = |environment: serde_json::Value| {
             ClaudeConfig::parse(
-                &json!({
-                    "runtimeExecutable": node, "sidecarEntry": entry, "claudeExecutable": claude,
-                    "journalDirectory": root.path().join("journal"), "environment": environment,
-                }),
+                &json!({"claudeExecutable": claude, "environment": environment}),
                 &crate::config::ClaudeDefaults::default(),
             )
         };
-
-        // `node` resolves through the runtime directory the adapter prepends,
-        // even under a minimal service PATH.
+        // `node` next to `claude` resolves through the directory the
+        // adapter prepends, even under a minimal service PATH.
         assert_eq!(
             preflight(&config(json!({}))?, Some(OsStr::new("/usr/bin:/bin"))),
             []
         );
 
-        // Under another runtime and a captured PATH without node, the
-        // script's interpreter is unresolved.
-        let bun = root.path().join("other/bin/bun");
-        executable(&bun, "")?;
-        let base = config(json!({"PATH": "/nonexistent"}))?;
-        let entry = match &base.host {
-            HostLaunch::Script { entry, .. } => entry.clone(),
-            HostLaunch::Executable { .. } => return Err("a script host was configured".into()),
-        };
-        let missing = ClaudeConfig {
-            host: HostLaunch::Script {
-                runtime: bun,
-                entry,
-            },
-            ..base
-        };
+        std::fs::remove_file(&node)?;
         assert_eq!(
-            preflight(&missing, None),
+            preflight(&config(json!({"PATH": "/nonexistent"}))?, None),
             [PreflightProblem::InterpreterNotFound {
                 field: "claudeExecutable",
                 interpreter: "node".into()
@@ -187,30 +143,19 @@ mod tests {
     }
 
     #[test]
-    fn reports_non_executable_files() -> Result<(), Box<dyn std::error::Error>> {
+    fn reports_a_non_executable_claude() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let plain = root.path().join("plain");
         std::fs::write(&plain, "")?;
         let config = ClaudeConfig::parse(
-            &json!({
-                "runtimeExecutable": plain, "sidecarEntry": root.path(), "claudeExecutable": plain,
-                "journalDirectory": root.path().join("journal"),
-            }),
+            &json!({"claudeExecutable": plain}),
             &crate::config::ClaudeDefaults::default(),
         )?;
         assert_eq!(
             preflight(&config, None),
-            [
-                PreflightProblem::NotExecutable {
-                    field: "runtimeExecutable"
-                },
-                PreflightProblem::NotExecutable {
-                    field: "claudeExecutable"
-                },
-                PreflightProblem::NotAFile {
-                    field: "sidecarEntry"
-                },
-            ]
+            [PreflightProblem::NotExecutable {
+                field: "claudeExecutable"
+            }]
         );
         Ok(())
     }

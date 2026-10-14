@@ -145,17 +145,15 @@ pub fn proxy_environment_from_settings(
     Ok(ProxyEnvironment { variables })
 }
 
-/// Reads the proxy environment of the user settings at `path`; a missing
-/// file sets none.
+/// Reads the proxy environment of the user settings at `path` (once, at
+/// start: a small file); a missing file sets none.
 ///
 /// # Errors
 ///
 /// Returns an unreadable or invalid file (see
 /// [`proxy_environment_from_settings`]).
-pub async fn read_user_proxy_environment(
-    path: &Path,
-) -> Result<ProxyEnvironment, ProxyEnvironmentError> {
-    let text = match tokio::fs::read_to_string(path).await {
+pub fn read_user_proxy_environment(path: &Path) -> Result<ProxyEnvironment, ProxyEnvironmentError> {
+    let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(ProxyEnvironment::default());
@@ -201,9 +199,8 @@ mod tests {
             .to_string(),
         )
         .unwrap_or_else(|error| panic!("{error}"));
-        let environment = read_user_proxy_environment(&path)
-            .await
-            .unwrap_or_else(|error| panic!("{error}"));
+        let environment =
+            read_user_proxy_environment(&path).unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(
             names(&environment),
             [
@@ -224,13 +221,13 @@ mod tests {
     #[tokio::test]
     async fn missing_settings_or_environment_set_no_overrides() {
         let directory = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
-        let missing = read_user_proxy_environment(&directory.path().join("settings.json")).await;
+        let missing = read_user_proxy_environment(&directory.path().join("settings.json"));
         assert_eq!(missing.ok(), Some(ProxyEnvironment::default()));
         assert_eq!(
             proxy_environment_from_settings(&json!({})).ok(),
             Some(ProxyEnvironment::default())
         );
-        let unreadable = read_user_proxy_environment(directory.path()).await;
+        let unreadable = read_user_proxy_environment(directory.path());
         assert!(matches!(unreadable, Err(ProxyEnvironmentError::Read(_))));
     }
 
