@@ -238,9 +238,7 @@ impl ClaudeProvider {
         let (service, outputs) = ThreadService::new(ServiceDeps {
             projects_root: config_directory.join("projects"),
             state_directory: config.journal_directory.clone(),
-            runtime: Arc::new(CliRuntime {
-                environment: environment.clone(),
-            }),
+            runtime: Arc::new(CliRuntime::new(environment.clone())),
             executable: config.claude_executable.clone(),
             clock: Arc::new(now_ms),
             new_uuid: Arc::new(uuid::random_uuid),
@@ -670,6 +668,12 @@ impl AgentProvider for ClaudeProvider {
 
     async fn turn_start(&self, params: TurnStartParams) -> Result<TurnStartResult, ProviderError> {
         self.service().await?.turn_start(params).await
+    }
+
+    async fn shutdown(&self) {
+        if let Some(running) = &self.running {
+            running.service.shutdown().await;
+        }
     }
 
     fn install_client_tools(&self, host: Weak<dyn ClientToolHost>) {

@@ -16,6 +16,8 @@ use agent_core::{
     provider::ProviderError,
 };
 
+use tracing::warn;
+
 use super::errors::internal;
 use crate::{
     session::{
@@ -24,6 +26,10 @@ use crate::{
     },
     state::{ThreadStateStore, thread_state::ThreadState},
 };
+
+/// How long shutdown waits for closed sessions' processes: their own exit
+/// grace (`cli::process`) plus the kill after it.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Session id → app thread id of every known chain.
 type Owners = Arc<Mutex<HashMap<String, AppThreadId>>>;
@@ -161,11 +167,23 @@ impl ThreadRegistry {
         Ok(self.register(state))
     }
 
-    /// Ends every session (service shutdown).
+    /// Ends every session (service shutdown) and waits until their
+    /// `claude` processes have exited on their own, at most
+    /// [`SHUTDOWN_GRACE`]; the rest are killed when the runtime drops.
     pub async fn shutdown(&self) {
+        let mut disposing = tokio::task::JoinSet::new();
         for handle in self.all() {
             // A session that already ended has nothing to end.
-            let _ = handle.dispose().await;
+            disposing.spawn(async move {
+                let _ = handle.dispose().await;
+            });
+        }
+        disposing.join_all().await;
+        if tokio::time::timeout(SHUTDOWN_GRACE, self.session_deps.runtime.ended())
+            .await
+            .is_err()
+        {
+            warn!("Claude processes were still running at shutdown");
         }
     }
 }

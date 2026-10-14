@@ -1284,6 +1284,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
             vcs: Some(vcs.clone()),
         }),
     );
+    let providers = registry.clone();
     let mut sync = SyncHub::with_registry(registry, store.clone(), options.enable_mutations)
         .with_content_projector(projector)
         .with_dictation(dictation)
@@ -1379,12 +1380,15 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let public_server = serve_public(options.listen, routers.public);
     let bootstrap_server = serve_inner(bootstrap_listener, routers.bootstrap, bootstrap_tls);
     let inner_server = serve_device_inner(inner_listener, routers.inner, inner_tls);
-    tokio::try_join!(
+    let served = tokio::try_join!(
         public_server,
         bootstrap_server,
         inner_server,
         control_server
-    )?;
+    );
+    // Before the runtime drops, which kills every remaining child.
+    providers.shutdown().await;
+    served?;
     Ok(())
 }
 

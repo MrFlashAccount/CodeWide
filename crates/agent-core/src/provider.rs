@@ -305,6 +305,11 @@ pub trait AgentProvider: Send + Sync {
         Ok(())
     }
 
+    /// Ends the provider's live work before the companion exits, so its
+    /// child processes finish on their own instead of being killed with the
+    /// runtime. Bounded by the provider. Default: nothing to end.
+    async fn shutdown(&self) {}
+
     /// Installs the companion's client-side tools. A provider declaring
     /// `orchestration.tools` declares them to its model on threads and turns
     /// it starts afterwards and routes their calls to `host`; other providers

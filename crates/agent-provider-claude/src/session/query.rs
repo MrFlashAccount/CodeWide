@@ -11,6 +11,7 @@ use std::{ffi::OsString, future::Future, pin::Pin, sync::Arc};
 
 use serde_json::Value;
 use tokio::sync::{mpsc, watch};
+use tokio_util::task::TaskTracker;
 use tracing::warn;
 
 use crate::cli::{
@@ -60,12 +61,31 @@ pub trait QueryRuntime: Send + Sync {
         &self,
         options: &QueryOptions,
     ) -> Result<(Arc<dyn Query>, mpsc::Receiver<ProcessEvent>), ProcessError>;
+
+    /// Resolves once the process of every query this runtime opened has
+    /// exited; closed queries' processes exit on their own. Default: a
+    /// runtime that runs no process.
+    fn ended(&self) -> BoxFuture<'static, ()> {
+        Box::pin(std::future::ready(()))
+    }
 }
 
 /// Queries as `claude` processes with the companion's environment plus
 /// `environment`.
 pub struct CliRuntime {
-    pub environment: Vec<(OsString, OsString)>,
+    environment: Vec<(OsString, OsString)>,
+    /// One writer per process; each ends with its process's exit.
+    writers: TaskTracker,
+}
+
+impl CliRuntime {
+    #[must_use]
+    pub fn new(environment: Vec<(OsString, OsString)>) -> Self {
+        Self {
+            environment,
+            writers: TaskTracker::new(),
+        }
+    }
 }
 
 impl QueryRuntime for CliRuntime {
@@ -78,7 +98,8 @@ impl QueryRuntime for CliRuntime {
         let (outbound, queue) = mpsc::unbounded_channel();
         let (initialized, ready) = watch::channel(false);
         let servers = options.sdk_mcp_servers();
-        tokio::spawn(write_in_order(process.clone(), servers, queue, initialized));
+        self.writers
+            .spawn(write_in_order(process.clone(), servers, queue, initialized));
         Ok((
             Arc::new(CliQuery {
                 process,
@@ -87,6 +108,14 @@ impl QueryRuntime for CliRuntime {
             }),
             events,
         ))
+    }
+
+    fn ended(&self) -> BoxFuture<'static, ()> {
+        let writers = self.writers.clone();
+        Box::pin(async move {
+            writers.close();
+            writers.wait().await;
+        })
     }
 }
 
@@ -201,4 +230,54 @@ async fn write_in_order(
         }
     }
     process.close().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{os::unix::fs::PermissionsExt, path::Path, time::Duration};
+
+    use super::*;
+    use crate::cli::command::{SessionIdentity, profile_options};
+
+    /// Answers `initialize`, then reads until its input ends and records
+    /// that it ended on its own.
+    const FAKE_CLAUDE: &str = r#"#!/bin/sh
+read -r init
+printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"codewide-1","response":{"commands":[]}}}'
+while read -r line; do :; done
+echo ended > ended.log
+"#;
+
+    fn options(directory: &Path) -> QueryOptions {
+        let executable = directory.join("claude");
+        std::fs::write(&executable, FAKE_CLAUDE).unwrap_or_else(|error| panic!("{error}"));
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+            .unwrap_or_else(|error| panic!("{error}"));
+        QueryOptions {
+            executable,
+            cwd: directory.to_owned(),
+            model: "opus".into(),
+            effort: None,
+            profile: profile_options(":workspace").unwrap_or_else(|| unreachable!()),
+            identity: SessionIdentity::New("s1".into()),
+            client_tools: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn ended_waits_until_closed_processes_exit_on_their_own() {
+        let directory = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
+        let runtime = CliRuntime::new(Vec::new());
+        let (query, _events) = runtime
+            .open(&options(directory.path()))
+            .unwrap_or_else(|error| panic!("{error}"));
+        query.close();
+        tokio::time::timeout(Duration::from_secs(10), runtime.ended())
+            .await
+            .unwrap_or_else(|_| panic!("the closed process did not exit"));
+        assert!(
+            directory.path().join("ended.log").is_file(),
+            "the process was killed instead of reading the end of its input"
+        );
+    }
 }

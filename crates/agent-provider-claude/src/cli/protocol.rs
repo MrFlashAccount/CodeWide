@@ -232,7 +232,6 @@ pub fn user_message_line(content: &Value, uuid: Option<&str>, priority: Priority
         "type": "user",
         "message": {"role": "user", "content": content},
         "parent_tool_use_id": null,
-        "session_id": "",
     });
     if let Some(uuid) = uuid {
         message["uuid"] = json!(uuid);
@@ -322,6 +321,8 @@ mod tests {
         assert_eq!(user["message"]["content"], "hi");
         assert_eq!(user["uuid"], "u1");
         assert!(user.get("priority").is_none());
+        // The Agent SDK leaves the session to the process: no `session_id`.
+        assert!(user.get("session_id").is_none());
         let steer: Value =
             serde_json::from_str(&user_message_line(&json!("now"), None, Priority::Now))
                 .unwrap_or_default();
