@@ -31,11 +31,12 @@ export type AgentAvatarSubject = {
 /** A small status mark on the avatar's corner. */
 export type AgentAvatarBadge = "done" | "failed" | "running" | "waiting";
 
+/** Green for done, red for a failure, grey while work goes on. */
 const BADGE_COLOR: Record<AgentAvatarBadge, string> = {
   done: colors.green,
   failed: colors.red,
-  running: colors.amber,
-  waiting: colors.amber,
+  running: colors.textMuted,
+  waiting: colors.textMuted,
 };
 
 /** A stable gradient circle per agent name, so one agent looks the same everywhere. */

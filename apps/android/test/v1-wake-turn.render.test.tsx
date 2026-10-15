@@ -1,5 +1,5 @@
 import { fireEvent, render, within, type RenderResult } from "@testing-library/react-native";
-import { View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { projectTimelineRows } from "../src/features/conversation/timeline/timelineRows";
 import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
 import { projectTurnPresentation } from "../src/features/conversation/turns/turnProjection";
@@ -252,7 +252,9 @@ it("draws the reports that woke a turn as one line before its bubble", () => {
 
   expect(view.getByTestId("task-notification-line")).toBeOnTheScreen();
   expect(view.getByText("2 agents")).toBeOnTheScreen();
-  expect(view.getByText("finished")).toBeOnTheScreen();
+  // The avatars' dots show the status; only assistive technology reads it.
+  expect(view.queryByText("finished")).toBeNull();
+  expect(view.getByLabelText("2 agents finished")).toBeOnTheScreen();
   expect(view.getAllByText("Rendered Markdown block")).toHaveLength(1);
 });
 
@@ -287,10 +289,37 @@ it("fits a report line to its container, not the window, and reserves its height
   expect(view.getByTestId("task-notification-line-row")).toHaveStyle({ minHeight: 40 });
 
   layOut(view, "task-notification-line-row", 320);
-  expect(view.getByTestId("task-notification-line")).toHaveStyle({ width: 320 });
+  expect(view.getByTestId("task-notification-line")).toHaveStyle({ maxWidth: 320 });
 
   layOut(view, "task-notification-line-row", 280);
-  expect(view.getByTestId("task-notification-line")).toHaveStyle({ width: 280 });
+  expect(view.getByTestId("task-notification-line")).toHaveStyle({ maxWidth: 280 });
+});
+
+it("opens a plain list of reports with fixed rows and a declared height", () => {
+  const woken = completedTurn("listed", [
+    taskReport("a", "wake", "Map sources"),
+    taskReport("b", "wake", "Review spec"),
+    answer("listed-answer", "Both are back."),
+  ]);
+  const view = render(timelineSurface([woken]));
+  layOut(view, "task-notification-line-row", 900);
+
+  fireEvent.press(view.getByTestId("task-notification-line"));
+
+  // No heading: the list is the menu. Each row keeps the height its two lines
+  // need, and the list declares the sum instead of being measured.
+  expect(view.queryByText(/background task|reports/iu)).toBeNull();
+  const rows = view.getAllByTestId("task-notification-row");
+  expect(rows).toHaveLength(2);
+  const heights = rows.map((row) => StyleSheet.flatten(row.props.style).height);
+  const [rowHeight] = heights;
+  expect(typeof rowHeight).toBe("number");
+  expect(rowHeight).toBeGreaterThanOrEqual(48);
+  expect(heights.every((height) => height === rowHeight)).toBe(true);
+  expect(view.getByTestId("task-notification-list")).toHaveStyle({
+    height: Number(rowHeight) * 2 + 4 + 8 * 2,
+  });
+  expect(view.queryByText(/finished/u)).toBeNull();
 });
 
 const launch = (id: string, receiver: string, description: string) => ({

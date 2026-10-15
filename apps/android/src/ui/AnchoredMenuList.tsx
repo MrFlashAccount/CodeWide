@@ -3,33 +3,48 @@ import { ScrollView, StyleSheet, View } from "react-native";
 import { colors, menuContentInset, radii, spacing, typeScale } from "../theme";
 import { AppText as Text } from "./Typography";
 
+/** Space between rows and around the list, for menus that declare their height. */
+export const LIST_GAP = spacing.xxs;
+export const LIST_PADDING = spacing.xs;
+
+/**
+ * How tall the list is: measured from its rows up to `maxHeight`, or a
+ * declared `height` for rows of fixed height, which the anchored popup then
+ * does not have to measure.
+ */
+type ListHeight =
+  | { readonly height?: never; readonly maxHeight: number }
+  | { readonly height: number; readonly maxHeight?: never };
+
 /**
  * The body of an anchored list menu, like the live plan's: a clipped rounded
- * surface, a quiet heading and scrolling rows bounded by `maxHeight`.
+ * surface, an optional quiet heading and scrolling rows.
  */
 export function AnchoredMenuList({
   children,
-  maxHeight,
   testID,
   title,
-}: {
+  ...size
+}: ListHeight & {
   readonly children: ReactNode;
-  readonly maxHeight: number;
   readonly testID: string;
-  readonly title: string;
+  readonly title?: string;
 }): React.JSX.Element {
+  const bound = size.height === undefined ? { maxHeight: size.maxHeight } : { height: size.height };
   return (
-    <View style={[styles.menu, { maxHeight }]}>
+    <View style={[styles.menu, bound]}>
       <ScrollView
         contentContainerStyle={styles.list}
         nestedScrollEnabled
         showsVerticalScrollIndicator={false}
-        style={{ maxHeight }}
+        style={bound}
         testID={testID}
       >
-        <Text accessibilityRole="header" style={styles.title}>
-          {title}
-        </Text>
+        {title === undefined ? null : (
+          <Text accessibilityRole="header" style={styles.title}>
+            {title}
+          </Text>
+        )}
         {children}
       </ScrollView>
     </View>
@@ -38,9 +53,9 @@ export function AnchoredMenuList({
 
 const styles = StyleSheet.create({
   list: {
-    gap: spacing.xxs,
+    gap: LIST_GAP,
     paddingHorizontal: menuContentInset,
-    paddingVertical: spacing.xs,
+    paddingVertical: LIST_PADDING,
   },
   menu: {
     borderRadius: radii.large,
