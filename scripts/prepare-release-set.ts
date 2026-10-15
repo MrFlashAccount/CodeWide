@@ -32,7 +32,7 @@ export type HostUpdateSigningOptions = {
   readonly privateKeyPem: string;
   readonly publicKeySpki: string;
   readonly keyId: string;
-  readonly previousManifestPath?: string;
+  readonly previousManifestPaths?: readonly string[];
   readonly nowMs?: number;
 };
 
@@ -128,29 +128,63 @@ function signingOptionsFromEnvironment(): HostUpdateSigningOptions {
   if (keyId === undefined || !/^[a-zA-Z0-9_-]{1,64}$/u.test(keyId)) {
     throw new Error("CODEWIDE_HOST_UPDATE_SIGNING_KEY_ID is required and must be a stable key id");
   }
+  const previousManifestPaths = previousManifestPathsFromEnvironment();
   return {
     privateKeyPem,
     publicKeySpki,
     keyId,
-    ...(process.env.CODEWIDE_PREVIOUS_RELEASE_MANIFEST === undefined
-      ? {}
-      : { previousManifestPath: process.env.CODEWIDE_PREVIOUS_RELEASE_MANIFEST }),
+    ...(previousManifestPaths === undefined ? {} : { previousManifestPaths }),
   };
+}
+
+function previousManifestPathsFromEnvironment(): readonly string[] | undefined {
+  const manifestPath = process.env.CODEWIDE_PREVIOUS_RELEASE_MANIFEST;
+  const manifestListPath = process.env.CODEWIDE_PREVIOUS_RELEASE_MANIFEST_LIST;
+  if (manifestPath !== undefined && manifestListPath !== undefined) {
+    throw new Error("Set only one previous release manifest input");
+  }
+  if (manifestPath !== undefined) {
+    if (manifestPath.length === 0) throw new Error("Previous release manifest path is empty");
+    return [manifestPath];
+  }
+  if (manifestListPath === undefined) return undefined;
+  if (manifestListPath.length === 0) {
+    throw new Error("Previous release manifest list path is empty");
+  }
+  const paths = readFileSync(manifestListPath, "utf8")
+    .split(/\r?\n/u)
+    .filter((path) => path.length > 0);
+  if (paths.length === 0 || new Set(paths).size !== paths.length) {
+    throw new Error("Previous release manifest list must contain unique paths");
+  }
+  return paths;
 }
 
 function base64Url(bytes: Buffer): string {
   return bytes.toString("base64url");
 }
 
-function previousTargetDigests(
-  path: string | undefined,
+type PreviousTarget = {
+  readonly platform: string;
+  readonly version: string;
+  readonly digest: string;
+  readonly rollbackCompatibleFrom: readonly string[];
+};
+
+type PreviousDescriptor = {
+  readonly sequence: number;
+  readonly targets: readonly PreviousTarget[];
+};
+
+function verifiedPreviousDescriptor(
+  path: string,
   publicKey: ReturnType<typeof createPublicKey>,
   keyId: string,
   maximumSequence: number,
-  expectedVersions: ReadonlyMap<string, string>,
-): ReadonlyMap<string, string> {
-  if (path === undefined) return new Map();
-  const envelope = record(JSON.parse(readFileSync(path, "utf8")) as unknown, "previous release manifest");
+  expectedPlatforms: ReadonlySet<string>,
+): PreviousDescriptor {
+  const envelopeValue: unknown = JSON.parse(readFileSync(path, "utf8"));
+  const envelope = record(envelopeValue, "previous release manifest");
   if (envelope.schemaVersion !== 1 || envelope.algorithm !== "ES256" || envelope.keyId !== keyId) {
     throw new Error("Previous release manifest uses an unsupported signing contract");
   }
@@ -159,33 +193,93 @@ function previousTargetDigests(
   if (!verify("sha256", payload, publicKey, signature)) {
     throw new Error("Previous release manifest signature is invalid");
   }
-  const descriptor = record(JSON.parse(payload.toString("utf8")) as unknown, "previous descriptor");
+  const descriptorValue: unknown = JSON.parse(payload.toString("utf8"));
+  const descriptor = record(descriptorValue, "previous descriptor");
   const sequence = descriptor.sequence;
   if (
     descriptor.schemaVersion !== 1 ||
     descriptor.channel !== "stable" ||
+    typeof sequence !== "number" ||
     !Number.isSafeInteger(sequence) ||
-    Number(sequence) >= maximumSequence ||
+    sequence <= 0 ||
+    sequence >= maximumSequence ||
     !Array.isArray(descriptor.targets)
   ) {
     throw new Error("Previous release manifest sequence is not older than this release");
   }
-  const digests = new Map<string, string>();
+  const targets: PreviousTarget[] = [];
+  const platforms = new Set<string>();
   for (const value of descriptor.targets) {
     const target = record(value, "previous target");
     const platform = string(target.platform, "previous target.platform");
     const digest = string(target.sha256, "previous target.sha256");
     const version = string(target.version, "previous target.version");
+    const rollbackCompatibleFrom = stringList(
+      target.rollbackCompatibleFrom,
+      "previous target.rollbackCompatibleFrom",
+    );
     if (
-      version !== expectedVersions.get(platform) ||
+      !expectedPlatforms.has(platform) ||
       !/^[0-9a-f]{64}$/u.test(digest) ||
-      digests.has(platform)
+      rollbackCompatibleFrom.some((candidate) => !/^[0-9a-f]{64}$/u.test(candidate)) ||
+      platforms.has(platform)
     ) {
-      throw new Error("Previous release manifest contains invalid target digests");
+      throw new Error("Previous release manifest contains an invalid target lineage");
     }
-    digests.set(platform, digest);
+    platforms.add(platform);
+    targets.push({ platform, version, digest, rollbackCompatibleFrom });
   }
-  return digests;
+  if (platforms.size !== expectedPlatforms.size) {
+    throw new Error("Previous release manifest does not contain every host platform");
+  }
+  return { sequence, targets };
+}
+
+function previousTargetLineages(
+  paths: readonly string[] | undefined,
+  publicKey: ReturnType<typeof createPublicKey>,
+  keyId: string,
+  maximumSequence: number,
+  expectedVersions: ReadonlyMap<string, string>,
+): ReadonlyMap<string, readonly string[]> {
+  if (paths === undefined || paths.length === 0) return new Map();
+  const expectedPlatforms = new Set(expectedVersions.keys());
+  const descriptors = paths
+    .map((path) =>
+      verifiedPreviousDescriptor(path, publicKey, keyId, maximumSequence, expectedPlatforms),
+    )
+    .sort((left, right) => right.sequence - left.sequence);
+  for (let index = 1; index < descriptors.length; index += 1) {
+    if (descriptors[index]?.sequence === descriptors[index - 1]?.sequence) {
+      throw new Error("Previous release manifests contain a duplicate sequence");
+    }
+  }
+  const newest = descriptors[0];
+  if (
+    newest === undefined ||
+    [...expectedVersions].some(
+      ([platform, version]) =>
+        newest.targets.find((target) => target.platform === platform)?.version !== version,
+    )
+  ) {
+    throw new Error("Newest release manifest does not match the release plan predecessor");
+  }
+  const digests = new Map<string, Set<string>>(
+    [...expectedPlatforms].map((platform) => [platform, new Set<string>()]),
+  );
+  for (const descriptor of descriptors) {
+    for (const target of descriptor.targets) {
+      const platformDigests = digests.get(target.platform);
+      if (platformDigests === undefined) {
+        throw new Error("Previous release manifest contains an unknown host platform");
+      }
+      platformDigests.add(target.digest);
+      for (const digest of target.rollbackCompatibleFrom) platformDigests.add(digest);
+    }
+  }
+  return new Map(
+    [...digests].map(([platform, platformDigests]) => [platform, [...platformDigests]]),
+  );
 }
 
 function signedHostUpdateManifest(
@@ -218,8 +312,8 @@ function signedHostUpdateManifest(
     ["relay-linux-x86-64", requiredPlanTarget(plan, "relay").previousVersion],
   ]);
   const sequence = releaseSequence(plan.version);
-  const rollback = previousTargetDigests(
-    options.previousManifestPath,
+  const rollback = previousTargetLineages(
+    options.previousManifestPaths,
     publicKey,
     options.keyId,
     sequence,
@@ -250,7 +344,7 @@ function signedHostUpdateManifest(
         bootstrapVersion: 1,
         journalVersion: 1,
         stateEpoch: 1,
-        rollbackCompatibleFrom: rollbackDigest(rollback, "linux-x86-64"),
+        rollbackCompatibleFrom: rollbackDigests(rollback, "linux-x86-64", linuxAsset.sha256),
       },
       {
         platform: "macos-universal",
@@ -264,7 +358,7 @@ function signedHostUpdateManifest(
         bootstrapVersion: 2,
         journalVersion: 1,
         stateEpoch: 1,
-        rollbackCompatibleFrom: rollbackDigest(rollback, "macos-universal"),
+        rollbackCompatibleFrom: rollbackDigests(rollback, "macos-universal", macosAsset.sha256),
       },
       {
         platform: "relay-linux-x86-64",
@@ -276,7 +370,7 @@ function signedHostUpdateManifest(
         bootstrapVersion: 1,
         journalVersion: 1,
         stateEpoch: 1,
-        rollbackCompatibleFrom: rollbackDigest(rollback, "relay-linux-x86-64"),
+        rollbackCompatibleFrom: rollbackDigests(rollback, "relay-linux-x86-64", relayAsset.sha256),
       },
     ],
   };
@@ -317,9 +411,12 @@ function requiredPlanTarget(
   return target;
 }
 
-function rollbackDigest(digests: ReadonlyMap<string, string>, platform: string): readonly string[] {
-  const digest = digests.get(platform);
-  return digest === undefined ? [] : [digest];
+function rollbackDigests(
+  lineages: ReadonlyMap<string, readonly string[]>,
+  platform: string,
+  targetDigest: string,
+): readonly string[] {
+  return lineages.get(platform)?.filter((digest) => digest !== targetDigest) ?? [];
 }
 
 function sha256(path: string): string {
