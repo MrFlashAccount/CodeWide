@@ -2,7 +2,7 @@
 
 How to install the Companion on your machine, reach it from your phone, pair
 devices and operate the host. For the short version, see the
-[README quick start](../README.md#quick-start).
+[README quick start](../README.md#get-started).
 
 ## Install the Companion
 
