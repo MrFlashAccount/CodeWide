@@ -72,6 +72,19 @@ function isSummaryItem(value: unknown): boolean {
           value.phase === "final_answer") &&
         (value.memoryCitation === undefined || value.memoryCitation === null)
       );
+    // The Companion summary view also keeps sub-agent launches, background
+    // task reports and context compactions (`in_summary_view`); their
+    // renderers validate the remaining fields when they read them.
+    case "collabAgentToolCall":
+      return (
+        typeof value.tool === "string" &&
+        Array.isArray(value.receiverThreadIds) &&
+        value.receiverThreadIds.every(isId)
+      );
+    case "codewideTaskNotification":
+      return isId(value.taskId);
+    case "contextCompaction":
+      return true;
     default:
       return false;
   }
