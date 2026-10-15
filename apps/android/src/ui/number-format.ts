@@ -65,3 +65,16 @@ export function formatDuration(milliseconds: number): string {
   }
   return parts.join(" ");
 }
+
+const BYTES_PER_KB = 1024;
+const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
+
+/** A byte count for people: bytes, whole kilobytes rounded up, or megabytes. */
+export function formatByteSize(bytes: number): string {
+  if (bytes < BYTES_PER_KB) {
+    return `${String(bytes)} B`;
+  }
+  return bytes < BYTES_PER_MB
+    ? `${String(Math.ceil(bytes / BYTES_PER_KB))} KB`
+    : `${(bytes / BYTES_PER_MB).toFixed(1)} MB`;
+}

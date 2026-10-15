@@ -2,6 +2,7 @@ import type { ReactElement, ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 
 import { colors, controlSize, layoutSize, radii, spacing, typeScale, typeWeight } from "../theme";
+import { formatByteSize } from "../ui/number-format";
 import { productFonts } from "../ui/product-fonts";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../ui/typography-policy";
 import { TwoRowHorizontalScroller } from "./TwoRowHorizontalScroller";
@@ -32,7 +33,7 @@ export function MessageAttachmentGrid(props: MessageAttachmentGridProps) {
 
 export function MessageAttachmentTile(props: MessageAttachmentTileProps) {
   const subtitle =
-    props.bytes === undefined ? props.label : `${props.label} · ${formatBytes(props.bytes)}`;
+    props.bytes === undefined ? props.label : `${props.label} · ${formatByteSize(props.bytes)}`;
   return (
     <Pressable
       accessibilityLabel={`Open ${props.name}`}
@@ -61,14 +62,6 @@ export function MessageAttachmentTile(props: MessageAttachmentTileProps) {
       </View>
     </Pressable>
   );
-}
-
-function formatBytes(bytes: number): string {
-  return bytes < 1024
-    ? `${String(bytes)} B`
-    : bytes < 1024 * 1024
-      ? `${String(Math.ceil(bytes / 1024))} KB`
-      : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 const styles = StyleSheet.create({

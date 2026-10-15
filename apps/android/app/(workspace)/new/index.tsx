@@ -89,6 +89,8 @@ export default function V1NewThreadRoute(): React.JSX.Element {
     openContent,
     openDocument,
     openDrawing,
+    // A draft has no background tasks yet.
+    openTaskOutput: ignoreRoute,
     openTerminal: ignoreRoute,
     openTool,
     openTurnChanges: ignoreRoute,
