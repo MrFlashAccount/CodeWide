@@ -7,12 +7,15 @@ import { AppText as Text } from "./Typography";
 
 const AVATAR_RADIUS = 10;
 const AVATAR_SIZE = AVATAR_RADIUS + AVATAR_RADIUS;
-/** The ring that separates overlapping avatars from each other and the surface. */
+/**
+ * The ring that separates overlapping avatars from each other. It is painted
+ * in the color of the surface under the avatar, so it reads as a gap, not an outline.
+ */
 const RING_WIDTH = spacing.optical;
 const RING_SIZE = AVATAR_SIZE + RING_WIDTH + RING_WIDTH;
 const BADGE_SIZE = 10;
 const BADGE_OFFSET = -spacing.optical;
-const STACK_OVERLAP = 7;
+const STACK_OVERLAP = 10;
 const DEFAULT_STACK_LIMIT = 4;
 const HUE_TURN = 360;
 const HUE_SPREAD_MIN = 40;
@@ -46,12 +49,15 @@ const BADGE_COLOR: Record<AgentAvatarBadge, string> = {
 export function AgentAvatar({
   badge = null,
   subject,
+  surface,
 }: {
   readonly badge?: AgentAvatarBadge | null;
   readonly subject: AgentAvatarSubject;
+  /** The color of the surface the avatar sits on, for its ring. */
+  readonly surface: string;
 }): React.JSX.Element {
   return (
-    <View style={styles.avatar}>
+    <View style={[styles.avatar, { borderColor: surface }]} testID="agent-avatar">
       {subject.kind === "agent" ? (
         <GradientCircle name={subject.name} />
       ) : (
@@ -60,38 +66,62 @@ export function AgentAvatar({
         </View>
       )}
       {badge === null ? null : (
-        <View style={[styles.badge, { backgroundColor: BADGE_COLOR[badge] }]} />
+        <View
+          style={[styles.badge, { backgroundColor: BADGE_COLOR[badge], borderColor: surface }]}
+        />
       )}
     </View>
   );
 }
 
-/** Up to `limit` overlapping avatars and a `+n` for the rest. */
+/**
+ * Up to `limit` overlapping avatars and a `+n` for the rest. The earliest
+ * subject is on top, each later one tucked under its predecessor.
+ */
 export function AgentAvatarStack<Subject extends AgentAvatarSubject>({
   badgeOf,
   keyOf,
   limit = DEFAULT_STACK_LIMIT,
   subjects,
+  surface,
 }: {
   readonly badgeOf: (subject: Subject) => AgentAvatarBadge | null;
   readonly keyOf: (subject: Subject) => string;
   readonly limit?: number;
   readonly subjects: readonly Subject[];
+  /** The color of the surface the stack sits on, for the avatars' rings. */
+  readonly surface: string;
 }): React.JSX.Element {
   const shown = subjects.slice(0, limit);
   const hidden = subjects.length - shown.length;
   return (
     <View style={styles.stack}>
       {shown.map((subject, index) => (
-        <View key={keyOf(subject)} style={index > 0 && styles.stacked}>
-          <AgentAvatar badge={badgeOf(subject)} subject={subject} />
+        <View
+          key={keyOf(subject)}
+          style={[index > 0 && styles.stacked, { zIndex: shown.length - index }]}
+        >
+          <AgentAvatar badge={badgeOf(subject)} subject={subject} surface={surface} />
         </View>
       ))}
-      {hidden > 0 ? (
-        <View style={[styles.glyphCircle, styles.stacked]}>
-          <Text style={styles.more}>+{hidden}</Text>
-        </View>
-      ) : null}
+      {hidden > 0 ? <HiddenCount count={hidden} surface={surface} /> : null}
+    </View>
+  );
+}
+
+/** The `+n` after a stack, ringed like the avatars it stands for. */
+function HiddenCount({
+  count,
+  surface,
+}: {
+  readonly count: number;
+  readonly surface: string;
+}): React.JSX.Element {
+  return (
+    <View style={[styles.avatar, styles.stacked, { borderColor: surface }]}>
+      <View style={styles.glyphCircle}>
+        <Text style={styles.moreLabel}>+{count}</Text>
+      </View>
     </View>
   );
 }
@@ -136,14 +166,12 @@ function nameHash(name: string): number {
 
 const styles = StyleSheet.create({
   avatar: {
-    borderColor: colors.conversationSurface,
     borderRadius: RING_SIZE,
     borderWidth: RING_WIDTH,
     height: RING_SIZE,
     width: RING_SIZE,
   },
   badge: {
-    borderColor: colors.conversationSurface,
     borderRadius: BADGE_SIZE,
     borderWidth: RING_WIDTH,
     bottom: BADGE_OFFSET,
@@ -160,7 +188,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: AVATAR_SIZE,
   },
-  more: {
+  moreLabel: {
     color: colors.textMuted,
     ...typeScale.caption,
   },

@@ -127,6 +127,7 @@ function TaskNotificationPill({
         badgeOf={(report) => reportOutcome(report).badge}
         keyOf={(report) => report.id}
         subjects={reports}
+        surface={colors.surfaceRaised}
       />
       <Text ellipsizeMode="tail" numberOfLines={1} style={styles.label}>
         {summary.label}
@@ -155,7 +156,11 @@ function ReportRow({
       style={({ pressed }) => [styles.row, { height }, pressed && styles.pressed]}
       testID="task-notification-row"
     >
-      <AgentAvatar badge={reportOutcome(report).badge} subject={report} />
+      <AgentAvatar
+        badge={reportOutcome(report).badge}
+        subject={report}
+        surface={colors.menuSurface}
+      />
       <ReportRowText
         details={target.error ?? details}
         loading={target.loading}

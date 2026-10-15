@@ -99,6 +99,7 @@ function WorkingSubagentsTrigger({
         badgeOf={() => "running"}
         keyOf={(agent) => agent.threadId}
         subjects={agents}
+        surface={colors.surfaceContainerHigh}
       />
       <Text style={styles.title}>Agents</Text>
       <Text style={styles.divider}>·</Text>
@@ -127,7 +128,7 @@ function WorkingSubagentRow({
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
       testID="working-subagent-row"
     >
-      <AgentAvatar badge="running" subject={agent} />
+      <AgentAvatar badge="running" subject={agent} surface={colors.menuSurface} />
       <View style={styles.rowText}>
         <Text numberOfLines={1} shimmering style={styles.rowName}>
           {agent.name}
