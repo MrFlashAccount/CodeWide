@@ -7,7 +7,7 @@ pub(super) fn read_listeners() -> Vec<Listener> {
     // LaunchAgents do not inherit an interactive shell's PATH. lsof is part of macOS.
     super::command_text(
         "/usr/sbin/lsof",
-        &["-nP", "-a", "-i4TCP", "-sTCP:LISTEN", "-F0pcufn"],
+        &["-nP", "-a", "-iTCP", "-sTCP:LISTEN", "-F0pcufn"],
     )
     .map_or_else(Vec::new, |output| parse_listeners(&output))
 }

@@ -110,7 +110,7 @@ struct RecognitionContext<'a> {
     details: String,
 }
 
-/// Lazily inventories IPv4 TCP listeners when a client asks for discovery.
+/// Lazily inventories IPv4 and IPv6 TCP listeners when a client asks for discovery.
 /// Known developer services are enabled automatically; system-owned and
 /// unknown ephemeral listeners remain visible but require explicit inclusion.
 pub async fn discover(excluded: Vec<u16>) -> Vec<DiscoveredPort> {
@@ -137,6 +137,19 @@ pub async fn forwarding_key_for_port(port: u16) -> Option<String> {
     .await
     .ok()
     .flatten()
+}
+
+/// Opens the discovered local service on `port`. A server bound only to `::1`
+/// refuses `127.0.0.1`, and one bound only to `127.0.0.1` refuses `::1`, so
+/// both loopback addresses are tried; IPv4 first preserves the earlier route.
+///
+/// # Errors
+/// Returns the IPv6 error when neither loopback address accepts.
+pub async fn connect_loopback(port: u16) -> std::io::Result<TcpStream> {
+    match TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await {
+        Ok(stream) => Ok(stream),
+        Err(_) => TcpStream::connect((std::net::Ipv6Addr::LOCALHOST, port)).await,
+    }
 }
 
 pub(crate) fn discover_blocking(excluded: &HashSet<u16>) -> Vec<DiscoveredPort> {
@@ -189,8 +202,9 @@ fn read_listeners() -> Vec<Listener> {
 
 #[cfg(not(target_os = "macos"))]
 fn read_listeners() -> Vec<Listener> {
+    // Both families: servers bound to `::` or `::1` are as local as `127.0.0.1`.
     Command::new("ss")
-        .args(["-H", "-4", "-ltnpe"])
+        .args(["-H", "-ltnpe"])
         .output()
         .ok()
         .filter(|output| output.status.success())
@@ -288,8 +302,17 @@ fn numeric_field_u64(line: &str, marker: &str) -> Option<u64> {
 
 #[cfg(not(target_os = "macos"))]
 fn read_proc_listeners() -> Vec<Listener> {
-    std::fs::read_to_string("/proc/net/tcp")
-        .unwrap_or_default()
+    ["/proc/net/tcp", "/proc/net/tcp6"]
+        .iter()
+        .flat_map(|path| parse_proc_listeners(&std::fs::read_to_string(path).unwrap_or_default()))
+        .collect()
+}
+
+/// Listening sockets of one `/proc/net/tcp` or `/proc/net/tcp6` table. Both
+/// tables put the port after the last `:` of the local address column.
+#[cfg(any(not(target_os = "macos"), test))]
+fn parse_proc_listeners(table: &str) -> Vec<Listener> {
+    table
         .lines()
         .skip(1)
         .filter_map(|line| {
@@ -297,7 +320,7 @@ fn read_proc_listeners() -> Vec<Listener> {
             if columns.get(3).copied() != Some("0A") {
                 return None;
             }
-            let encoded = columns.get(1)?.split(':').nth(1)?;
+            let encoded = columns.get(1)?.rsplit(':').next()?;
             let port = u16::from_str_radix(encoded, 16).ok()?;
             Some(Listener {
                 port,
@@ -875,12 +898,16 @@ fn forwarding_key(
         let arguments = process
             .map(|value| normalize_port(&value.arguments, listener.port))
             .unwrap_or_default();
+        // Distinct ports: one service listening on both 127.0.0.1 and ::1 for
+        // the same port is still one endpoint.
         let shared_ports = process.map_or(0, |value| {
             inventory
                 .listeners
                 .iter()
                 .filter(|candidate| candidate.pid == Some(value.pid))
-                .count()
+                .map(|candidate| candidate.port)
+                .collect::<HashSet<_>>()
+                .len()
         });
         let arguments_contain_port = process
             .is_some_and(|value| contains_number(&value.arguments, &listener.port.to_string()));
@@ -897,7 +924,10 @@ fn forwarding_key(
         if let Some(command) = &listener.process {
             values.push(command.clone());
         }
-        if process.is_none() || (shared_ports > 1 && !arguments_contain_port) {
+        if process.is_none()
+            || (shared_ports > 1 && !arguments_contain_port)
+            || has_identical_peer(listener, process, inventory)
+        {
             values.push(format!("port:{}", listener.port));
         }
         values
@@ -905,6 +935,33 @@ fn forwarding_key(
     let mut digest = Sha256::new();
     digest.update(components.join("\u{1f}").as_bytes());
     hex::encode(digest.finalize())
+}
+
+/// Whether another process with the same command, port-normalized arguments
+/// and working directory listens on a different port. Such instances are
+/// indistinguishable without the port, and clients reject an inventory whose
+/// service identities collide.
+fn has_identical_peer(
+    listener: &Listener,
+    process: Option<&Process>,
+    inventory: &Inventory,
+) -> bool {
+    let Some(process) = process else {
+        return false;
+    };
+    let identity = normalize_port(&process.arguments, listener.port);
+    inventory.listeners.iter().any(|candidate| {
+        candidate.port != listener.port
+            && candidate.pid.is_some_and(|pid| pid != process.pid)
+            && candidate
+                .pid
+                .and_then(|pid| inventory.processes.get(&pid))
+                .is_some_and(|peer| {
+                    peer.command == process.command
+                        && peer.cwd == process.cwd
+                        && normalize_port(&peer.arguments, candidate.port) == identity
+                })
+    })
 }
 
 fn normalize_port(arguments: &str, port: u16) -> String {
@@ -1170,6 +1227,46 @@ mod tests {
     }
 
     #[test]
+    fn parses_ipv6_and_dual_stack_ss_listeners() {
+        let parsed = parse_ss_listeners(
+            "LISTEN 0 5 *:60107 *:* users:((\"python3\",pid=1718,fd=3)) uid:501 ino:7\n\
+             LISTEN 0 511 [::1]:5173 [::]:* users:((\"node\",pid=42,fd=20)) uid:501 ino:8\n\
+             LISTEN 0 128 [::]:8080 [::]:* users:((\"java\",pid=43,fd=9)) uid:501 ino:9\n",
+        );
+        let ports = parsed
+            .iter()
+            .map(|listener| (listener.port, listener.pid))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ports,
+            [(60107, Some(1718)), (5173, Some(42)), (8080, Some(43))]
+        );
+    }
+
+    #[test]
+    fn proc_fallback_reads_ipv6_listeners() {
+        let tcp6 = "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   \
+            0: 00000000000000000000000001000000:1435 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000   501        0 4242 1\n   \
+            1: 00000000000000000000000001000000:1436 00000000000000000000000001000000:9C40 01 00000000:00000000 00:00000000 00000000   501        0 4243 1\n";
+        let listeners = parse_proc_listeners(tcp6);
+        assert_eq!(listeners.len(), 1, "only LISTEN rows are listeners");
+        assert_eq!(listeners[0].port, 5173);
+        assert_eq!(listeners[0].inode, Some(4242));
+    }
+
+    #[tokio::test]
+    async fn forwarding_reaches_a_server_bound_only_to_ipv6_loopback()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).await?;
+        let port = listener.local_addr()?.port();
+        let accepted = tokio::spawn(async move { listener.accept().await.map(|_| ()) });
+        let stream = connect_loopback(port).await?;
+        assert!(stream.peer_addr()?.is_ipv6());
+        accepted.await??;
+        Ok(())
+    }
+
+    #[test]
     fn replacement_listener_on_same_port_invalidates_discovery_cache() {
         let first = parse_ss_listeners(
             "LISTEN 0 511 127.0.0.1:4173 0.0.0.0:* users:((\"node\",pid=101,fd=20)) uid:501 ino:100\n",
@@ -1216,5 +1313,45 @@ mod tests {
         process.arguments = "code tunnel --on-port 45000".into();
         let second = enrich(&second_inventory.listeners[1], &second_inventory);
         assert_eq!(first.forwarding_key, second.forwarding_key);
+    }
+
+    #[test]
+    fn identical_processes_on_different_ports_get_distinct_keys() {
+        let listeners = parse_ss_listeners(
+            "LISTEN 0 4096 127.0.0.1:45439 0.0.0.0:* users:((\"agent-browser\",pid=201,fd=9)) uid:501 ino:1\n\
+             LISTEN 0 4096 127.0.0.1:33475 0.0.0.0:* users:((\"agent-browser\",pid=202,fd=9)) uid:501 ino:2\n\
+             LISTEN 0 4096 [::1]:33475 [::]:* users:((\"agent-browser\",pid=202,fd=10)) uid:501 ino:3\n",
+        );
+        let processes = [201, 202]
+            .into_iter()
+            .map(|pid| {
+                (
+                    pid,
+                    Process {
+                        pid,
+                        parent_pid: 1,
+                        user_id: 501,
+                        user: "demo".into(),
+                        command: "agent-browser".into(),
+                        arguments: "/usr/bin/agent-browser --headless".into(),
+                        cwd: Some("/home/demo".into()),
+                    },
+                )
+            })
+            .collect();
+        let inventory = Inventory {
+            current_user_id: Some(501),
+            listeners,
+            processes,
+            docker_by_port: HashMap::new(),
+        };
+        let first = enrich(&inventory.listeners[0], &inventory);
+        let second = enrich(&inventory.listeners[1], &inventory);
+        let second_ipv6 = enrich(&inventory.listeners[2], &inventory);
+        assert_ne!(first.forwarding_key, second.forwarding_key);
+        assert_eq!(
+            second.forwarding_key, second_ipv6.forwarding_key,
+            "one port in both families is one service"
+        );
     }
 }
