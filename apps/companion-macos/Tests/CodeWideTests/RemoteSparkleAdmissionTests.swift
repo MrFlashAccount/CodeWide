@@ -4,17 +4,11 @@ import Testing
 
 @Suite("Remote Sparkle exact-target admission")
 struct RemoteSparkleAdmissionTests {
-    private let target = ReleaseTargetPayload(
-        platform: "macos-universal",
-        version: "2.4.0",
-        build: "20400",
-        sourceRevision: String(repeating: "a", count: 40),
-        artifactUrl: "https://example.invalid/CodeWide.dmg",
-        sha256: String(repeating: "b", count: 64),
-        bootstrapVersion: 1,
-        journalVersion: 1,
-        stateEpoch: 1,
-        rollbackCompatibleFrom: [String(repeating: "c", count: 64)]
+    private let command = RemoteUpdateCommand(
+        operationId: "upd_00000000000000000000000000000000",
+        nonce: "fence_00000000000000000000000000000000",
+        targetVersion: "2.4.0",
+        targetBuild: "20400"
     )
 
     @Test func acceptsOnlyTheExactSignedTarget() {
@@ -22,7 +16,7 @@ struct RemoteSparkleAdmissionTests {
             displayVersion: "2.4.0",
             build: "20400",
             signatureValidated: true,
-            target: target
+            command: command
         ))
     }
 
@@ -36,7 +30,7 @@ struct RemoteSparkleAdmissionTests {
             displayVersion: candidate.0,
             build: candidate.1,
             signatureValidated: candidate.2,
-            target: target
+            command: command
         ))
     }
 }

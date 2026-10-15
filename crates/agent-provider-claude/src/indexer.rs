@@ -1,8 +1,8 @@
 //! Keeps the Claude session index current. A changed session record (from
-//! the watcher), a finished live turn and the startup backfill each ask the
-//! Claude host for a fresh neutral read (`nativeSession.read`); the index and
-//! the search documents are replaced only when the read differs. Reads that
-//! fail while the host is unavailable are retried once it is live again. A
+//! the watcher), a finished live turn and the startup backfill each read the
+//! session afresh from Claude's files ([`NativeSessions`]); the index and the
+//! search documents are replaced only when the read differs. Reads that fail
+//! while the source is unavailable are retried once it is live again. A
 //! watcher change that rewrites a thread with no live turn is published as a
 //! [`HistoryChange`], so open conversations of a session driven elsewhere (a
 //! terminal) refresh at once.
@@ -34,7 +34,7 @@ const LIST_PAGE: u32 = 500;
 const RECENT_PAGE: u32 = 20;
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
-/// The Claude host's native-session reads.
+/// Reads of Claude's sessions as neutral turns (`native::LocalSessions`).
 #[async_trait]
 pub trait NativeSessions: Send + Sync {
     async fn list(
@@ -452,7 +452,7 @@ fn coalesce(
 fn report(err: &IndexError, session_id: Option<&str>, message: &'static str) {
     let session_id = session_id.unwrap_or("");
     if err.host_unavailable() {
-        debug!(err = %err, session_id, "{message}; retrying when the Claude host is live");
+        debug!(err = %err, session_id, "{message}; retrying when the Claude session source is live");
     } else if matches!(err, IndexError::Host(_)) {
         warn!(err = %err, session_id, "{message}");
     } else {
@@ -463,7 +463,7 @@ fn report(err: &IndexError, session_id: Option<&str>, message: &'static str) {
 /// Logs a failed thread re-read with its thread id.
 fn report_thread(err: &IndexError, thread: &AppThreadId, message: &'static str) {
     if err.host_unavailable() {
-        debug!(err = %err, thread_id = %thread, "{message}; retrying when the Claude host is live");
+        debug!(err = %err, thread_id = %thread, "{message}; retrying when the Claude session source is live");
     } else if matches!(err, IndexError::Host(_)) {
         warn!(err = %err, thread_id = %thread, "{message}");
     } else {

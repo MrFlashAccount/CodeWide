@@ -216,7 +216,19 @@ function advanceMutationCursor(mutation: ThreadSummaryMutation, cursor: number):
 /** Identifies material summary events whose missing row needs authoritative metadata. */
 export function threadSummaryEventNeedsMetadata(payload: Record<string, unknown>): boolean {
   const patch = threadProjectionPatchFromEvent(payload);
-  return patch !== null && METADATA_SUMMARY_PATCHES.has(patch.operation.kind);
+  if (patch === null) {
+    return false;
+  }
+  if (
+    patch.operation.kind === "threadStatus" &&
+    object(patch.operation.status)?.type === "notLoaded"
+  ) {
+    // An unloaded status does not create catalog membership. For an unknown
+    // row, thread/read cannot supply metadata because that RPC accepts only a
+    // thread already loaded by App Server; the catalog remains its authority.
+    return false;
+  }
+  return METADATA_SUMMARY_PATCHES.has(patch.operation.kind);
 }
 
 const METADATA_SUMMARY_PATCHES = new Set([

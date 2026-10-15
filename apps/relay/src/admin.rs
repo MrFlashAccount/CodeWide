@@ -6,9 +6,11 @@ use crate::{
     registry::{Registry, RouteSummary},
     server::Relay,
 };
+use codewide_host_update::HostUpdateRunningArtifact;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     fs::File,
+    io::{Read as _, Write as _},
     os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     time::Duration,
@@ -27,12 +29,23 @@ const MAX_FRAME: usize = 64 * 1024;
 #[serde(tag = "command", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Request {
     Status,
+    /// The running process's own immutable generation, for update health proof.
+    Attest,
     Pair,
-    Approve { candidate: String },
+    Approve {
+        candidate: String,
+    },
     Cancel,
-    Invite { route: Option<String> },
-    Rename { route: String, label: String },
-    Revoke { route: String },
+    Invite {
+        route: Option<String>,
+    },
+    Rename {
+        route: String,
+        label: String,
+    },
+    Revoke {
+        route: String,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -55,6 +68,9 @@ pub enum Reply {
     },
     Renamed {
         updated: bool,
+    },
+    Attestation {
+        artifact: Option<HostUpdateRunningArtifact>,
     },
     Error {
         message: String,
@@ -164,6 +180,9 @@ async fn handle(
             port,
             routes: registry.summaries()?,
         },
+        Request::Attest => Reply::Attestation {
+            artifact: codewide_host_update::linux::running_artifact(&crate::update::RELAY),
+        },
         Request::Pair => return pairing(socket, &relay.enrollment()).await,
         Request::Invite { route } => {
             let invitation = registry.create_invitation(route.as_deref())?;
@@ -251,6 +270,32 @@ pub async fn read_frame<T: DeserializeOwned>(stream: &mut (impl AsyncRead + Unpi
     let mut bytes = vec![0; length];
     stream.read_exact(&mut bytes).await?;
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+/// Asks the Relay at `socket` for its generation attestation without an async
+/// runtime, for the update runner's synchronous health polling.
+#[must_use]
+pub fn attest_blocking(socket: &Path, timeout: Duration) -> Option<HostUpdateRunningArtifact> {
+    let mut stream = std::os::unix::net::UnixStream::connect(socket).ok()?;
+    stream.set_read_timeout(Some(timeout)).ok()?;
+    stream.set_write_timeout(Some(timeout)).ok()?;
+    let request = serde_json::to_vec(&Request::Attest).ok()?;
+    stream
+        .write_all(&u32::try_from(request.len()).ok()?.to_be_bytes())
+        .ok()?;
+    stream.write_all(&request).ok()?;
+    let mut length = [0_u8; 4];
+    stream.read_exact(&mut length).ok()?;
+    let length = usize::try_from(u32::from_be_bytes(length)).ok()?;
+    if length == 0 || length > MAX_FRAME {
+        return None;
+    }
+    let mut bytes = vec![0; length];
+    stream.read_exact(&mut bytes).ok()?;
+    match serde_json::from_slice(&bytes).ok()? {
+        Reply::Attestation { artifact } => artifact,
+        _ => None,
+    }
 }
 
 /// Writes one bounded, length-delimited JSON control message.

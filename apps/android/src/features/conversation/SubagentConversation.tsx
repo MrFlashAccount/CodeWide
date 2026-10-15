@@ -157,8 +157,8 @@ export function SubagentConversation({
             <ComposerSubagentContextChip
               connectionId={connectionId}
               database={summaries}
-              onOpen={(children) => {
-                openChildren(children);
+              onOpen={(children, initialThreadId) => {
+                openChildren(children, initialThreadId);
               }}
               parentThreadId={thread.id}
             />

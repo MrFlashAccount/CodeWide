@@ -20,6 +20,7 @@ import com.facebook.react.modules.fresco.FrescoModule
 import com.oney.WebRTCModule.WebRTCModuleOptions
 
 import dev.codewide.app.remote.CodeWidePackage
+import dev.codewide.app.remote.installCompanionAddressRouting
 import dev.codewide.app.diagnostics.NativeDiagnosticRuntime
 import dev.codewide.app.remote.GlobalVoiceAudioRouteRuntime
 import dev.codewide.app.remote.GlobalVoiceAudioRecordFailureKind
@@ -50,6 +51,7 @@ class MainApplication : Application(), ReactApplication {
     NativeDiagnosticRuntime.install(this)
     PersonalVoiceFilterRuntime.install(this)
     configureWebRtcAudioDeviceModule()
+    installCompanionAddressRouting(this)
     DefaultNewArchitectureEntryPoint.releaseLevel = try {
       ReleaseLevel.valueOf(BuildConfig.REACT_NATIVE_RELEASE_LEVEL.uppercase())
     } catch (e: IllegalArgumentException) {

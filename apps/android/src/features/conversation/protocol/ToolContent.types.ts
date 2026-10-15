@@ -1,10 +1,9 @@
 import type { RenderBlock } from "@codewide/renderers";
+import type { TransferAccess } from "../../../data/private-transfer";
 
 export interface ToolContentProps {
   block: RenderBlock;
-  getTransferAccess?: (
-    forceRefresh?: boolean,
-  ) => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: (forceRefresh?: boolean) => Promise<TransferAccess>;
 }
 export interface ToolResourceLinkProps {
   label: string;

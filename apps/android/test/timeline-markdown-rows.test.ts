@@ -195,38 +195,36 @@ const enabled = {
 
 /** A turn with no user message: a background task woke the agent. */
 function providerTurnRow(id: string, source: string, status: "completed" | "inProgress"): TurnRow {
-  const row = status === "completed" ? turnRow(id, source) : streamingTurnRow(id, [
-    { id: `${id}-agent`, phase: "final_answer", text: source, type: "agentMessage" },
-  ]);
+  const row =
+    status === "completed"
+      ? turnRow(id, source)
+      : streamingTurnRow(id, [
+          { id: `${id}-agent`, phase: "final_answer", text: source, type: "agentMessage" },
+        ]);
   return row;
 }
 
-describe("continued responses", () => {
-  it("draws everything from one user message to the next as one bubble", () => {
+describe("wake turns", () => {
+  it("draws a turn without a user message as its own bubble after the previous one", () => {
     const head = completedConversationTurnRow("head", "First answer");
     const wake = providerTurnRow("wake", "Background task finished", "completed");
     const next = completedConversationTurnRow("next", "Another answer");
     const rows = projectTimelineRows([head, wake, next], enabled);
     const slices = rows.filter((row) => row.kind === "turnSlice");
 
-    expect(slices.map((row) => [row.item.id, row.placement, row.bubble])).toEqual([
-      ["head", "single", "start"],
-      ["wake", "single", "end"],
-      ["next", "single", "single"],
+    expect(slices.map((row) => [row.item.id, row.placement, row.followsLead])).toEqual([
+      ["head", "single", true],
+      ["wake", "single", false],
+      ["next", "single", true],
     ]);
-    // The head's answer folds into the bubble's history; only the latest answer stays outside.
-    expect(slices[0]).toMatchObject({
-      group: { memberIndex: 0, members: [head, wake] },
-      parts: [{ kind: "empty" }],
-    });
-    expect(slices[1]?.parts).toEqual([expect.objectContaining({ kind: "markdownBlock" })]);
-    expect(slices[1]).toMatchObject({ group: { memberIndex: 1, members: [head, wake] } });
-    expect(slices[2]).toMatchObject({ group: null });
-    // The continuation still answers for its own turn.
+    // Every turn keeps its own answer outside; nothing folds into a neighbour.
+    expect(
+      slices.every((row) => row.parts.every((part) => part.kind === "markdownBlock")),
+    ).toBe(true);
     expect(timelineResponseStartRow(rows, "wake")?.key).toBe(timelineRowKey(slices[1]!));
   });
 
-  it("streams a live continuation into the existing bubble without changing row keys", () => {
+  it("adds a live wake after the previous turn without changing its rows", () => {
     const head = completedConversationTurnRow("head", "First answer");
     const alone = projectTimelineRows([head], enabled);
     const live = projectTimelineRows(
@@ -234,22 +232,8 @@ describe("continued responses", () => {
       enabled,
     );
 
-    expect(live[0]?.key).toBe(alone[0]?.key);
-    expect(live.map((row) => (row.kind === "turnSlice" ? row.bubble : row.kind))).toEqual([
-      "turnLead",
-      "start",
-      "end",
-    ]);
-    // While the continuation runs, the head's answer is still the latest one shown.
-    expect(live[1]).toMatchObject({ parts: [expect.objectContaining({ kind: "markdownBlock" })] });
-  });
-
-  it("keeps a turn without a user message alone when nothing precedes it", () => {
-    const rows = projectTimelineRows(
-      [providerTurnRow("wake", "Background task finished", "completed")],
-      enabled,
-    );
-    expect(rows).toMatchObject([{ bubble: "single", group: null, kind: "turnSlice" }]);
+    expect(live.slice(0, alone.length)).toEqual(alone);
+    expect(live.at(-1)).toMatchObject({ followsLead: false, kind: "turnSlice", placement: "single" });
   });
 });
 

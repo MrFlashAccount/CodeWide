@@ -92,12 +92,7 @@ impl ClaudeDefaults {
     /// own, or in the installers' locations) unless it configures
     /// `claudeExecutable`.
     #[must_use]
-    pub fn discover(
-        entry: &Value,
-        bundled_host: Option<PathBuf>,
-        agent_sdk: Option<PathBuf>,
-        journal_directory: PathBuf,
-    ) -> Self {
+    pub fn discover(entry: &Value, journal_directory: PathBuf) -> Self {
         let configures = |pointer: &str| entry.pointer(pointer).is_some();
         let login_path = if configures("/environment/PATH") {
             None
@@ -123,8 +118,6 @@ impl ClaudeDefaults {
             find_claude(&search_path, home.as_deref())
         };
         Self {
-            bundled_host,
-            agent_sdk,
             claude_executable,
             journal_directory,
             login_path,

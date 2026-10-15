@@ -2,14 +2,15 @@
 //! shapes). Pure functions; the only place these shapes are produced for a
 //! non-native provider.
 
-use agent_core::usage::TurnUsageProjection;
+use agent_core::{model::turns::in_summary_view, usage::TurnUsageProjection};
+use companion_host::wire_items::TASK_NOTIFICATION_ITEM_TYPE;
 use serde_json::{Value, json};
 
 use super::WireProvider;
 use crate::agent::model::{
     AgentItem, AgentThread, AgentTurn, AppThreadId, CallStatus, ClientMessageId, ExecutionStatus,
-    FileChange, FileChangeKind, ItemsView, MessagePhase, SubagentStatus, ThreadStatus, TurnStatus,
-    UserContent, WebSearchAction,
+    FileChange, FileChangeKind, ItemsView, MessagePhase, SubagentStatus, TaskNotificationDelivery,
+    TaskNotificationStatus, ThreadStatus, TurnStatus, UserContent, WebSearchAction,
 };
 
 /// Marker namespace of a capability item projected as a generic tool call.
@@ -24,7 +25,7 @@ pub fn thread(thread: &AgentThread, provider: &WireProvider, turns: &[Value]) ->
         "extra": null,
         "sessionId": thread.app_thread_id.as_str(),
         "forkedFromId": null,
-        "parentThreadId": null,
+        "parentThreadId": thread.spawn.as_ref().map(|spawn| spawn.parent_thread_id.as_str()),
         "preview": thread.preview,
         "ephemeral": false,
         "section": null,
@@ -46,10 +47,10 @@ pub fn thread(thread: &AgentThread, provider: &WireProvider, turns: &[Value]) ->
         "cliVersion": provider.descriptor.version,
         "originator": null,
         "source": "appServer",
-        "canAcceptDirectInput": can_accept_direct_input(thread.status),
+        "canAcceptDirectInput": can_accept_direct_input(thread),
         "threadSource": null,
-        "agentNickname": null,
-        "agentRole": null,
+        "agentNickname": thread.spawn.as_ref().and_then(|spawn| spawn.agent_nickname.as_deref()),
+        "agentRole": thread.spawn.as_ref().and_then(|spawn| spawn.agent_role.as_deref()),
         "gitInfo": null,
         "name": thread.name,
         "daybreakEnabled": null,
@@ -59,15 +60,15 @@ pub fn thread(thread: &AgentThread, provider: &WireProvider, turns: &[Value]) ->
     projected
 }
 
-/// Whether this companion can run a turn in the thread: unknown (`None`) for
-/// a thread no process has loaded, `false` while another process holds it.
+/// Whether this companion can run a turn in the thread: `false` while
+/// another process holds it, and for a sub-agent's thread, which its parent
+/// drives. A neutral provider reports a held thread as `OpenElsewhere`, so an
+/// unloaded thread is held by no one and a turn loads it here. Every status
+/// therefore names the lock explicitly: the client keeps the last value it
+/// received, and a released thread must clear it.
 #[must_use]
-pub const fn can_accept_direct_input(status: ThreadStatus) -> Option<bool> {
-    match status {
-        ThreadStatus::NotLoaded => None,
-        ThreadStatus::OpenElsewhere => Some(false),
-        ThreadStatus::Idle | ThreadStatus::Active | ThreadStatus::Failed => Some(true),
-    }
+pub const fn can_accept_direct_input(thread: &AgentThread) -> bool {
+    !matches!(thread.status, ThreadStatus::OpenElsewhere) && thread.spawn.is_none()
 }
 
 /// Projects a thread lifecycle status. A thread open elsewhere runs nothing
@@ -99,9 +100,8 @@ const fn items_view(view: ItemsView) -> &'static str {
     }
 }
 
-/// Projects one turn with the requested items view. `summary` keeps the
-/// user messages and the final answer, which is what delivery reconciliation
-/// and the thread preview read.
+/// Projects one turn with the requested items view; `summary` keeps the
+/// items the neutral summary rule keeps ([`in_summary_view`]).
 #[must_use]
 pub fn turn(turn: &AgentTurn, view: ItemsView) -> Value {
     let items = match view {
@@ -109,16 +109,7 @@ pub fn turn(turn: &AgentTurn, view: ItemsView) -> Value {
         ItemsView::Summary => turn
             .items
             .iter()
-            .filter(|item| {
-                matches!(
-                    item,
-                    AgentItem::UserMessage { .. }
-                        | AgentItem::AgentMessage {
-                            phase: MessagePhase::Final,
-                            ..
-                        }
-                )
-            })
+            .filter(|item| in_summary_view(item))
             .map(item)
             .collect(),
         ItemsView::Full => turn.items.iter().map(item).collect(),
@@ -198,6 +189,25 @@ const fn subagent_agent_status(status: SubagentStatus) -> &'static str {
         SubagentStatus::Completed => "completed",
         SubagentStatus::Failed => "errored",
         SubagentStatus::Stopped => "interrupted",
+    }
+}
+
+const fn task_notification_delivery(delivery: TaskNotificationDelivery) -> &'static str {
+    match delivery {
+        TaskNotificationDelivery::Wake => "wake",
+        TaskNotificationDelivery::MidTurn => "midTurn",
+    }
+}
+
+const fn task_notification_status(status: TaskNotificationStatus) -> &'static str {
+    match status {
+        TaskNotificationStatus::Completed => "completed",
+        TaskNotificationStatus::Failed => "failed",
+        TaskNotificationStatus::Killed => "killed",
+        TaskNotificationStatus::Stopped => "stopped",
+        TaskNotificationStatus::Interim => "interim",
+        TaskNotificationStatus::Lost => "lost",
+        TaskNotificationStatus::Unknown => "unknown",
     }
 }
 
@@ -383,6 +393,7 @@ pub fn item(item: &AgentItem) -> Value {
             item_id,
             provenance,
             agent_thread_id,
+            description,
             model,
             prompt,
             result,
@@ -415,8 +426,35 @@ pub fn item(item: &AgentItem) -> Value {
                 "model": model,
                 "reasoningEffort": null,
                 "agentsStates": states,
+                "codewideDescription": description,
             })
         }
+        // A CodeWide extension the client renders outside the turn's bubble;
+        // an older client shows it as an unsupported block.
+        AgentItem::TaskNotification {
+            item_id,
+            delivery,
+            source,
+            task_id,
+            name,
+            status,
+            duration_ms,
+            tool_uses,
+            result,
+            ..
+        } => json!({
+            "type": TASK_NOTIFICATION_ITEM_TYPE,
+            "id": item_id.as_str(),
+            "delivery": task_notification_delivery(*delivery),
+            "kind": source.kind(),
+            "taskId": task_id,
+            "name": name,
+            "agentThreadId": source.agent_thread_id().map(AppThreadId::as_str),
+            "status": task_notification_status(*status),
+            "durationMs": duration_ms,
+            "toolUses": tool_uses,
+            "result": result,
+        }),
         AgentItem::CapabilityItem {
             item_id,
             capability,
@@ -456,6 +494,70 @@ mod tests {
             provenance: None,
             usage,
         }
+    }
+
+    fn claude_wire() -> WireProvider {
+        WireProvider {
+            descriptor: crate::agent::model::ProviderDescriptor {
+                id: crate::agent::model::ProviderId::from_static("claude"),
+                display_name: "Claude".into(),
+                model_provider: "anthropic".into(),
+                version: String::new(),
+            },
+            capabilities: crate::agent::model::CapabilitySet::none(
+                crate::agent::model::StartWhileActiveMode::Busy,
+            ),
+            primary_id: crate::agent::model::ProviderId::from_static("codex"),
+            multi_provider: true,
+        }
+    }
+
+    fn neutral_thread(spawn: Option<crate::agent::model::ThreadSpawn>) -> AgentThread {
+        AgentThread {
+            app_thread_id: AppThreadId::from_static("parent:agent:a1"),
+            provider: crate::agent::model::ProviderId::from_static("claude"),
+            cwd: "/w".into(),
+            name: Some("Check the build".into()),
+            preview: String::new(),
+            created_at: 1,
+            updated_at: 2,
+            recency_at: None,
+            archived: false,
+            origin: crate::agent::model::ThreadOrigin::External,
+            status: ThreadStatus::Active,
+            settings: crate::agent::model::ThreadSettings {
+                model: "default".into(),
+                effort: None,
+                permission_profile: ":read-only".into(),
+                service_tier: None,
+            },
+            spawn,
+        }
+    }
+
+    /// A sub-agent's thread is the parent's child on the wire, so the client
+    /// files it under its parent and keeps the composer closed; a root
+    /// thread names no parent and accepts input.
+    #[test]
+    fn a_sub_agent_thread_names_its_parent_and_takes_no_direct_input() {
+        let child = thread(
+            &neutral_thread(Some(crate::agent::model::ThreadSpawn {
+                parent_thread_id: AppThreadId::from_static("parent"),
+                agent_nickname: Some("Check the build".into()),
+                agent_role: Some("Explore".into()),
+            })),
+            &claude_wire(),
+            &[],
+        );
+        assert_eq!(child["parentThreadId"], "parent");
+        assert_eq!(child["agentNickname"], "Check the build");
+        assert_eq!(child["agentRole"], "Explore");
+        assert_eq!(child["canAcceptDirectInput"], false);
+
+        let root = thread(&neutral_thread(None), &claude_wire(), &[]);
+        assert_eq!(root["parentThreadId"], Value::Null);
+        assert_eq!(root["agentNickname"], Value::Null);
+        assert_eq!(root["canAcceptDirectInput"], true);
     }
 
     #[test]
@@ -523,6 +625,7 @@ mod tests {
         assert_eq!(running["senderThreadId"], "parent");
         assert_eq!(running["receiverThreadIds"], json!(["parent:agent:a1"]));
         assert_eq!(running["prompt"], "Run the build");
+        assert_eq!(running["codewideDescription"], "Check the build");
         assert_eq!(
             running["agentsStates"]["parent:agent:a1"]["status"],
             "running"
@@ -542,5 +645,115 @@ mod tests {
         assert_eq!(unnamed["status"], "interrupted");
         assert_eq!(unnamed["receiverThreadIds"], json!([]));
         assert_eq!(unnamed["agentsStates"], json!({}));
+    }
+
+    fn report(
+        delivery: TaskNotificationDelivery,
+        source: crate::agent::model::TaskNotificationSource,
+        status: TaskNotificationStatus,
+    ) -> AgentItem {
+        AgentItem::TaskNotification {
+            item_id: crate::agent::model::ItemId::from_static("turn:notification:0"),
+            provenance: None,
+            delivery,
+            source,
+            task_id: "a1".into(),
+            name: "Check the build".into(),
+            status,
+            duration_ms: Some(12_963),
+            tool_uses: Some(2),
+            result: Some("Build passes".into()),
+        }
+    }
+
+    #[test]
+    fn a_task_report_is_a_codewide_item_with_every_field_present() {
+        use crate::agent::model::TaskNotificationSource;
+
+        let agent = item(&report(
+            TaskNotificationDelivery::Wake,
+            TaskNotificationSource::Agent {
+                agent_thread_id: Some(AppThreadId::from_static("parent:agent:a1")),
+            },
+            TaskNotificationStatus::Interim,
+        ));
+        assert_eq!(
+            agent,
+            json!({
+                "type": "codewideTaskNotification",
+                "id": "turn:notification:0",
+                "delivery": "wake",
+                "kind": "agent",
+                "taskId": "a1",
+                "name": "Check the build",
+                "agentThreadId": "parent:agent:a1",
+                "status": "interim",
+                "durationMs": 12_963,
+                "toolUses": 2,
+                "result": "Build passes",
+            })
+        );
+
+        let mut command = report(
+            TaskNotificationDelivery::MidTurn,
+            TaskNotificationSource::Command {
+                agent_thread_id: (),
+            },
+            TaskNotificationStatus::Lost,
+        );
+        if let AgentItem::TaskNotification {
+            duration_ms,
+            tool_uses,
+            result,
+            ..
+        } = &mut command
+        {
+            *duration_ms = None;
+            *tool_uses = None;
+            *result = None;
+        }
+        let command = item(&command);
+        assert_eq!(command["delivery"], "midTurn");
+        assert_eq!(command["kind"], "command");
+        assert_eq!(command["status"], "lost");
+        for field in ["agentThreadId", "durationMs", "toolUses", "result"] {
+            assert_eq!(
+                command.get(field),
+                Some(&Value::Null),
+                "{field} must stay null"
+            );
+        }
+    }
+
+    #[test]
+    fn the_summary_view_keeps_task_reports_and_agent_launches_with_the_messages() {
+        let mut finished = finished_turn(None);
+        finished.items = vec![
+            report(
+                TaskNotificationDelivery::Wake,
+                crate::agent::model::TaskNotificationSource::Other {
+                    agent_thread_id: (),
+                },
+                TaskNotificationStatus::Completed,
+            ),
+            AgentItem::Plan {
+                item_id: crate::agent::model::ItemId::from_static("plan"),
+                provenance: None,
+                text: "Check".into(),
+            },
+            subagent(SubagentStatus::Running, None),
+        ];
+        let projected = turn(&finished, ItemsView::Summary);
+        let types: Vec<_> = projected["items"]
+            .as_array()
+            .map(|items| items.iter().map(|item| item["type"].clone()).collect())
+            .unwrap_or_default();
+        assert_eq!(
+            types,
+            vec![
+                json!("codewideTaskNotification"),
+                json!("collabAgentToolCall")
+            ]
+        );
     }
 }

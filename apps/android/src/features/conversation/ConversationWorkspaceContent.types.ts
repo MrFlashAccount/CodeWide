@@ -30,7 +30,6 @@ export type RenderConversationWorkspaceContentProps = {
   activeProjects: ReturnType<typeof useActiveProjectSelection>["activeProjects"];
   activeThread: ThreadListItem | null;
   activeThreadResourceId: string | null;
-  activeTunnelResourceId: string | null;
   activeWorkspaceSupport: ReturnType<typeof useActiveProjectSelection>["activeWorkspaceSupport"];
   addActiveProject: ReturnType<typeof useActiveProjectSelection>["addActiveProject"];
   changeEmptyThreadProject: ReturnType<

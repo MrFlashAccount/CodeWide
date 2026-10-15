@@ -1,8 +1,8 @@
 //! The Claude session index: tables the Claude adapter derives from Claude's
 //! native session store inside the companion's host index database.
 //!
-//! Every row is a neutral read the Claude host returned for one session
-//! (`session.read`). The tables are disposable: [`CLAUDE_INDEX_SCHEMA`]
+//! Every row is a neutral read of one session from Claude's files
+//! (`native::LocalSessions`). The tables are disposable: [`CLAUDE_INDEX_SCHEMA`]
 //! drops them when the companion schema asks for a rebuild or when
 //! [`CLAUDE_INDEX_LOGIC_VERSION`] changes, and the indexer reads every
 //! session again. Thread metadata stays companion state, published through
@@ -24,6 +24,7 @@ use redb::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tracing::warn;
 
 use crate::subagents::{self, ChildThread, IndexedSubagent};
 
@@ -40,8 +41,13 @@ const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// Bumped whenever the derived rows change meaning; a change drops them.
 /// 2: person prompts of interactive sessions, `subagent` items, sub-agent
 /// turns in their own table. 3: each session's newest conversation message
-/// ([`StoredSession::newest_message`]).
-pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 3;
+/// ([`StoredSession::newest_message`]). 4: thread metadata of a session
+/// without its own `cwd` (republishes threads the earlier guard skipped).
+/// 5: a compacted session's whole history (the host read only the part after
+/// the last compaction, so compacted threads lost their earlier turns).
+/// 6: sessions read from Claude's files by the companion (`native`), not
+/// through the Claude host. 7: background task reports as items.
+pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 7;
 
 /// The Claude tables' schema in the host index.
 pub const CLAUDE_INDEX_SCHEMA: ClaudeIndexSchema = ClaudeIndexSchema;
@@ -493,11 +499,21 @@ impl ClaudeStore {
             .map(|session| session.session.last_modified_ms)
             .max()
             .unwrap_or(last.session.last_modified_ms);
-        let Some(cwd) = sessions
+        // The newest session that names a directory: the CodeWide thread's,
+        // else the session's own. The SDK leaves a session's `cwd` unknown
+        // when its first `cwd` lies past the 64 KiB head it reads, so a
+        // missing one must not keep the thread, or its sub-agents, out of
+        // the index.
+        let cwd = sessions
             .iter()
             .rev()
-            .find_map(|session| session.session.cwd.clone())
-        else {
+            .map(thread_cwd)
+            .find(|cwd| !cwd.is_empty());
+        let Some(cwd) = cwd else {
+            warn!(
+                thread = %thread,
+                "Claude thread metadata not published: no session names a directory"
+            );
             return Ok(());
         };
         self.threads.put_thread_metadata(&IndexedThreadMetadata {
@@ -651,6 +667,14 @@ mod tests {
         let provider = agent_core::model::ProviderId::from_static("claude");
         let thread = child.thread(&provider);
         assert_eq!(thread.name.as_deref(), Some("Check the build"));
+        assert_eq!(
+            thread.spawn,
+            Some(agent_core::model::ThreadSpawn {
+                parent_thread_id: AppThreadId::from_static("thread-s"),
+                agent_nickname: Some("Check the build".into()),
+                agent_role: Some("Explore".into()),
+            })
+        );
         assert_eq!(thread.status, agent_core::model::ThreadStatus::Active);
         assert_eq!(thread.preview, "Run the build");
 
@@ -682,6 +706,42 @@ mod tests {
         );
         store.remove_session("session-s")?;
         assert!(store.child_thread(&child_id)?.is_none());
+        Ok(())
+    }
+
+    /// The SDK leaves a session's `cwd` unknown when its first `cwd` lies past
+    /// the head it reads (a large first prompt). The `CodeWide` thread names the
+    /// directory anyway, so the thread and its sub-agents still reach the index.
+    #[test]
+    fn a_session_without_its_own_cwd_still_publishes_the_thread_and_its_sub_agents()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let (store, threads) = open(&directory.path().join("index.redb"))?;
+        let mut read = read_with_subagent(true);
+        read.session.cwd = None;
+        read.session.codewide = Some(agent_core::model::NativeSessionCodewide {
+            created_at: 1,
+            cwd: "/work/codewide".into(),
+            origin: agent_core::model::NativeThreadOrigin::Interactive,
+            presence: agent_core::model::NativeThreadPresence::Listed { archived: false },
+            recency_at: None,
+            settings: agent_core::model::ThreadSettings {
+                model: "claude-opus".into(),
+                effort: None,
+                permission_profile: ":workspace".into(),
+                service_tier: None,
+            },
+            title: agent_core::model::NativeTitleOverride::None,
+            updated_at: 2,
+        });
+        assert_eq!(store.replace_session(&read)?, Replaced::Written);
+        let parent = threads.metadata("thread-s").ok_or("parent row")?;
+        assert_eq!(parent.cwd, "/work/codewide");
+        let child = threads
+            .metadata("thread-s:agent:a0001")
+            .ok_or("child row")?;
+        assert_eq!(child.parent_thread_id.as_deref(), Some("thread-s"));
+        assert_eq!(child.cwd, "/work/codewide");
         Ok(())
     }
 

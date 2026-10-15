@@ -17,10 +17,12 @@ import { AppText as Text } from "../../../ui/Typography";
 import { styles as markdownStyles } from "../content/AgentResponseMarkdown.styles";
 import { AgentResponseMarkdown } from "../content/AgentResponseMarkdown";
 import { ThinkingStatus } from "../protocol/ThinkingStatus";
+import { ActiveTurnActivity } from "./ActiveTurnActivity";
 import { CollapsedTurnActivity, CompletedTurnHistory } from "./CompletedTurnHistory";
+import { LaunchedAgentsChip } from "./LaunchedAgentsChip";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
+import { activitySegmentKind } from "./activitySegmentKind";
 import { TurnActivitySegment } from "./TurnActivity";
-import type { TurnBubbleGroup } from "./turnBubbleGroup";
 import type { projectTurnPresentation } from "./turnProjection";
 import { styles } from "./TurnTimelineItem.styles";
 import type { TurnTimelineItemProps } from "./TurnTimelineItem.types";
@@ -32,8 +34,6 @@ type VirtualizedAgentTurnBodyProps = {
   compact: boolean;
   forceExpanded: boolean;
   getTransferAccess: TurnTimelineItemProps["getTransferAccess"];
-  /** The turns sharing this bubble, or `null` for a turn drawn alone. */
-  group: TurnBubbleGroup | null;
   onFixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
   onLoadItems: TurnTimelineItemProps["onLoadItems"];
   parts: readonly VirtualizedTurnPart[];
@@ -55,12 +55,7 @@ export function VirtualizedAgentTurnBody(props: VirtualizedAgentTurnBodyProps): 
   );
 }
 
-function VirtualizedTurnLead(props: VirtualizedAgentTurnBodyProps): ReactElement | null {
-  // A continuation's activity is part of the group's one history at the top
-  // of the bubble.
-  if (props.group !== null && props.group.memberIndex > 0) {
-    return null;
-  }
+function VirtualizedTurnLead(props: VirtualizedAgentTurnBodyProps): ReactElement {
   const preTurn =
     props.presentation.preTurnBlocks.length === 0 ? null : (
       <PreTurnLifecycleRows
@@ -81,18 +76,21 @@ function VirtualizedTurnLead(props: VirtualizedAgentTurnBodyProps): ReactElement
       {props.presentation.rawTurn.status === "inProgress" ? null : (
         <VirtualizedTurnHistory {...props} />
       )}
+      {/* A running turn shows its launch rows; a finished one folds them into its history. */}
+      {props.presentation.rawTurn.status === "inProgress" ? null : (
+        <LaunchedAgentsChip agents={props.presentation.launchedAgents} />
+      )}
     </>
   );
 }
 
-/** The finished turn's collapsed activity, joined by its bubble's continuations. */
+/** The finished turn's collapsed activity. */
 function VirtualizedTurnHistory(props: VirtualizedAgentTurnBodyProps): ReactElement {
   return (
     <CompletedTurnHistory
       compact={props.compact}
       forceExpanded={props.forceExpanded}
       item={props.turn}
-      {...(props.group === null ? {} : { bubbleTurns: props.group.members })}
       {...(props.getTransferAccess === undefined
         ? {}
         : { getTransferAccess: props.getTransferAccess })}
@@ -107,33 +105,32 @@ function VirtualizedTurnHistory(props: VirtualizedAgentTurnBodyProps): ReactElem
 function VirtualizedTurnParts(props: VirtualizedAgentTurnBodyProps): ReactElement {
   return (
     <>
-      {groupVirtualizedTurnParts(props.parts).map((group) =>
-        group.kind === "markdown" ? (
-          <VirtualizedMarkdownGroup
-            animateNew={props.animateLiveUpdates}
-            key={`markdown:${group.responseKey}`}
-            parts={group.parts}
-            placement={props.placement}
-            presentation={props.presentation}
-          />
-        ) : (
-          renderNonMarkdownPart(props, group.part)
-        ),
-      )}
+      {groupVirtualizedTurnParts(
+        props.parts,
+        props.presentation.rawTurn.status === "inProgress",
+      ).map((group) => renderPartGroup(props, group))}
     </>
   );
 }
 
 type VirtualizedMarkdownPart = Extract<VirtualizedTurnPart, { kind: "markdownBlock" }>;
+type LiveActivityPart = Extract<VirtualizedTurnPart, { kind: "activity" }>["part"];
 type VirtualizedTurnPartGroup =
   | { kind: "markdown"; parts: VirtualizedMarkdownPart[]; responseKey: string }
   | {
       kind: "single";
       part: Exclude<VirtualizedTurnPart, { kind: "markdownBlock" }>;
+    }
+  | {
+      /** The running turn's current group of tool calls, with its unmaterialized start. */
+      earlierIndexes: readonly number[];
+      kind: "active";
+      part: Extract<LiveActivityPart, { kind: "activity" }>;
     };
 
 function groupVirtualizedTurnParts(
   parts: readonly VirtualizedTurnPart[],
+  running: boolean,
 ): VirtualizedTurnPartGroup[] {
   const groups: VirtualizedTurnPartGroup[] = [];
   for (const part of parts) {
@@ -147,10 +144,47 @@ function groupVirtualizedTurnParts(
     } else if (part.kind === "markdownBlock") {
       groups.push({ kind: "markdown", parts: [part], responseKey: part.response.key });
     } else {
-      groups.push({ kind: "single", part });
+      groups.push(nonMarkdownGroup(groups, part, running));
     }
   }
   return groups;
+}
+
+function nonMarkdownGroup(
+  groups: VirtualizedTurnPartGroup[],
+  part: Exclude<VirtualizedTurnPart, { kind: "markdownBlock" }>,
+  running: boolean,
+): VirtualizedTurnPartGroup {
+  return running && part.kind === "activity" && isCurrentToolGroup(part.part)
+    ? activeGroup(groups, part.part)
+    : { kind: "single", part };
+}
+
+/** The trailing group of tool calls a running turn is still adding to. */
+function isCurrentToolGroup(
+  part: LiveActivityPart,
+): part is Extract<LiveActivityPart, { kind: "activity" }> {
+  return (
+    part.kind === "activity" &&
+    !part.followedByAgent &&
+    activitySegmentKind(part.blocks) === "disclosure"
+  );
+}
+
+/** Takes over the collapsed start of the same group, drawn right before it. */
+function activeGroup(
+  groups: VirtualizedTurnPartGroup[],
+  part: Extract<LiveActivityPart, { kind: "activity" }>,
+): VirtualizedTurnPartGroup {
+  const previous = groups.at(-1);
+  if (previous?.kind === "single" && previous.part.kind === "activity") {
+    const collapsed = previous.part.part;
+    if (collapsed.kind === "collapsedActivity") {
+      groups.pop();
+      return { earlierIndexes: collapsed.indexes, kind: "active", part };
+    }
+  }
+  return { earlierIndexes: [], kind: "active", part };
 }
 
 function VirtualizedMarkdownGroup({
@@ -224,6 +258,41 @@ function renderSearchMessage(itemId: unknown, content: ReactElement): ReactEleme
     return content;
   }
   return <SearchMessage itemId={itemId}>{content}</SearchMessage>;
+}
+
+function renderPartGroup(
+  props: VirtualizedAgentTurnBodyProps,
+  group: VirtualizedTurnPartGroup,
+): ReactElement | null {
+  if (group.kind === "markdown") {
+    return (
+      <VirtualizedMarkdownGroup
+        animateNew={props.animateLiveUpdates}
+        key={`markdown:${group.responseKey}`}
+        parts={group.parts}
+        placement={props.placement}
+        presentation={props.presentation}
+      />
+    );
+  }
+  if (group.kind === "active") {
+    return (
+      <ActiveTurnActivity
+        compact={props.compact}
+        earlierIndexes={group.earlierIndexes}
+        key={group.part.key}
+        part={group.part}
+        turn={props.turn}
+        {...(props.getTransferAccess === undefined
+          ? {}
+          : { getTransferAccess: props.getTransferAccess })}
+        {...(props.onFixUnsupportedBlock === undefined
+          ? {}
+          : { onFixUnsupportedBlock: props.onFixUnsupportedBlock })}
+      />
+    );
+  }
+  return renderNonMarkdownPart(props, group.part);
 }
 
 function renderNonMarkdownPart(

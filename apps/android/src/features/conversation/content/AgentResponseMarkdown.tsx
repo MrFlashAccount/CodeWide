@@ -3,7 +3,7 @@ import type { RenderBlock } from "@codewide/renderers";
 import { projectCompleteMarkdown, projectMarkdownStream } from "@codewide/rendering-core";
 import { Fragment } from "react";
 import { ActivityIndicator, View } from "react-native";
-import { readPrivateAssetText } from "../../../data/private-transfer";
+import { readPrivateAssetText, type TransferAccess } from "../../../data/private-transfer";
 import { useAsyncResource } from "../../../rendering/async-resource-store";
 import type { ContentReviewTarget } from "../../../rendering/content-review";
 import { ContentReviewComments } from "../../../rendering/ContentReviewHost";
@@ -26,9 +26,7 @@ export function AgentResponseMarkdown({
   visibilityRef,
 }: {
   block: RenderBlock;
-  getTransferAccess?: (
-    forceRefresh?: boolean,
-  ) => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: (forceRefresh?: boolean) => Promise<TransferAccess>;
   onVisibilityLayout?: () => void;
   visibilityRef?: (node: View | null) => void;
 }) {

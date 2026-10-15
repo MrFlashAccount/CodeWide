@@ -9,6 +9,11 @@ export type ConversationSurfaceCapabilities = {
   onBack: (() => void) | undefined;
   onViewedLatest: (() => void) | undefined;
   readOnly: boolean;
+  /**
+   * Re-reads the thread so the server checks again whether another app still
+   * holds it; `undefined` where no thread can be open elsewhere.
+   */
+  recheckThread: (() => Promise<void>) | undefined;
   server: ThreadListServer | undefined;
   thread: ThreadListItem | null;
   unread: number;

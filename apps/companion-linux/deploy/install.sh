@@ -9,6 +9,7 @@ git_plugin_binary=${CODEWIDE_COMPANION_GIT_PLUGIN_BINARY:-"$repo_root/target/rel
 update_guardian_binary=${CODEWIDE_COMPANION_UPDATE_GUARDIAN_BINARY:-"$repo_root/target/release/codewide-companion-update-guardian"}
 unit_source=${CODEWIDE_COMPANION_UNIT_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion.service"}
 update_unit_source=${CODEWIDE_COMPANION_UPDATE_UNIT_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-update.service"}
+update_path_source=${CODEWIDE_COMPANION_UPDATE_PATH_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-update.path"}
 memory_watch_source=${CODEWIDE_COMPANION_MEMORY_WATCH_SOURCE:-"$repo_root/apps/companion-linux/deploy/memory-watch.sh"}
 memory_watch_service_source=${CODEWIDE_COMPANION_MEMORY_WATCH_SERVICE_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.service"}
 memory_watch_timer_source=${CODEWIDE_COMPANION_MEMORY_WATCH_TIMER_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-memory-watch.timer"}
@@ -80,6 +81,7 @@ fi
 
 install -m 0644 "$unit_source" "$unit_root/codewide-companion.service"
 install -m 0644 "$update_unit_source" "$unit_root/codewide-companion-update.service"
+install -m 0644 "$update_path_source" "$unit_root/codewide-companion-update.path"
 install -m 0644 "$memory_watch_service_source" "$unit_root/codewide-companion-memory-watch.service"
 install -m 0644 "$memory_watch_timer_source" "$unit_root/codewide-companion-memory-watch.timer"
 
@@ -136,7 +138,7 @@ mkdir -p "$state_root"
 
 [ "$activate" -eq 1 ] || exit 0
 systemctl --user enable codewide-companion.service
-systemctl --user enable codewide-companion-update.service
+systemctl --user enable --now codewide-companion-update.path
 systemctl --user enable --now codewide-companion-memory-watch.timer
 systemctl --user restart codewide-companion.service
 attempt=0

@@ -26,7 +26,7 @@ public_status=$(curl --silent --show-error \
 test "$public_status" = 404
 test -L "$HOME/.local/lib/codewide/current"
 test -x "$HOME/.local/lib/codewide/bootstrap/codewide-companion-update-guardian"
-systemctl --user is-enabled --quiet codewide-companion-update.service
+systemctl --user is-enabled --quiet codewide-companion-update.path
 plugins=$("$HOME/.local/lib/codewide/current/bin/codewide-companion" vcs plugin list)
 printf '%s' "$plugins" | grep -F '"id":"git"' >/dev/null
 test -x "$HOME/.local/lib/codewide/current/libexec/codewide-vcs-git"

@@ -1,4 +1,5 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
+import { isTaskNotificationItem } from "./taskNotifications";
 
 type Turn = Thread["turns"][number];
 
@@ -13,8 +14,9 @@ export type TurnRenderWindow = {
   userItemIndexes: number[];
 };
 
+/** Background task reports are drawn outside the bubble, never as turn activity. */
 function isTurnActivityItem(item: Turn["items"][number]): boolean {
-  return item.type !== "userMessage" && !isQuestionMessage(item);
+  return item.type !== "userMessage" && !isQuestionMessage(item) && !isTaskNotificationItem(item);
 }
 
 /**
@@ -64,7 +66,7 @@ export function selectTurnRenderWindow(
       userItemIndexes.push(index);
     } else if (
       item !== undefined &&
-      !isQuestionMessage(item) &&
+      isTurnActivityItem(item) &&
       !hiddenPlaceholderIndexes.has(index)
     ) {
       latestNonUserIndex = index;

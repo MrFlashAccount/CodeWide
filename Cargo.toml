@@ -3,6 +3,7 @@ members = [
     "apps/companion-linux",
     "apps/relay",
     "crates/agent-core",
+    "crates/agent-index",
     "crates/agent-provider-claude",
     "crates/agent-provider-codex",
     "crates/agent-resources",
@@ -11,6 +12,8 @@ members = [
     "crates/companion-core",
     "crates/companion-host",
     "crates/companion-swift-ffi",
+    "crates/host-resolver",
+    "crates/host-update",
 ]
 exclude = ["openai-codex/codex-rs"]
 resolver = "2"

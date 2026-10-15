@@ -38,8 +38,11 @@ export type HostUpdateResourceRecord = {
   connected: boolean;
   generation: number;
   intent: UpdateIntent | null;
-  loaded: boolean;
+  /** Start of the latest server read; `null` before the first one. */
+  lastReadAt: number | null;
   retryAttempt: number;
+  /** When the displayed terminal phase was first published; `null` while none is shown. */
+  terminalShownAt: number | null;
   timer: ReturnType<typeof setTimeout> | null;
   view: HostUpdateView;
 };
@@ -57,6 +60,7 @@ export const INITIAL_HOST_UPDATE_VIEW: HostUpdateView = {
   operationId: null,
   phase: null,
   platform: null,
+  progress: null,
   targetFingerprint: null,
 };
 
@@ -77,6 +81,7 @@ export function hostUpdateStatusView(status: HostUpdateStatus): HostUpdateView {
     operationId: operation.operationId,
     phase: operation.phase,
     platform: status.platform,
+    progress: status.activeOperation?.progress ?? null,
     targetFingerprint: target.targetFingerprint,
   };
 }
@@ -114,6 +119,7 @@ export function hostUpdateOperationView(
     latestVersion: operation.targetVersion,
     operationId: operation.operationId,
     phase: operation.phase,
+    progress: operation.progress,
     targetFingerprint: operation.targetFingerprint,
   };
 }
@@ -149,6 +155,7 @@ export function hostUpdateHttpFailureView(
     errorMessage: failure.availability === "error" ? error.message : null,
     operationId: null,
     phase: null,
+    progress: null,
   };
 }
 
@@ -160,7 +167,7 @@ export function hostUpdateTransportFailureView(
   return {
     ...previous,
     canApply: false,
-    canCheck: false,
+    canCheck: !preserveIntent,
     canRetry: false,
     disconnected: preserveIntent,
     errorCode: preserveIntent ? null : "transport_error",
@@ -174,8 +181,9 @@ export function createHostUpdateResourceRecord(connected: boolean): HostUpdateRe
     connected,
     generation: 0,
     intent: null,
-    loaded: false,
+    lastReadAt: null,
     retryAttempt: 0,
+    terminalShownAt: null,
     timer: null,
     view: INITIAL_HOST_UPDATE_VIEW,
   };

@@ -497,10 +497,6 @@ function updateReroutedModel(thread: Thread, rawTurnId: unknown, toModel: unknow
   };
 }
 
-export function threadContainsClientMessage(thread: Thread, clientId: string): boolean {
-  return thread.turns.some((turn) => turn.items.some((item) => item.type === "userMessage" && item.clientId === clientId));
-}
-
 function upsertTurn(thread: Thread, value: unknown): void {
   const source = asObject(value);
   if (source === null || typeof source.id !== "string") return;

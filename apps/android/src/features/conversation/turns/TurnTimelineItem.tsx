@@ -110,7 +110,11 @@ export function TurnTimelineItem({
                     request={{
                       copyText: presentation.copyText,
                       ...(presentation.canForkThrough && onForkThroughTurn !== undefined
-                        ? { onFork: async () => onForkThroughTurn(turn.id) }
+                        ? {
+                            onFork: () => {
+                              onForkThroughTurn(turn.id);
+                            },
+                          }
                         : {}),
                       ...(presentation.canReviewResponse && agentReviewTarget !== null
                         ? {

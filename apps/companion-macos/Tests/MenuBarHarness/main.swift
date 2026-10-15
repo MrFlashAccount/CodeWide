@@ -207,10 +207,29 @@ private enum HarnessFailure: Error {
 struct HarnessMenu: View {
     @ObservedObject var model: HarnessModel
     var body: some View {
-        CompanionMenuView(snapshot: CompanionMenuSnapshot(connection: .connected, profileName: "Default",
-                            serverVersion: "0.157.0", appVersion: "0.4.0", coreVersion: "0.4.0",
-                            address: "192.0.2.1:8767"), primaryAction: { model.primaryActions += 1 }, revokeDevice: { _ in },
+        CompanionMenuView(snapshot: harnessSnapshot(), primaryAction: { model.primaryActions += 1 }, revokeDevice: { _ in },
                           initiallyShowsDetails: model.expanded, moreActions: { Button("Fixture action") {} })
             .id(model.expanded)
+    }
+
+    private func harnessSnapshot() -> CompanionMenuSnapshot {
+        let providers: [CompanionAgentProvider]
+        do {
+            providers = try CompanionAgentProvider.decodeList(#"""
+            {"providers":[{"id":"codex","name":"Codex","primary":true,"status":"live"},{"id":"claude","name":"Claude","primary":false,"status":"reconnecting"}]}
+            """#)
+        } catch {
+            preconditionFailure("Invalid provider fixture: \(error)")
+        }
+        var snapshot = CompanionMenuSnapshot(
+            connection: .connected,
+            profileName: "Default",
+            serverVersion: "0.157.0",
+            appVersion: "0.4.0",
+            coreVersion: "0.4.0",
+            address: "192.0.2.1:8767"
+        )
+        snapshot.agentProviders = providers
+        return snapshot
     }
 }

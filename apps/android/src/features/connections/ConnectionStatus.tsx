@@ -13,20 +13,25 @@ import {
   connectionStateLabel,
 } from "./connectionPresentation";
 import { styles } from "./ConnectionRowEditor.styles";
+import { hostUpdateConnectionLabel } from "./hostUpdatePresentation";
+import type { HostUpdateView } from "./hostUpdateSettingsContract";
 
 export function ConnectionStatus({
   connection,
   copyDiagnostic,
   diagnosticExpanded,
+  hostUpdate,
   secureLive,
   setDiagnosticExpanded,
 }: {
   connection: StoredConnection;
   copyDiagnostic: () => Promise<void>;
   diagnosticExpanded: boolean;
+  hostUpdate?: HostUpdateView;
   secureLive: boolean;
   setDiagnosticExpanded: (update: (value: boolean) => boolean) => void;
 }) {
+  const updateLabel = hostUpdateConnectionLabel(hostUpdate);
   return (
     <>
       {!secureLive && (
@@ -63,11 +68,13 @@ export function ConnectionStatus({
               },
             ]}
           >
-            {connectionStateLabel(connection.state, connection.enabled, connection.health)}
+            {updateLabel ??
+              connectionStateLabel(connection.state, connection.enabled, connection.health)}
           </Text>
         </View>
       )}
       {connection.lastError !== null &&
+        updateLabel === null &&
         connection.state !== "live" &&
         connection.health !== "online" &&
         connection.health !== "reconnecting" && (

@@ -56,14 +56,47 @@ pub fn snapshot(registry: &ProviderRegistry) -> Value {
     })
 }
 
+/// A data-minimized provider snapshot for trusted host UI. It includes the
+/// provider runtime version, while subscription, account and capability fields
+/// stay inside their existing client-wire owner.
+#[must_use]
+pub fn connection_snapshot(registry: &ProviderRegistry) -> Value {
+    let mut providers = registry
+        .enabled()
+        .map(|provider| connection_entry(registry, provider.as_ref()))
+        .collect::<Vec<_>>();
+    providers.extend(registry.disabled().map(|id| {
+        json!({
+            "id": id.as_str(),
+            "name": disabled_provider_name(id),
+            "primary": false,
+            "status": "disabled",
+            "version": null,
+        })
+    }));
+    json!({"providers": providers})
+}
+
+fn connection_entry(registry: &ProviderRegistry, provider: &dyn AgentProvider) -> Value {
+    let descriptor = provider.descriptor();
+    let health = provider.health();
+    let version = match descriptor.version.trim() {
+        "" => None,
+        value => Some(value.to_owned()),
+    };
+    json!({
+        "id": descriptor.id.as_str(),
+        "name": descriptor.display_name,
+        "primary": registry.is_primary(&descriptor.id),
+        "status": runtime_status(&health, provider.status()),
+        "version": version,
+    })
+}
+
 fn enabled_entry(registry: &ProviderRegistry, provider: &dyn AgentProvider) -> Value {
     let descriptor = provider.descriptor();
     let health = provider.health();
-    let status = match (&health, provider.status()) {
-        (ProviderHealth::Unavailable, _) => "unavailable",
-        (ProviderHealth::Available(_), ProviderStatus::Live) => "live",
-        (ProviderHealth::Available(_), ProviderStatus::Reconnecting) => "reconnecting",
-    };
+    let status = runtime_status(&health, provider.status());
     let (auth, plan_label, account_label) = match health {
         ProviderHealth::Available(ProviderAuth::Authenticated {
             plan_label,
@@ -96,6 +129,14 @@ fn enabled_entry(registry: &ProviderRegistry, provider: &dyn AgentProvider) -> V
         }
     }
     entry
+}
+
+fn runtime_status(health: &ProviderHealth, status: ProviderStatus) -> &'static str {
+    match (health, status) {
+        (ProviderHealth::Unavailable, _) => "unavailable",
+        (ProviderHealth::Available(_), ProviderStatus::Live) => "live",
+        (ProviderHealth::Available(_), ProviderStatus::Reconnecting) => "reconnecting",
+    }
 }
 
 /// A boolean capability is a host capability when an enabled provider
@@ -326,6 +367,37 @@ mod tests {
                 "primary",
                 "status"
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn connection_snapshot_excludes_account_subscription_and_capability_data()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let claude = Arc::new(
+            FakeProvider::new("claude", agent_provider_claude::CAPABILITIES)
+                .reporting_rate_limits(),
+        );
+        claude.set_health(ProviderHealth::Available(ProviderAuth::Authenticated {
+            plan_label: Some("max".into()),
+            account_label: Some("user@example.com".into()),
+        }));
+        claude.set_rate_limits(limits(42));
+        let registry = registry(
+            vec![codex(), claude],
+            vec![ProviderId::from_static("gemini")],
+        )?;
+
+        let snapshot = connection_snapshot(&registry);
+        assert_eq!(
+            snapshot,
+            json!({
+                "providers": [
+                    {"id": "codex", "name": "CODEX", "primary": true, "status": "live", "version": "1"},
+                    {"id": "claude", "name": "CLAUDE", "primary": false, "status": "live", "version": "1"},
+                    {"id": "gemini", "name": "Gemini", "primary": false, "status": "disabled", "version": null},
+                ]
+            })
         );
         Ok(())
     }

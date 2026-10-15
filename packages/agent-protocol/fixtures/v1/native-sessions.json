@@ -241,9 +241,67 @@
                   }
                 },
                 {
+                  "type": "taskNotification",
+                  "itemId": "5f0c2a1e-3b4d-4e5f-8a6b-7c8d9e0f1a2b:notification:0",
+                  "delivery": "midTurn",
+                  "kind": "command",
+                  "taskId": "b7x2k9q1m",
+                  "name": "Watch the dev server",
+                  "agentThreadId": null,
+                  "status": "lost",
+                  "durationMs": null,
+                  "toolUses": null,
+                  "result": null,
+                  "provenance": {
+                    "provider": "claude",
+                    "nativeThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+                  }
+                },
+                {
                   "type": "agentMessage",
                   "itemId": "msg_01:1",
                   "text": "Tests pass.",
+                  "phase": "final",
+                  "provenance": {
+                    "provider": "claude",
+                    "nativeThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+                  }
+                }
+              ],
+              "provenance": {
+                "provider": "claude",
+                "nativeThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+              }
+            },
+            {
+              "turnId": "7b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e",
+              "status": "completed",
+              "origin": "provider",
+              "startedAt": 1791542390,
+              "completedAt": 1791542392,
+              "error": null,
+              "items": [
+                {
+                  "type": "taskNotification",
+                  "itemId": "7b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e:notification:0",
+                  "delivery": "wake",
+                  "kind": "agent",
+                  "taskId": "a05d989c3914f829e",
+                  "name": "Find the failing test",
+                  "agentThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e:agent:a05d989c3914f829e",
+                  "status": "interim",
+                  "durationMs": 12963,
+                  "toolUses": 2,
+                  "result": "None fail.",
+                  "provenance": {
+                    "provider": "claude",
+                    "nativeThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+                  }
+                },
+                {
+                  "type": "agentMessage",
+                  "itemId": "msg_03:0",
+                  "text": "The sub-agent found no failing test.",
                   "phase": "final",
                   "provenance": {
                     "provider": "claude",

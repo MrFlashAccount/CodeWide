@@ -18,6 +18,8 @@ do {
         stateDirectory: RuntimeConstants.stateDirectory.path,
         codexHome: selectedCodexHome.path,
         appVersion: metadata.version,
+        appBuild: metadata.build,
+        sourceRevision: metadata.sourceRevision,
         hostVersion: metadata.version,
         computerName: computerName,
         listenAddress: listenAddress
@@ -30,8 +32,6 @@ do {
         selectedCodexHome: selectedCodexHome,
         userHome: userHome
     )
-    let observationPublisher = RuntimeObservationPublisher(core: core)
-    observationPublisher.start()
     let delegate = RuntimeListenerDelegate(
         service: service,
         runtimeExecutableURL: executableURL
@@ -39,9 +39,7 @@ do {
     let listener = NSXPCListener(machServiceName: RuntimeConstants.machServiceName)
     listener.delegate = delegate
     listener.resume()
-    withExtendedLifetime(observationPublisher) {
-        RunLoop.current.run()
-    }
+    RunLoop.current.run()
 } catch {
     runtimeLogger.error("Companion startup failed: \(String(describing: error), privacy: .private)")
     FileHandle.standardError.write(Data("CodeWideRuntime: \(error)\n".utf8))

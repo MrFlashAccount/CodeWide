@@ -225,6 +225,20 @@ struct RuntimeConnectionTests {
         #expect(runtime.lastError == nil)
     }
 
+    @Test func providerPresentationFailureDoesNotTakePairingOffline() async {
+        let service = TestRuntimeService()
+        service.agentProviderConnectionsFailure = NSError(domain: "test", code: 17)
+        let runtime = makeRuntime(service: service)
+
+        await runtime.refresh()
+
+        #expect(runtime.health?.phase == "running")
+        #expect(runtime.appServer != nil)
+        #expect(runtime.devices.count == 1)
+        #expect(runtime.agentProviders.isEmpty)
+        #expect(runtime.lastError?.contains("Agent connections") == true)
+    }
+
     @Test func directPairingUsesTheSelectedAddressWithoutAnOnlineRelay() async throws {
         let service = TestRuntimeService()
         service.relayEnabled = false
@@ -394,6 +408,7 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
     var healthRequests = 0
     var managementRequests = 0
     var relayFailure: NSError?
+    var agentProviderConnectionsFailure: NSError?
     var healthFailure: NSError?
     var discoveryFailure: NSError?
     var discoveryRequests = 0
@@ -402,6 +417,9 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
     var holdDevices = false
     var pendingDevices: (@Sendable (DeviceListPayload?, NSError?) -> Void)?
     var relayEnabled = true
+    var agentProviderConnectionsJSON = """
+    {"providers":[{"id":"codex","name":"Codex","primary":true,"status":"live"},{"id":"claude","name":"Claude","primary":false,"status":"live"}],"hostCapabilities":{}}
+    """
     var relayUpdateJSON = """
     {"currentVersion":"0.4.1","capability":{"applySupported":true,"unavailableReason":null},"availableTarget":null,"activeOperation":null}
     """
@@ -434,6 +452,12 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
     func appServer(withReply reply: @escaping @Sendable (AppServerPayload?, NSError?) -> Void) {
         managementRequests += 1
         reply(server("default"), nil)
+    }
+
+    func agentProviderConnections(withReply reply: @escaping @Sendable (String?, NSError?) -> Void) {
+        managementRequests += 1
+        if let agentProviderConnectionsFailure { reply(nil, agentProviderConnectionsFailure); return }
+        reply(agentProviderConnectionsJSON, nil)
     }
 
     private func server(_ id: String) -> AppServerPayload {

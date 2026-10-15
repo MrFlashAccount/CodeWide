@@ -67,6 +67,16 @@ it("confirms a committed update next to the new version", () => {
   expect(view.queryByLabelText("Update Companion")).toBeNull();
 });
 
+it("shows received download progress and identifies a stale observation during reconnect", () => {
+  const update: HostUpdateView = { ...available(), phase: "installing", canApply: false, canCheck: false,
+    progress: { stage: "downloading", downloadedBytes: 5_000_000, totalBytes: 10_000_000 } };
+  const view = render(<Fixture update={update} />);
+  expect(view.getByText(/Downloading · 50% · 5.0 \/ 10.0 MB. Companion is reachable/u)).toBeTruthy();
+  view.rerender(<Fixture update={{ ...update, disconnected: true }} />);
+  expect(view.getByText(/Last confirmed: Downloading · 50%/u)).toBeTruthy();
+  expect(view.queryByText(/Companion is reachable/u)).toBeNull();
+});
+
 it.each([
   ["rolledBack", "New Companion did not reconnect", "Update rolled back: New Companion did not reconnect"],
   ["failed", "Artifact verification failed", "Update failed: Artifact verification failed"],
@@ -175,6 +185,24 @@ it("offers an accessible check action after a stale target", () => {
   expect(view.getByText(/available release changed/u)).toBeTruthy();
 });
 
+it("names a failed request without claiming that an update failed", () => {
+  const view = render(
+    <Fixture
+      update={{
+        ...available(),
+        availability: "error",
+        canApply: false,
+        canCheck: true,
+        errorCode: "relay_update_failed",
+        errorMessage: "Could not connect to the Relay.",
+        phase: null,
+      }}
+    />,
+  );
+  expect(view.getByText("Update request failed: Could not connect to the Relay.")).toBeTruthy();
+  expect(view.queryByText(/Update failed/u)).toBeNull();
+});
+
 function Fixture({
   onApply = async () => undefined,
   onCheck = async () => undefined,
@@ -209,6 +237,7 @@ function available(): HostUpdateView {
     operationId: null,
     phase: null,
     platform: "macos-universal",
+    progress: null,
     targetFingerprint: FINGERPRINT,
   };
 }

@@ -19,10 +19,13 @@ pub mod gateway;
 pub mod history;
 pub mod items;
 pub mod list;
+pub mod model_scope;
 pub mod observe;
 pub mod results;
 pub mod settings;
 
+#[cfg(test)]
+mod fork_tests;
 #[cfg(test)]
 mod golden_tests;
 

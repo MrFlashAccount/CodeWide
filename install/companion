@@ -188,6 +188,7 @@ finish() {
     restore_target memory-watch-unit "$unit_root/codewide-companion-memory-watch.service" 0644
     restore_target memory-watch-timer "$unit_root/codewide-companion-memory-watch.timer" 0644
     restore_target update-unit "$unit_root/codewide-companion-update.service" 0644
+    restore_target update-path "$unit_root/codewide-companion-update.path" 0644
     restore_target update-guardian "$install_root/bootstrap/codewide-companion-update-guardian" 0755
     restore_target update-config "$install_root/bootstrap/config.json" 0600
     restore_current_link
@@ -262,6 +263,7 @@ test -r "$payload/bootstrap/config.json"
 test -r "$payload/bootstrap/generation.json"
 test -r "$payload/systemd/user/codewide-companion.service"
 test -r "$payload/systemd/user/codewide-companion-update.service"
+test -r "$payload/systemd/user/codewide-companion-update.path"
 test -r "$payload/systemd/user/codewide-companion-memory-watch.service"
 test -r "$payload/systemd/user/codewide-companion-memory-watch.timer"
 
@@ -297,6 +299,7 @@ backup_target "$unit_root/codewide-companion.service" unit
 backup_target "$unit_root/codewide-companion-memory-watch.service" memory-watch-unit
 backup_target "$unit_root/codewide-companion-memory-watch.timer" memory-watch-timer
 backup_target "$unit_root/codewide-companion-update.service" update-unit
+backup_target "$unit_root/codewide-companion-update.path" update-path
 backup_target "$install_root/bootstrap/codewide-companion-update-guardian" update-guardian
 backup_target "$install_root/bootstrap/config.json" update-config
 backup_current_link
@@ -308,6 +311,7 @@ CODEWIDE_COMPANION_UPDATE_GUARDIAN_BINARY="$payload/libexec/codewide-companion-u
 CODEWIDE_COMPANION_MEMORY_WATCH_SOURCE="$payload/libexec/codewide-companion-memory-watch" \
 CODEWIDE_COMPANION_UNIT_SOURCE="$payload/systemd/user/codewide-companion.service" \
 CODEWIDE_COMPANION_UPDATE_UNIT_SOURCE="$payload/systemd/user/codewide-companion-update.service" \
+CODEWIDE_COMPANION_UPDATE_PATH_SOURCE="$payload/systemd/user/codewide-companion-update.path" \
 CODEWIDE_COMPANION_MEMORY_WATCH_SERVICE_SOURCE="$payload/systemd/user/codewide-companion-memory-watch.service" \
 CODEWIDE_COMPANION_MEMORY_WATCH_TIMER_SOURCE="$payload/systemd/user/codewide-companion-memory-watch.timer" \
 CODEWIDE_COMPANION_INSTALL_ROOT="$install_root" \

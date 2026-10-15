@@ -288,6 +288,30 @@ pub struct ThreadCreateParams {
     pub client_tools: Option<Vec<ClientToolSpec>>,
 }
 
+/// How much of the source thread a fork keeps: everything, the turns
+/// through `turn_id`, or the turns before `turn_id`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ForkBoundary {
+    All,
+    Before { turn_id: TurnId },
+    Through { turn_id: TurnId },
+}
+
+/// `thread.fork`: copies `app_thread_id` into a new thread on the same
+/// provider; `fork_app_thread_id` is host-minted for `threads.hostMintedIds`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadForkParams {
+    pub app_thread_id: AppThreadId,
+    pub boundary: ForkBoundary,
+    pub fork_app_thread_id: Option<AppThreadId>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ThreadResult {
     pub thread: AgentThread,
@@ -459,6 +483,8 @@ pub enum OperationCall {
     CatalogPermissionProfiles(Empty),
     #[serde(rename = "thread.create")]
     ThreadCreate(ThreadCreateParams),
+    #[serde(rename = "thread.fork")]
+    ThreadFork(ThreadForkParams),
     #[serde(rename = "thread.read")]
     ThreadRead(ThreadRef),
     #[serde(rename = "thread.list")]

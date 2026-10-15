@@ -92,6 +92,48 @@
     {
       "respondsTo": null,
       "message": {
+        "id": 41,
+        "method": "thread.fork",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "forkAppThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7f",
+          "boundary": {
+            "kind": "through",
+            "turnId": "0199a3c5-0000-7000-8000-000000000001"
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": "thread.fork",
+      "message": {
+        "id": 41,
+        "result": {
+          "thread": {
+            "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7f",
+            "provider": "claude",
+            "cwd": "/home/dev/project",
+            "name": "Tests (fork)",
+            "preview": "Fix the failing test",
+            "createdAt": 1760000200,
+            "updatedAt": 1760000200,
+            "recencyAt": null,
+            "archived": false,
+            "origin": "interactive",
+            "status": "idle",
+            "settings": {
+              "model": "claude-sonnet-4-5",
+              "effort": null,
+              "permissionProfile": ":read-only",
+              "serviceTier": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
         "id": 3,
         "method": "thread.create",
         "params": {
@@ -183,6 +225,31 @@
               "permissionProfile": ":read-only",
               "serviceTier": null
             }
+          },
+          "activeTurnId": null
+        }
+      }
+    },
+    { "respondsTo": null, "message": { "id": 42, "method": "thread.read", "params": { "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e:agent:a1b2c3d4e5f600001" } } },
+    {
+      "respondsTo": "thread.read",
+      "message": {
+        "id": 42,
+        "result": {
+          "thread": {
+            "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e:agent:a1b2c3d4e5f600001",
+            "provider": "claude",
+            "cwd": "/home/dev/project",
+            "name": "Check the build",
+            "preview": "Run the build and report.",
+            "createdAt": 1760000050,
+            "updatedAt": 1760000090,
+            "recencyAt": null,
+            "archived": false,
+            "origin": "external",
+            "status": "idle",
+            "settings": { "model": "default", "effort": null, "permissionProfile": ":read-only", "serviceTier": null },
+            "spawn": { "parentThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e", "agentNickname": "Check the build", "agentRole": "Explore" }
           },
           "activeTurnId": null
         }

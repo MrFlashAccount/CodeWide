@@ -14,9 +14,8 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
-async-trait = "0.1.89"
+codewide-host-update = { path = "../host-update", features = ["macos-sparkle"] }
 companion-core = { path = "../companion-core" }
-rand = "0.9.2"
 semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"

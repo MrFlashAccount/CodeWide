@@ -3,6 +3,8 @@ import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { connectionId, normalizeThreadItem } from "@codewide/domain";
 import { toRenderBlock, type RenderBlock } from "@codewide/renderers";
 import { projectedQuestionHistory, projectedTurnMetadata } from "@codewide/sync-client";
+import { turnLaunchedAgents } from "../../../rendering/launchedAgents";
+import { turnTaskNotifications } from "../../../rendering/taskNotifications";
 import { selectTurnRenderWindow } from "../../../rendering/thread-render-window";
 import type { TurnSequencePart } from "../../../rendering/turn-sequence";
 import { isToolActivityKind } from "../protocol/protocolKind";
@@ -303,12 +305,27 @@ export function projectTurnPresentation(
     turnPreparationCache.delete(oldest);
   }
   const canForkThrough = turn.turn.status !== "inProgress" && forkAvailable;
+  const pendingRequest = pendingRequestPresentation(prepared, hasPendingRequest);
   return {
     ...prepared,
     canForkThrough,
-    hasAgentContent: prepared.hasAgentContent || hasPendingRequest,
+    hasAgentContent: pendingRequest.hasAgentContent,
     searchedAgentBlock: searchAgentBlock(turn, searchFocus, prepared.latestAgentBlock),
+    showEmptyResponsePlaceholder: pendingRequest.showEmptyResponsePlaceholder,
     showMessageActions: prepared.copyText !== "" || canForkThrough || prepared.canReviewResponse,
+  };
+}
+
+function pendingRequestPresentation(
+  prepared: ReturnType<typeof prepareTurnPresentation>,
+  hasPendingRequest: boolean,
+) {
+  if (hasPendingRequest) {
+    return { hasAgentContent: true, showEmptyResponsePlaceholder: false };
+  }
+  return {
+    hasAgentContent: prepared.hasAgentContent,
+    showEmptyResponsePlaceholder: prepared.showEmptyResponsePlaceholder,
   };
 }
 
@@ -409,6 +426,16 @@ function prepareTurnPresentation(turn: TurnRow) {
   const hasCompletedHistory =
     rawTurn.status !== "inProgress" &&
     hasCompletedTurnHistory(rawTurn, renderWindow.collapsedActivityIndexes);
+  // A background task woke the agent and it produced nothing: no answer, no
+  // activity, no artifacts. Unloaded content is empty only when a wake report
+  // proves a Companion that counts a wake's work: older ones counted none.
+  const taskNotifications = turnTaskNotifications(rawTurn);
+  const isEmptyWake =
+    rawTurn.status === "completed" &&
+    renderWindow.userItemIndexes.length === 0 &&
+    showEmptyResponsePlaceholder &&
+    !hasCompletedHistory &&
+    (rawTurn.itemsView === "full" || taskNotifications.wake.length > 0);
   const hasDisclosedBubbleActivity =
     preTurnBlocks.some(preTurnBlockUsesDisclosure) ||
     hasCompletedHistory ||
@@ -443,7 +470,6 @@ function prepareTurnPresentation(turn: TurnRow) {
       : visibleLiveActivitySequence.length > 0 ||
         preTurnBlocks.length > 0 ||
         latestAgentBlock !== null) ||
-    showEmptyResponsePlaceholder ||
     artifacts.length > 0;
   return {
     agentBubbleFill,
@@ -454,11 +480,14 @@ function prepareTurnPresentation(turn: TurnRow) {
     copyText,
     hasAgentContent,
     hasGeneratedAgentResponse,
+    isEmptyWake,
     latestAgentBlock,
+    launchedAgents: turnLaunchedAgents(rawTurn),
     liveMarkdownProjections,
     preTurnBlocks,
     rawTurn,
     showEmptyResponsePlaceholder,
+    taskNotifications,
     userBlocks,
     visibleLiveActivitySequence,
   };

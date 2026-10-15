@@ -117,7 +117,7 @@ jobs:
           echo "CODEWIDE_RELAY_VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=relay-v$version" >> "$GITHUB_ENV"
           echo "ASSET=dist/relay/codewide-relay-x86_64-unknown-linux-musl" >> "$GITHUB_ENV"
-          echo "UPDATER_ASSET=dist/relay/codewide-relay-updater-x86_64-unknown-linux-musl" >> "$GITHUB_ENV"
+          echo "BUNDLE_ASSET=dist/relay/codewide-relay-x86_64-unknown-linux-musl.tar.gz" >> "$GITHUB_ENV"
 
       - name: Build portable binary
         id: build
@@ -145,8 +145,8 @@ jobs:
           path: |
             ${{ env.ASSET }}
             ${{ env.ASSET }}.sha256
-            ${{ env.UPDATER_ASSET }}
-            ${{ env.UPDATER_ASSET }}.sha256
+            ${{ env.BUNDLE_ASSET }}
+            ${{ env.BUNDLE_ASSET }}.sha256
           if-no-files-found: error
 
       - name: Validate Homebrew tap generation
@@ -170,11 +170,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="CodeWide Relay $CODEWIDE_RELAY_VERSION. Portable static x86_64 Relay and short-lived Relay Updater with checksummed standalone installation."
+          notes="CodeWide Relay $CODEWIDE_RELAY_VERSION. Portable static x86_64 Relay and its signed generation bundle for remote updates, with checksummed standalone installation."
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$ASSET" "$ASSET.sha256" "$UPDATER_ASSET" "$UPDATER_ASSET.sha256" --clobber
+            gh release upload "$RELEASE_TAG" "$ASSET" "$ASSET.sha256" "$BUNDLE_ASSET" "$BUNDLE_ASSET.sha256" --clobber
           else
-            gh release create "$RELEASE_TAG" "$ASSET" "$ASSET.sha256" "$UPDATER_ASSET" "$UPDATER_ASSET.sha256" \
+            gh release create "$RELEASE_TAG" "$ASSET" "$ASSET.sha256" "$BUNDLE_ASSET" "$BUNDLE_ASSET.sha256" \
               --title "CodeWide Relay $CODEWIDE_RELAY_VERSION" \
               --notes "$notes" \
               --latest=false

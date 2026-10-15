@@ -5,6 +5,12 @@ import { ConversationTimelineSurface } from "./timeline/ConversationTimelineSurf
 import { TimelineViewport } from "./timeline/TimelineViewportView";
 
 export function createConversationTimelineContent(props: CreateConversationTimelineContentProps) {
+  // The draft's server, shown like a thread's while the new chat can go to several servers.
+  const draftServers = props.projectsInputs.newChatPicker?.servers ?? [];
+  const draftServer =
+    draftServers.length > 1
+      ? draftServers.find((server) => server.id === props.draftConnectionId)
+      : undefined;
   const timelineContent = (
     <TimelineViewport
       awayFromLatest={props.timelineState.historyAnchorStateBinding.awayFromLatest}
@@ -28,6 +34,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
           newChat={props.timelineRead.newChat}
           onChangeWorkspaceMode={props.projectsInputs.onChangeWorkspaceMode}
           openProjectPicker={props.composerProjectSelectionBinding.openProjectPicker}
+          server={draftServer}
           threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
           workspaceMode={props.workspaceMode}
           workspaceSupport={props.workspaceSupport}

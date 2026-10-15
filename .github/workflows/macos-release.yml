@@ -99,6 +99,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+
       - name: Restore Cargo and SwiftPM caches
         id: native-cache
         uses: actions/cache/restore@v6.1.0
@@ -253,7 +254,6 @@ jobs:
           apps/companion-macos/scripts/build-app.sh
           test "$(lipo -archs apps/companion-macos/.build/app/CodeWide.app/Contents/MacOS/CodeWide)" = arm64
           test "$(lipo -archs apps/companion-macos/.build/app/CodeWide.app/Contents/MacOS/CodeWideRuntime)" = arm64
-          test "$(lipo -archs apps/companion-macos/.build/app/CodeWide.app/Contents/Resources/UpdaterBootstrap/CodeWideUpdateGuardian)" = arm64
           apps/companion-macos/scripts/build-dmg.sh "$CODEWIDE_VERSION"
 
       - name: Save native compilation cache before update validation

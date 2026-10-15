@@ -14,6 +14,7 @@ struct CompanionMenuView<MoreActions: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @State private var showsDetails = false
+    @State private var expandedProviderID: String?
     @State private var showsNoticeDetails = false
     @State private var dismissedNotice: String?
 
@@ -31,16 +32,29 @@ struct CompanionMenuView<MoreActions: View>: View {
         self.actionsIdentity = actionsIdentity
         self.moreActions = moreActions
         _showsDetails = State(initialValue: initiallyShowsDetails)
+        _expandedProviderID = State(
+            initialValue: initiallyShowsDetails ? snapshot.visibleAgentProviders.first?.id : nil
+        )
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(.bottom, 18)
-            connection
-            if showsDetails {
-                connectionDetails
-                    .padding(.top, 14)
+            if snapshot.visibleAgentProviders.isEmpty {
+                connection
+                if showsDetails {
+                    connectionDetails
+                        .padding(.top, 14)
+                }
+            } else {
+                ForEach(snapshot.visibleAgentProviders) { provider in
+                    providerRow(provider)
+                    if expandedProviderID == provider.id {
+                        providerConnectionDetails(provider)
+                            .padding(.top, 10)
+                    }
+                }
             }
             Divider().padding(.vertical, 18)
             if let notice = snapshot.notice, notice != dismissedNotice {
@@ -67,6 +81,11 @@ struct CompanionMenuView<MoreActions: View>: View {
         .onChange(of: snapshot.notice) { _, _ in
             dismissedNotice = nil
             showsNoticeDetails = false
+        }
+        .onChange(of: snapshot.visibleAgentProviders.map(\.id)) { _, ids in
+            if let expandedProviderID, !ids.contains(expandedProviderID) {
+                self.expandedProviderID = nil
+            }
         }
     }
 
@@ -143,6 +162,62 @@ struct CompanionMenuView<MoreActions: View>: View {
             if let version = snapshot.coreVersion { detail("Core", value: version) }
             if let address = snapshot.address {
                 detail("Address", value: address)
+            }
+        }
+        .padding(.horizontal, 6)
+    }
+
+    private func providerRow(_ provider: CompanionAgentProvider) -> some View {
+        Button {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                expandedProviderID = expandedProviderID == provider.id ? nil : provider.id
+            }
+        } label: {
+            HStack(spacing: 12) {
+                AgentProviderIcon(providerID: provider.id, size: 34)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(provider.name)
+                        .font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: 5) {
+                        Image(systemName: providerStatusSymbol(provider))
+                            .font(.system(size: provider.status == .live ? 6 : 10))
+                            .foregroundStyle(providerStatusColor(provider))
+                            .accessibilityHidden(true)
+                        Text(provider.connectionSummary)
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(secondaryText)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(secondaryText)
+                    .rotationEffect(.degrees(expandedProviderID == provider.id ? 90 : 0))
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .help("Show \(provider.name) connection details")
+        .accessibilityLabel("\(provider.name), \(provider.connectionSummary). Connection details")
+        .accessibilityValue(expandedProviderID == provider.id ? "Expanded" : "Collapsed")
+    }
+
+    private func providerConnectionDetails(_ provider: CompanionAgentProvider) -> some View {
+        VStack(spacing: 9) {
+            detail("Connection", value: provider.connectionSummary)
+            if provider.primary {
+                detail("Role", value: "Primary provider")
+            }
+            if let version = provider.version {
+                detail(provider.name, value: version)
+            }
+            if provider.id == "codex" {
+                detail("Profile", value: snapshot.profileName)
             }
         }
         .padding(.horizontal, 6)
@@ -347,6 +422,22 @@ struct CompanionMenuView<MoreActions: View>: View {
         case .connected: successColor
         case .starting: secondaryText
         default: .orange
+        }
+    }
+
+    private func providerStatusColor(_ provider: CompanionAgentProvider) -> Color {
+        switch provider.status {
+        case .live: successColor
+        case .reconnecting: .orange
+        case .disabled, .unavailable: secondaryText
+        }
+    }
+
+    private func providerStatusSymbol(_ provider: CompanionAgentProvider) -> String {
+        switch provider.status {
+        case .live: "circle.fill"
+        case .reconnecting: "circle.dotted"
+        case .disabled, .unavailable: "exclamationmark.circle.fill"
         }
     }
 

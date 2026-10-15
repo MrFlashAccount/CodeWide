@@ -3,7 +3,6 @@ import { eq, useLiveQuery } from "@tanstack/react-db";
 import type {
   BackgroundTerminalsRow,
   ThreadGoalRow,
-  TunnelRow,
   TurnControlsRow,
   WorkspaceResourceDatabase,
 } from "./workspace-resource-database";
@@ -47,20 +46,6 @@ export function useThreadGoalRow(
       database === null || resourceId === null
         ? undefined
         : builder.from({ row: database.threadGoals }).where(({ row }) => eq(row.id, resourceId)),
-    [database, resourceId],
-  );
-  return query.data?.[0] ?? null;
-}
-
-export function useTunnelRow(
-  database: WorkspaceResourceDatabase | null,
-  resourceId: string | null,
-): TunnelRow | null {
-  const query = useLiveQuery(
-    (builder) =>
-      database === null || resourceId === null
-        ? undefined
-        : builder.from({ row: database.tunnels }).where(({ row }) => eq(row.id, resourceId)),
     [database, resourceId],
   );
   return query.data?.[0] ?? null;

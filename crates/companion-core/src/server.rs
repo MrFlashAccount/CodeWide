@@ -18,7 +18,7 @@ use crate::{
     build_shelf::BuildShelfProxy,
     content::{ContentQuery, PrivateContentService},
     device_tls::DeviceTlsConnectInfo,
-    file_uploads::WorkspaceUploadStore,
+    file_uploads::FileTransfer,
     files::{FileQuery, FileService, FileTextQuery},
     host_update::SharedHostUpdateGuardian,
     identity::TransportIdentity,
@@ -64,7 +64,8 @@ pub struct CompanionRouters {
 #[derive(Clone, Default)]
 pub struct CompanionServices {
     pub build_shelf: Option<BuildShelfProxy>,
-    pub files: Option<Arc<FileService>>,
+    /// Files and their upload staging are one unit: neither is served without the other.
+    pub files: Option<FileTransfer>,
     pub content: Option<Arc<PrivateContentService>>,
     pub image_previews: Option<Arc<ImagePreviewService>>,
     pub media: Option<Arc<MediaProxyService>>,
@@ -81,7 +82,12 @@ pub struct CompanionServices {
     pub inner_tls_target: Option<SocketAddr>,
     pub inner_tls_limit: Option<Arc<tokio::sync::Semaphore>>,
     pub relay: Option<crate::relay::RelayRuntime>,
-    pub workspace_upload_staging: Option<WorkspaceUploadStore>,
+}
+
+impl CompanionServices {
+    pub(crate) fn file_service(&self) -> Option<Arc<FileService>> {
+        self.files.as_ref().map(|transfer| transfer.files().clone())
+    }
 }
 
 #[derive(Clone)]
@@ -474,6 +480,7 @@ fn build_control_router(state: AppState) -> Router {
         .route("/healthz", get(health))
         .route("/readyz", get(readiness))
         .route("/v1/app-server", get(app_server_upgrade))
+        .route("/v1/host-update/health", get(host_update_process_health))
         .route("/v1/pairing/start", post(pairing_start))
         .route("/v1/devices", get(devices_list))
         .route("/v1/devices/{device_id}", delete(device_revoke))
@@ -528,12 +535,25 @@ async fn readiness(State(state): State<AppState>) -> (StatusCode, Json<Health>) 
 
 #[cfg(test)]
 mod tests {
-    use super::constant_time_eq;
+    use super::{AuthorizationContext, admits_relay_update, constant_time_eq};
 
     #[test]
     fn token_comparison_requires_exact_bytes() {
         assert!(constant_time_eq(b"same", b"same"));
         assert!(!constant_time_eq(b"same", b"diff"));
         assert!(!constant_time_eq(b"short", b"longer"));
+    }
+
+    #[test]
+    fn relay_update_admits_device_sessions_and_the_admin_only() {
+        assert!(admits_relay_update(Some(&AuthorizationContext::Admin)));
+        assert!(admits_relay_update(Some(&AuthorizationContext::Session {
+            device_id: "phone".to_owned(),
+            expires_at: 1,
+        })));
+        assert!(!admits_relay_update(Some(&AuthorizationContext::Device {
+            device_id: "phone".to_owned(),
+        })));
+        assert!(!admits_relay_update(None));
     }
 }

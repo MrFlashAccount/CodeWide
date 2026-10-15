@@ -76,7 +76,6 @@ type NativeBridge = {
     relayTlsPinSha256: string,
   ) => Promise<{ capabilityToken: string; deviceId: string }>;
   closeTerminal?: (sessionId: string) => void;
-  companionHttpOrigin: (connectionId: string) => Promise<string>;
   configureFullscreenWindow?: (reactTag: number) => void;
   deleteConnectionCredentials: (connectionId: string) => Promise<void>;
   discoverPorts?: (connectionId: string) => Promise<string>;
@@ -363,20 +362,6 @@ export async function listNativeConnectionConfigs(): Promise<NativeConnectionCon
       tlsPinSha256: candidate.tlsPinSha256,
     };
   });
-}
-
-export async function nativeCompanionHttpOrigin(
-  connectionId: string,
-  _endpoint: string,
-): Promise<string> {
-  if (bridge === undefined || Platform.OS !== "android") {
-    throw new Error("Native pinned HTTP transport is unavailable in this build");
-  }
-  const origin = await bridge.companionHttpOrigin(connectionId);
-  if (!/^http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]{43}$/u.test(origin)) {
-    throw new Error("Native pinned HTTP transport returned an invalid origin");
-  }
-  return origin;
 }
 
 export async function purgeLegacyDerivedStorage(): Promise<number> {

@@ -36,6 +36,7 @@ export function renderReadConversationLayout({
                   composerContent={props.footerContent}
                   currentOutcome={null}
                   failureNotice={read.presentation.failureNotice}
+                  openElsewhereActions={null}
                   readOnly
                   remoteThread={props.remoteThread}
                   reportBottomChromeHeight={props.viewport.reportBottomChromeHeight}

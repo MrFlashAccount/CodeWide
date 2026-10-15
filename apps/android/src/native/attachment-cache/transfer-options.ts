@@ -1,3 +1,5 @@
+import type { CompanionTransport } from "../companionTransportContract";
+
 /** Stable source identity, separate from rotating transport URLs and authorization. */
 export interface CachedTransferOptions {
   identity: string;
@@ -8,5 +10,6 @@ export interface CachedSourceRequest {
   headers: Record<string, string>;
   options: CachedTransferOptions;
   signal?: AbortSignal | undefined;
+  transport: CompanionTransport;
   uri: string;
 }

@@ -10,6 +10,7 @@ use codewide_relay::{
     server::{Relay, serve},
     transport_tls::RelayTlsIdentity,
 };
+use socket2::{Domain, Socket, Type};
 use std::{
     io::IsTerminal, os::unix::fs::PermissionsExt, path::PathBuf, process::ExitCode, time::Duration,
 };
@@ -77,6 +78,39 @@ enum Command {
     /// Print the state directory selected from the active service for the installer.
     #[command(hide = true)]
     BootstrapInfo,
+    /// Print this executable's version, build and source revision as JSON.
+    #[command(hide = true)]
+    BuildInfo,
+    /// Run one queued remote update; started by the stable bootstrap copy.
+    #[command(hide = true)]
+    UpdateRun {
+        /// Install root holding `generations/`, `current` and `bootstrap/`.
+        #[arg(long)]
+        install_root: PathBuf,
+    },
+}
+
+/// Build provenance in a fixed field order: the installer matches this exact
+/// line before it records a generation's metadata.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuildInfo {
+    schema_version: u16,
+    version: &'static str,
+    build: &'static str,
+    source_revision: &'static str,
+}
+
+impl BuildInfo {
+    fn current() -> Self {
+        let source_revision = env!("CODEWIDE_RELAY_SOURCE_REVISION");
+        Self {
+            schema_version: 1,
+            version: env!("CODEWIDE_RELAY_VERSION"),
+            build: &source_revision[..12],
+            source_revision,
+        }
+    }
 }
 
 pub async fn run() -> ExitCode {
@@ -99,6 +133,23 @@ async fn execute(cli: &Cli) -> Result<ExitCode> {
         || (cli.command.is_none() && cli.port.is_some() && !interactive)
     {
         return run_server(cli).await.map(|()| ExitCode::SUCCESS);
+    }
+    if matches!(cli.command, Some(Command::BuildInfo)) {
+        println!("{}", serde_json::to_string(&BuildInfo::current())?);
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(Command::UpdateRun { install_root }) = &cli.command {
+        let state = cli
+            .state
+            .clone()
+            .ok_or("update-run needs the Relay --state directory")?;
+        codewide_relay::update::run_pending(
+            install_root.clone(),
+            state.join(codewide_relay::update::GUARDIAN_STATE),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        return Ok(ExitCode::SUCCESS);
     }
     if matches!(cli.command, Some(Command::Pair)) && (cli.json || !interactive) {
         return Err("pair needs an interactive terminal to confirm the matching symbols. For scripts or older clients, use invite.".into());
@@ -130,9 +181,9 @@ async fn execute(cli: &Cli) -> Result<ExitCode> {
             else {
                 return Err("The Relay service returned an incompatible status response".into());
             };
-            let endpoint = discovery::public_address(cli.address.as_deref(), port).await?;
+            let endpoints = discovery::public_addresses(cli.address.as_deref(), port).await?;
             socket = UnixStream::connect(target.state.join(SOCKET)).await?;
-            return presentation::pair(socket, &endpoint).await;
+            return presentation::pair(socket, &endpoints).await;
         }
         Some(Command::Status) | None => Request::Status,
         Some(Command::Invite { route }) => Request::Invite {
@@ -145,7 +196,12 @@ async fn execute(cli: &Cli) -> Result<ExitCode> {
         Some(Command::Revoke { route }) => Request::Revoke {
             route: route.clone(),
         },
-        Some(Command::BootstrapInfo | Command::Serve) => return Ok(ExitCode::SUCCESS),
+        Some(
+            Command::BootstrapInfo
+            | Command::BuildInfo
+            | Command::UpdateRun { .. }
+            | Command::Serve,
+        ) => return Ok(ExitCode::SUCCESS),
     };
     write_frame(&mut socket, &request).await?;
     let reply = tokio::time::timeout(Duration::from_secs(5), read_frame(&mut socket)).await??;
@@ -167,10 +223,11 @@ async fn run_server(cli: &Cli) -> Result<()> {
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o710))?;
     }
     let identity = RelayTlsIdentity::load_or_create(&root)?;
-    let relay =
-        Relay::new(registry.clone()).with_updater(codewide_relay::update::RelayUpdater::new(&root));
+    let relay = Relay::new(registry.clone()).with_updater(
+        codewide_relay::update::RelayUpdater::new(&root, identity.pin()),
+    );
     let port = cli.port.unwrap_or(8780);
-    let listener = TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await?;
+    let listener = public_listener(port)?;
     let control = ControlServer::bind(
         &root,
         registry,
@@ -201,10 +258,82 @@ async fn run_server(cli: &Cli) -> Result<()> {
     result.map(|_| ())
 }
 
+fn public_listener(port: u16) -> std::io::Result<TcpListener> {
+    dual_stack_listener(port).or_else(|_| ipv4_listener(port))
+}
+
+fn dual_stack_listener(port: u16) -> std::io::Result<TcpListener> {
+    let ipv6 = Socket::new(Domain::IPV6, Type::STREAM, None)?;
+    ipv6.set_only_v6(false)?;
+    ipv6.set_reuse_address(true)?;
+    ipv6.bind(&std::net::SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port)).into())?;
+    ipv6.listen(1024)?;
+    ipv6.set_nonblocking(true)?;
+    TcpListener::from_std(ipv6.into())
+}
+
+fn ipv4_listener(port: u16) -> std::io::Result<TcpListener> {
+    let ipv4 = Socket::new(Domain::IPV4, Type::STREAM, None)?;
+    ipv4.set_reuse_address(true)?;
+    ipv4.bind(&std::net::SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, port)).into())?;
+    ipv4.listen(1024)?;
+    ipv4.set_nonblocking(true)?;
+    TcpListener::from_std(ipv4.into())
+}
+
 async fn shutdown_signal() -> std::io::Result<()> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! {
         result = tokio::signal::ctrl_c() => result,
         _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BuildInfo, public_listener};
+    use socket2::SockRef;
+    #[cfg(target_os = "linux")]
+    use std::net::Ipv4Addr;
+    #[cfg(target_os = "linux")]
+    use tokio::{io::AsyncReadExt, net::TcpStream};
+
+    #[test]
+    fn build_info_keeps_the_installer_field_order() -> Result<(), serde_json::Error> {
+        let line = serde_json::to_string(&BuildInfo::current())?;
+        let prefix = format!(
+            r#"{{"schemaVersion":1,"version":"{}","build":""#,
+            env!("CODEWIDE_RELAY_VERSION")
+        );
+        assert!(line.starts_with(&prefix), "{line}");
+        assert!(line.contains(r#"","sourceRevision":""#));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn public_listener_keeps_the_restart_port_reusable() -> std::io::Result<()> {
+        let listener = public_listener(0)?;
+
+        assert!(SockRef::from(&listener).reuse_address()?);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn public_listener_rebinds_after_an_active_connection() -> std::io::Result<()> {
+        let previous = tokio::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).await?;
+        let port = previous.local_addr()?.port();
+        let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).await?;
+        let (server, _) = previous.accept().await?;
+
+        drop(server);
+        let mut end = [0_u8; 1];
+        assert_eq!(client.read(&mut end).await?, 0);
+        drop(client);
+        drop(previous);
+
+        let replacement = public_listener(port)?;
+        assert_eq!(replacement.local_addr()?.port(), port);
+        Ok(())
     }
 }

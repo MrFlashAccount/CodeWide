@@ -1,8 +1,7 @@
 import { useSelector } from "@legendapp/state/react";
 import { useEffect } from "react";
 
-import { remoteProjectCatalogCache } from "../../data/remoteProjectCatalogCache";
-import { createRemoteProjectCatalogModel } from "../../data/remote-project-catalog-model";
+import { remoteProjectCatalogModel } from "../../data/remoteProjectCatalog";
 import type { RemoteProject } from "../../data/remote-projects";
 import { useEvent } from "../../react/useEvent";
 
@@ -17,10 +16,6 @@ type RemoteProjectCatalog = {
   mergeProject: (connectionId: string, project: RemoteProject) => void;
   projectsByConnection: Record<string, RemoteProject[]>;
 };
-
-const remoteProjectCatalogModel = createRemoteProjectCatalogModel({
-  cache: remoteProjectCatalogCache,
-});
 
 /** Removes a deleted server from both the resident catalog and its disk cache. */
 export async function forgetRemoteProjectCatalogConnection(connectionId: string): Promise<void> {

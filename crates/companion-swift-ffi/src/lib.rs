@@ -6,39 +6,41 @@ use std::{
     time::Duration,
 };
 
+use codewide_host_update::HostUpdateRelayState;
 use companion_core::runtime_host::{
     RuntimeHealth, RuntimeHost, RuntimeHostError, RuntimePhase, UpdateStatus,
 };
 use companion_core::{
     host_identity::HostDisplayName,
-    host_update::{
-        HOST_UPDATE_BOOTSTRAP_VERSION, HOST_UPDATE_JOURNAL_VERSION, HostPlatform, ReleaseAdmission,
-        SignedReleaseDescriptor, admit_signed_release, verify_signed_release_descriptor,
-    },
     managed_runtime::{
         AppServerConnection, ManagedRuntime, ManagedRuntimeConfig, PairingPresentation,
         relay_connection_label,
     },
-    relay::{RelayEnrollmentStatus, RelayStatus},
+    relay::{RelayConnectionStatus, RelayEnrollmentStatus, RelayRuntime, RelayStatus},
     secure_store::SecretStoragePolicy,
     upstream::probe_app_server_version,
 };
 
-/// The Claude agent host inside the application bundle:
-/// `Contents/Resources/claude-agent-host`, next to the runtime's
-/// `Contents/MacOS` executable. `None` outside a bundle.
-fn bundled_claude_host() -> Option<PathBuf> {
-    let executable = std::env::current_exe().ok()?;
-    let host = executable
-        .parent()?
-        .parent()?
-        .join("Resources/claude-agent-host");
-    host.is_file().then_some(host)
+/// Relay state recorded by each accepted remote update.
+fn relay_probe(relay: RelayRuntime) -> codewide_host_update::macos::RelayProbe {
+    Box::new(move || {
+        relay.status().map_or(
+            HostUpdateRelayState {
+                configured: false,
+                enabled: false,
+                upstream_live: false,
+            },
+            |status| HostUpdateRelayState {
+                configured: status.configured,
+                enabled: status.enabled,
+                upstream_live: matches!(status.connection, RelayConnectionStatus::Online),
+            },
+        )
+    })
 }
 
 mod codex_installation;
 mod logging;
-mod macos_host_update;
 
 pub use codex_installation::FfiCodexInstallation;
 use codex_installation::{inspect_codex_installation, start_codex_app_server};
@@ -108,134 +110,6 @@ pub struct FfiDeviceStatus {
 }
 
 #[derive(Clone, Debug, uniffi::Record)]
-pub struct FfiHostUpdateTarget {
-    pub platform: String,
-    pub version: String,
-    pub build: String,
-    pub source_revision: String,
-    pub artifact_url: String,
-    pub sha256: String,
-    pub bootstrap_version: u16,
-    pub journal_version: u16,
-    pub state_epoch: u32,
-    pub rollback_compatible_from: Vec<String>,
-}
-
-#[derive(Clone, Debug, uniffi::Record)]
-pub struct FfiVerifiedHostUpdateRelease {
-    pub sequence: u64,
-    pub expires_at: u64,
-    pub targets: Vec<FfiHostUpdateTarget>,
-}
-
-#[derive(Clone, Debug, uniffi::Record)]
-pub struct FfiAdmittedHostUpdate {
-    pub sequence: u64,
-    pub expires_at: u64,
-    pub target_fingerprint: String,
-    pub target: FfiHostUpdateTarget,
-}
-
-/// Verifies a signed stable descriptor for baseline receipt establishment.
-/// This does not admit an update; callers must independently prove the
-/// installed bundle is byte-identical to the verified current release image.
-///
-/// # Errors
-///
-/// Returns an error when the envelope, signature, trust key, channel, or
-/// freshness contract is invalid.
-#[uniffi::export]
-#[allow(clippy::needless_pass_by_value)]
-pub fn verify_host_update_release(
-    envelope_json: String,
-    public_key_spki: String,
-    now_unix_seconds: u64,
-    trusted_key_id: String,
-) -> Result<FfiVerifiedHostUpdateRelease, CompanionFfiError> {
-    let envelope: SignedReleaseDescriptor =
-        serde_json::from_str(&envelope_json).map_err(CompanionFfiError::runtime)?;
-    let descriptor = verify_signed_release_descriptor(
-        &envelope,
-        &public_key_spki,
-        now_unix_seconds,
-        &trusted_key_id,
-    )
-    .map_err(CompanionFfiError::runtime)?;
-    Ok(FfiVerifiedHostUpdateRelease {
-        sequence: descriptor.sequence,
-        expires_at: descriptor.expires_at,
-        targets: descriptor
-            .targets
-            .into_iter()
-            .map(ffi_host_update_target)
-            .collect(),
-    })
-}
-
-/// Applies the complete shared admission policy to one macOS target.
-///
-/// # Errors
-///
-/// Returns an error when signature verification or any target, predecessor,
-/// sequence, compatibility, or state-epoch admission rule fails.
-#[uniffi::export]
-#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
-pub fn admit_macos_host_update_release(
-    envelope_json: String,
-    public_key_spki: String,
-    now_unix_seconds: u64,
-    trusted_key_id: String,
-    current_version: String,
-    current_digest: String,
-    highest_sequence: u64,
-    state_epoch: u32,
-) -> Result<FfiAdmittedHostUpdate, CompanionFfiError> {
-    let envelope: SignedReleaseDescriptor =
-        serde_json::from_str(&envelope_json).map_err(CompanionFfiError::runtime)?;
-    let admission = ReleaseAdmission {
-        trusted_key_id: &trusted_key_id,
-        platform: HostPlatform::MacosUniversal,
-        current_version: &current_version,
-        current_digest: &current_digest,
-        highest_sequence,
-        state_epoch,
-        bootstrap_version: HOST_UPDATE_BOOTSTRAP_VERSION,
-        journal_version: HOST_UPDATE_JOURNAL_VERSION,
-    };
-    let (descriptor, target, target_fingerprint) =
-        admit_signed_release(&envelope, &public_key_spki, now_unix_seconds, &admission)
-            .map_err(CompanionFfiError::runtime)?;
-    Ok(FfiAdmittedHostUpdate {
-        sequence: descriptor.sequence,
-        expires_at: descriptor.expires_at,
-        target_fingerprint,
-        target: ffi_host_update_target(target),
-    })
-}
-
-fn ffi_host_update_target(
-    target: companion_core::host_update::ReleaseTargetV1,
-) -> FfiHostUpdateTarget {
-    FfiHostUpdateTarget {
-        platform: match target.platform {
-            HostPlatform::LinuxX86_64 => "linux-x86-64",
-            HostPlatform::MacosUniversal => "macos-universal",
-            HostPlatform::RelayLinuxX86_64 => "relay-linux-x86-64",
-        }
-        .to_owned(),
-        version: target.version,
-        build: target.build,
-        source_revision: target.source_revision,
-        artifact_url: target.artifact_url,
-        sha256: target.sha256,
-        bootstrap_version: target.bootstrap_version,
-        journal_version: target.journal_version,
-        state_epoch: target.state_epoch,
-        rollback_compatible_from: target.rollback_compatible_from,
-    }
-}
-
-#[derive(Clone, Debug, uniffi::Record)]
 pub struct FfiPairing {
     pub link: String,
     pub expires_at_unix_ms: u64,
@@ -278,18 +152,28 @@ impl CoreHost {
     ///
     /// Returns an adapter error when the state directory cannot be opened,
     /// migrated, exclusively locked, or durably checkpointed.
+    ///
+    /// `app_build` and `source_revision` identify the installed bundle for
+    /// remote updates.
     #[uniffi::constructor]
     // UniFFI constructors receive owned strings from the Swift boundary.
-    #[allow(clippy::needless_pass_by_value)]
+    #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
     pub fn new(
         state_directory: String,
         codex_home: String,
         app_version: String,
+        app_build: String,
+        source_revision: String,
         host_version: String,
         computer_name: String,
         listen_address: String,
     ) -> Result<Arc<Self>, CompanionFfiError> {
         logging::install(Path::new(&state_directory));
+        let installed = codewide_host_update::macos::InstalledRelease {
+            version: app_version.clone(),
+            build: app_build,
+            source_revision,
+        };
         let lifecycle = RuntimeHost::open(&state_directory, app_version, host_version)?;
         let codex_home = PathBuf::from(codex_home);
         let executor = tokio::runtime::Builder::new_multi_thread()
@@ -303,6 +187,8 @@ impl CoreHost {
             .parent()
             .ok_or_else(|| CompanionFfiError::runtime("Companion state directory has no parent"))?
             .join("Updater");
+        let updates =
+            codewide_host_update::macos::MacosSparkleUpdater::new(&updater_root, installed);
         let config = ManagedRuntimeConfig::desktop(
             state_directory.into(),
             codex_home.clone(),
@@ -310,13 +196,11 @@ impl CoreHost {
         )
         .with_secret_storage_policy(SecretStoragePolicy::PrivateFileOnly)
         .with_listen_address(listen_address.parse().map_err(CompanionFfiError::runtime)?)
-        .with_host_update_guardian(macos_host_update::MacOsHostUpdateGuardian::shared(
-            updater_root,
-        ))
-        .with_claude_host(bundled_claude_host());
+        .with_host_update_guardian(updates.clone());
         let companion = executor
             .block_on(ManagedRuntime::start(config))
             .map_err(CompanionFfiError::runtime)?;
+        updates.observe_relay(relay_probe(companion.relay_runtime()));
         Ok(Arc::new(Self {
             lifecycle: Mutex::new(lifecycle),
             companion,
@@ -333,6 +217,17 @@ impl CoreHost {
                 FfiAppServerConnection::Reconnecting { last_known_version }
             }
         }
+    }
+
+    /// Returns the data-minimized provider connection snapshot used by the
+    /// local macOS UI. Account, subscription, capability and credential data
+    /// are not part of this contract.
+    ///
+    /// # Errors
+    /// Returns an adapter error if the presentation cannot be serialized.
+    pub fn agent_provider_connections_json(&self) -> Result<String, CompanionFfiError> {
+        serde_json::to_string(&self.companion.agent_provider_connections())
+            .map_err(CompanionFfiError::runtime)
     }
 
     /// Finds local Codex homes with a reachable App Server endpoint.
@@ -839,6 +734,8 @@ mod tests {
                 state.display().to_string(),
                 codex.display().to_string(),
                 version.into(),
+                "200098.0.0".into(),
+                "a".repeat(40),
                 version.into(),
                 "Restart test".into(),
                 "127.0.0.1:0".into(),

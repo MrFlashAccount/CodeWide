@@ -28,38 +28,44 @@ struct SetupStateTests {
         #expect(SetupStep.allCases.allSatisfy { !snapshot.canNavigate(to: $0) })
     }
 
-    @Test func anAlreadyConnectedSingleProfileNeedsNoChoiceOrConfirmation() {
-        var snapshot = SetupSnapshot(macState: .ready, profiles: [profile(available: true)])
-        #expect(snapshot.canAdvancePastCodex)
+    @Test func firstStepStaysVisibleAsCodeWideWithAConnectedProfile() {
+        let snapshot = SetupSnapshot(macState: .ready, profiles: [profile(available: true)])
+        #expect(SetupStep.mac.title == "CodeWide")
         #expect(!snapshot.showsProfilePicker)
-        snapshot.step = .relay
-        #expect(!snapshot.canAdvancePastCodex)
-        // Completing Codex still leaves the Direct/Relay decision to the user.
+        #expect(snapshot.canNavigate(to: .relay))
         #expect(!snapshot.canNavigate(to: .phone))
+    }
+
+    @Test func setupListsEveryEnabledProviderFoundByTheRuntime() throws {
+        let providers = try CompanionAgentProvider.decodeList("""
+        {"providers":[
+          {"id":"codex","name":"Codex","primary":true,"status":"live"},
+          {"id":"claude","name":"Claude","primary":false,"status":"live"},
+          {"id":"gemini","name":"Gemini","primary":false,"status":"disabled"}
+        ]}
+        """)
+        let snapshot = SetupSnapshot(macState: .ready, agentProviders: providers)
+        #expect(snapshot.visibleAgentProviders.map(\.name) == ["Codex", "Claude"])
     }
 
     @Test func multipleProfilesRemainAnExplicitChoice() {
         let other = AppServerPayload(id: "work", displayName: "Work", codexHome: "/work",
                                      state: .available(version: "0.157.0"), selected: false)
         let snapshot = SetupSnapshot(macState: .ready, profiles: [profile(available: true), other])
-        #expect(!snapshot.canAdvancePastCodex)
         #expect(snapshot.showsProfilePicker)
     }
 
-    @Test func automaticAdvanceWaitsForDiscoveryAndRecovery() {
+    @Test func providerRecoveryKeepsLaterStepsLocked() {
         var snapshot = SetupSnapshot(macState: .ready, profiles: [profile(available: true)])
         snapshot.isDiscovering = true
-        #expect(!snapshot.canAdvancePastCodex)
         snapshot.isDiscovering = false
         snapshot.isWorking = true
-        #expect(!snapshot.canAdvancePastCodex)
         snapshot.isWorking = false
         snapshot.error = "Discovery failed"
-        #expect(!snapshot.canAdvancePastCodex)
         snapshot.error = nil
         for state: SetupMacState in [.checking, .helperUnavailable, .permissionRequired, .startCodex] {
             snapshot.macState = state
-            #expect(!snapshot.canAdvancePastCodex)
+            #expect(!snapshot.canNavigate(to: .relay))
             #expect(!snapshot.showsProfilePicker)
         }
     }
@@ -67,7 +73,6 @@ struct SetupStateTests {
     @Test func anUnselectedSingleProfileRequiresConnectInsteadOfARadioChoice() {
         let snapshot = SetupSnapshot(macState: .chooseProfile,
                                      profiles: [profile(available: true, selected: false)])
-        #expect(!snapshot.canAdvancePastCodex)
         #expect(!snapshot.showsProfilePicker)
         #expect(snapshot.profileToConnect?.id == "test")
         #expect(snapshot.canPerformPrimaryAction)

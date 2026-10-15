@@ -228,7 +228,13 @@ export function createConnectionStateModel(): ConnectionStateModel {
 export function connectionDisplayState(
   connection: Pick<ConnectionStateRow, "state" | "rpcAvailable">,
 ): RemoteConnectionState {
-  return (connection.state === "live" || connection.state === "syncing") && !connection.rpcAvailable
+  if (connection.state === "authRequired") {
+    return "authRequired";
+  }
+  if (connection.rpcAvailable) {
+    return "live";
+  }
+  return connection.state === "live" || connection.state === "syncing"
     ? "connecting"
     : connection.state;
 }

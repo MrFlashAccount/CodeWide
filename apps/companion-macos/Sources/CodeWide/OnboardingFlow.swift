@@ -8,8 +8,6 @@ struct OnboardingFlow: View {
     let finish: @MainActor () -> Void
 
     @State private var step: SetupStep = .mac
-    @State private var hasFinishedInitialDiscovery = false
-    @State private var allowsAutomaticAdvance = true
     @State private var route: PairingRoute = .direct
     @State private var hasChosenConnection = false
     @State private var actionError: String?
@@ -36,12 +34,9 @@ struct OnboardingFlow: View {
             enableRelay: { runAction { try await runtime.setRelayEnabled(true) } }
         ))
         .task {
-            await runtime.discoverAppServers()
+            await runtime.refresh()
             guard !Task.isCancelled else { return }
-            hasFinishedInitialDiscovery = true
-        }
-        .onChange(of: shouldAdvancePastCodex, initial: true) { _, shouldAdvance in
-            if shouldAdvance { move(to: .relay) }
+            await runtime.discoverAppServers()
         }
         .task(id: pairingRequestKey) {
             guard pairingRequestKey != nil else {
@@ -54,10 +49,6 @@ struct OnboardingFlow: View {
             }
             await createPairing()
         }
-    }
-
-    private var shouldAdvancePastCodex: Bool {
-        hasFinishedInitialDiscovery && allowsAutomaticAdvance && snapshot.canAdvancePastCodex
     }
 
     private var macState: SetupMacState {
@@ -74,6 +65,7 @@ struct OnboardingFlow: View {
         value.step = step
         value.macState = macState
         value.profiles = runtime.appServers
+        value.agentProviders = runtime.agentProviders
         value.installation = runtime.codexInstallation
         value.endpoints = runtime.directAccess?.endpoints ?? []
         value.selectedEndpoint = runtime.pairingEndpoint
@@ -136,8 +128,6 @@ struct OnboardingFlow: View {
 
     private func move(to destination: SetupStep) {
         guard destination != step, snapshot.canNavigate(to: destination) else { return }
-        // Returning to Codex is deliberate; refreshes must not send the user forward again.
-        allowsAutomaticAdvance = false
         step = destination
         actionError = nil
     }

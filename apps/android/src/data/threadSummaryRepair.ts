@@ -5,6 +5,7 @@ import {
   type SyncSnapshotThread,
 } from "@codewide/sync-client";
 import { isCatalogExcluded } from "./threadCatalogMembership";
+import { appLogger } from "../observability/logger";
 import { threadSummaryEventNeedsMetadata } from "./thread-summary-projection";
 import type { ThreadSummaryDatabase } from "./thread-summary-database-contract";
 import { threadSummaryProjectionCursor } from "./thread-summary-types";
@@ -63,6 +64,11 @@ export function createThreadSummaryRepair({ readMetadata, summaries }: RepairPor
         // A concurrent authoritative removal does not require a readable shell.
         // Persist that removal rather than retrying a deleted thread forever.
         if (!queuedSummaryRemoved(events)) {
+          appLogger.warnCaught({
+            error,
+            event: "thread_summary.metadata_repair.failed",
+            fields: { connectionId, threadId },
+          });
           throw error;
         }
         await summaries.applyEvents(connectionId, events.splice(0));

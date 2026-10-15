@@ -32,7 +32,7 @@ it("preserves composer integration contracts", () => {
     ]),
   ).toBe(true);
   expect(ownerComposerControlChips).toContain(
-    "`Model and thinking: ${modelLabel}, ${view.effort.value ?? \"not specified\"}${nextTurnSuffix(modelNextTurn)}`",
+    "`Model and thinking: ${modelLabel}, ${view.effort.value ?? \"not specified\"}`",
   );
   expect(ownerComposerControlChips).toContain("<ModelThinkingMenu");
   expect(ownerComposerControlChips).toContain("<PermissionsMenu");

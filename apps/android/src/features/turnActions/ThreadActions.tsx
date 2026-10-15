@@ -9,7 +9,6 @@ import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { AppSheet } from "../../ui/AppSheet";
 import { MenuAction } from "../../ui/MenuAction";
 import { AppText as Text } from "../../ui/Typography";
-import { ForkTargetSheet } from "./ForkTargetSheet";
 import { styles } from "./ThreadActions.styles";
 
 export function ThreadHeaderMenu(props: ThreadHeaderProps) {
@@ -24,11 +23,7 @@ export function ThreadHeaderMenu(props: ThreadHeaderProps) {
     pinned,
   } = props;
   const [webMenuVisible, setWebMenuVisible] = useState(false);
-  const { actions, closeForkTargets, forkChoices, handleAction, run, selectForkTarget } =
-    useThreadHeaderActions(props);
-  const forkTargetSheet = forkChoices !== null && (
-    <ForkTargetSheet choices={forkChoices} onClose={closeForkTargets} onSelect={selectForkTarget} />
-  );
+  const { actions, handleAction, run } = useThreadHeaderActions(props);
   if (Platform.OS === "web") {
     return (
       <>
@@ -114,19 +109,15 @@ export function ThreadHeaderMenu(props: ThreadHeaderProps) {
             />
           </AppSheet>
         )}
-        {forkTargetSheet}
       </>
     );
   }
   return (
-    <>
-      <NativeThreadMenu
-        actions={actions}
-        onSelect={handleAction}
-        {...(onOpenMenu === undefined ? {} : { onOpenMenu })}
-      />
-      {forkTargetSheet}
-    </>
+    <NativeThreadMenu
+      actions={actions}
+      onSelect={handleAction}
+      {...(onOpenMenu === undefined ? {} : { onOpenMenu })}
+    />
   );
 }
 

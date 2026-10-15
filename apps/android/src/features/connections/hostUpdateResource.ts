@@ -23,6 +23,7 @@ import { HostUpdateHttpError, type HostUpdateTransport } from "./hostUpdateTrans
 type HostUpdateResourceOptions = {
   readonly createIdempotencyKey: () => string;
   readonly idempotencyPrefix?: string;
+  readonly now?: () => number;
   readonly retryBaseMilliseconds?: number;
   readonly subject?: string;
   readonly transport: HostUpdateTransport;
@@ -31,6 +32,13 @@ type HostUpdateResourceOptions = {
 const DEFAULT_RETRY_MILLISECONDS = 1000;
 const RETRY_MULTIPLIER = 2;
 const MAX_RETRY_MILLISECONDS = 8000;
+// Demand older than this rereads the server: Companion or Relay may have been
+// updated or restarted while no settings surface observed the connection.
+const STATUS_FRESH_MILLISECONDS = 30_000;
+// One hour, matching the Linux guardian's retention of a terminal outcome:
+// after this a status read without that outcome no longer keeps the locally
+// shown result.
+const RETAINED_TERMINAL_MILLISECONDS = 3_600_000;
 const NOT_FOUND_STATUS = 404;
 
 type TransportFailureInput = {
@@ -56,6 +64,7 @@ function cancelTimer(record: HostUpdateResourceRecord): void {
 export function createHostUpdateResource({
   createIdempotencyKey,
   idempotencyPrefix = "host-update",
+  now = Date.now,
   retryBaseMilliseconds = DEFAULT_RETRY_MILLISECONDS,
   subject = "Companion",
   transport,
@@ -79,6 +88,12 @@ export function createHostUpdateResource({
           canCheck: false,
           disconnected: record.intent !== null,
         };
+    const terminal = projected.phase !== null && isTerminalHostUpdatePhase(projected.phase);
+    if (!terminal) {
+      record.terminalShownAt = null;
+    } else if (record.view.phase !== projected.phase || record.terminalShownAt === null) {
+      record.terminalShownAt = now();
+    }
     record.view = projected;
     snapshot$.byConnection.assign({ [connectionId]: projected });
   };
@@ -144,10 +159,32 @@ export function createHostUpdateResource({
     record: HostUpdateResourceRecord,
   ): Promise<void> => {
     const status = await transport.readStatus(connectionId);
-    record.loaded = true;
     record.retryAttempt = 0;
     record.intent = intentAfterStatus(record.intent, status);
-    publish(connectionId, record, hostUpdateStatusView(status));
+    const view = hostUpdateStatusView(status);
+    // Some older guardians omit completed operations from status. A status
+    // refresh must not erase the terminal result we just read by operation id,
+    // but that result expires like the guardian's own retention.
+    const terminal =
+      status.activeOperation === null &&
+      record.view.phase !== null &&
+      isTerminalHostUpdatePhase(record.view.phase) &&
+      record.terminalShownAt !== null &&
+      now() - record.terminalShownAt < RETAINED_TERMINAL_MILLISECONDS;
+    publish(
+      connectionId,
+      record,
+      terminal
+        ? {
+            ...view,
+            canRetry: record.view.canRetry,
+            errorCode: record.view.errorCode,
+            errorMessage: record.view.errorMessage,
+            operationId: record.view.operationId,
+            phase: record.view.phase,
+          }
+        : view,
+    );
     if (
       status.activeOperation !== null &&
       !isTerminalHostUpdatePhase(status.activeOperation.phase)
@@ -269,6 +306,7 @@ export function createHostUpdateResource({
     }
     cancelTimer(record);
     record.busy = true;
+    record.lastReadAt = now();
     const generation = record.generation;
     try {
       await runReconcile(connectionId, record);
@@ -307,6 +345,10 @@ export function createHostUpdateResource({
     }
   };
 
+  // A failed read also counts as recent, so a rerender cannot loop requests.
+  const isStale = (record: HostUpdateResourceRecord): boolean =>
+    record.lastReadAt === null || now() - record.lastReadAt >= STATUS_FRESH_MILLISECONDS;
+
   const resource: HostUpdateResource = {
     async apply(connectionId, targetFingerprint) {
       const record = requireHostUpdateResourceRecord(records, connectionId);
@@ -340,6 +382,7 @@ export function createHostUpdateResource({
         errorCode: null,
         errorMessage: null,
         phase: "accepted",
+        progress: null,
       });
       await reconcile(connectionId, record);
     },
@@ -349,6 +392,7 @@ export function createHostUpdateResource({
         return;
       }
       record.busy = true;
+      record.lastReadAt = now();
       publish(connectionId, record, {
         ...record.view,
         canApply: false,
@@ -358,7 +402,6 @@ export function createHostUpdateResource({
       });
       try {
         const status = await transport.check(connectionId);
-        record.loaded = true;
         record.retryAttempt = 0;
         record.intent = intentAfterStatus(record.intent, status);
         publish(connectionId, record, hostUpdateStatusView(status));
@@ -391,7 +434,7 @@ export function createHostUpdateResource({
         observeDisconnected(connectionId, record, disconnected);
         return;
       }
-      if (!record.loaded || reconnected) {
+      if (reconnected || isStale(record)) {
         reconcile(connectionId, record).catch(() => undefined);
       }
     },

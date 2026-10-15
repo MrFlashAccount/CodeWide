@@ -58,7 +58,8 @@ endpoint.
 
 - `contract/v1.json` owns the V1 machine-readable limits and compatibility
   surface.
-- `contract/host-update-v1.json` owns the additive host-update API, guardian,
+- `host_update` re-exports `codewide-host-update` (`crates/host-update`), whose
+  `contract/host-update-v1.json` owns the additive host-update API, guardian,
   journal, phase, release-target, and error contracts.
 - `contract/v2.json` owns the V2 device wire contract.
 - `runtime_host` owns the platform-host state lock, update checkpoint, and

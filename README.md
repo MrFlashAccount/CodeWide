@@ -115,18 +115,16 @@ flowchart LR
   subgraph host["Your Mac or Linux machine"]
     companion["CodeWide Companion"]
     codex["Codex App Server"]
-    claudehost["Claude agent host"]
     claude["claude CLI"]
   end
   app -- "Relay: any network" --> relay
   companion -- "outbound" --> relay
   app -. "Direct: same Wi-Fi or VPN (Mac)" .-> companion
   companion -- "control socket" --> codex
-  companion -- "stdio" --> claudehost
-  claudehost -- "Claude Agent SDK" --> claude
+  companion -- "stream-json over stdio" --> claude
 ```
 
-- **Companion** runs next to your code. Owns threads, history, queue, files, terminals, ports.
+- **Companion** runs next to your code. Drives the Codex App Server and your own `claude` CLI directly. Owns threads, history, queue, files, terminals, ports.
 - **App** pairs once by QR code, then opens TLS 1.3 straight to the Companion and pins its identity.
 - **Relay** is a small server on your VPS. Both sides connect out. It forwards encrypted bytes only.
 - **Direct** (Mac) skips the relay on the same Wi-Fi or a VPN such as Tailscale.

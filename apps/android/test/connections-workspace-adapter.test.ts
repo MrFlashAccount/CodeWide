@@ -23,7 +23,6 @@ vi.mock("../src/native/native-transport", () => ({
   claimNativePairing: vi.fn(),
   deleteNativeConnection: vi.fn(async () => undefined),
   listNativeConnectionConfigs: vi.fn(),
-  nativeCompanionHttpOrigin: vi.fn(),
   reconnectNativeConnection: vi.fn(),
   revokeRemoteConnection: remote.revoke,
   saveNativeConnectionCredentials: vi.fn(),

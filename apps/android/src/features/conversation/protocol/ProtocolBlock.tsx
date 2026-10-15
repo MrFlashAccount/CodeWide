@@ -23,6 +23,7 @@ import { TokenUsageProtocolBlock } from "./TokenUsageProtocolBlock";
 import { ToolCallProtocolBlock } from "./ToolContent";
 import { UnknownProtocolBlock } from "./UnknownProtocolBlock";
 import { WebSearchProtocolBlock } from "./WebSearchProtocolBlock";
+import type { TransferAccess } from "../../../data/private-transfer";
 
 export function ProtocolBlock({
   block,
@@ -30,7 +31,7 @@ export function ProtocolBlock({
   onFixUnsupportedBlock,
 }: {
   block: RenderBlock;
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
 }) {
   const activeToolCall = useContext(ActiveToolCallContext);

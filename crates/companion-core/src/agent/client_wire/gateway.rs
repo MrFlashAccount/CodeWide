@@ -16,14 +16,16 @@ use rand::Rng;
 use serde_json::{Value, json};
 use tracing::warn;
 
-use super::{PROVIDER_FIELD, WireProvider, request_ids, results, settings};
+use super::{
+    PROVIDER_FIELD, WireProvider, decode, model_scope::ModelScope, request_ids, results, settings,
+};
 use crate::agent::{
     bindings::{BindOutcome, BindingOrigin, BindingStore, ThreadRoute},
     model::{
         AppThreadId, Capability, ERROR_CAPABILITY_UNSUPPORTED, ERROR_INVALID_PARAMS,
-        ERROR_INVALID_REQUEST, ERROR_PROVIDER_DISABLED, ProviderId, RuntimeRequestId,
-        ThreadCreateParams, ThreadSettings, capability_unsupported_message,
-        thread_not_found_message,
+        ERROR_INVALID_REQUEST, ERROR_PROVIDER_DISABLED, ForkBoundary, ProviderId, RuntimeRequestId,
+        ThreadChange, ThreadCreateParams, ThreadForkParams, ThreadSettings, ThreadUpdateParams,
+        TurnId, capability_unsupported_message, thread_not_found_message,
     },
     provider::{AgentProvider, NativeSurface, ProviderError},
     registry::{ProviderRegistry, disabled_provider_name},
@@ -140,12 +142,33 @@ pub enum ThreadStartRoute {
 pub struct ClientWireGateway {
     registry: Arc<ProviderRegistry>,
     bindings: Arc<BindingStore>,
+    model_scope: ModelScope,
 }
 
 impl ClientWireGateway {
     #[must_use]
     pub fn new(registry: Arc<ProviderRegistry>, bindings: Arc<BindingStore>) -> Self {
-        Self { registry, bindings }
+        Self {
+            registry,
+            bindings,
+            model_scope: ModelScope::default(),
+        }
+    }
+
+    /// Rejects a thread-scoped `method` whose `model` only another provider
+    /// offers: switching agents is a fork (`model_scope`).
+    ///
+    /// # Errors
+    /// Returns `-32602` naming the provider that offers the model.
+    pub async fn check_model_scope(
+        &self,
+        target: &Target,
+        method: &str,
+        params: &Value,
+    ) -> Result<(), RpcFailure> {
+        self.model_scope
+            .check(&self.registry, target, method, params)
+            .await
     }
 
     #[must_use]
@@ -452,6 +475,79 @@ impl ClientWireGateway {
         self.bind_created(&wire.descriptor.id, thread.app_thread_id.as_str())
             .await?;
         Ok(thread)
+    }
+
+    /// Copies `source` into a new thread of the same provider through the
+    /// neutral `thread.fork`, writing its `created` binding like a created
+    /// thread. The boundary comes from `lastTurnId` (through) or
+    /// `beforeTurnId` (before). The requested `model`, `serviceTier` and
+    /// `config.model_reasoning_effort` that differ from the copy's settings
+    /// are applied in one `thread.update`; without a difference no update
+    /// is sent.
+    ///
+    /// # Errors
+    /// Returns the provider or binding failure.
+    pub async fn fork_thread(
+        &self,
+        source: &Target,
+        params: &Value,
+    ) -> Result<crate::agent::model::AgentThread, RpcFailure> {
+        let turn = |name: &str| {
+            params
+                .get(name)
+                .and_then(Value::as_str)
+                .and_then(TurnId::parse)
+        };
+        let boundary = match (turn("lastTurnId"), turn("beforeTurnId")) {
+            (Some(turn_id), _) => ForkBoundary::Through { turn_id },
+            (None, Some(turn_id)) => ForkBoundary::Before { turn_id },
+            (None, None) => ForkBoundary::All,
+        };
+        let provider = &source.provider;
+        let fork_app_thread_id = provider
+            .capabilities()
+            .supports(Capability::ThreadsHostMintedIds)
+            .then(mint_app_thread_id);
+        if let Some(id) = &fork_app_thread_id {
+            self.bind_created(&source.wire.descriptor.id, id.as_str())
+                .await?;
+        }
+        let thread = provider
+            .thread_fork(ThreadForkParams {
+                app_thread_id: source.thread_id.clone(),
+                boundary,
+                fork_app_thread_id,
+            })
+            .await
+            .map_err(|error| RpcFailure::from_provider(&error))?;
+        self.bind_created(&source.wire.descriptor.id, thread.app_thread_id.as_str())
+            .await?;
+        let requested = decode::requested_settings(params);
+        let differs = |requested: Option<String>, current: Option<&str>| {
+            requested.filter(|value| Some(value.as_str()) != current)
+        };
+        let model = differs(requested.model, Some(thread.settings.model.as_str()));
+        let effort = differs(requested.effort, thread.settings.effort.as_deref());
+        let service_tier = differs(
+            requested.service_tier,
+            thread.settings.service_tier.as_deref(),
+        );
+        if model.is_none() && effort.is_none() && service_tier.is_none() {
+            return Ok(thread);
+        }
+        let updated = provider
+            .thread_update(ThreadUpdateParams {
+                app_thread_id: thread.app_thread_id.clone(),
+                change: ThreadChange::Settings {
+                    model,
+                    effort,
+                    permission_profile: None,
+                    service_tier,
+                },
+            })
+            .await
+            .map_err(|error| RpcFailure::from_provider(&error))?;
+        Ok(updated.thread.unwrap_or(thread))
     }
 
     /// The `ThreadStartResponse` and `thread/started` notification of a

@@ -64,11 +64,12 @@ grep -F '"sourceRevision":"'"$expected_source_revision"'"' \
   "$install_root/current/metadata.json" >/dev/null
 test -r "$unit_root/codewide-companion.service"
 test -r "$unit_root/codewide-companion-update.service"
+test -r "$unit_root/codewide-companion-update.path"
 test -r "$unit_root/codewide-companion-memory-watch.service"
 test -r "$unit_root/codewide-companion-memory-watch.timer"
 test -s "$test_home/.codewide/host.token"
-# The Claude agent host ships inside the companion binary: no separate
-# installer, payload or provider configuration is written.
+# Claude runs inside the companion binary: no separate installer, payload
+# or provider configuration is written.
 test ! -e "$install_root/current/libexec/codewide-install-claude-provider"
 test ! -e "$install_root/current/share/claude-agent-host"
 test ! -e "$test_home/.local/state/codewide/companion/agent-providers.json"

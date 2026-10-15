@@ -24,7 +24,7 @@ describe("connection state model", () => {
     ]);
   });
 
-  it("keeps transport state and RPC availability in one native-owned snapshot", () => {
+  it("normalizes protocol catch-up once foreground RPC is available", () => {
     const model = createConnectionStateModel();
     model.reconcileProfiles([{ id: "buddy", connectionId: "buddy", enabled: true }]);
 
@@ -37,7 +37,11 @@ describe("connection state model", () => {
   it("never presents syncing or live without RPC availability as connected", () => {
     expect(connectionDisplayState({ state: "live", rpcAvailable: false })).toBe("connecting");
     expect(connectionDisplayState({ state: "syncing", rpcAvailable: false })).toBe("connecting");
-    expect(connectionDisplayState({ state: "syncing", rpcAvailable: true })).toBe("syncing");
+    expect(connectionDisplayState({ state: "syncing", rpcAvailable: true })).toBe("live");
+    expect(connectionDisplayState({ state: "degraded", rpcAvailable: true })).toBe("live");
+    expect(connectionDisplayState({ state: "authRequired", rpcAvailable: true })).toBe(
+      "authRequired",
+    );
     expect(connectionDisplayState({ state: "live", rpcAvailable: true })).toBe("live");
   });
 

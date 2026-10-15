@@ -208,7 +208,10 @@ fn spawn_relay(
 ) -> JoinHandle<()> {
     let relay = Relay::new(registry);
     let relay = if with_updater {
-        relay.with_updater(codewide_relay::update::RelayUpdater::new(state_root))
+        relay.with_updater(codewide_relay::update::RelayUpdater::new(
+            state_root,
+            "test-pin".to_owned(),
+        ))
     } else {
         relay
     };
@@ -365,6 +368,65 @@ async fn wrong_companion_token_cannot_claim_the_companion_slot() -> Result<()> {
 }
 
 #[tokio::test]
+async fn phone_upgrade_waits_for_the_companion_attachment() -> Result<()> {
+    let mut fixture = Fixture::start().await?;
+    fixture.stop_latest_adapter()?;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let address = format!("wss://{}/relay/control/{}", fixture.relay, fixture.route_id);
+    let mut request = address.into_client_request()?;
+    request.headers_mut().insert(
+        "authorization",
+        HeaderValue::from_str(&format!("Bearer {}", fixture.adapter.access_token))?,
+    );
+    let mut control = connect_companion(request, &fixture.relay_tls_pin_sha256).await?;
+    let welcome = tokio::time::timeout(Duration::from_secs(1), control.next())
+        .await?
+        .transpose()?
+        .ok_or_else(|| std::io::Error::other("control connection closed before welcome"))?;
+    assert!(matches!(welcome, Message::Text(_)));
+
+    let public_address = format!(
+        "ws://{}/c/{}/v1/e2ee-tunnel",
+        fixture.relay, fixture.route_id
+    );
+    let phone = tokio::spawn(async move { connect_async(public_address).await });
+    let open = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            match control.next().await.transpose()? {
+                Some(Message::Text(open)) => break Ok::<_, codewide_relay::Error>(open),
+                Some(Message::Ping(bytes)) => control.send(Message::Pong(bytes)).await?,
+                Some(Message::Pong(_)) => {}
+                Some(_) => {
+                    break Err(std::io::Error::other("expected an open control message").into());
+                }
+                None => {
+                    break Err(
+                        std::io::Error::other("control connection closed before open").into(),
+                    );
+                }
+            }
+        }
+    })
+    .await??;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&open)?["type"],
+        "Open"
+    );
+
+    let result = tokio::time::timeout(Duration::from_secs(7), phone).await??;
+    let Err(error) = result else {
+        return Err(
+            std::io::Error::other("the phone received 101 before the companion attached").into(),
+        );
+    };
+    let tokio_tungstenite::tungstenite::Error::Http(response) = error else {
+        return Err(std::io::Error::other("expected an HTTP rejection").into());
+    };
+    assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    Ok(())
+}
+
+#[tokio::test]
 async fn health_pair_and_control_are_absent_from_the_plain_carrier() -> Result<()> {
     let fixture = Fixture::start().await?;
     let public = reqwest::Client::new();
@@ -429,9 +491,16 @@ async fn relay_update_status_requires_route_credentials_and_reports_bootstrap_st
         .await?;
     assert_eq!(status.current_version, env!("CARGO_PKG_VERSION"));
     assert!(!status.capability.apply_supported);
+    // A test build has no embedded release key; an official build that does
+    // not run from an installed generation needs the manual bootstrap.
+    let expected = if codewide_host_update::ReleaseTrust::embedded().is_some() {
+        "manual_bootstrap_required"
+    } else {
+        "unofficial_build"
+    };
     assert_eq!(
         status.capability.unavailable_reason.as_deref(),
-        Some("manual_bootstrap_required")
+        Some(expected)
     );
     Ok(())
 }

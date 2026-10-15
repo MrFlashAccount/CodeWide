@@ -3,15 +3,14 @@ import { useEvent } from "../../react/useEvent";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
 import { useAppNotice } from "../../ui/useAppNotice";
-import type { ForkTargetChoice } from "./forkTargets";
 import { copySessionId } from "./turnActions";
 
 import type { ThreadHeaderProps } from "./threadHeaderContract";
 
 export function useThreadHeaderActions({
   archived,
+  forkOffer,
   forkPicker,
-  forkTargets,
   onArchive,
   onCompact,
   onDelete,
@@ -19,6 +18,7 @@ export function useThreadHeaderActions({
   onRenameRequest,
   onTogglePin,
   onUnarchive,
+  openElsewhere = false,
   pinned,
   threadId,
 }: ThreadHeaderProps) {
@@ -35,30 +35,27 @@ export function useThreadHeaderActions({
       selected: pinned,
     },
     {
-      disabled: onFork === undefined,
+      disabled: onFork === undefined || forkPicker === undefined || forkOffer === undefined,
       icon: "git-branch-outline",
       id: "fork",
       label: "Fork thread",
     },
-    {
-      disabled: onCompact === undefined,
-      icon: "contract-outline",
-      id: "compact",
-      label: "Compact context",
-    },
+    sessionItem(
+      { icon: "contract-outline", id: "compact", label: "Compact context" },
+      onCompact,
+      openElsewhere,
+    ),
     {
       disabled: archived ? onUnarchive === undefined : onArchive === undefined,
       icon: archived ? "archive" : "archive-outline",
       id: "archive",
       label: archived ? "Unarchive thread" : "Archive thread",
     },
-    {
-      destructive: true,
-      disabled: onDelete === undefined,
-      icon: "trash-outline",
-      id: "delete",
-      label: "Delete thread",
-    },
+    sessionItem(
+      { destructive: true, icon: "trash-outline", id: "delete", label: "Delete thread" },
+      onDelete,
+      openElsewhere,
+    ),
   ];
   const run = useEvent((action: (() => Promise<void>) | undefined, label: string) => {
     if (action === undefined) {
@@ -83,17 +80,13 @@ export function useThreadHeaderActions({
       onRenameRequest();
     } else if (id === "pin") {
       run(onTogglePin, pinned ? "Unpin" : "Pin");
-    } else if (id === "fork" && onFork !== undefined) {
-      const picked =
-        forkTargets !== undefined &&
-        forkPicker !== undefined &&
-        forkPicker.openForkTargets(forkTargets);
-      if (!picked) {
-        run(
-          async () => onFork({ boundary: { kind: "all" }, ephemeral: false, target: null }),
-          "Fork",
-        );
-      }
+    } else if (
+      id === "fork" &&
+      onFork !== undefined &&
+      forkPicker !== undefined &&
+      forkOffer !== undefined
+    ) {
+      forkPicker.openFork({ kind: "all" }, forkOffer);
     } else if (id === "compact") {
       run(onCompact, "Compact");
     } else if (id === "archive") {
@@ -116,25 +109,16 @@ export function useThreadHeaderActions({
     }
   });
 
-  const closeForkTargets = useEvent(() => {
-    forkPicker?.closeForkTargets();
-  });
-  const selectForkTarget = useEvent((choice: ForkTargetChoice) => {
-    forkPicker?.closeForkTargets();
-    if (onFork !== undefined) {
-      run(
-        async () => onFork({ boundary: { kind: "all" }, ephemeral: false, target: choice.target }),
-        "Fork",
-      );
-    }
-  });
+  return { actions, handleAction, run };
+}
 
-  return {
-    actions,
-    closeForkTargets,
-    forkChoices: forkPicker?.forkChoices ?? null,
-    handleAction,
-    run,
-    selectForkTarget,
-  };
+/** An action that needs the thread's session: off, with the reason, while another app holds it. */
+function sessionItem(
+  item: ActionMenuItem,
+  action: (() => Promise<void>) | undefined,
+  openElsewhere: boolean,
+): ActionMenuItem {
+  return openElsewhere
+    ? { ...item, description: "Open in another app", disabled: true }
+    : { ...item, disabled: action === undefined };
 }

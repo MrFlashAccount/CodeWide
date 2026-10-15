@@ -387,9 +387,7 @@ describe("fullscreen workspace presentation", () => {
       'snapshot.profiles.some(({ status }) => status === "live") ? colors.green : colors.textMuted',
     );
     expect(ownerComposerMenuComposition).toContain("function ComposerPortsRoute(");
-    expect(ownerComposerMenuComposition).toContain(
-      "const resource = useTunnelRow(request.resources, request.tunnelResourceId)",
-    );
+    expect(ownerComposerMenuComposition).toContain("<PortsFeature portForwarding={forwarding} />");
     expect(ownerPortsFeature).toContain(
       "<PortForwardingManager {...portForwarding} renderScrollComponent={AppSheetScrollView} />",
     );

@@ -42,6 +42,13 @@ impl RelayTlsIdentity {
         }
     }
 
+    /// Loads the durable identity without ever creating one.
+    /// # Errors
+    /// Rejects missing, partial, non-regular, or group/world-readable identity state.
+    pub fn load_existing(root: &Path) -> Result<Self> {
+        Self::load(&root.join(CERT_FILE), &root.join(KEY_FILE))
+    }
+
     /// Returns the exact SHA-256 leaf-certificate pin copied in an invitation bundle.
     #[must_use]
     pub fn pin(&self) -> String {

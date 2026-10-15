@@ -282,12 +282,13 @@ impl EventProjector {
             .as_ref()
             .is_none_or(|previous| previous.status != next.status)
         {
-            let mut params = json!({"threadId": id, "status": items::thread_status(next.status)});
             // The client keeps the lock of a thread open elsewhere live from
-            // this field; an unloaded thread leaves its last known value.
-            if let Some(accepts) = items::can_accept_direct_input(next.status) {
-                params["canAcceptDirectInput"] = json!(accepts);
-            }
+            // this field, so every status change names it, the release too.
+            let params = json!({
+                "threadId": id,
+                "status": items::thread_status(next.status),
+                "canAcceptDirectInput": items::can_accept_direct_input(thread),
+            });
             payloads.push(json!({"method": "thread/status/changed", "params": params}));
         }
         let name_changed = previous
@@ -519,6 +520,7 @@ mod tests {
                 permission_profile: ":workspace".into(),
                 service_tier: None,
             },
+            spawn: None,
         }
     }
 
@@ -578,10 +580,12 @@ mod tests {
             thread: thread(ThreadStatus::Idle, None, false, "m"),
         });
         assert_eq!(released[0]["params"]["canAcceptDirectInput"], true);
+        // A Claude session another process lets go of becomes unloaded: the
+        // release must clear the lock the client holds.
         let unloaded = projector.project(AgentEvent::ThreadUpdated {
             thread: thread(ThreadStatus::NotLoaded, None, false, "m"),
         });
-        assert!(unloaded[0]["params"].get("canAcceptDirectInput").is_none());
+        assert_eq!(unloaded[0]["params"]["canAcceptDirectInput"], true);
     }
 
     #[test]

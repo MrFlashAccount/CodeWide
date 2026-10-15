@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { StoredConnection } from "../src/data/connection-profile-types";
 import { createHostUpdateTransport } from "../src/features/connections/hostUpdateTransport";
+import { urlTransport } from "../src/native/urlTransport";
 
 const connectionFiles = [
   "ConnectionFeature.tsx",
@@ -44,6 +45,47 @@ describe("Android host update ownership", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("bounds a hung session authorization and never sends a late apply after timeout", async () => {
+    vi.useFakeTimers();
+    const authorization = Promise.withResolvers<string>();
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+    const connection: StoredConnection = {
+      displayName: "Host", enabled: true, endpoint: "wss://host.example", iconId: "server", id: "server",
+      lastError: null, lastErrorAt: null, sortOrder: 0, state: "connecting", token: "",
+    };
+    const transport = createHostUpdateTransport({
+      currentConnections: () => [connection],
+      connectionTransport: () => ({ baseUrl: "https://pinned.example/cap", transport: urlTransport }),
+      scopedHttpAuthorization: async () => authorization.promise,
+    }, { requestTimeoutMilliseconds: 10 });
+    const outcome = transport.apply("server", "fingerprint", "key").catch(error => error);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await outcome).toEqual(expect.objectContaining({ message: expect.stringContaining("in time") }));
+    authorization.resolve("Bearer scoped");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("bounds a stalled HTTP body so operation polling can resume", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: () => new Promise(() => undefined) })));
+    const connection: StoredConnection = {
+      displayName: "Host", enabled: true, endpoint: "wss://host.example", iconId: "server", id: "server",
+      lastError: null, lastErrorAt: null, sortOrder: 0, state: "live", token: "",
+    };
+    const transport = createHostUpdateTransport({
+      currentConnections: () => [connection],
+      connectionTransport: () => ({ baseUrl: "https://pinned.example/cap", transport: urlTransport }),
+      scopedHttpAuthorization: async () => "Bearer scoped",
+    }, { requestTimeoutMilliseconds: 10 });
+    const outcome = transport.readOperation("server", "operation-00000000000000000000").catch(error => error);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await outcome).toEqual(expect.objectContaining({ message: expect.stringContaining("in time") }));
   });
 
   it("uses only the authenticated private V1 host-update routes", async () => {
@@ -77,7 +119,7 @@ describe("Android host update ownership", () => {
       const transport = createHostUpdateTransport(
         {
           currentConnections: () => [connection],
-          nativeCompanionHttpOrigin: async () => "https://pinned.example/cap",
+          connectionTransport: () => ({ baseUrl: "https://pinned.example/cap", transport: urlTransport }),
           scopedHttpAuthorization: async () => "Bearer scoped",
         },
         basePath === undefined ? {} : { basePath },
@@ -102,7 +144,7 @@ describe("Android host update ownership", () => {
       ]);
     }
     expect(transportSource).toContain("scopedHttpAuthorization");
-    expect(transportSource).toContain("nativeCompanionHttpOrigin");
+    expect(transportSource).toContain("connectionTransport(connection)");
     expect(transportSource).not.toMatch(/artifactUrl|downloadUrl|targetUrl/u);
   });
 });

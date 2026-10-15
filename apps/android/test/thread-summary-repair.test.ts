@@ -1,4 +1,4 @@
-import type { SyncEvent, SyncSnapshotThread } from "@codewide/sync-client";
+import { RpcResponseError, type SyncEvent, type SyncSnapshotThread } from "@codewide/sync-client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createV1TestThread } from "./fixtures/v1Thread";
 import { createThreadSyncProjection } from "../src/data/thread-sync-projection";
@@ -34,7 +34,11 @@ function snapshot(id = "thread"): SyncSnapshotThread {
   };
 }
 
-function status(cursor: number, type: "active" | "idle", threadId = "thread"): SyncEvent {
+function status(
+  cursor: number,
+  type: "active" | "idle" | "notLoaded",
+  threadId = "thread",
+): SyncEvent {
   return {
     cursor,
     payload: {
@@ -227,6 +231,29 @@ describe("summary synchronization and durable recovery", () => {
       status: { type: "idle" },
       unread: 1,
     });
+    summaries.close();
+  });
+
+  it("ACKs an unloaded status for an unknown thread without reading loaded-thread metadata", async () => {
+    const summaries = createThreadSummaryDatabase();
+    await summaries.prepare();
+    const readMetadata = vi.fn(async () => {
+      throw new RpcResponseError(-32_600, "thread not loaded: missing-thread");
+    });
+    const repair = createThreadSummaryRepair({ readMetadata, summaries });
+    const failed = vi.fn();
+    const acknowledger = new OrderedProjectionAcknowledger(failed);
+    const acknowledge = vi.fn();
+    acknowledger.enqueue({
+      recovery: false,
+      checkpoint: repair("server", [status(7, "notLoaded", "missing-thread")]),
+      acknowledge,
+    });
+    await acknowledger.settled();
+    expect(readMetadata).not.toHaveBeenCalled();
+    expect(failed).not.toHaveBeenCalled();
+    expect(acknowledge).toHaveBeenCalledOnce();
+    expect(await summaries.get("server", "missing-thread")).toBeNull();
     summaries.close();
   });
 

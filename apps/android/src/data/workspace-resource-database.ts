@@ -53,17 +53,6 @@ export type ThreadGoalRow = {
   updatedAt: number;
 };
 
-export type TunnelValue = { authorization: string; expiresAt: number; id: string; url: string };
-
-export type TunnelRow = {
-  connectionId: string;
-  error: string | null;
-  id: string;
-  status: "creating" | "ready" | "revoking" | "error";
-  tunnel: TunnelValue | null;
-  updatedAt: number;
-};
-
 export type VoiceInputRow = {
   backend: "remote" | "android";
   error: string | null;
@@ -100,13 +89,11 @@ export type WorkspaceResourceDatabase = {
   putThreadGoal: (row: Omit<ThreadGoalRow, "updatedAt">) => void;
   putThreadHistory: (row: Omit<ThreadHistoryRow, "updatedAt">) => void;
   putThreadResources: (row: Omit<ThreadResourcesRow, "updatedAt">) => void;
-  putTunnel: (row: Omit<TunnelRow, "updatedAt">) => void;
   putTurnControls: (row: Omit<TurnControlsRow, "updatedAt">) => void;
   putVoiceInput: (row: Omit<VoiceInputRow, "updatedAt">) => void;
   threadGoals: LocalCollection<ThreadGoalRow>;
   threadHistories: ThreadHistoryModel;
   threadResources: ThreadResourcesModel;
-  tunnels: LocalCollection<TunnelRow>;
   turnControls: LocalCollection<TurnControlsRow>;
   voiceInputs: LocalCollection<VoiceInputRow>;
 };
@@ -131,12 +118,6 @@ export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
       id: "workspace-thread-goals-v1",
     }),
   );
-  const tunnels = createCollection(
-    localOnlyCollectionOptions<TunnelRow, string>({
-      getKey: (row) => row.id,
-      id: "workspace-tunnels-v1",
-    }),
-  );
   const voiceInputs = createCollection(
     localOnlyCollectionOptions<VoiceInputRow, string>({
       getKey: (row) => row.id,
@@ -155,13 +136,7 @@ export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
     async deleteConnection(connectionId) {
       deletedConnections.add(connectionId);
       const prefix = `${connectionId}\u0000`;
-      for (const collection of [
-        backgroundTerminals,
-        threadGoals,
-        tunnels,
-        voiceInputs,
-        fileTransfers,
-      ]) {
+      for (const collection of [backgroundTerminals, threadGoals, voiceInputs, fileTransfers]) {
         const keys = collection.toArray
           .filter((row) => row.id === connectionId || row.id.startsWith(prefix))
           .map((row) => row.id);
@@ -212,13 +187,6 @@ export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
       }
       threadResources.put({ ...row, updatedAt: Date.now() });
     },
-    putTunnel(row) {
-      if (deletedConnections.has(row.connectionId)) {
-        return;
-      }
-      put(tunnels, { ...row, updatedAt: Date.now() });
-      trimOldest(tunnels, 24);
-    },
     putTurnControls(row) {
       if (isDeleted(row.id)) {
         return;
@@ -236,7 +204,6 @@ export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
     threadGoals,
     threadHistories,
     threadResources,
-    tunnels,
     turnControls,
     voiceInputs,
   };

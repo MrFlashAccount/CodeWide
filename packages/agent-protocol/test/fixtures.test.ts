@@ -113,6 +113,38 @@ describe("shape checks reject drift", () => {
     ]);
   });
 
+  it("rejects a thread on a report that is not an agent's", () => {
+    const report = (kind: string, agentThreadId: string | null): unknown => ({
+      method: "event",
+      params: {
+        type: "item.completed",
+        appThreadId: "t",
+        turnId: "u",
+        item: {
+          type: "taskNotification",
+          itemId: "u:notification:0",
+          delivery: "wake",
+          kind,
+          taskId: "b1",
+          name: "npm test",
+          agentThreadId,
+          status: "completed",
+          durationMs: null,
+          toolUses: null,
+          result: null,
+        },
+      },
+    });
+    expect(checkMessage(report("agent", "t:agent:a1"))).toEqual([]);
+    expect(checkMessage(report("command", null))).toEqual([]);
+    expect(checkMessage(report("command", "t:agent:a1"))).toEqual([
+      "$.params.item.agentThreadId: expected null for kind command",
+    ]);
+    expect(checkMessage(report("other", "t:agent:a1"))).toEqual([
+      "$.params.item.agentThreadId: expected null for kind other",
+    ]);
+  });
+
   it("requires the answered operation to check a result", () => {
     expect(checkMessage({ id: 1, result: {} })).toEqual([
       "$: a response needs the operation it answers",

@@ -149,6 +149,15 @@ export type ThreadChange =
     };
 
 /**
+ * How much of the source thread a fork keeps: everything, the turns through
+ * `turnId`, or the turns before `turnId`.
+ */
+export type ForkBoundary =
+  | { readonly kind: "all" }
+  | { readonly kind: "before"; readonly turnId: TurnId }
+  | { readonly kind: "through"; readonly turnId: TurnId };
+
+/**
  * The optional client tools of `thread.create` and `turn.start`. Absent:
  * the thread keeps its current set. Present: replaces the set (an empty
  * array removes every client tool). The set is live state of the provider
@@ -250,6 +259,20 @@ export interface OperationMap {
     };
     readonly result: { readonly thread: AgentThread };
   };
+  /**
+   * Copies a thread into a new thread on the same provider with its history
+   * through `boundary`; the source thread is unchanged. `forkAppThreadId` is
+   * host-minted for providers that declare `threads.hostMintedIds`, otherwise
+   * `null` and the provider mints it. Requires `threads.fork`.
+   */
+  readonly "thread.fork": {
+    readonly params: {
+      readonly appThreadId: AppThreadId;
+      readonly boundary: ForkBoundary;
+      readonly forkAppThreadId: AppThreadId | null;
+    };
+    readonly result: { readonly thread: AgentThread };
+  };
   readonly "thread.list": {
     readonly params: ThreadListParams;
     readonly result: {
@@ -328,6 +351,7 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   "catalog.models",
   "catalog.permissionProfiles",
   "thread.create",
+  "thread.fork",
   "thread.read",
   "thread.list",
   "thread.turns",

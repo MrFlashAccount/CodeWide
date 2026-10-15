@@ -13,7 +13,7 @@ export type UseThreadTimelineProps = {
   composerScope: string;
   fixUnsupportedBlock: (block: RenderBlock) => Promise<void>;
   focusSearchMessage: (node: View) => void;
-  forkThroughTurn: (turnId: string) => Promise<void>;
+  forkThroughTurn: (turnId: string) => void;
   getStableTransferAccess: GetTransferAccess;
   getTransferAccess: GetTransferAccess | undefined;
   latestUnreadAgentTurnId: string | null;

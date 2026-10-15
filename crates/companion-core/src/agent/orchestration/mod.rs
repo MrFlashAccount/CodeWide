@@ -295,6 +295,22 @@ impl OrchestrationService {
             parent_profile.as_deref(),
             request.permission_profile.as_deref(),
         )?;
+        let permission_profile = match target.catalog_permission_profiles().await {
+            Ok(catalog) => profiles::for_target(
+                &permission_profile,
+                &catalog
+                    .profiles
+                    .iter()
+                    .map(|profile| profile.id.as_str())
+                    .collect::<Vec<_>>(),
+            )?,
+            Err(err) => {
+                // Without the catalog the profile goes as chosen; the
+                // provider rejects one it does not know.
+                warn!(err = %err, provider = %wire.descriptor.id, "agent provider's permission profiles are unavailable");
+                permission_profile
+            }
+        };
         Ok(SpawnPlan {
             target,
             wire,

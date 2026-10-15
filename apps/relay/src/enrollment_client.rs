@@ -18,6 +18,9 @@ use tokio_tungstenite::{
     tungstenite::{Message, protocol::WebSocketConfig},
 };
 
+/// Bounds opening the channel: resolution, TCP connect, TLS and the challenge.
+const OPEN_BUDGET: Duration = Duration::from_secs(10);
+
 pub struct EnrollmentClient {
     socket: WebSocketStream<TlsStream<TcpStream>>,
     pub code: String,
@@ -31,7 +34,7 @@ impl EnrollmentClient {
     /// Rejects invalid input, unsupported servers, and closed enrollment windows.
     pub async fn connect(address: &str, label: &str) -> Result<Self> {
         validate_label(label)?;
-        tokio::time::timeout(Duration::from_secs(10), Self::connect_inner(address, label)).await?
+        tokio::time::timeout(OPEN_BUDGET, Self::connect_inner(address, label)).await?
     }
 
     async fn connect_inner(address: &str, label: &str) -> Result<Self> {
@@ -46,7 +49,7 @@ impl EnrollmentClient {
         }
         let host = url.host_str().ok_or_else(denied)?.trim_matches(['[', ']']);
         let port = url.port_or_known_default().ok_or_else(denied)?;
-        let tcp = TcpStream::connect((host, port)).await?;
+        let tcp = codewide_host_resolver::connect(host, port, OPEN_BUDGET).await?;
         let name = rustls::pki_types::ServerName::try_from(host.to_owned())?;
         let tls = TlsConnector::from(enrollment_client_config()?)
             .connect(name, tcp)

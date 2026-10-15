@@ -25,7 +25,9 @@ import {
   ForceExpandCardsContext,
   TurnActivityContentContext,
 } from "./turnContexts";
+import { activitySegmentKind } from "./activitySegmentKind";
 import { turnActivityLabel } from "./turnProjection";
+import type { TransferAccess } from "../../../data/private-transfer";
 
 export function TurnActivitySegment({
   animateNew,
@@ -40,7 +42,7 @@ export function TurnActivitySegment({
   animateNew: boolean;
   compact: boolean;
   forceExpanded: boolean;
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   part: Extract<TurnSequencePart, { kind: "activity" }>;
   turnKey: string;
@@ -76,7 +78,7 @@ export function TurnActivitySegment({
 type ActivitySegmentProps = {
   animateNew: boolean;
   forceExpanded: boolean;
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
   label: string;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   outputFootprint: ActivityFootprint | null;
@@ -243,7 +245,7 @@ function RevealedActivityBlock({
 }: {
   animate: boolean;
   block: RenderBlock;
-  getTransferAccess?: () => Promise<{ authorization: string; baseUrl: string }>;
+  getTransferAccess?: () => Promise<TransferAccess>;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   turnKey: string;
 }): ReactElement {
@@ -261,23 +263,6 @@ function RevealedActivityBlock({
       {content}
     </ExpansionItemKeyContext.Provider>
   );
-}
-
-function activitySegmentKind(
-  blocks: readonly RenderBlock[],
-): "agentNavigation" | "disclosure" | "thinking" {
-  if (blocks.length > 0 && blocks.every((block) => block.kind === "reasoning")) {
-    return "thinking";
-  }
-  if (
-    blocks.length > 0 &&
-    blocks.every(
-      (block) => block.kind === "collabAgentToolCall" || block.kind === "subAgentActivity",
-    )
-  ) {
-    return "agentNavigation";
-  }
-  return "disclosure";
 }
 
 export interface TurnActivityProps {

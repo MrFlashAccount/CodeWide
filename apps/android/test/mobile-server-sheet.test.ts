@@ -130,8 +130,9 @@ describe("unified thread filters", () => {
     expect(selectServer).toContain("setRequested(next)");
     expect(selectServer).toContain("readonly select: (next: ServerScope) => void");
     expect(selectServer).not.toContain("setActiveThreadId(");
+    // Pinned project rows and thread rows show their server only across several servers.
     for (const body of [sidebarBody, mobileBody])
-      expect(body.match(/serverScope\.kind === "all" && servers\.length > 1/gu)).toHaveLength(1);
+      expect(body.match(/serverScope\.kind === "all" && servers\.length > 1/gu)).toHaveLength(2);
     expect(rowContent).toContain("accessibilityLabel={`Server ${server.name}`}");
     expect(ownerWorkspaceThreadList).toContain(
       "initialOffset: mobileThreadOffset.read(sidebarScopeKey)",

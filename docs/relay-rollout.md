@@ -31,12 +31,15 @@ frames remain inner-TLS ciphertext.
 dist/relay/codewide-relay-x86_64-unknown-linux-musl --version
 ```
 
-The build emits the Linux binary and its SHA-256 manifest under `dist/relay/`.
+The build emits the Linux binary, the generation bundle
+`codewide-relay-x86_64-unknown-linux-musl.tar.gz` (one directory holding
+`bin/codewide-relay`), and a SHA-256 manifest for each under `dist/relay/`.
+The signed release manifest targets the bundle.
 The current release target is statically linked Linux `x86_64`, built in a
 digest-pinned musl container so the same artifact runs on glibc and musl hosts.
 ARM64 is rejected explicitly until a matching release artifact exists.
 
-After those two files are published under the matching GitHub Release tag,
+After those files are published under the matching GitHub Release tag,
 install and verify the binary without cloning the repository:
 
 ```sh
@@ -45,27 +48,91 @@ codewide-relay pair
 ```
 
 The installer resolves the published product version and its release origin
-(including dated releases), verifies the release SHA-256,
-checks the binary-reported version, and atomically installs it to
-`/usr/local/bin/codewide-relay`. It requests `sudo` for the installation when
-needed; downloads and verification run as the invoking user. No shell restart or
-manual PATH edit is required. Before reporting success it verifies both
-`command -v codewide-relay` and `codewide-relay --version` by name, then verifies
-the running service through its private administration socket.
+(including dated releases), verifies the release SHA-256, checks the
+binary-reported version, and atomically installs a fresh Relay to
+`~/.local/bin` or `~/bin`, whichever standard user directory is already in
+`PATH`, without `sudo`. It refuses to install outside `PATH`. Before reporting
+success it verifies `command -v codewide-relay`, the binary-reported version,
+and the running service through its private administration socket.
 
-On a Linux host running systemd, it creates a user service and enables lingering
-automatically, so Relay starts after reboot and keeps running after SSH logout.
-It runs as the installing user, using that user's existing state directory. No
-manual `systemctl` commands or unit editing are required. Existing user or system
-services retain their configuration, port, and state; the installer restarts
-them with the updated binary instead of creating another Relay. If startup or
-readiness fails, it restores the previous binary and restarts the previous
-active service. It never deletes or regenerates the Relay's identity or routes.
-Ambiguous system/user services and a running unmanaged foreground daemon are
-rejected before installation rather than replaced silently.
+On a Linux host running systemd, it creates and enables a user service. It runs
+as the installing user, uses that user's existing state directory, and starts
+with that user's login. Lingering is host policy rather than an installation
+prerequisite: when the Relay must start before login and remain after logout, an
+administrator can enable it separately with `loginctl enable-linger USER`. No
+manual unit editing is required. Existing user or system services retain their
+configuration, port, state, and installation scope; updating an existing system
+service still requests administrator access instead of creating a second Relay.
+If startup or readiness fails, the installer restores the previous binary and
+restarts the previous active service. It never deletes or regenerates the
+Relay's identity or routes. Ambiguous system/user services and a running
+unmanaged foreground daemon are rejected before installation rather than
+replaced silently.
 
-Run `codewide-relay pair` to connect a Mac. The public address is detected
-automatically; `--state` and `--address` are not needed in the ordinary case.
+### Generations and remote updates
+
+A user service is installed exactly like the Linux Companion, through the shared
+`codewide-host-update` guardian:
+
+- `~/.local/lib/codewide-relay/generations/<bundle sha256>/` holds one immutable
+  Relay with its `metadata.json`;
+- `~/.local/lib/codewide-relay/current` is a relative link to the active
+  generation, and `~/.local/bin/codewide-relay` points through it;
+- `~/.local/lib/codewide-relay/bootstrap/codewide-relay-update-guardian` is a
+  stable copy of the installed Relay that runs `update-run` from
+  `codewide-relay-update.service`. Remote updates never replace it; rerun the
+  installer to refresh it;
+- `codewide-relay-update.path` watches only the fixed
+  `<state>/host-update/activation-request.json` marker and starts the guardian.
+
+A paired Companion checks and applies a signed release through
+`/relay/update/<route>`. While the Relay keeps serving, the Relay itself
+admits the signed descriptor, downloads and digest-checks the bundle, validates
+and extracts it, verifies the payload, and fsyncs a complete local generation
+under `preparations/<operationId>`. Only then does it publish the fixed marker;
+no update request invokes `systemctl`. The network-dark, package-format-blind
+guardian accepts only that prepared generation, atomically publishes it under
+`generations/`, switches `current` with one `rename(2)`, and restarts the fixed
+service. It does not know a release URL, signature, archive, or download
+protocol. The update commits once the restarted Relay attests the
+exact generation over its control socket, keeps its TLS identity, and the
+initiating Companion reconnects. Otherwise the guardian switches `current`
+back to the previous generation and restarts it. Interrupted operations resume
+from the durable journal in `<state>/host-update`; product startup resumes
+preparation, and the path unit resumes activation while the marker exists.
+
+The first bundle release is a manual baseline: install it with the installer.
+Later releases certify its digest and update remotely. A legacy system service
+receives no remote updates until it is migrated to a user service.
+
+### Migrating a legacy system service
+
+An existing machine-wide Relay cannot become rootless without one privileged
+cutover: its service, executable, and state are owned by root and its process
+already owns the listening port. Run the repository-owned migration as the
+login user that should own Relay:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay-migrate-user | sh
+```
+
+The command validates the active legacy service before changing anything, asks
+for `sudo` once, and copies the current identity, route registry, port, and
+pending invitations into the user state. It then installs the normal rootless
+service and verifies that the port, certificate identity, routes, service
+readiness, and login-shell command resolution are unchanged. A failed cutover
+restores the old unit, binary, service, and any user state that was present.
+
+After success, the previous system unit and executable remain in
+`/var/lib/codewide-relay/system-to-user-v1`, while pre-existing user state is
+kept at
+`${XDG_STATE_HOME:-$HOME/.local/state}/codewide/relay-before-system-migration`.
+Future runs of `install/relay` and signed remote updates operate entirely in
+user scope and do not request `sudo`.
+
+Run the `pair` command printed by the installer to connect a Mac. The public
+address is detected automatically; `--state` and `--address` are not needed in
+the ordinary case.
 The VPS must accept inbound TCP `8780` (or the port of an existing customized
 service). Host and cloud firewall policies remain operator-owned.
 
@@ -116,8 +183,10 @@ connections send the access token only after verifying that saved pin.
 Legacy data-plane connections may remain `ws://` during migration. New data
 attachments use pinned WSS. Attachments carry only
 opaque inner-TLS bytes and a 256-bit ticket that is delivered over control,
-expires after 15 seconds, and is consumed exactly once. The long-lived Relay
-access token never enters the plain channel. An active network attacker can
+expires after five seconds, and is consumed exactly once. Relay completes the
+phone's outer WebSocket upgrade only after Companion consumes that ticket, so a
+missing data attachment is reported as `503` instead of a false `101`. The
+long-lived Relay access token never enters the plain channel. An active network attacker can
 still drop or race an attachment, but gains only the same denial/ciphertext
 injection powers already assigned to a compromised Relay; it cannot read data
 or reach the Companion API. Exposing the Relay port still requires normal host
@@ -131,9 +200,9 @@ For macOS, run this on the Relay host:
 codewide-relay
 ```
 
-Choose **Connect a computer** in the menu. The Ratatui panel displays the public
-IP and the running listener's port. In
-CodeWide, open **Advanced → Add Relay**, enter that `IP:port`, then click
+Choose **Connect a computer** in the menu. The Ratatui panel displays every
+detected public IPv4 and IPv6 address with the running listener's port. In
+CodeWide, open **Advanced → Add Relay**, enter either reachable `IP:port`, then click
 **Connect**. Check that the same four symbols appear in CodeWide and the Relay panel, then
 press **Enter** in that terminal. There is no JSON or key to copy. CodeWide
 supplies its computer name as the route label.
@@ -150,8 +219,9 @@ configuration and establishes the pinned, authenticated control connection.
 revokes any uncommitted route. A failed attempt restores the Mac's previous
 Relay configuration. The Relay does not open enrollment after a restart.
 
-Automatic public IP discovery uses HTTPS to `api.ipify.org`; it cannot discover
-an externally remapped port. Supply the reachable endpoint when needed:
+Automatic public IP discovery uses HTTPS to `api.ipify.org` and
+`api6.ipify.org`; a missing address family is omitted. It cannot discover an
+externally remapped port. Supply the reachable endpoint when needed:
 
 ```sh
 codewide-relay pair --address 203.0.113.10:8780
@@ -226,7 +296,10 @@ codewide-companion relay pair 203.0.113.10:8780
 ```
 
 The address is the Relay's reachable DNS name or `IP:port`, never a Companion
-address or an SSH config alias. Include the port explicitly. The
+address or an SSH config alias. Include the port explicitly. A Linux
+Companion resolves the DNS name like the host's own tools (`getent ahosts`,
+in NSS order), so a DNS64 nameserver listed first in `resolv.conf` is honored
+on IPv6-only hosts. The
 one-line invitation contains the route ID, one-time token, and Relay TLS
 certificate pin. Companion verifies the pin before sending the invitation.
 The pairing API then consumes the invitation and issues the route-specific

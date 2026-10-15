@@ -7,11 +7,11 @@ import type { GlobalSupervisorWebRtcSessionFactory } from "../native/globalSuper
 import { acquireGlobalVoiceForegroundLease } from "../native/globalVoiceForegroundLease.native";
 import { NativeEngineSupervisor } from "../native/native-engine";
 import { purgeCachedConnectionAttachments } from "../native/attachment-cache/cached-transfer";
+import { companionConnectionTransport } from "../native/companionTransport";
 import {
   enqueueNativeCommand,
   listNativeCommands,
   mintNativeSession,
-  nativeCompanionHttpOrigin,
   getMicrophonePermission,
   requestMicrophonePermission,
 } from "../native/native-transport";
@@ -68,6 +68,7 @@ import {
 } from "./serverRequestDelivery";
 import { readGlobalSupervisorWorkCatalog } from "./globalSupervisorWorkCatalog";
 import { createThreadSyncProjection } from "./thread-sync-projection";
+import { remoteProjectCatalogModel } from "./remoteProjectCatalog";
 import {
   clearConnectionLiveActivity,
   createThreadLiveActivityProjection,
@@ -327,6 +328,7 @@ async function startWorkspaceRuntime(): Promise<void> {
             agentProviders,
             catalog: workspaceCatalog,
             details,
+            projects: remoteProjectCatalogModel,
             resources,
             summaries,
             sync: workspaceThreadSync,
@@ -590,12 +592,12 @@ export const globalVoicePreviewRuntime = createGlobalVoicePreviewRuntime({
 });
 
 const uploadTelemetryBatch = createWorkspaceTelemetryUpload({
+  connectionTransport: companionConnectionTransport,
   currentConnections,
   isRpcAvailable: (connectionId) =>
     workspaceRuntime.snapshot.connectionState?.rows$
       .peek()
       .find((candidate) => candidate.connectionId === connectionId)?.rpcAvailable === true,
-  nativeCompanionHttpOrigin,
   scopedHttpAuthorization,
 });
 configureTelemetryTransport(uploadTelemetryBatch);
@@ -742,8 +744,8 @@ const refreshAccountRateLimits = createAccountRateLimitsLoader({
 });
 
 const transferAccess = createPrivateTransferAccess({
+  connectionTransport: companionConnectionTransport,
   currentConnections,
-  nativeCompanionHttpOrigin,
   scopedHttpAuthorization,
 });
 

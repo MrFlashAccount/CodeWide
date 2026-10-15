@@ -237,6 +237,33 @@ pub fn turn_settings_overrides(params: &Value) -> Option<ThreadChange> {
         .then(|| settings_change(params))
 }
 
+/// Execution settings a `thread/fork` request names for the new thread, in
+/// the Codex `ThreadForkParams` shape: top-level `model` and `serviceTier`,
+/// and `config.model_reasoning_effort`. A missing, non-string or empty
+/// value is absent; values stay opaque provider strings.
+#[derive(Debug, Default, Eq, PartialEq)]
+pub struct RequestedSettings {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub service_tier: Option<String>,
+}
+
+/// Decodes the [`RequestedSettings`] of a `thread/fork` request.
+#[must_use]
+pub fn requested_settings(params: &Value) -> RequestedSettings {
+    let text = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    RequestedSettings {
+        model: text(params.get("model")),
+        effort: text(params.pointer("/config/model_reasoning_effort")),
+        service_tier: text(params.get("serviceTier")),
+    }
+}
+
 /// Decodes a client answer to a runtime request into the neutral response.
 /// Anything that is not a recognizable answer becomes `error`, which every
 /// provider treats as a decline (never an allow).

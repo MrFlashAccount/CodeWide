@@ -1,14 +1,11 @@
-import { Ionicons } from "@expo/vector-icons";
 import { createElement, useState, type ReactNode } from "react";
-import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from "react-native";
+import { Pressable, StyleSheet, View, useWindowDimensions } from "react-native";
 
 import { useEvent } from "../react/useEvent";
 import {
   colors,
   controlHitSlop,
   controlSize,
-  iconSize,
-  layoutSize,
   menuContentInset,
   radii,
   spacing,
@@ -16,23 +13,23 @@ import {
 } from "../theme";
 import { CodeWideSlider } from "./CodeWideSlider.native";
 import { ContentMenu } from "./ContentMenu";
+import { FastModeToggle } from "./FastModeToggle";
 import {
   fastServiceTier,
   isFastServiceTier,
   retainedServiceTier,
   STANDARD_SERVICE_TIER,
 } from "./modelServiceTier";
-import { ModelAgentNote, ModelProviderHeader } from "./ModelAgentScope";
-import { groupsModelsByProvider, modelSections } from "./modelSections";
+import { ModelAgentNote } from "./ModelAgentScope";
+import { ModelChoiceList, ModelDisclosure } from "./ModelChoiceList";
+import { groupsModelsByProvider } from "./modelSections";
 import { clampModelEffort, modelEffortLevels } from "./modelEffort";
 import { modelEffortLabel } from "./modelEffortPresentation";
-import { ProviderIcon } from "./ProviderIcon";
 import { AppText as Text } from "./Typography";
 import type { ModelThinkingMenuProps, ModelSettingsChoice } from "./TurnControlMenus.types";
 
 const MENU_WIDTH = 352;
 const MIN_MENU_WIDTH = 1;
-const MAX_VISIBLE_MODELS = 5;
 const DISABLED_OPACITY = 0.45;
 
 type ModelControl = ModelThinkingMenuProps["models"][number];
@@ -238,11 +235,12 @@ function ModelMenuContent({
         showServiceTierControls={props.showServiceTierControls !== false}
       />
       {modelsExpanded && (
-        <ModelChoices
+        <ModelChoiceList
           grouped={groupsModelsByProvider(props.agentScope)}
           models={props.models}
-          onChoose={onSelectModel}
-          selectedEffort={draft.effort}
+          onChoose={(candidate) => {
+            onSelectModel(candidate.id, clampModelEffort(candidate, draft.effort));
+          }}
           selectedModel={draft.model}
         />
       )}
@@ -311,7 +309,12 @@ function ModelControls({
 }): ReactNode {
   return (
     <View style={styles.modelControls}>
-      <ModelDisclosure expanded={modelsExpanded} model={model} onPress={onToggleModels} />
+      <ModelDisclosure
+        expanded={modelsExpanded}
+        label={model?.label ?? null}
+        onPress={onToggleModels}
+        provider={model?.provider ?? null}
+      />
       {showServiceTierControls && (
         <FastToggle
           model={model}
@@ -319,110 +322,6 @@ function ModelControls({
           selectedServiceTier={selectedServiceTier}
         />
       )}
-    </View>
-  );
-}
-
-function ModelDisclosure({
-  expanded,
-  model,
-  onPress,
-}: {
-  expanded: boolean;
-  model: ModelControl | undefined;
-  onPress: () => void;
-}): ReactNode {
-  return (
-    <Pressable
-      accessibilityLabel={`Choose model, ${model?.label ?? "unavailable"}`}
-      accessibilityRole="button"
-      accessibilityState={{ expanded }}
-      onPress={onPress}
-      style={styles.modelButton}
-    >
-      <ModelLabel label={model?.label ?? "Choose model"} provider={model?.provider ?? null} />
-      <Ionicons
-        color={colors.textMuted}
-        name={expanded ? "chevron-up" : "chevron-down"}
-        size={iconSize.inline}
-      />
-    </Pressable>
-  );
-}
-
-function ModelChoices({
-  grouped,
-  models,
-  onChoose,
-  selectedEffort,
-  selectedModel,
-}: {
-  /** Groups the rows under provider headers (a new chat on a multi-provider server). */
-  grouped: boolean;
-  models: readonly ModelControl[];
-  onChoose: (model: string, effort: string | null) => void;
-  selectedEffort: string | null;
-  selectedModel: string | null;
-}): ReactNode {
-  const row = (candidate: ModelControl) => (
-    <ModelRow
-      candidate={candidate}
-      key={candidate.id}
-      onChoose={onChoose}
-      selected={candidate.id === selectedModel}
-      selectedEffort={selectedEffort}
-    />
-  );
-  return (
-    <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled style={styles.modelList}>
-      {grouped
-        ? modelSections(models).map((section) => (
-            <View key={section.provider ?? "unannotated"}>
-              {section.provider !== null && <ModelProviderHeader provider={section.provider} />}
-              {section.models.map(row)}
-            </View>
-          ))
-        : models.map(row)}
-    </ScrollView>
-  );
-}
-
-function ModelRow({
-  candidate,
-  onChoose,
-  selected,
-  selectedEffort,
-}: {
-  candidate: ModelControl;
-  onChoose: (model: string, effort: string | null) => void;
-  selected: boolean;
-  selectedEffort: string | null;
-}): ReactNode {
-  const choose = useEvent(() => {
-    onChoose(candidate.id, clampModelEffort(candidate, selectedEffort));
-  });
-  return (
-    <Pressable
-      accessibilityLabel={candidate.label}
-      accessibilityRole="button"
-      accessibilityState={{ selected }}
-      onPress={choose}
-      style={styles.modelRow}
-    >
-      <ModelLabel label={candidate.label} provider={candidate.provider ?? null} />
-      {selected && <Ionicons color={colors.text} name="checkmark" size={iconSize.inline} />}
-    </Pressable>
-  );
-}
-
-/** A model's label, led by its provider's mark in a provider-aware catalog. */
-function ModelLabel({ label, provider }: { label: string; provider: string | null }): ReactNode {
-  return (
-    <View style={styles.modelLabel}>
-      {provider !== null && <ProviderIcon provider={provider} size={iconSize.inline} />}
-      <Text numberOfLines={1} style={styles.rowText}>
-        {label}
-      </Text>
     </View>
   );
 }
@@ -446,21 +345,7 @@ function FastToggle({
   if (fastTier === undefined) {
     return null;
   }
-  return (
-    <Pressable
-      accessibilityLabel="Fast mode"
-      accessibilityRole="switch"
-      accessibilityState={{ checked: enabled }}
-      onPress={toggle}
-      style={[styles.fastButton, enabled && styles.fastButtonActive]}
-    >
-      <Ionicons
-        color={enabled ? colors.onPrimary : colors.textMuted}
-        name={enabled ? "flash" : "flash-outline"}
-        size={iconSize.action}
-      />
-    </Pressable>
-  );
+  return <FastModeToggle enabled={enabled} onToggle={toggle} />;
 }
 
 function PersonalityChoices({
@@ -545,50 +430,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: menuContentInset,
     paddingVertical: spacing.xs,
   },
-  fastButton: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainer,
-    borderRadius: radii.medium,
-    height: layoutSize.header,
-    justifyContent: "center",
-    width: layoutSize.header,
-  },
-  fastButtonActive: {
-    backgroundColor: colors.accent,
-  },
-  modelButton: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainer,
-    borderRadius: radii.medium,
-    flex: 1,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    minHeight: layoutSize.header,
-    paddingHorizontal: spacing.md,
-  },
   modelControls: {
     flexDirection: "row",
     gap: spacing.xs,
     marginTop: spacing.xs,
-  },
-  modelLabel: {
-    alignItems: "center",
-    flexDirection: "row",
-    flexShrink: 1,
-    gap: spacing.xs,
-  },
-  modelList: {
-    marginTop: spacing.xs,
-    maxHeight: layoutSize.header * MAX_VISIBLE_MODELS,
-  },
-  modelRow: {
-    alignItems: "center",
-    borderBottomColor: colors.border,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    minHeight: layoutSize.header,
-    paddingHorizontal: spacing.sm,
   },
   notice: {
     ...typeScale.body,
@@ -607,11 +452,6 @@ const styles = StyleSheet.create({
   },
   personalitySelected: {
     backgroundColor: colors.surfaceContainer,
-  },
-  rowText: {
-    ...typeScale.title,
-    color: colors.text,
-    flexShrink: 1,
   },
   smallText: {
     ...typeScale.label,

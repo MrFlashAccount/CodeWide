@@ -70,8 +70,6 @@ function turnView(turn: TurnItem, virtualized: boolean) {
         followsLead={row.followsLead}
         forceExpanded={false}
         parts={row.parts}
-        bubble={row.bubble}
-        group={row.group}
         placement={row.placement}
         presentation={projectTurnPresentation(turn, null, false, false)}
       />
@@ -155,7 +153,7 @@ describe.each([false, true])("thinking handoff (virtualized: %s)", (virtualized)
     },
   );
 
-  it("does not leave a pending thinking bubble after an empty turn completes", () => {
+  it("replaces pending thinking with presentation fallback for an empty completed bubble", () => {
     const pending = pendingTurn();
     const view = render(turnView(pending, virtualized));
     expect(view.getByTestId("turn-thinking-placeholder")).toBeTruthy();

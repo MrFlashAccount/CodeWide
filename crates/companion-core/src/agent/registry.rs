@@ -95,6 +95,13 @@ impl ProviderRegistry {
         }
     }
 
+    /// Ends every enabled provider's live work (companion shutdown),
+    /// concurrently.
+    pub async fn shutdown(&self) {
+        futures_util::future::join_all(self.providers.iter().map(|provider| provider.shutdown()))
+            .await;
+    }
+
     /// The primary provider (first in order).
     #[must_use]
     pub fn primary(&self) -> &Arc<dyn AgentProvider> {

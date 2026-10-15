@@ -1,7 +1,6 @@
 [Unit]
 Description=CodeWide Companion update guardian
-After=network-online.target
-Wants=network-online.target
+ConditionPathExists=%h/.local/state/codewide/host-update/activation-request.json
 
 [Service]
 Type=oneshot
@@ -17,11 +16,9 @@ ProtectSystem=full
 ProtectHome=read-only
 ReadWritePaths=%h/.local/lib/codewide %h/.local/state/codewide/host-update
 ReadOnlyPaths=%h/.local/lib/codewide/bootstrap %h/.config/systemd/user
-CapabilityBoundingSet=
 AmbientCapabilities=
 LockPersonality=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
-
-[Install]
-WantedBy=default.target
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any

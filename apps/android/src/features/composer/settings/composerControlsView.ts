@@ -6,7 +6,6 @@ import type { PermissionDefaultOption } from "../../../ui/TurnControlMenus.types
 import {
   serverControlValue,
   shownOverlayEntry,
-  type ComposerControlEntry,
   type ComposerControlField,
   type ComposerControlsOverlay,
 } from "./controlsOverlay";
@@ -18,11 +17,6 @@ import {
 
 /** One displayed control value. */
 type ComposerControlState<Value> = {
-  /**
-   * The value was chosen while a turn ran and takes effect when the next turn
-   * starts; the running turn keeps the previous value.
-   */
-  readonly nextTurn: boolean;
   /** A local choice the server has not answered yet. */
   readonly pending: boolean;
   readonly value: Value;
@@ -58,37 +52,13 @@ export type ComposerControlsDraft = {
 
 /** Inputs of an existing thread's controls. */
 export type ExistingThreadControlsInput = {
-  readonly activeTurnId: string | null;
   readonly agent: ThreadAgent | null;
   readonly controls: TurnControlsValue;
   readonly overlay: ComposerControlsOverlay;
   readonly server: ProjectedThreadExecutionSettings | null;
 };
 
-const SETTLED = { nextTurn: false, pending: false } as const;
-const READ_ONLY_PROFILE = ":read-only";
-
-/**
- * Whether `entry`, chosen while a turn ran, waits for the next turn. Model,
- * thinking and Fast always apply at a turn boundary. The primary (Codex)
- * provider applies every access change to subsequent turns; a neutral provider
- * (Claude) switches between workspace and full access inside the running turn
- * and applies a change to or from read-only at the next turn.
- */
-function appliesAtNextTurn(
-  field: ComposerControlField,
-  agent: ThreadAgent | null,
-  entry: ComposerControlEntry,
-): boolean {
-  if (field !== "permissions") {
-    return true;
-  }
-  return (
-    threadPermissionDefaultScope(agent) === "primary" ||
-    entry.from === READ_ONLY_PROFILE ||
-    entry.value === READ_ONLY_PROFILE
-  );
-}
+const SETTLED = { pending: false } as const;
 
 function existingThreadValue(
   input: ExistingThreadControlsInput,
@@ -100,11 +70,6 @@ function existingThreadValue(
     return { ...SETTLED, value: server };
   }
   return {
-    nextTurn:
-      shown.turnId !== null &&
-      shown.turnId === input.activeTurnId &&
-      shown.value !== shown.from &&
-      appliesAtNextTurn(field, input.agent, shown),
     pending: shown.status === "sending" && shown.value !== server,
     value: shown.value,
   };
@@ -114,7 +79,6 @@ function profileDisplay(
   state: ComposerControlState<string | null>,
 ): ComposerControlState<ComposerPermissionsDisplay> {
   return {
-    nextTurn: state.nextTurn,
     pending: state.pending,
     value: state.value === null ? { kind: "legacy" } : { id: state.value, kind: "profile" },
   };

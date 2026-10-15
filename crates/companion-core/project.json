@@ -6,6 +6,7 @@
   "tags": ["language:rust", "type:library"],
   "implicitDependencies": [
     "relay",
+    "host-resolver",
     "companion-sync-contract",
     "agent-core",
     "agent-transport",

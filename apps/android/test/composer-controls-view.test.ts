@@ -86,7 +86,6 @@ function server(
 
 function existing(input: Partial<ExistingThreadControlsInput>) {
   return existingThreadControlsView({
-    activeTurnId: null,
     agent: codexAgent,
     controls,
     overlay: EMPTY_CONTROLS_OVERLAY,
@@ -100,10 +99,9 @@ function choose(
   changes: ComposerControlChanges,
   current: ProjectedThreadExecutionSettings | null,
   mutation: number,
-  activeTurnId: string | null = null,
 ): ComposerControlsOverlay {
   return overlayWithChanges(overlay, {
-    baseline: controlBaseline(current, activeTurnId),
+    baseline: controlBaseline(current),
     changes,
     mutation,
   });
@@ -132,7 +130,7 @@ describe("model thinking levels", () => {
 describe("existing thread controls", () => {
   it("shows the server's settings, never a catalog default", () => {
     const view = existing({});
-    expect(view.model).toEqual({ nextTurn: false, pending: false, value: "astra" });
+    expect(view.model).toEqual({ pending: false, value: "astra" });
     expect(view.effort.value).toBe("high");
     expect(view.permissions.value).toEqual({ id: ":workspace", kind: "profile" });
   });
@@ -161,13 +159,12 @@ describe("existing thread controls", () => {
     const before = server();
     const overlay = choose(EMPTY_CONTROLS_OVERLAY, { effort: "low", model: "astra" }, before, 1);
     const pending = existing({ overlay, server: before });
-    expect(pending.effort).toEqual({ nextTurn: false, pending: true, value: "low" });
+    expect(pending.effort).toEqual({ pending: true, value: "low" });
     // The model did not change: it is not shown as pending.
     expect(pending.model.pending).toBe(false);
 
     const echoed = server({ effort: "low" });
     expect(existing({ overlay, server: echoed }).effort).toEqual({
-      nextTurn: false,
       pending: false,
       value: "low",
     });
@@ -183,18 +180,17 @@ describe("existing thread controls", () => {
   it("does not resurrect a confirmed choice when the server later reverts it", () => {
     const before = server();
     let state = {
-      activeTurnId: null,
       overlay: choose(EMPTY_CONTROLS_OVERLAY, { model: "sol" }, before, 1),
       server: before,
     };
-    state = reconcileControlsState(state, server({ model: "sol" }), null);
-    state = reconcileControlsState(state, before, null);
+    state = reconcileControlsState(state, server({ model: "sol" }));
+    state = reconcileControlsState(state, before);
     expect(existing({ overlay: state.overlay, server: before }).model.value).toBe("astra");
   });
 
   it("returns the same state when nothing changed", () => {
-    const state = { activeTurnId: null, overlay: EMPTY_CONTROLS_OVERLAY, server: server() };
-    expect(reconcileControlsState(state, server(), null)).toBe(state);
+    const state = { overlay: EMPTY_CONTROLS_OVERLAY, server: server() };
+    expect(reconcileControlsState(state, server())).toBe(state);
   });
 
   it("reverts a rejected choice and keeps a newer choice of the same field", () => {
@@ -211,44 +207,8 @@ describe("existing thread controls", () => {
   it("stops the shimmer once the server accepts, before the echo arrives", () => {
     const before = server();
     const overlay = overlayAccepted(choose(EMPTY_CONTROLS_OVERLAY, { model: "sol" }, before, 1), 1);
-    expect(existing({ overlay, server: before }).model).toEqual({
-      nextTurn: false,
-      pending: false,
-      value: "sol",
-    });
-  });
-
-  it("marks a model change made during a turn as applying from the next turn", () => {
-    const before = server();
-    const overlay = choose(EMPTY_CONTROLS_OVERLAY, { model: "sol" }, before, 1, "turn-1");
-    const echoed = server({ model: "sol" });
-    expect(existing({ activeTurnId: "turn-1", overlay, server: echoed }).model.nextTurn).toBe(true);
-    expect(existing({ activeTurnId: "turn-2", overlay, server: echoed }).model.nextTurn).toBe(
-      false,
-    );
-    expect(existing({ activeTurnId: null, overlay, server: echoed }).model.nextTurn).toBe(false);
-  });
-
-  it("applies Claude's workspace/full-access switch live and read-only at the next turn", () => {
-    const before = server({ model: "opus", permissions: ":workspace" });
-    const full = choose(EMPTY_CONTROLS_OVERLAY, { permissions: ":full-access" }, before, 1, "t");
-    expect(
-      existing({ activeTurnId: "t", agent: claudeAgent, overlay: full, server: before })
-        .permissions,
-    ).toEqual({ nextTurn: false, pending: true, value: { id: ":full-access", kind: "profile" } });
-    const readOnly = choose(EMPTY_CONTROLS_OVERLAY, { permissions: ":read-only" }, before, 2, "t");
-    expect(
-      existing({ activeTurnId: "t", agent: claudeAgent, overlay: readOnly, server: before })
-        .permissions.nextTurn,
-    ).toBe(true);
-  });
-
-  it("applies every Codex access change at the next turn", () => {
-    const before = server();
-    const full = choose(EMPTY_CONTROLS_OVERLAY, { permissions: ":full-access" }, before, 1, "t");
-    expect(
-      existing({ activeTurnId: "t", overlay: full, server: before }).permissions.nextTurn,
-    ).toBe(true);
+    // The server does not report when a change takes effect; nothing is inferred.
+    expect(existing({ overlay, server: before }).model).toEqual({ pending: false, value: "sol" });
   });
 });
 

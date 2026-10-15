@@ -58,8 +58,12 @@ The setup assistant opens by itself on first launch.
   curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
   ```
 
-  The relay starts right away and after every reboot. Allow inbound TCP
-  `8780` in the server firewall and your provider's network rules, then run:
+  The relay installs as a systemd user service without `sudo` and starts
+  right away and with every login of that user. For a relay that must run
+  before login and after logout, enable systemd lingering for the user, see
+  [self-hosting](self-hosting.md#reach-the-companion-from-your-phone). Allow
+  inbound TCP `8780` in the server firewall and your provider's network rules,
+  then run:
 
   ```sh
   codewide-relay pair

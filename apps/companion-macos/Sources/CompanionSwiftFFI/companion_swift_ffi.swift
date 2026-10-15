@@ -465,22 +465,6 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
-    typealias FfiType = UInt16
-    typealias SwiftType = UInt16
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt16 {
-        return try lift(readInt(&buf))
-    }
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     typealias FfiType = UInt32
     typealias SwiftType = UInt32
@@ -584,6 +568,16 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 public protocol CoreHostProtocol: AnyObject, Sendable {
+
+    /**
+     * Returns the data-minimized provider connection snapshot used by the
+     * local macOS UI. Account, subscription, capability and credential data
+     * are not part of this contract.
+     *
+     * # Errors
+     * Returns an adapter error if the presentation cannot be serialized.
+     */
+    func agentProviderConnectionsJson() throws  -> String
 
     func appServerConnection()  -> FfiAppServerConnection
 
@@ -764,8 +758,11 @@ open class CoreHost: CoreHostProtocol, @unchecked Sendable {
      *
      * Returns an adapter error when the state directory cannot be opened,
      * migrated, exclusively locked, or durably checkpointed.
+     *
+     * `app_build` and `source_revision` identify the installed bundle for
+     * remote updates.
      */
-public convenience init(stateDirectory: String, codexHome: String, appVersion: String, hostVersion: String, computerName: String, listenAddress: String)throws  {
+public convenience init(stateDirectory: String, codexHome: String, appVersion: String, appBuild: String, sourceRevision: String, hostVersion: String, computerName: String, listenAddress: String)throws  {
     let handle =
         try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
@@ -773,6 +770,8 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
         FfiConverterString.lower(stateDirectory),
         FfiConverterString.lower(codexHome),
         FfiConverterString.lower(appVersion),
+        FfiConverterString.lower(appBuild),
+        FfiConverterString.lower(sourceRevision),
         FfiConverterString.lower(hostVersion),
         FfiConverterString.lower(computerName),
         FfiConverterString.lower(listenAddress),uniffiCallStatus
@@ -792,6 +791,23 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
 
 
 
+
+    /**
+     * Returns the data-minimized provider connection snapshot used by the
+     * local macOS UI. Account, subscription, capability and credential data
+     * are not part of this contract.
+     *
+     * # Errors
+     * Returns an adapter error if the presentation cannot be serialized.
+     */
+open func agentProviderConnectionsJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_agent_provider_connections_json(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
 
 open func appServerConnection() -> FfiAppServerConnection  {
     return try!  FfiConverterTypeFfiAppServerConnection_lift(try! rustCall() {
@@ -1120,68 +1136,6 @@ public func FfiConverterTypeCoreHost_lower(_ value: CoreHost) -> UInt64 {
 
 
 
-public struct FfiAdmittedHostUpdate: Equatable, Hashable {
-    public var sequence: UInt64
-    public var expiresAt: UInt64
-    public var targetFingerprint: String
-    public var target: FfiHostUpdateTarget
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(sequence: UInt64, expiresAt: UInt64, targetFingerprint: String, target: FfiHostUpdateTarget) {
-        self.sequence = sequence
-        self.expiresAt = expiresAt
-        self.targetFingerprint = targetFingerprint
-        self.target = target
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FfiAdmittedHostUpdate: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFfiAdmittedHostUpdate: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAdmittedHostUpdate {
-        return
-            try FfiAdmittedHostUpdate(
-                sequence: FfiConverterUInt64.read(from: &buf),
-                expiresAt: FfiConverterUInt64.read(from: &buf),
-                targetFingerprint: FfiConverterString.read(from: &buf),
-                target: FfiConverterTypeFfiHostUpdateTarget.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FfiAdmittedHostUpdate, into buf: inout [UInt8]) {
-        FfiConverterUInt64.write(value.sequence, into: &buf)
-        FfiConverterUInt64.write(value.expiresAt, into: &buf)
-        FfiConverterString.write(value.targetFingerprint, into: &buf)
-        FfiConverterTypeFfiHostUpdateTarget.write(value.target, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFfiAdmittedHostUpdate_lift(_ buf: RustBuffer) throws -> FfiAdmittedHostUpdate {
-    return try FfiConverterTypeFfiAdmittedHostUpdate.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFfiAdmittedHostUpdate_lower(_ value: FfiAdmittedHostUpdate) -> RustBuffer {
-    return FfiConverterTypeFfiAdmittedHostUpdate.lower(value)
-}
-
-
 public struct FfiAppServerCandidate: Equatable, Hashable {
     public var id: String
     public var displayName: String
@@ -1365,92 +1319,6 @@ public func FfiConverterTypeFfiDirectAccess_lift(_ buf: RustBuffer) throws -> Ff
 #endif
 public func FfiConverterTypeFfiDirectAccess_lower(_ value: FfiDirectAccess) -> RustBuffer {
     return FfiConverterTypeFfiDirectAccess.lower(value)
-}
-
-
-public struct FfiHostUpdateTarget: Equatable, Hashable {
-    public var platform: String
-    public var version: String
-    public var build: String
-    public var sourceRevision: String
-    public var artifactUrl: String
-    public var sha256: String
-    public var bootstrapVersion: UInt16
-    public var journalVersion: UInt16
-    public var stateEpoch: UInt32
-    public var rollbackCompatibleFrom: [String]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(platform: String, version: String, build: String, sourceRevision: String, artifactUrl: String, sha256: String, bootstrapVersion: UInt16, journalVersion: UInt16, stateEpoch: UInt32, rollbackCompatibleFrom: [String]) {
-        self.platform = platform
-        self.version = version
-        self.build = build
-        self.sourceRevision = sourceRevision
-        self.artifactUrl = artifactUrl
-        self.sha256 = sha256
-        self.bootstrapVersion = bootstrapVersion
-        self.journalVersion = journalVersion
-        self.stateEpoch = stateEpoch
-        self.rollbackCompatibleFrom = rollbackCompatibleFrom
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FfiHostUpdateTarget: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFfiHostUpdateTarget: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiHostUpdateTarget {
-        return
-            try FfiHostUpdateTarget(
-                platform: FfiConverterString.read(from: &buf),
-                version: FfiConverterString.read(from: &buf),
-                build: FfiConverterString.read(from: &buf),
-                sourceRevision: FfiConverterString.read(from: &buf),
-                artifactUrl: FfiConverterString.read(from: &buf),
-                sha256: FfiConverterString.read(from: &buf),
-                bootstrapVersion: FfiConverterUInt16.read(from: &buf),
-                journalVersion: FfiConverterUInt16.read(from: &buf),
-                stateEpoch: FfiConverterUInt32.read(from: &buf),
-                rollbackCompatibleFrom: FfiConverterSequenceString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FfiHostUpdateTarget, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.platform, into: &buf)
-        FfiConverterString.write(value.version, into: &buf)
-        FfiConverterString.write(value.build, into: &buf)
-        FfiConverterString.write(value.sourceRevision, into: &buf)
-        FfiConverterString.write(value.artifactUrl, into: &buf)
-        FfiConverterString.write(value.sha256, into: &buf)
-        FfiConverterUInt16.write(value.bootstrapVersion, into: &buf)
-        FfiConverterUInt16.write(value.journalVersion, into: &buf)
-        FfiConverterUInt32.write(value.stateEpoch, into: &buf)
-        FfiConverterSequenceString.write(value.rollbackCompatibleFrom, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFfiHostUpdateTarget_lift(_ buf: RustBuffer) throws -> FfiHostUpdateTarget {
-    return try FfiConverterTypeFfiHostUpdateTarget.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFfiHostUpdateTarget_lower(_ value: FfiHostUpdateTarget) -> RustBuffer {
-    return FfiConverterTypeFfiHostUpdateTarget.lower(value)
 }
 
 
@@ -1731,64 +1599,6 @@ public func FfiConverterTypeFfiRuntimeHealth_lift(_ buf: RustBuffer) throws -> F
 #endif
 public func FfiConverterTypeFfiRuntimeHealth_lower(_ value: FfiRuntimeHealth) -> RustBuffer {
     return FfiConverterTypeFfiRuntimeHealth.lower(value)
-}
-
-
-public struct FfiVerifiedHostUpdateRelease: Equatable, Hashable {
-    public var sequence: UInt64
-    public var expiresAt: UInt64
-    public var targets: [FfiHostUpdateTarget]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(sequence: UInt64, expiresAt: UInt64, targets: [FfiHostUpdateTarget]) {
-        self.sequence = sequence
-        self.expiresAt = expiresAt
-        self.targets = targets
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension FfiVerifiedHostUpdateRelease: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFfiVerifiedHostUpdateRelease: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiVerifiedHostUpdateRelease {
-        return
-            try FfiVerifiedHostUpdateRelease(
-                sequence: FfiConverterUInt64.read(from: &buf),
-                expiresAt: FfiConverterUInt64.read(from: &buf),
-                targets: FfiConverterSequenceTypeFfiHostUpdateTarget.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FfiVerifiedHostUpdateRelease, into buf: inout [UInt8]) {
-        FfiConverterUInt64.write(value.sequence, into: &buf)
-        FfiConverterUInt64.write(value.expiresAt, into: &buf)
-        FfiConverterSequenceTypeFfiHostUpdateTarget.write(value.targets, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFfiVerifiedHostUpdateRelease_lift(_ buf: RustBuffer) throws -> FfiVerifiedHostUpdateRelease {
-    return try FfiConverterTypeFfiVerifiedHostUpdateRelease.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFfiVerifiedHostUpdateRelease_lower(_ value: FfiVerifiedHostUpdateRelease) -> RustBuffer {
-    return FfiConverterTypeFfiVerifiedHostUpdateRelease.lower(value)
 }
 
 
@@ -2205,75 +2015,6 @@ fileprivate struct FfiConverterSequenceTypeFfiDeviceStatus: FfiConverterRustBuff
     }
 }
 
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeFfiHostUpdateTarget: FfiConverterRustBuffer {
-    typealias SwiftType = [FfiHostUpdateTarget]
-
-    public static func write(_ value: [FfiHostUpdateTarget], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeFfiHostUpdateTarget.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiHostUpdateTarget] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [FfiHostUpdateTarget]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeFfiHostUpdateTarget.read(from: &buf))
-        }
-        return seq
-    }
-}
-/**
- * Applies the complete shared admission policy to one macOS target.
- *
- * # Errors
- *
- * Returns an error when signature verification or any target, predecessor,
- * sequence, compatibility, or state-epoch admission rule fails.
- */
-public func admitMacosHostUpdateRelease(envelopeJson: String, publicKeySpki: String, nowUnixSeconds: UInt64, trustedKeyId: String, currentVersion: String, currentDigest: String, highestSequence: UInt64, stateEpoch: UInt32)throws  -> FfiAdmittedHostUpdate  {
-    return try  FfiConverterTypeFfiAdmittedHostUpdate_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
-        uniffiCallStatus in
-    uniffi_companion_swift_ffi_fn_func_admit_macos_host_update_release(
-        FfiConverterString.lower(envelopeJson),
-        FfiConverterString.lower(publicKeySpki),
-        FfiConverterUInt64.lower(nowUnixSeconds),
-        FfiConverterString.lower(trustedKeyId),
-        FfiConverterString.lower(currentVersion),
-        FfiConverterString.lower(currentDigest),
-        FfiConverterUInt64.lower(highestSequence),
-        FfiConverterUInt32.lower(stateEpoch),uniffiCallStatus
-    )
-})
-}
-/**
- * Verifies a signed stable descriptor for baseline receipt establishment.
- * This does not admit an update; callers must independently prove the
- * installed bundle is byte-identical to the verified current release image.
- *
- * # Errors
- *
- * Returns an error when the envelope, signature, trust key, channel, or
- * freshness contract is invalid.
- */
-public func verifyHostUpdateRelease(envelopeJson: String, publicKeySpki: String, nowUnixSeconds: UInt64, trustedKeyId: String)throws  -> FfiVerifiedHostUpdateRelease  {
-    return try  FfiConverterTypeFfiVerifiedHostUpdateRelease_lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
-        uniffiCallStatus in
-    uniffi_companion_swift_ffi_fn_func_verify_host_update_release(
-        FfiConverterString.lower(envelopeJson),
-        FfiConverterString.lower(publicKeySpki),
-        FfiConverterUInt64.lower(nowUnixSeconds),
-        FfiConverterString.lower(trustedKeyId),uniffiCallStatus
-    )
-})
-}
-
 private enum InitializationResult {
     case ok
     case contractVersionMismatch
@@ -2289,10 +2030,7 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_func_admit_macos_host_update_release() != 27860) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_companion_swift_ffi_checksum_func_verify_host_update_release() != 7360) {
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_agent_provider_connections_json() != 6547) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_app_server_connection() != 62371) {
@@ -2352,7 +2090,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_start_app_server() != 22333) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 47119) {
+    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 40899) {
         return InitializationResult.apiChecksumMismatch
     }
 

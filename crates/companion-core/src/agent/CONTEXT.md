@@ -16,7 +16,7 @@ companion-host         → (redb, no agent crate)
 agent-search           → (SQLite, no agent crate)
 agent-resources        → agent-core, companion-host
 agent-provider-codex   → agent-core, agent-transport, companion-host, agent-search, agent-resources
-agent-provider-claude  → agent-core, agent-transport, companion-host, agent-search, agent-resources
+agent-provider-claude  → agent-core, companion-host, agent-search, agent-resources
 companion-core         → all of the above
 ```
 
@@ -26,7 +26,7 @@ companion-core         → all of the above
 - [`crates/agent-search`](../../../agent-search/CONTEXT.md) — the stored-message search index format and reads shared by the adapters.
 - [`crates/agent-resources`](../../../agent-resources/CONTEXT.md) — the thread resource model, projection and reads shared by the adapters.
 - [`crates/agent-provider-codex`](../../../agent-provider-codex/CONTEXT.md) — the Codex adapter and the Codex-owned storage.
-- [`crates/agent-provider-claude`](../../../agent-provider-claude/CONTEXT.md) — the Claude adapter (Rust) and its index of Claude's session store; its TypeScript host lives in `crates/agent-provider-claude/host/`.
+- [`crates/agent-provider-claude`](../../../agent-provider-claude/CONTEXT.md) — the Claude adapter (Rust): drives the user's `claude` CLI over stream-json and reads and writes Claude's session store; it keeps an index of that store.
 
 No adapter crate depends on `companion-core`; `companion-core` depends on both adapter crates only to wire them in.
 
@@ -40,7 +40,7 @@ No adapter crate depends on `companion-core`; `companion-core` depends on both a
 - `client_wire/` — the single client-wire ↔ neutral translation: `decode.rs` (request classification), `gateway.rs` (routing by binding or capability, degradation errors, provisional-binding confirmation, `thread/start` provider choice), `items.rs`, `results.rs`, `events.rs`, `settings.rs`, `history.rs` (neutral → v0.155.1 projection), `request_ids` (`wire-request-ids-v0`, owned by `agent-core`), `list.rs` (merged `thread/list`), `catalog.rs` (merged `model/list` and `permissionProfile/list`). `mod.rs` owns `Thread.codewideAgent {provider, providerName, primary, capabilities}`; it and the `codewideAgentProvider` / `codewideAgentProviders` annotations are attached only in multi-provider mode.
 - `orchestration/` — the model-driven subagent tools (one owner for every provider): `tools.rs` (names, schemas, validated arguments, results), `children.rs` (durable parent → child links), `tracker.rs` (per-agent status from the client-wire turn lifecycle, waiters, queued messages), `profiles.rs` (permission non-escalation, observed effective profiles), `mod.rs` (`OrchestrationService`, the `ClientToolHost` installed into every provider in active mutation mode).
 - `fork/` — fork into another provider: `mod.rs` (`ForkService`: create, durable fork record, pending handoff injected into the first `turn/start`), `handoff.rs` (pure history selection and budgeting, ported from t3code).
-- Direct input: `items.rs` sets `Thread.canAcceptDirectInput` from the neutral status (`null` for `notLoaded`, `false` for `openElsewhere`, otherwise `true`), and `events.rs` repeats it on every `thread/status/changed` of a neutral thread so the client applies a lock and its release live; Codex App Server status changes omit it. A queued turn waits on an `openElsewhere` thread (`ThreadActivity::Unavailable`).
+- Direct input: `items.rs` sets `Thread.canAcceptDirectInput` from the neutral status (`false` for `openElsewhere`, otherwise `true`: a neutral provider reports a held thread as `openElsewhere`, so an unloaded one is free), and `events.rs` repeats it on every `thread/status/changed` of a neutral thread so the client applies a lock and its release live, including the release to `notLoaded`; Codex App Server status changes omit it. A queued turn waits on an `openElsewhere` thread (`ThreadActivity::Unavailable`).
 - `client_wire/observe.rs` — the facts read back from client-wire payloads (turn lifecycle, effective permission profile).
 - `provider_status.rs` — `companion/agentProviders/read` (every configured provider with status, sign-in state and capabilities, plus host capabilities) and the durable `companion/agentProviders/changed` notifier (multi-provider mode only), built from `AgentProvider::status`/`health`/`subscribe_rate_limits` (optional `accountLabel` and `rateLimits` entry fields, omitted when not applicable); it names no provider.
 - `testing.rs` — the in-memory fake providers for unit tests of this layer (`FakeProvider`, `ScriptedProvider`).

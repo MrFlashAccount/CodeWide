@@ -12,9 +12,9 @@ accounting), the versioned `codewide-agent` protocol
 (`packages/agent-protocol`), declared capabilities and one crate per
 provider. Codex (`crates/agent-provider-codex`, the in-process App Server
 adapter with its storage) and Claude (`crates/agent-provider-claude`: a Rust
-adapter plus its Node child, the Claude agent host in `host/`, over the
-user's own `claude` CLI) are equal providers, and every thread is bound to
-one provider for its life. Claude history is read from Claude's own session
+adapter that drives the user's own `claude` CLI over its stream-json
+protocol) are equal providers, and every thread is bound to one provider for
+its life. Claude history is read from Claude's own session
 store, so sessions started with `claude` in a terminal appear next to
 CodeWide's threads. In phase 1 the client keeps its Codex-shaped wire; the
 companion projects neutral events to it in one place and the client hides

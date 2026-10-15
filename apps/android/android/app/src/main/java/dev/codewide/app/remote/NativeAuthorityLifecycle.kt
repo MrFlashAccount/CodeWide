@@ -20,7 +20,7 @@ internal data class NativeAuthorityRevocation(
   val legacySession: () -> Unit,
   val portForwards: () -> Unit,
   val terminalSessions: () -> Unit,
-  val httpProxy: () -> Unit,
+  val companionHttp: () -> Unit,
 )
 
 /** Attempts every revocation even if one owner fails, then rejects authority publication. */
@@ -30,7 +30,7 @@ internal fun revokeNativeAuthority(revocation: NativeAuthorityRevocation) {
     revocation.legacySession,
     revocation.portForwards,
     revocation.terminalSessions,
-    revocation.httpProxy,
+    revocation.companionHttp,
   )
   for (action in actions) {
     try {

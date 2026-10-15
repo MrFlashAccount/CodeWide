@@ -10,6 +10,7 @@ export function ConversationBottomChrome({
   composerContent,
   currentOutcome,
   failureNotice,
+  openElsewhereActions,
   readOnly,
   remoteThread,
   reportBottomChromeHeight,
@@ -27,7 +28,6 @@ export function ConversationBottomChrome({
         !timeline.some((item) => item.kind === "turn" && item.turn.status === "inProgress") && (
           <>{requestPrompt}</>
         )}
-      {openElsewhere && <ThreadOpenElsewhereNotice />}
       {/* The persistent notice already says why a send was refused. */}
       {failureNotice !== null &&
         !(openElsewhere && failureNotice.kind === "conversationOpenElsewhere") && (
@@ -40,6 +40,13 @@ export function ConversationBottomChrome({
         )}
       {!readOnly && <QuestionDock />}
       {composerContent}
+      {/* It takes the editor's place under the read-only composer's context chips. */}
+      {openElsewhere && openElsewhereActions !== null && (
+        <ThreadOpenElsewhereNotice
+          onCheckAgain={openElsewhereActions.onCheckAgain}
+          onFork={openElsewhereActions.onFork}
+        />
+      )}
     </View>
   );
 }

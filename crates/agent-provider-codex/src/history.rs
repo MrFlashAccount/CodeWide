@@ -453,6 +453,21 @@ pub(crate) struct SummaryProjectionState {
     model_context_window: Option<u64>,
 }
 
+impl agent_index::SummaryProjection for SummaryProjectionState {
+    fn ingest(
+        &mut self,
+        line: &[u8],
+        offset: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.ingest_rollout_record(line, offset)
+            .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+    }
+
+    fn is_current(&self) -> bool {
+        Self::is_current(self)
+    }
+}
+
 impl SummaryProjectionState {
     pub(crate) fn new(id: String) -> Self {
         Self {

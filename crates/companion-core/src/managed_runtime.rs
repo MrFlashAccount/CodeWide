@@ -25,10 +25,12 @@ use agent_provider_codex::{
 };
 
 use crate::{
+    agent::registry::ProviderRegistry,
     auth::{DeviceRegistry, DeviceStatus},
     content::{ContentProjector, PrivateContentService},
     device_tls::{DeviceTlsAcceptor, bootstrap_config, device_bound_config},
     dictation::DictationService,
+    file_uploads::FileTransfer,
     files::FileService,
     host_identity::HostDisplayName,
     host_update::SharedHostUpdateGuardian,
@@ -61,8 +63,6 @@ pub struct ManagedRuntimeConfig {
     pub host_display_name: HostDisplayName,
     pub listen_address: SocketAddr,
     pub host_update_guardian: Option<SharedHostUpdateGuardian>,
-    /// The Claude agent host executable inside the application bundle.
-    pub claude_host: Option<PathBuf>,
 }
 
 impl ManagedRuntimeConfig {
@@ -81,7 +81,6 @@ impl ManagedRuntimeConfig {
             host_display_name,
             listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8767)),
             host_update_guardian: None,
-            claude_host: None,
         }
     }
 
@@ -98,14 +97,6 @@ impl ManagedRuntimeConfig {
     }
 
     /// Installs the platform-owned host replacement boundary for private V1 routes.
-    /// The Claude agent host shipped with the application; with it Claude
-    /// runs without a `providers.claude` entry.
-    #[must_use]
-    pub fn with_claude_host(mut self, claude_host: Option<PathBuf>) -> Self {
-        self.claude_host = claude_host;
-        self
-    }
-
     #[must_use]
     pub fn with_host_update_guardian(mut self, guardian: SharedHostUpdateGuardian) -> Self {
         self.host_update_guardian = Some(guardian);
@@ -127,6 +118,7 @@ pub enum AppServerConnection {
 
 pub struct ManagedRuntime {
     upstream: UpstreamHandle,
+    agent_registry: Arc<ProviderRegistry>,
     registry: Arc<DeviceRegistry>,
     relay: RelayRuntime,
     identity: TransportIdentity,
@@ -251,7 +243,7 @@ impl ManagedRuntime {
         // The Codex storage modules are reached only through the Codex adapter.
         let codex = CodexProvider::new(upstream.clone())
             .with_storage(CodexStorage::new(history).with_resources(resources.clone()));
-        let registry = crate::agent::providers::load_registry(
+        let agent_registry = crate::agent::providers::load_registry(
             &config.state_directory,
             Arc::new(codex),
             Some(&crate::agent::providers::ProviderHost {
@@ -259,16 +251,18 @@ impl ManagedRuntime {
                 state_directory: config.state_directory.clone(),
                 files: files.clone(),
                 vcs: Some(vcs.clone()),
-                claude_host: config.claude_host.clone(),
             }),
+        );
+        let mut sync = SyncHub::with_registry(
+            agent_registry.clone(),
+            store.clone(),
+            config.enable_mutations,
         )
-        .await;
-        let mut sync = SyncHub::with_registry(registry, store.clone(), config.enable_mutations)
-            .with_content_projector(Arc::new(ContentProjector::new(content.clone())))
-            .with_dictation(dictation)
-            .with_files(files.clone())
-            .with_projects(projects.clone())
-            .with_workspaces(workspaces.clone());
+        .with_content_projector(Arc::new(ContentProjector::new(content.clone())))
+        .with_dictation(dictation)
+        .with_files(files.clone())
+        .with_projects(projects.clone())
+        .with_workspaces(workspaces.clone());
         if let Some(account_pool) = &account_pool {
             sync = sync.with_account_pool(account_pool);
         }
@@ -286,6 +280,11 @@ impl ManagedRuntime {
             .await?,
         );
         tunnels.start_revocation_cleanup(registry.subscribe_authorization_changes());
+        let file_transfer = FileTransfer::for_devices(
+            files,
+            config.state_directory.join("workspace-uploads.redb"),
+            &registry,
+        )?;
 
         let bootstrap_listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         bootstrap_listener.set_nonblocking(true)?;
@@ -301,7 +300,7 @@ impl ManagedRuntime {
         .await?;
         let services = CompanionServices {
             build_shelf: None,
-            files: Some(files),
+            files: Some(file_transfer),
             content: Some(content),
             image_previews: Some(image_previews.clone()),
             media: Some(media.clone()),
@@ -360,6 +359,7 @@ impl ManagedRuntime {
 
         Ok(Self {
             upstream,
+            agent_registry,
             registry,
             relay,
             identity: identity.public().clone(),
@@ -392,6 +392,12 @@ impl ManagedRuntime {
                 last_known_version: version,
             },
         }
+    }
+
+    /// Returns the data-minimized provider connection state for local host UI.
+    #[must_use]
+    pub fn agent_provider_connections(&self) -> serde_json::Value {
+        crate::agent::provider_status::connection_snapshot(&self.agent_registry)
     }
 
     #[must_use]
@@ -535,6 +541,13 @@ impl ManagedRuntime {
     /// Rejects a corrupt or unsafe Relay configuration.
     pub fn relay_status(&self) -> RuntimeResult<RelayStatus> {
         Ok(self.relay.status()?)
+    }
+
+    /// Shared handle to the Relay runtime for platform adapters that observe
+    /// Relay state outside this runtime, such as the host update guardian.
+    #[must_use]
+    pub fn relay_runtime(&self) -> RelayRuntime {
+        self.relay.clone()
     }
 
     /// Reads Relay-owned self-update state through the pinned management route.

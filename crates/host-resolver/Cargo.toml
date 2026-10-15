@@ -1,0 +1,20 @@
+[package]
+name = "codewide-host-resolver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Host-name resolution that follows the host's own resolver for CodeWide outbound connections"
+
+[dependencies]
+reqwest = { version = "0.12.23", default-features = false }
+tokio = { version = "1.47.1", features = ["net", "time"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio = { version = "1.47.1", features = ["net", "process", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1.47.1", features = ["macros", "net", "rt-multi-thread", "time"] }
+
+[lints]
+workspace = true

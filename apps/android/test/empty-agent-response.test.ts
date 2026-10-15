@@ -8,10 +8,25 @@ const screen = compactSource(
   readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
 );
 
-const ownerTurnProjection = compactSource(readFileSync(new URL("../src/features/conversation/turns/turnProjection.ts", import.meta.url), "utf8"));
-const ownerTurnTimelineItem = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnTimelineItem.tsx", import.meta.url), "utf8"));
+const ownerTurnProjection = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/turnProjection.ts", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerTurnTimelineItem = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/TurnTimelineItem.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
-const ownerAgentTurnBody = compactSource(readFileSync(new URL("../src/features/conversation/turns/AgentTurnBody.tsx", import.meta.url), "utf8"));
+const ownerAgentTurnBody = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/AgentTurnBody.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("empty agent response", () => {
   it("distinguishes a generated response from an empty projected block", () => {
@@ -23,8 +38,10 @@ describe("empty agent response", () => {
     );
   });
 
-  it("uses stable terminal empty-state copy", () => {
-    expect(ownerAgentTurnBody).toContain("rawTurn.status === \"interrupted\" ? \"Stopped before response was generated\" : \"No response was generated\"");
+  it("uses stable terminal presentation fallback copy", () => {
+    expect(ownerAgentTurnBody).toContain("No response was generated");
+    expect(ownerAgentTurnBody).toContain("Stopped before response was generated");
+    expect(ownerTurnProjection).toContain("showEmptyResponsePlaceholder");
     expect(screen).not.toContain("Completed without final response");
     expect(screen).not.toContain("Stopped before a response was completed.");
   });

@@ -1,0 +1,10 @@
+[Unit]
+Description=Activate a prepared CodeWide Companion update
+
+[Path]
+PathExists=%h/.local/state/codewide/host-update/activation-request.json
+Unit=codewide-companion-update.service
+MakeDirectory=true
+
+[Install]
+WantedBy=default.target

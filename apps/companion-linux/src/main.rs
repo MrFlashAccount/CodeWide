@@ -19,7 +19,7 @@ use codewide_companion::{
     catalog::SessionCatalog,
     content::{ContentProjector, PrivateContentService},
     dictation::DictationService,
-    file_uploads::WorkspaceUploadStore,
+    file_uploads::FileTransfer,
     files::FileService,
     history::digest_turn,
     history_service::HistoryService,
@@ -48,7 +48,6 @@ use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
 use tracing::{info, warn};
 
-mod claude_host;
 mod local_control;
 mod provider_status;
 
@@ -1283,10 +1282,9 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
             state_directory: state_directory.clone(),
             files: files.clone(),
             vcs: Some(vcs.clone()),
-            claude_host: claude_host::installed(&state_directory),
         }),
-    )
-    .await;
+    );
+    let providers = registry.clone();
     let mut sync = SyncHub::with_registry(registry, store.clone(), options.enable_mutations)
         .with_content_projector(projector)
         .with_dictation(dictation)
@@ -1301,17 +1299,15 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         .clone()
         .unwrap_or_else(|| state_directory.join("identity"));
     let identity = CompanionIdentity::load_or_create(&identity_directory)?;
-    // Retain the historical filename: V1 uploads already persist ownership here.
-    let workspace_upload_staging = WorkspaceUploadStore::open(
-        state_directory.join("sync-v2-workspace-uploads.redb"),
-        files.clone(),
-    )?;
-    workspace_upload_staging.start_periodic_gc();
     let token: Arc<str> = Arc::from(token);
     let registry = Arc::new(DeviceRegistry::open(token, options.device_registry, None).await?);
     tunnels.start_revocation_cleanup(registry.subscribe_authorization_changes());
-
-    workspace_upload_staging.start_revocation_cleanup(registry.subscribe_authorization_changes());
+    // Retain the historical filename: V1 uploads already persist ownership here.
+    let file_transfer = FileTransfer::for_devices(
+        files,
+        state_directory.join("sync-v2-workspace-uploads.redb"),
+        &registry,
+    )?;
     let bootstrap_listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     bootstrap_listener.set_nonblocking(true)?;
     let bootstrap_tls_target = bootstrap_listener.local_addr()?;
@@ -1327,18 +1323,17 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let mut excluded_ports = HashSet::from([options.listen.port()]);
     excluded_ports.insert(bootstrap_tls_target.port());
     excluded_ports.insert(inner_tls_target.port());
-    let update_guardian = Arc::new(
-        codewide_companion::host_update::LinuxHostUpdateGuardian::new_with_runtime(
-            codewide_companion::host_update::LinuxHostUpdateGuardian::default_root(),
-            codewide_companion::host_update::LinuxHostUpdateGuardian::default_state_root(),
-            identity.public().tls_pin_sha256.clone(),
-            identity_directory.join("identity.json"),
-            relay.clone(),
-        ),
-    );
+    let update_guardian = Arc::new(codewide_companion::host_update::guardian(
+        codewide_companion::host_update::default_root(),
+        codewide_companion::host_update::default_state_root(),
+        identity.public().tls_pin_sha256.clone(),
+        identity_directory.join("identity.json"),
+        relay.clone(),
+    ));
+    update_guardian.resume_preparation();
     let services = server::CompanionServices {
         build_shelf: configured_build_shelf()?,
-        files: Some(files),
+        files: Some(file_transfer),
         content: Some(content),
         image_previews: Some(image_previews),
         media: Some(media),
@@ -1358,7 +1353,6 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         inner_tls_target: Some(inner_tls_target),
         inner_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(256))),
         relay: Some(relay),
-        workspace_upload_staging: Some(workspace_upload_staging),
     };
     let bootstrap_tls = codewide_companion::device_tls::bootstrap_config(&identity)?;
     let inner_tls = codewide_companion::device_tls::device_bound_config(
@@ -1386,12 +1380,15 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let public_server = serve_public(options.listen, routers.public);
     let bootstrap_server = serve_inner(bootstrap_listener, routers.bootstrap, bootstrap_tls);
     let inner_server = serve_device_inner(inner_listener, routers.inner, inner_tls);
-    tokio::try_join!(
+    let served = tokio::try_join!(
         public_server,
         bootstrap_server,
         inner_server,
         control_server
-    )?;
+    );
+    // Before the runtime drops, which kills every remaining child.
+    providers.shutdown().await;
+    served?;
     Ok(())
 }
 

@@ -153,108 +153,100 @@ export function startUpload(
       return { bytes: file.size, sha256: hash };
     }
     let offset = status.offset;
-    const handle = file.native.open();
     let finalBody: { bytes: number; sha256: string } | null = null;
-    try {
-      handle.offset = offset;
-      while (offset < file.size) {
-        if (isCancelled()) {
-          throw new Error("Transfer cancelled");
-        }
-        const chunk = handle.readBytes(Math.min(4 * 1024 * 1024, file.size - offset));
-        if (chunk.length === 0) {
-          throw new Error("Could not read the complete upload file");
-        }
-        const start = offset;
-        const end = start + chunk.length - 1;
-        let response: Response | null = null;
-        for (let attempt = 0; attempt < 4 && response === null; attempt += 1) {
-          const requestController = new AbortController();
-          activeRequest = requestController;
-          try {
-            response = await fetchScopedUpload(rootId, remotePath, getAccess, {
-              body: chunk,
-              headers: {
-                ...commonHeaders,
-                "content-range": `bytes ${String(start)}-${String(end)}/${String(file.size)}`,
-              },
-              method: "PUT",
-              signal: requestController.signal,
-            });
-          } catch (error) {
-            if (isCancelled()) {
-              // WHY: Cancellation is authoritative, and the fetch error may contain a secret-bearing URL.
-              // oxlint-disable-next-line preserve-caught-error
-              throw new Error("Transfer cancelled");
-            }
-            if (attempt === 3) {
-              throw error;
-            }
-            await delay(150 * 2 ** attempt);
-            status = await uploadStatus(
-              getAccess,
-              rootId,
-              remotePath,
-              commonHeaders,
-              file.size,
-              hash,
-            );
-            if (status.complete) {
-              return { bytes: file.size, sha256: hash };
-            }
-            if (status.offset !== start) {
-              offset = status.offset;
-              handle.offset = offset;
-              break;
-            }
-          } finally {
-            activeRequest = null;
-          }
-        }
-        if (offset !== start) {
-          continue;
-        }
-        if (response === null) {
-          throw new Error("Upload request did not complete");
-        }
-        const acknowledged = Number(response.headers.get("x-upload-offset") ?? end + 1);
-        if (
-          response.status === 409 &&
-          Number.isSafeInteger(acknowledged) &&
-          acknowledged >= 0 &&
-          acknowledged <= file.size &&
-          acknowledged !== start
-        ) {
-          offset = acknowledged;
-          handle.offset = offset;
-          continue;
-        }
-        if (response.status === 308) {
-          if (acknowledged !== end + 1) {
-            throw new Error("Host acknowledged an invalid upload offset");
-          }
-          offset = acknowledged;
-          onProgress({ phase: "transferring", total: file.size, transferred: offset });
-          continue;
-        }
-        const bodyText = await response.text();
-        if (!response.ok) {
-          throw new Error(`Upload failed (${String(response.status)}): ${bodyText.slice(0, 200)}`);
-        }
-        const parsedBody = unknownRecord(JSON.parse(bodyText));
-        if (
-          parsedBody === null ||
-          typeof parsedBody.bytes !== "number" ||
-          typeof parsedBody.sha256 !== "string"
-        ) {
-          throw new Error("Upload completion response is invalid");
-        }
-        finalBody = { bytes: parsedBody.bytes, sha256: parsedBody.sha256 };
-        offset = file.size;
-        onProgress({ phase: "transferring", total: file.size, transferred: offset });
+    while (offset < file.size) {
+      if (isCancelled()) {
+        throw new Error("Transfer cancelled");
       }
-    } finally {
-      handle.close();
+      // The native transport streams this byte range from the file; it never enters JavaScript.
+      const chunkLength = Math.min(4 * 1024 * 1024, file.size - offset);
+      const start = offset;
+      const end = start + chunkLength - 1;
+      let response: Response | null = null;
+      for (let attempt = 0; attempt < 4 && response === null; attempt += 1) {
+        const requestController = new AbortController();
+        activeRequest = requestController;
+        try {
+          response = await fetchScopedUpload(rootId, remotePath, getAccess, {
+            body: { kind: "file", length: chunkLength, offset: start, uri: file.native.uri },
+            headers: {
+              ...commonHeaders,
+              "content-range": `bytes ${String(start)}-${String(end)}/${String(file.size)}`,
+            },
+            method: "PUT",
+            signal: requestController.signal,
+          });
+        } catch (error) {
+          if (isCancelled()) {
+            // WHY: Cancellation is authoritative, and the fetch error may contain a secret-bearing URL.
+            // oxlint-disable-next-line preserve-caught-error
+            throw new Error("Transfer cancelled");
+          }
+          if (attempt === 3) {
+            throw error;
+          }
+          await delay(150 * 2 ** attempt);
+          status = await uploadStatus(
+            getAccess,
+            rootId,
+            remotePath,
+            commonHeaders,
+            file.size,
+            hash,
+          );
+          if (status.complete) {
+            return { bytes: file.size, sha256: hash };
+          }
+          if (status.offset !== start) {
+            offset = status.offset;
+            break;
+          }
+        } finally {
+          activeRequest = null;
+        }
+      }
+      if (offset !== start) {
+        continue;
+      }
+      if (response === null) {
+        throw new Error("Upload request did not complete");
+      }
+      const acknowledged = Number(response.headers.get("x-upload-offset") ?? end + 1);
+      if (
+        response.status === 409 &&
+        Number.isSafeInteger(acknowledged) &&
+        acknowledged >= 0 &&
+        acknowledged <= file.size &&
+        acknowledged !== start
+      ) {
+        offset = acknowledged;
+        continue;
+      }
+      if (response.status === 308) {
+        if (acknowledged !== end + 1) {
+          throw new Error("Host acknowledged an invalid upload offset");
+        }
+        offset = acknowledged;
+        onProgress({ phase: "transferring", total: file.size, transferred: offset });
+        continue;
+      }
+      const bodyText = await response.text();
+      if (!response.ok) {
+        throw new Error(
+          `Upload failed (HTTP ${String(response.status)}): ${bodyText.slice(0, 200)}`,
+        );
+      }
+      const parsedBody = unknownRecord(JSON.parse(bodyText));
+      if (
+        parsedBody === null ||
+        typeof parsedBody.bytes !== "number" ||
+        typeof parsedBody.sha256 !== "string"
+      ) {
+        throw new Error("Upload completion response is invalid");
+      }
+      finalBody = { bytes: parsedBody.bytes, sha256: parsedBody.sha256 };
+      offset = file.size;
+      onProgress({ phase: "transferring", total: file.size, transferred: offset });
     }
     if (finalBody === null) {
       status = await uploadStatus(getAccess, rootId, remotePath, commonHeaders, file.size, hash);
@@ -305,7 +297,11 @@ async function uploadStatus(
     throw new Error("Host returned invalid completed-upload metadata");
   }
   if (!complete && response.status !== 204 && response.status !== 404) {
-    throw new Error(`Upload resume check failed (${String(response.status)})`);
+    // HEAD has no body; Companion mirrors its bounded error message into a header.
+    const reason = response.headers.get("x-codewide-error");
+    throw new Error(
+      `Upload resume check failed (HTTP ${String(response.status)})${reason === null ? "" : `: ${reason}`}`,
+    );
   }
   return { complete, offset };
 }

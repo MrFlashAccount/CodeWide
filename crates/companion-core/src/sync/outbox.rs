@@ -316,6 +316,24 @@ async fn reconcile_outbox_command(context: &PumpContext, command: OutboxCommand)
     let Some(target) = command_target(context, &command).await else {
         return;
     };
+    // A command naming another provider's model fails once: switching
+    // agents is a fork, and a retry would be rejected the same way.
+    if let Err(failure) = context
+        .gateway
+        .check_model_scope(&target, &command.method, &command.params)
+        .await
+    {
+        set_outbox_state(
+            &context.store,
+            &context.local_events,
+            &command.remote_thread_id,
+            &command.command_id,
+            OutboxState::Failed,
+            Some(&failure.message),
+        )
+        .await;
+        return;
+    }
     if target.provider.status() != ProviderStatus::Live {
         return;
     }

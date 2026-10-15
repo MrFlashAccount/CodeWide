@@ -78,7 +78,7 @@ enum ProviderState {
     },
     /// `false` in the configuration turns the provider off.
     Disabled,
-    /// No entry and no shipped host or no `claude`: the companion runs no Claude.
+    /// No entry and no `claude` found: the companion runs no Claude.
     Off {
         reason: String,
     },
@@ -193,21 +193,13 @@ fn report_with(
     }
 }
 
-/// What the companion would give Claude for `entry`, without installing
-/// anything: the shipped host and an Agent SDK already in place.
+/// What the companion would give Claude for `entry`: the user's `claude`
+/// and login-shell `PATH`.
 fn claude_defaults(
     state_directory: &Path,
     entry: &serde_json::Value,
 ) -> claude::config::ClaudeDefaults {
-    let sdk = claude::agent_sdk::AGENT_SDK
-        .directory(&state_directory.join("claude-agent-sdk"))
-        .join("sdk.mjs");
-    claude::config::ClaudeDefaults::discover(
-        entry,
-        crate::claude_host::shipped_path(state_directory),
-        sdk.is_file().then_some(sdk),
-        state_directory.join("claude-journal"),
-    )
+    claude::config::ClaudeDefaults::discover(entry, state_directory.join("claude-journal"))
 }
 
 fn automatic_claude_state(
@@ -216,13 +208,6 @@ fn automatic_claude_state(
 ) -> ProviderState {
     let entry = serde_json::Value::Object(serde_json::Map::new());
     let defaults = defaults(&entry);
-    if defaults.bundled_host.is_none() {
-        return ProviderState::Off {
-            reason:
-                "this build ships no Claude agent host and agent-providers.json has no claude entry"
-                    .into(),
-        };
-    }
     match claude::ClaudeConfig::automatic(&defaults) {
         Ok(config) => config_state(
             &config,
@@ -258,7 +243,7 @@ fn config_state(
 ) -> ProviderState {
     let inherited = inherited_path.map(OsString::as_os_str);
     let host = ClaudeHostReport {
-        search_path: config.host_search_path(inherited),
+        search_path: config.search_path(inherited),
         search_path_source: if entry.pointer("/environment/PATH").is_some() {
             "configured"
         } else if login_path.is_some() || config.environment.search_path.is_some() {
@@ -288,7 +273,7 @@ mod tests {
 
     use super::*;
 
-    /// A machine that offers Claude nothing: no shipped host, no `claude`,
+    /// A machine that offers Claude nothing: no `claude`,
     /// no login shell.
     fn no_machine(
         state_directory: &Path,
@@ -314,18 +299,16 @@ mod tests {
         let missing = report_with(root.path(), None, &no_machine(root.path()));
         assert!(matches!(missing.config, ConfigState::Missing));
         assert!(missing.ready());
-        // A build without the shipped host runs no Claude.
+        // A machine without `claude` runs no Claude.
         assert!(matches!(
             missing.providers[1].state,
             ProviderState::Off { .. }
         ));
 
-        let node = root.path().join("node/bin/node");
+        let node = root.path().join("npm/bin/node");
         let claude = root.path().join("npm/bin/claude");
-        let entry = root.path().join("host/dist/main.js");
         executable(&node, "")?;
         executable(&claude, "#!/usr/bin/env node\n")?;
-        executable(&entry, "")?;
         let write = |environment: serde_json::Value| {
             std::fs::write(
                 root.path().join(CONFIG_FILE_NAME),
@@ -333,7 +316,6 @@ mod tests {
                     "version": 1, "primary": "codex",
                     "providers": {
                         "claude": {
-                            "runtimeExecutable": node, "sidecarEntry": entry,
                             "claudeExecutable": claude,
                             "journalDirectory": root.path().join("journal"),
                             "environment": environment,
@@ -363,7 +345,7 @@ mod tests {
         );
         assert!(!ready.ready());
 
-        std::fs::remove_file(&node)?;
+        std::fs::remove_file(&claude)?;
         let invalid =
             serde_json::to_value(report_with(root.path(), None, &no_machine(root.path())))?;
         assert_eq!(invalid["providers"][1]["status"], "invalid");
@@ -378,18 +360,14 @@ mod tests {
     #[test]
     fn flags_an_interpreter_missing_from_the_host_path() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let bun = root.path().join("bun/bin/bun");
         let claude = root.path().join("npm/bin/claude");
-        let entry = root.path().join("host/dist/main.js");
-        executable(&bun, "")?;
         executable(&claude, "#!/usr/bin/env node\n")?;
-        executable(&entry, "")?;
         std::fs::write(
             root.path().join(CONFIG_FILE_NAME),
             serde_json::to_vec(&json!({
                 "version": 1, "primary": "codex",
                 "providers": {"claude": {
-                    "runtimeExecutable": bun, "sidecarEntry": entry, "claudeExecutable": claude,
+                    "claudeExecutable": claude,
                     "journalDirectory": root.path().join("journal"),
                 }},
             }))?,

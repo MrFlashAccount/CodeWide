@@ -19,7 +19,8 @@ func nativeManagementCrossesXPCIntoTheRustCore() async throws {
 
     let core = try CoreHost(
         stateDirectory: state.path, codexHome: codex.path,
-        appVersion: "1.0.0", hostVersion: "1.0.0", computerName: "XPC test", listenAddress: "127.0.0.1:0"
+        appVersion: "1.0.0", appBuild: "200001.0.0", sourceRevision: String(repeating: "a", count: 40),
+        hostVersion: "1.0.0", computerName: "XPC test", listenAddress: "127.0.0.1:0"
     )
     let service = RuntimeService(
         core: core,
@@ -52,6 +53,7 @@ func nativeManagementCrossesXPCIntoTheRustCore() async throws {
     #expect(runtime.health?.phase == "running")
     #expect(runtime.appServer?.codexHome == codex.path)
     #expect(runtime.appServer?.state == .unavailable(lastKnownVersion: nil))
+    #expect(runtime.agentProviders.contains { $0.id == "codex" })
     #expect(runtime.relay?.configured == false)
     #expect(runtime.devices.isEmpty)
     #expect(!runtime.appServers.isEmpty)

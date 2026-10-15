@@ -9,9 +9,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
-use crate::rollout_store::{
-    RecordRef, RolloutContentEntry, RolloutContentField, RolloutContentLocator, RolloutStore,
-};
+use agent_index::ContentEntry;
+
+use crate::rollout_store::{RecordRef, RolloutContentField, RolloutContentLocator, RolloutStore};
 
 const MAX_SOURCE_RECORD_BYTES: usize = 64 * 1024 * 1024;
 const TEXT_CONTENT_TYPE: &str = "text/plain; charset=utf-8";
@@ -41,7 +41,7 @@ pub(crate) fn entries_from_record(
     file_id: [u8; 32],
     record: RecordRef,
     line: &[u8],
-) -> Vec<RolloutContentEntry> {
+) -> Vec<ContentEntry> {
     let prefix = &line[..line.len().min(8 * 1024)];
     if memchr::memmem::find(prefix, b"\"type\":\"item_completed\"").is_none()
         && memchr::memmem::find(prefix, b"\"type\":\"exec_command_end\"").is_none()
@@ -106,26 +106,34 @@ pub(crate) fn entries_from_record(
         return Vec::new();
     };
     let digest = Sha256::digest(output.as_bytes()).into();
-    vec![RolloutContentEntry {
+    let locator = RolloutContentLocator {
+        source_path: source_path.to_path_buf(),
+        file_id,
+        record,
+        thread_id: payload
+            .get("thread_id")
+            .or_else(|| payload.get("threadId"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        turn_id: payload
+            .get("turn_id")
+            .or_else(|| payload.get("turnId"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        item_id: item_id.to_owned(),
+        field,
+        content_type: TEXT_CONTENT_TYPE.to_owned(),
+    };
+    // A locator is small; one that cannot be serialized would be a bug in
+    // its own derive, so an encoding failure leaves the record unindexed.
+    let Ok(encoded) = serde_json::to_vec(&locator) else {
+        return Vec::new();
+    };
+    vec![ContentEntry {
         digest,
-        locator: RolloutContentLocator {
-            source_path: source_path.to_path_buf(),
-            file_id,
-            record,
-            thread_id: payload
-                .get("thread_id")
-                .or_else(|| payload.get("threadId"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned),
-            turn_id: payload
-                .get("turn_id")
-                .or_else(|| payload.get("turnId"))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned),
-            item_id: item_id.to_owned(),
-            field,
-            content_type: TEXT_CONTENT_TYPE.to_owned(),
-        },
+        file_id,
+        offset: record.offset,
+        locator: encoded,
     }]
 }
 
@@ -225,7 +233,7 @@ mod tests {
     use crate::rollout::{index_rollout_fully, rollout_file_id};
 
     #[test]
-    fn indexes_only_materialized_command_output() {
+    fn indexes_only_materialized_command_output() -> Result<(), Box<dyn std::error::Error>> {
         let line = br#"{"type":"event_msg","payload":{"type":"item_completed","thread_id":"thread","turn_id":"turn","item":{"type":"CommandExecution","id":"command","aggregated_output":"hello"}}}"#;
         let entries = entries_from_record(
             Path::new("/tmp/rollout.jsonl"),
@@ -240,7 +248,10 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let expected_digest: [u8; 32] = Sha256::digest(b"hello").into();
         assert_eq!(entries[0].digest, expected_digest);
-        assert_eq!(entries[0].locator.item_id, "command");
+        assert_eq!(entries[0].offset, 10);
+        let locator: RolloutContentLocator = serde_json::from_slice(&entries[0].locator)?;
+        assert_eq!(locator.item_id, "command");
+        Ok(())
     }
 
     #[tokio::test]

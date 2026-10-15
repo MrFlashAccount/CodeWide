@@ -96,9 +96,7 @@ it("preserves conversation timeline integration contracts", () => {
   expect(ownerTimelineViewport).not.toContain("bootstrapInitialPosition");
   expect(ownerHistoryAnchor).not.toContain("historyAnchorOffsetPx");
   expect(ownerTimelineMeasurementBindings).toContain("commitInitialTimelineLoad();");
-  expect(ownerThreadTimeline).toContain(
-    'await onFork({ boundary: { kind: "through", turnId }, ephemeral: false, target: null })',
-  );
+  expect(ownerThreadTimeline).toContain("openForkThroughTurn(turnId);");
   expect(
     sourceHasJsxElement(ownerThreadTimeline, "RecoverableRenderBoundary", [
       "key={boundaryKey}",

@@ -1,0 +1,36 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "host-resolver",
+  "projectType": "library",
+  "sourceRoot": "crates/host-resolver/src",
+  "tags": ["language:rust", "type:library"],
+  "metadata": {
+    "description": "Host-name resolution through the host's NSS resolver for outbound connections"
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "rustWorkspace"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p codewide-host-resolver --all-targets --all-features -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test -p codewide-host-resolver --all-features",
+        "cwd": "."
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo build -p codewide-host-resolver --release",
+        "cwd": "."
+      }
+    }
+  }
+}

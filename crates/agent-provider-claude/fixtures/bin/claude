@@ -1,0 +1,7 @@
+#!/bin/sh
+# The fake `claude` of this crate's tests. A test links this checked-in file
+# and writes the behaviour next to the link as `<link>.sh`, a plain file that
+# sh reads. A test never execs a file it has just written: another test's
+# fork may still hold that file open for writing, and exec would then fail
+# with ETXTBSY.
+exec /bin/sh "$0.sh" "$@"

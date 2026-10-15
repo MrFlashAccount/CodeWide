@@ -1,7 +1,9 @@
+import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
+import { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import { agentProviders } from "../../data/workspace-runtime";
-import { threadOpenElsewhere } from "../../data/threadDirectInput";
+import { threadRefusesDirectInput } from "../../data/threadDirectInput";
 import { ConversationComposition } from "./ConversationComposition";
-import { forkTargetChoices } from "../turnActions/forkTargets";
+import { forkOffer, type ForkThreadSettings } from "../turnActions/forkTargets";
 import { threadAgentAccounts, threadAgentActions } from "./threadAgentActions";
 import type { RenderConversationWorkspaceContentProps } from "./ConversationWorkspaceContent.types";
 /**
@@ -41,12 +43,13 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       )}
       actions={{
         archived: props.activeThread?.archived ?? false,
-        forkTargets:
+        forkOffer:
           gated.onFork === undefined
             ? undefined
             : () =>
-                forkTargetChoices(
+                forkOffer(
                   remoteThread,
+                  serverThreadSettings(remoteThread),
                   props.runtime.resources?.turnControls.get(props.activeControlsResourceId ?? "")
                     ?.value?.models ?? [],
                 ),
@@ -107,15 +110,12 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         onSetGoalStatus: gated.onSetGoalStatus,
       }}
       ports={{
-        onCreateTunnel: props.conversationActions.onCreateTunnel,
         onOpenBrowser: props.onOpenBrowser,
         onOpenLoopbackLink: props.openActiveLoopbackLink,
-        onRevokeTunnel: props.conversationActions.onRevokeTunnel,
         portForwardingConnectionId:
           props.native && props.activeConnectionId !== "" ? props.activeConnectionId : null,
         portForwardingServerName:
           props.servers.find((server) => server.id === props.activeConnectionId)?.name ?? "Server",
-        tunnelResourceId: props.activeTunnelResourceId,
       }}
       projects={{
         discoveredProjects: props.activeDiscoveredProjects,
@@ -178,8 +178,20 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         newChat: props.newChatDraft !== null,
         onBack: props.desktop ? undefined : props.closeActiveConversation,
         onViewedLatest: props.markActiveThreadRead,
-        // A thread another process holds opens read-only until it lets go.
-        readOnly: threadOpenElsewhere(remoteThread),
+        // A thread another process holds opens read-only until it lets go; a
+        // sub-agent, driven by its parent agent, is always read-only.
+        readOnly: threadRefusesDirectInput(remoteThread),
+        recheckThread:
+          props.activeConnectionId === "" || remoteThread === null
+            ? undefined
+            : async () => {
+                await props.features.conversation.readThread(
+                  props.activeConnectionId,
+                  remoteThread.id,
+                  undefined,
+                  true,
+                );
+              },
         server: props.servers.find((server) => server.id === props.activeConnectionId),
         thread: visibleThread,
         unread: props.activeThread?.unread ?? 0,
@@ -191,4 +203,14 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       }}
     />
   );
+}
+
+/** The settings the server reports for the thread, the composer chips' settled values. */
+function serverThreadSettings(thread: Thread | null): ForkThreadSettings {
+  const settings = thread === null ? null : projectedThreadExecutionSettings(thread);
+  return {
+    effort: settings?.effort ?? null,
+    model: settings?.model ?? null,
+    serviceTier: settings?.serviceTier ?? null,
+  };
 }

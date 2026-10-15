@@ -26,11 +26,11 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::model::{
     AgentEvent, AgentThread, AppThreadId, CapabilityInvokeParams, CapabilitySet, ClientToolSpec,
-    ModelCatalog, PermissionProfileCatalog, ProviderDescriptor, ProviderId, ProviderRateLimits,
-    RequestRespondParams, RpcError, ThreadCreateParams, ThreadListParams, ThreadListResult,
-    ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult,
-    ToolCallParams, ToolCallResult, TurnInterruptParams, TurnStartParams, TurnStartResult,
-    TurnSteerParams, TurnSteerResult,
+    ERROR_CAPABILITY_UNSUPPORTED, ModelCatalog, PermissionProfileCatalog, ProviderDescriptor,
+    ProviderId, ProviderRateLimits, RequestRespondParams, RpcError, ThreadCreateParams,
+    ThreadForkParams, ThreadListParams, ThreadListResult, ThreadReadResult, ThreadTurnsParams,
+    ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult, ToolCallParams, ToolCallResult,
+    TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
 };
 
 pub use native_storage::{
@@ -272,6 +272,17 @@ pub trait AgentProvider: Send + Sync {
 
     async fn thread_compact(&self, thread: &AppThreadId) -> Result<(), ProviderError>;
 
+    /// Copies a thread into a new thread of this provider (`thread.fork`).
+    /// Only providers declaring `threads.fork` without the native surface
+    /// implement it; the native surface forks through its own `thread/fork`.
+    async fn thread_fork(&self, params: ThreadForkParams) -> Result<AgentThread, ProviderError> {
+        let _ = params;
+        Err(ProviderError::Rejected(RpcError::new(
+            ERROR_CAPABILITY_UNSUPPORTED,
+            crate::model::capability_unsupported_message("threads.fork"),
+        )))
+    }
+
     /// Starts a turn. Never steers: an active thread answers `busy`, or the
     /// provider joins natively when it declares `turns.startWhileActive:
     /// nativeJoin`.
@@ -293,6 +304,11 @@ pub trait AgentProvider: Send + Sync {
     async fn admit_turn(&self) -> Result<(), AdmissionError> {
         Ok(())
     }
+
+    /// Ends the provider's live work before the companion exits, so its
+    /// child processes finish on their own instead of being killed with the
+    /// runtime. Bounded by the provider. Default: nothing to end.
+    async fn shutdown(&self) {}
 
     /// Installs the companion's client-side tools. A provider declaring
     /// `orchestration.tools` declares them to its model on threads and turns

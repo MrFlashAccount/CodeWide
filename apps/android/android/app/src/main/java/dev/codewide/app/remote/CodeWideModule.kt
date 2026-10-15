@@ -538,7 +538,20 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
               putDouble("expiresAt", credential.expiresAt.toDouble())
             })
           },
-          onFailure = { error -> promise.reject("SESSION_MINT_FAILED", "Could not authorize the remote operation", error) },
+          onFailure = { error ->
+            // Only a 401/409 from Companion is an authorization verdict; any other
+            // failure means Companion was not reached, and the user must see that.
+            // Transport errors may carry credentials, so only their class is exported.
+            if (error is SessionAuthorizationException) {
+              promise.reject("SESSION_AUTH_REQUIRED", "Companion rejected this device; pair it again", error)
+            } else {
+              promise.reject(
+                "SESSION_MINT_FAILED",
+                "Could not reach Companion to authorize the request (${error.javaClass.simpleName})",
+                error,
+              )
+            }
+          },
         )
       }
     } catch (error: Throwable) {
@@ -547,14 +560,32 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   }
 
   @ReactMethod
-  fun companionHttpOrigin(connectionId: String, promise: Promise) {
-    try {
-      require(connectionId.isNotBlank()) { "Connection id is required" }
-      val service = CodexConnectionService.instance ?: error("Connection service is not running")
-      promise.resolve(service.companionHttpOrigin(connectionId))
+  fun companionHttpRequest(requestJson: String, promise: Promise) {
+    val request = try {
+      CompanionHttpBridge.parse(requestJson)
     } catch (error: Throwable) {
-      promise.reject("COMPANION_HTTP_PROXY_FAILED", "Could not open the pinned companion HTTP transport", error)
+      promise.reject("COMPANION_HTTP_INPUT", "Companion HTTP request is invalid", error)
+      return
     }
+    val service = CodexConnectionService.instance
+    if (service == null) {
+      promise.reject("COMPANION_HTTP_UNAVAILABLE", "Connection service is not running")
+      return
+    }
+    service.companionHttpRequest(request) { result ->
+      result.fold(
+        onSuccess = { promise.resolve(CompanionHttpBridge.encode(it)) },
+        onFailure = { error ->
+          val code = if (error is IOException && error.message == "Canceled") "COMPANION_HTTP_ABORTED" else "COMPANION_HTTP_FAILED"
+          promise.reject(code, "Companion HTTP ${request.method} failed: ${error.javaClass.simpleName}: ${error.message}", error)
+        },
+      )
+    }
+  }
+
+  @ReactMethod
+  fun companionHttpCancel(requestId: String) {
+    CodexConnectionService.instance?.cancelCompanionHttpRequest(requestId)
   }
 
   @ReactMethod

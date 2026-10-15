@@ -94,6 +94,77 @@ it("reports a build without embedded release trust as unofficial, not as missing
 });
 
 describe("Companion host update resource", () => {
+  it("retains a terminal failure when the subsequent legacy status omits it", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.statuses.set("server", status("linux-x86-64"));
+    harness.resource.observe("server", true);
+    await settle();
+    await harness.resource.apply("server", TARGET_FINGERPRINT);
+    const id = harness.view("server").operationId;
+    if (id === null) throw new Error("Missing accepted operation");
+    harness.operations.set("server", operation(id, "failed", "download_failed", "The signed update could not be downloaded."));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.view("server")).toMatchObject({ phase: "failed", canRetry: true, canCheck: true, errorCode: "download_failed" });
+    harness.resource.forget("server");
+  });
+
+  it("lets a retained terminal failure expire like the guardian's retention", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.statuses.set("server", status("linux-x86-64"));
+    harness.resource.observe("server", true);
+    await settle();
+    await harness.resource.apply("server", TARGET_FINGERPRINT);
+    const id = harness.view("server").operationId;
+    if (id === null) throw new Error("Missing accepted operation");
+    harness.operations.set("server", operation(id, "failed", "download_failed", "The signed update could not be downloaded."));
+    await vi.advanceTimersByTimeAsync(1);
+
+    harness.advance(59 * 60_000);
+    harness.resource.observe("server", true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.view("server")).toMatchObject({ phase: "failed", errorCode: "download_failed" });
+
+    harness.advance(60_000);
+    harness.resource.observe("server", true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.view("server")).toMatchObject({ phase: null, errorCode: null, errorMessage: null });
+    harness.resource.forget("server");
+  });
+
+  it("drops a retained terminal failure when the user checks again", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.statuses.set("server", status("linux-x86-64"));
+    harness.resource.observe("server", true);
+    await settle();
+    await harness.resource.apply("server", TARGET_FINGERPRINT);
+    const id = harness.view("server").operationId;
+    if (id === null) throw new Error("Missing accepted operation");
+    harness.operations.set("server", operation(id, "failed", "download_failed", "The signed update could not be downloaded."));
+    await vi.advanceTimersByTimeAsync(1);
+
+    await harness.resource.check("server");
+    expect(harness.view("server")).toMatchObject({ phase: null, errorCode: null, errorMessage: null });
+    harness.resource.forget("server");
+  });
+
+  it("publishes received download progress and replaces it with the durable failure", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    const pending = { ...operation(operationId("progress"), "installing"), progress: { stage: "downloading", downloadedBytes: 512, totalBytes: 1024 } as const };
+    harness.statuses.set("server", { ...status("linux-x86-64"), activeOperation: pending });
+    harness.resource.observe("server", true);
+    await settle();
+    expect(harness.view("server").progress).toEqual(pending.progress);
+    harness.operations.set("server", operation(pending.operationId, "failed", "download_failed", "Download interrupted"));
+    harness.statuses.set("server", status("linux-x86-64"));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.view("server")).toMatchObject({ phase: "failed", progress: null, disconnected: false, errorMessage: "Download interrupted" });
+    harness.resource.forget("server");
+  });
+
   it("sanitizes guardian terminal errors before publishing them", () => {
     expect(
       parseHostUpdateOperation({
@@ -313,6 +384,41 @@ describe("Companion host update resource", () => {
     });
   });
 
+  it("rereads a status left stale by a restart no settings surface observed", async () => {
+    const harness = createHarness();
+    harness.statuses.set("server", status("linux-x86-64"));
+    harness.resource.observe("server", true);
+    await settle();
+    expect(harness.view("server").currentVersion).toBe("1.0.0");
+
+    // Companion was updated while settings were closed; no disconnect was observed.
+    harness.statuses.set("server", { ...status("linux-x86-64", null), currentVersion: "1.1.0" });
+    harness.advance(29_999);
+    harness.resource.observe("server", true);
+    await settle();
+    expect(harness.view("server").currentVersion).toBe("1.0.0");
+
+    harness.advance(1);
+    harness.resource.observe("server", true);
+    await settle();
+    expect(harness.view("server")).toMatchObject({ currentVersion: "1.1.0", latestVersion: null });
+  });
+
+  it("does not repeat a failed status read on every render", async () => {
+    const harness = createHarness();
+    harness.transport.readStatus.mockRejectedValue(new Error("Companion is unreachable"));
+    harness.resource.observe("server", true);
+    await settle();
+    harness.resource.observe("server", true);
+    harness.resource.observe("server", true);
+    await settle();
+    expect(harness.transport.readStatus).toHaveBeenCalledOnce();
+    expect(harness.view("server")).toMatchObject({
+      errorCode: "transport_error",
+      errorMessage: "Companion is unreachable",
+    });
+  });
+
   it("isolates simultaneous servers", async () => {
     const harness = createHarness();
     harness.statuses.set("mac", status("macos-universal"));
@@ -348,12 +454,17 @@ function createHarness() {
     operationId: `operation-${idempotencyKey}`.slice(0, 128),
     phase: "accepted",
   }));
+  let clock = 0;
   const resource = createHostUpdateResource({
     createIdempotencyKey: () => "00000000-0000-4000-8000-000000000001",
+    now: () => clock,
     retryBaseMilliseconds: 1,
     transport,
   });
   return {
+    advance(milliseconds: number) {
+      clock += milliseconds;
+    },
     operations,
     resource,
     statuses,
@@ -418,6 +529,7 @@ function operation(
     targetFingerprint: TARGET_FINGERPRINT,
     targetVersion: "1.1.0",
     updatedAt: 2,
+    progress: null,
   };
 }
 

@@ -58,8 +58,28 @@ pub fn page_turns(
     })
 }
 
-/// A turn with only the items `view` includes: none, the user messages and
-/// the final answer, or all.
+/// Whether the `summary` items view keeps `item`: the user messages and the
+/// final answer (what delivery reconciliation and the thread preview read),
+/// the sub-agent launches (a client shows which agents a turn started and
+/// which still run) and the background task reports (shown outside the
+/// turn's collapsed body). No other activity item. The one summary rule:
+/// `thread.turns` pages and the wire projector both apply it.
+#[must_use]
+pub const fn in_summary_view(item: &AgentItem) -> bool {
+    matches!(
+        item,
+        AgentItem::UserMessage { .. }
+            | AgentItem::Subagent { .. }
+            | AgentItem::TaskNotification { .. }
+            | AgentItem::AgentMessage {
+                phase: MessagePhase::Final,
+                ..
+            }
+    )
+}
+
+/// A turn with only the items `view` includes: none, those
+/// [`in_summary_view`] keeps, or all.
 #[must_use]
 pub fn view_items(turn: &AgentTurn, view: ItemsView) -> AgentTurn {
     let items = match view {
@@ -68,16 +88,7 @@ pub fn view_items(turn: &AgentTurn, view: ItemsView) -> AgentTurn {
         ItemsView::Summary => turn
             .items
             .iter()
-            .filter(|item| {
-                matches!(
-                    item,
-                    AgentItem::UserMessage { .. }
-                        | AgentItem::AgentMessage {
-                            phase: MessagePhase::Final,
-                            ..
-                        }
-                )
-            })
+            .filter(|item| in_summary_view(item))
             .cloned()
             .collect(),
     };
@@ -97,7 +108,10 @@ pub fn view_items(turn: &AgentTurn, view: ItemsView) -> AgentTurn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{TurnId, TurnOrigin, TurnStatus};
+    use crate::model::{
+        ExecutionStatus, ItemId, SubagentStatus, TaskNotificationDelivery, TaskNotificationSource,
+        TaskNotificationStatus, TurnId, TurnOrigin, TurnStatus,
+    };
 
     fn turn(id: &str) -> AgentTurn {
         AgentTurn {
@@ -136,6 +150,79 @@ mod tests {
             .err()
             .map(|error| error.code);
         assert_eq!(error, Some(ERROR_INVALID_PARAMS));
+        Ok(())
+    }
+
+    fn item_ids(turn: &AgentTurn) -> Vec<&str> {
+        turn.items
+            .iter()
+            .map(|item| item.item_id().as_str())
+            .collect()
+    }
+
+    /// A wake turn that launched a background agent while a report arrived:
+    /// one item of each kind the summary rule decides on.
+    fn wake_turn() -> AgentTurn {
+        let message = |id: &'static str, phase| AgentItem::AgentMessage {
+            item_id: ItemId::from_static(id),
+            provenance: None,
+            text: id.into(),
+            phase,
+        };
+        let mut wake = turn("wake");
+        wake.items = vec![
+            AgentItem::TaskNotification {
+                item_id: ItemId::from_static("report"),
+                provenance: None,
+                delivery: TaskNotificationDelivery::Wake,
+                source: TaskNotificationSource::Command {
+                    agent_thread_id: (),
+                },
+                task_id: "b1".into(),
+                name: "npm test".into(),
+                status: TaskNotificationStatus::Completed,
+                duration_ms: None,
+                tool_uses: None,
+                result: None,
+            },
+            message("commentary", MessagePhase::Commentary),
+            AgentItem::Command {
+                item_id: ItemId::from_static("command"),
+                provenance: None,
+                command: "npm test".into(),
+                cwd: "/w".into(),
+                status: ExecutionStatus::Completed,
+                output: None,
+                exit_code: Some(0),
+                duration_ms: None,
+            },
+            AgentItem::Subagent {
+                item_id: ItemId::from_static("launch"),
+                provenance: None,
+                agent_thread_id: None,
+                agent_type: None,
+                background: true,
+                description: "Review the diff".into(),
+                model: None,
+                prompt: "Review it.".into(),
+                result: None,
+                status: SubagentStatus::Running,
+            },
+            message("final", MessagePhase::Final),
+        ];
+        wake
+    }
+
+    #[test]
+    fn a_summary_page_keeps_messages_launches_and_task_reports_only() -> Result<(), RpcError> {
+        let turns = [turn("a"), wake_turn()];
+        let summary = page_turns(&turns, Some("a"), 5, SortDirection::Asc, ItemsView::Summary)?;
+        assert_eq!(
+            summary.turns.iter().map(item_ids).collect::<Vec<_>>(),
+            [vec!["report", "launch", "final"]]
+        );
+        let full = page_turns(&turns, Some("a"), 5, SortDirection::Asc, ItemsView::Full)?;
+        assert_eq!(full.turns[0].items, turns[1].items);
         Ok(())
     }
 }

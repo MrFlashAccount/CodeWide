@@ -97,8 +97,12 @@ final class MenuBarPanel: NSObject, NSWindowDelegate {
         anchor = visibleAnchor
         position()
         window.makeKeyAndOrderFront(nil)
-        if keyboardInitiated { window.selectNextKeyView(nil) }
-        else { window.makeFirstResponder(nil) }
+        if keyboardInitiated, NSApplication.shared.isFullKeyboardAccessEnabled {
+            window.recalculateKeyViewLoop()
+            window.selectNextKeyView(nil)
+        } else {
+            window.makeFirstResponder(nil)
+        }
         installDismissalHandlers()
     }
 

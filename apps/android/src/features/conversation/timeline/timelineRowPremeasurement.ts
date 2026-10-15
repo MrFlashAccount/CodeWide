@@ -205,9 +205,7 @@ function dynamicPresentationReason(
   if (isLeadingPlacement(row.placement) && presentation.preTurnBlocks.length > 0) {
     return "leading-activity";
   }
-  // A bubble shared by several turns combines their history and chrome; its
-  // slices keep native layout instead of a per-turn exact size.
-  if (row.group !== null) {
+  if (drawsAgentChip(row, presentation)) {
     return "composite-row";
   }
   // WHY: Exact hints are lifetime-fixed sizes in LegendList. Expansion lives inside
@@ -285,7 +283,8 @@ function estimateDynamicTimelineRow(options: {
     }
     height +=
       presentation.compactionBlocks.length * (controlSize.compact + spacing.xxs) +
-      Math.max(0, presentation.userBlocks.length - 1) * spacing.optical;
+      Math.max(0, presentation.userBlocks.length - 1) * spacing.optical +
+      (row.notifications.length > 0 ? controlSize.compact + spacing.xs : 0);
     return dynamicHeight(
       reason,
       roundToPhysicalPixel(Math.max(height, controlSize.compact), geometry.density),
@@ -473,6 +472,26 @@ function rowOuterVerticalChrome(
 
 function isStreamingPart(part: VirtualizedTurnPart): boolean {
   return part.kind === "markdownBlock" && part.streaming;
+}
+
+/**
+ * Agent chips have no premeasured size: a finished turn's launch chip leads
+ * its bubble, and a person's turn draws reports that arrived during its
+ * answer below the bubble.
+ */
+function drawsAgentChip(
+  row: MeasurableTimelineRow,
+  presentation: ReturnType<typeof projectTurnPresentation>,
+): boolean {
+  const launchChip =
+    isLeadingPlacement(row.placement) &&
+    presentation.rawTurn.status !== "inProgress" &&
+    presentation.launchedAgents.length > 0;
+  const reportLine =
+    isTrailingPlacement(row.placement) &&
+    presentation.userBlocks.length > 0 &&
+    presentation.taskNotifications.midTurn.length > 0;
+  return launchChip || reportLine;
 }
 
 function isLeadingPlacement(placement: VirtualizedTurnPlacement): boolean {

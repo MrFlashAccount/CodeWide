@@ -2,7 +2,8 @@ import { View } from "react-native";
 import { colors } from "../../theme";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { AppText as Text } from "../../ui/Typography";
-import type { SidebarProject } from "./sidebarProjects";
+import { ServerIcon } from "../connections/ServerIcon";
+import type { SidebarProject, SidebarProjectServer } from "./sidebarProjects";
 import { styles } from "./SidebarProjects.styles";
 
 const folderIcon = { color: colors.textMuted, name: "folder-outline", role: "body" } as const;
@@ -10,13 +11,23 @@ const folderIcon = { color: colors.textMuted, name: "folder-outline", role: "bod
 type ShortcutContentProps = {
   readonly pending: boolean;
   readonly project: SidebarProject;
+  readonly server?: SidebarProjectServer | undefined;
 };
 
-/** Keeps the shortcut's text, folder and unread indicator stable during commands. */
+/**
+ * Keeps the shortcut's text, leading icon and unread indicator stable during
+ * commands. One leading icon: the server's across several servers, else the folder.
+ */
 export function SidebarProjectShortcutContent(props: ShortcutContentProps): React.JSX.Element {
   return (
     <>
-      <InlineIcon {...folderIcon} />
+      {props.server === undefined ? (
+        <InlineIcon {...folderIcon} />
+      ) : (
+        <View accessibilityLabel={`Server ${props.server.name}`} accessible>
+          <ServerIcon iconId={props.server.iconId} metric="body" />
+        </View>
+      )}
       <ProjectIdentity {...props} />
       <View style={styles.unreadSlot}>
         {props.project.unread && (

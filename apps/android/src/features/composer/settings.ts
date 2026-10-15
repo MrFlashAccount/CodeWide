@@ -58,7 +58,6 @@ export const EMPTY_TURN_CONTROLS: TurnControlsValue = {
 import type { Personality } from "@codewide/codex-protocol/v0.155.1";
 import { observable } from "@legendapp/state";
 import { useEffect } from "react";
-import { activeTurnId } from "../../data/thread-lifecycle";
 import { readThreadAgent } from "../../data/threadAgent";
 import type { StoredComposerPreferences } from "../../data/thread-ui-state-types";
 import type { TurnControlsRow } from "../../data/workspace-resource-database";
@@ -156,7 +155,6 @@ export function useComposerSettings({
 
   const [controls$] = useConversationState(composerScope, () =>
     observable<ComposerControlsState>({
-      activeTurnId: null,
       overlay: EMPTY_CONTROLS_OVERLAY,
       server: null,
     }),
@@ -166,16 +164,15 @@ export function useComposerSettings({
     remoteThread === null || remoteThread === undefined
       ? null
       : projectedThreadExecutionSettings(remoteThread);
-  const currentTurnId = activeTurnId(remoteThread);
   // Publishes the server's settings to the route-owned control sheet and
   // retires local choices the server has echoed or replaced since.
   useEffect(() => {
     const current = controls$.peek();
-    const next = reconcileControlsState(current, server, currentTurnId);
+    const next = reconcileControlsState(current, server);
     if (next !== current) {
       controls$.set(next);
     }
-  }, [controls$, currentTurnId, server]);
+  }, [controls$, server]);
   const readThread = useEvent(() => remoteThread ?? null);
   const remoteSettings = !newChat && onUpdateSettings !== undefined;
 
@@ -195,7 +192,6 @@ export function useComposerSettings({
       overlay: overlayWithChanges(state.overlay, {
         baseline: controlBaseline(
           thread === null ? null : projectedThreadExecutionSettings(thread),
-          activeTurnId(thread),
         ),
         changes,
         mutation,
