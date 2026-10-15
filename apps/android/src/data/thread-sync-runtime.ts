@@ -6,6 +6,11 @@ import { isThreadNotFound, reportMissingThread } from "./missingThread";
 import { recordTiming } from "./operational-metrics";
 import { readPrivateAssetText } from "./private-transfer";
 import {
+  type IndexedSubagent,
+  parseThreadSyncSubagents,
+  subagentSnapshotThreads,
+} from "./subagentIndexRows";
+import {
   assertThreadSyncReachedHead,
   hydrateThreadSyncActiveText,
   latestSealedTurnId,
@@ -98,12 +103,6 @@ export function createThreadSyncRuntime({
         const finishBackendRefresh = details.chat.beginBackendRefresh(connectionId, threadId);
         const isCurrent = captureThreadHistoryRead(connectionId, session, details);
         try {
-          void refreshSubagents(connectionId, threadId).catch(() => {
-            appLogger.warn({
-              event: "subagent.refresh.failed",
-              fields: { connectionId, threadId },
-            });
-          });
           const startedAt = performance.now();
           const liveRevision = details.liveRevision(connectionId, threadId);
           let afterTurnId =
@@ -115,9 +114,10 @@ export function createThreadSyncRuntime({
             details.historySourceWitness(connectionId, threadId),
           );
           let response: ThreadSyncResponse;
+          let rawResponse: unknown;
           let materialized;
           for (;;) {
-            const rawResponse = await rpcAfterAttach<unknown>(session, "companion/thread/sync", {
+            rawResponse = await rpcAfterAttach<unknown>(session, "companion/thread/sync", {
               afterTurnId,
               limit: THREAD_RESIDENT_TURN_LIMIT,
               sourceWitness: catchUp.sourceWitness,
@@ -155,6 +155,7 @@ export function createThreadSyncRuntime({
             afterTurnId = lastTurn.id;
           }
           recordTiming("thread_cursor_sync_ms", performance.now() - startedAt);
+          synchronizeSubagents(connectionId, threadId, rawResponse);
           await details.synchronizeThread({
             connectionId,
             expectedLiveRevision: liveRevision,
@@ -221,6 +222,39 @@ export function createThreadSyncRuntime({
       requireAuthoritative ? "afterCurrent" : "inFlight",
     );
   };
+
+  /**
+   * The final sync answer's subagent rows are authoritative for the thread's descendants. Without
+   * them (`null`: an older Companion or an unreadable index) the cached rows stay and the separate
+   * index read refreshes them. Malformed rows leave the cached rows without failing the history
+   * read. Neither write holds the history read.
+   */
+  function synchronizeSubagents(connectionId: string, threadId: string, answer: unknown): void {
+    const report = (error: unknown) => {
+      appLogger.warnCaught({
+        error,
+        event: "subagent.refresh.failed",
+        fields: { connectionId, threadId },
+      });
+    };
+    let rows: readonly IndexedSubagent[] | null;
+    try {
+      rows = parseThreadSyncSubagents(answer);
+    } catch (error: unknown) {
+      report(error);
+      return;
+    }
+    const summaries = getSummaries();
+    const written =
+      rows === null
+        ? refreshSubagents(connectionId, threadId)
+        : (summaries?.replaceSubagentCatalog(
+            connectionId,
+            threadId,
+            subagentSnapshotThreads(rows, threadId),
+          ) ?? RESOLVED_VOID_PROMISE);
+    void written.catch(report);
+  }
 
   const repairThreadProjection = async (
     connectionId: string,

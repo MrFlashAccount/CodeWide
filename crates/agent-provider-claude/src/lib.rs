@@ -810,4 +810,10 @@ impl AgentProvider for ClaudeProvider {
     ) -> Option<tokio::sync::mpsc::Receiver<agent_core::provider::HistoryChange>> {
         self.storage.as_ref()?.take_history_changes()
     }
+
+    fn take_subagent_changes(
+        &self,
+    ) -> Option<tokio::sync::mpsc::Receiver<agent_core::provider::SubagentsChange>> {
+        self.storage.as_ref()?.take_subagent_changes()
+    }
 }

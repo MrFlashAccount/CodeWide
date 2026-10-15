@@ -7,5 +7,6 @@ export type AgentsWorkspaceCapabilities = {
     connectionId: string,
     request: { readonly offset: number; readonly taskId: string; readonly threadId: string },
   ) => Promise<BackgroundTaskOutputPage>;
-  refreshSubagents: (connectionId: string, rootThreadId: string, force?: boolean) => Promise<void>;
+  /** Reads one root's descendant index again; concurrent requests for the root share one read. */
+  refreshSubagents: (connectionId: string, rootThreadId: string) => Promise<void>;
 };

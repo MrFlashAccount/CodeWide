@@ -1596,6 +1596,13 @@ async fn real_claude_serves_threads_catalogs_and_degradation_without_a_turn() ->
         )
         .await?;
     assert_eq!(synced["result"]["history"]["kind"], "reset", "{synced}");
+    // The snapshot carries the thread's sub-agent tree, the answer of
+    // `companion/threadSubagents/read`; this thread spawned none.
+    assert_eq!(
+        synced["result"]["subagents"],
+        json!({"threads": []}),
+        "{synced}"
+    );
     harness.stop();
     Ok(())
 }
