@@ -390,7 +390,7 @@ async fn port_forward_upgrade(
     }
     let target = match tokio::time::timeout(
         Duration::from_secs(10),
-        tokio::net::TcpStream::connect(("127.0.0.1", port)),
+        crate::ports::connect_loopback(port),
     )
     .await
     {
