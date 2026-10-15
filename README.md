@@ -1,592 +1,233 @@
 <p align="center">
-  <img alt="CodeWide" src="brand/codewide-app-icon-1024.png" width="144" height="144">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="brand/codewide-wordmark-inverse.svg">
+    <img alt="CodeWide" src="brand/codewide-wordmark.svg" width="320">
+  </picture>
 </p>
 
-<h1 align="center">CodeWide</h1>
+<h3 align="center">Codex and Claude Code on your own machine. Run the day from your phone.</h3>
 
-CodeWide is an Android-first agentic IDE for working with Codex on remote
-development machines.
+<p align="center">
+  No CodeWide cloud. No account. Your own relay.<br>
+  Approve, review, steer and ship from Android. Open the laptop only when you have to.
+</p>
 
-## Architecture
+<p align="center">
+  <a href="https://github.com/MrFlashAccount/CodeWide/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/MrFlashAccount/CodeWide?label=release&color=5878FF"></a>
+  <img alt="Android" src="https://img.shields.io/badge/phone-Android-0F0F10">
+  <img alt="Companion: macOS and Linux" src="https://img.shields.io/badge/host-macOS%20%7C%20Linux-0F0F10">
+  <img alt="No cloud, no account" src="https://img.shields.io/badge/cloud-none-0F0F10">
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0F0F10"></a>
+</p>
 
-The Android client talks to the companion over the `/v1` sync protocol. The
-companion talks to coding agents only through its agent provider layer: the
-neutral core (`crates/agent-core`: provider trait, model mirror, usage
-accounting), the versioned `codewide-agent` protocol
-(`packages/agent-protocol`), declared capabilities and one crate per
-provider. Codex (`crates/agent-provider-codex`, the in-process App Server
-adapter with its storage) and Claude (`crates/agent-provider-claude`: a Rust
-adapter that drives the user's own `claude` CLI over its stream-json
-protocol) are equal providers, and every thread is bound to one provider for
-its life. Claude history is read from Claude's own session
-store, so sessions started with `claude` in a terminal appear next to
-CodeWide's threads. In phase 1 the client keeps its Codex-shaped wire; the
-companion projects neutral events to it in one place and the client hides
-features a thread's provider does not declare. See [docs/agent-providers.md](docs/agent-providers.md).
+<!--
+  SCREENSHOT PLACEHOLDER: hero
+  Three phone frames in a row, or a 20-second GIF:
+    1. Thread list, Codex and Claude side by side, live activity lines.
+    2. A diff in the review editor, a line comment being dictated.
+    3. The built-in browser on a dev server, DevTools Console open.
+  Target: docs/assets/readme/hero.png, 1600 px wide.
+-->
 
-## Current executable surface
+---
 
-- Expo 57 / React Native 0.86 adaptive phone, tablet, and unfolded-fold UI.
-- Slack/Telegram Desktop-style fold workspace: server rail, selected-server threads,
-  selected thread.
-- Typed domain identities that isolate equal remote thread IDs across servers.
-- Rich renderer registry with bounded fallback for unknown future items.
-- Live structured plans, turn diffs, token usage and bounded MCP progress.
-- Durable SQLite cache/outbox/drafts/pending approvals with batched delta commits.
-- Native Android foreground WebSocket service with replay journal, network callbacks,
-  and voice dictation bridge.
-- Authenticated loopback companion bridging WebSocket frames to the managed
-  App Server over its Unix WebSocket socket.
-- One-time device pairing/revocation, authenticated file transfer, and bounded localhost
-  previews plus native phone-local TCP forwarding for HTTP, WebSocket and HMR.
-- Companion-owned durable prompt queue with reconnect reconciliation and delivery
-  receipts, plus goals/progress, review, compact, steer and boundary-aware fork.
-- A full-width composer with a left control menu for model/effort, files,
-  skills, permissions and delivery mode; no filter tabs below thread search.
-- Typed file/image/audio inputs with persisted attachment drafts and
-  authenticated inline previews for remote files. Arbitrary external
-  image URLs still require the authenticated media-proxy gate.
-- Bounded, schema-valid per-server outboxes with exactly-once reconciliation and
-  explicit backpressure instead of invisible overflow.
-- Deterministic protocol fixtures for rendering, synchronization, and performance tests.
+An agent runs for minutes and needs you at a few points: **approve**, **answer**,
+**look**, **send the next task**. None of that needs a keyboard.
 
-CodeWide is distributed under the [MIT License](LICENSE).
+CodeWide puts that loop on an Android phone. Everything else stays on your Mac
+or Linux box: the agents, the code, the terminals, the sign-ins.
 
-## Commands
+## Why CodeWide
+
+**The official remotes are fine** if you drive one agent, your host runs the
+vendor's desktop app, and the session may pass through the vendor's servers.
+
+**CodeWide is for the rest:**
+
+- **Nothing in the middle.** Pinned TLS 1.3 from phone to machine. LAN, VPN or your own relay.
+- **Both agents.** Codex and Claude Code in one list. Fork a thread into the other agent.
+- **Headless Linux hosts.** A home server or a cloud box, no desktop app, no screen.
+- **Review anything.** Comments on diffs, Markdown, images, diagrams and web pages.
+- **Your dev server on the phone.** `127.0.0.1:<port>`, hot reload, Chromium DevTools.
+- **A real terminal** in every thread.
+
+**Not for you yet** if your phone is an iPhone, your host is Windows, or you
+want a cloud VM that outlives a sleeping laptop.
+
+## From the phone
+
+### Review, and talk back
+
+<!--
+  SCREENSHOT PLACEHOLDER: review
+  Left: a diff with two line comments. Right: a Markdown plan with a
+  highlighted sentence and the comment box open.
+-->
+
+- **Diffs.** Line comments in a code review editor. Dictate one, it lands on the line.
+- **Plans and answers.** Highlight a passage in any Markdown and comment on it.
+- **Images and diagrams.** Tap a point on a screenshot or a Mermaid diagram. Draw on it.
+- **Web pages.** Pick an element in the built-in browser. Its selector, HTML, console errors and a screenshot go to the thread.
+- **One attachment.** Every comment set goes out with your next message, anchors included.
+
+### Steer
+
+- **Approvals and questions** as native cards: command, reason, directory. Tap allow.
+- **Prompt queue.** Send while the agent is busy. Survives reconnects and restarts.
+- **Voice.** Dictation transcribed on your machine through your Codex sign-in. No audio kept on the phone.
+- **Fork into the other agent.** New thread, handoff of the conversation, original untouched.
+- **Subagents across providers.** Either agent can start, wait for and message agents on the other.
+- **Goals (Codex).** An objective and a token budget. Pause, resume, see the time spent.
+- **Live activity** in the thread list. See what every agent is doing without opening it.
+- **Token usage and cost** next to every turn.
+
+### See what it built
+
+<!--
+  SCREENSHOT PLACEHOLDER: dev-server
+  The built-in browser on a Vite app, DevTools Network tab open, port chip
+  visible in the composer.
+-->
+
+- **Ports arrive on the phone** as `127.0.0.1:<port>`. Vite, Docker Compose and `kubectl port-forward` are detected automatically.
+- **HTTP, WebSockets and hot reload** work unchanged.
+- **Chromium DevTools**: Elements, Console, Network, Performance.
+
+### Beyond chat
+
+- **Terminal per thread**, rooted in its working directory. Tabs survive minimizing.
+- **Files and images** both ways. Resumable, checksum-verified.
+- **Search** across every thread on every machine.
+- **Terminal sessions** you started with `claude` show up in the thread list.
+- **Several machines, one app.** Phones, tablets, unfolded foldables.
+- **Global voice mode (Codex, early).** A floating orb over any app that starts tasks and reports back.
+
+## How it works
+
+```mermaid
+flowchart LR
+  subgraph phone["📱 Android phone"]
+    app["CodeWide app"]
+  end
+  subgraph vps["Your VPS (optional)"]
+    relay["CodeWide Relay"]
+  end
+  subgraph host["Your Mac or Linux machine"]
+    companion["CodeWide Companion"]
+    codex["Codex App Server"]
+    claude["claude CLI"]
+  end
+  app -- "Relay: any network" --> relay
+  companion -- "outbound" --> relay
+  app -. "Direct: same Wi-Fi or VPN (Mac)" .-> companion
+  companion -- "control socket" --> codex
+  companion -- "stream-json over stdio" --> claude
+```
+
+- **Companion** runs next to your code. Drives the Codex App Server and your own `claude` CLI directly. Owns threads, history, queue, files, terminals, ports.
+- **App** pairs once by QR code, then opens TLS 1.3 straight to the Companion and pins its identity.
+- **Relay** is a small server on your VPS. Both sides connect out. It forwards encrypted bytes only.
+- **Direct** (Mac) skips the relay on the same Wi-Fi or a VPN such as Tailscale.
+
+**No CodeWide cloud, no CodeWide account.** The agents talk to OpenAI and
+Anthropic exactly as they do in your terminal. CodeWide never reads your agent
+credentials.
+
+### Security
+
+- **End-to-end.** Pinned identity, TLS 1.3 inside the carrier connection, no plaintext fallback.
+- **Keys stay on the phone.** Non-exportable Android Keystore key. A copied token can't open a session.
+- **One-time pairing.** QR codes are single-use and expire in five minutes.
+- **Revocable.** Remove a device from the Mac menu bar or `codewide-companion revoke <id>` on Linux.
+
+A paired phone has your access on that machine. Pair only devices you own.
+[Details](docs/self-hosting.md#pairing-and-device-security).
+
+## Get started
+
+| | |
+|---|---|
+| **Phone** | Android, arm64 |
+| **Computer** | Mac with Apple Silicon, macOS 26+. Or Linux x86_64 with systemd |
+| **Agents** | Codex CLI 0.155.1+, signed in. Claude Code, signed in (optional) |
+| **Network** | Same Wi-Fi or VPN (Mac). Your own relay on a VPS. Or any `wss://` endpoint you control |
+| **API keys** | None. Uses the `codex` and `claude` sign-ins on that machine, subscriptions included |
+
+### Mac
+
+```sh
+brew tap MrFlashAccount/codewide
+brew trust --cask MrFlashAccount/codewide/codewide
+brew install --cask MrFlashAccount/codewide/codewide
+xattr -dr com.apple.quarantine /Applications/CodeWide.app   # self-signed for now
+open -a CodeWide
+```
+
+1. The setup assistant finds your Codex sign-in.
+2. Pick **Use Direct** (same network or VPN) or set up a relay on a VPS:
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
+   codewide-relay pair
+   ```
+3. Install the APK from the [latest release](https://github.com/MrFlashAccount/CodeWide/releases/latest), tap **Add server**, scan the QR code.
+4. Open your Mac in the app and send Codex a message.
+
+Every branch of the assistant, step by step: [Getting started](docs/getting-started.md).
+
+### Linux server
+
+```sh
+codex app-server daemon start                   # Codex CLI installed and signed in
+curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/companion | sh
+codewide-companion relay pair <relay-ip>:8780   # invite from `codewide-relay invite`
+codewide-companion pair                         # QR code
+```
+
+Own TLS ingress instead of a relay: [self-hosting](docs/self-hosting.md#reach-the-companion-from-your-phone).
+
+### Claude Code
+
+Install `claude` on the same machine and sign in. The Companion picks it up.
+
+## FAQ
+
+**Does my computer need to stay on?**
+Yes. **Keep Awake** in the Mac menu bar prevents idle sleep. A closed lid still sleeps unless an external display is connected.
+
+**Is there an iOS app?**
+Not yet. CodeWide is Android-first.
+
+**Does my code go through CodeWide's servers?**
+There are none. Phone to your machine, optionally through a relay you run.
+
+**What is Codex-only?**
+Goals, global voice mode, background process lists and the account pool. Everything else works with both. [Full matrix](docs/agent-providers.md).
+
+**Is pairing safe over a relay?**
+The QR code is a one-time secret that expires in five minutes. The relay sees TLS bytes only. Revoke a phone you lose.
+
+## Documentation
+
+- [Getting started](docs/getting-started.md): the Mac assistant step by step, relay, first checks.
+- [Self-hosting](docs/self-hosting.md): install options, relays and tunnels, pairing, terminal, ports, telemetry.
+- [Relay rollout](docs/relay-rollout.md): setup, canary, rollback.
+- [macOS Companion](apps/companion-macos/README.md): the menu-bar app.
+- [Agent providers](docs/agent-providers.md): how Codex and Claude plug in, capability matrix.
+- [Development](docs/development.md): architecture, build, test, release.
+
+## Contributing
+
+pnpm and Cargo monorepo. Android app: Expo / React Native. Companion and relay: Rust. macOS app: Swift.
 
 ```sh
 pnpm install
 pnpm typecheck
 pnpm test
-pnpm bench:fixtures
-pnpm test:e2e
-pnpm security:scan-artifacts
-pnpm security:scan-secrets
-pnpm --filter @codewide/android build
 cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo run -p codewide-companion -- --help
 ```
 
-`pnpm security:scan-secrets` runs pinned Gitleaks against both reachable Git
-history and the tracked/untracked non-ignored working tree. The verified binary
-is cached outside the repository; set `CODEWIDE_GITLEAKS_BIN` to use an existing
-installation instead.
+Rules and per-area checks: [AGENTS.md](AGENTS.md). Full command reference: [docs/development.md](docs/development.md).
 
-Serve every locally available Android APK from a compact build shelf with a
-stable latest-build marker and resumable byte-range downloads:
+## License
 
-```sh
-python3 scripts/build-shelf-server.py --host 127.0.0.1 --port 4190
-```
-
-The shelf scans Gradle APK outputs and archived test builds on every request.
-While it is running, each new `release/app-release.apk` is also copied once into
-`builds/android/`, with its version metadata and SHA-256, so rebuilding does not
-erase the recent download history. The archive keeps the eight newest APKs and
-their metadata. `/latest.apk` always resolves to the highest release version
-code; `/api/builds` exposes the current catalog; `/healthz` is the lightweight
-tunnel probe.
-
-Run the logical multi-server recovery soak (24 hours by default):
-
-```sh
-pnpm soak:sync
-```
-
-It writes a private mode-`0600` progress/result artifact under
-`test-results/soak/`. This exercises replay, network drops and JS runtime
-recreation; it does not replace the physical Android Doze/device gate.
-
-Run the UI in a browser during renderer development:
-
-```sh
-pnpm --filter @codewide/android web
-```
-
-For Android JS/TS Fast Refresh, install the debug APK once. Keep Metro on the
-workstation loopback and provide an operator-owned HTTPS endpoint through
-`CODEWIDE_METRO_URL`; the phone then needs neither USB nor ADB and may use any
-network:
-
-```sh
-pnpm dev:android
-```
-
-The debug application id is `dev.codexremote.app.dev`, so it can remain
-installed beside the signed release app. Open the `codewide://` URL printed
-by the helper once; subsequent JS/TS edits arrive through Fast Refresh. Metro
-signs its development manifest with the same local OTA key. On Linux it also needs a sufficiently large
-inotify budget (`fs.inotify.max_user_watches=524288` and
-`fs.inotify.max_user_instances=1024`).
-
-The `dev.codexremote.app` package identity and related legacy storage, service,
-and deep-link aliases are retained intentionally. They let existing installs
-upgrade to CodeWide without losing local state or breaking saved links.
-
-For the signed release app, publish JS/TS, message-renderer, and asset changes
-without rebuilding or reinstalling the APK:
-
-```sh
-./scripts/release-ota
-```
-
-The one-shot command discovers the private OTA key and public update endpoint,
-runs the Android release checks, publishes atomically, verifies the public
-manifest and bundle hash, and prints the update ID as JSON. Use `--dry-run` to
-validate release configuration without publishing.
-
-The build shelf serves the signed Expo Updates protocol at `/api/updates`.
-A release app checks once when its UI opens and at most once every 30 minutes
-while it remains active, downloads a new compatible bundle, and immediately
-recreates its JS runtime with that bundle. The Android process does not need to
-be force-stopped; transient UI state may be reset. The signing key defaults to
-the user data directory under `codewide/ota/private-key.pem` and can be
-overridden with `CODEWIDE_OTA_PRIVATE_KEY`. Only the public certificate is
-checked in.
-
-Changes to Kotlin, the Android manifest, native libraries, or native dependency
-versions still require a new APK and a new `runtimeVersion`; the updater rejects
-bundles built for a different native runtime.
-
-## Server-side voice transcription
-
-The composer records mono PCM16 at Android's native routed sample rate. Native
-callbacks use roughly 100 ms capture frames, but those frames are not network
-requests: the client coalesces them into ordered one-second batches and keeps
-exactly one `companion/dictation/appendBatch` RPC in flight. Stop flushes the
-partial batch before `companion/dictation/finish`, so a long recording cannot
-be reordered and a short recording cannot lose its tail.
-
-The companion writes the private PCM stream in capture order, wraps bounded WAV
-segments, and calls the ChatGPT transcription endpoint only after Stop. Codex
-OAuth stays on the host; microphone audio and credentials are never persisted
-by the Android client. Retryable rate limits retain the host-side recording only
-until explicit retry/cancel or idle cleanup.
-
-Build and install the companion as a user service:
-
-```sh
-pnpm build:companion
-target/release/codewide-companion create-token
-apps/companion-linux/deploy/install.sh
-codewide-companion pair
-```
-
-For an ordinary macOS 26+ desktop, install the native menu-bar app from the
-CodeWide Homebrew tap. It owns the LaunchAgent lifecycle, Relay setup, QR
-pairing, live device presence, revoke, and signed in-app updates:
-
-```sh
-brew tap MrFlashAccount/codewide
-brew install --cask codewide
-```
-
-For a headless x86_64 Linux host, the checksummed standalone installer installs
-the portable Companion bundle and its user-systemd units:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/companion | sh
-```
-
-On Linux, the Homebrew package is also named CodeWide:
-
-```sh
-brew install --formula MrFlashAccount/codewide/codewide
-```
-
-The executable and systemd service keep their `codewide-companion` names.
-If you installed the old `codewide-companion` formula, migrate it once:
-
-```sh
-brew update
-brew trust --formula MrFlashAccount/codewide/codewide
-brew migrate --formula codewide
-```
-
-The packaged service exposes an HTTP carrier. Put it behind any ordinary
-public-CA TLS ingress, Tailscale, ngrok, or another relay. Application traffic
-uses a separate TLS 1.3 connection inside the blind WebSocket carrier, so the
-relay cannot read it. Tell the CLI which public `wss://` URL belongs in the QR:
-
-```sh
-set -lx CODEWIDE_PUBLIC_ENDPOINT wss://host.example/v1/sync
-set -lx CODEWIDE_SERVER_NAME 'Home workstation'
-set -lx CODEWIDE_SERVER_EMOJI '🏠'
-codewide-companion pair
-```
-
-Build the standalone Linux Relay release artifact with
-`./scripts/build-relay-linux`. After a Relay release is published, install its
-verified portable `x86_64` Linux binary with:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay | sh
-```
-
-The installer verifies the binary, places it in `~/.local/bin` or `~/bin`
-(whichever standard user directory is already in `PATH`), and starts a systemd
-user service without `sudo`. It refuses to install outside `PATH`, so a
-successful installation always makes `codewide-relay` directly executable. The
-service starts with the user's login; an administrator may separately enable
-systemd lingering when the Relay must also run before login and after logout.
-Existing system services keep their machine-wide installation and therefore
-still require administrator access to update. Existing service configuration,
-Relay keys, and paired computers are preserved; a failed startup restores the
-previous executable and running service. Use `--no-start` only for a manually
-managed, binary-only installation.
-
-To move an older machine-wide installation to the rootless user service, run
-the official migration once as the user who will own Relay:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install/relay-migrate-user | sh
-```
-
-The migration asks for `sudo` once to stop and archive the old system service,
-then preserves its identity, port, and paired computers in the user service.
-Any pre-existing user state is retained as
-`~/.local/state/codewide/relay-before-system-migration`; the old system unit and
-binary remain under `/var/lib/codewide-relay/system-to-user-v1` for rollback.
-Future installer runs and signed updates use the user service without `sudo`.
-
-To connect a Mac, run:
-
-```sh
-codewide-relay pair
-```
-
-The terminal automatically shows the public IP and port. Enter that address in
-CodeWide's **Advanced → Add Relay**, click **Connect**, compare the four symbols,
-and confirm in the Relay terminal. Allow inbound TCP `8780` in the VPS firewall;
-the installer does not change host or cloud firewall rules.
-
-The same Relay binary is available from the CodeWide tap:
-
-```sh
-brew install --formula MrFlashAccount/codewide/relay
-```
-
-The Homebrew formula installs only the executable; use `codewide-relay serve`
-for a foreground server, or the curl installer for automatic service setup.
-Android and Companion both connect outbound to that Relay address. Plain
-WebSocket connections carry opaque inner-TLS bytes, while TLS 1.3 connections
-on the same port carry health, pairing, and control. For a Linux Companion,
-`codewide-relay invite` creates an address-independent one-time bundle on the
-Relay host. On the Companion host, run
-`codewide-companion relay pair relay.example:8780` and paste that bundle. The
-running Companion applies pairing and `relay disable|enable` immediately through
-its private control socket; no restart is required. Setup, canary and rollback are documented in
-[docs/relay-rollout.md](docs/relay-rollout.md).
-
-`pair` reads the Companion identity through the private control socket and puts
-its SHA-256 SPKI pin in the QR. A current Android build establishes pinned inner
-TLS before it sends the one-time pairing token, public device key, or proof. The
-initial challenge/session exchange and all later private traffic stay inside it.
-The public carrier exposes no authentication or application data routes; it
-accepts only the blind `/v1/e2ee-tunnel` plus Build Shelf / update downloads.
-
-Secure transport is mandatory. Pairing payloads and saved profiles without a
-Companion identity pin are rejected and must be paired again. There is no
-preview switch, legacy transport, automatic trust-on-current-carrier upgrade,
-or downgrade path.
-
-Scan the terminal QR from `Add server`, or enter the one-time token manually.
-The CLI selects compact Unicode, ANSI, or a private SVG fallback with
-`--qr auto`; use `--qr unicode|ansi|svg` to force a renderer.
-The QR expires after five minutes and contains a secret: do not paste it into
-logs or share a screenshot. Remote endpoints must use `wss://`; plain `ws://`
-is accepted only for loopback, the Android emulator host alias, or an SSH
-forward terminating on the device. `serve --insecure-http` is retained only as
-a hidden command-line compatibility no-op; it no longer disables or changes
-inner TLS.
-
-Build Shelf / OTA and Expo Updates intentionally remain carrier-level public
-traffic. They do not pass through the native inner proxy because an app must be
-able to download its own update before the application transport is available.
-
-Inspect the public identity without exposing its private key:
-
-```sh
-codewide-companion identity
-```
-
-The private identity key is stored through the Companion Secure Store. It uses
-the platform credential store when available (Keychain, Credential Manager, or
-Linux keyring plus Secret Service) and records that backend durably. Headless
-systems fall back to a mode-0600 file. A temporarily unavailable platform store
-never causes silent key regeneration or a weaker fallback; a later successful
-load may migrate the file-backed key upward.
-
-Identity rotation is an explicit recovery event, not silent renewal. Stop the
-service, rotate with acknowledgement, restart it, then scan a fresh QR on every
-device. The previous private key is deleted and old pins fail closed:
-
-```sh
-systemctl --user stop codewide-companion.service
-codewide-companion rotate-identity --confirm-device-repair
-systemctl --user start codewide-companion.service
-codewide-companion pair
-```
-
-The phone stores only its revocable per-device capability in Android
-Keystore-backed SecureStore; the host persists only its SHA-256 hash and the
-installation's public P-256 key. Before every socket reconnect,
-the foreground service signs a one-use 60-second challenge with the
-non-exportable Android Keystore key, then receives a non-chainable 15-minute
-in-memory session token. A stolen bearer without that key cannot mint a session;
-a long-lived device capability cannot open `/v1/sync`; and a paired device can
-never open the raw `/v1/app-server` bridge. Every successfully authenticated
-paired session receives the complete Companion data-plane grant.
-
-The companion exposes registration and session minting through the single
-public `/v1/auth` endpoint. Registration signs the one-time pairing token and
-device metadata with the non-exportable Android Keystore key. The server derives
-`deviceId` from that public key; the id is an identifier, not a secret or a
-second factor. Copying either the id or the long-lived capability is insufficient
-to mint a session without the private key. Pairing creation, device management,
-health checks and the raw App Server bridge exist only on the OS-local control
-endpoint and are not routed by the public server at all.
-
-Inspect and revoke devices:
-
-```sh
-codewide-companion devices
-codewide-companion revoke DEVICE_ID
-```
-
-## Streaming telemetry
-
-Android sends bounded structured telemetry batches to its own companion. The
-schema contains timestamps, event names, numeric measurements, short tags and
-explicit identifiers only; message text, prompts, protocol payloads and raw
-state are rejected by both client and server. The companion stores at most
-200,000 events for seven days in a separate `telemetry.redb`, deduplicated by
-device and event id, so diagnostics cannot enlarge or lock the canonical thread
-index.
-
-Telemetry ingestion is session-authorized on the public endpoint. Reading it is
-available only through the OS-local administrator control endpoint:
-
-```sh
-codewide-companion telemetry query --session-id THREAD_ID --descending
-codewide-companion telemetry query --request-id REQUEST_ID
-codewide-companion telemetry query --from-unix-ms 1787240000000 --to-unix-ms 1787240300000 --name stream.react_commit
-```
-
-Time filters use the companion receipt time, which remains useful when a phone
-clock is skewed. Queries also accept `--device-id`, `--connection-id`,
-`--batch-id`, `--client-session-id`, `--event-id`, `--thread-id`, `--turn-id`,
-`--item-id`, exact `--tag-name`/`--tag-value` pairs and `--limit`.
-
-## Interactive terminal
-
-The Android thread menu can open a full-screen terminal workspace rooted at
-that thread's working directory. Each Codex thread owns its own terminal tabs;
-there is no global terminal. The companion owns every pseudo-terminal and sends
-ordered binary input/output over a dedicated authenticated WebSocket at
-`/v1/terminals`; Android owns the certificate-pinned socket, while
-`expo-libghostty` provides VT parsing, rendering, selection, IME input and the
-terminal accessory keyboard. The down-arrow minimizes the full-screen workspace
-without stopping its shells. A `Terminals · N` chip beside the thread resources
-restores it; only closing an individual tab terminates that shell. Android keeps
-the ordered ANSI transcript in its cache so a recreated renderer can recover
-after minimization without keeping hidden terminal views mounted. Transcripts
-are deleted with their tabs and bounded to 128 MiB each. A connection shutdown,
-thread deletion, or companion shutdown also closes the associated terminals.
-The client and companion each permit at most eight concurrent sessions.
-
-Remote shell access is part of the full grant issued to every authenticated
-paired session. Revoke the device to remove that access.
-
-The current `expo-libghostty` React Native seam carries base64 strings across
-the JS/native boundary. That encoding is confined to the renderer adapter; the
-phone-to-companion transport remains binary, so replacing the seam later does
-not change the terminal protocol. The native dependency ships 64-bit Android
-artifacts only, so Android builds target `arm64-v8a` devices and `x86_64`
-emulators rather than advertising a 32-bit terminal that cannot load.
-
-## Phone-local port forwarding
-
-The Android foreground service can expose a remote-machine loopback service as
-`127.0.0.1:<phone-port>` on the phone. Each current forward maps one remote
-`127.0.0.1:<remote-port>` to an automatically selected or explicitly preferred
-phone port. Current forwards survive JS runtime recreation, but are never
-restored from saved profiles. The native service polls current listeners while
-the connection is enabled and reconstructs forwards from discovery after restart.
-Only explicit include/exclude policies persist; React renders the native projection.
-
-The companion lazily inventories listeners when the selected server is active.
-It applies the same conservative recognition policy as Doma for Docker Compose,
-Minikube, Kubernetes port-forwards, Hermes, Vite, Bun/Node, Python, zrok,
-user processes and system-owned services. Stable service keys preserve an
-include/exclude choice across ephemeral port changes. Known developer services
-start automatically; system services and unknown ephemeral listeners stay in
-`Available` until explicitly included. The Ports screen groups recognized
-services, filters by name/category/port, and separates `Active`, `Available`
-and `Excluded` entries.
-
-A confirmed-live service opens as a full-screen app route, not inside the Ports
-sheet. Its browser can dock the bundled Chromium DevTools Frontend below the
-page and connects it to the inspected WebView through the real Chrome DevTools
-Protocol. Elements, Console, Sources, Network, Application and the Performance
-panel therefore use WebView's native CDP implementation rather than an injected
-JavaScript console. A separate Android WebView trace control records all native
-tracing categories as a fallback. Browser-shell features that Android WebView
-does not implement remain unavailable; this is the maximum page-level surface,
-not an emulation of desktop Chrome.
-
-Each accepted phone TCP connection gets one authenticated binary WebSocket at
-`/v1/port-forwards/<remote-port>`. The companion opens only its own
-`127.0.0.1:<remote-port>` and forwards opaque bytes, so HTTP keep-alive,
-WebSocket upgrades and dev-server HMR work without protocol rewriting. The
-endpoint requires a short-lived authenticated paired session, rejects
-browser-origin upgrades, expires streams with their session, and never accepts
-an arbitrary target host. The older bounded path-based preview endpoint remains
-available for compatibility.
-
-A successful discovery removes a vanished service and closes its phone listener
-and active streams. An explicit exclusion remains a policy, not a stale row;
-it applies again if the service returns. Failed scans do not masquerade as an
-empty inventory. There is no `Saved ports` group. Confirmed-live HTTP services
-open in CodeWide's built-in browser, including its bundled developer tools.
-
-The phone listener is loopback-only, but another local app that discovers its
-port could connect to it. Prefer automatic high ports and stop profiles that are
-not in use; do not forward an unauthenticated administrative service.
-
-Pairings created before device-proof support or before the Companion identity
-pin became mandatory must be paired again.
-
-The production companion binds its blind HTTP carrier to `127.0.0.1:8766` and a
-process-private TLS 1.3 listener to a random loopback port. Operator commands
-such as pairing and device management use
-the same CLI over a private local IPC endpoint (`$XDG_RUNTIME_DIR/codewide/companion-control.sock`
-on Linux), protected by directory mode `0700`, endpoint mode `0600` and the
-administrator capability. There is no administrative TCP listener to forward by
-mistake. A reverse proxy, SSH forward, overlay, or relay sees only opaque inner
-TLS records after the WebSocket tunnel is established.
-
-The installed companion binary is also the headless operator CLI: `create-token`,
-`pair`, `devices` and `revoke` call the running process through that
-local endpoint.
-
-A durable deployment runs `codewide-companion.service` behind an operator-owned
-blind relay or private overlay network. Hostnames, tunnel credentials and
-provider-specific configuration are machine-local and must not be committed.
-Set the Android build's update endpoint explicitly:
-
-```sh
-export CODEWIDE_UPDATE_URL=https://updates.example.com/api/updates
-```
-
-Wireless development similarly requires an operator-owned HTTPS Metro endpoint
-through `CODEWIDE_METRO_URL`; the repository has no default public tunnel.
-
-The Android system picker uploads composer attachments into the companion-owned
-private `attachments` root. Named roots provide stable bases for relative paths;
-authenticated paired sessions may also read or write explicit absolute host paths:
-
-```sh
-set -lx CODEWIDE_FILE_ROOTS '{"project":"/absolute/path/to/project"}'
-systemctl --user restart codewide-companion.service
-```
-
-Uploads require `X-Content-SHA256` and use bounded resumable chunks. Downloads resume through byte ranges;
-both directions verify the final SHA-256 before publishing the destination.
-
-Release builds never fall back to the debug signing key. The normal release path
-is one command:
-
-```sh
-./scripts/release-apk
-```
-
-It discovers the private signing material, increments the patch version,
-version code and native runtime together, runs the release checks, builds and
-verifies the signed arm64 APK, publishes it to the build shelf, downloads it
-through the public endpoint, verifies its SHA-256, and prints the release data
-as JSON. Source versions roll back if the build fails before publication. Use
-`--dry-run` to inspect the next version and validate credentials without
-changing files or publishing. `--version X.Y.Z` overrides the automatic patch
-version while the version code still increments by one.
-
-The low-level Gradle/signing variables below remain available for debugging or
-nonstandard builds:
-
-```sh
-set -lx CODEWIDE_RELEASE_STORE_FILE /absolute/path/to/release.keystore
-set -lx CODEWIDE_RELEASE_STORE_PASSWORD '...'
-set -lx CODEWIDE_RELEASE_KEY_ALIAS codex-remote-v1
-set -lx CODEWIDE_RELEASE_KEY_PASSWORD '...'
-```
-
-The Android project also contains a `:baselineprofile` Macrobenchmark module.
-It generates a real startup/ART profile from an API 33+ connected device and
-compares cold startup with no compilation against the required profile. Normal
-release builds do not silently launch instrumentation; generate and then build
-explicitly:
-
-```sh
-pnpm android:gradle -- :app:generateReleaseBaselineProfile
-pnpm android:gradle -- :baselineprofile:connectedBenchmarkReleaseAndroidTest
-pnpm android:gradle -- :app:assembleRelease
-```
-
-The wrapper uses explicit `JAVA_HOME` / `ANDROID_HOME` when provided and falls
-back to the repository's known Gradle-managed JDK and Android SDK locations.
-This keeps CLI builds deterministic even when `java` is not exported in the
-interactive shell.
-
-Generation on an emulator is useful for correctness. Treat benchmark numbers as
-release evidence only when captured on physical mid-range hardware.
-
-Run the release/device evidence gate against one explicitly selected ADB target:
-
-```sh
-pnpm test:android-device -- \
-  --serial emulator-5554 \
-  --apk apps/android/android/app/build/outputs/apk/release/app-release.apk \
-  --suite smoke,lifecycle,layout \
-  --expected-server-count 4 \
-  --capture-screenshot
-```
-
-An AVD can be paired without a camera or a token in shell history. Write the
-five-minute one-time payload to a private file, then pass only its path:
-
-```sh
-mkdir -p test-results/private-runtime/android
-chmod 700 test-results/private-runtime/android
-set -lx CODEWIDE_PUBLIC_ENDPOINT wss://10.0.2.2:8766/v1/sync
-set -lx CODEWIDE_SERVER_NAME 'AVD test server'
-codewide-companion pair --json \
-  > test-results/private-runtime/android/pairing.json
-chmod 600 test-results/private-runtime/android/pairing.json
-pnpm test:android-device -- \
-  --serial emulator-5554 \
-  --apk apps/android/android/app/build/outputs/apk/release/app-release.apk \
-  --pairing-file test-results/private-runtime/android/pairing.json
-```
-
-The runner accepts only a mode-`0600`, unexpired pairing payload with shell-safe
-automation fields. It never writes the one-time token or resulting capability
-into evidence.
-
-The runner installs with `adb install -r`, exercises sleep/wake, forced Doze,
-App Standby and process recreation, checks the real accessibility geometry for
-`server rail -> threads -> thread` and `Menu -> wide input -> voice -> send`,
-and writes a mode-`0600` evidence bundle under ignored `test-results/`. An
-upgrade run additionally requires `--suite upgrade --previous-apk <old.apk>` and
-fails if the package UID or first-install identity changes.
-
-CodeWide uses one Android application and the Companion `/v1` API. The former V2
-frontend, protocol, native modules, and generation-parity runner are removed; see
-[the retirement and UI reuse audit](docs/android-v2-retirement.md).
-
-Use `pnpm validate:android:v1` and `pnpm --filter @codewide/android compile:android`
-for source validation. `pnpm test:android-device -- --dry-run` shows the retained
-smoke, lifecycle and layout plan. Select a device with `--serial` and an APK with
-`--apk`; upgrade coverage additionally uses `--suite upgrade --previous-apk`. Source checks are
-not device evidence. The retired two-generation Appium runner no longer certifies
-releases; no replacement live-conversation E2E coverage is claimed.
+[MIT](LICENSE)
