@@ -91,7 +91,7 @@ jobs:
         run: pnpm ci:rust
 
       - name: Build affected Rust applications
-        run: pnpm nx affected -t build --projects='tag:language:rust'
+        run: pnpm nx affected -t build --exclude='*,!tag:language:rust'
 
   macos:
     runs-on: macos-26
