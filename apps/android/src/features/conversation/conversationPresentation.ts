@@ -7,7 +7,6 @@ import {
   pendingDeliveryMayOwnTurn,
 } from "../../data/thread-lifecycle";
 import { selectLiveTurnPlan } from "../../rendering/live-turn-plan";
-import { selectRunningAgents } from "../../rendering/runningAgents";
 import type { ThreadListItem } from "../threadList/threadListTypes";
 
 export function projectConversationPresentation(
@@ -45,7 +44,6 @@ export function projectConversationPresentation(
     currentTurnId,
     failureNotice,
     liveTurnPlan,
-    runningAgents: selectRunningAgents(remoteThread),
     sessionCompactionCount,
     threadLifecycleActive,
   };

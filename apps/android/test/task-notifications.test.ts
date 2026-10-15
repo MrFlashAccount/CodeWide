@@ -6,7 +6,6 @@ import { reportLineSummary } from "../src/features/conversation/turns/taskNotifi
 import { projectTurnPresentation } from "../src/features/conversation/turns/turnProjection";
 import { compactCompletedTurnForStorage } from "../src/data/thread-detail-projection";
 import { turnLaunchedAgents } from "../src/rendering/launchedAgents";
-import { selectRunningAgents } from "../src/rendering/runningAgents";
 import { turnTaskNotifications } from "../src/rendering/taskNotifications";
 import { selectTurnRenderWindow } from "../src/rendering/thread-render-window";
 
@@ -162,54 +161,6 @@ describe("task notification reports", () => {
       label: "Agent a",
       phrase: "finished",
     });
-  });
-});
-
-describe("running agents", () => {
-  const launch = (id: string, receiver: string, status: string) => ({
-    agentsStates: { [receiver]: { message: null, status } },
-    codewideDescription: `Agent ${id}`,
-    id,
-    prompt: "Long prompt",
-    receiverThreadIds: [receiver],
-    status: "inProgress",
-    tool: "spawnAgent",
-    type: "collabAgentToolCall",
-  });
-
-  function thread(turns: readonly TurnItem[], primary: boolean): Thread {
-    const value: unknown = {
-      codewideAgent: { capabilities: [], primary, provider: "claude", providerName: "Claude" },
-      id: "thread",
-      turns: turns.map((entry): Turn => entry.turn),
-    };
-    // WHY: The generated Thread type has many fields the selector never reads; the fixture
-    // supplies only the turns and the provider descriptor it consumes.
-    return value as Thread;
-  }
-
-  it("lists launched agents until a final report arrives", () => {
-    const turns = [
-      turn("launch", [
-        prompt("launch"),
-        launch("l1", "t1", "running"),
-        launch("l2", "t2", "running"),
-      ]),
-      turn("wake", [
-        report("a", { agentThreadId: "t1" }),
-        report("b", { agentThreadId: "t2", status: "interim" }),
-      ]),
-    ];
-
-    expect(selectRunningAgents(thread(turns, false))).toEqual([
-      { agentThreadId: "t2", kind: "agent", name: "Agent l2" },
-    ]);
-  });
-
-  it("does not trust launch state from a primary provider", () => {
-    const turns = [turn("launch", [prompt("launch"), launch("l1", "t1", "running")])];
-
-    expect(selectRunningAgents(thread(turns, true))).toEqual([]);
   });
 });
 

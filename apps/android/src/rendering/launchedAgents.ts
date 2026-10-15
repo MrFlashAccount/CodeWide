@@ -12,11 +12,6 @@ export type LaunchedAgent = {
   readonly agentThreadId: string | null;
   readonly key: string;
   readonly kind: "agent";
-  /**
-   * The state the launch item reports. Only a provider whose children have
-   * no live thread of their own updates it; otherwise it stays the launch state.
-   */
-  readonly launchStatus: string | null;
   readonly name: string;
 };
 
@@ -52,19 +47,14 @@ function launches(raw: Record<string, unknown> | null): LaunchedAgent[] {
       )
     : [];
   if (receivers.length === 0) {
-    return [{ agentThreadId: null, key: id, kind: "agent", launchStatus: null, name }];
+    return [{ agentThreadId: null, key: id, kind: "agent", name }];
   }
-  const states = unknownRecord(raw.agentsStates);
-  return receivers.map((receiver) => {
-    const status = unknownRecord(states?.[receiver])?.status;
-    return {
-      agentThreadId: receiver,
-      key: `${id}:${receiver}`,
-      kind: "agent",
-      launchStatus: typeof status === "string" ? status : null,
-      name,
-    };
-  });
+  return receivers.map((receiver) => ({
+    agentThreadId: receiver,
+    key: `${id}:${receiver}`,
+    kind: "agent",
+    name,
+  }));
 }
 
 /** The launch's short description, else its agent path, else its prompt's first line. */

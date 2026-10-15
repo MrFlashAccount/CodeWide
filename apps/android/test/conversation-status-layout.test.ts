@@ -4,21 +4,19 @@ import { shouldShowConversationStatus } from "../src/features/conversation/conve
 
 describe("conversation status visibility", () => {
   it.each([
-    { expected: true, hasGoal: true, hasLiveTurnPlan: false, hasRunningAgents: false },
-    { expected: true, hasGoal: false, hasLiveTurnPlan: true, hasRunningAgents: false },
-    { expected: true, hasGoal: false, hasLiveTurnPlan: false, hasRunningAgents: true },
-    { expected: true, hasGoal: true, hasLiveTurnPlan: true, hasRunningAgents: true },
-    { expected: false, hasGoal: false, hasLiveTurnPlan: false, hasRunningAgents: false },
-  ])("shows independent goal, live-plan and running-agent contents", (contents) => {
+    { expected: true, hasGoal: true, hasLiveTurnPlan: false },
+    { expected: true, hasGoal: false, hasLiveTurnPlan: true },
+    { expected: true, hasGoal: true, hasLiveTurnPlan: true },
+    { expected: false, hasGoal: false, hasLiveTurnPlan: false },
+  ])("shows independent goal and live-plan contents", ({ expected, hasGoal, hasLiveTurnPlan }) => {
     expect(
       shouldShowConversationStatus({
-        hasGoal: contents.hasGoal,
-        hasLiveTurnPlan: contents.hasLiveTurnPlan,
-        hasRunningAgents: contents.hasRunningAgents,
+        hasGoal,
+        hasLiveTurnPlan,
         searchActive: false,
         timelinePositioned: true,
       }),
-    ).toBe(contents.expected);
+    ).toBe(expected);
   });
 
   it.each([
@@ -31,7 +29,6 @@ describe("conversation status visibility", () => {
         shouldShowConversationStatus({
           hasGoal: true,
           hasLiveTurnPlan: true,
-          hasRunningAgents: true,
           searchActive,
           timelinePositioned,
         }),

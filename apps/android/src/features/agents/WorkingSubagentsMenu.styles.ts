@@ -7,16 +7,14 @@ import {
   spacing,
   typeScale,
   typeWeight,
-} from "../../../theme";
+} from "../../theme";
 
 const PRESSED_OPACITY = 0.72;
-const TRIGGER_ELEVATION = 4;
 
 export const styles = StyleSheet.create({
   label: {
     color: colors.text,
     flexShrink: 1,
-    minWidth: 0,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
@@ -27,11 +25,6 @@ export const styles = StyleSheet.create({
   },
   listTitle: {
     color: colors.textMuted,
-    ...typeScale.label,
-  },
-  phrase: {
-    color: colors.textMuted,
-    flexShrink: 0,
     ...typeScale.label,
   },
   pressed: {
@@ -52,19 +45,25 @@ export const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  total: {
+    color: colors.textMuted,
+    flexShrink: 0,
+    ...typeScale.label,
+  },
   trigger: {
     alignItems: "center",
-    backgroundColor: colors.surfaceHover,
-    borderColor: colors.borderSoft,
-    borderRadius: radii.pill,
+    alignSelf: "flex-start",
+    backgroundColor: colors.surfaceContainerHigh,
+    borderColor: colors.border,
+    borderRadius: radii.medium,
     borderWidth: 1,
-    elevation: TRIGGER_ELEVATION,
     flexDirection: "row",
-    flexShrink: 1,
-    gap: spacing.xs,
-    maxWidth: "92%",
+    flexGrow: 0,
+    flexShrink: 0,
+    gap: spacing.compact,
     minHeight: controlSize.compact,
     paddingLeft: spacing.xxs,
-    paddingRight: spacing.inputInset,
+    paddingRight: spacing.xs,
+    paddingVertical: spacing.optical,
   },
 });

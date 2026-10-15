@@ -62,7 +62,6 @@ function Timeline({
       positionSearchTurn={() => undefined}
       readOnly={false}
       remoteThread={null}
-      runningAgents={[]}
       threadSearchActive={false}
       threadSearchVisible={threadSearchVisible}
       timeline={[]}

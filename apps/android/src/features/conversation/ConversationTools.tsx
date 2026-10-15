@@ -164,8 +164,8 @@ export function useConversationTools(props: UseConversationToolsProps) {
         <ComposerSubagentContextChip
           connectionId={props.draftConnectionId}
           database={props.subagentSummaryDatabase}
-          onOpen={(summaries) => {
-            openSubagents(summaries);
+          onOpen={(summaries, initialThreadId) => {
+            openSubagents(summaries, initialThreadId);
           }}
           parentThreadId={props.draftThreadId}
         />

@@ -15,7 +15,6 @@ export const styles = StyleSheet.create({
   label: {
     color: colors.text,
     flexShrink: 1,
-    minWidth: 0,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
@@ -78,9 +77,8 @@ export const styles = StyleSheet.create({
     borderRadius: radii.pill,
     borderWidth: 1,
     flexDirection: "row",
-    flexShrink: 1,
+    flexShrink: 0,
     gap: spacing.xs,
-    maxWidth: "92%",
     minHeight: controlSize.compact,
     paddingLeft: spacing.xxs,
     paddingRight: spacing.sm,
