@@ -10,7 +10,6 @@ export type ReportOutcome = {
 
 /** The one-line summary of several reports drawn outside the bubble. */
 export type ReportLineSummary = {
-  readonly badge: AgentAvatarBadge;
   readonly label: string;
   readonly phrase: string;
 };
@@ -36,29 +35,32 @@ export function reportName(report: TaskNotificationReport): string {
 
 /**
  * One reason line for any number of reports: a single report names its task;
- * several read as a count, with a failure taking precedence over progress.
+ * several read as a count. The phrase is for assistive technology; the
+ * avatars' dots show the status.
  */
 export function reportLineSummary(reports: readonly TaskNotificationReport[]): ReportLineSummary {
   const [first] = reports;
   if (reports.length === 1 && first !== undefined) {
-    const outcome = reportOutcome(first);
-    return { badge: outcome.badge, label: reportName(first), phrase: outcome.phrase };
+    return { label: reportName(first), phrase: reportOutcome(first).phrase };
   }
   const badges = new Set(reports.map((report) => reportOutcome(report).badge));
   const agents = reports.every((report) => report.kind === "agent");
   const label = `${String(reports.length)} ${agents ? "agents" : "background tasks"}`;
   if (badges.has("failed")) {
-    return { badge: "failed", label, phrase: "some failed" };
+    return { label, phrase: "some failed" };
   }
   if (badges.has("waiting")) {
-    return { badge: "waiting", label, phrase: "reported" };
+    return { label, phrase: "reported" };
   }
-  return { badge: "done", label, phrase: "finished" };
+  return { label, phrase: "finished" };
 }
 
-/** One row's detail line: outcome, delivery, duration and the work it did. */
+/**
+ * One row's detail line: delivery, duration and the work it did. The dot
+ * shows the outcome; the phrase stands in only when nothing else is known.
+ */
 export function reportDetails(report: TaskNotificationReport): string {
-  const parts = [reportOutcome(report).phrase];
+  const parts: string[] = [];
   if (report.delivery === "midTurn") {
     parts.push("during the answer");
   }
@@ -68,5 +70,5 @@ export function reportDetails(report: TaskNotificationReport): string {
   if (report.toolUses !== null) {
     parts.push(`${String(report.toolUses)} ${report.toolUses === 1 ? "action" : "actions"}`);
   }
-  return parts.join(" · ");
+  return parts.length === 0 ? reportOutcome(report).phrase : parts.join(" · ");
 }

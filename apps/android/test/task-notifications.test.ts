@@ -151,12 +151,10 @@ describe("task notification reports", () => {
     ).wake;
 
     expect(reportLineSummary(parsed)).toEqual({
-      badge: "failed",
       label: "3 agents",
       phrase: "some failed",
     });
     expect(reportLineSummary(parsed.slice(0, 1))).toEqual({
-      badge: "done",
       label: "Agent a",
       phrase: "finished",
     });

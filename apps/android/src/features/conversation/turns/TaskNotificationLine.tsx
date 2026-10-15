@@ -1,13 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import { createElement, useContext, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, View, useWindowDimensions } from "react-native";
 import { useEvent } from "../../../react/useEvent";
-import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
-import { colors, iconSize } from "../../../theme";
+import { colors, controlSize, iconSize, spacing, typeScale } from "../../../theme";
 import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
-import { AnchoredMenuList } from "../../../ui/AnchoredMenuList";
+import { AnchoredMenuList, LIST_GAP, LIST_PADDING } from "../../../ui/AnchoredMenuList";
 import { ContentMenu } from "../../../ui/ContentMenu";
 import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
 import { useLayoutWidth } from "../../../ui/useLayoutWidth";
@@ -21,24 +20,15 @@ import {
 } from "./taskNotificationPresentation";
 import { BackgroundTaskContext, SubagentNavigationContext } from "./turnContexts";
 
-const BADGE_ICON = {
-  done: "checkmark-circle",
-  failed: "alert-circle",
-  running: "ellipse",
-  waiting: "time-outline",
-} as const;
-
-const BADGE_COLOR = {
-  done: colors.green,
-  failed: colors.red,
-  running: colors.amber,
-  waiting: colors.amber,
-} as const;
+/** Each row shows a name and a detail line; its height never depends on measurement. */
+const ROW_TEXT_HEIGHT = typeScale.body.lineHeight + typeScale.label.lineHeight;
+const ROW_PADDING = spacing.xs;
 
 /**
  * Background task reports drawn outside a bubble as one short line: the
  * reports that woke a turn, or those that arrived while it answered. The line
- * opens a list; an agent's row opens its thread.
+ * opens a plain list under it; an agent's row opens its thread, a command's
+ * row its output. Each report's status is the dot on its avatar.
  */
 export function TaskNotificationLine({
   reports,
@@ -48,6 +38,7 @@ export function TaskNotificationLine({
   const [open, setOpen] = useRecyclingState(false);
   const menu = useAnchoredMenuSize();
   const layout = useLayoutWidth();
+  const { fontScale } = useWindowDimensions();
   const toggleOpen = useEvent(() => {
     setOpen((current) => !current);
   });
@@ -57,12 +48,11 @@ export function TaskNotificationLine({
   if (reports.length === 0) {
     return null;
   }
-  // WHY numeric: Compose measures the anchored trigger intrinsically (a
-  // percentage bound collapses its label) and opens the menu at the anchor's
-  // start with the menu's width, so anchor and menu share the line's width.
-  // Until it is laid out, the row keeps the line's height empty.
-  const rowWidth = layout.width;
-  if (rowWidth === null) {
+  // WHY numeric: Compose measures the anchored pill intrinsically (a
+  // percentage bound collapses its label), so the pill is bounded by the
+  // line's laid-out width. Until it is laid out, the line keeps its height.
+  const lineWidth = layout.width;
+  if (lineWidth === null) {
     return (
       <View
         onLayout={layout.onLayout}
@@ -71,146 +61,110 @@ export function TaskNotificationLine({
       />
     );
   }
-  const summary = reportLineSummary(reports);
-  const trigger = createElement(TaskNotificationTrigger, {
+  const rowHeight = Math.max(
+    controlSize.touch,
+    ROW_TEXT_HEIGHT * fontScale + ROW_PADDING + ROW_PADDING,
+  );
+  const trigger = createElement(TaskNotificationPill, {
+    maxWidth: lineWidth,
     onPress: toggleOpen,
     open,
     reports,
-    rowWidth,
-    summary,
   });
-  const body = (
-    <AnchoredMenuList
-      maxHeight={menu.maxHeight}
-      testID="task-notification-list"
-      title={reports.length === 1 ? "Background task" : `${String(reports.length)} reports`}
-    >
+  // The menu opens at the pill's start with its own width; Compose keeps it
+  // inside the window. Rows have a fixed height, so the list declares its
+  // height instead of the popup measuring it.
+  const listHeight = Math.min(
+    menu.maxHeight,
+    reports.length * rowHeight + (reports.length - 1) * LIST_GAP + LIST_PADDING + LIST_PADDING,
+  );
+  const list = (
+    <AnchoredMenuList height={listHeight} testID="task-notification-list">
       {reports.map((report) => (
-        <ReportRow key={report.id} onNavigate={close} report={report} />
+        <ReportRow height={rowHeight} key={report.id} onNavigate={close} report={report} />
       ))}
     </AnchoredMenuList>
   );
   return (
     <View onLayout={layout.onLayout} style={styles.lineRow} testID="task-notification-line-row">
       <ContentMenu
-        align="center"
+        align="start"
+        height={listHeight}
         onOpenChange={setOpen}
         open={open}
         placement="bottom"
         trigger={trigger}
-        width={rowWidth}
+        width={Math.min(menu.width, lineWidth)}
       >
-        {body}
+        {list}
       </ContentMenu>
     </View>
   );
 }
 
-function TaskNotificationTrigger({
+function TaskNotificationPill({
+  maxWidth,
   onPress,
   open,
   reports,
-  rowWidth,
-  summary,
 }: {
+  readonly maxWidth: number;
   readonly onPress: () => void;
   readonly open: boolean;
   readonly reports: readonly TaskNotificationReport[];
-  readonly rowWidth: number;
-  readonly summary: ReturnType<typeof reportLineSummary>;
 }): React.JSX.Element {
+  const summary = reportLineSummary(reports);
   return (
     <Pressable
       accessibilityLabel={`${summary.label} ${summary.phrase}`}
       accessibilityRole="button"
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={[styles.anchorRow, { width: rowWidth }]}
+      style={({ pressed }) => [styles.trigger, { maxWidth }, pressed && styles.pressed]}
       testID="task-notification-line"
     >
-      {({ pressed }) => (
-        <TaskNotificationPill
-          maxWidth={rowWidth}
-          pressed={pressed}
-          reports={reports}
-          summary={summary}
-        />
-      )}
-    </Pressable>
-  );
-}
-
-function TaskNotificationPill({
-  maxWidth,
-  pressed,
-  reports,
-  summary,
-}: {
-  readonly maxWidth: number;
-  readonly pressed: boolean;
-  readonly reports: readonly TaskNotificationReport[];
-  readonly summary: ReturnType<typeof reportLineSummary>;
-}): React.JSX.Element {
-  const single = reports.length === 1;
-  return (
-    <View style={[styles.trigger, { maxWidth }, pressed && styles.pressed]}>
       <AgentAvatarStack
-        // One report's status sits next to the label; a stack marks each avatar.
-        badgeOf={(report) => (single ? null : reportOutcome(report).badge)}
+        badgeOf={(report) => reportOutcome(report).badge}
         keyOf={(report) => report.id}
         subjects={reports}
       />
       <Text ellipsizeMode="tail" numberOfLines={1} style={styles.label}>
         {summary.label}
       </Text>
-      <Ionicons
-        color={BADGE_COLOR[summary.badge]}
-        name={BADGE_ICON[summary.badge]}
-        size={iconSize.indicator}
-      />
-      <Text numberOfLines={1} style={styles.phrase}>
-        {summary.phrase}
-      </Text>
-    </View>
+    </Pressable>
   );
 }
 
 function ReportRow({
+  height,
   onNavigate,
   report,
 }: {
+  readonly height: number;
   readonly onNavigate: () => void;
   readonly report: TaskNotificationReport;
 }): React.JSX.Element {
   const target = useReportTarget(report, onNavigate);
-  const outcome = reportOutcome(report);
   const details = reportDetails(report);
-  const opens = target.kind !== "result";
   return (
-    <View>
-      <Pressable
-        accessibilityLabel={`${reportName(report)}, ${details}`}
-        accessibilityRole="button"
-        {...(opens || report.result === null
-          ? {}
-          : { accessibilityState: { expanded: target.expanded } })}
-        disabled={!opens && report.result === null}
-        onPress={target.press}
-        style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-        testID="task-notification-row"
-      >
-        <AgentAvatar badge={outcome.badge} subject={report} />
-        <ReportRowText
-          details={target.error ?? details}
-          loading={target.loading}
-          name={reportName(report)}
-        />
-        {opens ? (
-          <Ionicons color={colors.textDim} name="chevron-forward" size={iconSize.inline} />
-        ) : null}
-      </Pressable>
-      {target.expanded ? <ReportResult result={report.result} /> : null}
-    </View>
+    <Pressable
+      accessibilityLabel={`${reportName(report)}, ${reportOutcome(report).phrase}, ${details}`}
+      accessibilityRole="button"
+      disabled={target.kind === "none"}
+      onPress={target.press}
+      style={({ pressed }) => [styles.row, { height }, pressed && styles.pressed]}
+      testID="task-notification-row"
+    >
+      <AgentAvatar badge={reportOutcome(report).badge} subject={report} />
+      <ReportRowText
+        details={target.error ?? details}
+        loading={target.loading}
+        name={reportName(report)}
+      />
+      {target.kind === "none" ? null : (
+        <Ionicons color={colors.textDim} name="chevron-forward" size={iconSize.inline} />
+      )}
+    </Pressable>
   );
 }
 
@@ -231,14 +185,13 @@ function failedOpening(error: unknown): OpeningState {
 }
 
 /**
- * What a report row opens: an agent's thread, a background task's output
- * (loaded on press), else its result text in place.
+ * What a report row opens: an agent's thread or a background task's output
+ * (loaded on press); without either it opens nothing.
  */
 function useReportTarget(report: TaskNotificationReport, onNavigate: () => void) {
   const openThread = useContext(SubagentNavigationContext);
   const openTask = useContext(BackgroundTaskContext);
   // The list renders in the anchored popover, outside any recycled list cell.
-  const [expanded, setExpanded] = useState(false);
   const [opening, setOpening] = useState<OpeningState>(NOT_OPENING);
   const agentThreadId = report.agentThreadId;
   const kind =
@@ -246,7 +199,7 @@ function useReportTarget(report: TaskNotificationReport, onNavigate: () => void)
       ? "thread"
       : report.kind !== "agent" && openTask !== null
         ? "task"
-        : "result";
+        : "none";
   const press = useEvent(async () => {
     if (kind === "thread" && agentThreadId !== null && openThread !== null) {
       onNavigate();
@@ -261,13 +214,10 @@ function useReportTarget(report: TaskNotificationReport, onNavigate: () => void)
       if (next.status === "idle") {
         onNavigate();
       }
-    } else {
-      setExpanded((current) => !current);
     }
   });
   return {
     error: opening.status === "failed" ? opening.message : null,
-    expanded,
     kind,
     loading: opening.status === "loading",
     press: () => void press(),
@@ -291,14 +241,6 @@ function ReportRowText({
       <Text numberOfLines={1} style={styles.rowDetails}>
         {details}
       </Text>
-    </View>
-  );
-}
-
-function ReportResult({ result }: { readonly result: string | null }): React.JSX.Element | null {
-  return result === null ? null : (
-    <View style={styles.result}>
-      <RichMarkdown source={result} />
     </View>
   );
 }

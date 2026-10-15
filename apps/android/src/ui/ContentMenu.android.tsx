@@ -1,5 +1,5 @@
 import { DropdownMenu, Host, RNHostView } from "@expo/ui/jetpack-compose";
-import { width } from "@expo/ui/jetpack-compose/modifiers";
+import { height, width } from "@expo/ui/jetpack-compose/modifiers";
 import { StyleSheet, View } from "react-native";
 
 import { useEvent } from "../react/useEvent";
@@ -60,6 +60,15 @@ function NativeMenuItems({ props }: { readonly props: ContentMenuProps }): React
 }
 
 function NativeMenuBody({ props }: { readonly props: ContentMenuProps }): React.JSX.Element {
+  // A declared height reaches both layout trees, so the popup never waits
+  // for, or clips to, a measurement of the React Native body.
+  if (props.height !== undefined) {
+    return (
+      <RNHostView matchContents modifiers={[width(props.width), height(props.height)]}>
+        <View style={{ height: props.height, width: props.width }}>{props.children}</View>
+      </RNHostView>
+    );
+  }
   return (
     <RNHostView matchContents modifiers={[width(props.width)]}>
       <View style={{ width: props.width }}>{props.children}</View>
