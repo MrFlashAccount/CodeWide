@@ -7,16 +7,27 @@ export const LIVE_ACTIVITY_WINDOW = 16;
 
 export type TurnRenderWindow = {
   collapsedActivityIndexes: number[];
-  compactionIndexes: number[];
   latestAgentIndex: number;
+  /** Compactions before the response, drawn as lifecycle lines above the bubble. */
+  leadCompactionIndexes: number[];
   liveActivityIndexes: number[];
   preTurnActivityIndexes: number[];
+  /** Compactions during the response, drawn as lifecycle lines below the bubble. */
+  trailingCompactionIndexes: number[];
   userItemIndexes: number[];
 };
 
-/** Background task reports are drawn outside the bubble, never as turn activity. */
+/**
+ * Background task reports and context compactions are drawn outside the
+ * bubble, never as turn activity.
+ */
 function isTurnActivityItem(item: Turn["items"][number]): boolean {
-  return item.type !== "userMessage" && !isQuestionMessage(item) && !isTaskNotificationItem(item);
+  return (
+    item.type !== "userMessage" &&
+    item.type !== "contextCompaction" &&
+    !isQuestionMessage(item) &&
+    !isTaskNotificationItem(item)
+  );
 }
 
 /**
@@ -103,9 +114,7 @@ export function selectTurnRenderWindow(
   }
 
   // App Server may perform work before it materializes the canonical user
-  // message. Keep that pre-turn activity in the response bubble. A context
-  // compaction is presented outside only when it belongs to that pre-turn
-  // lifecycle; a compaction after the user boundary belongs inside the turn.
+  // message. Keep that pre-turn activity in the response bubble.
   // Agent text is the response itself, never pre-turn activity: a
   // provider-initiated turn has no user message at all, and its answer must
   // stream and complete as the response rather than as a lifecycle row.
@@ -113,7 +122,7 @@ export function selectTurnRenderWindow(
   // all of its work is the response, including items a client marked pre-turn
   // while no user message had arrived yet.
   const firstUserIndex = userItemIndexes[0] ?? Number.POSITIVE_INFINITY;
-  const preTurnIndexes =
+  const preTurnActivityIndexes =
     userItemIndexes.length === 0
       ? []
       : materializedIndexes.filter((index) => {
@@ -124,23 +133,27 @@ export function selectTurnRenderWindow(
             (index < firstUserIndex || isProjectedPreTurn(item))
           );
         });
-  const compactionIndexes = preTurnIndexes.filter(
-    (index) => turn.items[index]?.type === "contextCompaction",
+  const separatedIndexSet = new Set(preTurnActivityIndexes);
+  const { leadCompactionIndexes, trailingCompactionIndexes } = splitCompactions(
+    turn,
+    turn.status === "inProgress"
+      ? materializedIndexes.filter(
+          (index) => !separatedIndexSet.has(index) && !isBlankAgentMessage(turn.items[index]),
+        )
+      : [],
+    userItemIndexes.length > 0,
   );
-  const preTurnActivityIndexes = preTurnIndexes.filter(
-    (index) => turn.items[index]?.type !== "contextCompaction",
-  );
-  const separatedIndexSet = new Set([...preTurnActivityIndexes, ...compactionIndexes]);
 
   if (turn.status !== "inProgress") {
     return {
       collapsedActivityIndexes: materializedIndexes.filter(
         (index) => index !== latestAgentIndex && !separatedIndexSet.has(index),
       ),
-      compactionIndexes,
       latestAgentIndex,
+      leadCompactionIndexes,
       liveActivityIndexes: [],
       preTurnActivityIndexes,
+      trailingCompactionIndexes,
       userItemIndexes,
     };
   }
@@ -166,12 +179,47 @@ export function selectTurnRenderWindow(
 
   return {
     collapsedActivityIndexes: activityIndexes.filter((index) => !liveIndexSet.has(index)),
-    compactionIndexes,
     latestAgentIndex,
+    leadCompactionIndexes,
     liveActivityIndexes,
     preTurnActivityIndexes,
+    trailingCompactionIndexes,
     userItemIndexes,
   };
+}
+
+/**
+ * A context compaction is system information, not turn work: it is drawn as
+ * a lifecycle line outside the bubble. A finished turn draws every compaction
+ * before its bubble, the same in its summary and full views (a summary keeps
+ * no work to place them by). While the turn runs, a compaction after its
+ * first response item follows the bubble, where the live work is; one before
+ * it, or marked pre-turn while a user boundary exists, leads the bubble.
+ */
+function splitCompactions(
+  turn: Turn,
+  responseIndexes: readonly number[],
+  hasUserBoundary: boolean,
+): Pick<TurnRenderWindow, "leadCompactionIndexes" | "trailingCompactionIndexes"> {
+  const firstResponseIndex = responseIndexes[0] ?? Number.POSITIVE_INFINITY;
+  const leadCompactionIndexes: number[] = [];
+  const trailingCompactionIndexes: number[] = [];
+  for (let index = 0; index < turn.items.length; index += 1) {
+    const item = turn.items[index];
+    if (item?.type !== "contextCompaction") {
+      continue;
+    }
+    if (index < firstResponseIndex || (hasUserBoundary && isProjectedPreTurn(item))) {
+      leadCompactionIndexes.push(index);
+    } else {
+      trailingCompactionIndexes.push(index);
+    }
+  }
+  return { leadCompactionIndexes, trailingCompactionIndexes };
+}
+
+function isBlankAgentMessage(item: Turn["items"][number] | undefined): boolean {
+  return item?.type === "agentMessage" && item.text.trim() === "";
 }
 
 function isProjectedPreTurn(item: Turn["items"][number] | undefined): boolean {

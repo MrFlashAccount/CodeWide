@@ -12,11 +12,12 @@ import type { TimelineItem } from "../timeline/timelineTypes";
 import { hasCompletedTurnHistory } from "./completedHistoryVisibility";
 
 export type CachedTurnProjection = {
-  compactionBlocks: RenderBlock[];
   latestAgentBlock: RenderBlock | null;
+  leadCompactionBlocks: RenderBlock[];
   liveActivityBlocks: RenderBlock[];
   preTurnBlocks: RenderBlock[];
   renderWindow: ReturnType<typeof selectTurnRenderWindow>;
+  trailingCompactionBlocks: RenderBlock[];
   userBlocks: RenderBlock[];
 };
 
@@ -25,18 +26,20 @@ type RawTurnItem = Thread["turns"][number]["items"][number];
 
 const TURN_PROJECTION_CACHE_MAX_ENTRIES = 64;
 const TURN_PROJECTION_REFERENCE_FIELDS = [
-  "compactionBlocks",
   "latestAgentBlock",
+  "leadCompactionBlocks",
   "liveActivityBlocks",
   "preTurnBlocks",
   "renderWindow",
+  "trailingCompactionBlocks",
   "userBlocks",
 ] as const;
 const RENDER_WINDOW_REFERENCE_FIELDS = [
   "collapsedActivityIndexes",
-  "compactionIndexes",
+  "leadCompactionIndexes",
   "liveActivityIndexes",
   "preTurnActivityIndexes",
+  "trailingCompactionIndexes",
   "userItemIndexes",
 ] as const;
 const renderBlockCache = new WeakMap<RawTurnItem, CachedRenderBlock>();
@@ -47,35 +50,30 @@ export function projectTurnProjection(
 ): CachedTurnProjection {
   const rawTurn = turn.turn;
   const renderWindow = selectTurnRenderWindow(rawTurn);
-  const userBlocks = renderWindow.userItemIndexes.flatMap((index) => {
-    const item = rawTurn.items[index];
-    return item === undefined ? [] : [projectThreadItem(turn, item, index)];
-  });
-  const preTurnBlocks = renderWindow.preTurnActivityIndexes.flatMap((index) => {
-    const item = rawTurn.items[index];
-    return item === undefined ? [] : [projectThreadItem(turn, item, index)];
-  });
-  const compactionBlocks = renderWindow.compactionIndexes.flatMap((index) => {
-    const item = rawTurn.items[index];
-    return item === undefined ? [] : [projectThreadItem(turn, item, index)];
-  });
   const latestAgentItem =
     renderWindow.latestAgentIndex < 0 ? undefined : rawTurn.items[renderWindow.latestAgentIndex];
   const latestAgentBlock =
     latestAgentItem === undefined
       ? null
       : projectThreadItem(turn, latestAgentItem, renderWindow.latestAgentIndex);
-  const liveActivityBlocks = renderWindow.liveActivityIndexes.flatMap((index) => {
-    const item = rawTurn.items[index];
-    return item === undefined ? [] : [projectThreadItem(turn, item, index)];
-  });
   return retainTurnProjection(turn.key, {
-    compactionBlocks,
     latestAgentBlock,
-    liveActivityBlocks,
-    preTurnBlocks,
+    leadCompactionBlocks: projectIndexes(turn, renderWindow.leadCompactionIndexes),
+    liveActivityBlocks: projectIndexes(turn, renderWindow.liveActivityIndexes),
+    preTurnBlocks: projectIndexes(turn, renderWindow.preTurnActivityIndexes),
     renderWindow,
-    userBlocks,
+    trailingCompactionBlocks: projectIndexes(turn, renderWindow.trailingCompactionIndexes),
+    userBlocks: projectIndexes(turn, renderWindow.userItemIndexes),
+  });
+}
+
+function projectIndexes(
+  turn: Extract<TimelineItem, { kind: "turn" }>,
+  indexes: readonly number[],
+): RenderBlock[] {
+  return indexes.flatMap((index) => {
+    const item = turn.turn.items[index];
+    return item === undefined ? [] : [projectThreadItem(turn, item, index)];
   });
 }
 
@@ -86,11 +84,18 @@ function retainTurnProjection(key: string, next: CachedTurnProjection): CachedTu
     return next;
   }
   const value: CachedTurnProjection = {
-    compactionBlocks: retainReferences(previous.compactionBlocks, next.compactionBlocks),
     latestAgentBlock: next.latestAgentBlock,
+    leadCompactionBlocks: retainReferences(
+      previous.leadCompactionBlocks,
+      next.leadCompactionBlocks,
+    ),
     liveActivityBlocks: retainReferences(previous.liveActivityBlocks, next.liveActivityBlocks),
     preTurnBlocks: retainReferences(previous.preTurnBlocks, next.preTurnBlocks),
     renderWindow: retainRenderWindow(previous.renderWindow, next.renderWindow),
+    trailingCompactionBlocks: retainReferences(
+      previous.trailingCompactionBlocks,
+      next.trailingCompactionBlocks,
+    ),
     userBlocks: retainReferences(previous.userBlocks, next.userBlocks),
   };
   const retained = projectionReferencesEqual(previous, value) ? previous : value;
@@ -351,11 +356,12 @@ function prepareTurnPresentation(turn: TurnRow) {
   const rawTurn = turn.turn;
   const artifacts = retainAgentArtifacts(turn.key, projectAgentArtifacts(rawTurn));
   const {
-    compactionBlocks,
     latestAgentBlock,
+    leadCompactionBlocks,
     liveActivityBlocks,
     preTurnBlocks,
     renderWindow,
+    trailingCompactionBlocks,
     userBlocks,
   } = projectTurnProjection(turn);
   const liveActivityEntries = renderWindow.liveActivityIndexes.flatMap(
@@ -412,20 +418,29 @@ function prepareTurnPresentation(turn: TurnRow) {
         item.delivery === "async" &&
         (item.questions?.length ?? 0) > 0,
     );
-  // Explicit compaction completes successfully without generating an answer.
-  // Its lifecycle row is the result; failed/interrupted turns still need their warning.
-  const completedCompaction =
-    rawTurn.status === "completed" &&
-    rawTurn.items.some((item) => item.type === "contextCompaction");
-  const showEmptyResponsePlaceholder =
-    !hasQuestions &&
-    !completedCompaction &&
-    rawTurn.status !== "inProgress" &&
-    !hasGeneratedAgentResponse &&
-    artifacts.length === 0;
   const hasCompletedHistory =
     rawTurn.status !== "inProgress" &&
     hasCompletedTurnHistory(rawTurn, renderWindow.collapsedActivityIndexes);
+  // A turn that only compacted the context (an explicit or automatic
+  // compaction between messages) has no response: its lifecycle lines are the
+  // whole turn, drawn without a bubble, footer or empty-response warning. A
+  // failed or interrupted turn keeps its bubble for that warning.
+  const isCompactionOnly =
+    leadCompactionBlocks.length + trailingCompactionBlocks.length > 0 &&
+    rawTurn.status !== "failed" &&
+    rawTurn.status !== "interrupted" &&
+    !hasQuestions &&
+    !hasGeneratedAgentResponse &&
+    !hasCompletedHistory &&
+    artifacts.length === 0 &&
+    preTurnBlocks.length === 0 &&
+    visibleLiveActivitySequence.length === 0;
+  const showEmptyResponsePlaceholder =
+    !hasQuestions &&
+    !isCompactionOnly &&
+    rawTurn.status !== "inProgress" &&
+    !hasGeneratedAgentResponse &&
+    artifacts.length === 0;
   // A background task woke the agent and it produced nothing: no answer, no
   // activity, no artifacts. Unloaded content is empty only when a wake report
   // proves a Companion that counts a wake's work: older ones counted none.
@@ -476,18 +491,20 @@ function prepareTurnPresentation(turn: TurnRow) {
     agentReviewTarget,
     artifacts,
     canReviewResponse,
-    compactionBlocks,
     copyText,
     hasAgentContent,
     hasGeneratedAgentResponse,
+    isCompactionOnly,
     isEmptyWake,
     latestAgentBlock,
     launchedAgents: turnLaunchedAgents(rawTurn),
+    leadCompactionBlocks,
     liveMarkdownProjections,
     preTurnBlocks,
     rawTurn,
     showEmptyResponsePlaceholder,
     taskNotifications,
+    trailingCompactionBlocks,
     userBlocks,
     visibleLiveActivitySequence,
   };

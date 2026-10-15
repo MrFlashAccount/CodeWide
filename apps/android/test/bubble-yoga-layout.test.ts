@@ -201,7 +201,7 @@ describe("Yoga-owned bubble layout", () => {
     const beforeAgentBubble = ownerTurnTimelineItem.slice(turnStart, agentBubbleStart);
     const agentBubble = ownerTurnTimelineItem.slice(agentBubbleStart, agentBubbleEnd);
 
-    expect(beforeAgentBubble).toContain("blocks={presentation.compactionBlocks}");
+    expect(beforeAgentBubble).toContain("blocks={presentation.leadCompactionBlocks}");
     expect(beforeAgentBubble).not.toContain("blocks={presentation.preTurnBlocks}");
     expect(ownerTurnTimelineItem).toContain("renderAgentTurnBody(turn, presentation,");
     expect(ownerAgentTurnBody).toContain("blocks={presentation.preTurnBlocks}");

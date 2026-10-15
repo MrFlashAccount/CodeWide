@@ -678,10 +678,12 @@ export function compactCompletedTurnForStorage(turn: Turn): Turn {
   // is lifecycle evidence, not the chat boundary: compacting around it would
   // discard the visible answer and produce "Completed without final response".
   const finalAgentIndex = explicitFinalAgentIndex >= 0 ? explicitFinalAgentIndex : latestAgentIndex;
-  // Background task reports and subagent launches are small and drawn outside
-  // the collapsed history (reason lines, agent chips), so they stay resident.
+  // Background task reports, subagent launches and context compactions are
+  // small and drawn outside the collapsed history (reason lines, agent chips,
+  // lifecycle lines), so they stay resident.
   const retains = (item: Turn["items"][number], index: number): boolean =>
     item.type === "userMessage" ||
+    item.type === "contextCompaction" ||
     index === finalAgentIndex ||
     isTaskNotificationItem(item) ||
     isAgentLaunchItem(item);

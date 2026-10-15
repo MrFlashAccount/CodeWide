@@ -49,18 +49,19 @@ describe("thread render window", () => {
     ];
 
     const active = selectTurnRenderWindow(turn(items));
-    expect(active.compactionIndexes).toEqual([0]);
+    expect(active.leadCompactionIndexes).toEqual([0]);
+    expect(active.trailingCompactionIndexes).toEqual([]);
     expect(active.preTurnActivityIndexes).toEqual([1]);
     expect(active.liveActivityIndexes).toEqual([3, 4]);
     expect(active.collapsedActivityIndexes).toEqual([]);
 
     const completed = selectTurnRenderWindow(turn(items, "completed"));
-    expect(completed.compactionIndexes).toEqual([0]);
+    expect(completed.leadCompactionIndexes).toEqual([0]);
     expect(completed.preTurnActivityIndexes).toEqual([1]);
     expect(completed.collapsedActivityIndexes).toEqual([3]);
   });
 
-  it("keeps compaction after the user boundary inside the turn activity", () => {
+  it("draws a compaction during the response outside the bubble, below it while the turn runs", () => {
     const items: FakeItem[] = [
       { type: "userMessage", id: "user" },
       { type: "commandExecution", id: "tool-before" },
@@ -70,23 +71,42 @@ describe("thread render window", () => {
     ];
 
     const active = selectTurnRenderWindow(turn(items));
-    expect(active.compactionIndexes).toEqual([]);
-    expect(active.liveActivityIndexes).toEqual([1, 2, 3, 4]);
+    expect(active.leadCompactionIndexes).toEqual([]);
+    expect(active.trailingCompactionIndexes).toEqual([2]);
+    expect(active.liveActivityIndexes).toEqual([1, 3, 4]);
 
     const completed = selectTurnRenderWindow(turn(items, "completed"));
-    expect(completed.compactionIndexes).toEqual([]);
-    expect(completed.collapsedActivityIndexes).toEqual([1, 2, 3]);
+    expect(completed.leadCompactionIndexes).toEqual([2]);
+    expect(completed.trailingCompactionIndexes).toEqual([]);
+    expect(completed.collapsedActivityIndexes).toEqual([1, 3]);
+  });
+
+  it("keeps a turn that only compacted the context out of the response", () => {
+    for (const items of [
+      [{ type: "contextCompaction", id: "compaction" }],
+      [{ type: "userMessage", id: "user" }, { type: "contextCompaction", id: "compaction" }],
+    ] satisfies FakeItem[][]) {
+      for (const status of ["inProgress", "completed"] as const) {
+        const window = selectTurnRenderWindow(turn(items, status));
+        expect(window.leadCompactionIndexes).toEqual([items.length - 1]);
+        expect(window.trailingCompactionIndexes).toEqual([]);
+        expect(window.liveActivityIndexes).toEqual([]);
+        expect(window.collapsedActivityIndexes).toEqual([]);
+        expect(window.latestAgentIndex).toBe(-1);
+      }
+    }
   });
 
   it("keeps a compaction explicitly marked as pre-turn outside after canonical reordering", () => {
     const window = selectTurnRenderWindow(turn([
       { type: "userMessage", id: "user" },
+      { type: "commandExecution", id: "tool" },
       { type: "contextCompaction", id: "compaction", codewidePreTurn: true },
       { type: "agentMessage", id: "agent" },
     ]));
 
-    expect(window.compactionIndexes).toEqual([1]);
-    expect(window.liveActivityIndexes).toEqual([2]);
+    expect(window.leadCompactionIndexes).toEqual([2]);
+    expect(window.liveActivityIndexes).toEqual([1, 3]);
   });
 
   it("keeps projected pre-turn state outside activity when canonical ordering moves it after the user", () => {
@@ -97,7 +117,7 @@ describe("thread render window", () => {
     ]));
 
     expect(window.preTurnActivityIndexes).toEqual([1]);
-    expect(window.compactionIndexes).toEqual([]);
+    expect(window.leadCompactionIndexes).toEqual([]);
     expect(window.liveActivityIndexes).toEqual([2]);
   });
 
@@ -326,7 +346,7 @@ describe("provider-initiated (wake) turn without a user message", () => {
     const rendered = [
       ...completed.preTurnActivityIndexes,
       ...completed.collapsedActivityIndexes,
-      ...completed.compactionIndexes,
+      ...completed.leadCompactionIndexes,
       completed.latestAgentIndex,
     ];
     expect(completed.latestAgentIndex).toBe(3);
