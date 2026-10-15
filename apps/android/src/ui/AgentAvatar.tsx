@@ -1,7 +1,8 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useId } from "react";
 import { StyleSheet, View } from "react-native";
 import Svg, { Circle, LinearGradient, Stop, Text as SvgText } from "react-native-svg";
-import { colors, spacing, typeScale, typeWeight } from "../theme";
+import { colors, iconSize, spacing, typeScale, typeWeight } from "../theme";
 import { AppText as Text } from "./Typography";
 
 const AVATAR_RADIUS = 10;
@@ -21,7 +22,7 @@ const FNV_OFFSET = 2_166_136_261;
 const FNV_PRIME = 16_777_619;
 const FIRST_LETTER = /[\p{L}\p{N}]/u;
 
-/** What an avatar stands for: a command gets a terminal glyph, anything else a gradient. */
+/** What an avatar stands for: a command gets a terminal icon, anything else a gradient. */
 export type AgentAvatarSubject = {
   readonly kind: "agent" | "command" | "other";
   readonly name: string;
@@ -49,7 +50,7 @@ export function AgentAvatar({
     <View style={styles.avatar}>
       {subject.kind === "command" ? (
         <View style={styles.glyphCircle}>
-          <Text style={styles.glyph}>$</Text>
+          <Ionicons color={colors.textMuted} name="terminal-outline" size={iconSize.indicator} />
         </View>
       ) : (
         <GradientCircle name={subject.name} />
@@ -146,11 +147,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: BADGE_OFFSET,
     width: BADGE_SIZE,
-  },
-  glyph: {
-    color: colors.accent,
-    fontFamily: "monospace",
-    ...typeScale.caption,
   },
   glyphCircle: {
     alignItems: "center",
