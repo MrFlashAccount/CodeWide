@@ -13,7 +13,6 @@ import {
   type MessageListState,
 } from "../../../ui/MessageListBoundary";
 import { LiveTurnPlanMenu } from "../../goal/LiveTurnPlanMenu";
-import { RunningAgentsMenu } from "./RunningAgentsMenu";
 import { ThreadHistoryLoadingIndicator } from "../ConversationHistoryStatus";
 import { styles } from "./ConversationTimelineSurface.styles";
 import type { ConversationTimelineSurfaceProps } from "./ConversationTimelineSurfaceContract";
@@ -40,7 +39,6 @@ export function ConversationTimelineSurface({
   positionSearchTurn,
   readOnly,
   remoteThread,
-  runningAgents,
   threadSearchActive,
   threadSearchVisible,
   timeline,
@@ -144,7 +142,6 @@ export function ConversationTimelineSurface({
           testID="live-plan-float"
         >
           {liveTurnPlan === null ? null : <LiveTurnPlanMenu plan={liveTurnPlan} />}
-          {runningAgents.length === 0 ? null : <RunningAgentsMenu agents={runningAgents} />}
           {goalContent}
         </View>
       )}

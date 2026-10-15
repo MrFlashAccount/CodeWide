@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import { createElement, useContext } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import type { LaunchedAgent } from "../../../rendering/launchedAgents";
 import { colors, iconSize } from "../../../theme";
@@ -11,6 +11,9 @@ import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "./AgentChip.styles";
 import { SubagentNavigationContext } from "./turnContexts";
+
+/** The chip sits inside a bubble, inside the timeline gutters and bubble padding. */
+const BUBBLE_SIDE_INSET = 96;
 
 /**
  * The subagents a finished turn started, as one chip in its bubble: the
@@ -25,6 +28,7 @@ export function LaunchedAgentsChip({
 }): React.JSX.Element | null {
   const [open, setOpen] = useRecyclingState(false);
   const menu = useAnchoredMenuSize();
+  const window = useWindowDimensions();
   const toggleOpen = useEvent(() => {
     setOpen((current) => !current);
   });
@@ -41,6 +45,9 @@ export function LaunchedAgentsChip({
   const trigger = createElement(LaunchedAgentsTrigger, {
     agents,
     label,
+    // WHY numeric: Compose measures the anchored trigger intrinsically; a
+    // percentage bound collapses its label to nothing.
+    maxWidth: window.width - BUBBLE_SIDE_INSET,
     onPress: toggleOpen,
     open,
   });
@@ -90,11 +97,13 @@ function LaunchedAgentsList({
 function LaunchedAgentsTrigger({
   agents,
   label,
+  maxWidth,
   onPress,
   open,
 }: {
   readonly agents: readonly LaunchedAgent[];
   readonly label: string;
+  readonly maxWidth: number;
   readonly onPress: () => void;
   readonly open: boolean;
 }): React.JSX.Element {
@@ -104,7 +113,7 @@ function LaunchedAgentsTrigger({
       accessibilityRole="button"
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={({ pressed }) => [styles.trigger, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.trigger, { maxWidth }, pressed && styles.pressed]}
       testID="launched-agents-chip"
     >
       <AgentAvatarStack badgeOf={() => null} keyOf={(agent) => agent.key} subjects={agents} />

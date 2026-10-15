@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import { createElement, useContext, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
@@ -19,6 +19,8 @@ import {
 } from "./taskNotificationPresentation";
 import { SubagentNavigationContext } from "./turnContexts";
 
+/** The line is centred outside bubbles, inside the timeline gutters. */
+const LINE_SIDE_INSET = 48;
 const BADGE_ICON = {
   done: "checkmark-circle",
   failed: "alert-circle",
@@ -45,6 +47,7 @@ export function TaskNotificationLine({
 }): React.JSX.Element | null {
   const [open, setOpen] = useRecyclingState(false);
   const menu = useAnchoredMenuSize();
+  const window = useWindowDimensions();
   const toggleOpen = useEvent(() => {
     setOpen((current) => !current);
   });
@@ -56,6 +59,9 @@ export function TaskNotificationLine({
   }
   const summary = reportLineSummary(reports);
   const trigger = createElement(TaskNotificationTrigger, {
+    // WHY numeric: Compose measures the anchored trigger intrinsically; a
+    // percentage bound collapses its label to nothing.
+    maxWidth: window.width - LINE_SIDE_INSET,
     onPress: toggleOpen,
     open,
     reports,
@@ -78,11 +84,13 @@ export function TaskNotificationLine({
 }
 
 function TaskNotificationTrigger({
+  maxWidth,
   onPress,
   open,
   reports,
   summary,
 }: {
+  readonly maxWidth: number;
   readonly onPress: () => void;
   readonly open: boolean;
   readonly reports: readonly TaskNotificationReport[];
@@ -95,7 +103,7 @@ function TaskNotificationTrigger({
       accessibilityRole="button"
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={({ pressed }) => [styles.trigger, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.trigger, { maxWidth }, pressed && styles.pressed]}
       testID="task-notification-line"
     >
       <AgentAvatarStack
