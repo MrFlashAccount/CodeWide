@@ -14,6 +14,21 @@ describe("thread turns after page", () => {
       .toEqual({ turns: [completed], hasMore: true, sourceWitness: "source" });
   });
 
+  it("accepts every item kind the Companion summary view keeps", () => {
+    const turn = {
+      ...completed,
+      items: [
+        { type: "userMessage", id: "prompt", content: [] },
+        { type: "collabAgentToolCall", id: "spawn", tool: "spawnAgent", receiverThreadIds: ["parent:agent:a1"] },
+        { type: "codewideTaskNotification", id: "report", taskId: "a1" },
+        { type: "contextCompaction", id: "compaction" },
+        { type: "agentMessage", id: "answer", text: "Done", phase: "final_answer" },
+      ],
+    };
+    expect(parseThreadTurnsAfterPage({ data: [turn], hasMore: false, sourceWitness: "source" }, "anchor", 5).turns)
+      .toEqual([turn]);
+  });
+
   it.each([
     null,
     {},
@@ -27,6 +42,9 @@ describe("thread turns after page", () => {
     { data: [{ ...completed, items: [null] }], hasMore: false },
     { data: [{ ...completed, items: [{ type: "agentMessage", id: "item", text: 10 }] }], hasMore: false },
     { data: [{ ...completed, items: [{ type: "userMessage", id: "item", content: [null] }] }], hasMore: false },
+    { data: [{ ...completed, items: [{ type: "collabAgentToolCall", id: "item", tool: "spawnAgent", receiverThreadIds: [""] }] }], hasMore: false },
+    { data: [{ ...completed, items: [{ type: "codewideTaskNotification", id: "item" }] }], hasMore: false },
+    { data: [{ ...completed, items: [{ type: "commandExecution", id: "item" }] }], hasMore: false },
     { data: [{ ...completed, error: { message: 12 } }], hasMore: false },
     { data: [{ ...completed, durationMs: Infinity }], hasMore: false },
   ])("rejects a malformed or non-advancing page %#", (value) => {

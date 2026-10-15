@@ -9,7 +9,12 @@ import {
   setTelemetryEnabled,
   type TelemetryBatch,
 } from "../src/data/telemetry";
-import { recordThreadHistoryTelemetry, recordThreadOpeningMeasure } from "../src/data/thread-history-telemetry";
+import {
+  recordThreadHistoryTelemetry,
+  recordThreadOpeningMeasure,
+  reportThreadHistoryLoadFailure,
+} from "../src/data/thread-history-telemetry";
+import { appLogger } from "../src/observability/logger";
 
 describe("telemetry batching", () => {
   afterEach(() => {
@@ -136,5 +141,44 @@ describe("opening diagnostics", () => {
       expect.objectContaining({ threadId: "thread-1", tags: { stage: "hydrate" }, values: { durationMs: 450 } }),
       expect.objectContaining({ threadId: "thread-1", tags: { stage: "open" }, values: { durationMs: 470 } }),
     ]);
+  });
+});
+
+describe("history load failures", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetTelemetryForTests();
+  });
+
+  it("reports the cause without enabling render profiling", async () => {
+    const batches: TelemetryBatch[] = [];
+    configureTelemetryTransport(async (_connectionId, batch) => { batches.push(batch); });
+    setTelemetryEnabled(false);
+    const warnCaught = vi.spyOn(appLogger, "warnCaught").mockImplementation(() => undefined);
+    const error = new Error("Companion returned an invalid history summary page");
+
+    reportThreadHistoryLoadFailure({
+      connectionId: "connection-1",
+      direction: "older",
+      error,
+      historyEpoch: 3,
+      threadId: "thread-1",
+    });
+    await flushTelemetry();
+
+    expect(batches.flatMap((batch) => batch.events)).toEqual([
+      expect.objectContaining({
+        connectionId: "connection-1",
+        name: "chat.history.load_failed",
+        tags: { direction: "older", errorKind: "Error" },
+        threadId: "thread-1",
+        values: { historyEpoch: 3 },
+      }),
+    ]);
+    expect(warnCaught).toHaveBeenCalledWith({
+      error,
+      event: "chat.history.load_failed",
+      fields: { connectionId: "connection-1", direction: "older", historyEpoch: 3, threadId: "thread-1" },
+    });
   });
 });

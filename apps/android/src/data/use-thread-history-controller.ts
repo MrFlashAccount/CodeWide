@@ -3,7 +3,10 @@ import { useConversationCleanup, useConversationRef } from "../ui/use-conversati
 import { useEvent } from "../react/useEvent";
 import { useLatest } from "../react/useLatest";
 import { threadHistoryContainsBeginning, type ThreadHistoryState } from "./thread-pagination";
-import { recordThreadHistoryTelemetry, telemetryErrorKind } from "./thread-history-telemetry";
+import {
+  recordThreadHistoryTelemetry,
+  reportThreadHistoryLoadFailure,
+} from "./thread-history-telemetry";
 import {
   ThreadHistoryLoadCoordinator,
   type ThreadHistoryLoadDirection,
@@ -144,9 +147,12 @@ export function useThreadHistoryController(
         outcome = { cause: error, status: "failed" };
         const threadId = context.threadId;
         if (threadId !== null) {
-          recordThreadHistoryTelemetry(context.connectionId, threadId, "chat.history.load_failed", {
-            tags: { direction, errorKind: telemetryErrorKind(error) },
-            values: { historyEpoch: context.historyEpoch },
+          reportThreadHistoryLoadFailure({
+            connectionId: context.connectionId,
+            direction,
+            error,
+            historyEpoch: context.historyEpoch,
+            threadId,
           });
         }
         throw error;

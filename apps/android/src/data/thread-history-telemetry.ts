@@ -1,3 +1,5 @@
+import { appLogger } from "../observability/logger";
+import type { ThreadHistoryLoadDirection } from "./thread-history-load-coordinator";
 import {
   recordOperationalTelemetryEvent,
   recordTelemetryEvent,
@@ -40,6 +42,36 @@ export function recordThreadHistoryTelemetry(
     connectionId,
     name,
     threadId,
+  });
+}
+
+/**
+ * A failed history page leaves the conversation on cached rows ("update
+ * delayed"), so its cause is reported even when profiling is off: an
+ * operational event for counting and a diagnostic log carrying the Error.
+ */
+export function reportThreadHistoryLoadFailure(failure: {
+  readonly connectionId: string;
+  readonly direction: ThreadHistoryLoadDirection;
+  readonly error: unknown;
+  readonly historyEpoch: number;
+  readonly threadId: string;
+}): void {
+  const { connectionId, direction, error, historyEpoch, threadId } = failure;
+  if (connectionId === "" || threadId === "") {
+    return;
+  }
+  recordOperationalTelemetryEvent(connectionId, {
+    connectionId,
+    name: "chat.history.load_failed",
+    tags: { direction, errorKind: telemetryErrorKind(error) },
+    threadId,
+    values: { historyEpoch },
+  });
+  appLogger.warnCaught({
+    error,
+    event: "chat.history.load_failed",
+    fields: { connectionId, direction, historyEpoch, threadId },
   });
 }
 
