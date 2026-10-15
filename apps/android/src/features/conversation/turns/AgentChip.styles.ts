@@ -1,17 +1,16 @@
 import { StyleSheet } from "react-native";
-import {
-  colors,
-  controlSize,
-  menuContentInset,
-  radii,
-  spacing,
-  typeScale,
-  typeWeight,
-} from "../../../theme";
+import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
 
 const PRESSED_OPACITY = 0.72;
 
 export const styles = StyleSheet.create({
+  /** The anchor spans its row, so the menu below lines up with the row's edges. */
+  anchorRow: {
+    alignItems: "center",
+  },
+  anchorRowStart: {
+    alignItems: "flex-start",
+  },
   label: {
     color: colors.text,
     flexShrink: 1,
@@ -26,15 +25,6 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: spacing.xxs,
     width: "100%",
-  },
-  list: {
-    gap: spacing.xxs,
-    paddingHorizontal: menuContentInset,
-    paddingVertical: spacing.xs,
-  },
-  listTitle: {
-    color: colors.textMuted,
-    ...typeScale.label,
   },
   phrase: {
     color: colors.textMuted,

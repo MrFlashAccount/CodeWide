@@ -1,11 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import { createElement, useContext } from "react";
-import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
+import { Pressable, View, useWindowDimensions } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import type { LaunchedAgent } from "../../../rendering/launchedAgents";
 import { colors, iconSize } from "../../../theme";
 import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
+import { AnchoredMenuList } from "../../../ui/AnchoredMenuList";
 import { ContentMenu } from "../../../ui/ContentMenu";
 import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
 import { AppText as Text } from "../../../ui/Typography";
@@ -42,15 +43,28 @@ export function LaunchedAgentsChip({
     agents.length === 1
       ? (agents[0]?.name ?? "Subagent")
       : `${String(agents.length)} agents started`;
+  // WHY numeric: Compose measures the anchored trigger intrinsically (a
+  // percentage bound collapses its label) and opens the menu at the anchor's
+  // start with the menu's width, so anchor and menu share one row width.
+  const rowWidth = window.width - BUBBLE_SIDE_INSET;
   const trigger = createElement(LaunchedAgentsTrigger, {
     agents,
     label,
-    // WHY numeric: Compose measures the anchored trigger intrinsically; a
-    // percentage bound collapses its label to nothing.
-    maxWidth: window.width - BUBBLE_SIDE_INSET,
     onPress: toggleOpen,
     open,
+    rowWidth,
   });
+  const body = (
+    <AnchoredMenuList
+      maxHeight={menu.maxHeight}
+      testID="launched-agents-list"
+      title={agents.length === 1 ? "Agent started" : `${String(agents.length)} agents started`}
+    >
+      {agents.map((agent) => (
+        <LaunchedAgentRow agent={agent} key={agent.key} onNavigate={close} />
+      ))}
+    </AnchoredMenuList>
+  );
   return (
     <View style={styles.launchRow}>
       <ContentMenu
@@ -59,53 +73,26 @@ export function LaunchedAgentsChip({
         open={open}
         placement="bottom"
         trigger={trigger}
-        width={menu.width}
+        width={rowWidth}
       >
-        <LaunchedAgentsList agents={agents} maxHeight={menu.maxHeight} onNavigate={close} />
+        {body}
       </ContentMenu>
     </View>
-  );
-}
-
-function LaunchedAgentsList({
-  agents,
-  maxHeight,
-  onNavigate,
-}: {
-  readonly agents: readonly LaunchedAgent[];
-  readonly maxHeight: number;
-  readonly onNavigate: () => void;
-}): React.JSX.Element {
-  return (
-    <ScrollView
-      contentContainerStyle={styles.list}
-      nestedScrollEnabled
-      showsVerticalScrollIndicator={false}
-      style={{ maxHeight }}
-      testID="launched-agents-list"
-    >
-      <Text accessibilityRole="header" style={styles.listTitle}>
-        {agents.length === 1 ? "Agent started" : `${String(agents.length)} agents started`}
-      </Text>
-      {agents.map((agent) => (
-        <LaunchedAgentRow agent={agent} key={agent.key} onNavigate={onNavigate} />
-      ))}
-    </ScrollView>
   );
 }
 
 function LaunchedAgentsTrigger({
   agents,
   label,
-  maxWidth,
   onPress,
   open,
+  rowWidth,
 }: {
   readonly agents: readonly LaunchedAgent[];
   readonly label: string;
-  readonly maxWidth: number;
   readonly onPress: () => void;
   readonly open: boolean;
+  readonly rowWidth: number;
 }): React.JSX.Element {
   return (
     <Pressable
@@ -113,14 +100,34 @@ function LaunchedAgentsTrigger({
       accessibilityRole="button"
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={({ pressed }) => [styles.trigger, { maxWidth }, pressed && styles.pressed]}
+      style={[styles.anchorRowStart, { width: rowWidth }]}
       testID="launched-agents-chip"
     >
+      {({ pressed }) => (
+        <LaunchedAgentsPill agents={agents} label={label} maxWidth={rowWidth} pressed={pressed} />
+      )}
+    </Pressable>
+  );
+}
+
+function LaunchedAgentsPill({
+  agents,
+  label,
+  maxWidth,
+  pressed,
+}: {
+  readonly agents: readonly LaunchedAgent[];
+  readonly label: string;
+  readonly maxWidth: number;
+  readonly pressed: boolean;
+}): React.JSX.Element {
+  return (
+    <View style={[styles.trigger, { maxWidth }, pressed && styles.pressed]}>
       <AgentAvatarStack badgeOf={() => null} keyOf={(agent) => agent.key} subjects={agents} />
       <Text ellipsizeMode="tail" numberOfLines={1} style={styles.label}>
         {label}
       </Text>
-    </Pressable>
+    </View>
   );
 }
 
