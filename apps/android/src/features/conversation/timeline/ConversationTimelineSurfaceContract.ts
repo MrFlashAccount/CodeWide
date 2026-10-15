@@ -18,11 +18,11 @@ export type ConversationTimelineSurfaceProps = {
   draftConnectionId: string | null;
   draftThreadId: string | null;
   fullscreenCovered: boolean;
-  goalContent: ReactNode;
   historyActivityModel: ThreadHistoryModel | null;
   historyActivityResourceId: string | null;
   historyViewport: ThreadHistoryViewport;
   latestUnreadReceiptKey: string | null;
+  liveStatusContent: ReactNode;
   liveStatusVisible: boolean;
   liveTurnPlan: LiveTurnPlan | null;
   messageListState: MessageListState;

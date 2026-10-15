@@ -6,6 +6,7 @@ import { AppVoiceInputProvider, type AppVoiceInputRuntime } from "../../ui/Voice
 import type { useComposerProjectSelection } from "../projects/composerProjectSelection";
 import type { useThreadRename } from "../turnActions/threadRename";
 import { LargeContentViewerHost } from "./content/FullContentViewer";
+import { BackgroundTaskOutputHost } from "./turns/BackgroundTaskOutputHost";
 import type { createConversationChromeContent } from "./ConversationChromeContent";
 import type { useComposerState } from "../composer/composerState";
 import { ConversationLayout } from "./ConversationLayout";
@@ -54,6 +55,11 @@ export function createConversationFrame({
   timelineView: ReturnType<typeof createConversationTimelineContent>;
   toolsBinding: ReturnType<typeof useConversationTools>;
 }) {
+  const readBackgroundTask = agentsInputs.onReadBackgroundTask;
+  const readTaskOutput =
+    readBackgroundTask === undefined || draftThreadId === null
+      ? undefined
+      : async (taskId: string, offset: number) => readBackgroundTask(draftThreadId, taskId, offset);
   const frame = (
     <AppVoiceInputProvider runtime={appVoiceInputRuntime}>
       <AppFullscreenOverlayBoundary
@@ -72,31 +78,37 @@ export function createConversationFrame({
               : null)
           }
         >
-          <LargeContentViewerHost>
-            <ConversationLayout
-              bottomChrome={chromeView.bottomChrome}
-              compact={surfaceInputs.compact}
-              conversationInsets={conversationInsets}
-              cwd={surfaceInputs.cwd}
-              headerContent={chromeView.headerContent}
-              jumpContent={chromeView.jumpContent}
-              openCodeDocument={toolsBinding.openTimelineDocument}
-              presentTurnChanges={toolsBinding.changesFeatureBinding.presentTurnChanges}
-              projectPickerContent={conversationOverlayContentBinding.projectPickerContent}
-              projectPickerVisible={composerProjectSelectionBinding.projectPickerVisible}
-              renameContent={conversationOverlayContentBinding.renameContent}
-              reviewContent={conversationOverlayContentBinding.reviewContent}
-              searchContent={chromeView.searchContent}
-              setComposerTrayVisible={
-                composerStateBinding.composerMenuStateBinding.setComposerTrayVisible
-              }
-              setConversationPaneHeight={conversationPaneGeometryBinding.setConversationPaneHeight}
-              setNarrowConversationPane={conversationPaneGeometryBinding.setNarrowConversationPane}
-              threadRenameVisible={threadRenameBinding.threadRenameVisible}
-              threadSearchVisible={timelineState.timelineSearchStateBinding.threadSearchVisible}
-              timelineSurface={timelineView.timelineSurface}
-            />
-          </LargeContentViewerHost>
+          <BackgroundTaskOutputHost read={readTaskOutput}>
+            <LargeContentViewerHost>
+              <ConversationLayout
+                bottomChrome={chromeView.bottomChrome}
+                compact={surfaceInputs.compact}
+                conversationInsets={conversationInsets}
+                cwd={surfaceInputs.cwd}
+                headerContent={chromeView.headerContent}
+                jumpContent={chromeView.jumpContent}
+                openCodeDocument={toolsBinding.openTimelineDocument}
+                presentTurnChanges={toolsBinding.changesFeatureBinding.presentTurnChanges}
+                projectPickerContent={conversationOverlayContentBinding.projectPickerContent}
+                projectPickerVisible={composerProjectSelectionBinding.projectPickerVisible}
+                renameContent={conversationOverlayContentBinding.renameContent}
+                reviewContent={conversationOverlayContentBinding.reviewContent}
+                searchContent={chromeView.searchContent}
+                setComposerTrayVisible={
+                  composerStateBinding.composerMenuStateBinding.setComposerTrayVisible
+                }
+                setConversationPaneHeight={
+                  conversationPaneGeometryBinding.setConversationPaneHeight
+                }
+                setNarrowConversationPane={
+                  conversationPaneGeometryBinding.setNarrowConversationPane
+                }
+                threadRenameVisible={threadRenameBinding.threadRenameVisible}
+                threadSearchVisible={timelineState.timelineSearchStateBinding.threadSearchVisible}
+                timelineSurface={timelineView.timelineSurface}
+              />
+            </LargeContentViewerHost>
+          </BackgroundTaskOutputHost>
         </SubagentNavigationContext.Provider>
       </AppFullscreenOverlayBoundary>
     </AppVoiceInputProvider>

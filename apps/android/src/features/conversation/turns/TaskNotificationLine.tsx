@@ -19,7 +19,7 @@ import {
   reportName,
   reportOutcome,
 } from "./taskNotificationPresentation";
-import { SubagentNavigationContext } from "./turnContexts";
+import { BackgroundTaskContext, SubagentNavigationContext } from "./turnContexts";
 
 const BADGE_ICON = {
   done: "checkmark-circle",
@@ -182,53 +182,110 @@ function ReportRow({
   readonly onNavigate: () => void;
   readonly report: TaskNotificationReport;
 }): React.JSX.Element {
-  const openThread = useContext(SubagentNavigationContext);
-  // The list renders in the anchored popover, outside any recycled list cell.
-  const [expanded, setExpanded] = useState(false);
+  const target = useReportTarget(report, onNavigate);
   const outcome = reportOutcome(report);
-  const agentThreadId = report.agentThreadId;
-  const navigates = agentThreadId !== null && openThread !== null;
-  const press = useEvent(() => {
-    if (agentThreadId !== null && openThread !== null) {
-      onNavigate();
-      openThread(agentThreadId);
-      return;
-    }
-    setExpanded((current) => !current);
-  });
   const details = reportDetails(report);
+  const opens = target.kind !== "result";
   return (
     <View>
       <Pressable
         accessibilityLabel={`${reportName(report)}, ${details}`}
         accessibilityRole="button"
-        {...(navigates || report.result === null ? {} : { accessibilityState: { expanded } })}
-        disabled={!navigates && report.result === null}
-        onPress={press}
+        {...(opens || report.result === null
+          ? {}
+          : { accessibilityState: { expanded: target.expanded } })}
+        disabled={!opens && report.result === null}
+        onPress={target.press}
         style={({ pressed }) => [styles.row, pressed && styles.pressed]}
         testID="task-notification-row"
       >
         <AgentAvatar badge={outcome.badge} subject={report} />
-        <ReportRowText details={details} name={reportName(report)} />
-        {navigates ? (
+        <ReportRowText
+          details={target.error ?? details}
+          loading={target.loading}
+          name={reportName(report)}
+        />
+        {opens ? (
           <Ionicons color={colors.textDim} name="chevron-forward" size={iconSize.inline} />
         ) : null}
       </Pressable>
-      {expanded ? <ReportResult result={report.result} /> : null}
+      {target.expanded ? <ReportResult result={report.result} /> : null}
     </View>
   );
 }
 
+/** Opening a task's output: idle, loading, or a failure shown in the row. */
+type OpeningState =
+  | { readonly status: "idle" }
+  | { readonly status: "loading" }
+  | { readonly message: string; readonly status: "failed" };
+
+const NOT_OPENING: OpeningState = { status: "idle" };
+const OPENING: OpeningState = { status: "loading" };
+
+function failedOpening(error: unknown): OpeningState {
+  return {
+    message: error instanceof Error ? error.message : "Could not read the output",
+    status: "failed",
+  };
+}
+
+/**
+ * What a report row opens: an agent's thread, a background task's output
+ * (loaded on press), else its result text in place.
+ */
+function useReportTarget(report: TaskNotificationReport, onNavigate: () => void) {
+  const openThread = useContext(SubagentNavigationContext);
+  const openTask = useContext(BackgroundTaskContext);
+  // The list renders in the anchored popover, outside any recycled list cell.
+  const [expanded, setExpanded] = useState(false);
+  const [opening, setOpening] = useState<OpeningState>(NOT_OPENING);
+  const agentThreadId = report.agentThreadId;
+  const kind =
+    agentThreadId !== null && openThread !== null
+      ? "thread"
+      : report.kind !== "agent" && openTask !== null
+        ? "task"
+        : "result";
+  const press = useEvent(async () => {
+    if (kind === "thread" && agentThreadId !== null && openThread !== null) {
+      onNavigate();
+      openThread(agentThreadId);
+    } else if (kind === "task" && openTask !== null) {
+      setOpening(OPENING);
+      const next = await openTask({ name: reportName(report), taskId: report.taskId }).then(
+        () => NOT_OPENING,
+        failedOpening,
+      );
+      setOpening(next);
+      if (next.status === "idle") {
+        onNavigate();
+      }
+    } else {
+      setExpanded((current) => !current);
+    }
+  });
+  return {
+    error: opening.status === "failed" ? opening.message : null,
+    expanded,
+    kind,
+    loading: opening.status === "loading",
+    press: () => void press(),
+  } as const;
+}
+
 function ReportRowText({
   details,
+  loading,
   name,
 }: {
   readonly details: string;
+  readonly loading: boolean;
   readonly name: string;
 }): React.JSX.Element {
   return (
     <View style={styles.rowText}>
-      <Text numberOfLines={1} style={styles.rowName}>
+      <Text numberOfLines={1} shimmering={loading} style={styles.rowName}>
         {name}
       </Text>
       <Text numberOfLines={1} style={styles.rowDetails}>

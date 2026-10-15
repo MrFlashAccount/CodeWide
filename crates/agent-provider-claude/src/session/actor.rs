@@ -232,6 +232,9 @@ impl Session {
                 let active = self.active.as_ref().map(|active| active.builder.snapshot());
                 let _ = reply.send((self.state_tx.borrow().clone(), active, fence));
             }
+            Command::BackgroundTask { task_id, reply } => {
+                let _ = reply.send(self.task_reports.state(&task_id));
+            }
             Command::Dispose { reply } => {
                 self.dispose().await;
                 let _ = reply.send(());

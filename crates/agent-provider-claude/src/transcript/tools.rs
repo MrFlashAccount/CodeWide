@@ -23,6 +23,7 @@ use super::{
     frames::ToolResultBlock,
     json::{JsonRecord, arr_of, record, str_of},
 };
+use crate::background_tasks::BackgroundTaskId;
 
 const MIB: usize = 1024 * 1024;
 /// Bash output kept on the item: the last 1 MiB.
@@ -214,6 +215,7 @@ pub fn start_item(call: &ToolCallInput, context: &ToolContext<'_>) -> Option<Age
             output: None,
             exit_code: None,
             duration_ms: None,
+            background_task_id: None,
         });
     }
     if is_subagent_tool(&call.name) {
@@ -279,6 +281,15 @@ fn bash_output(result: &ToolResultBlock, tool_use_result: &Value) -> String {
     result.text.clone()
 }
 
+/// The background task a `Bash` call started: the structured result's
+/// `backgroundTaskId`, when it has Claude's id shape.
+fn background_task_id(tool_use_result: &Value) -> Option<String> {
+    record(tool_use_result)
+        .and_then(|structured| str_of(structured, "backgroundTaskId"))
+        .and_then(BackgroundTaskId::parse)
+        .map(BackgroundTaskId::into_string)
+}
+
 /// How a started tool call ended.
 pub struct ToolOutcome<'a> {
     /// The thread the call ran in; names a spawned sub-agent's thread.
@@ -340,6 +351,7 @@ pub fn complete_item(
             )),
             exit_code: completed.then_some(0),
             duration_ms: Some(outcome.duration_ms),
+            background_task_id: background_task_id(outcome.tool_use_result),
         },
         AgentItem::FileChange {
             item_id,
@@ -470,6 +482,7 @@ fn with_execution_status(item: AgentItem, status: ExecutionStatus) -> AgentItem 
             output,
             exit_code,
             duration_ms,
+            background_task_id,
             ..
         } => AgentItem::Command {
             item_id,
@@ -480,6 +493,7 @@ fn with_execution_status(item: AgentItem, status: ExecutionStatus) -> AgentItem 
             output,
             exit_code,
             duration_ms,
+            background_task_id,
         },
         AgentItem::FileChange {
             item_id,
@@ -532,7 +546,81 @@ pub fn block_item_id(message_id: &str, block_index: usize) -> Option<ItemId> {
 
 #[cfg(test)]
 mod tests {
-    use super::{keep_tail, split_mcp_tool_name};
+    use agent_core::model::{AgentItem, AppThreadId, ExecutionStatus};
+    use serde_json::{Value, json};
+
+    use super::{
+        ToolCallInput, ToolContext, ToolOutcome, complete_item, keep_tail, split_mcp_tool_name,
+        start_item,
+    };
+    use crate::transcript::frames::ToolResultBlock;
+
+    fn completed_bash(tool_use_result: &Value) -> Result<Option<String>, &'static str> {
+        let call = ToolCallInput {
+            id: "toolu_bg".into(),
+            input: json!({"command": "sleep 8 && echo BG_DONE", "run_in_background": true})
+                .as_object()
+                .cloned()
+                .unwrap_or_default(),
+            name: "Bash".into(),
+        };
+        let started = start_item(
+            &call,
+            &ToolContext {
+                cwd: "/w",
+                mcp_servers: &[],
+            },
+        )
+        .ok_or("no started item")?;
+        let text = "Command running in background with ID: bd3cb8oli. Output is being written to: /tmp/claude-1/-w/s/tasks/bd3cb8oli.output.";
+        let result = ToolResultBlock {
+            blocks: Vec::new(),
+            is_error: false,
+            text: text.into(),
+            tool_use_id: "toolu_bg".into(),
+        };
+        let thread = AppThreadId::from_static("thread");
+        match complete_item(
+            started,
+            &call,
+            &ToolOutcome {
+                app_thread_id: &thread,
+                duration_ms: 3,
+                result: &result,
+                status: ExecutionStatus::Completed,
+                tool_use_result,
+            },
+        ) {
+            AgentItem::Command {
+                background_task_id,
+                output,
+                ..
+            } => {
+                assert_eq!(output.as_deref(), Some(text));
+                Ok(background_task_id)
+            }
+            _ => Err("not a command item"),
+        }
+    }
+
+    #[test]
+    fn a_background_bash_call_names_its_task_from_the_structured_result() {
+        assert_eq!(
+            completed_bash(&json!({"stdout": "", "stderr": "", "backgroundTaskId": "bd3cb8oli"})),
+            Ok(Some("bd3cb8oli".into()))
+        );
+        // A foreground call, a missing structured result and an id that
+        // could name another file carry no task.
+        assert_eq!(
+            completed_bash(&json!({"stdout": "", "stderr": ""})),
+            Ok(None)
+        );
+        assert_eq!(completed_bash(&Value::Null), Ok(None));
+        assert_eq!(
+            completed_bash(&json!({"backgroundTaskId": "../../etc/passwd"})),
+            Ok(None)
+        );
+    }
 
     #[test]
     fn command_output_keeps_its_last_mebibyte_with_a_truncation_line() {

@@ -11,6 +11,7 @@
 //! adapter never reads, stores or logs Claude credentials or tokens and
 //! never emits client-wire JSON.
 
+pub mod background_tasks;
 pub mod catalog;
 pub mod cli;
 pub mod config;
@@ -44,14 +45,17 @@ use std::time::Duration;
 
 use agent_core::{
     model::{
-        AgentEvent, AgentThread, AppThreadId, CapabilityInvokeParams, CapabilitySet,
-        ERROR_CAPABILITY_UNSUPPORTED, ERROR_INVALID_REQUEST, ModelCatalog,
-        PermissionProfileCatalog, Provenance, ProviderDescriptor, ProviderId, ProviderRateLimits,
-        ProviderThreadRef, RequestRespondParams, RpcError, RpcErrorData, StartWhileActiveMode,
-        ThreadCreateParams, ThreadForkParams, ThreadListParams, ThreadListResult, ThreadReadResult,
-        ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult,
-        TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
-        capability_unsupported_message, thread_not_found_message, turns::page_turns,
+        AgentEvent, AgentThread, AppThreadId, BackgroundTaskReadParams, BackgroundTaskReadResult,
+        CapabilityInvokeParams, CapabilitySet, ERROR_BACKGROUND_TASK_UNAVAILABLE,
+        ERROR_CAPABILITY_UNSUPPORTED, ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ItemsView,
+        ModelCatalog, PermissionProfileCatalog, Provenance, ProviderDescriptor, ProviderId,
+        ProviderRateLimits, ProviderThreadRef, RequestRespondParams, RpcError, RpcErrorData,
+        SortDirection, StartWhileActiveMode, ThreadCreateParams, ThreadForkParams,
+        ThreadListParams, ThreadListResult, ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult,
+        ThreadUpdateParams, ThreadUpdateResult, TurnInterruptParams, TurnStartParams,
+        TurnStartResult, TurnSteerParams, TurnSteerResult, background_task_not_found_message,
+        capability_unsupported_message, thread_not_found_message,
+        turns::{MAX_TURNS_PAGE, page_turns},
     },
     provider::{
         AgentProvider, ClientToolHost, NativeThreadResources, ProviderAuth, ProviderError,
@@ -69,6 +73,7 @@ pub use storage::{ClaudeStorage, ClaudeStorageHost};
 use subagents::ChildThread;
 
 use crate::{
+    background_tasks::{BackgroundTaskId, TaskFacts, TaskRead},
     runtime::{
         account::{Account, ProbeTarget},
         companion_tools::CompanionTools,
@@ -119,6 +124,7 @@ pub const CAPABILITIES: CapabilitySet = CapabilitySet {
     codex_native: false,
     orchestration_tools: true,
     threads_cross_provider_fork: true,
+    threads_background_task_output: true,
     turns_start_while_active: StartWhileActiveMode::Busy,
 };
 
@@ -379,6 +385,35 @@ impl ClaudeProvider {
 
     /// A fence after every event emitted so far, for a fenced read the
     /// index answers.
+    /// What the thread's own items say about `task`: newest turns first,
+    /// until the call that launched it.
+    async fn background_task_facts(
+        &self,
+        thread: &AppThreadId,
+        task: &BackgroundTaskId,
+    ) -> Result<TaskFacts, ProviderError> {
+        let mut facts = TaskFacts::default();
+        let mut cursor = None;
+        loop {
+            let page = self
+                .thread_turns(ThreadTurnsParams {
+                    app_thread_id: thread.clone(),
+                    cursor,
+                    limit: u32::try_from(MAX_TURNS_PAGE).unwrap_or(u32::MAX),
+                    sort_direction: SortDirection::Desc,
+                    items_view: ItemsView::Full,
+                })
+                .await?;
+            if facts.scan_newest_first(task, &page.turns) {
+                return Ok(facts);
+            }
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => return Ok(facts),
+            }
+        }
+    }
+
     async fn fence(&self) -> Result<ProviderFence, ProviderError> {
         Ok(provider_fence(self.service().await?.fence().await?))
     }
@@ -670,6 +705,54 @@ impl AgentProvider for ClaudeProvider {
 
     async fn turn_start(&self, params: TurnStartParams) -> Result<TurnStartResult, ProviderError> {
         self.service().await?.turn_start(params).await
+    }
+
+    /// Reads only `<a session of the thread>/tasks/<task id>.output` of a
+    /// task the thread's own items launched or reported
+    /// (`background_tasks`); a sub-agent's read-only child thread has none.
+    async fn thread_background_task_read(
+        &self,
+        params: BackgroundTaskReadParams,
+    ) -> Result<BackgroundTaskReadResult, ProviderError> {
+        let Some(task) = BackgroundTaskId::parse(&params.task_id) else {
+            return Err(ProviderError::Rejected(RpcError::new(
+                ERROR_INVALID_PARAMS,
+                "invalid background task id",
+            )));
+        };
+        if let Some(child) = self.child_thread(&params.app_thread_id) {
+            child?;
+            return Err(ProviderError::Rejected(RpcError::new(
+                ERROR_BACKGROUND_TASK_UNAVAILABLE,
+                background_task_not_found_message(task.as_str()),
+            )));
+        }
+        let thread = self
+            .service()
+            .await?
+            .background_task_thread(&params.app_thread_id, &task)
+            .await?;
+        let facts = self
+            .background_task_facts(&params.app_thread_id, &task)
+            .await?;
+        let temp_root = background_tasks::process_temp_root();
+        tokio::task::spawn_blocking(move || {
+            background_tasks::answer(&TaskRead {
+                task: &task,
+                facts: &facts,
+                live: thread.live,
+                sessions: &thread.sessions,
+                temp_root: &temp_root,
+                offset: params.offset,
+                limit: params.limit,
+            })
+        })
+        .await
+        .map_err(|err| {
+            error!(err = %err, "background task output read failed");
+            ProviderError::Protocol("background task output read failed".into())
+        })?
+        .map_err(ProviderError::Rejected)
     }
 
     async fn shutdown(&self) {

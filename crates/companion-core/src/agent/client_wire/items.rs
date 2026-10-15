@@ -15,6 +15,9 @@ use crate::agent::model::{
 
 /// Marker namespace of a capability item projected as a generic tool call.
 const CAPABILITY_ITEM_NAMESPACE: &str = "codewide.capability";
+/// The `CodeWide` field of a `commandExecution` that started a background
+/// task: the task id `companion/thread/backgroundTask/read` takes.
+pub const BACKGROUND_TASK_ID_FIELD: &str = "codewideBackgroundTaskId";
 
 /// Projects one neutral thread. `turns` are already projected wire turns.
 #[must_use]
@@ -285,22 +288,31 @@ pub fn item(item: &AgentItem) -> Value {
             output,
             exit_code,
             duration_ms,
+            background_task_id,
             ..
-        } => json!({
-            "type": "commandExecution",
-            "id": item_id.as_str(),
-            "pluginId": null,
-            "scriptPath": null,
-            "command": command,
-            "cwd": cwd,
-            "processId": null,
-            "source": "agent",
-            "status": execution_status(*status),
-            "commandActions": [{"type": "unknown", "command": command}],
-            "aggregatedOutput": output,
-            "exitCode": exit_code,
-            "durationMs": duration_ms,
-        }),
+        } => {
+            let mut projected = json!({
+                "type": "commandExecution",
+                "id": item_id.as_str(),
+                "pluginId": null,
+                "scriptPath": null,
+                "command": command,
+                "cwd": cwd,
+                "processId": null,
+                "source": "agent",
+                "status": execution_status(*status),
+                "commandActions": [{"type": "unknown", "command": command}],
+                "aggregatedOutput": output,
+                "exitCode": exit_code,
+                "durationMs": duration_ms,
+            });
+            // Omitted for a foreground command, so a command without a
+            // background task keeps its earlier bytes.
+            if let Some(task_id) = background_task_id {
+                projected[BACKGROUND_TASK_ID_FIELD] = json!(task_id);
+            }
+            projected
+        }
         AgentItem::FileChange {
             item_id,
             changes,
@@ -723,6 +735,32 @@ mod tests {
                 "{field} must stay null"
             );
         }
+    }
+
+    #[test]
+    fn a_background_command_names_its_task_and_a_foreground_one_keeps_its_bytes() {
+        let command = |background_task_id: Option<&str>| AgentItem::Command {
+            item_id: crate::agent::model::ItemId::from_static("toolu_1"),
+            provenance: None,
+            command: "npm test".into(),
+            cwd: "/w".into(),
+            status: ExecutionStatus::Completed,
+            output: Some("Command running in background with ID: b1".into()),
+            exit_code: Some(0),
+            duration_ms: Some(4),
+            background_task_id: background_task_id.map(str::to_owned),
+        };
+        let background = item(&command(Some("bd3cb8oli")));
+        assert_eq!(background["type"], "commandExecution");
+        assert_eq!(background[BACKGROUND_TASK_ID_FIELD], "bd3cb8oli");
+
+        let foreground = item(&command(None));
+        assert!(foreground.get(BACKGROUND_TASK_ID_FIELD).is_none());
+        let mut without_field = background;
+        if let Some(object) = without_field.as_object_mut() {
+            object.remove(BACKGROUND_TASK_ID_FIELD);
+        }
+        assert_eq!(foreground, without_field);
     }
 
     #[test]

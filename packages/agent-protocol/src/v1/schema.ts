@@ -218,6 +218,7 @@ const taggedItem = tagged(
     agentMessage: { itemId: str, phase: literal("commentary", "final"), text: str },
     capabilityItem: { capability: str, itemId: str, kind: str, payload: json },
     command: {
+      backgroundTaskId: optional(str),
       command: str,
       cwd: str,
       durationMs: nullable(int),
@@ -550,6 +551,16 @@ const operationChecks: Readonly<
   "request.respond": {
     params: obj({ appThreadId: str, requestId: nativeRequestId, response: runtimeResponse }),
     result: emptyObject,
+  },
+  "thread.backgroundTask.read": {
+    params: obj({ appThreadId: str, limit: int, offset: int, taskId: str }),
+    result: obj({
+      nextOffset: nullable(int),
+      sizeBytes: int,
+      status: literal("running", "completed", "failed", "killed", "stopped", "lost", "unknown"),
+      taskId: str,
+      text: str,
+    }),
   },
   "thread.compact": { params: obj({ appThreadId: str }), result: emptyObject },
   "thread.create": {

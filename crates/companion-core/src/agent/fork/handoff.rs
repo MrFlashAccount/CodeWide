@@ -358,6 +358,7 @@ mod tests {
                         output: Some("ok".into()),
                         exit_code: Some(0),
                         duration_ms: None,
+                        background_task_id: None,
                     },
                     AgentItem::Reasoning {
                         item_id: ItemId::from_static("r2"),

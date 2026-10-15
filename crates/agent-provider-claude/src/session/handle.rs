@@ -14,7 +14,7 @@ use super::{
     ports::SessionDeps,
     turn::{SteerMessage, TurnRequest},
 };
-use crate::state::thread_state::ThreadState;
+use crate::{background_tasks::LiveTaskState, state::thread_state::ThreadState};
 
 /// Whether a turn runs and whether a query is open.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -65,6 +65,10 @@ pub(super) enum Command {
     Read {
         fenced: bool,
         reply: oneshot::Sender<SessionRead>,
+    },
+    BackgroundTask {
+        task_id: String,
+        reply: oneshot::Sender<Option<LiveTaskState>>,
     },
     Dispose {
         reply: oneshot::Sender<()>,
@@ -216,6 +220,20 @@ impl SessionHandle {
     /// The session ended.
     pub async fn read(&self, fenced: bool) -> Result<SessionRead, SessionGone> {
         self.ask(|reply| Command::Read { fenced, reply }).await
+    }
+
+    /// What the open query knows of a background task; `None` without a
+    /// query or when the task neither started nor reported in it.
+    ///
+    /// # Errors
+    ///
+    /// The session ended.
+    pub async fn background_task(
+        &self,
+        task_id: String,
+    ) -> Result<Option<LiveTaskState>, SessionGone> {
+        self.ask(|reply| Command::BackgroundTask { task_id, reply })
+            .await
     }
 
     /// Ends the session's query and turn for good.

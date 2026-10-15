@@ -304,7 +304,7 @@ const launch = (id: string, receiver: string, description: string) => ({
   type: "collabAgentToolCall",
 });
 
-it("shows a finished turn's launched agents as one chip outside its history", () => {
+it("draws no launch chip in a bubble, since a launch is not a result", () => {
   const launcher = completedTurn(
     "launcher",
     [
@@ -321,21 +321,9 @@ it("shows a finished turn's launched agents as one chip outside its history", ()
     oneCommandMetrics,
   );
   const view = render(timelineSurface([launcher]));
-  layOut(view, "launched-agents-row", 500);
 
-  expect(view.getByTestId("launched-agents-chip")).toBeOnTheScreen();
-  expect(view.getByText("2 agents started")).toBeOnTheScreen();
-});
-
-it("keeps a running turn's launch rows without a launch chip", () => {
-  const running = completedTurn(
-    "running",
-    [launch("l1", "t1", "Map sources"), answer("running-answer", "Working.")],
-    { completedAt: null, status: "inProgress" },
-  );
-  const view = render(timelineSurface([running]));
-
-  expect(view.queryByTestId("launched-agents-chip")).toBeNull();
+  expect(view.getByTestId("codex-bubble")).toBeOnTheScreen();
+  expect(view.queryByText(/agents? started/u)).toBeNull();
 });
 
 it("folds a running turn's current tool calls into one row showing only the running one", () => {

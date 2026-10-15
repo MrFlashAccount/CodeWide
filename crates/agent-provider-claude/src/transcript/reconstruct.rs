@@ -28,10 +28,11 @@ use super::{
     builder::{TurnBuilder, TurnBuilderContext, UserMessage},
     entries::{HistoryEntry, history_entries},
     frames::ClaudeFrame,
-    json::JsonRecord,
+    json::{JsonRecord, record_of as json_record, str_of},
     result::TurnOutcome,
     segments::{HistorySegment, SegmentHints, SegmentReport, history_segments},
     task_notifications::reported_identity,
+    task_reports::stored_task_reports,
     turn_index::{PromptRole, TurnOutcomeRecord, TurnRecord},
 };
 
@@ -326,6 +327,11 @@ fn replay_running_segment(segment: &HistorySegment, context: &HistoryContext) ->
 /// turn that started it).
 fn with_notified_statuses(turns: Vec<AgentTurn>, entries: &[HistoryEntry]) -> Vec<AgentTurn> {
     let mut statuses = NotifiedStatuses::default();
+    record_wakes(&mut statuses, entries);
+    settle_subagent_items(turns, &statuses)
+}
+
+fn record_wakes(statuses: &mut NotifiedStatuses, entries: &[HistoryEntry]) {
     for entry in entries {
         if let HistoryEntry::Wake { reports, .. } = entry {
             for report in reports {
@@ -333,6 +339,35 @@ fn with_notified_statuses(turns: Vec<AgentTurn>, entries: &[HistoryEntry]) -> Ve
             }
         }
     }
+}
+
+/// Records the final status of every task report one stored transcript of a
+/// session holds: its report messages and the reports Claude queued into it
+/// as `queued_command` attachments. A report may reach a conversation other
+/// than the one that spawned its agent: a nested background agent reports
+/// to its parent sub-agent (a sub-agent transcript keeps that report only as
+/// an attachment) or, when that one is busy or done, to the main conversation.
+pub fn record_transcript_reports(statuses: &mut NotifiedStatuses, rows: &[&JsonRecord]) {
+    record_wakes(statuses, &history_entries(rows, subagent_parent(rows)));
+    for prompt in rows.iter().filter_map(|row| queued_task_notification(row)) {
+        for report in stored_task_reports(prompt) {
+            statuses.record(&report);
+        }
+    }
+}
+
+/// The prompt of a queued background task report attachment.
+fn queued_task_notification(row: &JsonRecord) -> Option<&str> {
+    json_record(row, "attachment")
+        .filter(|attachment| str_of(attachment, "type") == Some("queued_command"))
+        .filter(|attachment| str_of(attachment, "commandMode") == Some("task-notification"))
+        .and_then(|attachment| str_of(attachment, "prompt"))
+}
+
+/// The turns with every still-running sub-agent item a report in `statuses`
+/// settled carrying that report's final status.
+#[must_use]
+pub fn settle_subagent_items(turns: Vec<AgentTurn>, statuses: &NotifiedStatuses) -> Vec<AgentTurn> {
     turns
         .into_iter()
         .map(|mut turn| {

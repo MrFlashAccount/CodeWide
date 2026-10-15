@@ -1,6 +1,8 @@
 import { QuestionConversationProvider } from "../requests/QuestionFeature";
 import { useComposerInteractions } from "../composer/composerInteractions";
 import { ThreadGoalMenu } from "../goal/ThreadGoalMenu";
+import { useThreadSubagents } from "../agents/workingSubagents";
+import { WorkingSubagentsMenu } from "../agents/WorkingSubagentsMenu";
 import { projectInlineQueue } from "../queue/QueueFeature";
 import { useConversationRequestPrompts } from "../requests/ConversationRequestPrompts";
 import type { ConversationCompositionCapabilities } from "./conversationCompositionCapabilities";
@@ -49,9 +51,16 @@ export function ConversationComposition(
     timelineState: scoped.timelineState,
     unread: props.surface.unread,
   });
+  const subagents = useThreadSubagents({
+    connectionId: scoped.activation.draftConnectionId,
+    database: props.agents.subagentSummaryDatabase,
+    enabled: props.agents.subagentThreadDetails !== null,
+    parentThreadId: scoped.activation.draftThreadId,
+  });
   const { currentGoal, inlineQueueMaxHeight, liveStatusVisible } = conversationStatusLayout(
     scoped,
     timelineRead,
+    subagents.working.length > 0,
   );
   const { bottomRequestPrompt, embeddedRequestPrompt } = useConversationRequestPrompts(
     props.requests,
@@ -168,6 +177,16 @@ export function ConversationComposition(
       />
     );
 
+  const workingAgentsContent = (
+    <WorkingSubagentsMenu
+      onOpen={(threadId) => {
+        toolsBinding.openSubagents(subagents.catalog, threadId);
+      }}
+      total={subagents.total}
+      working={subagents.working}
+    />
+  );
+
   if (props.surface.thread === null) {
     return <ConversationSelectionPlaceholder />;
   }
@@ -200,6 +219,7 @@ export function ConversationComposition(
     timelineRead,
     toolsBinding,
     visibleQueuedPrompts,
+    workingAgentsContent,
   });
 
   return (

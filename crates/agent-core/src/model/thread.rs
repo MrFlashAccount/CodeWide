@@ -329,6 +329,11 @@ pub enum AgentItem {
         output: Option<String>,
         exit_code: Option<i64>,
         duration_ms: Option<i64>,
+        /// The provider's id of the background task the command started
+        /// (added within v1); absent for a command that ran in the
+        /// foreground. `thread.backgroundTask.read` reads its output.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        background_task_id: Option<String>,
     },
     FileChange {
         item_id: ItemId,

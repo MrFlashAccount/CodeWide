@@ -234,6 +234,12 @@ export type AgentItemBody =
       readonly type: "reasoning";
     }
   | {
+      /**
+       * The provider's id of the background task the command started (added
+       * within v1); absent for a command that ran in the foreground.
+       * `thread.backgroundTask.read` reads its output.
+       */
+      readonly backgroundTaskId?: string;
       readonly command: string;
       readonly cwd: string;
       readonly durationMs: number | null;

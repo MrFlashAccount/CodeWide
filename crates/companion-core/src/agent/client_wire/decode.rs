@@ -10,9 +10,14 @@
 use serde_json::Value;
 
 use crate::agent::model::{
-    AppThreadId, ApprovalDecision, Capability, ClientMessageId, ItemsView, RuntimeResponse,
-    SortDirection, ThreadChange, TurnId, UserContent, UserInputAnswer,
+    AppThreadId, ApprovalDecision, Capability, ClientMessageId, ItemsView,
+    MAX_BACKGROUND_TASK_PAGE_BYTES, RuntimeResponse, SortDirection, ThreadChange, TurnId,
+    UserContent, UserInputAnswer,
 };
+
+/// Reads one page of a background task's output
+/// (`threads.backgroundTaskOutput`).
+pub const BACKGROUND_TASK_READ_METHOD: &str = "companion/thread/backgroundTask/read";
 
 /// Methods answered from every enabled provider.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,6 +76,7 @@ pub fn thread_capability(method: &str) -> Option<Capability> {
         }
         method if method.starts_with("thread/realtime/") => Capability::RealtimeVoice,
         "companion/threadSubagents/read" => Capability::SubagentThreads,
+        BACKGROUND_TASK_READ_METHOD => Capability::ThreadsBackgroundTaskOutput,
         method if is_thread_resource_method(method) => Capability::HistoryThreadResources,
         _ => Capability::CodexNative,
     })
@@ -213,6 +219,51 @@ pub fn items_view(params: &Value, default: ItemsView) -> ItemsView {
         Some("notLoaded") => ItemsView::NotLoaded,
         _ => default,
     }
+}
+
+/// The page `companion/thread/backgroundTask/read` asks for.
+#[derive(Debug, Eq, PartialEq)]
+pub struct BackgroundTaskPage {
+    pub task_id: String,
+    /// Byte offset; absent → 0.
+    pub offset: u64,
+    /// Page size in bytes; absent → the largest page, larger values are
+    /// capped to it.
+    pub limit: u32,
+}
+
+/// Decodes `{taskId, offset?, limit?}` of `companion/thread/backgroundTask/read`.
+///
+/// # Errors
+/// Returns the `-32602` message for a missing task id, a negative or
+/// fractional offset, or a limit that is not a positive integer.
+pub fn background_task_page(params: &Value) -> Result<BackgroundTaskPage, &'static str> {
+    let task_id = params
+        .get("taskId")
+        .and_then(Value::as_str)
+        .filter(|task_id| !task_id.is_empty())
+        .ok_or("taskId is required")?;
+    let offset = match params.get("offset") {
+        None | Some(Value::Null) => 0,
+        Some(offset) => offset
+            .as_u64()
+            .ok_or("offset must be a non-negative integer")?,
+    };
+    let limit = match params.get("limit") {
+        None | Some(Value::Null) => MAX_BACKGROUND_TASK_PAGE_BYTES,
+        Some(limit) => limit
+            .as_u64()
+            .filter(|limit| *limit > 0)
+            .ok_or("limit must be a positive integer")?
+            .min(u64::from(MAX_BACKGROUND_TASK_PAGE_BYTES))
+            .try_into()
+            .unwrap_or(MAX_BACKGROUND_TASK_PAGE_BYTES),
+    };
+    Ok(BackgroundTaskPage {
+        task_id: task_id.to_owned(),
+        offset,
+        limit,
+    })
 }
 
 /// Settings change of `thread/settings/update` (fields the neutral model carries).
@@ -375,6 +426,56 @@ mod tests {
         assert_eq!(
             route("thread/list", &json!({})),
             MethodRoute::Merged(MergedMethod::ThreadList)
+        );
+    }
+
+    #[test]
+    fn a_background_task_read_needs_its_capability_and_a_bounded_page() {
+        assert_eq!(
+            route(
+                BACKGROUND_TASK_READ_METHOD,
+                &json!({"threadId": "t", "taskId": "b1"})
+            ),
+            MethodRoute::Thread {
+                thread_id: "t".into(),
+                requires: Some(Capability::ThreadsBackgroundTaskOutput)
+            }
+        );
+        assert_eq!(
+            background_task_page(&json!({"threadId": "t", "taskId": "b1"})),
+            Ok(BackgroundTaskPage {
+                task_id: "b1".into(),
+                offset: 0,
+                limit: MAX_BACKGROUND_TASK_PAGE_BYTES,
+            })
+        );
+        assert_eq!(
+            background_task_page(&json!({"taskId": "b1", "offset": 70_000, "limit": 1_000_000})),
+            Ok(BackgroundTaskPage {
+                task_id: "b1".into(),
+                offset: 70_000,
+                limit: MAX_BACKGROUND_TASK_PAGE_BYTES,
+            })
+        );
+        assert_eq!(
+            background_task_page(&json!({"taskId": "b1", "offset": null, "limit": 10})),
+            Ok(BackgroundTaskPage {
+                task_id: "b1".into(),
+                offset: 0,
+                limit: 10,
+            })
+        );
+        assert_eq!(
+            background_task_page(&json!({"taskId": ""})),
+            Err("taskId is required")
+        );
+        assert_eq!(
+            background_task_page(&json!({"taskId": "b1", "offset": -1})),
+            Err("offset must be a non-negative integer")
+        );
+        assert_eq!(
+            background_task_page(&json!({"taskId": "b1", "limit": 0})),
+            Err("limit must be a positive integer")
         );
     }
 

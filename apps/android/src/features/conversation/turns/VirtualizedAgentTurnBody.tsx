@@ -19,7 +19,6 @@ import { AgentResponseMarkdown } from "../content/AgentResponseMarkdown";
 import { ThinkingStatus } from "../protocol/ThinkingStatus";
 import { ActiveTurnActivity } from "./ActiveTurnActivity";
 import { CollapsedTurnActivity, CompletedTurnHistory } from "./CompletedTurnHistory";
-import { LaunchedAgentsChip } from "./LaunchedAgentsChip";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
 import { activitySegmentKind } from "./activitySegmentKind";
 import { TurnActivitySegment } from "./TurnActivity";
@@ -75,10 +74,6 @@ function VirtualizedTurnLead(props: VirtualizedAgentTurnBodyProps): ReactElement
       {preTurn}
       {props.presentation.rawTurn.status === "inProgress" ? null : (
         <VirtualizedTurnHistory {...props} />
-      )}
-      {/* A running turn shows its launch rows; a finished one folds them into its history. */}
-      {props.presentation.rawTurn.status === "inProgress" ? null : (
-        <LaunchedAgentsChip agents={props.presentation.launchedAgents} />
       )}
     </>
   );

@@ -39,10 +39,12 @@ use serde_json::Value;
 use crate::{
     indexer::NativeSessions,
     transcript::{
+        agents::NotifiedStatuses,
         chain::active_branch,
         json::{JsonRecord, str_of},
         reconstruct::{
-            HistoryContext, reconstruct_subagent_turns, reconstruct_turns, running_agents,
+            HistoryContext, reconstruct_subagent_turns, reconstruct_turns,
+            record_transcript_reports, running_agents, settle_subagent_items,
         },
         turn_index::TurnRecord,
     },
@@ -249,7 +251,10 @@ fn read(paths: &Paths, session_id: &str) -> Result<NativeSessionReadResult, Prov
         active,
         records,
     );
-    let subagents = native_subagents(&file, &turns, &context);
+    let transcripts = subagent_transcripts(&file);
+    let statuses = session_statuses(&messages, &transcripts);
+    let turns = settle_subagent_items(turns, &statuses);
+    let subagents = native_subagents(&transcripts, &turns, &context, &statuses);
     let session = native_session(&file, meta, owner).ok_or_else(|| not_found(session_id))?;
     Ok(NativeSessionReadResult {
         session,
@@ -297,39 +302,81 @@ fn transcript_rows(rows: &[Value]) -> Vec<&JsonRecord> {
         .collect()
 }
 
-/// Each sub-agent transcript as neutral turns; a sub-agent its spawning item
-/// (in the main conversation or another sub-agent) reports `running` keeps
-/// its last turn in progress.
-fn native_subagents(
-    session: &SessionFile,
-    turns: &[AgentTurn],
-    context: &HistoryContext,
-) -> Vec<NativeSubagent> {
-    let transcripts = files::subagents(session)
+/// One stored sub-agent transcript of a session.
+struct SubagentTranscript {
+    agent_id: String,
+    rows: Vec<Value>,
+    sidecar: files::SubagentSidecar,
+}
+
+fn subagent_transcripts(session: &SessionFile) -> Vec<SubagentTranscript> {
+    files::subagents(session)
         .into_iter()
         .filter_map(|subagent| {
             let rows = files::rows(&subagent.path).ok()?;
             let sidecar = files::subagent_sidecar(&subagent);
-            Some((subagent.agent_id, rows, sidecar))
+            Some(SubagentTranscript {
+                agent_id: subagent.agent_id,
+                rows,
+                sidecar,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+/// The final status of every task report anywhere in the session: a
+/// report reaches whichever conversation was there to take it, not always
+/// the one that spawned its agent.
+fn session_statuses(
+    messages: &[&JsonRecord],
+    transcripts: &[SubagentTranscript],
+) -> NotifiedStatuses {
+    let mut statuses = NotifiedStatuses::default();
+    record_transcript_reports(&mut statuses, messages);
+    for transcript in transcripts {
+        let rows = transcript
+            .rows
+            .iter()
+            .filter_map(Value::as_object)
+            .collect::<Vec<_>>();
+        record_transcript_reports(&mut statuses, &rows);
+    }
+    statuses
+}
+
+/// Each sub-agent transcript as neutral turns; a sub-agent its spawning item
+/// (in the main conversation or another sub-agent) reports `running` keeps
+/// its last turn in progress. A spawning item is running until a report
+/// anywhere in the session settles it.
+fn native_subagents(
+    transcripts: &[SubagentTranscript],
+    turns: &[AgentTurn],
+    context: &HistoryContext,
+    statuses: &NotifiedStatuses,
+) -> Vec<NativeSubagent> {
+    let subagent_turns = |transcript: &SubagentTranscript, running: bool| {
+        settle_subagent_items(
+            reconstruct_subagent_turns(&transcript_rows(&transcript.rows), context, running),
+            statuses,
+        )
+    };
     let settled = transcripts
         .iter()
-        .map(|(_, rows, _)| reconstruct_subagent_turns(&transcript_rows(rows), context, false))
+        .map(|transcript| subagent_turns(transcript, false))
         .collect::<Vec<_>>();
     let mut running = running_agents(turns).into_iter().collect::<HashSet<_>>();
-    for subagent_turns in &settled {
-        running.extend(running_agents(subagent_turns));
+    for turns in &settled {
+        running.extend(running_agents(turns));
     }
     transcripts
         .iter()
         .zip(settled)
-        .map(|((agent_id, rows, sidecar), settled)| NativeSubagent {
-            agent_id: agent_id.clone(),
-            parent_agent_id: sidecar.parent_agent_id.clone(),
-            parent_tool_use_id: sidecar.tool_use_id.clone(),
-            turns: if running.contains(agent_id) {
-                reconstruct_subagent_turns(&transcript_rows(rows), context, true)
+        .map(|(transcript, settled)| NativeSubagent {
+            agent_id: transcript.agent_id.clone(),
+            parent_agent_id: transcript.sidecar.parent_agent_id.clone(),
+            parent_tool_use_id: transcript.sidecar.tool_use_id.clone(),
+            turns: if running.contains(&transcript.agent_id) {
+                subagent_turns(transcript, true)
             } else {
                 settled
             },

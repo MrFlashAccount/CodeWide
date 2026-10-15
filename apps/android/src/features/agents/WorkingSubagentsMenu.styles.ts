@@ -2,13 +2,19 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../theme";
 
 const PRESSED_OPACITY = 0.72;
+/** Floats over the timeline like the live plan's chip. */
+const TRIGGER_ELEVATION = 4;
 
 export const styles = StyleSheet.create({
+  divider: {
+    color: colors.textDim,
+    flexShrink: 0,
+    ...typeScale.label,
+  },
   label: {
-    color: colors.text,
+    color: colors.textMuted,
     flexShrink: 1,
     ...typeScale.label,
-    fontWeight: typeWeight.semibold,
   },
   pressed: {
     opacity: PRESSED_OPACITY,
@@ -28,25 +34,24 @@ export const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
-  total: {
-    color: colors.textMuted,
+  title: {
+    color: colors.text,
     flexShrink: 0,
     ...typeScale.label,
+    fontWeight: typeWeight.semibold,
   },
   trigger: {
     alignItems: "center",
-    alignSelf: "flex-start",
     backgroundColor: colors.surfaceContainerHigh,
-    borderColor: colors.border,
-    borderRadius: radii.medium,
+    borderColor: colors.borderSoft,
+    borderRadius: radii.pill,
     borderWidth: 1,
+    elevation: TRIGGER_ELEVATION,
     flexDirection: "row",
-    flexGrow: 0,
     flexShrink: 0,
-    gap: spacing.compact,
+    gap: spacing.xxs,
     minHeight: controlSize.compact,
     paddingLeft: spacing.xxs,
-    paddingRight: spacing.xs,
-    paddingVertical: spacing.optical,
+    paddingRight: spacing.inputInset,
   },
 });

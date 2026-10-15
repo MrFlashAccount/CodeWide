@@ -453,6 +453,7 @@ impl Session {
     /// runs) or when the next turn begins. It never wakes a turn by itself:
     /// Claude's own output for the wake does.
     async fn on_task_report(&mut self, frame: &ClaudeFrame, report: &TaskReport) {
+        self.task_reports.received(report);
         let delivered = self.task_reports.delivered(report, |tool_use_id| {
             self.active
                 .as_ref()

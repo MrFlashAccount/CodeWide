@@ -8,19 +8,11 @@ export const styles = StyleSheet.create({
   anchorRow: {
     alignItems: "center",
   },
-  anchorRowStart: {
-    alignItems: "flex-start",
-  },
   label: {
     color: colors.text,
     flexShrink: 1,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
-  },
-  launchRow: {
-    alignItems: "flex-start",
-    marginBottom: spacing.xs,
-    width: "100%",
   },
   lineRow: {
     alignItems: "center",
@@ -75,9 +67,6 @@ export const styles = StyleSheet.create({
     paddingRight: spacing.sm,
   },
   /** An unmeasured row holds the pill's height so measuring it moves nothing. */
-  unmeasuredChip: {
-    minHeight: controlSize.compact,
-  },
   unmeasuredLine: {
     minHeight: controlSize.compact + spacing.xxs + spacing.xxs,
   },

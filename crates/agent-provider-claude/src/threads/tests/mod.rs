@@ -5,6 +5,7 @@
 //! are appended to the session's JSONL file as Claude writes them, so
 //! listings and history read them back.
 
+mod background_tasks;
 mod forks;
 mod golden;
 mod sessions;
@@ -158,11 +159,14 @@ impl FakeQuery {
                 },
                 ToOwned::to_owned,
             );
-            self.persist(
-                json!({"type": kind, "uuid": uuid, "sessionId": self.session_id,
+            let mut row = json!({"type": kind, "uuid": uuid, "sessionId": self.session_id,
                 "cwd": self.options.cwd.to_string_lossy(), "timestamp": "2026-10-01T10:00:05.000Z",
-                "message": frame["message"]}),
-            );
+                "message": frame["message"]});
+            // Claude stores a tool's structured result beside its message.
+            if let Some(result) = frame.get("tool_use_result") {
+                row["toolUseResult"] = result.clone();
+            }
+            self.persist(row);
         }
         let _ = self.events.send(ProcessEvent::Message(frame)).await;
     }

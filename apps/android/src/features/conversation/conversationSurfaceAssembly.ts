@@ -44,6 +44,7 @@ export function createConversationSurfaceAssembly(props: {
   timelineRead: ReturnType<typeof useConversationTimelineRead>;
   toolsBinding: ReturnType<typeof useConversationTools>;
   visibleQueuedPrompts: ConversationCompositionCapabilities["queue"]["queuedPrompts"];
+  workingAgentsContent: ReactNode;
 }) {
   const timelineView = createConversationTimelineContent({
     composerInputs: props.composerInputs,
@@ -54,12 +55,12 @@ export function createConversationSurfaceAssembly(props: {
     cwd: props.surfaceInputs.cwd,
     draftConnectionId: props.scoped.activation.draftConnectionId,
     draftThreadId: props.scoped.activation.draftThreadId,
-    goalContent: null,
     historyActivityModel: props.readInputs.historyActivityModel,
     historyActivityResourceId: props.readInputs.historyActivityResourceId,
     historyViewport: props.readInputs.historyViewport,
     inlineQueueBinding: props.inlineQueueBinding,
     inlineQueueMaxHeight: props.inlineQueueMaxHeight,
+    liveStatusContent: props.workingAgentsContent,
     liveStatusVisible: props.liveStatusVisible,
     messageListState: props.readInputs.messageListState,
     overlayScrollStateBinding: props.scoped.overlayScrollStateBinding,

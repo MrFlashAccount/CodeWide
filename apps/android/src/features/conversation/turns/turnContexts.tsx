@@ -17,3 +17,14 @@ export const ThreadCwdContext = createContext("/workspace");
 export const SubagentNavigationContext = createContext<((threadId: string) => void) | null>(null);
 
 export const TurnActivityMetricsContext = createContext<ActivityMetrics | null>(null);
+
+/** A background task a person can open: its id and the name to title it with. */
+export type OpenableBackgroundTask = { readonly name: string; readonly taskId: string };
+
+/**
+ * Loads a background task's output and opens it in a dialog; `null` where the
+ * thread cannot read task output. Resolves once the dialog shows.
+ */
+export const BackgroundTaskContext = createContext<
+  ((task: OpenableBackgroundTask) => Promise<void>) | null
+>(null);

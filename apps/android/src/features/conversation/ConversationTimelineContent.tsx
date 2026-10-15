@@ -138,11 +138,11 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       draftConnectionId={props.draftConnectionId}
       draftThreadId={props.draftThreadId}
       fullscreenCovered={props.overlayScrollStateBinding.fullscreenCovered}
-      goalContent={props.goalContent}
       historyActivityModel={props.historyActivityModel}
       historyActivityResourceId={props.historyActivityResourceId}
       historyViewport={props.historyViewport}
       latestUnreadReceiptKey={props.timelineRead.unreadReceiptBinding.latestUnreadReceiptKey}
+      liveStatusContent={props.liveStatusContent}
       liveStatusVisible={props.liveStatusVisible}
       liveTurnPlan={props.timelineRead.conversationPresentationBinding.liveTurnPlan}
       messageListState={props.messageListState}

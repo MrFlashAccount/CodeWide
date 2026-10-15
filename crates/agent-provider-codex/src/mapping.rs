@@ -198,6 +198,7 @@ pub fn item(item: &Value) -> Option<AgentItem> {
             output: opt_string(item, "aggregatedOutput"),
             exit_code: int_field(item, "exitCode"),
             duration_ms: int_field(item, "durationMs"),
+            background_task_id: None,
         },
         "fileChange" => AgentItem::FileChange {
             provenance: None,

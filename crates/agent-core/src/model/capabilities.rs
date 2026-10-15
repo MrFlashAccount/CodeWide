@@ -38,10 +38,11 @@ pub enum Capability {
     CodexNative,
     OrchestrationTools,
     ThreadsCrossProviderFork,
+    ThreadsBackgroundTaskOutput,
 }
 
 impl Capability {
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 29] = [
         Self::TurnsSteer,
         Self::TurnsProviderInitiated,
         Self::ThreadsHostMintedIds,
@@ -70,6 +71,7 @@ impl Capability {
         Self::CodexNative,
         Self::OrchestrationTools,
         Self::ThreadsCrossProviderFork,
+        Self::ThreadsBackgroundTaskOutput,
     ];
 
     /// Protocol name of the capability.
@@ -104,6 +106,7 @@ impl Capability {
             Self::CodexNative => "codex.native",
             Self::OrchestrationTools => "orchestration.tools",
             Self::ThreadsCrossProviderFork => "threads.crossProviderFork",
+            Self::ThreadsBackgroundTaskOutput => "threads.backgroundTaskOutput",
         }
     }
 }
@@ -182,6 +185,11 @@ pub struct CapabilitySet {
     /// an older declaration → unsupported.
     #[serde(rename = "threads.crossProviderFork", default)]
     pub threads_cross_provider_fork: bool,
+    /// The provider reads the output of a background task a thread started
+    /// (`thread.backgroundTask.read`). Absent in an older declaration →
+    /// unsupported.
+    #[serde(rename = "threads.backgroundTaskOutput", default)]
+    pub threads_background_task_output: bool,
     #[serde(rename = "turns.startWhileActive")]
     pub turns_start_while_active: StartWhileActiveMode,
 }
@@ -219,6 +227,7 @@ impl CapabilitySet {
             codex_native: false,
             orchestration_tools: false,
             threads_cross_provider_fork: false,
+            threads_background_task_output: false,
             turns_start_while_active,
         }
     }
@@ -255,6 +264,7 @@ impl CapabilitySet {
             Capability::CodexNative => self.codex_native,
             Capability::OrchestrationTools => self.orchestration_tools,
             Capability::ThreadsCrossProviderFork => self.threads_cross_provider_fork,
+            Capability::ThreadsBackgroundTaskOutput => self.threads_background_task_output,
         }
     }
 }
@@ -294,6 +304,7 @@ mod tests {
             codex_native: true,
             orchestration_tools: true,
             threads_cross_provider_fork: true,
+            threads_background_task_output: true,
             turns_start_while_active: StartWhileActiveMode::Busy,
         })?;
         for capability in Capability::ALL {
@@ -310,10 +321,12 @@ mod tests {
         if let Some(object) = older.as_object_mut() {
             object.remove("orchestration.tools");
             object.remove("threads.crossProviderFork");
+            object.remove("threads.backgroundTaskOutput");
         }
         let declared: CapabilitySet = serde_json::from_value(older)?;
         assert!(!declared.supports(Capability::OrchestrationTools));
         assert!(!declared.supports(Capability::ThreadsCrossProviderFork));
+        assert!(!declared.supports(Capability::ThreadsBackgroundTaskOutput));
         Ok(())
     }
 }

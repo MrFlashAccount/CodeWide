@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Pressable } from "react-native";
 import { SubagentListProjection, subagentsForThread } from "../../data/subagent-projection";
 import type { ThreadSummaryDatabase } from "../../data/thread-summary-database";
+import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { useThreadSummaryView } from "../../data/use-thread-summary-view";
 import { useConstant } from "../../react/useConstant";
 import { colors } from "../../theme";
@@ -10,7 +11,6 @@ import { InlineIcon } from "../../ui/InlineIcon";
 import { ComposerContextCount } from "../../ui/ResourceContextChip";
 import { SUBAGENT_LIST_LIMIT } from "./agentSelection";
 import { styles } from "./ComposerSubagentContextChip.styles";
-import { WorkingSubagentsMenu, type SubagentOpener } from "./WorkingSubagentsMenu";
 
 export function ComposerSubagentContextChip({
   connectionId,
@@ -20,7 +20,7 @@ export function ComposerSubagentContextChip({
 }: {
   connectionId: string | null;
   database: ThreadSummaryDatabase | null;
-  onOpen: SubagentOpener;
+  onOpen: (summaries: readonly StoredThreadSummary[]) => void;
   parentThreadId: string | null;
 }) {
   if (database === null || connectionId === null || parentThreadId === null) {
@@ -46,7 +46,7 @@ export function ComposerSubagentContextChipLoaded({
 }: {
   connectionId: string;
   database: ThreadSummaryDatabase;
-  onOpen: SubagentOpener;
+  onOpen: (summaries: readonly StoredThreadSummary[]) => void;
   parentThreadId: string;
 }) {
   const view = useThreadSummaryView(database, {
@@ -65,28 +65,24 @@ export function ComposerSubagentContextChipLoaded({
   if (visible.length === 0) {
     return null;
   }
-  // The child thread's own status is the authority on who still works.
-  const working = visible.filter((summary) => summary.status.type === "active");
-  if (working.length > 0) {
-    return (
-      <WorkingSubagentsMenu
-        onOpen={onOpen}
-        summaries={summaries}
-        total={visible.length}
-        working={working}
-      />
-    );
-  }
   return (
     <Pressable
       accessibilityLabel={`Subagents: ${String(visible.length)}`}
       accessibilityRole="button"
       onPress={() => {
-        onOpen(summaries, null);
+        onOpen(summaries);
       }}
       style={styles.composerContextChip}
     >
-      <InlineIcon color={colors.textMuted} name="people-outline" role="label" />
+      <InlineIcon
+        color={
+          visible.some((summary) => summary.status.type === "active")
+            ? colors.green
+            : colors.textMuted
+        }
+        name="people-outline"
+        role="label"
+      />
       <ComposerContextCount label="Subagents" value={visible.length} />
     </Pressable>
   );

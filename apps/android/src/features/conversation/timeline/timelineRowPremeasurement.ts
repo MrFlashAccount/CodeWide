@@ -205,7 +205,7 @@ function dynamicPresentationReason(
   if (isLeadingPlacement(row.placement) && presentation.preTurnBlocks.length > 0) {
     return "leading-activity";
   }
-  if (drawsAgentChip(row, presentation)) {
+  if (drawsLinesBelow(row, presentation)) {
     return "composite-row";
   }
   // WHY: Exact hints are lifetime-fixed sizes in LegendList. Expansion lives inside
@@ -475,25 +475,21 @@ function isStreamingPart(part: VirtualizedTurnPart): boolean {
 }
 
 /**
- * Agent chips and lines below the bubble have no premeasured size: a finished
- * turn's launch chip leads its bubble, and a person's turn draws reports that
- * arrived during its answer, like compactions during any answer, below it.
+ * Lines below the bubble have no premeasured size: a person's turn draws
+ * reports that arrived during its answer, like compactions during any
+ * answer, below it.
  */
-function drawsAgentChip(
+function drawsLinesBelow(
   row: MeasurableTimelineRow,
   presentation: ReturnType<typeof projectTurnPresentation>,
 ): boolean {
-  const launchChip =
-    isLeadingPlacement(row.placement) &&
-    presentation.rawTurn.status !== "inProgress" &&
-    presentation.launchedAgents.length > 0;
   const reportLine =
     isTrailingPlacement(row.placement) &&
     presentation.userBlocks.length > 0 &&
     presentation.taskNotifications.midTurn.length > 0;
   const compactionLine =
     isTrailingPlacement(row.placement) && presentation.trailingCompactionBlocks.length > 0;
-  return launchChip || reportLine || compactionLine;
+  return reportLine || compactionLine;
 }
 
 function isLeadingPlacement(placement: VirtualizedTurnPlacement): boolean {

@@ -444,3 +444,219 @@ async fn time_the_largest_local_session_read() -> Result<(), Box<dyn std::error:
     );
     Ok(())
 }
+
+fn sidechain(
+    agent: &str,
+    uuid: &str,
+    parent: Option<&str>,
+    second: u32,
+    kind: &str,
+    message: &Value,
+) -> Value {
+    json!({"type": kind, "uuid": uuid, "parentUuid": parent, "timestamp": at(second),
+        "isSidechain": true, "agentId": agent, "message": message})
+}
+
+fn report(agent: &str, tool_use: &str) -> String {
+    format!(
+        "<task-notification>\n<task-id>{agent}</task-id>\n<tool-use-id>{tool_use}</tool-use-id>\n<status>completed</status>\n<summary>Agent \"{agent}\" finished</summary>\n</task-notification>"
+    )
+}
+
+/// A background agent that spawns two background agents of its own. One
+/// reports back into its transcript as a queued attachment; the other
+/// reports to the main conversation instead.
+fn write_nested_store(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let (projects, _) = fixture_paths(root);
+    let directory = projects.join("-work").join(SESSION).join("subagents");
+    std::fs::create_dir_all(&directory)?;
+    write_nested_main(&projects.join("-work").join(format!("{SESSION}.jsonl")))?;
+    write_outer_agent(&directory)?;
+    for (agent, tool_use) in [("inner1", "toolu_inner1"), ("inner2", "toolu_inner2")] {
+        write_inner_agent(&directory, agent, tool_use)?;
+    }
+    Ok(())
+}
+
+/// The main conversation: it spawns the outer agent and takes the second inner report.
+fn write_nested_main(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let session = [
+        user("p1", None, 1, &json!("Research it")),
+        assistant(
+            "a1",
+            "p1",
+            2,
+            &json!([{"type": "tool_use", "id": "toolu_outer", "name": "Agent",
+            "input": {"description": "Outer", "prompt": "Research", "run_in_background": true}}]),
+        ),
+        user(
+            "r1",
+            Some("a1"),
+            3,
+            &json!([{"type": "tool_result", "tool_use_id": "toolu_outer",
+            "content": "Async agent launched successfully.\nagentId: outer1"}]),
+        ),
+        assistant(
+            "a2",
+            "r1",
+            4,
+            &json!([{"type": "text", "text": "Started."}]),
+        ),
+        {
+            let mut wake = user(
+                "w1",
+                Some("a2"),
+                9,
+                &json!(report("inner2", "toolu_inner2")),
+            );
+            wake["origin"] = json!({"kind": "task-notification"});
+            wake
+        },
+        assistant("a3", "w1", 10, &json!([{"type": "text", "text": "Noted."}])),
+    ];
+    std::fs::write(path, session.iter().map(row).collect::<String>())?;
+    Ok(())
+}
+
+/// The outer agent: it spawns both inner agents and takes the first report as an attachment.
+fn write_outer_agent(directory: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let spawn = |id: &str, description: &str| {
+        json!({"type": "tool_use", "id": id, "name": "Agent",
+            "input": {"description": description, "prompt": "Look", "run_in_background": true}})
+    };
+    let launched = |id: &str, agent: &str| {
+        json!([{"type": "tool_result", "tool_use_id": id,
+            "content": format!("Async agent launched successfully.\nagentId: {agent}")}])
+    };
+    let outer = [
+        sidechain(
+            "outer1",
+            "o1",
+            None,
+            3,
+            "user",
+            &json!({"role": "user", "content": "Research"}),
+        ),
+        sidechain(
+            "outer1",
+            "o2",
+            Some("o1"),
+            4,
+            "assistant",
+            &json!({"id": "msg_o2", "role": "assistant", "content": [spawn("toolu_inner1", "Inner one"), spawn("toolu_inner2", "Inner two")]}),
+        ),
+        sidechain(
+            "outer1",
+            "o3",
+            Some("o2"),
+            5,
+            "user",
+            &json!({"role": "user", "content": launched("toolu_inner1", "inner1")}),
+        ),
+        sidechain(
+            "outer1",
+            "o4",
+            Some("o3"),
+            5,
+            "user",
+            &json!({"role": "user", "content": launched("toolu_inner2", "inner2")}),
+        ),
+        json!({"type": "attachment", "uuid": "o5", "parentUuid": "o4", "timestamp": at(6), "isSidechain": true,
+            "agentId": "outer1", "attachment": {"type": "queued_command", "commandMode": "task-notification",
+                "prompt": report("inner1", "toolu_inner1"), "source_uuid": "src-o5"}}),
+        sidechain(
+            "outer1",
+            "o6",
+            Some("o5"),
+            7,
+            "assistant",
+            &json!({"id": "msg_o6", "role": "assistant", "stop_reason": "end_turn", "content": [{"type": "text", "text": "Done."}]}),
+        ),
+    ];
+    std::fs::write(
+        directory.join("agent-outer1.jsonl"),
+        outer.iter().map(row).collect::<String>(),
+    )?;
+    std::fs::write(
+        directory.join("agent-outer1.meta.json"),
+        r#"{"toolUseId":"toolu_outer"}"#,
+    )?;
+    Ok(())
+}
+
+/// An inner agent that finished its only turn.
+fn write_inner_agent(
+    directory: &Path,
+    agent: &str,
+    tool_use: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let transcript = [
+        sidechain(
+            agent,
+            &format!("{agent}-1"),
+            None,
+            5,
+            "user",
+            &json!({"role": "user", "content": "Look"}),
+        ),
+        sidechain(
+            agent,
+            &format!("{agent}-2"),
+            Some(&format!("{agent}-1")),
+            6,
+            "assistant",
+            &json!({"id": format!("msg_{agent}"), "role": "assistant", "stop_reason": "end_turn",
+                    "content": [{"type": "text", "text": "Found it."}]}),
+        ),
+    ];
+    std::fs::write(
+        directory.join(format!("agent-{agent}.jsonl")),
+        transcript.iter().map(row).collect::<String>(),
+    )?;
+    std::fs::write(
+        directory.join(format!("agent-{agent}.meta.json")),
+        format!(r#"{{"toolUseId":"{tool_use}","parentAgentId":"outer1"}}"#),
+    )?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_nested_background_agent_settles_on_a_report_in_any_transcript()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write_nested_store(root.path())?;
+    let read = sessions(root.path()).read(SESSION).await?;
+    let outer = read
+        .subagents
+        .iter()
+        .find(|subagent| subagent.agent_id == "outer1")
+        .ok_or("outer agent")?;
+    let nested = outer
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .filter_map(|item| match item {
+            AgentItem::Subagent {
+                description,
+                status,
+                ..
+            } => Some((description.clone(), *status)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        nested,
+        [
+            ("Inner one".to_owned(), SubagentStatus::Completed),
+            ("Inner two".to_owned(), SubagentStatus::Completed),
+        ]
+    );
+    let running = crate::subagents::index(&read)
+        .into_iter()
+        .filter(|subagent| subagent.running)
+        .map(|subagent| subagent.agent_id)
+        .collect::<Vec<_>>();
+    // The outer agent never reported: only it still works.
+    assert_eq!(running, ["outer1"]);
+    Ok(())
+}
