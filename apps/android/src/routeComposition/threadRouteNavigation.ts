@@ -9,6 +9,7 @@ import { agentRouteSessions } from "../services/agents/agentRouteSession";
 import { attachmentRouteSessions } from "../services/attachments/attachmentRouteSession";
 import { drawingRouteSessions } from "../services/drawing/drawingRouteSession";
 import { terminalRouteSessions } from "../services/terminal/terminalRouteSession";
+import { taskOutputRouteSessions } from "../services/backgroundTasks/taskOutputRouteSession";
 import { useEvent } from "../react/useEvent";
 import {
   threadRouteSessionOwner,
@@ -75,6 +76,13 @@ export function useThreadRouteNavigation(
       pathname: "/threads/[connectionId]/[threadId]/content/[sessionId]",
     });
   });
+  const openTaskOutput = useEvent<ConversationRouteNavigation["openTaskOutput"]>((request) => {
+    const session = taskOutputRouteSessions.open(owner, request);
+    router.push({
+      params: { ...routeParams, sessionId: session.id },
+      pathname: "/threads/[connectionId]/[threadId]/task-output/[sessionId]",
+    });
+  });
   const openDocument = useEvent<ConversationRouteNavigation["openDocument"]>((request) => {
     const session = documentRouteService.open(owner, request);
     router.push({
@@ -124,6 +132,7 @@ export function useThreadRouteNavigation(
     openContent,
     openDocument,
     openDrawing,
+    openTaskOutput,
     openTerminal,
     openTool,
     openTurnChanges,

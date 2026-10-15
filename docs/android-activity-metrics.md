@@ -16,7 +16,8 @@ unknown. These are estimates, not measured per-command model usage or billing.
 The backend owns the 16-card live activity window's range summaries. Agent updates
 separate groups; completed final answers, hidden reasoning, questions, pre-turn
 activity, background task reports and context compactions do not inflate the
-completed history total. Compactions are lifecycle lines outside the bubble, so a
+completed history total (a running turn counts a compaction after its first
+response item as its work). Compactions are lifecycle lines outside the bubble, so a
 summary turn carries them as items instead (`in_summary_view`; Codex summary
 projection version 13). Full item hydration carries
 ready range metadata on the first item of each group. Selection uses both endpoints,

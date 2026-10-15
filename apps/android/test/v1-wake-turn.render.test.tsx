@@ -276,6 +276,28 @@ it("draws a person's mid-turn report after the answer it arrived during", () => 
   expect(view.getByText("Build")).toBeOnTheScreen();
 });
 
+it("draws a background task that is not an agent with a terminal icon, not an agent avatar", () => {
+  const woken = completedTurn("monitor", [
+    { ...taskReport("m", "wake", 'Monitor "Deploy log" stream ended'), kind: "other" },
+    answer("monitor-answer", "The stream ended."),
+  ]);
+  const view = render(timelineSurface([woken]));
+  layOut(view, "task-notification-line-row", 600);
+
+  expect(view.getByText("terminal-outline")).toBeOnTheScreen();
+});
+
+it("draws an agent's report with its avatar, not a terminal icon", () => {
+  const woken = completedTurn("agent", [
+    taskReport("a", "wake", "Map sources"),
+    answer("agent-answer", "Mapped."),
+  ]);
+  const view = render(timelineSurface([woken]));
+  layOut(view, "task-notification-line-row", 600);
+
+  expect(view.queryByText("terminal-outline")).toBeNull();
+});
+
 it("fits a report line to its container, not the window, and reserves its height before", () => {
   const woken = completedTurn("narrow", [
     taskReport("long", "wake", "Reuse backend images, build the frontend and bring the stand up"),

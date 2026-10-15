@@ -28,6 +28,10 @@ describe("Expo UI menu shape", () => {
     expect(patch).toContain("strokeLineJoin = strokeLineJoin");
     expect(patch).toContain("strokeLineMiter = strokeMiterLimit");
     expect(patch).toContain("takeUnless { it.alpha == 0f }");
+    // Menus centre on their anchor and keep a gap from it through Material's offset.
+    expect(patch).toContain("offsetX?: number");
+    expect(patch).toContain("val offsetY: Float = 0f");
+    expect(patch).toContain("offset = DpOffset(props.offsetX.dp, props.offsetY.dp)");
   });
 
   it("uses the menu radius and compiles the patched Compose source, not the prebuilt AAR", () => {

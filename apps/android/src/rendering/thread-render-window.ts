@@ -12,14 +12,13 @@ export type TurnRenderWindow = {
   leadCompactionIndexes: number[];
   liveActivityIndexes: number[];
   preTurnActivityIndexes: number[];
-  /** Compactions during the response, drawn as lifecycle lines below the bubble. */
-  trailingCompactionIndexes: number[];
   userItemIndexes: number[];
 };
 
 /**
  * Background task reports and context compactions are drawn outside the
- * bubble, never as turn activity.
+ * bubble; a compaction is turn activity only during a running response
+ * (`splitCompactions`).
  */
 function isTurnActivityItem(item: Turn["items"][number]): boolean {
   return (
@@ -75,6 +74,9 @@ export function selectTurnRenderWindow(
     const item = turn.items[index];
     if (item?.type === "userMessage") {
       userItemIndexes.push(index);
+    } else if (item?.type === "contextCompaction") {
+      // A newer compaction ends the thinking before it, like any work.
+      latestNonUserIndex = index;
     } else if (
       item !== undefined &&
       isTurnActivityItem(item) &&
@@ -134,7 +136,7 @@ export function selectTurnRenderWindow(
           );
         });
   const separatedIndexSet = new Set(preTurnActivityIndexes);
-  const { leadCompactionIndexes, trailingCompactionIndexes } = splitCompactions(
+  const { leadCompactionIndexes, workCompactionIndexes } = splitCompactions(
     turn,
     turn.status === "inProgress"
       ? materializedIndexes.filter(
@@ -153,7 +155,6 @@ export function selectTurnRenderWindow(
       leadCompactionIndexes,
       liveActivityIndexes: [],
       preTurnActivityIndexes,
-      trailingCompactionIndexes,
       userItemIndexes,
     };
   }
@@ -167,9 +168,12 @@ export function selectTurnRenderWindow(
       !separatedIndexSet.has(index) && item?.type === "agentMessage" && item.text.trim() !== ""
     );
   });
-  const activityIndexes = materializedIndexes.filter(
-    (index) => turn.items[index]?.type !== "agentMessage" && !separatedIndexSet.has(index),
-  );
+  const activityIndexes = [
+    ...materializedIndexes.filter(
+      (index) => turn.items[index]?.type !== "agentMessage" && !separatedIndexSet.has(index),
+    ),
+    ...workCompactionIndexes,
+  ].sort((left, right) => left - right);
   const liveCount = Math.max(0, Math.min(liveActivityLimit, activityIndexes.length));
   const liveActivityIndexes = [
     ...agentIndexes,
@@ -183,27 +187,26 @@ export function selectTurnRenderWindow(
     leadCompactionIndexes,
     liveActivityIndexes,
     preTurnActivityIndexes,
-    trailingCompactionIndexes,
     userItemIndexes,
   };
 }
 
 /**
- * A context compaction is system information, not turn work: it is drawn as
- * a lifecycle line outside the bubble. A finished turn draws every compaction
- * before its bubble, the same in its summary and full views (a summary keeps
- * no work to place them by). While the turn runs, a compaction after its
- * first response item follows the bubble, where the live work is; one before
- * it, or marked pre-turn while a user boundary exists, leads the bubble.
+ * Where a context compaction goes. It is system information drawn as a
+ * lifecycle line before the bubble when it precedes the response (or is
+ * marked pre-turn while a user boundary exists), and always once the turn has
+ * finished: a summary keeps no work to place it by, so both views agree.
+ * While the turn runs, a compaction after its first response item is part of
+ * that work and joins its activity.
  */
 function splitCompactions(
   turn: Turn,
   responseIndexes: readonly number[],
   hasUserBoundary: boolean,
-): Pick<TurnRenderWindow, "leadCompactionIndexes" | "trailingCompactionIndexes"> {
+): { leadCompactionIndexes: number[]; workCompactionIndexes: number[] } {
   const firstResponseIndex = responseIndexes[0] ?? Number.POSITIVE_INFINITY;
   const leadCompactionIndexes: number[] = [];
-  const trailingCompactionIndexes: number[] = [];
+  const workCompactionIndexes: number[] = [];
   for (let index = 0; index < turn.items.length; index += 1) {
     const item = turn.items[index];
     if (item?.type !== "contextCompaction") {
@@ -212,10 +215,10 @@ function splitCompactions(
     if (index < firstResponseIndex || (hasUserBoundary && isProjectedPreTurn(item))) {
       leadCompactionIndexes.push(index);
     } else {
-      trailingCompactionIndexes.push(index);
+      workCompactionIndexes.push(index);
     }
   }
-  return { leadCompactionIndexes, trailingCompactionIndexes };
+  return { leadCompactionIndexes, workCompactionIndexes };
 }
 
 function isBlankAgentMessage(item: Turn["items"][number] | undefined): boolean {

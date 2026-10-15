@@ -76,7 +76,8 @@ impl ActivityItem {
 const TASK_NOTIFICATION_KIND: &str = crate::wire_items::TASK_NOTIFICATION_ITEM_TYPE;
 
 /// A context compaction is system information drawn outside the turn's
-/// body, so it never counts as activity either.
+/// body; it counts as activity only during a running response
+/// ([`ActivityState::working_compactions`]).
 const COMPACTION_KIND: &str = "contextCompaction";
 
 /// Whether an item can be turn activity or the turn's answer.
@@ -136,7 +137,11 @@ impl ActivityState {
     #[must_use]
     pub fn projection(&self) -> Value {
         let first_user = self.items.iter().position(|i| i.kind == "userMessage");
-        let last = self.items.iter().rposition(is_turn_work);
+        // A newer compaction ends the thinking before it, like any work.
+        let last = self
+            .items
+            .iter()
+            .rposition(|i| is_turn_work(i) || i.kind == COMPACTION_KIND);
         let final_agent = self
             .items
             .iter()
@@ -151,7 +156,7 @@ impl ActivityState {
                     i.kind == "agentMessage" && i.text && i.phase != AgentPhase::Question
                 })
             });
-        let visible: Vec<_> = self
+        let mut visible: Vec<_> = self
             .items
             .iter()
             .enumerate()
@@ -161,6 +166,8 @@ impl ActivityState {
                     && (item.kind != "reasoning" || (self.active && Some(*index) == last))
             })
             .collect();
+        visible.extend(self.working_compactions(&visible, first_user));
+        visible.sort_by_key(|(index, _)| *index);
         let history: Vec<_> = visible
             .iter()
             .filter(|(index, item)| {
@@ -195,6 +202,35 @@ impl ActivityState {
             .collect();
         json!({"version": 1, "total": total, "ranges": ranges, "commands": commands})
     }
+    /// The compactions of a running turn after its first response item: part
+    /// of that work. Before it (or marked pre-turn under a user boundary),
+    /// and in any finished turn, a compaction is a lifecycle line instead.
+    fn working_compactions<'a>(
+        &'a self,
+        visible: &[(usize, &ActivityItem)],
+        first_user: Option<usize>,
+    ) -> Vec<(usize, &'a ActivityItem)> {
+        if !self.active {
+            return Vec::new();
+        }
+        let Some(first_response) = visible
+            .iter()
+            .find(|(index, item)| !is_pre_turn(*index, item, first_user))
+            .map(|(index, _)| *index)
+        else {
+            return Vec::new();
+        };
+        self.items
+            .iter()
+            .enumerate()
+            .filter(|(index, item)| {
+                item.kind == COMPACTION_KIND
+                    && *index > first_response
+                    && !(first_user.is_some() && item.pre_turn)
+            })
+            .collect()
+    }
+
     fn ranges(
         &self,
         visible: &[(usize, &ActivityItem)],
@@ -542,6 +578,28 @@ mod tests {
             ActivityState::from_turn(&turn(&[compaction("only")], "completed")).projection();
         assert_eq!(only_compaction["total"]["count"], 0);
         assert_eq!(only_compaction["ranges"], json!([]));
+    }
+
+    #[test]
+    fn a_compaction_during_a_running_response_is_its_work() {
+        let compaction = |id: &str| json!({"id": id, "type": "contextCompaction"});
+        let items = [
+            compaction("before"),
+            user(),
+            command("work", "abcd"),
+            compaction("during"),
+            command("more", "efgh"),
+        ];
+        let running = ActivityState::from_turn(&turn(&items, "inProgress")).projection();
+        assert_eq!(running["total"]["count"], 3);
+        assert_eq!(
+            running["total"]["kinds"],
+            json!(["commandExecution", "contextCompaction"])
+        );
+
+        // Finished, the summary keeps it as a lifecycle line, not history.
+        let finished = ActivityState::from_turn(&turn(&items, "completed")).projection();
+        assert_eq!(finished["total"]["count"], 2);
     }
 
     #[test]

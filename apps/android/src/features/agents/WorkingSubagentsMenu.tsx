@@ -99,17 +99,13 @@ function WorkingSubagentsTrigger({
         badgeOf={() => "running"}
         keyOf={(agent) => agent.threadId}
         subjects={agents}
+        surface={colors.surfaceContainerHigh}
       />
       <Text style={styles.title}>Agents</Text>
       <Text style={styles.divider}>·</Text>
       <Text numberOfLines={1} shimmering style={styles.label}>
         {label}
       </Text>
-      <Ionicons
-        color={colors.textDim}
-        name={open ? "chevron-down" : "chevron-up"}
-        size={iconSize.inline}
-      />
     </Pressable>
   );
 }
@@ -132,13 +128,12 @@ function WorkingSubagentRow({
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
       testID="working-subagent-row"
     >
-      <AgentAvatar badge="running" subject={agent} />
+      <AgentAvatar badge="running" subject={agent} surface={colors.menuSurface} />
       <View style={styles.rowText}>
         <Text numberOfLines={1} shimmering style={styles.rowName}>
           {agent.name}
         </Text>
       </View>
-      <Ionicons color={colors.textDim} name="chevron-forward" size={iconSize.inline} />
     </Pressable>
   );
 }
@@ -165,7 +160,6 @@ function AllSubagentsRow({
       <View style={styles.rowText}>
         <Text style={styles.rowName}>All subagents · {total}</Text>
       </View>
-      <Ionicons color={colors.textDim} name="chevron-forward" size={iconSize.inline} />
     </Pressable>
   );
 }
