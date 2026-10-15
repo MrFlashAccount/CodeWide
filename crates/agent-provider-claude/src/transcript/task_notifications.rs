@@ -72,25 +72,58 @@ fn quoted_name<'a>(summary: &'a str, prefix: &str) -> Option<&'a str> {
         .map(|(at, _)| &rest[..at])
 }
 
-/// Kind and name as the report's summary states them.
+/// The predefined XML entities Claude escapes in a notification's elements.
+const XML_ENTITIES: [(&str, char); 5] = [
+    ("&amp;", '&'),
+    ("&lt;", '<'),
+    ("&gt;", '>'),
+    ("&quot;", '"'),
+    ("&apos;", '\''),
+];
+
+/// `text` with its XML entities decoded in one pass, so a decoded `&` never
+/// starts another entity; an unknown `&...;` stays as written.
+fn decode_xml_entities(text: &str) -> String {
+    let mut decoded = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        decoded.push_str(&rest[..at]);
+        rest = &rest[at..];
+        if let Some((entity, character)) = XML_ENTITIES
+            .iter()
+            .find(|(entity, _)| rest.starts_with(entity))
+        {
+            decoded.push(*character);
+            rest = &rest[entity.len()..];
+        } else {
+            decoded.push('&');
+            rest = &rest[1..];
+        }
+    }
+    decoded.push_str(rest);
+    decoded
+}
+
+/// Kind and name as the report's summary states them. Claude stores the
+/// summary XML-escaped; the name is shown as plain text.
 #[must_use]
 pub fn reported_identity(report: &TaskReport) -> TaskIdentity {
     let summary = report.summary.as_deref();
     if let Some(name) = summary.and_then(|summary| quoted_name(summary, AGENT_PREFIX)) {
         return TaskIdentity {
             kind: TaskKind::Agent,
-            name: name.to_owned(),
+            name: decode_xml_entities(name),
         };
     }
     if let Some(name) = summary.and_then(|summary| quoted_name(summary, COMMAND_PREFIX)) {
         return TaskIdentity {
             kind: TaskKind::Command,
-            name: name.to_owned(),
+            name: decode_xml_entities(name),
         };
     }
     TaskIdentity {
         kind: TaskKind::Other,
-        name: summary.unwrap_or(FALLBACK_NAME).to_owned(),
+        name: decode_xml_entities(summary.unwrap_or(FALLBACK_NAME)),
     }
 }
 
@@ -248,6 +281,24 @@ mod tests {
         );
         assert_eq!(started_task_identity(Some("local_bash"), Some("npm")), None);
         assert_eq!(started_task_identity(Some("local_agent"), Some("  ")), None);
+    }
+
+    #[test]
+    fn a_name_is_decoded_from_the_escaped_summary() {
+        assert_eq!(
+            reported_identity(&report(
+                "Background command \"cd /tmp &amp;&amp; make 2&gt;&amp;1 &lt;in\" completed"
+            )),
+            identity(TaskKind::Command, "cd /tmp && make 2>&1 <in")
+        );
+        assert_eq!(
+            reported_identity(&report("Agent \"runtime &amp;amp; ops\" finished")),
+            identity(TaskKind::Agent, "runtime &amp; ops")
+        );
+        assert_eq!(
+            reported_identity(&report("Monitor &unknown; &quot;x&apos;")),
+            identity(TaskKind::Other, "Monitor &unknown; \"x'")
+        );
     }
 
     #[test]

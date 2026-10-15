@@ -24,27 +24,22 @@ import { BackgroundTaskContext, SubagentNavigationContext } from "./turnContexts
 const ROW_TEXT_HEIGHT = typeScale.body.lineHeight + typeScale.label.lineHeight;
 const ROW_PADDING = spacing.xs;
 
+/** The pill takes at most this share of the conversation's width. */
+const PILL_WIDTH_SHARE = 0.5;
+
 /**
- * Background task reports drawn outside a bubble as one short line: the
- * reports that woke a turn, or those that arrived while it answered. The line
- * opens a plain list under it; an agent's row opens its thread, a command's
- * row its output. Each report's status is the dot on its avatar.
+ * Background task reports drawn outside a bubble as one short pill: the
+ * reports that woke a turn, or those that arrived while it answered. A single
+ * report's pill opens it directly (an agent's thread or a command's output);
+ * several open a plain list centered on the pill. Each report's status is the
+ * dot on its avatar.
  */
 export function TaskNotificationLine({
   reports,
 }: {
   readonly reports: readonly TaskNotificationReport[];
 }): React.JSX.Element | null {
-  const [open, setOpen] = useRecyclingState(false);
-  const menu = useAnchoredMenuSize();
   const layout = useLayoutWidth();
-  const { fontScale } = useWindowDimensions();
-  const toggleOpen = useEvent(() => {
-    setOpen((current) => !current);
-  });
-  const close = useEvent(() => {
-    setOpen(false);
-  });
   if (reports.length === 0) {
     return null;
   }
@@ -61,56 +56,115 @@ export function TaskNotificationLine({
       />
     );
   }
+  const [only] = reports;
+  return (
+    <View onLayout={layout.onLayout} style={styles.lineRow} testID="task-notification-line-row">
+      {reports.length === 1 && only !== undefined ? (
+        <SingleReportPill lineWidth={lineWidth} report={only} />
+      ) : (
+        <ReportListPill lineWidth={lineWidth} reports={reports} />
+      )}
+    </View>
+  );
+}
+
+/** One report: the pill is the report's own link, without a list. */
+function SingleReportPill({
+  lineWidth,
+  report,
+}: {
+  readonly lineWidth: number;
+  readonly report: TaskNotificationReport;
+}): React.JSX.Element {
+  // The pill lives in a recycled list cell.
+  const [opening, setOpening] = useRecyclingState<OpeningState>(NOT_OPENING);
+  const target = useReportTarget(report, [opening, setOpening], noop);
+  return (
+    <>
+      <TaskNotificationPill
+        loading={target.loading}
+        maxWidth={lineWidth * PILL_WIDTH_SHARE}
+        onPress={target.kind === "none" ? null : target.press}
+        open={null}
+        reports={[report]}
+      />
+      {target.error === null ? null : (
+        <Text numberOfLines={2} style={styles.lineError} testID="task-notification-error">
+          {target.error}
+        </Text>
+      )}
+    </>
+  );
+}
+
+/** Several reports: the pill opens their list centered on it, above or below. */
+function ReportListPill({
+  lineWidth,
+  reports,
+}: {
+  readonly lineWidth: number;
+  readonly reports: readonly TaskNotificationReport[];
+}): React.JSX.Element {
+  const [open, setOpen] = useRecyclingState(false);
+  const menu = useAnchoredMenuSize();
+  const { fontScale } = useWindowDimensions();
+  const toggleOpen = useEvent(() => {
+    setOpen((current) => !current);
+  });
+  const close = useEvent(() => {
+    setOpen(false);
+  });
   const rowHeight = Math.max(
     controlSize.touch,
     ROW_TEXT_HEIGHT * fontScale + ROW_PADDING + ROW_PADDING,
   );
   const trigger = createElement(TaskNotificationPill, {
-    maxWidth: lineWidth,
+    loading: false,
+    maxWidth: lineWidth * PILL_WIDTH_SHARE,
     onPress: toggleOpen,
     open,
     reports,
   });
-  // The menu opens at the pill's start with its own width; Compose keeps it
-  // inside the window. Rows have a fixed height, so the list declares its
-  // height instead of the popup measuring it.
+  // Rows have a fixed height, so the list declares its height instead of
+  // the popup measuring it; Compose keeps the list inside the window.
   const listHeight = Math.min(
     menu.maxHeight,
     reports.length * rowHeight + (reports.length - 1) * LIST_GAP + LIST_PADDING + LIST_PADDING,
   );
-  const list = (
-    <AnchoredMenuList height={listHeight} testID="task-notification-list">
-      {reports.map((report) => (
-        <ReportRow height={rowHeight} key={report.id} onNavigate={close} report={report} />
-      ))}
-    </AnchoredMenuList>
-  );
   return (
-    <View onLayout={layout.onLayout} style={styles.lineRow} testID="task-notification-line-row">
-      <ContentMenu
-        align="start"
-        height={listHeight}
-        onOpenChange={setOpen}
-        open={open}
-        placement="bottom"
-        trigger={trigger}
-        width={Math.min(menu.width, lineWidth)}
-      >
-        {list}
-      </ContentMenu>
-    </View>
+    <ContentMenu
+      align="center"
+      height={listHeight}
+      onOpenChange={setOpen}
+      open={open}
+      placement="bottom"
+      trigger={trigger}
+      width={Math.min(menu.width, lineWidth)}
+    >
+      <AnchoredMenuList height={listHeight} testID="task-notification-list">
+        {reports.map((report) => (
+          <ReportRow height={rowHeight} key={report.id} onNavigate={close} report={report} />
+        ))}
+      </AnchoredMenuList>
+    </ContentMenu>
   );
 }
 
+/**
+ * The pill itself. `open` is the list's state for a pill that opens one and
+ * `null` for a single report's link; `onPress` is `null` when nothing opens.
+ */
 function TaskNotificationPill({
+  loading,
   maxWidth,
   onPress,
   open,
   reports,
 }: {
+  readonly loading: boolean;
   readonly maxWidth: number;
-  readonly onPress: () => void;
-  readonly open: boolean;
+  readonly onPress: (() => void) | null;
+  readonly open: boolean | null;
   readonly reports: readonly TaskNotificationReport[];
 }): React.JSX.Element {
   const summary = reportLineSummary(reports);
@@ -118,8 +172,9 @@ function TaskNotificationPill({
     <Pressable
       accessibilityLabel={`${summary.label} ${summary.phrase}`}
       accessibilityRole="button"
-      accessibilityState={{ expanded: open }}
-      onPress={onPress}
+      accessibilityState={open === null ? { busy: loading } : { expanded: open }}
+      disabled={onPress === null}
+      onPress={onPress ?? undefined}
       style={({ pressed }) => [styles.trigger, { maxWidth }, pressed && styles.pressed]}
       testID="task-notification-line"
     >
@@ -129,7 +184,7 @@ function TaskNotificationPill({
         subjects={reports}
         surface={colors.surfaceRaised}
       />
-      <Text ellipsizeMode="tail" numberOfLines={1} style={styles.label}>
+      <Text ellipsizeMode="tail" numberOfLines={1} shimmering={loading} style={styles.label}>
         {summary.label}
       </Text>
     </Pressable>
@@ -145,7 +200,9 @@ function ReportRow({
   readonly onNavigate: () => void;
   readonly report: TaskNotificationReport;
 }): React.JSX.Element {
-  const target = useReportTarget(report, onNavigate);
+  // The list renders in the anchored popover, outside any recycled list cell.
+  const [opening, setOpening] = useState<OpeningState>(NOT_OPENING);
+  const target = useReportTarget(report, [opening, setOpening], onNavigate);
   const details = reportDetails(report);
   return (
     <Pressable
@@ -180,6 +237,7 @@ type OpeningState =
   | { readonly message: string; readonly status: "failed" };
 
 const NOT_OPENING: OpeningState = { status: "idle" };
+const noop = (): void => undefined;
 const OPENING: OpeningState = { status: "loading" };
 
 function failedOpening(error: unknown): OpeningState {
@@ -193,11 +251,13 @@ function failedOpening(error: unknown): OpeningState {
  * What a report row opens: an agent's thread or a background task's output
  * (loaded on press); without either it opens nothing.
  */
-function useReportTarget(report: TaskNotificationReport, onNavigate: () => void) {
+function useReportTarget(
+  report: TaskNotificationReport,
+  [opening, setOpening]: readonly [OpeningState, (next: OpeningState) => void],
+  onNavigate: () => void,
+) {
   const openThread = useContext(SubagentNavigationContext);
   const openTask = useContext(BackgroundTaskContext);
-  // The list renders in the anchored popover, outside any recycled list cell.
-  const [opening, setOpening] = useState<OpeningState>(NOT_OPENING);
   const agentThreadId = report.agentThreadId;
   const kind =
     agentThreadId !== null && openThread !== null

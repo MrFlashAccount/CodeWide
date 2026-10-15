@@ -5,6 +5,25 @@ import { colors, spacing, typeScale, typeWeight } from "../../../theme";
 const DOT_SIZE = 8;
 
 export const styles = StyleSheet.create({
+  command: {
+    backgroundColor: colors.code,
+    borderBottomColor: colors.borderSoft,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  commandPrompt: {
+    color: colors.textDim,
+    ...typeScale.code,
+  },
+  commandText: {
+    color: colors.text,
+    flex: 1,
+    minWidth: 0,
+    ...typeScale.code,
+  },
   details: {
     color: colors.textMuted,
     flexShrink: 1,

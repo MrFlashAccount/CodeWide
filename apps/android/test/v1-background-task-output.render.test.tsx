@@ -77,7 +77,7 @@ function navigationRecorder() {
   return { navigation, opened };
 }
 
-it("reads a task's first page on press, then opens its output screen", async () => {
+it("opens a single report's output from its pill, without a list", async () => {
   const read = jest.fn(async () => page("first page\n", 11));
   const { navigation, opened } = navigationRecorder();
   const view = render(
@@ -92,15 +92,40 @@ it("reads a task's first page on press, then opens its output screen", async () 
   fireEvent(view.getByTestId("task-notification-line-row"), "layout", {
     nativeEvent: { layout: { height: 40, width: 400, x: 0, y: 0 } },
   });
-  fireEvent.press(view.getByTestId("task-notification-line"));
   await act(async () => {
-    fireEvent.press(view.getByTestId("task-notification-row"));
+    fireEvent.press(view.getByTestId("task-notification-line"));
   });
 
+  expect(view.queryByTestId("task-notification-list")).toBeNull();
   expect(read).toHaveBeenCalledWith("bd3cb8oli", 0);
   expect(opened).toHaveLength(1);
   expect(opened[0]).toMatchObject({ name: "Wait for CI", taskId: "bd3cb8oli" });
   expect(opened[0]?.first.text).toBe("first page\n");
+});
+
+it("shows why a single report's output could not open under its pill", async () => {
+  const read = jest.fn(async () => {
+    throw new Error("Task output is no longer available");
+  });
+  const { navigation, opened } = navigationRecorder();
+  const view = render(
+    <ConversationRouteNavigationContext.Provider value={navigation}>
+      <BackgroundTaskOutputHost read={read}>
+        <TaskNotificationLine reports={[report]} />
+      </BackgroundTaskOutputHost>
+    </ConversationRouteNavigationContext.Provider>,
+  );
+  fireEvent(view.getByTestId("task-notification-line-row"), "layout", {
+    nativeEvent: { layout: { height: 40, width: 400, x: 0, y: 0 } },
+  });
+  await act(async () => {
+    fireEvent.press(view.getByTestId("task-notification-line"));
+  });
+
+  expect(opened).toHaveLength(0);
+  expect(view.getByTestId("task-notification-error")).toHaveTextContent(
+    "Task output is no longer available",
+  );
 });
 
 it("shows the output in a read-only terminal, reads the rest by itself and closes", async () => {
@@ -117,6 +142,10 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
     />,
   );
   await act(async () => undefined);
+
+  // The title stays short; the command is pinned above its output.
+  expect(view.getByRole("header")).toHaveTextContent("Background command");
+  expect(view.getByTestId("background-task-command")).toHaveTextContent("$Wait for CI");
 
   // The next page follows without a button; each part is written once, with
   // the carriage returns a terminal needs.
