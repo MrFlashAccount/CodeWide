@@ -1,4 +1,4 @@
-import { render, within } from "@testing-library/react-native";
+import { fireEvent, render, within, type RenderResult } from "@testing-library/react-native";
 import { View } from "react-native";
 import { projectTimelineRows } from "../src/features/conversation/timeline/timelineRows";
 import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
@@ -148,6 +148,13 @@ function timelineSurface(turns: readonly TurnItem[]) {
   );
 }
 
+/** Lays out the rows that size an anchored line or chip by their container. */
+function layOut(view: RenderResult, testID: string, width: number) {
+  for (const row of view.getAllByTestId(testID)) {
+    fireEvent(row, "layout", { nativeEvent: { layout: { height: 40, width, x: 0, y: 0 } } });
+  }
+}
+
 function slicesOf(turns: readonly TurnItem[], turn: TurnItem) {
   return projectTimelineRows(turns, {
     enabled: true,
@@ -241,6 +248,7 @@ it("draws the reports that woke a turn as one line before its bubble", () => {
     answer("woken-answer", "Both are back."),
   ]);
   const view = render(timelineSurface([woken]));
+  layOut(view, "task-notification-line-row", 600);
 
   expect(view.getByTestId("task-notification-line")).toBeOnTheScreen();
   expect(view.getByText("2 agents")).toBeOnTheScreen();
@@ -260,9 +268,29 @@ it("draws a person's mid-turn report after the answer it arrived during", () => 
     answer("person-answer", "Deployed."),
   ]);
   const view = render(timelineSurface([person]));
+  layOut(view, "task-notification-line-row", 600);
 
   expect(view.getAllByTestId("task-notification-line")).toHaveLength(1);
   expect(view.getByText("Build")).toBeOnTheScreen();
+});
+
+it("fits a report line to its container, not the window, and reserves its height before", () => {
+  const woken = completedTurn("narrow", [
+    taskReport("long", "wake", "Reuse backend images, build the frontend and bring the stand up"),
+    answer("narrow-answer", "Done."),
+  ]);
+  const view = render(timelineSurface([woken]));
+
+  // A split layout gives the conversation part of the window: before layout
+  // the row holds the line's height without a width-dependent pill.
+  expect(view.queryByTestId("task-notification-line")).toBeNull();
+  expect(view.getByTestId("task-notification-line-row")).toHaveStyle({ minHeight: 40 });
+
+  layOut(view, "task-notification-line-row", 320);
+  expect(view.getByTestId("task-notification-line")).toHaveStyle({ width: 320 });
+
+  layOut(view, "task-notification-line-row", 280);
+  expect(view.getByTestId("task-notification-line")).toHaveStyle({ width: 280 });
 });
 
 const launch = (id: string, receiver: string, description: string) => ({
@@ -293,6 +321,7 @@ it("shows a finished turn's launched agents as one chip outside its history", ()
     oneCommandMetrics,
   );
   const view = render(timelineSurface([launcher]));
+  layOut(view, "launched-agents-row", 500);
 
   expect(view.getByTestId("launched-agents-chip")).toBeOnTheScreen();
   expect(view.getByText("2 agents started")).toBeOnTheScreen();

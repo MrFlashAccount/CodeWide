@@ -20,6 +20,7 @@ export const styles = StyleSheet.create({
   launchRow: {
     alignItems: "flex-start",
     marginBottom: spacing.xs,
+    width: "100%",
   },
   lineRow: {
     alignItems: "center",
@@ -72,5 +73,12 @@ export const styles = StyleSheet.create({
     minHeight: controlSize.compact,
     paddingLeft: spacing.xxs,
     paddingRight: spacing.sm,
+  },
+  /** An unmeasured row holds the pill's height so measuring it moves nothing. */
+  unmeasuredChip: {
+    minHeight: controlSize.compact,
+  },
+  unmeasuredLine: {
+    minHeight: controlSize.compact + spacing.xxs + spacing.xxs,
   },
 });

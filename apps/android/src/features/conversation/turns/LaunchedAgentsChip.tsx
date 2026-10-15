@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import { createElement, useContext } from "react";
-import { Pressable, View, useWindowDimensions } from "react-native";
+import { Pressable, View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import type { LaunchedAgent } from "../../../rendering/launchedAgents";
 import { colors, iconSize } from "../../../theme";
@@ -9,12 +9,10 @@ import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
 import { AnchoredMenuList } from "../../../ui/AnchoredMenuList";
 import { ContentMenu } from "../../../ui/ContentMenu";
 import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
+import { useLayoutWidth } from "../../../ui/useLayoutWidth";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "./AgentChip.styles";
 import { SubagentNavigationContext } from "./turnContexts";
-
-/** The chip sits inside a bubble, inside the timeline gutters and bubble padding. */
-const BUBBLE_SIDE_INSET = 96;
 
 /**
  * The subagents a finished turn started, as one chip in its bubble: the
@@ -29,7 +27,7 @@ export function LaunchedAgentsChip({
 }): React.JSX.Element | null {
   const [open, setOpen] = useRecyclingState(false);
   const menu = useAnchoredMenuSize();
-  const window = useWindowDimensions();
+  const layout = useLayoutWidth();
   const toggleOpen = useEvent(() => {
     setOpen((current) => !current);
   });
@@ -45,8 +43,18 @@ export function LaunchedAgentsChip({
       : `${String(agents.length)} agents started`;
   // WHY numeric: Compose measures the anchored trigger intrinsically (a
   // percentage bound collapses its label) and opens the menu at the anchor's
-  // start with the menu's width, so anchor and menu share one row width.
-  const rowWidth = window.width - BUBBLE_SIDE_INSET;
+  // start with the menu's width, so anchor and menu share the bubble's width.
+  // Until it is laid out, the row keeps the chip's height empty.
+  const rowWidth = layout.width;
+  if (rowWidth === null) {
+    return (
+      <View
+        onLayout={layout.onLayout}
+        style={[styles.launchRow, styles.unmeasuredChip]}
+        testID="launched-agents-row"
+      />
+    );
+  }
   const trigger = createElement(LaunchedAgentsTrigger, {
     agents,
     label,
@@ -66,7 +74,7 @@ export function LaunchedAgentsChip({
     </AnchoredMenuList>
   );
   return (
-    <View style={styles.launchRow}>
+    <View onLayout={layout.onLayout} style={styles.launchRow} testID="launched-agents-row">
       <ContentMenu
         align="start"
         onOpenChange={setOpen}
