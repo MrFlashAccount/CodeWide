@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 codewide-host-resolver = { path = "../../crates/host-resolver" }
 codewide-host-update = { path = "../../crates/host-update", features = ["linux-guardian"] }
+async-trait = { version = "0.1.89", optional = true }
 axum = { version = "0.8.4", features = ["ws"] }
 base64 = "0.22.1"
 clap = { version = "4.5.45", features = ["derive"], optional = true }
@@ -42,7 +43,7 @@ tempfile = "3.21.0"
 
 [features]
 default = ["cli"]
-cli = ["dep:clap", "dep:console", "dep:crossterm", "dep:ratatui"]
+cli = ["dep:async-trait", "dep:clap", "dep:console", "dep:crossterm", "dep:ratatui"]
 
 [[bin]]
 name = "codewide-relay"

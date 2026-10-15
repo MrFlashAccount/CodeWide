@@ -89,6 +89,12 @@ impl Relay {
         }))
     }
 
+    /// The Relay's updater; absent for a Relay started without one.
+    #[must_use]
+    pub fn updater(&self) -> Option<&RelayUpdater> {
+        self.0.updater.as_ref()
+    }
+
     #[must_use]
     pub fn enrollment(&self) -> Enrollment {
         self.0.enrollment.clone()

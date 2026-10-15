@@ -96,6 +96,22 @@ rewrites Companion's authoritative state. Existing flat installations report
 `manual_bootstrap_required` until the standalone installer establishes this
 layout and its pinned trust configuration.
 
+A managed installation can also update itself from its own terminal:
+
+```sh
+codewide-companion update           # install the newest release
+codewide-companion update --check   # only report whether one is available
+```
+
+The command talks to the running service through its private control socket
+with the administrator token, so it needs no paired phone. The terminal is the
+update's initiating device: it follows the restart and confirms the new
+Companion, which commits the update; if that fails, the guardian restores the
+previous generation. It exits non-zero unless the Companion ends on the newest
+release, and `--json` prints the result instead of progress lines. An
+interrupted run leaves the update to roll back at its reconnect deadline;
+running `update` again before then follows it and confirms it.
+
 ## Validation and release
 
 ```sh

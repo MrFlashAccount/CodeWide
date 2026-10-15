@@ -1,6 +1,7 @@
 //! Terminal workflow; network and state authority remain in the daemon.
 mod discovery;
 mod presentation;
+mod update;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use codewide_relay::{
@@ -25,7 +26,7 @@ enum Color {
 }
 
 #[derive(Parser)]
-#[command(name = "codewide-relay", version = env!("CODEWIDE_RELAY_VERSION"), about = "Connect your computers through an encrypted Relay", after_help = "Quick start:\n  codewide-relay           Open the Relay menu\n  codewide-relay pair      Connect a computer in 60 seconds\n  codewide-relay status    Show paired computers\n  codewide-relay serve     Run the server in the foreground\n\nWithout a terminal, the default command shows status. Existing noninteractive service commands with --port continue to start the server.")]
+#[command(name = "codewide-relay", version = env!("CODEWIDE_RELAY_VERSION"), about = "Connect your computers through an encrypted Relay", after_help = "Quick start:\n  codewide-relay           Open the Relay menu\n  codewide-relay pair      Connect a computer in 60 seconds\n  codewide-relay status    Show paired computers\n  codewide-relay update    Update the Relay to the newest release\n  codewide-relay serve     Run the server in the foreground\n\nWithout a terminal, the default command shows status. Existing noninteractive service commands with --port continue to start the server.")]
 struct Cli {
     /// Listener port (serve only; defaults to 8780).
     #[arg(long, global = true, value_parser = clap::value_parser!(u16).range(1..))]
@@ -74,6 +75,13 @@ enum Command {
     Revoke {
         #[arg(long)]
         route: String,
+    },
+    /// Update the running Relay to the newest release and confirm it
+    /// restarted healthy; otherwise the previous version is restored.
+    Update {
+        /// Only report whether a newer release is available.
+        #[arg(long)]
+        check: bool,
     },
     /// Print the state directory selected from the active service for the installer.
     #[command(hide = true)]
@@ -166,6 +174,15 @@ async fn execute(cli: &Cli) -> Result<ExitCode> {
         println!("{state}");
         return Ok(ExitCode::SUCCESS);
     }
+    if let Some(Command::Update { check }) = cli.command {
+        let control = update::RelayControl {
+            socket: target.state.join(SOCKET),
+            access_denied: discovery::access_denied(&target).to_string(),
+        };
+        return update::run(control, check, cli.json)
+            .await
+            .map(|()| ExitCode::SUCCESS);
+    }
     let mut socket = match UnixStream::connect(target.state.join(SOCKET)).await {
         Ok(socket) => socket,
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -200,6 +217,7 @@ async fn execute(cli: &Cli) -> Result<ExitCode> {
             Command::BootstrapInfo
             | Command::BuildInfo
             | Command::UpdateRun { .. }
+            | Command::Update { .. }
             | Command::Serve,
         ) => return Ok(ExitCode::SUCCESS),
     };

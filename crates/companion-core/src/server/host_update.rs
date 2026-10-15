@@ -1,13 +1,71 @@
 use crate::host_update::{
     ApplyHostUpdateCommand, ApplyHostUpdateRequest, GuardianError, GuardianErrorCode,
-    HostUpdateCapability, ReconnectReceipt,
+    HostUpdateCapability, LOCAL_ADMINISTRATOR_DEVICE_ID, ReconnectReceipt,
 };
+
+/// Who initiates a host update, and so must confirm the restarted Companion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UpdateInitiator {
+    /// A paired device's authenticated session over the transport.
+    DeviceSession,
+    /// The administrator at the host's terminal, over the private control
+    /// socket (`codewide-companion update`).
+    LocalAdministrator,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HostUpdateErrorBody {
     error: String,
     message: String,
+}
+
+/// The host update API for one initiator: the transport serves it to paired
+/// devices, the control socket to the administrator at the host's terminal.
+fn host_update_routes(initiator: UpdateInitiator) -> Router<AppState> {
+    Router::new()
+        .route(
+            "/v1/host-update",
+            get(move |State(state): State<AppState>, headers: HeaderMap| {
+                host_update_status(state, headers, initiator)
+            }),
+        )
+        .route(
+            "/v1/host-update/check",
+            post(move |State(state): State<AppState>, headers: HeaderMap| {
+                host_update_check(state, headers, initiator)
+            }),
+        )
+        .route(
+            "/v1/host-update/apply",
+            post(
+                move |State(state): State<AppState>,
+                      headers: HeaderMap,
+                      Json(request): Json<ApplyHostUpdateRequest>| {
+                    host_update_apply(state, headers, request, initiator)
+                },
+            ),
+        )
+        .route(
+            "/v1/host-update/operations/{operation_id}",
+            get(
+                move |State(state): State<AppState>,
+                      Path(operation_id): Path<String>,
+                      headers: HeaderMap| {
+                    host_update_operation(state, operation_id, headers, initiator)
+                },
+            ),
+        )
+        .route(
+            "/v1/host-update/operations/{operation_id}/reconnect",
+            post(
+                move |State(state): State<AppState>,
+                      Path(operation_id): Path<String>,
+                      headers: HeaderMap| {
+                    host_update_reconnect(state, operation_id, headers, initiator)
+                },
+            ),
+        )
 }
 
 async fn host_update_process_health(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -24,8 +82,12 @@ async fn host_update_process_health(State(state): State<AppState>, headers: Head
     Json(serde_json::json!({ "artifact": artifact, "ready": ready, "relayOnline": relay_online })).into_response()
 }
 
-async fn host_update_status(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if let Err(response) = host_update_actor(&state.authorization, &headers).await {
+async fn host_update_status(
+    state: AppState,
+    headers: HeaderMap,
+    initiator: UpdateInitiator,
+) -> Response {
+    if let Err(response) = host_update_actor(initiator, &state.authorization, &headers).await {
         return response;
     }
     let Some(guardian) = &state.host_update_guardian else {
@@ -37,8 +99,12 @@ async fn host_update_status(State(state): State<AppState>, headers: HeaderMap) -
         .map_or_else(host_update_error, |status| Json(status).into_response())
 }
 
-async fn host_update_check(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if let Err(response) = host_update_actor(&state.authorization, &headers).await {
+async fn host_update_check(
+    state: AppState,
+    headers: HeaderMap,
+    initiator: UpdateInitiator,
+) -> Response {
+    if let Err(response) = host_update_actor(initiator, &state.authorization, &headers).await {
         return response;
     }
     let Some(guardian) = &state.host_update_guardian else {
@@ -51,11 +117,12 @@ async fn host_update_check(State(state): State<AppState>, headers: HeaderMap) ->
 }
 
 async fn host_update_apply(
-    State(state): State<AppState>,
+    state: AppState,
     headers: HeaderMap,
-    Json(request): Json<ApplyHostUpdateRequest>,
+    request: ApplyHostUpdateRequest,
+    initiator: UpdateInitiator,
 ) -> Response {
-    let actor = match host_update_actor(&state.authorization, &headers).await {
+    let actor = match host_update_actor(initiator, &state.authorization, &headers).await {
         Ok(actor) => actor,
         Err(response) => return response,
     };
@@ -120,11 +187,12 @@ async fn host_update_apply_authorized(
 }
 
 async fn host_update_operation(
-    State(state): State<AppState>,
-    Path(operation_id): Path<String>,
+    state: AppState,
+    operation_id: String,
     headers: HeaderMap,
+    initiator: UpdateInitiator,
 ) -> Response {
-    if let Err(response) = host_update_actor(&state.authorization, &headers).await {
+    if let Err(response) = host_update_actor(initiator, &state.authorization, &headers).await {
         return response;
     }
     if !valid_opaque_id(&operation_id, 20, 128) {
@@ -144,11 +212,12 @@ async fn host_update_operation(
 }
 
 async fn host_update_reconnect(
-    State(state): State<AppState>,
-    Path(operation_id): Path<String>,
+    state: AppState,
+    operation_id: String,
     headers: HeaderMap,
+    initiator: UpdateInitiator,
 ) -> Response {
-    let actor = match host_update_actor(&state.authorization, &headers).await {
+    let actor = match host_update_actor(initiator, &state.authorization, &headers).await {
         Ok(actor) => actor,
         Err(response) => return response,
     };
@@ -172,6 +241,7 @@ async fn host_update_reconnect(
 }
 
 async fn host_update_actor(
+    initiator: UpdateInitiator,
     authorization: &Authorization,
     headers: &HeaderMap,
 ) -> Result<String, Response> {
@@ -182,6 +252,26 @@ async fn host_update_actor(
             "browser-origin requests are not accepted",
         ));
     }
+    match initiator {
+        UpdateInitiator::DeviceSession => device_session_actor(authorization, headers).await,
+        UpdateInitiator::LocalAdministrator => {
+            if authorize_admin(authorization, headers).await {
+                Ok(LOCAL_ADMINISTRATOR_DEVICE_ID.to_owned())
+            } else {
+                Err(host_update_json_error(
+                    StatusCode::UNAUTHORIZED,
+                    "admin_authorization_required",
+                    "the local administrator token is required",
+                ))
+            }
+        }
+    }
+}
+
+async fn device_session_actor(
+    authorization: &Authorization,
+    headers: &HeaderMap,
+) -> Result<String, Response> {
     let context = match authorization {
         Authorization::Registry(registry) => {
             registry.authorization_context(header_auth(headers)).await
@@ -437,6 +527,56 @@ mod host_update_server_tests {
     }
 
     #[tokio::test]
+    async fn the_control_socket_updates_as_the_local_administrator_only()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let authorization = Authorization::Registry(Arc::new(
+            DeviceRegistry::open(
+                Arc::from("admin-token-that-is-long-enough-for-tests"),
+                directory.path().join("devices.json"),
+                Some(60_000),
+            )
+            .await?,
+        ));
+        let bearer = |token: &str| -> Result<HeaderMap, header::InvalidHeaderValue> {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::AUTHORIZATION,
+                header::HeaderValue::from_str(&format!("Bearer {token}"))?,
+            );
+            Ok(headers)
+        };
+        let admin = bearer("admin-token-that-is-long-enough-for-tests")?;
+        // The terminal confirms its own update under one fixed id.
+        assert_eq!(
+            host_update_actor(UpdateInitiator::LocalAdministrator, &authorization, &admin)
+                .await
+                .expect("the administrator token is authorized"),
+            LOCAL_ADMINISTRATOR_DEVICE_ID
+        );
+        assert_eq!(
+            host_update_actor(
+                UpdateInitiator::LocalAdministrator,
+                &authorization,
+                &bearer("another-token-that-is-long-enough")?,
+            )
+            .await
+            .expect_err("only the administrator token is accepted")
+            .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        // The administrator is not a device session over the transport.
+        assert_eq!(
+            host_update_actor(UpdateInitiator::DeviceSession, &authorization, &admin)
+                .await
+                .expect_err("the transport requires a device session")
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn host_update_requires_a_non_browser_device_session()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
@@ -490,7 +630,7 @@ mod host_update_server_tests {
             header::HeaderValue::from_str(&format!("Bearer {}", session.session_token))?,
         );
         assert_eq!(
-            host_update_actor(&authorization, &session_headers)
+            host_update_actor(UpdateInitiator::DeviceSession, &authorization, &session_headers)
                 .await
                 .expect("session is authorized"),
             claimed.device_id
@@ -502,7 +642,7 @@ mod host_update_server_tests {
             header::HeaderValue::from_str(&device_bearer)?,
         );
         assert_eq!(
-            host_update_actor(&authorization, &capability_headers)
+            host_update_actor(UpdateInitiator::DeviceSession, &authorization, &capability_headers)
                 .await
                 .expect_err("device capability is not a session")
                 .status(),
@@ -511,7 +651,7 @@ mod host_update_server_tests {
 
         session_headers.insert(header::ORIGIN, header::HeaderValue::from_static("https://example.test"));
         assert_eq!(
-            host_update_actor(&authorization, &session_headers)
+            host_update_actor(UpdateInitiator::DeviceSession, &authorization, &session_headers)
                 .await
                 .expect_err("browser origin must be rejected")
                 .status(),

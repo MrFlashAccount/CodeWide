@@ -50,6 +50,15 @@ The routes exist only on the authenticated private V1 TLS surface:
 - `POST /v1/host-update/operations/{operationId}/reconnect` submits the fresh
   post-restart receipt from the initiating device.
 
+The Linux Companion's private control socket serves the same routes to the
+administrator token for `codewide-companion update`; the Relay's administration
+socket carries the equivalent `updateCheck`, `updateApply`, `updateOperation` and
+`updateReconnect` commands for `codewide-relay update`. Their actor is the fixed
+`local-administrator`, never a paired device id: the terminal is the initiating
+device, follows the operation across the restart and submits the reconnect
+receipt to the restarted process. The shared driver is
+`codewide_host_update::linux::local_update`.
+
 Browser `Origin` requests remain rejected. A short-lived authenticated device
 session supplies `initiatingDeviceId`; a caller cannot choose the actor. Apply
 returns `202`, `operationId`, and `Location` only after the guardian has

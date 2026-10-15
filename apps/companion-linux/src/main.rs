@@ -50,6 +50,7 @@ use tracing::{info, warn};
 
 mod local_control;
 mod provider_status;
+mod terminal_update;
 
 /// Opens the companion index with the Codex rollout tables, as the server does.
 fn open_rollout_index(path: &Path) -> Result<RolloutStore, Box<dyn std::error::Error>> {
@@ -177,6 +178,18 @@ enum Command {
         device_id: String,
         #[command(flatten)]
         control: ControlOptions,
+    },
+    /// Updates the running Companion to the newest release and confirms it
+    /// restarted healthy; otherwise the previous version is restored.
+    Update {
+        #[command(flatten)]
+        control: ControlOptions,
+        /// Only report whether a newer release is available.
+        #[arg(long, default_value_t = false)]
+        check: bool,
+        /// Print the result as JSON instead of progress lines.
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     Relay(RelayOptions),
     Telemetry(Box<TelemetryOptions>),
@@ -549,6 +562,28 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             );
             let body = control_request(reqwest::Method::DELETE, &path, None, control).await?;
             println!("{body}");
+        }
+        Command::Update {
+            control,
+            check,
+            json,
+        } => {
+            let endpoint = control
+                .control_endpoint
+                .unwrap_or_else(default_control_endpoint);
+            let token_file = control
+                .token_file
+                .unwrap_or_else(default_administrator_token_file);
+            let administrator_token = read_administrator_token(&token_file).await?;
+            terminal_update::run(
+                terminal_update::CompanionControl {
+                    endpoint,
+                    administrator_token,
+                },
+                check,
+                json,
+            )
+            .await?;
         }
         Command::Relay(options) => match options.command {
             RelayCommand::Pair {

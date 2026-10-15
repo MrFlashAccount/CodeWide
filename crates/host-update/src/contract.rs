@@ -602,6 +602,10 @@ pub struct ApplyHostUpdateAccepted {
     pub phase: HostUpdatePhase,
 }
 
+/// The initiating device of an update started from the host's own terminal
+/// through its private control channel. Never a paired device's id.
+pub const LOCAL_ADMINISTRATOR_DEVICE_ID: &str = "local-administrator";
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReconnectReceipt {
