@@ -9,8 +9,9 @@ use tokio::sync::{mpsc, watch};
 
 use super::{
     model::{
-        AgentThread, AppThreadId, CapabilityInvokeParams, CapabilitySet, ForkBoundary,
-        ModelCatalog, PermissionProfileCatalog, ProviderDescriptor, ProviderId, ProviderRateLimits,
+        AgentThread, AppThreadId, BackgroundTaskReadParams, BackgroundTaskReadResult,
+        BackgroundTaskStatus, CapabilityInvokeParams, CapabilitySet, ForkBoundary, ModelCatalog,
+        PermissionProfileCatalog, ProviderDescriptor, ProviderId, ProviderRateLimits,
         RequestRespondParams, RpcError, SortDirection, ThreadCreateParams, ThreadForkParams,
         ThreadListParams, ThreadListResult, ThreadOrigin, ThreadReadResult, ThreadSettings,
         ThreadSortKey, ThreadStatus, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams,
@@ -290,6 +291,24 @@ impl AgentProvider for FakeProvider {
 
     async fn thread_compact(&self, _: &AppThreadId) -> Result<(), ProviderError> {
         Err(unsupported())
+    }
+
+    /// Answers a four-byte page `"page"` of a ten-byte running task.
+    async fn thread_background_task_read(
+        &self,
+        params: BackgroundTaskReadParams,
+    ) -> Result<BackgroundTaskReadResult, ProviderError> {
+        self.record(&format!(
+            "thread.backgroundTask.read {} {} {} {}",
+            params.app_thread_id, params.task_id, params.offset, params.limit
+        ));
+        Ok(BackgroundTaskReadResult {
+            task_id: params.task_id,
+            status: BackgroundTaskStatus::Running,
+            text: "page".into(),
+            next_offset: Some(params.offset + 4),
+            size_bytes: 10,
+        })
     }
 
     async fn turn_start(&self, _: TurnStartParams) -> Result<TurnStartResult, ProviderError> {

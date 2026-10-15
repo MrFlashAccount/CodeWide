@@ -3,7 +3,6 @@ import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { connectionId, normalizeThreadItem } from "@codewide/domain";
 import { toRenderBlock, type RenderBlock } from "@codewide/renderers";
 import { projectedQuestionHistory, projectedTurnMetadata } from "@codewide/sync-client";
-import { turnLaunchedAgents } from "../../../rendering/launchedAgents";
 import { turnTaskNotifications } from "../../../rendering/taskNotifications";
 import { selectTurnRenderWindow } from "../../../rendering/thread-render-window";
 import type { TurnSequencePart } from "../../../rendering/turn-sequence";
@@ -497,7 +496,6 @@ function prepareTurnPresentation(turn: TurnRow) {
     isCompactionOnly,
     isEmptyWake,
     latestAgentBlock,
-    launchedAgents: turnLaunchedAgents(rawTurn),
     leadCompactionBlocks,
     liveMarkdownProjections,
     preTurnBlocks,

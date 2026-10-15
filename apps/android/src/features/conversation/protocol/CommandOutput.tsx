@@ -28,6 +28,7 @@ import { Card } from "../turns/Card";
 import { CopyButton } from "../turns/MessageActionRail";
 import { ActiveToolCallContext, TurnActivityMetricsContext } from "../turns/turnContexts";
 import { styles } from "./CommandOutput.styles";
+import { BackgroundTaskOutputButton } from "./BackgroundTaskOutputButton";
 import { ProtocolBody, TOOL_RESULT_MAX_HEIGHT } from "./ToolContent";
 
 export function CommandExecutionProtocolBlock({
@@ -69,6 +70,7 @@ export function CommandExecutionProtocolBlock({
         running={running}
         {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       />
+      <BackgroundTaskOutputButton block={block} name={commandActivityTitle(command)} />
       {block.durationMs !== null && (
         <Text style={styles.turnMetaText}>{formatDuration(block.durationMs)}</Text>
       )}

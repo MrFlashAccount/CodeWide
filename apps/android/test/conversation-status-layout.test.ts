@@ -4,20 +4,25 @@ import { shouldShowConversationStatus } from "../src/features/conversation/conve
 
 describe("conversation status visibility", () => {
   it.each([
-    { expected: true, hasGoal: true, hasLiveTurnPlan: false },
-    { expected: true, hasGoal: false, hasLiveTurnPlan: true },
-    { expected: true, hasGoal: true, hasLiveTurnPlan: true },
-    { expected: false, hasGoal: false, hasLiveTurnPlan: false },
-  ])("shows independent goal and live-plan contents", ({ expected, hasGoal, hasLiveTurnPlan }) => {
-    expect(
-      shouldShowConversationStatus({
-        hasGoal,
-        hasLiveTurnPlan,
-        searchActive: false,
-        timelinePositioned: true,
-      }),
-    ).toBe(expected);
-  });
+    { expected: true, hasGoal: true, hasLiveTurnPlan: false, hasWorkingAgents: false },
+    { expected: true, hasGoal: false, hasLiveTurnPlan: true, hasWorkingAgents: false },
+    { expected: true, hasGoal: false, hasLiveTurnPlan: false, hasWorkingAgents: true },
+    { expected: true, hasGoal: true, hasLiveTurnPlan: true, hasWorkingAgents: true },
+    { expected: false, hasGoal: false, hasLiveTurnPlan: false, hasWorkingAgents: false },
+  ])(
+    "shows independent goal, live-plan and working-agent contents",
+    ({ expected, hasGoal, hasLiveTurnPlan, hasWorkingAgents }) => {
+      expect(
+        shouldShowConversationStatus({
+          hasGoal,
+          hasLiveTurnPlan,
+          hasWorkingAgents,
+          searchActive: false,
+          timelinePositioned: true,
+        }),
+      ).toBe(expected);
+    },
+  );
 
   it.each([
     { searchActive: true, timelinePositioned: true },
@@ -29,6 +34,7 @@ describe("conversation status visibility", () => {
         shouldShowConversationStatus({
           hasGoal: true,
           hasLiveTurnPlan: true,
+          hasWorkingAgents: true,
           searchActive,
           timelinePositioned,
         }),

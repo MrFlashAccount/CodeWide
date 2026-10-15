@@ -169,6 +169,23 @@ export interface ClientToolsParam {
   readonly clientTools?: readonly ClientToolSpec[];
 }
 
+/** The largest page of `thread.backgroundTask.read`, in bytes. */
+export const MAX_BACKGROUND_TASK_PAGE_BYTES = 65_536;
+
+/**
+ * A background task's state as its thread knows it: the status of its final
+ * report, `running` while the provider's live session knows it started and it
+ * has not reported, else `unknown`.
+ */
+export type BackgroundTaskStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "killed"
+  | "stopped"
+  | "lost"
+  | "unknown";
+
 export type TurnStartResult =
   | { readonly turnId: TurnId; readonly type: "started" }
   | { readonly activeTurnId: TurnId; readonly type: "busy" };
@@ -239,6 +256,36 @@ export interface OperationMap {
       readonly response: RuntimeResponse;
     };
     readonly result: Record<string, never>;
+  };
+  /**
+   * Optional (`threads.backgroundTaskOutput`). One page of the output of a
+   * background task the thread itself started or was reported (a `command`
+   * item's `backgroundTaskId`, a `taskNotification`'s `taskId`); the caller
+   * never names a path. `text` is UTF-8 from byte `offset`, at most `limit`
+   * bytes (capped at `MAX_BACKGROUND_TASK_PAGE_BYTES`) and cut on a character
+   * boundary (an offset inside a character starts at the next one); a page
+   * makes progress even when one character exceeds `limit`. `nextOffset` is
+   * the exact byte after `text`, `null` when the page reaches the end of the
+   * file as it was read (`sizeBytes`); a running task's reader continues from
+   * `sizeBytes`. Errors: `-32602` for a malformed task id; `-32074
+   * "background task not found: <taskId>"` for a task the thread never
+   * started or reported; `-32074 "background task output is unavailable:
+   * <taskId>"` when its output file is gone.
+   */
+  readonly "thread.backgroundTask.read": {
+    readonly params: {
+      readonly appThreadId: AppThreadId;
+      readonly limit: number;
+      readonly offset: number;
+      readonly taskId: string;
+    };
+    readonly result: {
+      readonly nextOffset: number | null;
+      readonly sizeBytes: number;
+      readonly status: BackgroundTaskStatus;
+      readonly taskId: string;
+      readonly text: string;
+    };
   };
   readonly "thread.compact": {
     readonly params: { readonly appThreadId: AppThreadId };
@@ -358,6 +405,7 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   "thread.update",
   "thread.owns",
   "thread.compact",
+  "thread.backgroundTask.read",
   "turn.start",
   "turn.steer",
   "turn.interrupt",

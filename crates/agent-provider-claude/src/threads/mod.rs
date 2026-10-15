@@ -12,6 +12,8 @@
 //!
 //! - `service.rs` — construction, startup, resolution, projections, adoption;
 //! - `thread_ops.rs` / `turn_ops.rs` — the operations;
+//! - `background_task_ops.rs` — a thread's sessions and live knowledge for
+//!   a background task output read;
 //! - `outputs.rs` — the ordered output stream;
 //! - `registry.rs` — session actors and the session chain index;
 //! - `projection.rs` — `AgentThread` and list rows (pure);
@@ -21,6 +23,7 @@
 //! - `startup.rs` — loading and finalizing turns left in progress;
 //! - `errors.rs` — protocol errors.
 
+mod background_task_ops;
 mod errors;
 pub mod history;
 mod live_prompts;
@@ -37,6 +40,7 @@ mod turn_ops;
 #[cfg(test)]
 mod tests;
 
+pub use background_task_ops::BackgroundTaskThread;
 pub use errors::OPEN_ELSEWHERE_MESSAGE;
 pub use outputs::ServiceOutputs;
 pub use service::{FenceReceiver, ServiceDeps, ServiceOutput, ThreadService};

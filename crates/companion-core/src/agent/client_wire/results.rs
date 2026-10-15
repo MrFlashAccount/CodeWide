@@ -9,7 +9,8 @@ use super::{
     items, settings,
 };
 use crate::agent::model::{
-    AgentTurn, ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ItemsView, SortDirection, ThreadChange,
+    AgentTurn, BackgroundTaskReadParams, BackgroundTaskReadResult, BackgroundTaskStatus,
+    ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ItemsView, SortDirection, ThreadChange,
     ThreadTurnsParams, ThreadUpdateParams, TurnInterruptParams, TurnStartParams, TurnStartResult,
     TurnSteerParams,
 };
@@ -60,6 +61,31 @@ async fn all_turns(target: &Target) -> Result<Vec<AgentTurn>, RpcFailure> {
         .await
         .map_err(|error| failure(&error))?;
     Ok(page.turns)
+}
+
+const fn background_task_status(status: BackgroundTaskStatus) -> &'static str {
+    match status {
+        BackgroundTaskStatus::Running => "running",
+        BackgroundTaskStatus::Completed => "completed",
+        BackgroundTaskStatus::Failed => "failed",
+        BackgroundTaskStatus::Killed => "killed",
+        BackgroundTaskStatus::Stopped => "stopped",
+        BackgroundTaskStatus::Lost => "lost",
+        BackgroundTaskStatus::Unknown => "unknown",
+    }
+}
+
+/// The `companion/thread/backgroundTask/read` result: one page of a
+/// background task's output (`nextOffset` null at the end of the file).
+#[must_use]
+pub fn background_task_page(read: &BackgroundTaskReadResult) -> Value {
+    json!({
+        "taskId": read.task_id,
+        "status": background_task_status(read.status),
+        "text": read.text,
+        "nextOffset": read.next_offset,
+        "sizeBytes": read.size_bytes,
+    })
 }
 
 fn projected_thread(
@@ -191,6 +217,20 @@ pub async fn execute(target: &Target, method: &str, params: &Value) -> Result<Va
             update(target, decode::settings_change(params)).await?;
             Ok(json!({}))
         }
+        decode::BACKGROUND_TASK_READ_METHOD => {
+            let page = decode::background_task_page(params)
+                .map_err(|message| RpcFailure::new(ERROR_INVALID_PARAMS, message))?;
+            let read = provider
+                .thread_background_task_read(BackgroundTaskReadParams {
+                    app_thread_id: thread_id,
+                    task_id: page.task_id,
+                    offset: page.offset,
+                    limit: page.limit,
+                })
+                .await
+                .map_err(|error| failure(&error))?;
+            Ok(background_task_page(&read))
+        }
         "thread/compact/start" => {
             provider
                 .thread_compact(&thread_id)
@@ -270,4 +310,77 @@ async fn update(
         .await
         .map(|result| result.thread)
         .map_err(|error| failure(&error))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::agent::{
+        model::{AppThreadId, CapabilitySet, StartWhileActiveMode},
+        provider::AgentProvider,
+        testing::FakeProvider,
+    };
+
+    fn target(provider: Arc<FakeProvider>) -> Target {
+        let dynamic: Arc<dyn AgentProvider> = provider;
+        Target {
+            wire: WireProvider {
+                descriptor: dynamic.descriptor(),
+                capabilities: dynamic.capabilities(),
+                primary_id: crate::agent::model::ProviderId::from_static("codex"),
+                multi_provider: true,
+            },
+            provider: dynamic,
+            thread_id: AppThreadId::from_static("thread-1"),
+            provisional: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_background_task_read_is_one_neutral_page_in_camel_case()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let provider =
+            FakeProvider::new("claude", CapabilitySet::none(StartWhileActiveMode::Busy)).into_arc();
+        let target = target(provider.clone());
+        let page = execute(
+            &target,
+            decode::BACKGROUND_TASK_READ_METHOD,
+            &json!({"threadId": "thread-1", "taskId": "bd3cb8oli", "offset": 6}),
+        )
+        .await
+        .map_err(|failure| failure.message)?;
+        assert_eq!(
+            page,
+            json!({
+                "taskId": "bd3cb8oli",
+                "status": "running",
+                "text": "page",
+                "nextOffset": 10,
+                "sizeBytes": 10,
+            })
+        );
+        assert_eq!(
+            provider.calls(),
+            ["thread.backgroundTask.read thread-1 bd3cb8oli 6 65536"]
+        );
+
+        let invalid = execute(
+            &target,
+            decode::BACKGROUND_TASK_READ_METHOD,
+            &json!({"threadId": "thread-1", "offset": 6}),
+        )
+        .await;
+        assert_eq!(
+            invalid.map_err(|failure| (failure.code, failure.message)),
+            Err((ERROR_INVALID_PARAMS, "taskId is required".to_owned()))
+        );
+        assert_eq!(
+            provider.calls().len(),
+            1,
+            "an invalid page never reaches the provider"
+        );
+        Ok(())
+    }
 }

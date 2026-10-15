@@ -24,6 +24,11 @@ pub const ERROR_INVALID_PARAMS: i64 = -32_602;
 pub const ERROR_PROVIDER_DISABLED: i64 = -32_070;
 /// The thread's provider does not declare the capability the call needs.
 pub const ERROR_CAPABILITY_UNSUPPORTED: i64 = -32_072;
+/// `thread.backgroundTask.read` of a task the thread never started or
+/// reported, or whose output file is gone or unreadable
+/// ([`background_task_not_found_message`],
+/// [`background_task_output_unavailable_message`]).
+pub const ERROR_BACKGROUND_TASK_UNAVAILABLE: i64 = -32_074;
 
 pub const EXPECTED_TURN_NOT_ACTIVE: &str = "expected turn is not active";
 
@@ -35,6 +40,19 @@ pub fn thread_not_found_message(app_thread_id: &str) -> String {
 #[must_use]
 pub fn capability_unsupported_message(capability: &str) -> String {
     format!("{capability} is not supported by this thread's agent")
+}
+
+/// The thread neither started nor reported the background task.
+#[must_use]
+pub fn background_task_not_found_message(task_id: &str) -> String {
+    format!("background task not found: {task_id}")
+}
+
+/// The thread started the background task, but its output file is gone or
+/// cannot be read.
+#[must_use]
+pub fn background_task_output_unavailable_message(task_id: &str) -> String {
+    format!("background task output is unavailable: {task_id}")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -459,6 +477,50 @@ pub struct RequestRespondParams {
     pub response: RuntimeResponse,
 }
 
+/// The largest page of `thread.backgroundTask.read`, in bytes.
+pub const MAX_BACKGROUND_TASK_PAGE_BYTES: u32 = 65_536;
+
+/// `thread.backgroundTask.read` (optional, `threads.backgroundTaskOutput`):
+/// one page of a background task's output, `limit` bytes at most (capped at
+/// [`MAX_BACKGROUND_TASK_PAGE_BYTES`]) from byte `offset`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundTaskReadParams {
+    pub app_thread_id: AppThreadId,
+    pub task_id: String,
+    pub offset: u64,
+    pub limit: u32,
+}
+
+/// A background task's state as its thread knows it: the status of its
+/// final report, `Running` while the live session knows it started and it
+/// has not reported, else `Unknown`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BackgroundTaskStatus {
+    Running,
+    Completed,
+    Failed,
+    Killed,
+    Stopped,
+    Lost,
+    Unknown,
+}
+
+/// One page of a background task's output. `text` is UTF-8 starting at the
+/// requested offset and ending on a character boundary; `next_offset` is the
+/// byte after it, `None` when the page reaches the end of the file as it was
+/// when read (`size_bytes`).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundTaskReadResult {
+    pub task_id: String,
+    pub status: BackgroundTaskStatus,
+    pub text: String,
+    pub next_offset: Option<u64>,
+    pub size_bytes: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityInvokeParams {
     pub capability: String,
@@ -497,6 +559,8 @@ pub enum OperationCall {
     ThreadOwns(ThreadRef),
     #[serde(rename = "thread.compact")]
     ThreadCompact(ThreadRef),
+    #[serde(rename = "thread.backgroundTask.read")]
+    ThreadBackgroundTaskRead(BackgroundTaskReadParams),
     #[serde(rename = "turn.start")]
     TurnStart(TurnStartParams),
     #[serde(rename = "turn.steer")]

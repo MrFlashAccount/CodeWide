@@ -1,0 +1,86 @@
+{
+  "description": "background task output: a command item names the background task it started, thread.backgroundTask.read pages its output while it runs, and a task the thread never started is a typed error",
+  "messages": [
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-7a8e-7b2c-9d1e-000000000201",
+          "item": {
+            "type": "command",
+            "itemId": "toolu_01Rs6JNNf5SqHRxpq5DeJHrW",
+            "command": "npm test",
+            "cwd": "/home/dev/project",
+            "status": "completed",
+            "output": "Command running in background with ID: bd3cb8oli.",
+            "exitCode": 0,
+            "durationMs": 41,
+            "backgroundTaskId": "bd3cb8oli"
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": "codewide-stdio:40",
+        "method": "thread.backgroundTask.read",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "taskId": "bd3cb8oli",
+          "offset": 0,
+          "limit": 65536
+        }
+      }
+    },
+    {
+      "respondsTo": "thread.backgroundTask.read",
+      "message": {
+        "id": "codewide-stdio:40",
+        "result": {
+          "taskId": "bd3cb8oli",
+          "status": "running",
+          "text": "PASS src/a.test.ts\n",
+          "nextOffset": null,
+          "sizeBytes": 19
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": "codewide-stdio:41",
+        "method": "thread.backgroundTask.read",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "taskId": "bd3cb8oli",
+          "offset": 0,
+          "limit": 8
+        }
+      }
+    },
+    {
+      "respondsTo": "thread.backgroundTask.read",
+      "message": {
+        "id": "codewide-stdio:41",
+        "result": {
+          "taskId": "bd3cb8oli",
+          "status": "completed",
+          "text": "PASS src",
+          "nextOffset": 8,
+          "sizeBytes": 19
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "id": "codewide-stdio:42",
+        "error": { "code": -32074, "message": "background task not found: bother01", "data": null }
+      }
+    }
+  ]
+}

@@ -51,11 +51,11 @@ function Timeline({
       draftConnectionId={null}
       draftThreadId={null}
       fullscreenCovered={false}
-      goalContent={null}
       historyActivityModel={null}
       historyActivityResourceId={null}
       historyViewport={COMPLETE_STATIC_THREAD_HISTORY}
       latestUnreadReceiptKey={null}
+      liveStatusContent={null}
       liveStatusVisible={liveStatusVisible}
       liveTurnPlan={null}
       messageListState={state}

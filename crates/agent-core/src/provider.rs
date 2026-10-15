@@ -25,7 +25,8 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::model::{
-    AgentEvent, AgentThread, AppThreadId, CapabilityInvokeParams, CapabilitySet, ClientToolSpec,
+    AgentEvent, AgentThread, AppThreadId, BackgroundTaskReadParams, BackgroundTaskReadResult,
+    Capability, CapabilityInvokeParams, CapabilitySet, ClientToolSpec,
     ERROR_CAPABILITY_UNSUPPORTED, ModelCatalog, PermissionProfileCatalog, ProviderDescriptor,
     ProviderId, ProviderRateLimits, RequestRespondParams, RpcError, ThreadCreateParams,
     ThreadForkParams, ThreadListParams, ThreadListResult, ThreadReadResult, ThreadTurnsParams,
@@ -280,6 +281,23 @@ pub trait AgentProvider: Send + Sync {
         Err(ProviderError::Rejected(RpcError::new(
             ERROR_CAPABILITY_UNSUPPORTED,
             crate::model::capability_unsupported_message("threads.fork"),
+        )))
+    }
+
+    /// One page of a background task's output (`thread.backgroundTask.read`).
+    /// Only providers declaring `threads.backgroundTaskOutput` implement it.
+    /// A provider reads only the output of a task the thread itself started
+    /// or reported, never a path a caller names.
+    async fn thread_background_task_read(
+        &self,
+        params: BackgroundTaskReadParams,
+    ) -> Result<BackgroundTaskReadResult, ProviderError> {
+        let _ = params;
+        Err(ProviderError::Rejected(RpcError::new(
+            ERROR_CAPABILITY_UNSUPPORTED,
+            crate::model::capability_unsupported_message(
+                Capability::ThreadsBackgroundTaskOutput.name(),
+            ),
         )))
     }
 

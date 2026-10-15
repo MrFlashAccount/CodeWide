@@ -28,11 +28,11 @@ export function ConversationTimelineSurface({
   draftConnectionId,
   draftThreadId,
   fullscreenCovered,
-  goalContent,
   historyActivityModel,
   historyActivityResourceId,
   historyViewport,
   latestUnreadReceiptKey,
+  liveStatusContent,
   liveStatusVisible,
   liveTurnPlan,
   messageListState,
@@ -142,7 +142,7 @@ export function ConversationTimelineSurface({
           testID="live-plan-float"
         >
           {liveTurnPlan === null ? null : <LiveTurnPlanMenu plan={liveTurnPlan} />}
-          {goalContent}
+          {liveStatusContent}
         </View>
       )}
     </View>

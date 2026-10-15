@@ -1,7 +1,20 @@
 import { StyleSheet } from "react-native";
 import { colors, controlSize, spacing, typeScale, typeTracking, typeWeight } from "../../../theme";
 
+const PRESSED_OPACITY = 0.72;
+
 export const styles = StyleSheet.create({
+  backgroundTaskButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    gap: spacing.xs,
+    minHeight: controlSize.compact,
+  },
+  backgroundTaskLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   commandActivitySection: {
     gap: spacing.xxs,
     maxWidth: "100%",
@@ -39,6 +52,9 @@ export const styles = StyleSheet.create({
     color: colors.textDim,
     ...typeScale.caption,
     fontVariant: ["tabular-nums"],
+  },
+  pressed: {
+    opacity: PRESSED_OPACITY,
   },
   turnMetaText: {
     color: colors.textMuted,

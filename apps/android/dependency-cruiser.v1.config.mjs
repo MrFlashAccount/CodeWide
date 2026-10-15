@@ -91,6 +91,8 @@ const featurePublicModules = {
     "RouteSubagentWorkspace",
     "conversationAgentCapabilities",
     "subagentConversationContract",
+    "workingSubagents",
+    "WorkingSubagentsMenu",
   ],
   terminal: [
     "terminalActions",

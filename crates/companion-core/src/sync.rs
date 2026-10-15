@@ -3182,6 +3182,7 @@ fn rpc_is_known_read(method: &str) -> bool {
             | "companion/thread/pins/list"
             | "companion/thread/history/after"
             | "companion/thread/history/before"
+            | "companion/thread/backgroundTask/read"
             | "companion/threadSubagents/read"
             | "config/read"
             | "fs/readDirectory"
@@ -3226,6 +3227,7 @@ fn rpc_requires_ordered_lane(method: &str) -> bool {
                 method,
                 "companion/accountPool/list"
                     | "companion/project/list"
+                    | "companion/thread/backgroundTask/read"
                     | "companion/queue/list"
                     | "companion/threadAttachments/read"
                     | "companion/threadChange/read"
@@ -3503,6 +3505,10 @@ mod tests {
     fn scheduling_distinguishes_known_reads_from_possible_writes() {
         assert!(rpc_is_known_read("thread/list"));
         assert!(rpc_is_known_read("companion/threadSubagents/read"));
+        assert!(rpc_is_known_read("companion/thread/backgroundTask/read"));
+        assert!(!rpc_requires_ordered_lane(
+            "companion/thread/backgroundTask/read"
+        ));
         assert!(rpc_is_known_read("fs/readDirectory"));
         assert!(rpc_is_known_read("config/read"));
         assert!(!rpc_is_known_read("turn/start"));

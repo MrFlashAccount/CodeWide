@@ -57,6 +57,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "companion-host",
+ "libc",
  "notify",
  "rand 0.9.5",
  "redb",

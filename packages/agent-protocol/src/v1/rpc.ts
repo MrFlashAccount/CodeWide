@@ -86,9 +86,16 @@ const INVALID_PARAMS = -32_602;
 const INTERNAL_ERROR = -32_603;
 const PROVIDER_DISABLED = -32_070;
 const CAPABILITY_UNSUPPORTED = -32_072;
+const BACKGROUND_TASK_UNAVAILABLE = -32_074;
 
 /** JSON-RPC error codes shared by the companion and providers. */
 export interface ErrorCodes {
+  /**
+   * `thread.backgroundTask.read`: the thread neither started nor reported the
+   * task (`"background task not found: <taskId>"`), or its output file is gone
+   * or unreadable (`"background task output is unavailable: <taskId>"`).
+   */
+  readonly backgroundTaskUnavailable: number;
   /** The thread's provider does not declare the capability the call needs. */
   readonly capabilityUnsupported: number;
   readonly internal: number;
@@ -102,6 +109,7 @@ export interface ErrorCodes {
 
 /** Error codes shared by the companion and providers. */
 export const ERROR_CODES: ErrorCodes = {
+  backgroundTaskUnavailable: BACKGROUND_TASK_UNAVAILABLE,
   capabilityUnsupported: CAPABILITY_UNSUPPORTED,
   internal: INTERNAL_ERROR,
   invalidParams: INVALID_PARAMS,
@@ -122,4 +130,12 @@ export const EXPECTED_TURN_NOT_ACTIVE = "expected turn is not active" as const;
 
 export function capabilityUnsupportedMessage(capability: string): string {
   return `${capability} is not supported by this thread's agent`;
+}
+
+export function backgroundTaskNotFoundMessage(taskId: string): string {
+  return `background task not found: ${taskId}`;
+}
+
+export function backgroundTaskOutputUnavailableMessage(taskId: string): string {
+  return `background task output is unavailable: ${taskId}`;
 }

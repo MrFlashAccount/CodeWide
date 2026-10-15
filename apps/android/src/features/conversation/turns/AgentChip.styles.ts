@@ -8,18 +8,11 @@ export const styles = StyleSheet.create({
   anchorRow: {
     alignItems: "center",
   },
-  anchorRowStart: {
-    alignItems: "flex-start",
-  },
   label: {
     color: colors.text,
     flexShrink: 1,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
-  },
-  launchRow: {
-    alignItems: "flex-start",
-    marginBottom: spacing.xs,
   },
   lineRow: {
     alignItems: "center",

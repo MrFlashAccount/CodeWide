@@ -27,7 +27,6 @@ export type CreateConversationTimelineContentProps = {
   cwd: Exclude<ConversationSurfaceCapabilities["cwd"], undefined>;
   draftConnectionId: string | null;
   draftThreadId: string | null;
-  goalContent: ReactNode;
   historyActivityModel: Exclude<MainThreadReadCapabilities["historyActivityModel"], undefined>;
   historyActivityResourceId: Exclude<
     MainThreadReadCapabilities["historyActivityResourceId"],
@@ -36,6 +35,7 @@ export type CreateConversationTimelineContentProps = {
   historyViewport: Exclude<MainThreadReadCapabilities["historyViewport"], undefined>;
   inlineQueueBinding: ReturnType<typeof projectInlineQueue>;
   inlineQueueMaxHeight: number;
+  liveStatusContent: ReactNode;
   liveStatusVisible: boolean;
   messageListState: Exclude<MainThreadReadCapabilities["messageListState"], undefined>;
   overlayScrollStateBinding: ReturnType<typeof useOverlayScrollState>;

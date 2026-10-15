@@ -5,7 +5,6 @@ import type { TimelineItem } from "../src/features/conversation/timeline/timelin
 import { reportLineSummary } from "../src/features/conversation/turns/taskNotificationPresentation";
 import { projectTurnPresentation } from "../src/features/conversation/turns/turnProjection";
 import { compactCompletedTurnForStorage } from "../src/data/thread-detail-projection";
-import { turnLaunchedAgents } from "../src/rendering/launchedAgents";
 import { turnTaskNotifications } from "../src/rendering/taskNotifications";
 import { selectTurnRenderWindow } from "../src/rendering/thread-render-window";
 
@@ -164,43 +163,6 @@ describe("task notification reports", () => {
   });
 });
 
-describe("launched agents", () => {
-  it("names a launch by its description, else its path, else its prompt", () => {
-    const launches = turnLaunchedAgents(
-      turn("launcher", [
-        {
-          codewideDescription: "Map sources",
-          id: "a",
-          receiverThreadIds: ["t1"],
-          tool: "spawnAgent",
-          type: "collabAgentToolCall",
-        },
-        {
-          agentPath: "/root/code_reviewer",
-          id: "b",
-          receiverThreadIds: ["t2"],
-          tool: "spawnAgent",
-          type: "collabAgentToolCall",
-        },
-        {
-          id: "c",
-          prompt: "Check the build\nthen report",
-          receiverThreadIds: [],
-          tool: "spawnAgent",
-          type: "collabAgentToolCall",
-        },
-        { id: "d", receiverThreadIds: ["t3"], tool: "wait", type: "collabAgentToolCall" },
-      ]).turn,
-    );
-
-    expect(launches.map((agent) => [agent.name, agent.agentThreadId])).toEqual([
-      ["Map sources", "t1"],
-      ["code reviewer", "t2"],
-      ["Check the build", null],
-    ]);
-  });
-});
-
 describe("wake lines and stored turns", () => {
   it("keeps the first wake's row when later wakes join its line", () => {
     const first = turn("first", [report("a")]);
@@ -234,23 +196,14 @@ describe("wake lines and stored turns", () => {
     expect(projectTimelineRows([unknown], options).length).toBeGreaterThan(0);
   });
 
-  it("keeps reports and subagent launches when a finished turn is stored compactly", () => {
-    const launch = {
-      agentsStates: {},
-      codewideDescription: "Map sources",
-      id: "launch",
-      receiverThreadIds: ["t1"],
-      tool: "spawnAgent",
-      type: "collabAgentToolCall",
-    };
+  it("keeps reports when a finished turn is stored compactly", () => {
     const command = { command: "ls", id: "command", status: "completed", type: "commandExecution" };
     const stored = compactCompletedTurnForStorage(
-      turn("wake", [report("a"), launch, command, answer("wake")]).turn,
+      turn("wake", [report("a"), command, answer("wake")]).turn,
     );
 
     expect(stored.itemsView).toBe("summary");
     expect(turnTaskNotifications(stored).wake.map((entry) => entry.id)).toEqual(["a"]);
-    expect(turnLaunchedAgents(stored).map((agent) => agent.name)).toEqual(["Map sources"]);
     expect(stored.items.some((item) => item.id === "command")).toBe(false);
   });
 });

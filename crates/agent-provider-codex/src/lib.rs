@@ -102,6 +102,7 @@ pub const CAPABILITIES: CapabilitySet = CapabilitySet {
     codex_native: true,
     orchestration_tools: true,
     threads_cross_provider_fork: true,
+    threads_background_task_output: false,
     turns_start_while_active: StartWhileActiveMode::NativeJoin,
 };
 

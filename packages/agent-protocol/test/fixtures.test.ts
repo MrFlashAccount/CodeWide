@@ -233,6 +233,75 @@ describe("additive capability names", () => {
   });
 });
 
+describe("background task output", () => {
+  const command = (extra: Record<string, unknown>): unknown => ({
+    method: "event",
+    params: {
+      type: "item.completed",
+      appThreadId: "t",
+      turnId: "u",
+      item: {
+        type: "command",
+        itemId: "c",
+        command: "npm test",
+        cwd: "/w",
+        status: "completed",
+        output: null,
+        exitCode: 0,
+        durationMs: null,
+        ...extra,
+      },
+    },
+  });
+  const page = (status: string): unknown => ({
+    id: 1,
+    result: { taskId: "b1", status, text: "", nextOffset: null, sizeBytes: 0 },
+  });
+
+  it("keeps backgroundTaskId optional on a command item", () => {
+    expect(checkMessage(command({}))).toEqual([]);
+    expect(checkMessage(command({ backgroundTaskId: "bd3cb8oli" }))).toEqual([]);
+    expect(checkMessage(command({ backgroundTaskId: 7 }))).toEqual([
+      "$.params.item.backgroundTaskId: expected string",
+    ]);
+  });
+
+  it("checks the page status and requires every page field", () => {
+    expect(checkMessage(page("running"), "thread.backgroundTask.read")).toEqual([]);
+    expect(checkMessage(page("interim"), "thread.backgroundTask.read")).toEqual([
+      "$.result.status: unexpected interim",
+    ]);
+    expect(
+      checkMessage(
+        { id: 1, result: { taskId: "b1", status: "running", text: "" } },
+        "thread.backgroundTask.read",
+      ),
+    ).toEqual(["$.result.nextOffset: missing", "$.result.sizeBytes: missing"]);
+  });
+
+  it("is an additive capability that older declarations omit", () => {
+    const extension = {
+      provider: "claude",
+      providerName: "Claude",
+      primary: false,
+      capabilities: {
+        ...Object.fromEntries(BOOLEAN_CAPABILITIES.map((name) => [name, false])),
+        "turns.startWhileActive": "busy",
+      } as CapabilitySet, // WHY: built from the exhaustive name list above.
+    };
+    expect(supportsCapability(extension, "threads.backgroundTaskOutput")).toBe(false);
+    expect(
+      supportsCapability(
+        {
+          ...extension,
+          capabilities: { ...extension.capabilities, "threads.backgroundTaskOutput": true },
+        },
+        "threads.backgroundTaskOutput",
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("capability reader", () => {
   const capabilities = {
     ...Object.fromEntries(BOOLEAN_CAPABILITIES.map((name) => [name, false])),

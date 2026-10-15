@@ -64,6 +64,15 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       }}
       agents={{
         onOpenSubagentThread: undefined,
+        onReadBackgroundTask:
+          props.activeConnectionId === ""
+            ? undefined
+            : async (threadId: string, taskId: string, offset: number) =>
+                props.features.agents.readBackgroundTask(props.activeConnectionId, {
+                  offset,
+                  taskId,
+                  threadId,
+                }),
         onRefreshSubagents: async (rootThreadId: string) => {
           await props.features.agents.refreshSubagents(props.activeConnectionId, rootThreadId);
         },

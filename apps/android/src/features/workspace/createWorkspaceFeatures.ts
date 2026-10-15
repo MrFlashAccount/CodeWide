@@ -1,4 +1,5 @@
 import { appLockVoiceLifecycle } from "../../data/appLockVoiceLifecycle";
+import { readBackgroundTaskOutput } from "../../data/backgroundTaskOutput";
 import {
   commandDelivery,
   currentConnections,
@@ -117,7 +118,19 @@ function createWorkspaceFeatures() {
     getPendingRequests: () => workspaceRuntime.snapshot.pendingRequests,
     getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
   });
-  const agents = { refreshSubagents: workspaceCatalog.refreshSubagents };
+  const agents = {
+    readBackgroundTask: async (
+      connectionId: string,
+      request: { readonly offset: number; readonly taskId: string; readonly threadId: string },
+    ) => {
+      const session = workspaceRuntime.supervisor?.session(connectionId);
+      if (session === undefined) {
+        throw new Error("The server is not connected");
+      }
+      return readBackgroundTaskOutput(session, request);
+    },
+    refreshSubagents: workspaceCatalog.refreshSubagents,
+  };
   const attachments = { transferAccess: transferAccess };
   const changes = {
     loadThreadChangeDiff: workspaceThreadResources.loadThreadChangeDiff,

@@ -146,11 +146,11 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       draftConnectionId={read.connectionId}
       draftThreadId={props.thread.id}
       fullscreenCovered={props.overlayState.fullscreenCovered}
-      goalContent={null}
       historyActivityModel={null}
       historyActivityResourceId={null}
       historyViewport={read.historyViewport}
       latestUnreadReceiptKey={null}
+      liveStatusContent={null}
       liveStatusVisible={liveStatusVisible}
       liveTurnPlan={read.presentation.liveTurnPlan}
       messageListState={{ status: "ready" }}

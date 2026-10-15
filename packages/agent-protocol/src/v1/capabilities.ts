@@ -48,10 +48,13 @@ export type BooleanCapability = (typeof BOOLEAN_CAPABILITIES)[number];
  * `threads.crossProviderFork`: a thread of this provider can be forked into a
  * thread of another provider (a context handoff by the companion) and receive
  * such a fork.
+ * `threads.backgroundTaskOutput`: the provider reads the output of a
+ * background task a thread started (`thread.backgroundTask.read`).
  */
 export const ADDITIVE_BOOLEAN_CAPABILITIES = [
   "orchestration.tools",
   "threads.crossProviderFork",
+  "threads.backgroundTaskOutput",
 ] as const;
 
 export type AdditiveBooleanCapability = (typeof ADDITIVE_BOOLEAN_CAPABILITIES)[number];

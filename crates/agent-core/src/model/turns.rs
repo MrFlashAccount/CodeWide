@@ -201,6 +201,7 @@ mod tests {
                 output: None,
                 exit_code: Some(0),
                 duration_ms: None,
+                background_task_id: None,
             },
             AgentItem::Subagent {
                 item_id: ItemId::from_static("launch"),

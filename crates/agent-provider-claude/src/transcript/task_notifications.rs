@@ -111,7 +111,9 @@ pub fn started_task_identity(
     })
 }
 
-fn reported_status(report: &TaskReport) -> TaskNotificationStatus {
+/// The status a report states (see the module docs).
+#[must_use]
+pub fn reported_status(report: &TaskReport) -> TaskNotificationStatus {
     if report
         .summary
         .as_deref()
