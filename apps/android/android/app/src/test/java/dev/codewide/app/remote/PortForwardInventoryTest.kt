@@ -114,11 +114,22 @@ class PortForwardInventoryTest {
       .put("name", "Dev").put("defaultForwardingEnabled", true)
     assertEquals(3000, parsePortForwardInventory(JSONArray().put(row)).single().port)
     assertThrows(IllegalArgumentException::class.java) {
-      parsePortForwardInventory(JSONArray().put(row).put(row))
-    }
-    assertThrows(IllegalArgumentException::class.java) {
       parsePortForwardInventory(JSONArray().put(JSONObject(row.toString()).put("port", 3000.5)))
     }
+  }
+
+  @Test
+  fun ambiguousRowsAreDroppedWithoutHidingOtherPorts() {
+    fun row(port: Int, serviceKey: String) = JSONObject().put("port", port)
+      .put("forwardingKey", serviceKey).put("name", "Port $port").put("defaultForwardingEnabled", true)
+    val shared = "b".repeat(64)
+    val rows = JSONArray()
+      .put(row(3000, key))
+      .put(row(45439, shared))
+      .put(row(33475, shared))
+      .put(row(4000, "c".repeat(64)))
+      .put(row(4000, "d".repeat(64)))
+    assertEquals(listOf(3000), parsePortForwardInventory(rows).map { it.port })
   }
 }
 

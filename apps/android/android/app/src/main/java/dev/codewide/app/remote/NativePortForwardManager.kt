@@ -8,6 +8,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.InetAddress
@@ -164,14 +165,22 @@ internal class NativePortForwardManager(
   private fun applyInventory(pending: PendingPortInventory) {
     runCatching {
       val envelope = JSONObject(pending.payload)
-      val inventory = parsePortForwardInventory(envelope.getJSONArray("ports"))
+      val rows = envelope.getJSONArray("ports")
+      val inventory = parsePortForwardInventory(rows)
       val discoveredByPort = inventory.associate { it.port to it.serviceKey }
+      // The UI may offer only ports that native forwarding accepted.
+      val accepted = JSONArray()
+      for (index in 0 until rows.length()) {
+        val row = rows.getJSONObject(index)
+        if (discoveredByPort[row.optInt("port")] == row.optString("forwardingKey")) accepted.put(row)
+      }
+      envelope.put("ports", accepted)
       synchronized(inventoryLock) {
         if (closed || pending.serverId in suspended ||
           (inventoryEpochs[pending.serverId] ?: 0L) != pending.generation) return
         availablePorts[pending.serverId] = discoveredByPort
         inventoryReconciler.reconcile(pending.serverId, inventory)
-        inventorySnapshots[pending.serverId] = pending.payload
+        inventorySnapshots[pending.serverId] = envelope.toString()
       }
       CodeWideModule.emitPortForwardEvent(JSONObject().put("type", "inventory")
         .put("connectionId", pending.serverId).toString())
