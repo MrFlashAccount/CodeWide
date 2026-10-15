@@ -37,10 +37,11 @@ internal class NativeCompanionHttp(
   private val calls = ConcurrentHashMap<String, Call>()
 
   fun execute(request: CompanionHttpRequest, completion: (Result<CompanionHttpResult>) -> Unit) {
-    val call = try {
+    val (client, call) = try {
       val saved = credentials(request.connectionId) ?: error("Saved native credentials are missing")
       require(saved.enabled) { "Connection is disabled" }
-      client(saved).newCall(okHttpRequest(saved, request))
+      val client = client(saved)
+      client to client.newCall(okHttpRequest(saved, request))
     } catch (error: Throwable) {
       completion(Result.failure(error))
       return
@@ -52,6 +53,12 @@ internal class NativeCompanionHttp(
     call.enqueue(object : Callback {
       override fun onFailure(call: Call, e: IOException) {
         calls.remove(request.requestId, call)
+        // JavaScript cancels a request whose response did not arrive within its budget.
+        // Cancelling an HTTP/2 call only resets its stream and keeps the connection
+        // pooled, so the retry would reuse the same stalled tunnel. By now the call
+        // has released its connection; close it and every other idle connection of
+        // this authority so the next request opens a fresh tunnel.
+        if (call.isCanceled()) evict(client)
         completion(Result.failure(e))
       }
 
@@ -76,6 +83,15 @@ internal class NativeCompanionHttp(
 
   fun cancel(requestId: String) {
     calls.remove(requestId)?.cancel()
+  }
+
+  /**
+   * Closes idle pooled tunnels of every authority after the default network changes.
+   * Their carriers belong to the previous route and can stall silently until a ping
+   * fails; in-flight calls keep their connections and finish or fail on their own.
+   */
+  fun retireIdleConnections() {
+    clients.values.forEach { evict(it.client) }
   }
 
   /** Closes pooled tunnels derived from a revoked, disabled or replaced authority. */

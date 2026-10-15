@@ -26,8 +26,11 @@ export type HostUpdateGuidance =
 const INSTALLER_BASE_URL = "https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/install";
 
 /** Short state for the row description, prefixed by the platform when it is known. */
-export function hostUpdateDescription(update: HostUpdateView): HostUpdateSummary {
-  const summary = hostUpdateSummary(update);
+export function hostUpdateDescription(
+  update: HostUpdateView,
+  subject: HostUpdateSubject,
+): HostUpdateSummary {
+  const summary = hostUpdateSummary(update, subject);
   return update.platform === null
     ? { text: capitalized(summary.text), tone: summary.tone }
     : { text: `${platformLabel(update.platform)} · ${summary.text}`, tone: summary.tone };
@@ -38,17 +41,18 @@ export function hostUpdateGuidance(
   update: HostUpdateView,
   subject: HostUpdateSubject,
 ): HostUpdateGuidance | null {
-  if (update.disconnected && update.phase !== null) {
+  if (update.disconnected) {
+    // A restart or a lost connection is expected during an update; it is not a failure.
     return {
       kind: "progress",
-      text: `Last confirmed: ${confirmedStep(update)}. Waiting for fresh ${subject} status; the device remains paired.`,
+      text: `Last confirmed: ${confirmedStep(update, subject)}. Waiting for fresh ${subject} status; the device remains paired.`,
     };
   }
   if (update.progress !== null) {
     const reason = update.errorMessage === null ? "" : ` Reason: ${update.errorMessage}`;
     return {
       kind: "progress",
-      text: `${progressText(update.progress)}. ${subject} is reachable.${reason}`,
+      text: `${progressText(update.progress, subject)}. ${subject} is reachable.${reason}`,
     };
   }
   if (update.errorMessage !== null) {
@@ -65,17 +69,20 @@ export function hostUpdateConnectionLabel(update: HostUpdateView | undefined): s
   if (update === undefined || update.phase === null || isTerminalHostUpdatePhase(update.phase)) {
     return null;
   }
-  const step = confirmedStep(update);
+  const step = confirmedStep(update, "Companion");
   return update.disconnected ? `${step} · reconnecting` : step;
 }
 
-function confirmedStep(update: HostUpdateView): string {
-  return update.progress === null
-    ? (phaseSummary(update.phase)?.text ?? "updating")
-    : progressText(update.progress);
+/** The latest state the server confirmed: its progress, phase or update availability. */
+function confirmedStep(update: HostUpdateView, subject: HostUpdateSubject): string {
+  if (update.progress !== null) {
+    return progressText(update.progress, subject);
+  }
+  return phaseSummary(update.phase)?.text ?? availabilitySummary(update).text;
 }
 
-function progressText(progress: HostUpdateProgress): string {
+/** Platform-neutral: Linux and macOS report the same progress stages. */
+function progressText(progress: HostUpdateProgress, subject: HostUpdateSubject): string {
   if (progress.stage === "downloading") {
     const downloaded = megabytes(progress.downloadedBytes);
     if (progress.totalBytes === null || progress.totalBytes === 0) {
@@ -91,7 +98,7 @@ function progressText(progress: HostUpdateProgress): string {
     awaitingReconnect: "Waiting for phone confirmation",
     checkingHealth: "Checking server readiness",
     extracting: "Unpacking update",
-    restarting: "Restarting Companion",
+    restarting: `Restarting ${subject}`,
     rollingBack: "Restoring previous version",
     verifying: "Verifying download",
   } as const;
@@ -104,24 +111,28 @@ function megabytes(bytes: number): string {
 
 /**
  * The row's own action: apply a fresh target, or re-check. A shown failure
- * carries its own retry and check actions, so the row stays quiet then.
+ * carries its own retry and check actions, so the row stays quiet then. A
+ * pending request keeps its action in place, disabled, until the server answers.
  */
 export function hostUpdateRowAction(
   update: HostUpdateView,
   failureShown: boolean,
 ): "apply" | "check" | null {
+  if (update.pending !== null) {
+    return update.pending;
+  }
   if (update.canApply && update.targetFingerprint !== null && !update.canRetry) {
     return "apply";
   }
   return update.canCheck && !update.canApply && !failureShown ? "check" : null;
 }
 
-function hostUpdateSummary(update: HostUpdateView): HostUpdateSummary {
-  if (update.disconnected && update.phase !== null) {
-    return muted(`${confirmedStep(update)} · reconnecting`);
+function hostUpdateSummary(update: HostUpdateView, subject: HostUpdateSubject): HostUpdateSummary {
+  if (update.disconnected) {
+    return muted(`${confirmedStep(update, subject)} · reconnecting`);
   }
   if (update.progress !== null) {
-    return muted(progressText(update.progress));
+    return muted(progressText(update.progress, subject));
   }
   if (update.errorMessage !== null) {
     return { text: failureLabel(update.phase), tone: "error" };

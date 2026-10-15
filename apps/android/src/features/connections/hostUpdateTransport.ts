@@ -46,6 +46,18 @@ export class HostUpdateHttpError extends Error {
   }
 }
 
+/**
+ * The server did not answer: credentials, the native request or its body did
+ * not complete in time or failed on the way. Unlike an HTTP error, this says
+ * nothing about the update, so an active operation keeps its last confirmed stage.
+ */
+export class HostUpdateUnreachableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "HostUpdateUnreachableError";
+  }
+}
+
 type HostUpdateTransportAuthority = {
   readonly connectionTransport: (connection: StoredConnection) => CompanionConnectionTransport;
   readonly currentConnections: () => StoredConnection[];
@@ -102,9 +114,9 @@ export function createHostUpdateTransport(
         signal,
       });
     };
-    let response = await send(false);
+    let response = await unreachableOnFailure(async () => send(false), subject);
     if (response.status === UNAUTHORIZED_STATUS) {
-      response = await send(true);
+      response = await unreachableOnFailure(async () => send(true), subject);
     }
     if (!response.ok) {
       throw await responseError(response, subject);
@@ -121,7 +133,9 @@ export function createHostUpdateTransport(
     const expired = Promise.withResolvers<never>();
     const timer = setTimeout(() => {
       controller.abort();
-      expired.reject(new Error(`Could not read ${subject} update status in time. Try again.`));
+      expired.reject(
+        new HostUpdateUnreachableError(`${subject} did not respond in time. Try again.`),
+      );
     }, requestTimeoutMilliseconds);
     try {
       // Native origin/session resolution and body reading can hang too. Bound
@@ -176,7 +190,22 @@ export function createHostUpdateTransport(
 
 function requireActiveRequest(signal: AbortSignal, subject: string): void {
   if (signal.aborted) {
-    throw new Error(`${subject} update request timed out`);
+    throw new HostUpdateUnreachableError(`${subject} update request timed out`);
+  }
+}
+
+async function unreachableOnFailure(
+  send: () => Promise<Response>,
+  subject: string,
+): Promise<Response> {
+  try {
+    return await send();
+  } catch (error) {
+    if (error instanceof HostUpdateUnreachableError) {
+      throw error;
+    }
+    const reason = error instanceof Error ? error.message : `${subject} is unreachable`;
+    throw new HostUpdateUnreachableError(reason, { cause: error });
   }
 }
 

@@ -127,8 +127,9 @@ function HostUpdateRow({
   readonly subject: HostUpdateSubject;
   readonly update: HostUpdateView;
 }): React.JSX.Element {
-  const pending = update.phase !== null && !isTerminalHostUpdatePhase(update.phase);
-  const description = hostUpdateDescription(update);
+  const pending =
+    update.pending !== null || (update.phase !== null && !isTerminalHostUpdatePhase(update.phase));
+  const description = hostUpdateDescription(update, subject);
   return (
     <View style={styles.row}>
       <View style={styles.leadingSlot}>
@@ -206,6 +207,8 @@ function HostUpdateRowAction({
     return (
       <AppButton
         accessibilityLabel={`Check for ${subject} updates`}
+        accessibilityState={{ busy: pending }}
+        isDisabled={pending}
         isIconOnly
         onPress={actions.check}
         size="sm"

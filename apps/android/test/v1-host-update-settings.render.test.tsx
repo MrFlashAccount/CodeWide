@@ -203,13 +203,66 @@ it("names a failed request without claiming that an update failed", () => {
   expect(view.queryByText(/Update failed/u)).toBeNull();
 });
 
+it("keeps Update in place, busy, while the server has not acknowledged it", () => {
+  const view = render(
+    <Fixture update={{ ...available(), canApply: false, canCheck: false, pending: "apply" }} />,
+  );
+  expect(view.getByTestId("host-update-version-shimmer").props.children).toBe("Companion 1.0.0");
+  expect(view.getByText("macOS · 1.1.0 available")).toBeTruthy();
+  const update = view.getByLabelText("Update Companion");
+  expect(update.props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+  expect(view.queryByText(/Updating|accepted/u)).toBeNull();
+});
+
+it("shimmers the version while a requested check is pending", () => {
+  const view = render(
+    <Fixture update={{ ...available(), canApply: false, canCheck: false, pending: "check" }} />,
+  );
+  expect(view.getByTestId("host-update-version-shimmer").props.children).toBe("Companion 1.0.0");
+  expect(view.getByLabelText("Check for Companion updates").props.accessibilityState).toMatchObject({
+    busy: true,
+  });
+});
+
+it("labels an unreachable restarting server as the last confirmed state, not a failure", () => {
+  const view = render(
+    <Fixture subject="Relay" update={{ ...available(), canApply: false, disconnected: true }} />,
+  );
+  expect(view.getByText("macOS · 1.1.0 available · reconnecting")).toBeTruthy();
+  expect(view.getByText(/Last confirmed: 1.1.0 available. Waiting for fresh Relay status/u)).toBeTruthy();
+  expect(view.queryByText(/failed/iu)).toBeNull();
+});
+
+it.each([
+  ["macos-universal", "macOS"],
+  ["linux-x86-64", "Linux"],
+] as const)("renders %s install progress the same way", (platform, label) => {
+  const progress = { stage: "downloading", downloadedBytes: 34_000_000, totalBytes: 59_000_000 } as const;
+  const installing: HostUpdateView = {
+    ...available(),
+    canApply: false,
+    canCheck: false,
+    phase: "installing",
+    platform,
+    progress,
+  };
+  const view = render(<Fixture update={installing} />);
+  expect(view.getByText(`${label} · Downloading · 57% · 34.0 / 59.0 MB`)).toBeTruthy();
+  view.rerender(
+    <Fixture subject="Relay" update={{ ...installing, progress: { stage: "restarting" } }} />,
+  );
+  expect(view.getByText(`${label} · Restarting Relay`)).toBeTruthy();
+});
+
 function Fixture({
   onApply = async () => undefined,
   onCheck = async () => undefined,
+  subject = "Companion",
   update,
 }: {
   readonly onApply?: (connectionId: string, targetFingerprint: string) => Promise<void>;
   readonly onCheck?: (connectionId: string) => Promise<void>;
+  readonly subject?: "Companion" | "Relay";
   readonly update: HostUpdateView;
 }) {
   return (
@@ -218,6 +271,7 @@ function Fixture({
       connectionName="Buddy"
       onApply={onApply}
       onCheck={onCheck}
+      subject={subject}
       update={update}
     />
   );
@@ -235,6 +289,7 @@ function available(): HostUpdateView {
     errorMessage: null,
     latestVersion: "1.1.0",
     operationId: null,
+    pending: null,
     phase: null,
     platform: "macos-universal",
     progress: null,

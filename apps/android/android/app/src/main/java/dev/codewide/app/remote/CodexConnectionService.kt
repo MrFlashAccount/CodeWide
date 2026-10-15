@@ -56,14 +56,20 @@ class CodexConnectionService : Service() {
     override fun onAvailable(network: Network) {
       synchronized(this@CodexConnectionService) {
         if (destroyed) return
-        if (networkState.available(network)) publishNetworkObservation(true)
+        if (networkState.available(network)) {
+          companionHttp.retireIdleConnections()
+          publishNetworkObservation(true)
+        }
       }
     }
 
     override fun onLost(network: Network) {
       synchronized(this@CodexConnectionService) {
         if (destroyed) return
-        if (networkState.lost(network)) publishNetworkObservation(false)
+        if (networkState.lost(network)) {
+          companionHttp.retireIdleConnections()
+          publishNetworkObservation(false)
+        }
       }
     }
 
