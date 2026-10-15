@@ -1,6 +1,8 @@
 import { fireEvent, render } from "@testing-library/react-native";
+import { View } from "react-native";
 import type { StoredThreadSummary } from "../src/data/thread-summary-types";
 import { WorkingSubagentsMenu } from "../src/features/agents/WorkingSubagentsMenu";
+import { ContentMenu } from "../src/ui/ContentMenu";
 
 function child(id: string, name: string, active: boolean): StoredThreadSummary {
   return {
@@ -57,4 +59,27 @@ it("floats nothing while no subagent works", () => {
   const view = render(<WorkingSubagentsMenu onOpen={() => undefined} total={1} working={[]} />);
 
   expect(view.queryByTestId("working-subagents-chip")).toBeNull();
+});
+
+it("opens the list centred above the chip with a gap, and draws no arrows", () => {
+  const view = render(
+    <WorkingSubagentsMenu
+      onOpen={() => undefined}
+      total={1}
+      working={[child("a", "Map sources", true)]}
+    />,
+  );
+  const chip = view.getByTestId("working-subagents-chip");
+  // The chip's measured width centres the wider menu on it.
+  fireEvent(view.UNSAFE_getAllByType(View).find((node) => node.props.onLayout)!, "layout", {
+    nativeEvent: { layout: { height: 32, width: 120, x: 0, y: 0 } },
+  });
+  fireEvent.press(chip);
+
+  const menuWidth: unknown = view.UNSAFE_getByType(ContentMenu).props.width;
+  expect(typeof menuWidth).toBe("number");
+  const menu = view.UNSAFE_getByProps({ expanded: true });
+  expect(menu.props.offsetX).toBe((120 - Number(menuWidth)) / 2);
+  expect(menu.props.offsetY).toBe(8);
+  expect(view.queryByText(/chevron/u)).toBeNull();
 });

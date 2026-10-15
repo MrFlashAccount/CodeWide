@@ -91,8 +91,7 @@ index e800ec2adafaa7120724b30b65ef37bfbe8a72c2..5074e34b3a750bee6c3cfe2f01afd427
 @@ -85,6 +108,9 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
      }
    }
--
-+
+ 
 +  // Remove only the Compose dialog, retaining the React children and their RNHost wrappers.
 +  if (!props.visible) return
 +
@@ -100,8 +99,7 @@ index e800ec2adafaa7120724b30b65ef37bfbe8a72c2..5074e34b3a750bee6c3cfe2f01afd427
    val resolvedContentColor = props.contentColor.composeOrNull ?: contentColorFor(resolvedContainerColor)
    val resolvedScrimColor = props.scrimColor.composeOrNull ?: BottomSheetDefaults.ScrimColor
 @@ -92,6 +118,7 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
--
-+
+ 
    ModalBottomSheet(
      sheetState = sheetState,
 +    sheetMaxWidth = props.maxWidth?.dp ?: BottomSheetDefaults.SheetMaxWidth,
@@ -208,10 +206,10 @@ index 202c2e55693f15b165127c4b56ee0c485e81013e..3398982592408fbd0c1c6effc08d433a
     * Parse dimension string (e.g., "24dp") to Compose Dp.
     */
 diff --git a/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt b/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt
-index 1791eace9a68362520bd39a41c6f8c55d32eb9c2..c4f09a2933e94e07acc06dd22f67aa0efb92fc28 100644
+index 1791eace9a68362520bd39a41c6f8c55d32eb9c2..0cfe31d273b010fafb4bc71580b1a885e7d651b5 100644
 --- a/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt
 +++ b/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt
-@@ -1,9 +1,11 @@
+@@ -1,9 +1,12 @@
  package expo.modules.ui.menu
  
  import androidx.compose.foundation.layout.Box
@@ -219,36 +217,40 @@ index 1791eace9a68362520bd39a41c6f8c55d32eb9c2..c4f09a2933e94e07acc06dd22f67aa0e
  import androidx.compose.material3.DropdownMenu
  import androidx.compose.material3.MenuDefaults
  import androidx.compose.runtime.Composable
++import androidx.compose.ui.unit.DpOffset
 +import androidx.compose.ui.unit.dp
  import expo.modules.kotlin.views.FunctionalComposableScope
  import expo.modules.ui.UIComposableScope
  import expo.modules.ui.ModifierRegistry
-@@ -25,7 +27,8 @@ fun FunctionalComposableScope.DropdownMenuContent(
+@@ -25,7 +28,9 @@ fun FunctionalComposableScope.DropdownMenuContent(
      DropdownMenu(
        containerColor = props.color?.composeOrNull ?: MenuDefaults.containerColor,
        expanded = props.expanded,
 -      onDismissRequest = onDismissRequest
 +      onDismissRequest = onDismissRequest,
-+      shape = props.cornerRadius?.let { RoundedCornerShape(it.dp) } ?: MenuDefaults.shape
++      shape = props.cornerRadius?.let { RoundedCornerShape(it.dp) } ?: MenuDefaults.shape,
++      offset = DpOffset(props.offsetX.dp, props.offsetY.dp)
      ) {
        itemsSlotView?.let {
          with(UIComposableScope()) {
 diff --git a/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt b/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt
-index 02620bb716b853d79fc29be2c4157d97e1b25c5e..6fee32134d1b08504eb04a30fe301d53058884df 100644
+index 02620bb716b853d79fc29be2c4157d97e1b25c5e..020f9410e4523e1e41300a8c911805ff48b1de00 100644
 --- a/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt
 +++ b/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt
-@@ -16,5 +16,6 @@ data class DropdownMenuProps(
+@@ -16,5 +16,8 @@ data class DropdownMenuProps(
    val activationMethod: ActivationMethod = ActivationMethod.SINGLE_PRESS,
    val expanded: Boolean = false,
    val color: Color? = null,
 +  val cornerRadius: Float? = null,
++  val offsetX: Float = 0f,
++  val offsetY: Float = 0f,
    val modifiers: ModifierList = emptyList()
  ) : ComposeProps
 diff --git a/build/jetpack-compose/DropdownMenu/index.d.ts b/build/jetpack-compose/DropdownMenu/index.d.ts
-index 05d6909108a74317ac3117327ad19b0c9661b082..7304cf6b2e24219f9eb880025873edc80039285d 100644
+index 05d6909108a74317ac3117327ad19b0c9661b082..bd959598c34925b14e1e5633dbac08f4ecd73d19 100644
 --- a/build/jetpack-compose/DropdownMenu/index.d.ts
 +++ b/build/jetpack-compose/DropdownMenu/index.d.ts
-@@ -23,6 +23,11 @@ export interface DropdownMenuProps {
+@@ -23,6 +23,21 @@ export interface DropdownMenuProps {
       * The color of the container holding the dropdown menu items.
       */
      color?: ColorValue;
@@ -257,6 +259,16 @@ index 05d6909108a74317ac3117327ad19b0c9661b082..7304cf6b2e24219f9eb880025873edc8
 +     * Uses the platform default when omitted.
 +     */
 +    cornerRadius?: number;
++    /**
++     * Horizontal shift of the menu from its default position at the anchor's
++     * start, in density-independent pixels. Material keeps it inside the window.
++     */
++    offsetX?: number;
++    /**
++     * Gap between the anchor and the menu, in density-independent pixels; it
++     * applies above or below, wherever Material opens the menu.
++     */
++    offsetY?: number;
      /**
       * Optional styles to apply to the `DropdownMenu`.
       */
@@ -289,10 +301,10 @@ index ddf89aa5ac11610459f6db8abd96a3673f01054f..bf14f12159c4d69336b8f594a50088ff
       * Immediately opens the bottom sheet in full screen.
       * @default false
 diff --git a/src/jetpack-compose/DropdownMenu/index.tsx b/src/jetpack-compose/DropdownMenu/index.tsx
-index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..2205a126a88dcb2883e4929c82250d52498d348a 100644
+index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..7eda22e81e1d3f1da3d179b80c4d0d9b4893e6f1 100644
 --- a/src/jetpack-compose/DropdownMenu/index.tsx
 +++ b/src/jetpack-compose/DropdownMenu/index.tsx
-@@ -42,6 +42,12 @@ export interface DropdownMenuProps {
+@@ -42,6 +42,23 @@ export interface DropdownMenuProps {
     */
    color?: ColorValue;
  
@@ -302,14 +314,27 @@ index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..2205a126a88dcb2883e4929c82250d52
 +   */
 +  cornerRadius?: number;
 +
++  /**
++   * Horizontal shift of the menu from its default position at the anchor's
++   * start, in density-independent pixels. Material keeps it inside the window.
++   */
++  offsetX?: number;
++  /**
++   * Gap between the anchor and the menu, in density-independent pixels; it
++   * applies above or below, wherever Material opens the menu.
++   */
++  offsetY?: number;
++
    /**
     * Optional styles to apply to the `DropdownMenu`.
     */
-@@ -57,6 +63,7 @@ type NativeMenuProps = {
+@@ -57,6 +74,9 @@ type NativeMenuProps = {
    expanded?: boolean;
    onDismissRequest?: () => void;
    color?: ColorValue;
 +  cornerRadius?: number;
++  offsetX?: number;
++  offsetY?: number;
    style?: StyleProp<ViewStyle>;
    modifiers?: ModifierConfig[];
    children?: ReactNode;
@@ -319,8 +344,7 @@ index ea749156c15b4929ac692dc0a513d7b00430552c..c48c46eeb6347f6f10e0a18e2a95d5fd
 +++ b/src/jetpack-compose/ModalBottomSheet/index.tsx
 @@ -43,6 +43,12 @@ export type ModalBottomSheetProperties = {
  };
--
-+
+ 
  export interface ModalBottomSheetProps {
 +  /** Shows the native window without unmounting retained React children. Defaults to true. */
 +  visible?: boolean;
