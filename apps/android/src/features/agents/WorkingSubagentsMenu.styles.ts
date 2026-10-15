@@ -1,13 +1,5 @@
 import { StyleSheet } from "react-native";
-import {
-  colors,
-  controlSize,
-  menuContentInset,
-  radii,
-  spacing,
-  typeScale,
-  typeWeight,
-} from "../../theme";
+import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../theme";
 
 const PRESSED_OPACITY = 0.72;
 
@@ -17,15 +9,6 @@ export const styles = StyleSheet.create({
     flexShrink: 1,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
-  },
-  list: {
-    gap: spacing.xxs,
-    paddingHorizontal: menuContentInset,
-    paddingVertical: spacing.xs,
-  },
-  listTitle: {
-    color: colors.textMuted,
-    ...typeScale.label,
   },
   pressed: {
     opacity: PRESSED_OPACITY,

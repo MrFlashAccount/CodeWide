@@ -1,11 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { createElement, useState } from "react";
-import { Pressable, ScrollView, View, useWindowDimensions } from "react-native";
+import { Pressable, View, useWindowDimensions } from "react-native";
 import { subagentDisplayName } from "../../data/subagent-projection";
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { useEvent } from "../../react/useEvent";
 import { colors, iconSize } from "../../theme";
 import { AgentAvatar, AgentAvatarStack, type AgentAvatarSubject } from "../../ui/AgentAvatar";
+import { AnchoredMenuList } from "../../ui/AnchoredMenuList";
 import { ContentMenu } from "../../ui/ContentMenu";
 import { useAnchoredMenuSize } from "../../ui/useAnchoredMenuSize";
 import { AppText as Text } from "../../ui/Typography";
@@ -19,6 +20,11 @@ export type SubagentOpener = (
 
 /** The chip leaves room for the neighbouring composer chips. */
 const TRIGGER_WIDTH_SHARE = 0.6;
+/**
+ * Compose opens the menu at the chip's start, or ends it at the chip's end
+ * when that does not fit; a chip deep in the composer row needs a narrow menu.
+ */
+const MENU_MAX_WIDTH = 320;
 
 type WorkingSubagent = AgentAvatarSubject & { readonly threadId: string };
 
@@ -69,23 +75,18 @@ export function WorkingSubagentsMenu({
       open={open}
       placement="top"
       trigger={trigger}
-      width={menu.width}
+      width={Math.min(menu.width, MENU_MAX_WIDTH)}
     >
-      <ScrollView
-        contentContainerStyle={styles.list}
-        nestedScrollEnabled
-        showsVerticalScrollIndicator={false}
-        style={{ maxHeight: menu.maxHeight }}
+      <AnchoredMenuList
+        maxHeight={menu.maxHeight}
         testID="working-subagents-list"
+        title="Working now"
       >
-        <Text accessibilityRole="header" style={styles.listTitle}>
-          Working now
-        </Text>
         {agents.map((agent) => (
           <WorkingSubagentRow agent={agent} key={agent.threadId} onOpen={openChild} />
         ))}
         <AllSubagentsRow onOpen={openChild} total={total} />
-      </ScrollView>
+      </AnchoredMenuList>
     </ContentMenu>
   );
 }
