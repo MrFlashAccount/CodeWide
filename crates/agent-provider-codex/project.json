@@ -4,7 +4,7 @@
   "projectType": "library",
   "sourceRoot": "crates/agent-provider-codex/src",
   "tags": ["language:rust", "type:library"],
-  "implicitDependencies": ["agent-core", "agent-transport", "companion-host", "agent-search", "agent-resources"],
+  "implicitDependencies": ["agent-core", "agent-transport", "companion-host", "agent-search", "agent-resources", "agent-index"],
   "metadata": {
     "description": "Codex agent provider adapter and Codex-owned storage"
   },
@@ -23,13 +23,6 @@
       "executor": "nx:run-commands",
       "options": {
         "command": "cargo test -p agent-provider-codex --all-features",
-        "cwd": "."
-      }
-    },
-    "build": {
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "cargo build -p agent-provider-codex --release",
         "cwd": "."
       }
     }

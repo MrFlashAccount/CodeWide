@@ -24,13 +24,6 @@
         "command": "cargo test -p agent-core --all-features",
         "cwd": "."
       }
-    },
-    "build": {
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "cargo build -p agent-core --release",
-        "cwd": "."
-      }
     }
   }
 }

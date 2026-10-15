@@ -9,7 +9,6 @@ export default defineConfig({
     include: [
       "packages/**/test/**/*.test.ts",
       "apps/**/test/**/*.test.ts",
-      "crates/*/host/test/**/*.test.ts",
     ],
     testTimeout: 15_000,
   },

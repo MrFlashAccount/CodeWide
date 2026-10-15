@@ -1,0 +1,29 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "host-update",
+  "projectType": "library",
+  "sourceRoot": "crates/host-update/src",
+  "tags": ["language:rust", "type:library"],
+  "metadata": {
+    "description": "Signed release admission and crash-safe host updates"
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "rustWorkspace"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p codewide-host-update --all-targets --all-features -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test -p codewide-host-update --all-features",
+        "cwd": "."
+      }
+    }
+  }
+}
