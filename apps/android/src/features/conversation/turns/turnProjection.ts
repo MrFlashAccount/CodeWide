@@ -16,7 +16,6 @@ export type CachedTurnProjection = {
   liveActivityBlocks: RenderBlock[];
   preTurnBlocks: RenderBlock[];
   renderWindow: ReturnType<typeof selectTurnRenderWindow>;
-  trailingCompactionBlocks: RenderBlock[];
   userBlocks: RenderBlock[];
 };
 
@@ -30,7 +29,6 @@ const TURN_PROJECTION_REFERENCE_FIELDS = [
   "liveActivityBlocks",
   "preTurnBlocks",
   "renderWindow",
-  "trailingCompactionBlocks",
   "userBlocks",
 ] as const;
 const RENDER_WINDOW_REFERENCE_FIELDS = [
@@ -38,7 +36,6 @@ const RENDER_WINDOW_REFERENCE_FIELDS = [
   "leadCompactionIndexes",
   "liveActivityIndexes",
   "preTurnActivityIndexes",
-  "trailingCompactionIndexes",
   "userItemIndexes",
 ] as const;
 const renderBlockCache = new WeakMap<RawTurnItem, CachedRenderBlock>();
@@ -61,7 +58,6 @@ export function projectTurnProjection(
     liveActivityBlocks: projectIndexes(turn, renderWindow.liveActivityIndexes),
     preTurnBlocks: projectIndexes(turn, renderWindow.preTurnActivityIndexes),
     renderWindow,
-    trailingCompactionBlocks: projectIndexes(turn, renderWindow.trailingCompactionIndexes),
     userBlocks: projectIndexes(turn, renderWindow.userItemIndexes),
   });
 }
@@ -91,10 +87,6 @@ function retainTurnProjection(key: string, next: CachedTurnProjection): CachedTu
     liveActivityBlocks: retainReferences(previous.liveActivityBlocks, next.liveActivityBlocks),
     preTurnBlocks: retainReferences(previous.preTurnBlocks, next.preTurnBlocks),
     renderWindow: retainRenderWindow(previous.renderWindow, next.renderWindow),
-    trailingCompactionBlocks: retainReferences(
-      previous.trailingCompactionBlocks,
-      next.trailingCompactionBlocks,
-    ),
     userBlocks: retainReferences(previous.userBlocks, next.userBlocks),
   };
   const retained = projectionReferencesEqual(previous, value) ? previous : value;
@@ -360,7 +352,6 @@ function prepareTurnPresentation(turn: TurnRow) {
     liveActivityBlocks,
     preTurnBlocks,
     renderWindow,
-    trailingCompactionBlocks,
     userBlocks,
   } = projectTurnProjection(turn);
   const liveActivityEntries = renderWindow.liveActivityIndexes.flatMap(
@@ -425,7 +416,7 @@ function prepareTurnPresentation(turn: TurnRow) {
   // whole turn, drawn without a bubble, footer or empty-response warning. A
   // failed or interrupted turn keeps its bubble for that warning.
   const isCompactionOnly =
-    leadCompactionBlocks.length + trailingCompactionBlocks.length > 0 &&
+    leadCompactionBlocks.length > 0 &&
     rawTurn.status !== "failed" &&
     rawTurn.status !== "interrupted" &&
     !hasQuestions &&
@@ -502,7 +493,6 @@ function prepareTurnPresentation(turn: TurnRow) {
     rawTurn,
     showEmptyResponsePlaceholder,
     taskNotifications,
-    trailingCompactionBlocks,
     userBlocks,
     visibleLiveActivitySequence,
   };

@@ -205,7 +205,7 @@ function dynamicPresentationReason(
   if (isLeadingPlacement(row.placement) && presentation.preTurnBlocks.length > 0) {
     return "leading-activity";
   }
-  if (drawsLinesBelow(row, presentation)) {
+  if (drawsMidTurnReports(row, presentation)) {
     return "composite-row";
   }
   // WHY: Exact hints are lifetime-fixed sizes in LegendList. Expansion lives inside
@@ -474,22 +474,16 @@ function isStreamingPart(part: VirtualizedTurnPart): boolean {
   return part.kind === "markdownBlock" && part.streaming;
 }
 
-/**
- * Lines below the bubble have no premeasured size: a person's turn draws
- * reports that arrived during its answer, like compactions during any
- * answer, below it.
- */
-function drawsLinesBelow(
+/** A person's turn draws reports that arrived during its answer below the bubble. */
+function drawsMidTurnReports(
   row: MeasurableTimelineRow,
   presentation: ReturnType<typeof projectTurnPresentation>,
 ): boolean {
-  const reportLine =
+  return (
     isTrailingPlacement(row.placement) &&
     presentation.userBlocks.length > 0 &&
-    presentation.taskNotifications.midTurn.length > 0;
-  const compactionLine =
-    isTrailingPlacement(row.placement) && presentation.trailingCompactionBlocks.length > 0;
-  return reportLine || compactionLine;
+    presentation.taskNotifications.midTurn.length > 0
+  );
 }
 
 function isLeadingPlacement(placement: VirtualizedTurnPlacement): boolean {

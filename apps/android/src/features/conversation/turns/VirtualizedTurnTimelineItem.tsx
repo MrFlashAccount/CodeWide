@@ -212,17 +212,16 @@ function VirtualizedAgentMessage({
     </View>
   );
   // Reports that arrived while a person's turn answered follow its bubble; a
-  // wake turn lists them on its reason line instead. Compactions during the
-  // response follow it as well.
-  const trailing = isTrailingSlice(props.placement);
+  // wake turn lists them on its reason line instead.
   const midTurn =
-    trailing && presentation.userBlocks.length > 0 ? presentation.taskNotifications.midTurn : [];
+    isTrailingSlice(props.placement) && presentation.userBlocks.length > 0
+      ? presentation.taskNotifications.midTurn
+      : [];
   return renderAgentBoundary(
     props,
     <ImagePreviewGroup id={`${props.turn.key}:agent`}>
       {row}
       <TaskNotificationLine reports={midTurn} />
-      {trailing ? renderCompactionLines(props, presentation.trailingCompactionBlocks) : null}
     </ImagePreviewGroup>,
   );
 }

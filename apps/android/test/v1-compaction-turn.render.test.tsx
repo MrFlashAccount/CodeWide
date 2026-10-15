@@ -153,17 +153,15 @@ it("draws a summarised compaction-only turn from Companion totals without a bubb
   expect(view.queryByTestId("codex-bubble")).toBeNull();
 });
 
-it("keeps a compaction during a running response outside the bubble, below it", () => {
+it("keeps a compaction during a running response inside its bubble, as its work", () => {
   const running = turnItem("inProgress", [prompt, command, compaction("started")]);
   const view = render(timelineSurface(running));
 
   const bubble = view.getByTestId("codex-bubble");
-  const line = view.getByLabelText("Compacting context, running");
-  expect(bubble).toBeOnTheScreen();
-  expect(bubble).not.toContainElement(line);
-  const rendered = view.toJSON();
-  const order = JSON.stringify(rendered);
-  expect(order.indexOf('"codex-bubble"')).toBeLessThan(order.indexOf("Compacting context"));
+  // No lifecycle line outside: the compaction is the current action of the group.
+  expect(view.queryByTestId("pre-turn-lifecycle")).toBeNull();
+  expect(bubble).toContainElement(view.getByText("Compacting context"));
+  expect(bubble).toContainElement(view.getByText(/· 2$/u));
 });
 
 it("draws a finished turn's compaction above its bubble and outside its history", () => {

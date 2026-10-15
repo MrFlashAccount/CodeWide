@@ -140,15 +140,6 @@ export function TurnTimelineItem({
               </RecoverableRenderBoundary>
             </>
           )}
-          {presentation.trailingCompactionBlocks.length > 0 && (
-            <PreTurnLifecycleRows
-              blocks={presentation.trailingCompactionBlocks}
-              turnKey={turn.key}
-              turnStatus={presentation.rawTurn.status}
-              {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-              {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
-            />
-          )}
         </View>
       </PrivateAssetRecoveryProvider>
     </TurnMetricsProvider>

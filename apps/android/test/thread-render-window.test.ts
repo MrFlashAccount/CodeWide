@@ -50,7 +50,6 @@ describe("thread render window", () => {
 
     const active = selectTurnRenderWindow(turn(items));
     expect(active.leadCompactionIndexes).toEqual([0]);
-    expect(active.trailingCompactionIndexes).toEqual([]);
     expect(active.preTurnActivityIndexes).toEqual([1]);
     expect(active.liveActivityIndexes).toEqual([3, 4]);
     expect(active.collapsedActivityIndexes).toEqual([]);
@@ -61,7 +60,7 @@ describe("thread render window", () => {
     expect(completed.collapsedActivityIndexes).toEqual([3]);
   });
 
-  it("draws a compaction during the response outside the bubble, below it while the turn runs", () => {
+  it("makes a compaction during a running response its work, and a lifecycle line once it finished", () => {
     const items: FakeItem[] = [
       { type: "userMessage", id: "user" },
       { type: "commandExecution", id: "tool-before" },
@@ -72,12 +71,10 @@ describe("thread render window", () => {
 
     const active = selectTurnRenderWindow(turn(items));
     expect(active.leadCompactionIndexes).toEqual([]);
-    expect(active.trailingCompactionIndexes).toEqual([2]);
-    expect(active.liveActivityIndexes).toEqual([1, 3, 4]);
+    expect(active.liveActivityIndexes).toEqual([1, 2, 3, 4]);
 
     const completed = selectTurnRenderWindow(turn(items, "completed"));
     expect(completed.leadCompactionIndexes).toEqual([2]);
-    expect(completed.trailingCompactionIndexes).toEqual([]);
     expect(completed.collapsedActivityIndexes).toEqual([1, 3]);
   });
 
@@ -89,7 +86,6 @@ describe("thread render window", () => {
       for (const status of ["inProgress", "completed"] as const) {
         const window = selectTurnRenderWindow(turn(items, status));
         expect(window.leadCompactionIndexes).toEqual([items.length - 1]);
-        expect(window.trailingCompactionIndexes).toEqual([]);
         expect(window.liveActivityIndexes).toEqual([]);
         expect(window.collapsedActivityIndexes).toEqual([]);
         expect(window.latestAgentIndex).toBe(-1);
