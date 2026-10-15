@@ -362,7 +362,8 @@ pub fn digest_turn(path: &Path, turn: &TurnRef) -> Result<TurnDigest, HistoryErr
 
 /// Projects one bounded rollout span into the V1 summary turn used by the UI.
 ///
-/// Only user and final-agent response messages are materialized. Tool payloads
+/// Only user and final-agent response messages, async questions and context
+/// compactions (drawn outside the turn's body) are materialized. Tool payloads
 /// contribute activity metadata but never expand the summary response.
 ///
 /// # Errors
@@ -419,8 +420,9 @@ pub(crate) fn summary_projection_state_from_file(
 
 /// Version of the projection client caches sealed. 12: the Companion projects
 /// user messages for display (model-only context hidden, envelopes removed),
-/// so cached raw user messages are replaced.
-pub(crate) const SUMMARY_PROJECTION_VERSION: u8 = 12;
+/// so cached raw user messages are replaced. 13: context compactions are
+/// summary items rather than activity.
+pub(crate) const SUMMARY_PROJECTION_VERSION: u8 = 13;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct SummaryProjectionState {
@@ -994,6 +996,13 @@ impl SummaryProjectionState {
         {
             items.push(user);
         }
+        items.extend(
+            self.digest
+                .items
+                .iter()
+                .filter(|item| item.kind == "contextCompaction")
+                .map(|item| json!({ "type": "contextCompaction", "id": item.key })),
+        );
         items.extend(self.questions);
         if let Some(agent) = self.agent {
             items.push(agent);
@@ -1505,6 +1514,40 @@ mod tests {
         )?;
 
         assert_eq!(projected["items"][0]["clientId"], "android-command");
+        Ok(())
+    }
+
+    #[test]
+    fn summary_keeps_a_compaction_as_an_item_rather_than_activity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut file = std::fs::File::create(&path)?;
+        for line in [
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn","started_at":10}}"#,
+            r#"{"type":"event_msg","payload":{"type":"item_started","item":{"type":"ContextCompaction","id":"compaction-id"}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"ContextCompaction","id":"compaction-id"}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn","completed_at":12}}"#,
+        ] {
+            writeln!(file, "{line}")?;
+        }
+        file.sync_all()?;
+
+        let projected = project_summary_turn(
+            &path,
+            &TurnRef {
+                id: "turn".into(),
+                start_offset: 0,
+                end_offset: file.metadata()?.len(),
+                completed: true,
+            },
+        )?;
+
+        assert_eq!(
+            projected["items"],
+            json!([{ "type": "contextCompaction", "id": "compaction-id" }])
+        );
+        assert_eq!(projected["codewide"]["activity"]["count"], 0);
         Ok(())
     }
 

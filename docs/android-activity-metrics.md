@@ -14,8 +14,11 @@ uses the server's recorded turn input price; `estimatedInputCostUsd: null` means
 unknown. These are estimates, not measured per-command model usage or billing.
 
 The backend owns the 16-card live activity window's range summaries. Agent updates
-separate groups; completed final answers, hidden reasoning, questions and pre-turn
-activity do not inflate the completed history total. Full item hydration carries
+separate groups; completed final answers, hidden reasoning, questions, pre-turn
+activity, background task reports and context compactions do not inflate the
+completed history total. Compactions are lifecycle lines outside the bubble, so a
+summary turn carries them as items instead (`in_summary_view`; Codex summary
+projection version 13). Full item hydration carries
 ready range metadata on the first item of each group. Selection uses both endpoints,
 so a partial or unrelated range cannot inherit a whole-turn total.
 

@@ -117,8 +117,13 @@ function joinPendingLine(
   return row;
 }
 
+/** A lead row that draws only report lines; one with a person's message or a compaction keeps its turn. */
 function isReportLead(row: TimelineRow): row is TimelineLeadRow {
-  return row.kind === "turnLead" && row.notifications.length > 0;
+  return (
+    row.kind === "turnLead" &&
+    row.notifications.length > 0 &&
+    !hasTurnLead(projectTurnPresentation(row.item, null, false, false))
+  );
 }
 
 function projectTimelineItemRows(
@@ -155,12 +160,28 @@ function createTimelineItemRows(
     notifications,
     timelineIndex,
   };
-  if (presentation.isEmptyWake) {
-    return notifications.length === 0 ? [] : [lead];
+  const leadOnly = leadOnlyRows(presentation, lead);
+  if (leadOnly !== null) {
+    return leadOnly;
   }
   const followsLead = hasTurnLead(presentation) || notifications.length > 0;
   const slices = turnSlices({ followsLead, item, options, presentation, timelineIndex });
   return followsLead ? [lead, ...slices] : slices;
+}
+
+/**
+ * A turn without a response draws no bubble: a wake that produced nothing
+ * only its reason line (if any), a turn that only compacted the context only
+ * its lifecycle lines. `null` for a turn with a response.
+ */
+function leadOnlyRows(
+  presentation: ReturnType<typeof projectTurnPresentation>,
+  lead: TimelineLeadRow,
+): TimelineRow[] | null {
+  if (presentation.isEmptyWake) {
+    return lead.notifications.length === 0 ? [] : [lead];
+  }
+  return presentation.isCompactionOnly ? [lead] : null;
 }
 
 function turnSlices({
@@ -211,7 +232,7 @@ function leadNotifications(
 }
 
 function hasTurnLead(presentation: ReturnType<typeof projectTurnPresentation>): boolean {
-  return presentation.userBlocks.length > 0 || presentation.compactionBlocks.length > 0;
+  return presentation.userBlocks.length > 0 || presentation.leadCompactionBlocks.length > 0;
 }
 
 function projectTurnParts(

@@ -61,8 +61,9 @@ pub fn page_turns(
 /// Whether the `summary` items view keeps `item`: the user messages and the
 /// final answer (what delivery reconciliation and the thread preview read),
 /// the sub-agent launches (a client shows which agents a turn started and
-/// which still run) and the background task reports (shown outside the
-/// turn's collapsed body). No other activity item. The one summary rule:
+/// which still run), the background task reports and the context
+/// compactions (both shown outside the turn's collapsed body). No other
+/// activity item. The one summary rule:
 /// `thread.turns` pages and the wire projector both apply it.
 #[must_use]
 pub const fn in_summary_view(item: &AgentItem) -> bool {
@@ -71,6 +72,7 @@ pub const fn in_summary_view(item: &AgentItem) -> bool {
         AgentItem::UserMessage { .. }
             | AgentItem::Subagent { .. }
             | AgentItem::TaskNotification { .. }
+            | AgentItem::Compaction { .. }
             | AgentItem::AgentMessage {
                 phase: MessagePhase::Final,
                 ..
@@ -160,8 +162,8 @@ mod tests {
             .collect()
     }
 
-    /// A wake turn that launched a background agent while a report arrived:
-    /// one item of each kind the summary rule decides on.
+    /// A wake turn that compacted, then launched a background agent while a
+    /// report arrived: one item of each kind the summary rule decides on.
     fn wake_turn() -> AgentTurn {
         let message = |id: &'static str, phase| AgentItem::AgentMessage {
             item_id: ItemId::from_static(id),
@@ -184,6 +186,10 @@ mod tests {
                 duration_ms: None,
                 tool_uses: None,
                 result: None,
+            },
+            AgentItem::Compaction {
+                item_id: ItemId::from_static("compaction"),
+                provenance: None,
             },
             message("commentary", MessagePhase::Commentary),
             AgentItem::Command {
@@ -214,12 +220,13 @@ mod tests {
     }
 
     #[test]
-    fn a_summary_page_keeps_messages_launches_and_task_reports_only() -> Result<(), RpcError> {
+    fn a_summary_page_keeps_messages_launches_task_reports_and_compactions_only()
+    -> Result<(), RpcError> {
         let turns = [turn("a"), wake_turn()];
         let summary = page_turns(&turns, Some("a"), 5, SortDirection::Asc, ItemsView::Summary)?;
         assert_eq!(
             summary.turns.iter().map(item_ids).collect::<Vec<_>>(),
-            [vec!["report", "launch", "final"]]
+            [vec!["report", "compaction", "launch", "final"]]
         );
         let full = page_turns(&turns, Some("a"), 5, SortDirection::Asc, ItemsView::Full)?;
         assert_eq!(full.turns[0].items, turns[1].items);

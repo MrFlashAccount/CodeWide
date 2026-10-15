@@ -63,10 +63,13 @@ function reconcileItems(
 }
 
 function isChatBoundary(item: ThreadItem): boolean {
-  return item.type === "userMessage" || item.type === "agentMessage";
+  return item.type === "userMessage" || item.type === "agentMessage" || item.type === "contextCompaction";
 }
 
 function sameLogicalBoundary(left: ThreadItem, right: ThreadItem): boolean {
+  // A compaction has no content: the n-th compaction of a turn is the same one
+  // whatever id a summary or full projection gave it.
+  if (left.type === "contextCompaction" && right.type === "contextCompaction") return true;
   if (left.type === "userMessage" && right.type === "userMessage") {
     if (nonEmpty(left.clientId) !== null && left.clientId === right.clientId) return true;
     return userMessageFingerprint(left) === userMessageFingerprint(right);

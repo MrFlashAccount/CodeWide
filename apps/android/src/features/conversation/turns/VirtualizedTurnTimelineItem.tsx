@@ -60,26 +60,39 @@ export function VirtualizedTurnLeadItem(props: VirtualizedTurnLeadItemProps): Re
     props.presentation.userBlocks.length === 0
       ? null
       : renderUserTurnBody(props.turn, props.presentation.userBlocks, props.getTransferAccess);
-  const compaction =
-    props.presentation.compactionBlocks.length === 0 ? null : (
-      <PreTurnLifecycleRows
-        blocks={props.presentation.compactionBlocks}
-        turnKey={props.turn.key}
-        turnStatus={props.presentation.rawTurn.status}
-        {...(props.getTransferAccess === undefined
-          ? {}
-          : { getTransferAccess: props.getTransferAccess })}
-        {...(props.onFixUnsupportedBlock === undefined
-          ? {}
-          : { onFixUnsupportedBlock: props.onFixUnsupportedBlock })}
-      />
-    );
   return (
     <View style={styles.virtualizedTurnLead}>
       {user}
       <TaskNotificationLine reports={props.notifications} />
-      {compaction}
+      {renderCompactionLines(props, props.presentation.leadCompactionBlocks)}
     </View>
+  );
+}
+
+/** Context compactions are system lifecycle lines outside the bubble, never turn activity. */
+function renderCompactionLines(
+  props: {
+    readonly getTransferAccess?: TurnTimelineItemProps["getTransferAccess"] | undefined;
+    readonly onFixUnsupportedBlock?: TurnTimelineItemProps["onFixUnsupportedBlock"] | undefined;
+    readonly turn: TurnTimelineItemProps["turn"];
+  },
+  blocks: RenderBlock[],
+): ReactElement | null {
+  if (blocks.length === 0) {
+    return null;
+  }
+  return (
+    <PreTurnLifecycleRows
+      blocks={blocks}
+      turnKey={props.turn.key}
+      turnStatus={props.turn.turn.status}
+      {...(props.getTransferAccess === undefined
+        ? {}
+        : { getTransferAccess: props.getTransferAccess })}
+      {...(props.onFixUnsupportedBlock === undefined
+        ? {}
+        : { onFixUnsupportedBlock: props.onFixUnsupportedBlock })}
+    />
   );
 }
 
@@ -199,16 +212,17 @@ function VirtualizedAgentMessage({
     </View>
   );
   // Reports that arrived while a person's turn answered follow its bubble; a
-  // wake turn lists them on its reason line instead.
+  // wake turn lists them on its reason line instead. Compactions during the
+  // response follow it as well.
+  const trailing = isTrailingSlice(props.placement);
   const midTurn =
-    isTrailingSlice(props.placement) && presentation.userBlocks.length > 0
-      ? presentation.taskNotifications.midTurn
-      : [];
+    trailing && presentation.userBlocks.length > 0 ? presentation.taskNotifications.midTurn : [];
   return renderAgentBoundary(
     props,
     <ImagePreviewGroup id={`${props.turn.key}:agent`}>
       {row}
       <TaskNotificationLine reports={midTurn} />
+      {trailing ? renderCompactionLines(props, presentation.trailingCompactionBlocks) : null}
     </ImagePreviewGroup>,
   );
 }

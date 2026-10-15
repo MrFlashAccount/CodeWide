@@ -52,86 +52,103 @@ export function TurnTimelineItem({
         <View style={styles.turnGroup} testID="turn-group">
           {presentation.userBlocks.length > 0 &&
             renderUserTurnBody(turn, presentation.userBlocks, getTransferAccess)}
-          {presentation.compactionBlocks.length > 0 && (
+          {presentation.leadCompactionBlocks.length > 0 && (
             <PreTurnLifecycleRows
-              blocks={presentation.compactionBlocks}
+              blocks={presentation.leadCompactionBlocks}
               turnKey={turn.key}
               turnStatus={presentation.rawTurn.status}
               {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
               {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
             />
           )}
-          {agentDateLabel === null ? null : <TimelineDateSeparator label={agentDateLabel} />}
-          <RecoverableRenderBoundary
-            context={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
-            label="Agent message"
-            resetKey={`${turn.key}:agent`}
-            scope="bubble"
-          >
-            <ImagePreviewGroup id={`${turn.key}:agent`}>
-              <View style={styles.agentMessageRow}>
-                <Bubble
-                  animateLayout={presentation.rawTurn.status === "inProgress" && animateLiveUpdates}
-                  errorContext={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
-                  errorResetKey={`${turn.key}:agent`}
-                  fill={presentation.agentBubbleFill}
-                  footer={
-                    <TurnFooter
-                      changesTarget={{
-                        connectionId: turn.connectionId,
-                        threadId: turn.threadId,
-                        turnId: turn.id,
-                      }}
-                      completedAt={presentation.rawTurn.completedAt}
-                      diff={projectedTurnMetadata(presentation.rawTurn)?.diff ?? ""}
-                      durationMs={presentation.rawTurn.durationMs}
-                      model={projectedTurnMetadata(presentation.rawTurn)?.execution?.model ?? null}
-                      status={presentation.rawTurn.status}
-                      usage={usage}
-                    />
-                  }
-                  testID="codex-bubble"
-                  variant="agent"
-                >
-                  {renderAgentTurnBody(turn, presentation, {
-                    animateLiveUpdates,
-                    compact,
-                    forceExpanded,
-                    getTransferAccess,
-                    latestAgentRef,
-                    onFixUnsupportedBlock,
-                    onLatestAgentLayout,
-                    onLoadItems,
-                    requestPrompt,
-                  })}
-                </Bubble>
-                {presentation.showMessageActions && (
-                  <MessageActionRail
-                    request={{
-                      copyText: presentation.copyText,
-                      ...(presentation.canForkThrough && onForkThroughTurn !== undefined
-                        ? {
-                            onFork: () => {
-                              onForkThroughTurn(turn.id);
-                            },
+          {presentation.isCompactionOnly ? null : (
+            <>
+              {agentDateLabel === null ? null : <TimelineDateSeparator label={agentDateLabel} />}
+              <RecoverableRenderBoundary
+                context={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
+                label="Agent message"
+                resetKey={`${turn.key}:agent`}
+                scope="bubble"
+              >
+                <ImagePreviewGroup id={`${turn.key}:agent`}>
+                  <View style={styles.agentMessageRow}>
+                    <Bubble
+                      animateLayout={
+                        presentation.rawTurn.status === "inProgress" && animateLiveUpdates
+                      }
+                      errorContext={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
+                      errorResetKey={`${turn.key}:agent`}
+                      fill={presentation.agentBubbleFill}
+                      footer={
+                        <TurnFooter
+                          changesTarget={{
+                            connectionId: turn.connectionId,
+                            threadId: turn.threadId,
+                            turnId: turn.id,
+                          }}
+                          completedAt={presentation.rawTurn.completedAt}
+                          diff={projectedTurnMetadata(presentation.rawTurn)?.diff ?? ""}
+                          durationMs={presentation.rawTurn.durationMs}
+                          model={
+                            projectedTurnMetadata(presentation.rawTurn)?.execution?.model ?? null
                           }
-                        : {}),
-                      ...(presentation.canReviewResponse && agentReviewTarget !== null
-                        ? {
-                            onReview: () => {
-                              beginContentReview({
-                                kind: "response",
-                                target: agentReviewTarget,
-                              });
-                            },
-                          }
-                        : {}),
-                    }}
-                  />
-                )}
-              </View>
-            </ImagePreviewGroup>
-          </RecoverableRenderBoundary>
+                          status={presentation.rawTurn.status}
+                          usage={usage}
+                        />
+                      }
+                      testID="codex-bubble"
+                      variant="agent"
+                    >
+                      {renderAgentTurnBody(turn, presentation, {
+                        animateLiveUpdates,
+                        compact,
+                        forceExpanded,
+                        getTransferAccess,
+                        latestAgentRef,
+                        onFixUnsupportedBlock,
+                        onLatestAgentLayout,
+                        onLoadItems,
+                        requestPrompt,
+                      })}
+                    </Bubble>
+                    {presentation.showMessageActions && (
+                      <MessageActionRail
+                        request={{
+                          copyText: presentation.copyText,
+                          ...(presentation.canForkThrough && onForkThroughTurn !== undefined
+                            ? {
+                                onFork: () => {
+                                  onForkThroughTurn(turn.id);
+                                },
+                              }
+                            : {}),
+                          ...(presentation.canReviewResponse && agentReviewTarget !== null
+                            ? {
+                                onReview: () => {
+                                  beginContentReview({
+                                    kind: "response",
+                                    target: agentReviewTarget,
+                                  });
+                                },
+                              }
+                            : {}),
+                        }}
+                      />
+                    )}
+                  </View>
+                </ImagePreviewGroup>
+              </RecoverableRenderBoundary>
+            </>
+          )}
+          {presentation.trailingCompactionBlocks.length > 0 && (
+            <PreTurnLifecycleRows
+              blocks={presentation.trailingCompactionBlocks}
+              turnKey={turn.key}
+              turnStatus={presentation.rawTurn.status}
+              {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+              {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
+            />
+          )}
         </View>
       </PrivateAssetRecoveryProvider>
     </TurnMetricsProvider>

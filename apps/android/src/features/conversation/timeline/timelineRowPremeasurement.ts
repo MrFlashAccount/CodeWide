@@ -282,7 +282,7 @@ function estimateDynamicTimelineRow(options: {
       height += spacing.md * HORIZONTAL_SIDES + typeScale.caption.lineHeight * dimensions.fontScale;
     }
     height +=
-      presentation.compactionBlocks.length * (controlSize.compact + spacing.xxs) +
+      presentation.leadCompactionBlocks.length * (controlSize.compact + spacing.xxs) +
       Math.max(0, presentation.userBlocks.length - 1) * spacing.optical +
       (row.notifications.length > 0 ? controlSize.compact + spacing.xs : 0);
     return dynamicHeight(
@@ -475,9 +475,9 @@ function isStreamingPart(part: VirtualizedTurnPart): boolean {
 }
 
 /**
- * Agent chips have no premeasured size: a finished turn's launch chip leads
- * its bubble, and a person's turn draws reports that arrived during its
- * answer below the bubble.
+ * Agent chips and lines below the bubble have no premeasured size: a finished
+ * turn's launch chip leads its bubble, and a person's turn draws reports that
+ * arrived during its answer, like compactions during any answer, below it.
  */
 function drawsAgentChip(
   row: MeasurableTimelineRow,
@@ -491,7 +491,9 @@ function drawsAgentChip(
     isTrailingPlacement(row.placement) &&
     presentation.userBlocks.length > 0 &&
     presentation.taskNotifications.midTurn.length > 0;
-  return launchChip || reportLine;
+  const compactionLine =
+    isTrailingPlacement(row.placement) && presentation.trailingCompactionBlocks.length > 0;
+  return launchChip || reportLine || compactionLine;
 }
 
 function isLeadingPlacement(placement: VirtualizedTurnPlacement): boolean {

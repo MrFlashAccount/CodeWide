@@ -32,8 +32,9 @@ use crate::agent::{
 /// version names the projection client caches sealed: a client holding turns
 /// of another projection is answered with a reset, so its cache is replaced
 /// rather than extended. v2: user messages projected for display. v3:
-/// compaction items numbered within their turn.
-pub const SOURCE_WITNESS: &str = "codewide-agent-history-v3";
+/// compaction items numbered within their turn. v4: compaction items kept in
+/// the summary view and no longer counted as activity.
+pub const SOURCE_WITNESS: &str = "codewide-agent-history-v4";
 const MAX_PAGE_SIZE: u64 = 100;
 
 /// Direction of a semantic page relative to its anchor.
@@ -300,7 +301,7 @@ mod tests {
         assert_eq!(appended["headTurnId"], "c");
 
         // Turns cached from another projection are replaced by a reset.
-        let stale = witness.replacen("history-v3", "history-v2", 1);
+        let stale = witness.replacen("history-v4", "history-v3", 1);
         let replaced = sync_history(&newer, Some("c"), Some("a"), Some("b"), Some(&stale));
         assert_eq!(replaced["kind"], "reset");
         assert_eq!(ids(&replaced), ["a", "b", "c"]);

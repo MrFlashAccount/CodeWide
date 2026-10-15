@@ -47,6 +47,15 @@ describe("turn item reconciliation", () => {
     expect(result.filter((item) => item.type === "agentMessage")).toHaveLength(2);
   });
 
+  it("matches compactions by their order when projections give them different ids", () => {
+    const result = reconcileTurnItems(
+      [user("user", null), { type: "contextCompaction", id: "live-1" }, { type: "contextCompaction", id: "live-2" }],
+      [{ type: "contextCompaction", id: "generated:1" }, { type: "contextCompaction", id: "generated:2" }],
+    );
+
+    expect(result.map((item) => item.id)).toEqual(["user", "generated:1", "generated:2"]);
+  });
+
   it("preserves the pre-turn marker when canonical history replaces a live item", () => {
     const cached = Object.assign(
       { type: "contextCompaction", id: "compaction" } as const,

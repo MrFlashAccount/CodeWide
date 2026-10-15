@@ -75,6 +75,18 @@ impl ActivityItem {
 /// did, so it never counts as activity.
 const TASK_NOTIFICATION_KIND: &str = crate::wire_items::TASK_NOTIFICATION_ITEM_TYPE;
 
+/// A context compaction is system information drawn outside the turn's
+/// body, so it never counts as activity either.
+const COMPACTION_KIND: &str = "contextCompaction";
+
+/// Whether an item can be turn activity or the turn's answer.
+fn is_turn_work(item: &ActivityItem) -> bool {
+    item.kind != "userMessage"
+        && item.kind != TASK_NOTIFICATION_KIND
+        && item.kind != COMPACTION_KIND
+        && item.phase != AgentPhase::Question
+}
+
 /// Whether an item belongs to the lifecycle before the turn's user message.
 /// A turn without one (a background task woke the agent) has no such
 /// boundary: all of its work is the response, including items marked pre-turn
@@ -124,11 +136,7 @@ impl ActivityState {
     #[must_use]
     pub fn projection(&self) -> Value {
         let first_user = self.items.iter().position(|i| i.kind == "userMessage");
-        let last = self.items.iter().rposition(|i| {
-            i.kind != "userMessage"
-                && i.kind != TASK_NOTIFICATION_KIND
-                && i.phase != AgentPhase::Question
-        });
+        let last = self.items.iter().rposition(is_turn_work);
         let final_agent = self
             .items
             .iter()
@@ -148,9 +156,7 @@ impl ActivityState {
             .iter()
             .enumerate()
             .filter(|(index, item)| {
-                item.kind != "userMessage"
-                    && item.kind != TASK_NOTIFICATION_KIND
-                    && item.phase != AgentPhase::Question
+                is_turn_work(item)
                     && (item.kind != "agentMessage" || item.text)
                     && (item.kind != "reasoning" || (self.active && Some(*index) == last))
             })
@@ -217,8 +223,7 @@ impl ActivityState {
             if item.kind == "agentMessage" && item.text {
                 push_ranges(&mut ranges, &group, self.input_price, self.active, live_ids);
                 group.clear();
-            } else if item.kind != "agentMessage" && !(pre_turn && item.kind == "contextCompaction")
-            {
+            } else if item.kind != "agentMessage" {
                 group.push(*item);
             }
         }
@@ -512,6 +517,31 @@ mod tests {
             ActivityState::from_turn(&turn(&[report("wake")], "completed")).projection();
         assert_eq!(only_reports["total"]["count"], 0);
         assert_eq!(only_reports["ranges"], json!([]));
+    }
+
+    #[test]
+    fn compactions_are_not_activity() {
+        let compaction = |id: &str| json!({"id": id, "type": "contextCompaction"});
+        let metrics = ActivityState::from_turn(&turn(
+            &[
+                compaction("before"),
+                user(),
+                command("work", "abcd"),
+                compaction("during"),
+                json!({"id":"final","type":"agentMessage","text":"done","phase":"final_answer"}),
+            ],
+            "completed",
+        ))
+        .projection();
+        assert_eq!(metrics["total"]["count"], 1);
+        assert_eq!(metrics["total"]["kinds"], json!(["commandExecution"]));
+        assert_eq!(metrics["ranges"].as_array().map(Vec::len), Some(1));
+        assert_eq!(metrics["ranges"][0]["lastItemId"], "work");
+
+        let only_compaction =
+            ActivityState::from_turn(&turn(&[compaction("only")], "completed")).projection();
+        assert_eq!(only_compaction["total"]["count"], 0);
+        assert_eq!(only_compaction["ranges"], json!([]));
     }
 
     #[test]
