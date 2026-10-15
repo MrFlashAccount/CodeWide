@@ -65,6 +65,9 @@ final class RemoteUpdateCoordinator {
                 finished: { [weak self] in self?.session = nil }
             )
             self.session = session
+            // Tell the runtime at once that the app took the command, before
+            // Sparkle reads its feed.
+            try? writer.write(.downloading, downloadedBytes: 0)
             session.start()
         } catch {
             try? writer.write(.failed, error: error.localizedDescription)
@@ -77,12 +80,19 @@ private struct RemoteUpdateEventWriter {
     let root: URL
     let command: RemoteUpdateCommand
 
-    func write(_ kind: RemoteUpdateEvent.Kind, error: String? = nil) throws {
+    func write(
+        _ kind: RemoteUpdateEvent.Kind,
+        error: String? = nil,
+        downloadedBytes: UInt64? = nil,
+        totalBytes: UInt64? = nil
+    ) throws {
         let event = RemoteUpdateEvent(
             operationId: command.operationId,
             nonce: command.nonce,
             kind: kind,
-            errorMessage: error
+            errorMessage: error,
+            downloadedBytes: downloadedBytes,
+            totalBytes: totalBytes
         )
         let directory = RemoteUpdateSpool.commands(updaterRoot: root)
         let destination = directory.appending(path: "\(command.operationId).event.json")
@@ -226,9 +236,22 @@ private final class RemoteSparkleUserDriver: NSObject, SPUUserDriver {
     private let command: RemoteUpdateCommand
     private let writer: RemoteUpdateEventWriter
 
+    private var download = RemoteDownloadProgress()
+
     init(command: RemoteUpdateCommand, writer: RemoteUpdateEventWriter) {
         self.command = command
         self.writer = writer
+    }
+
+    /// Reports download progress at most once a second; every report is a
+    /// durable file write the runtime reads on the next status request.
+    private func publishDownload(force: Bool) {
+        guard let report = download.report(now: .now, force: force) else { return }
+        try? writer.write(
+            .downloading,
+            downloadedBytes: report.downloadedBytes,
+            totalBytes: report.totalBytes
+        )
     }
 
     func show(
@@ -269,10 +292,21 @@ private final class RemoteSparkleUserDriver: NSObject, SPUUserDriver {
         try? writer.write(.failed, error: error.localizedDescription)
         acknowledgement()
     }
-    func showDownloadInitiated(cancellation: @escaping () -> Void) {}
-    func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) {}
-    func showDownloadDidReceiveData(ofLength length: UInt64) {}
-    func showDownloadDidStartExtractingUpdate() {}
+    func showDownloadInitiated(cancellation: @escaping () -> Void) {
+        download = RemoteDownloadProgress()
+        publishDownload(force: true)
+    }
+    func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) {
+        download.expect(expectedContentLength)
+        publishDownload(force: true)
+    }
+    func showDownloadDidReceiveData(ofLength length: UInt64) {
+        download.receive(length)
+        publishDownload(force: false)
+    }
+    func showDownloadDidStartExtractingUpdate() {
+        try? writer.write(.extracting)
+    }
     func showExtractionReceivedProgress(_ progress: Double) {}
     func showReady(toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void) {
         reply(.install)
@@ -286,6 +320,39 @@ private final class RemoteSparkleUserDriver: NSObject, SPUUserDriver {
         acknowledgement: @escaping () -> Void
     ) { acknowledgement() }
     func dismissUpdateInstallation() {}
+}
+
+/// Accumulates Sparkle's download callbacks into throttled progress reports.
+struct RemoteDownloadProgress {
+    struct Report: Equatable {
+        let downloadedBytes: UInt64
+        let totalBytes: UInt64?
+    }
+
+    static let interval: Duration = .seconds(1)
+
+    private(set) var downloadedBytes: UInt64 = 0
+    private(set) var totalBytes: UInt64?
+    private var lastReport: ContinuousClock.Instant?
+
+    mutating func expect(_ length: UInt64) {
+        totalBytes = length > 0 ? length : nil
+    }
+
+    mutating func receive(_ length: UInt64) {
+        downloadedBytes += length
+    }
+
+    /// The report to publish now: forced, the first one, the completed
+    /// download, or one at least ``interval`` after the previous report.
+    mutating func report(now: ContinuousClock.Instant, force: Bool) -> Report? {
+        let complete = totalBytes.map { downloadedBytes >= $0 } ?? false
+        if !force, !complete, let lastReport, now - lastReport < Self.interval {
+            return nil
+        }
+        lastReport = now
+        return Report(downloadedBytes: downloadedBytes, totalBytes: totalBytes)
+    }
 }
 
 /// Sparkle may install only the exact release the device confirmed, and only

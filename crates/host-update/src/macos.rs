@@ -79,6 +79,9 @@ struct OperationRecord {
     current_version: String,
     target: ReleaseTargetV1,
     release_sequence: u64,
+    /// Latest Sparkle stage the app reported while installing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    progress: Option<HostUpdateProgress>,
 }
 
 /// Command the menu-bar app executes with Sparkle.
@@ -99,13 +102,37 @@ struct InstallEvent {
     nonce: String,
     kind: InstallEventKind,
     error_message: Option<String>,
+    #[serde(default)]
+    downloaded_bytes: Option<u64>,
+    #[serde(default)]
+    total_bytes: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 enum InstallEventKind {
+    /// Sparkle is downloading the confirmed release.
+    Downloading,
+    /// Sparkle is extracting and validating the downloaded archive.
+    Extracting,
+    /// Sparkle verified the release and is about to replace the bundle.
     Installing,
     Failed,
+}
+
+impl InstallEvent {
+    /// The stage this event reports, unless it ends the installation.
+    fn progress(&self) -> Option<HostUpdateProgress> {
+        match self.kind {
+            InstallEventKind::Downloading => Some(HostUpdateProgress::Downloading {
+                downloaded_bytes: self.downloaded_bytes.unwrap_or(0),
+                total_bytes: self.total_bytes,
+            }),
+            InstallEventKind::Extracting => Some(HostUpdateProgress::Extracting),
+            InstallEventKind::Installing => Some(HostUpdateProgress::Restarting),
+            InstallEventKind::Failed => None,
+        }
+    }
 }
 
 impl MacosSparkleUpdater {
@@ -203,6 +230,7 @@ impl MacosSparkleUpdater {
                 record.journal.restart_started_at = Some(self.started_at);
                 transition(&mut record, HostUpdatePhase::TargetReady, now)?;
                 transition(&mut record, HostUpdatePhase::AwaitingReconnect, now)?;
+                record.progress = None;
                 changed = true;
             } else if let Some(event) = event
                 .as_ref()
@@ -226,11 +254,16 @@ impl MacosSparkleUpdater {
                     now,
                 )?;
                 changed = true;
-            } else if record.journal.phase == HostUpdatePhase::Accepted
-                && event.is_some_and(|event| event.kind == InstallEventKind::Installing)
-            {
-                transition(&mut record, HostUpdatePhase::Installing, now)?;
-                changed = true;
+            } else if let Some(progress) = event.as_ref().and_then(InstallEvent::progress) {
+                // Any reported stage means the app took the command.
+                if record.journal.phase == HostUpdatePhase::Accepted {
+                    transition(&mut record, HostUpdatePhase::Installing, now)?;
+                    changed = true;
+                }
+                if record.progress.as_ref() != Some(&progress) {
+                    record.progress = Some(progress);
+                    changed = true;
+                }
             }
         }
         if changed {
@@ -463,6 +496,7 @@ impl HostUpdateGuardian for MacosSparkleUpdater {
             current_version: self.installed.version.clone(),
             target: available.target,
             release_sequence: available.release_sequence,
+            progress: None,
         };
         write_json(&self.operation_path(&operation_id), &record).map_err(internal)?;
         write_json(&self.state_root.join("active.json"), &operation_id).map_err(internal)?;
@@ -561,7 +595,10 @@ fn operation_view(record: &OperationRecord) -> HostUpdateOperation {
         error_code: record.journal.error_code.clone(),
         error_message: record.journal.error_message.clone(),
         progress: match record.journal.phase {
-            HostUpdatePhase::Installing => Some(HostUpdateProgress::Restarting),
+            HostUpdatePhase::Installing => record
+                .progress
+                .clone()
+                .or(Some(HostUpdateProgress::Restarting)),
             HostUpdatePhase::AwaitingReconnect => Some(HostUpdateProgress::AwaitingReconnect),
             _ => None,
         },
