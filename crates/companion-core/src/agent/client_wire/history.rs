@@ -24,7 +24,7 @@ use crate::agent::{
     model::{
         AgentTurn, ERROR_INVALID_PARAMS, ItemsView, SortDirection, ThreadTurnsParams, TurnStatus,
     },
-    provider::HistoryChange,
+    provider::{HistoryChange, SubagentsChange},
 };
 
 /// Opaque witness of the provider-owned history source. The provider's
@@ -230,6 +230,22 @@ pub fn history_invalidation(change: &HistoryChange) -> Value {
                 "archived": change.archived,
                 "summary": summary
             }
+        }
+    })
+}
+
+/// The sub-agent invalidation of a [`SubagentsChange`]: the client re-reads
+/// the thread's sub-agents (`companion/threadSubagents/read`, or the
+/// `subagents` of its next `companion/thread/sync`), open or not, since the
+/// thread list shows whether a thread's sub-agents still work. It names the
+/// root thread only; the companion index already holds the new rows when it
+/// is journaled.
+#[must_use]
+pub fn subagents_invalidation(change: &SubagentsChange) -> Value {
+    json!({
+        "method": "companion/thread/subagents/invalidated",
+        "params": {
+            "threadId": change.app_thread_id.as_str()
         }
     })
 }

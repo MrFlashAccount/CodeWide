@@ -34,7 +34,6 @@ export function createCatalogRuntime({
   const threadCatalogWindows = new Map<string, ThreadCatalogWindow>();
   const threadCatalogRefreshedAt = new Map<string, number>();
   const subagentRefreshInFlight = new Map<string, Promise<void>>();
-  const subagentRefreshedAt = new Map<string, number>();
   const refreshThreadCatalog = async (connectionId: string, force = false): Promise<void> => {
     const now = Date.now();
     if (
@@ -79,16 +78,13 @@ export function createCatalogRuntime({
     return operation;
   };
 
-  const refreshSubagents = async (
-    connectionId: string,
-    rootThreadId: string,
-    force = false,
-  ): Promise<void> => {
+  /**
+   * Reads one root's descendant index and replaces its subagent catalog. Callers are the
+   * Companion's subagent invalidation, spawning calls, an older Companion's thread sync and the
+   * agents view; concurrent requests for the same root share one read.
+   */
+  const refreshSubagents = async (connectionId: string, rootThreadId: string): Promise<void> => {
     const key = `${connectionId}\u0000${rootThreadId}`;
-    const now = Date.now();
-    if (!force && now - (subagentRefreshedAt.get(key) ?? 0) < THREAD_CATALOG_REPAIR_INTERVAL_MS) {
-      return;
-    }
     const pending = subagentRefreshInFlight.get(key);
     if (pending !== undefined) {
       return pending;
@@ -101,7 +97,6 @@ export function createCatalogRuntime({
       }
       const descendants = await loadSubagentDescendants(session, rootThreadId);
       await summaries.replaceSubagentCatalog(connectionId, rootThreadId, descendants);
-      subagentRefreshedAt.set(key, Date.now());
     })().finally(() => {
       if (subagentRefreshInFlight.get(key) === operation) {
         subagentRefreshInFlight.delete(key);
@@ -109,20 +104,6 @@ export function createCatalogRuntime({
     });
     subagentRefreshInFlight.set(key, operation);
     return operation;
-  };
-
-  /** Reads the tree now and again while a just-spawned agent's transcript reaches the index. */
-  const refreshSpawnedSubagents = (connectionId: string, rootThreadId: string): void => {
-    for (const delayMs of SPAWNED_SUBAGENT_REFRESH_DELAYS_MS) {
-      setTimeout(() => {
-        void refreshSubagents(connectionId, rootThreadId, true).catch(() => {
-          appLogger.warn({
-            event: "subagent.spawn_refresh.failed",
-            fields: { connectionId, threadId: rootThreadId },
-          });
-        });
-      }, delayMs);
-    }
   };
 
   function catalogWindowKey(connectionId: string, archived: boolean, projectCwd?: string): string {
@@ -302,11 +283,6 @@ export function createCatalogRuntime({
     pins.invalidate(connectionId);
     threadCatalogRefreshedAt.delete(connectionId);
     closeCatalogWindows(connectionId);
-    for (const key of subagentRefreshedAt.keys()) {
-      if (key.startsWith(`${connectionId}\u0000`)) {
-        subagentRefreshedAt.delete(key);
-      }
-    }
   }
   function refreshConnectionWindows(connectionId: string): void {
     void pins.ensure(connectionId, true).catch((error: unknown) => {
@@ -334,7 +310,6 @@ export function createCatalogRuntime({
     readThreadSummary,
     refreshConnectionWindows,
     refreshInvalidatedThread,
-    refreshSpawnedSubagents,
     refreshSubagents,
     refreshThreadCatalog,
     refreshThreadPins,
@@ -342,14 +317,3 @@ export function createCatalogRuntime({
   };
 }
 const THREAD_CATALOG_REPAIR_INTERVAL_MS = 10 * 60 * 1000;
-/** The Companion's watcher debounces a transcript write by 250 ms before it reads the session. */
-const SUBAGENT_INDEX_FIRST_RETRY_MS = 1000;
-/** A large session takes a while to read. */
-const SUBAGENT_INDEX_SLOW_READ_RETRY_MS = 4000;
-const SUBAGENT_INDEX_LAST_RETRY_MS = 10_000;
-const SPAWNED_SUBAGENT_REFRESH_DELAYS_MS = [
-  0,
-  SUBAGENT_INDEX_FIRST_RETRY_MS,
-  SUBAGENT_INDEX_SLOW_READ_RETRY_MS,
-  SUBAGENT_INDEX_LAST_RETRY_MS,
-] as const;

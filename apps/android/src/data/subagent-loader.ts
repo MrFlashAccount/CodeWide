@@ -1,66 +1,42 @@
 import { unknownRecord } from "./unknownRecord";
-import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RpcClient, SyncSnapshotThread } from "@codewide/sync-client";
+import { parseIndexedSubagents, subagentSnapshotThreads } from "./subagentIndexRows";
 
-type IndexedSubagent = {
-  agentNickname: string | null;
-  agentRole: string | null;
-  archived: boolean;
-  cliVersion: string;
-  createdAt: number;
-  cwd: string;
-  id: string;
-  modelProvider: string;
-  parentThreadId: string | null;
-  /** Whether the sub-agent runs now, when its provider's index knows it (Claude). */
-  running?: boolean;
-  source: Thread["source"];
-  updatedAt: number;
-};
+/** Journaled Companion event: the indexed subagents of `params.threadId` (a root) changed. */
+const SUBAGENTS_INVALIDATED_METHOD = "companion/thread/subagents/invalidated";
 
-type IndexedSubagentResponse = {
-  threads: IndexedSubagent[];
-};
-
-/** A live event after which the Companion's descendant index may list a new or changed subagent. */
-export type SubagentActivity = {
-  readonly rootThreadId: string;
-  /**
-   * The spawn has only begun: the agent's transcript reaches the index a moment later, so one
-   * read can still miss it.
-   */
-  readonly spawning: boolean;
-};
-
-export function subagentActivity(payload: Record<string, unknown>): SubagentActivity | null {
-  const params = record(payload.params);
-  const item = record(params?.item);
-  if (params === null || item === null || typeof params.threadId !== "string") {
+/**
+ * The root thread whose descendant index must be read again after this live event, or `null`.
+ *
+ * The Companion announces every indexed change (an agent appears, its running status or facts
+ * change) with `companion/thread/subagents/invalidated` after its index is updated. Spawning calls
+ * still request one immediate read so a Companion without that event lists the new agent.
+ */
+export function subagentRefreshRoot(payload: Record<string, unknown>): string | null {
+  const params = unknownRecord(payload.params);
+  if (params === null || typeof params.threadId !== "string") {
     return null;
   }
   const rootThreadId = params.threadId;
+  if (payload.method === SUBAGENTS_INVALIDATED_METHOD) {
+    return rootThreadId;
+  }
+  const item = unknownRecord(params.item);
+  if (item === null || payload.method !== "item/completed") {
+    return null;
+  }
   // Codex: wait for completion, because item/started can race the new rollout header. The
   // Companion watcher advances the local metadata index independently of the UI invalidation
   // suppression window.
   if (item.type === "subAgentActivity") {
-    return payload.method === "item/completed" &&
-      (item.kind === "started" || item.kind === "interacted")
-      ? { rootThreadId, spawning: false }
-      : null;
+    return item.kind === "started" || item.kind === "interacted" ? rootThreadId : null;
   }
-  // Claude: its agents are never announced as threads. The spawning call is the only live
-  // signal, and a foreground call completes only when its agent has finished.
-  if (item.type === "collabAgentToolCall" && item.tool === "spawnAgent") {
-    if (payload.method === "item/started") {
-      return { rootThreadId, spawning: true };
-    }
-    return payload.method === "item/completed" ? { rootThreadId, spawning: false } : null;
-  }
+  // Claude: its agents are never announced as threads; the spawning call is a live signal.
   // CodeWide orchestration: the spawning call completes once the Companion has linked the agent.
-  if (item.type === "dynamicToolCall" && item.tool === "codewide_spawn_agent") {
-    return payload.method === "item/completed" ? { rootThreadId, spawning: false } : null;
-  }
-  return null;
+  const spawning =
+    (item.type === "collabAgentToolCall" && item.tool === "spawnAgent") ||
+    (item.type === "dynamicToolCall" && item.tool === "codewide_spawn_agent");
+  return spawning ? rootThreadId : null;
 }
 
 /** Load one descendant tree from the Companion's canonical parent index. */
@@ -68,64 +44,8 @@ export async function loadSubagentDescendants(
   session: RpcClient,
   rootThreadId: string,
 ): Promise<SyncSnapshotThread[]> {
-  const response = await session.rpc<IndexedSubagentResponse>("companion/threadSubagents/read", {
+  const response = await session.rpc<unknown>("companion/threadSubagents/read", {
     threadId: rootThreadId,
   });
-  return response.threads.map((metadata) => ({
-    archived: metadata.archived,
-    thread: indexedSubagentThread(metadata, rootThreadId),
-  }));
-}
-
-/**
- * A provider that indexes its sub-agents itself (Claude) says whether one
- * runs; other children (Codex) report their status through live thread events,
- * so their index row stays `notLoaded` until one arrives.
- */
-function indexedSubagentStatus(running: boolean | undefined): Thread["status"] {
-  if (running === undefined) {
-    return { type: "notLoaded" };
-  }
-  return running ? { activeFlags: [], type: "active" } : { type: "idle" };
-}
-
-function indexedSubagentThread(metadata: IndexedSubagent, rootThreadId: string): Thread {
-  return {
-    agentNickname: metadata.agentNickname,
-    agentRole: metadata.agentRole,
-    canAcceptDirectInput: null,
-    cliVersion: metadata.cliVersion,
-    createdAt: metadata.createdAt,
-    cwd: metadata.cwd,
-    daybreakEnabled: null,
-    environments: null,
-    ephemeral: false,
-    extra: null,
-    forkedFromId: null,
-    gitInfo: null,
-    historyMode: "paginated",
-    id: metadata.id,
-    model: null,
-    modelProvider: metadata.modelProvider,
-    name: null,
-    originator: null,
-    parentThreadId: metadata.parentThreadId,
-    path: null,
-    preview: "",
-    projectId: null,
-    reasoningEffort: null,
-    recencyAt: metadata.updatedAt,
-    section: null,
-    sectionEnteredAt: null,
-    sessionId: rootThreadId,
-    source: metadata.source,
-    status: indexedSubagentStatus(metadata.running),
-    threadSource: null,
-    turns: [],
-    updatedAt: metadata.updatedAt,
-  };
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return unknownRecord(value);
+  return subagentSnapshotThreads(parseIndexedSubagents(response), rootThreadId);
 }

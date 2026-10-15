@@ -18,7 +18,7 @@ use agent_core::{
         AgentEvent, AgentThread, AppThreadId, ProviderId, RpcError, ThreadListParams,
         ThreadListResult, ThreadStatus, ThreadTurnsParams, ThreadTurnsResult, turns::page_turns,
     },
-    provider::{HistoryChange, ProviderStatus},
+    provider::{HistoryChange, ProviderStatus, SubagentsChange},
 };
 use agent_resources::ThreadResources;
 use companion_host::{
@@ -179,6 +179,8 @@ pub struct ClaudeStorage {
     journal_directory: PathBuf,
     history_changes: mpsc::Sender<HistoryChange>,
     history_changes_rx: Mutex<Option<mpsc::Receiver<HistoryChange>>>,
+    subagent_changes: mpsc::Sender<SubagentsChange>,
+    subagent_changes_rx: Mutex<Option<mpsc::Receiver<SubagentsChange>>>,
 }
 
 impl ClaudeStorage {
@@ -195,6 +197,7 @@ impl ClaudeStorage {
             resources = resources.with_vcs(vcs);
         }
         let (history_changes, history_changes_rx) = mpsc::channel(HISTORY_CHANGE_CAPACITY);
+        let (subagent_changes, subagent_changes_rx) = mpsc::channel(HISTORY_CHANGE_CAPACITY);
         Ok(Self {
             store,
             search,
@@ -206,6 +209,8 @@ impl ClaudeStorage {
             journal_directory: host.journal_directory,
             history_changes,
             history_changes_rx: Mutex::new(Some(history_changes_rx)),
+            subagent_changes,
+            subagent_changes_rx: Mutex::new(Some(subagent_changes_rx)),
         })
     }
 
@@ -245,7 +250,8 @@ impl ClaudeStorage {
             sessions,
             self.freshness.clone(),
         )
-        .with_history_changes(self.history_changes.clone());
+        .with_history_changes(self.history_changes.clone())
+        .with_subagent_changes(self.subagent_changes.clone());
         tokio::spawn(indexer.run(changes, finished_rx, relist_rx, status));
     }
 
@@ -253,6 +259,15 @@ impl ClaudeStorage {
     /// driven in a terminal); taken once by the companion.
     pub fn take_history_changes(&self) -> Option<mpsc::Receiver<HistoryChange>> {
         self.history_changes_rx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+
+    /// Threads whose indexed sub-agents changed, live turn or not; taken
+    /// once by the companion.
+    pub fn take_subagent_changes(&self) -> Option<mpsc::Receiver<SubagentsChange>> {
+        self.subagent_changes_rx
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()

@@ -166,6 +166,18 @@ pub struct HistoryChange {
     pub preview: Option<String>,
 }
 
+/// A thread whose indexed sub-agent children changed: one appeared or left,
+/// or its listed facts (running, nickname, role, parent) changed. Unlike a
+/// [`HistoryChange`] it is reported while a live turn runs too: a background
+/// sub-agent finishes after the turn that spawned it, and no live event of
+/// that turn announces it. The companion turns it into a sub-agent
+/// invalidation so clients re-read the thread's sub-agents.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SubagentsChange {
+    /// The root thread whose sub-agents changed.
+    pub app_thread_id: AppThreadId,
+}
+
 /// One entry of a provider's ordered event stream.
 pub enum ProviderEvent {
     Event(Box<AgentEvent>),
@@ -377,6 +389,14 @@ pub trait AgentProvider: Send + Sync {
     /// surface. Taken once by the companion; `None` when the provider has no
     /// such source.
     fn take_history_changes(&self) -> Option<mpsc::Receiver<HistoryChange>> {
+        None
+    }
+
+    /// Changes of the sub-agent children the provider published to the
+    /// companion thread index ([`SubagentsChange`]), for a provider whose
+    /// sub-agents are not announced as threads of their own. Taken once by
+    /// the companion; `None` when the provider has no such source.
+    fn take_subagent_changes(&self) -> Option<mpsc::Receiver<SubagentsChange>> {
         None
     }
 }

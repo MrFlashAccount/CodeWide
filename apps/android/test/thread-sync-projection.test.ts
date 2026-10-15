@@ -12,6 +12,7 @@ type Ports = Parameters<typeof createThreadSyncProjection>[0];
 function harness(initial = summary("worker", { status: { type: "active", activeFlags: [] } })) {
   let current: ReturnType<typeof summary> | null = initial;
   const refreshConnectionWindows = vi.fn();
+  const refreshSubagents = vi.fn(async (_connectionId: string, _rootThreadId: string) => undefined);
   const get = vi.fn(async () => current);
   const readThreadSummary = vi.fn(async () => ({
     archived: false,
@@ -37,7 +38,12 @@ function harness(initial = summary("worker", { status: { type: "active", activeF
     accountRateLimits: {},
     agentProviders: { applyChanged },
     projects: { mergeProject },
-    catalog: { readThreadSummary, refreshConnectionWindows, refreshInvalidatedThread: vi.fn() },
+    catalog: {
+      readThreadSummary,
+      refreshConnectionWindows,
+      refreshInvalidatedThread: vi.fn(),
+      refreshSubagents,
+    },
     details: { applyEvents: async () => ({ checkpoint: Promise.resolve(), threads: new Map() }) },
     resources: { threadResources: new Map() },
     summaries: {
@@ -59,6 +65,7 @@ function harness(initial = summary("worker", { status: { type: "active", activeF
     applyChanged,
     mergeProject,
     refreshConnectionWindows,
+    refreshSubagents,
     readThreadSummary,
     get,
     read: () => current,
@@ -165,4 +172,23 @@ it("merges a project another device pinned or unpinned into the project catalog"
     expect.objectContaining({ path: "/repo", pinned: false }),
   );
   expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
+});
+
+it("reads a root's subagents again once the Companion invalidates them, open or not", async () => {
+  const test = harness();
+  const invalidated = (cursor: number, threadId: string): SyncEvent => ({
+    cursor,
+    payload: { method: "companion/thread/subagents/invalidated", params: { threadId } },
+  });
+  await test.store.applyEvents("server", [
+    invalidated(1, "root"),
+    invalidated(2, "root"),
+    invalidated(3, "other-root"),
+  ]);
+  expect(test.refreshSubagents.mock.calls).toEqual([
+    ["server", "root"],
+    ["server", "other-root"],
+  ]);
+  expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
+  expect(test.readThreadSummary).not.toHaveBeenCalled();
 });

@@ -42,7 +42,7 @@ Background task reports: see `docs/agent-providers.md` (Claude native index, tas
 - `threads.backgroundTaskOutput`: a background `Bash` call's `command` item names its task (`backgroundTaskId` from the structured tool result), and `thread.backgroundTask.read` pages that task's output file (`src/background_tasks/`).
 - `threads.hostMintedIds` and `threads.externalDiscovery`: CodeWide threads are bound at `thread/start` (companion-minted UUIDv7); sessions started in a terminal or IDE are listed and discovered like Codex CLI threads (`thread.owns` answers from the index, then the thread service; the binding backfill pages `thread.list`, from the index once fresh).
 - `threads.fork`: a same-provider fork copies the thread's session chain up to the boundary into new Claude sessions (`native/write.rs`).
-- `history.messageSearch`, `history.threadResources` and `subagentThreads` are added exactly when storage is attached (`companion/threadSubagents/read` reads the child rows the index publishes).
+- `history.messageSearch`, `history.threadResources` and `subagentThreads` are added exactly when storage is attached (`companion/threadSubagents/read` and the `subagents` of `companion/thread/sync` read the child rows the index publishes). A re-read after which a session's sub-agents list differently (one appeared or left, or its running state, nickname, role or parent changed; timestamps alone do not count) reports a `SubagentsChange` for its thread, whether a live turn runs or not: a background sub-agent's report arrives in a later turn than its spawning item, so no live event of the spawning turn announces the change.
 
 ## Binding segments and provenance
 

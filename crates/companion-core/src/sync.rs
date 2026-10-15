@@ -549,6 +549,14 @@ impl SyncHub {
         {
             tokio::spawn(forward_history_changes(changes, local_events.clone()));
         }
+        // Their sub-agents are no threads of their own: the index reports
+        // when a thread's sub-agents list differently.
+        for changes in registry
+            .enabled()
+            .filter_map(|provider| provider.take_subagent_changes())
+        {
+            tokio::spawn(forward_subagent_changes(changes, local_events.clone()));
+        }
         let ingest_context = IngestContext {
             store: store.clone(),
             events: events.clone(),
@@ -1829,6 +1837,43 @@ impl SyncHub {
         id: &Value,
         params: &Value,
     ) -> Result<(), ()> {
+        match self.thread_subagents(params).await {
+            Ok(result) => send_local_rpc_result(socket, id, result).await,
+            Err(failure) => send_rpc_failure(socket, id.clone(), &failure).await,
+        }
+    }
+
+    /// Adds the thread's sub-agent tree to a `companion/thread/sync` snapshot,
+    /// read after its history so it is at least as new as `throughCursor`:
+    /// the snapshot carries authoritative sub-agent status, and a later
+    /// `companion/thread/subagents/invalidated` asks for a newer one. `null`
+    /// when its storage cannot be read (the client keeps its rows and reads
+    /// it through `companion/threadSubagents/read`).
+    async fn attach_thread_subagents(&self, params: &Value, result: &mut Value) {
+        let Some(thread_id) = params.get("threadId").and_then(Value::as_str) else {
+            return;
+        };
+        let subagents = match self
+            .thread_subagents(&json!({ "threadId": thread_id }))
+            .await
+        {
+            Ok(subagents) => subagents,
+            // Unreadable storage: the client keeps the rows it has.
+            Err(failure) if failure.code == -32020 => Value::Null,
+            // The thread's provider has no sub-agent threads and it spawned
+            // no agents: its tree is empty, not unknown.
+            Err(_) => json!({"threads": []}),
+        };
+        if let Some(fields) = result.as_object_mut() {
+            fields.insert("subagents".into(), subagents);
+        }
+    }
+
+    /// The sub-agent tree of `params.threadId` as `{"threads": [...]}`: the
+    /// one answer of `companion/threadSubagents/read` and of the `subagents`
+    /// of `companion/thread/sync`.
+    async fn thread_subagents(&self, params: &Value) -> Result<Value, RpcFailure> {
+        let storage_unavailable = || RpcFailure::new(-32020, STORAGE_UNAVAILABLE);
         let gated = self
             .gate_thread_capability(params, Capability::SubagentThreads)
             .await;
@@ -1841,8 +1886,7 @@ impl SyncHub {
                     Ok(rows) => rows,
                     Err(err) => {
                         warn!(err = ?err, "spawned agent links are unreadable");
-                        return send_rpc_error(socket, id.clone(), -32020, STORAGE_UNAVAILABLE)
-                            .await;
+                        return Err(storage_unavailable());
                     }
                 }
             }
@@ -1853,24 +1897,18 @@ impl SyncHub {
                 Some(Ok(rows)) => json!({"threads": rows}),
                 Some(Err(error)) => {
                     warn!(err = %error, "subagent tree is unreadable");
-                    return send_rpc_error(socket, id.clone(), -32020, STORAGE_UNAVAILABLE).await;
+                    return Err(storage_unavailable());
                 }
                 None => {
                     let Some(store) = self.thread_store(Capability::SubagentThreads) else {
-                        return send_rpc_error(socket, id.clone(), -32020, STORAGE_UNAVAILABLE)
-                            .await;
+                        return Err(storage_unavailable());
                     };
-                    match store.subagent_descendants(params) {
-                        Ok(result) => result,
-                        Err(error) => {
-                            return send_rpc_error(socket, id.clone(), -32020, &error).await;
-                        }
-                    }
+                    store
+                        .subagent_descendants(params)
+                        .map_err(|error| RpcFailure::new(-32020, error))?
                 }
             },
-            Err(failure) if spawned.is_empty() => {
-                return send_rpc_failure(socket, id.clone(), &failure).await;
-            }
+            Err(failure) if spawned.is_empty() => return Err(failure),
             Err(_) => json!({"threads": []}),
         };
         if let Some(rows) = result.get_mut("threads").and_then(Value::as_array_mut) {
@@ -1884,7 +1922,7 @@ impl SyncHub {
                     .is_none_or(|id| !present.contains(id))
             }));
         }
-        send_local_rpc_result(socket, id, result).await
+        Ok(result)
     }
 
     async fn handle_workspace_rpc(
@@ -1941,7 +1979,8 @@ impl SyncHub {
         }
         if method == "companion/thread/sync" {
             match self.thread_view.sync(params).await {
-                Ok(result) => {
+                Ok(mut result) => {
+                    self.attach_thread_subagents(params, &mut result).await;
                     self.send_projected_rpc_result(socket, id, method, params, result)
                         .await?;
                 }
@@ -2508,6 +2547,19 @@ async fn forward_history_changes(
 ) {
     while let Some(change) = changes.recv().await {
         let payload = crate::agent::client_wire::history::history_invalidation(&change);
+        if local.send(payload).await.is_err() {
+            break;
+        }
+    }
+}
+
+/// Journals each provider sub-agent change as a sub-agent invalidation.
+async fn forward_subagent_changes(
+    mut changes: tokio::sync::mpsc::Receiver<crate::agent::provider::SubagentsChange>,
+    local: tokio::sync::mpsc::Sender<Value>,
+) {
+    while let Some(change) = changes.recv().await {
+        let payload = crate::agent::client_wire::history::subagents_invalidation(&change);
         if local.send(payload).await.is_err() {
             break;
         }
@@ -3494,6 +3546,60 @@ mod tests {
             journaled["codewideThreadPatch"]["operation"]["kind"],
             "threadInvalidated"
         );
+        drop(changes);
+        forward_task.await?;
+        local_task.await?;
+        ingest_task.await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_provider_subagent_change_is_journaled_as_a_subagent_invalidation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("history.redb"))?);
+        let (ingest, receiver) = tokio::sync::mpsc::channel(4);
+        let (signals, mut delivered) = tokio::sync::broadcast::channel(4);
+        let context = IngestContext {
+            store: store.clone(),
+            events: signals,
+            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
+            content_projector: Arc::new(std::sync::RwLock::new(None)),
+            resources: None,
+            usage_projector: Arc::new(std::sync::Mutex::new(
+                crate::usage::LiveUsageProjector::new(
+                    store.clone(),
+                    agent_core::usage::UsagePricing::default(),
+                ),
+            )),
+            user_text: crate::user_message_projection::UserTextCleaners::new(
+                std::collections::HashMap::new(),
+                ProviderId::from_static("codex"),
+            ),
+        };
+        let ingest_task = tokio::spawn(ingest_events(receiver, context));
+        let (local, local_rx) = tokio::sync::mpsc::channel(4);
+        let local_task = tokio::spawn(forward_local_events(local_rx, ingest));
+        let (changes, changes_rx) = tokio::sync::mpsc::channel(4);
+        let forward_task = tokio::spawn(forward_subagent_changes(changes_rx, local));
+
+        changes
+            .send(crate::agent::provider::SubagentsChange {
+                app_thread_id: crate::agent::model::AppThreadId::from_static("terminal-session"),
+            })
+            .await?;
+        // Subscribed sessions are woken for the journaled entry.
+        tokio::time::timeout(std::time::Duration::from_secs(5), delivered.recv()).await??;
+        let page = store.replay_after(Some(0))?;
+        let [(_, entry)] = page.entries.as_slice() else {
+            return Err("expected one journaled entry".into());
+        };
+        let journaled: Value = serde_json::from_slice(entry)?;
+        assert_eq!(
+            journaled["method"],
+            "companion/thread/subagents/invalidated"
+        );
+        assert_eq!(journaled["params"]["threadId"], "terminal-session");
         drop(changes);
         forward_task.await?;
         local_task.await?;

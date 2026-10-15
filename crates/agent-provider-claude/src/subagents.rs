@@ -123,6 +123,26 @@ pub fn index(read: &NativeSessionReadResult) -> Vec<IndexedSubagent> {
         .collect()
 }
 
+/// Whether two indexed sub-agent sets of one session list differently: an
+/// agent appeared or left, or its running state, nickname, role or parent
+/// changed. Activity timestamps alone do not count, so a working agent's
+/// growing transcript does not re-announce it.
+#[must_use]
+pub fn listed_differently(previous: &[IndexedSubagent], next: &[IndexedSubagent]) -> bool {
+    fn listed(
+        subagent: &IndexedSubagent,
+    ) -> (&str, Option<&str>, Option<&str>, Option<&str>, bool) {
+        (
+            subagent.agent_id.as_str(),
+            subagent.parent_agent_id.as_deref(),
+            subagent.description.as_deref(),
+            subagent.agent_type.as_deref(),
+            subagent.running,
+        )
+    }
+    !previous.iter().map(listed).eq(next.iter().map(listed))
+}
+
 /// The first user text of a transcript, shortened like a list preview.
 fn preview(turns: &[AgentTurn]) -> String {
     turns
@@ -269,6 +289,29 @@ mod tests {
         );
         assert!(parse_child_thread_id(&parent).is_none());
         assert!(parse_child_thread_id(&AppThreadId::from_static("5f0c2a1e:agent:")).is_none());
+    }
+
+    #[test]
+    fn sub_agents_list_differently_when_one_appears_or_its_status_changes() {
+        let subagent = |agent_id: &str, running: bool, updated_at: i64| IndexedSubagent {
+            agent_id: agent_id.into(),
+            parent_agent_id: None,
+            parent_tool_use_id: Some("toolu_spawn".into()),
+            description: Some("Audit".into()),
+            agent_type: Some("Explore".into()),
+            started_at: Some(10),
+            updated_at: Some(updated_at),
+            running,
+        };
+        let working = [subagent("a1", true, 20)];
+        assert!(listed_differently(&[], &working));
+        assert!(!listed_differently(&working, &[subagent("a1", true, 30)]));
+        assert!(listed_differently(&working, &[subagent("a1", false, 30)]));
+        assert!(listed_differently(
+            &working,
+            &[subagent("a1", true, 20), subagent("a2", true, 20)]
+        ));
+        assert!(listed_differently(&working, &[]));
     }
 
     #[test]

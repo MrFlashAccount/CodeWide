@@ -15,7 +15,7 @@ import type { RemoteProjectCatalogModel } from "./remote-project-catalog-model";
 import { parseAddedRemoteProject, PROJECT_CHANGED_METHOD } from "./remote-projects";
 import { operationConfirmsDeliveredCommand } from "./command-receipt-evidence";
 import { hasAppServerAcceptedPendingDelivery, parseHostQueueSnapshot } from "./queue-event";
-import { subagentActivity } from "./subagent-loader";
+import { subagentRefreshRoot } from "./subagent-loader";
 import type { ThreadDetailDatabase } from "./thread-detail-database";
 import { threadPatchRequiresAuthoritativeRefresh } from "./thread-detail-refresh-policy";
 import type { ThreadProjectionStore } from "./thread-projection-store";
@@ -65,7 +65,7 @@ export function createThreadSyncProjection({
       const projectedThreads = projected.threads;
       const receiptThreadIds = new Set<string>();
       const deliveredReceiptThreads = new Set<string>();
-      const subagentRoots = new Map<string, boolean>();
+      const subagentRoots = new Set<string>();
       for (const event of events) {
         const params = asRecord(event.payload.params);
         const patch = threadProjectionPatchFromEvent(event.payload);
@@ -128,12 +128,9 @@ export function createThreadSyncProjection({
             patch.operation.archived === true,
           );
         }
-        const activity = subagentActivity(event.payload);
-        if (activity !== null) {
-          subagentRoots.set(
-            activity.rootThreadId,
-            (subagentRoots.get(activity.rootThreadId) ?? false) || activity.spawning,
-          );
+        const subagentRoot = subagentRefreshRoot(event.payload);
+        if (subagentRoot !== null) {
+          subagentRoots.add(subagentRoot);
         }
         const threadId = threadIdFromEvent(event.payload);
         if (threadId === null) {
@@ -199,12 +196,9 @@ export function createThreadSyncProjection({
             });
           });
       }
-      for (const [rootThreadId, spawning] of subagentRoots) {
-        if (spawning) {
-          catalog.refreshSpawnedSubagents(connectionId, rootThreadId);
-          continue;
-        }
-        void catalog.refreshSubagents(connectionId, rootThreadId, true).catch(() => {
+      // Also for a root that is not open: its thread-list row shows whether its agents work.
+      for (const rootThreadId of subagentRoots) {
+        void catalog.refreshSubagents(connectionId, rootThreadId).catch(() => {
           appLogger.warn({
             event: "subagent.event_refresh.failed",
             fields: { connectionId, threadId: rootThreadId },

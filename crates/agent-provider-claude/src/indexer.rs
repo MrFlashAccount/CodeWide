@@ -14,7 +14,7 @@ use agent_core::{
         AppThreadId, ERROR_INVALID_REQUEST, NativeSessionCodewide, NativeSessionListParams,
         NativeSessionListResult, NativeSessionReadResult, NativeThreadPresence,
     },
-    provider::{HistoryChange, ProviderError, ProviderStatus},
+    provider::{HistoryChange, ProviderError, ProviderStatus, SubagentsChange},
 };
 use async_trait::async_trait;
 use tokio::sync::{mpsc, watch};
@@ -25,6 +25,7 @@ use crate::{
     search::ClaudeSearch,
     storage::Freshness,
     store::{ClaudeStore, Observation, Replaced},
+    subagents,
     watcher::SessionChange,
 };
 
@@ -68,6 +69,7 @@ pub struct ClaudeIndexer {
     sessions: Arc<dyn NativeSessions>,
     freshness: Arc<Freshness>,
     history_changes: Option<mpsc::Sender<HistoryChange>>,
+    subagent_changes: Option<mpsc::Sender<SubagentsChange>>,
 }
 
 /// What one session read did to the index.
@@ -76,6 +78,8 @@ struct Indexed {
     thread: Option<AppThreadId>,
     /// The thread whose indexed turns or listed facts were rewritten from Claude's store.
     rewritten: Option<HistoryChange>,
+    /// The thread whose sub-agents now list differently.
+    subagents_changed: Option<AppThreadId>,
 }
 
 /// The change to publish for a rewritten session, with the thread's preview
@@ -115,6 +119,7 @@ impl ClaudeIndexer {
             sessions,
             freshness,
             history_changes: None,
+            subagent_changes: None,
         }
     }
 
@@ -126,22 +131,43 @@ impl ClaudeIndexer {
         self
     }
 
+    /// Publishes every thread whose indexed sub-agents list differently
+    /// after a read, whether a live turn of it runs or not: a background
+    /// sub-agent's report arrives in a later turn than its spawning item.
+    #[must_use]
+    pub fn with_subagent_changes(mut self, changes: mpsc::Sender<SubagentsChange>) -> Self {
+        self.subagent_changes = Some(changes);
+        self
+    }
+
     /// Reads one session and replaces its indexed turns; a session the host
     /// no longer has is removed. Returns the session's thread.
     ///
     /// # Errors
     /// Returns host, index or search failures.
     pub async fn index_session(&self, session_id: &str) -> Result<Option<AppThreadId>, IndexError> {
-        self.read_session(session_id)
-            .await
-            .map(|indexed| indexed.thread)
+        let indexed = self.read_session(session_id).await?;
+        self.publish_subagents_changed(session_id, indexed.subagents_changed);
+        Ok(indexed.thread)
+    }
+
+    fn publish_subagents_changed(&self, session_id: &str, thread: Option<AppThreadId>) {
+        if let (Some(sender), Some(app_thread_id)) = (&self.subagent_changes, thread)
+            && sender.try_send(SubagentsChange { app_thread_id }).is_err()
+        {
+            warn!(
+                session_id,
+                "Claude sub-agent change queue is full; the next change or open repairs the thread"
+            );
+        }
     }
 
     async fn read_session(&self, session_id: &str) -> Result<Indexed, IndexError> {
-        let previous = self
+        let (previous, previous_subagents) = self
             .store
             .session(session_id)?
-            .map(|stored| stored.session.app_thread_id);
+            .map(|stored| (Some(stored.session.app_thread_id), stored.subagents))
+            .unwrap_or_default();
         if let Some(thread) = &previous {
             self.freshness.mark_stale(thread);
         }
@@ -156,14 +182,24 @@ impl ClaudeIndexer {
                     self.freshness.mark_fresh(&previous);
                 }
                 self.freshness.mark_fresh(&thread);
-                let rewritten = if replaced == Replaced::Written {
-                    history_change(&self.store, &thread, read.session.codewide.as_ref())?
+                let (rewritten, subagents_changed) = if replaced == Replaced::Written {
+                    let next_subagents = self
+                        .store
+                        .session(session_id)?
+                        .map(|stored| stored.subagents)
+                        .unwrap_or_default();
+                    (
+                        history_change(&self.store, &thread, read.session.codewide.as_ref())?,
+                        subagents::listed_differently(&previous_subagents, &next_subagents)
+                            .then(|| thread.clone()),
+                    )
                 } else {
-                    None
+                    (None, None)
                 };
                 Ok(Indexed {
                     thread: Some(thread),
                     rewritten,
+                    subagents_changed,
                 })
             }
             Err(ProviderError::Rejected(rejection))
@@ -179,9 +215,11 @@ impl ClaudeIndexer {
                     Some(thread) => history_change(&self.store, thread, None)?,
                     None => None,
                 };
+                let subagents_changed = removed.clone().filter(|_| !previous_subagents.is_empty());
                 Ok(Indexed {
                     rewritten,
                     thread: removed,
+                    subagents_changed,
                 })
             }
             Err(error) => Err(error.into()),
@@ -314,6 +352,7 @@ impl ClaudeIndexer {
             return Ok(());
         }
         let indexed = self.read_session(&change.session_id).await?;
+        self.publish_subagents_changed(&change.session_id, indexed.subagents_changed);
         if let (Some(sender), Some(rewritten)) = (&self.history_changes, indexed.rewritten)
             && !self.freshness.is_running(&rewritten.app_thread_id)
             && sender.try_send(rewritten).is_err()
@@ -680,6 +719,76 @@ mod tests {
         indexer.apply(&change("terminal", 30)).await?;
         assert!(changes.try_recv().is_err());
         freshness.finished(&thread);
+        Ok(())
+    }
+
+    /// Session `session` of thread `session` at `size` with one sub-agent
+    /// whose only turn runs or finished.
+    fn read_with_agent(size: i64, running: bool) -> NativeSessionReadResult {
+        let mut read = session_read("session", "session", size, &["spawn an agent"]);
+        let mut turn = crate::test_support::turn("agent", "Audit the parser", 11);
+        if running {
+            turn.status = agent_core::model::TurnStatus::InProgress;
+            turn.completed_at = None;
+        }
+        read.subagents.push(agent_core::model::NativeSubagent {
+            agent_id: "a0001".into(),
+            parent_agent_id: None,
+            parent_tool_use_id: None,
+            turns: vec![turn],
+        });
+        read
+    }
+
+    #[tokio::test]
+    async fn a_sub_agent_that_finishes_after_its_turn_publishes_its_thread_while_a_turn_runs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let host = Arc::new(FakeHost::default());
+        host.put(session_read("session", "session", 10, &["spawn an agent"]));
+        let database = companion_host::database::open(directory.path().join("index.redb"), "test")?;
+        let store = Arc::new(ClaudeStore::attach(
+            database,
+            Arc::new(MemoryThreadIndex::default()),
+        )?);
+        let search = Arc::new(ClaudeSearch::open(
+            &directory.path().join("search.sqlite"),
+            store.clone(),
+        )?);
+        let freshness = Arc::new(Freshness::default());
+        let (sender, mut changes) = mpsc::channel(8);
+        let indexer = ClaudeIndexer::new(store, search, host.clone(), freshness.clone())
+            .with_subagent_changes(sender);
+        let thread = AppThreadId::from_static("session");
+        let published = SubagentsChange {
+            app_thread_id: thread.clone(),
+        };
+        indexer.backfill().await?;
+        assert!(changes.try_recv().is_err());
+
+        // The agent appears while the spawning turn runs.
+        freshness.started(&thread);
+        host.put(read_with_agent(20, true));
+        indexer.apply(&change("session", 20)).await?;
+        assert_eq!(changes.try_recv()?, published);
+
+        // It keeps working: its listed facts are the same.
+        host.put(read_with_agent(30, true));
+        indexer.apply(&change("session", 30)).await?;
+        assert!(changes.try_recv().is_err());
+        freshness.finished(&thread);
+
+        // Its report wakes a later turn, which runs while the index learns
+        // that the agent stopped.
+        freshness.started(&thread);
+        host.put(read_with_agent(40, false));
+        indexer.apply(&change("session", 40)).await?;
+        assert_eq!(changes.try_recv()?, published);
+        freshness.finished(&thread);
+
+        // A re-read after the turn finished finds nothing new.
+        indexer.refresh_thread(&thread).await?;
+        assert!(changes.try_recv().is_err());
         Ok(())
     }
 
