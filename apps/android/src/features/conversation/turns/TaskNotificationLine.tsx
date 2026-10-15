@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import { createElement, useContext, useState } from "react";
-import { Pressable, View, useWindowDimensions } from "react-native";
+import { Pressable, View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
@@ -10,6 +10,7 @@ import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
 import { AnchoredMenuList } from "../../../ui/AnchoredMenuList";
 import { ContentMenu } from "../../../ui/ContentMenu";
 import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
+import { useLayoutWidth } from "../../../ui/useLayoutWidth";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "./AgentChip.styles";
 import {
@@ -20,8 +21,6 @@ import {
 } from "./taskNotificationPresentation";
 import { BackgroundTaskContext, SubagentNavigationContext } from "./turnContexts";
 
-/** The line is centred outside bubbles, inside the timeline gutters. */
-const LINE_SIDE_INSET = 48;
 const BADGE_ICON = {
   done: "checkmark-circle",
   failed: "alert-circle",
@@ -48,7 +47,7 @@ export function TaskNotificationLine({
 }): React.JSX.Element | null {
   const [open, setOpen] = useRecyclingState(false);
   const menu = useAnchoredMenuSize();
-  const window = useWindowDimensions();
+  const layout = useLayoutWidth();
   const toggleOpen = useEvent(() => {
     setOpen((current) => !current);
   });
@@ -58,11 +57,21 @@ export function TaskNotificationLine({
   if (reports.length === 0) {
     return null;
   }
-  const summary = reportLineSummary(reports);
   // WHY numeric: Compose measures the anchored trigger intrinsically (a
   // percentage bound collapses its label) and opens the menu at the anchor's
-  // start with the menu's width, so anchor and menu share one row width.
-  const rowWidth = window.width - LINE_SIDE_INSET;
+  // start with the menu's width, so anchor and menu share the line's width.
+  // Until it is laid out, the row keeps the line's height empty.
+  const rowWidth = layout.width;
+  if (rowWidth === null) {
+    return (
+      <View
+        onLayout={layout.onLayout}
+        style={[styles.lineRow, styles.unmeasuredLine]}
+        testID="task-notification-line-row"
+      />
+    );
+  }
+  const summary = reportLineSummary(reports);
   const trigger = createElement(TaskNotificationTrigger, {
     onPress: toggleOpen,
     open,
@@ -82,7 +91,7 @@ export function TaskNotificationLine({
     </AnchoredMenuList>
   );
   return (
-    <View style={styles.lineRow}>
+    <View onLayout={layout.onLayout} style={styles.lineRow} testID="task-notification-line-row">
       <ContentMenu
         align="center"
         onOpenChange={setOpen}

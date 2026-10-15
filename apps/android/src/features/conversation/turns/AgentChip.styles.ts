@@ -66,4 +66,8 @@ export const styles = StyleSheet.create({
     paddingLeft: spacing.xxs,
     paddingRight: spacing.sm,
   },
+  /** An unmeasured row holds the pill's height so measuring it moves nothing. */
+  unmeasuredLine: {
+    minHeight: controlSize.compact + spacing.xxs + spacing.xxs,
+  },
 });

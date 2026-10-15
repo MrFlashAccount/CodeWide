@@ -33,6 +33,10 @@ it("loads a background command's output on press and shows it in a dialog", asyn
     </BackgroundTaskOutputHost>,
   );
 
+  // The line sizes its anchored pill from its laid-out container.
+  fireEvent(view.getByTestId("task-notification-line-row"), "layout", {
+    nativeEvent: { layout: { height: 40, width: 400, x: 0, y: 0 } },
+  });
   fireEvent.press(view.getByTestId("task-notification-line"));
   await act(async () => {
     fireEvent.press(view.getByTestId("task-notification-row"));
