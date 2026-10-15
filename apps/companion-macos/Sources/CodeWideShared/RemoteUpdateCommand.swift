@@ -27,6 +27,10 @@ public struct RemoteUpdateCommand: Codable, Equatable, Sendable {
 /// What the app reports back for a command before the runtime restarts.
 public struct RemoteUpdateEvent: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable {
+        /// Sparkle is downloading the confirmed release.
+        case downloading
+        /// Sparkle is extracting and validating the downloaded archive.
+        case extracting
         /// Sparkle verified the release and is about to replace the bundle.
         case installing
         /// Sparkle could not install the release; the installed version stays.
@@ -37,11 +41,24 @@ public struct RemoteUpdateEvent: Codable, Equatable, Sendable {
     public let nonce: String
     public let kind: Kind
     public let errorMessage: String?
+    /// Bytes received so far; reported only while downloading.
+    public let downloadedBytes: UInt64?
+    /// Expected archive size, when the feed announced it.
+    public let totalBytes: UInt64?
 
-    public init(operationId: String, nonce: String, kind: Kind, errorMessage: String? = nil) {
+    public init(
+        operationId: String,
+        nonce: String,
+        kind: Kind,
+        errorMessage: String? = nil,
+        downloadedBytes: UInt64? = nil,
+        totalBytes: UInt64? = nil
+    ) {
         self.operationId = operationId
         self.nonce = nonce
         self.kind = kind
         self.errorMessage = errorMessage
+        self.downloadedBytes = downloadedBytes
+        self.totalBytes = totalBytes
     }
 }

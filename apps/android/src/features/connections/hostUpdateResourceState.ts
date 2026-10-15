@@ -7,13 +7,16 @@ import {
   type HostUpdateStatus,
 } from "./hostUpdateContract";
 import type { HostUpdateView } from "./hostUpdateSettingsContract";
-import type { HostUpdateHttpError } from "./hostUpdateTransport";
+import { HostUpdateHttpError, HostUpdateUnreachableError } from "./hostUpdateTransport";
 
 const PRECONDITION_FAILED_STATUS = 412;
 const BAD_REQUEST_STATUS = 400;
 const NOT_FOUND_STATUS = 404;
 const CONFLICT_STATUS = 409;
 const LOCKED_STATUS = 423;
+const BAD_GATEWAY_STATUS = 502;
+const SERVICE_UNAVAILABLE_STATUS = 503;
+const GATEWAY_TIMEOUT_STATUS = 504;
 
 export type HostUpdateSnapshot = {
   readonly byConnection: Record<string, HostUpdateView>;
@@ -40,10 +43,14 @@ export type HostUpdateResourceRecord = {
   intent: UpdateIntent | null;
   /** Start of the latest server read; `null` before the first one. */
   lastReadAt: number | null;
+  /** A check requested while another read was in flight; it runs right after that read. */
+  queuedCheck: PromiseWithResolvers<undefined> | null;
   retryAttempt: number;
   /** When the displayed terminal phase was first published; `null` while none is shown. */
   terminalShownAt: number | null;
   timer: ReturnType<typeof setTimeout> | null;
+  /** First transient read failure since the latest confirmed status; `null` while reads succeed. */
+  transientSince: number | null;
   view: HostUpdateView;
 };
 
@@ -58,6 +65,7 @@ export const INITIAL_HOST_UPDATE_VIEW: HostUpdateView = {
   errorMessage: null,
   latestVersion: null,
   operationId: null,
+  pending: null,
   phase: null,
   platform: null,
   progress: null,
@@ -79,6 +87,7 @@ export function hostUpdateStatusView(status: HostUpdateStatus): HostUpdateView {
     errorMessage: operation.errorMessage,
     latestVersion: target.latestVersion,
     operationId: operation.operationId,
+    pending: null,
     phase: operation.phase,
     platform: status.platform,
     progress: status.activeOperation?.progress ?? null,
@@ -91,11 +100,10 @@ export function intentAfterStatus(
   status: HostUpdateStatus,
 ): UpdateIntent | null {
   const operation = status.activeOperation;
-  if (operation === null) {
+  if (operation === null || isTerminalHostUpdatePhase(operation.phase)) {
+    // Status may still show the previous outcome. An apply the server has not
+    // acknowledged yet stays pending; an acknowledged one has ended.
     return current?.operationId === null ? current : null;
-  }
-  if (isTerminalHostUpdatePhase(operation.phase)) {
-    return null;
   }
   return {
     idempotencyKey: current?.idempotencyKey ?? "",
@@ -118,6 +126,7 @@ export function hostUpdateOperationView(
     errorMessage: operation.errorMessage,
     latestVersion: operation.targetVersion,
     operationId: operation.operationId,
+    pending: null,
     phase: operation.phase,
     progress: operation.progress,
     targetFingerprint: operation.targetFingerprint,
@@ -134,6 +143,27 @@ export function unsupportedHostUpdateView(previous: HostUpdateView): HostUpdateV
     disconnected: false,
     errorCode: null,
     errorMessage: null,
+    pending: null,
+  };
+}
+
+/**
+ * Status confirmed while an apply waits for its acknowledgement: show the
+ * fresh versions but keep the request pending, so a concurrent read never
+ * offers Update again for the intent that is still being sent.
+ */
+export function pendingApplyView(status: HostUpdateView): HostUpdateView {
+  return {
+    ...status,
+    canApply: false,
+    canCheck: false,
+    canRetry: false,
+    errorCode: null,
+    errorMessage: null,
+    operationId: null,
+    pending: "apply",
+    phase: null,
+    progress: null,
   };
 }
 
@@ -154,6 +184,7 @@ export function hostUpdateHttpFailureView(
     // its message is a machine code that `availability` already classifies.
     errorMessage: failure.availability === "error" ? error.message : null,
     operationId: null,
+    pending: null,
     phase: null,
     progress: null,
   };
@@ -172,7 +203,29 @@ export function hostUpdateTransportFailureView(
     disconnected: preserveIntent,
     errorCode: preserveIntent ? null : "transport_error",
     errorMessage: preserveIntent ? null : errorMessage(error),
+    pending: preserveIntent ? previous.pending : null,
   };
+}
+
+/**
+ * Keeps the last confirmed status while a fresh read could not reach the
+ * server, for example while Companion or Relay restarts.
+ */
+export function hostUpdateWaitingView(previous: HostUpdateView): HostUpdateView {
+  return { ...previous, canApply: false, canCheck: true, disconnected: true, pending: null };
+}
+
+/** The server did not answer or answered that it is temporarily unavailable. */
+export function isTransientHostUpdateFailure(error: unknown): boolean {
+  if (error instanceof HostUpdateUnreachableError) {
+    return true;
+  }
+  return (
+    error instanceof HostUpdateHttpError &&
+    (error.status === BAD_GATEWAY_STATUS ||
+      error.status === SERVICE_UNAVAILABLE_STATUS ||
+      error.status === GATEWAY_TIMEOUT_STATUS)
+  );
 }
 
 export function createHostUpdateResourceRecord(connected: boolean): HostUpdateResourceRecord {
@@ -182,9 +235,11 @@ export function createHostUpdateResourceRecord(connected: boolean): HostUpdateRe
     generation: 0,
     intent: null,
     lastReadAt: null,
+    queuedCheck: null,
     retryAttempt: 0,
     terminalShownAt: null,
     timer: null,
+    transientSince: null,
     view: INITIAL_HOST_UPDATE_VIEW,
   };
 }

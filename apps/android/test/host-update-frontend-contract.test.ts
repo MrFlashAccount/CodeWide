@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { StoredConnection } from "../src/data/connection-profile-types";
-import { createHostUpdateTransport } from "../src/features/connections/hostUpdateTransport";
+import {
+  createHostUpdateTransport,
+  HostUpdateUnreachableError,
+} from "../src/features/connections/hostUpdateTransport";
 import { urlTransport } from "../src/native/urlTransport";
 
 const connectionFiles = [
@@ -10,6 +13,7 @@ const connectionFiles = [
   "hostUpdatePresentation.ts",
   "HostUpdateSettings.tsx",
   "hostUpdateContract.ts",
+  "hostUpdateOperationFollower.ts",
   "hostUpdateResource.ts",
   "hostUpdateResourceState.ts",
   "hostUpdateSettingsContract.ts",
@@ -85,7 +89,10 @@ describe("Android host update ownership", () => {
     }, { requestTimeoutMilliseconds: 10 });
     const outcome = transport.readOperation("server", "operation-00000000000000000000").catch(error => error);
     await vi.advanceTimersByTimeAsync(10);
-    expect(await outcome).toEqual(expect.objectContaining({ message: expect.stringContaining("in time") }));
+    const error: unknown = await outcome;
+    // A timeout says nothing about the update: an active operation keeps waiting.
+    expect(error).toBeInstanceOf(HostUpdateUnreachableError);
+    expect(error).toEqual(expect.objectContaining({ message: expect.stringContaining("in time") }));
   });
 
   it("uses only the authenticated private V1 host-update routes", async () => {

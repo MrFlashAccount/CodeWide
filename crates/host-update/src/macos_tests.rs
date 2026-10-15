@@ -159,6 +159,60 @@ async fn sparkle_failure_ends_the_operation_and_allows_a_retry() -> Result<(), G
 }
 
 #[tokio::test]
+async fn sparkle_stages_are_reported_as_operation_progress() -> Result<(), GuardianError> {
+    let directory = tempfile::tempdir().map_err(internal)?;
+    let state = directory.path();
+    let updater = updater(state, release("1.0.0"), 1);
+    let fingerprint = cache_available(state);
+    let accepted = updater.apply(command(&fingerprint, "idem_1")).await?;
+    let event_path = state
+        .join("commands")
+        .join(format!("{}.event.json", accepted.operation_id));
+    let nonce = read_optional_json::<OperationRecord>(
+        &state
+            .join("operations")
+            .join(format!("{}.json", accepted.operation_id)),
+    )
+    .map_err(internal)?
+    .ok_or_else(not_found)?
+    .journal
+    .nonce;
+
+    write_json(
+        &event_path,
+        &serde_json::json!({
+            "operationId": accepted.operation_id,
+            "nonce": nonce,
+            "kind": "downloading",
+            "downloadedBytes": 1_000,
+            "totalBytes": 4_000,
+        }),
+    )
+    .map_err(internal)?;
+    let downloading = updater.operation(&accepted.operation_id).await?;
+    assert_eq!(downloading.phase, HostUpdatePhase::Installing);
+    assert_eq!(
+        downloading.progress,
+        Some(HostUpdateProgress::Downloading {
+            downloaded_bytes: 1_000,
+            total_bytes: Some(4_000),
+        })
+    );
+
+    write_event(state, &accepted.operation_id, "extracting");
+    assert_eq!(
+        updater.operation(&accepted.operation_id).await?.progress,
+        Some(HostUpdateProgress::Extracting)
+    );
+    write_event(state, &accepted.operation_id, "installing");
+    assert_eq!(
+        updater.operation(&accepted.operation_id).await?.progress,
+        Some(HostUpdateProgress::Restarting)
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn restarted_target_waits_for_and_accepts_the_initiating_device() -> Result<(), GuardianError>
 {
     let directory = tempfile::tempdir().map_err(internal)?;
