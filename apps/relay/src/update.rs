@@ -14,9 +14,10 @@ use std::{
 };
 
 use codewide_host_update::{
-    ApplyHostUpdateCommand, GuardianError, GuardianErrorCode, HostPlatform, HostUpdateCapability,
-    HostUpdateGuardian, HostUpdateOperation, HostUpdatePhase, HostUpdateProgress,
-    HostUpdateRelayState, HostUpdateStatus, ReconnectReceipt, ReleaseTrust,
+    ApplyHostUpdateAccepted, ApplyHostUpdateCommand, GuardianError, GuardianErrorCode,
+    HostPlatform, HostUpdateCapability, HostUpdateGuardian, HostUpdateOperation, HostUpdatePhase,
+    HostUpdateProgress, HostUpdateRelayState, HostUpdateStatus, LOCAL_ADMINISTRATOR_DEVICE_ID,
+    ReconnectReceipt, ReleaseTrust,
     linux::{
         GenerationMetadataV1, LinuxActivationProduct, LinuxGuardianConfig, LinuxHostUpdateGuardian,
         LinuxProduct, ServiceHealth, ServiceHealthContext, SystemdScope, main_pid,
@@ -316,6 +317,63 @@ impl RelayUpdater {
             })
             .await?
             .into())
+    }
+
+    /// Admits the current signed release for an update started at this
+    /// host's terminal (`codewide-relay update`).
+    ///
+    /// # Errors
+    /// Returns an error when the release cannot be downloaded or admitted, or
+    /// this installation cannot update itself.
+    pub async fn local_check(&self) -> Result<HostUpdateStatus, GuardianError> {
+        self.guardian.check().await
+    }
+
+    /// Queues an update whose initiating device is the local administrator.
+    ///
+    /// # Errors
+    /// Returns an error when the intent is invalid, unsafe, or cannot be persisted.
+    pub async fn local_apply(
+        &self,
+        target_fingerprint: String,
+        idempotency_key: String,
+    ) -> Result<ApplyHostUpdateAccepted, GuardianError> {
+        self.guardian
+            .apply(ApplyHostUpdateCommand {
+                target_fingerprint,
+                idempotency_key,
+                initiating_device_id: LOCAL_ADMINISTRATOR_DEVICE_ID.to_owned(),
+            })
+            .await
+    }
+
+    /// Reads one durable update operation for the terminal.
+    ///
+    /// # Errors
+    /// Returns an error when the operation does not exist or cannot be decoded.
+    pub async fn local_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<HostUpdateOperation, GuardianError> {
+        self.guardian.operation(operation_id).await
+    }
+
+    /// Commits a terminal-started update once the terminal reached the
+    /// restarted Relay.
+    ///
+    /// # Errors
+    /// Returns an error when the receipt is stale, the update was started by
+    /// another device, or the operation is not awaiting reconnect.
+    pub async fn local_reconnect(
+        &self,
+        operation_id: &str,
+    ) -> Result<HostUpdateOperation, GuardianError> {
+        self.guardian
+            .reconnect(ReconnectReceipt {
+                operation_id: operation_id.to_owned(),
+                device_id: LOCAL_ADMINISTRATOR_DEVICE_ID.to_owned(),
+            })
+            .await
     }
 
     /// Records that the initiating Companion reached the restarted Relay. The

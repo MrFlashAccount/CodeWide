@@ -375,9 +375,7 @@ fn build_secure_router(state: AppState) -> Router {
     let transport = Router::new()
         .route("/v1/auth", post(authenticate))
         .route("/v1/device", delete(device_self_revoke))
-        .route("/v1/host-update", get(host_update_status))
-        .route("/v1/host-update/check", post(host_update_check))
-        .route("/v1/host-update/apply", post(host_update_apply))
+        .merge(host_update_routes(UpdateInitiator::DeviceSession))
         .route("/v1/relay-update", get(relay_update_status))
         .route("/v1/relay-update/check", post(relay_update_check))
         .route("/v1/relay-update/apply", post(relay_update_apply))
@@ -388,14 +386,6 @@ fn build_secure_router(state: AppState) -> Router {
         .route(
             "/v1/relay-update/operations/{operation_id}/reconnect",
             post(relay_update_reconnect),
-        )
-        .route(
-            "/v1/host-update/operations/{operation_id}",
-            get(host_update_operation),
-        )
-        .route(
-            "/v1/host-update/operations/{operation_id}/reconnect",
-            post(host_update_reconnect),
         )
         .route("/v1/sync", get(sync_upgrade))
         .route("/v1/port-forwards/discovery", get(port_discovery))
@@ -490,7 +480,8 @@ fn build_control_router(state: AppState) -> Router {
             get(telemetry_settings_read).patch(telemetry_settings_update),
         )
         .route("/v1/relay", get(relay_status).patch(relay_enabled))
-        .route("/v1/relay/pair", post(relay_pair));
+        .route("/v1/relay/pair", post(relay_pair))
+        .merge(host_update_routes(UpdateInitiator::LocalAdministrator));
     router
         .merge(diagnostic_control_routes())
         .layer(DefaultBodyLimit::max(8 * 1024))

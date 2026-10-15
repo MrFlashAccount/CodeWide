@@ -88,7 +88,15 @@ codewide-relay --address 203.0.113.42:8780
 codewide-relay status
 codewide-relay status --json
 codewide-relay revoke --route <route-id>
+codewide-relay update
+codewide-relay update --check
 ```
+
+`update` installs the newest Relay release through the administration socket
+and confirms the restarted Relay before the update commits; otherwise the
+previous generation is restored. `--check` only reports whether a newer release
+is available. A Relay not installed by the curl installer reports that it
+cannot update itself.
 
 On Linux, commands discover the active system or user `codewide-relay.service`
 and its state directory. The curl-installed service is owned by the installing

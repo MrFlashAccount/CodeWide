@@ -17,6 +17,7 @@
 mod generation;
 mod guardian;
 mod health;
+pub mod local_update;
 mod outcome;
 mod prepare;
 mod runner;

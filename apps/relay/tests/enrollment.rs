@@ -349,3 +349,44 @@ async fn invalid_nonce_reveal_closes_window_without_displaying_symbols_or_issuin
     assert!(fixture.enrollment.current().is_none());
     Ok(())
 }
+
+#[tokio::test]
+async fn control_socket_refuses_an_update_without_an_updater() -> Result<()> {
+    let fixture = Fixture::start().await?;
+    let mut control = fixture.control().await?;
+    write_frame(&mut control, &Request::UpdateCheck).await?;
+    assert!(matches!(
+        read_frame::<Reply>(&mut control).await?,
+        Reply::UpdateRejected { code, .. } if code == "manual_update_required"
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_command_explains_a_relay_that_cannot_update_itself() -> Result<()> {
+    let fixture = Fixture::start().await?;
+    let run = |arguments: &'static [&'static str]| {
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_codewide-relay"))
+            .arg("update")
+            .args(arguments)
+            .arg("--state")
+            .arg(fixture.state.path())
+            .arg("--color")
+            .arg("never")
+            .output()
+    };
+
+    let output = run(&[]).await?;
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Relay cannot update itself (this Relay runs without its updater)"),
+        "{stderr}"
+    );
+
+    let output = run(&["--check", "--json"]).await?;
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["result"], "unavailable");
+    Ok(())
+}

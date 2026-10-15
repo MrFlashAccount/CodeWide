@@ -6,7 +6,10 @@ use crate::{
     registry::{Registry, RouteSummary},
     server::Relay,
 };
-use codewide_host_update::HostUpdateRunningArtifact;
+use codewide_host_update::{
+    ApplyHostUpdateAccepted, GuardianError, HostUpdateOperation, HostUpdateRunningArtifact,
+    HostUpdateStatus,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     fs::File,
@@ -26,7 +29,12 @@ pub const SOCKET: &str = "control.sock";
 const MAX_FRAME: usize = 64 * 1024;
 
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "command", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "command",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum Request {
     Status,
     /// The running process's own immutable generation, for update health proof.
@@ -45,6 +53,20 @@ pub enum Request {
     },
     Revoke {
         route: String,
+    },
+    /// The update commands of `codewide-relay update`, whose initiating
+    /// device is the local administrator at this host's terminal.
+    UpdateCheck,
+    UpdateApply {
+        target_fingerprint: String,
+        idempotency_key: String,
+    },
+    UpdateOperation {
+        operation_id: String,
+    },
+    /// The terminal reached the restarted Relay: commits its update.
+    UpdateReconnect {
+        operation_id: String,
     },
 }
 
@@ -71,6 +93,21 @@ pub enum Reply {
     },
     Attestation {
         artifact: Option<HostUpdateRunningArtifact>,
+    },
+    UpdateStatus {
+        // Boxed: the status is far larger than every other reply.
+        status: Box<HostUpdateStatus>,
+    },
+    UpdateAccepted {
+        accepted: ApplyHostUpdateAccepted,
+    },
+    UpdateOperation {
+        operation: HostUpdateOperation,
+    },
+    /// The updater refused an update command; `code` is its stable reason.
+    UpdateRejected {
+        code: String,
+        message: String,
     },
     Error {
         message: String,
@@ -205,10 +242,73 @@ async fn handle(
             }
             Reply::Revoked { removed }
         }
+        Request::UpdateCheck => {
+            update_reply(&relay, async |updater| {
+                updater
+                    .local_check()
+                    .await
+                    .map(|status| Reply::UpdateStatus {
+                        status: Box::new(status),
+                    })
+            })
+            .await
+        }
+        Request::UpdateApply {
+            target_fingerprint,
+            idempotency_key,
+        } => {
+            update_reply(&relay, async |updater| {
+                updater
+                    .local_apply(target_fingerprint, idempotency_key)
+                    .await
+                    .map(|accepted| Reply::UpdateAccepted { accepted })
+            })
+            .await
+        }
+        Request::UpdateOperation { operation_id } => {
+            update_reply(&relay, async |updater| {
+                updater
+                    .local_operation(&operation_id)
+                    .await
+                    .map(|operation| Reply::UpdateOperation { operation })
+            })
+            .await
+        }
+        Request::UpdateReconnect { operation_id } => {
+            update_reply(&relay, async |updater| {
+                updater
+                    .local_reconnect(&operation_id)
+                    .await
+                    .map(|operation| Reply::UpdateOperation { operation })
+            })
+            .await
+        }
         Request::Approve { .. } | Request::Cancel => return Err(denied()),
     };
     tokio::time::timeout(Duration::from_secs(5), write_frame(socket, &reply)).await??;
     Ok(())
+}
+
+/// Runs one update command on the Relay's updater, or refuses it when this
+/// Relay runs without one.
+async fn update_reply(
+    relay: &Relay,
+    command: impl AsyncFnOnce(&crate::update::RelayUpdater) -> std::result::Result<Reply, GuardianError>,
+) -> Reply {
+    let Some(updater) = relay.updater() else {
+        return Reply::UpdateRejected {
+            code: codewide_host_update::GuardianErrorCode::ManualUpdateRequired
+                .reason()
+                .to_owned(),
+            message: "this Relay runs without its updater".to_owned(),
+        };
+    };
+    command(updater)
+        .await
+        .unwrap_or_else(|error| Reply::UpdateRejected {
+            code: error.code.reason().to_owned(),
+            message: error.message,
+        })
 }
 
 async fn pairing(socket: &mut UnixStream, enrollment: &Enrollment) -> Result<()> {
