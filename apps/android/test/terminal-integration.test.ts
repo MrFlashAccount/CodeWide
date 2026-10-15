@@ -231,6 +231,21 @@ describe("native terminal integration", () => {
     expect(patch).toContain("private val symbolsPaint = newTextPaint(terminalTypeface)");
   });
 
+  it("shows output without a PTY read-only: no keyboard, accessory bar, cursor, paste or input", () => {
+    const patch = readFileSync(
+      new URL("../../../patches/expo-libghostty@0.8.1.patch", import.meta.url),
+      "utf8",
+    );
+    expect(patch).toContain('Prop("readOnly")');
+    expect(patch).toContain("readOnly?: boolean;");
+    expect(patch).toContain("if (readOnly) return true");
+    expect(patch).toContain("if (readOnly || !cursorVisible");
+    expect(patch).toContain("override fun onCheckIsTextEditor(): Boolean = !readOnly");
+    expect(patch).toContain("if (!finished && !readOnly && bytes.isNotEmpty())");
+    expect(patch).toContain("menu.findItem(MENU_PASTE)?.isVisible = !readOnly");
+    expect(patch).toContain("private fun accessoryVisibility() = if (readOnly) GONE else VISIBLE");
+  });
+
   it("retains only logical VT state and recreates Android render resources", () => {
     const patch = readFileSync(
       new URL("../../../patches/expo-libghostty@0.8.1.patch", import.meta.url),
@@ -332,7 +347,9 @@ describe("native terminal integration", () => {
       "utf8",
     );
     expect(patch).toContain("bar.visibility = VISIBLE");
-    expect(patch).toContain("accessoryBar.visibility = VISIBLE");
+    // Visible for every interactive terminal; only a read-only output view hides them.
+    expect(patch).toContain("accessoryBar.visibility = accessoryVisibility()");
+    expect(patch).toContain("private fun accessoryVisibility() = if (readOnly) GONE else VISIBLE");
     expect(patch).toContain("The terminal controls are part of the workspace and stay visible");
   });
 

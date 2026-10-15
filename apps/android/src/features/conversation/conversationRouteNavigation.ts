@@ -11,6 +11,7 @@ import type { ComposerToolRouteRequest } from "../../services/composer/composerT
 import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
 import type { AgentRouteRequest } from "../../services/agents/agentRouteSession";
 import type { AttachmentRouteRequest } from "../../services/attachments/attachmentRouteSession";
+import type { TaskOutputRouteRequest } from "../../services/backgroundTasks/taskOutputRouteSession";
 
 /** Commands exposed by the qualified V1 thread route layout to conversation features. */
 export type ConversationRouteNavigation = {
@@ -21,6 +22,8 @@ export type ConversationRouteNavigation = {
   readonly openContent: (request: LargeContentRouteRequest) => void;
   readonly openDocument: (request: DocumentPreviewRequest) => void;
   readonly openDrawing: (request: DrawingRouteRequest) => void;
+  /** A background task's output on its own screen. */
+  readonly openTaskOutput: (request: TaskOutputRouteRequest) => void;
   readonly openTerminal: (request: TerminalRouteRequest) => void;
   readonly openTool: (request: ComposerToolRouteRequest) => void;
   readonly openTurnChanges: (request: TurnChangesRouteRequest) => void;
