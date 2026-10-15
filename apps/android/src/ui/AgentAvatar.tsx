@@ -22,7 +22,10 @@ const FNV_OFFSET = 2_166_136_261;
 const FNV_PRIME = 16_777_619;
 const FIRST_LETTER = /[\p{L}\p{N}]/u;
 
-/** What an avatar stands for: a command gets a terminal icon, anything else a gradient. */
+/**
+ * What an avatar stands for: an agent gets a gradient with its initial; a
+ * command or any other background task gets a terminal icon, never an agent's look.
+ */
 export type AgentAvatarSubject = {
   readonly kind: "agent" | "command" | "other";
   readonly name: string;
@@ -49,12 +52,12 @@ export function AgentAvatar({
 }): React.JSX.Element {
   return (
     <View style={styles.avatar}>
-      {subject.kind === "command" ? (
+      {subject.kind === "agent" ? (
+        <GradientCircle name={subject.name} />
+      ) : (
         <View style={styles.glyphCircle}>
           <Ionicons color={colors.textMuted} name="terminal-outline" size={iconSize.indicator} />
         </View>
-      ) : (
-        <GradientCircle name={subject.name} />
       )}
       {badge === null ? null : (
         <View style={[styles.badge, { backgroundColor: BADGE_COLOR[badge] }]} />
