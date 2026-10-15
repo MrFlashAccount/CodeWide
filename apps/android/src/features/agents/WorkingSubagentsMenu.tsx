@@ -105,11 +105,6 @@ function WorkingSubagentsTrigger({
       <Text numberOfLines={1} shimmering style={styles.label}>
         {label}
       </Text>
-      <Ionicons
-        color={colors.textDim}
-        name={open ? "chevron-down" : "chevron-up"}
-        size={iconSize.inline}
-      />
     </Pressable>
   );
 }
@@ -138,7 +133,6 @@ function WorkingSubagentRow({
           {agent.name}
         </Text>
       </View>
-      <Ionicons color={colors.textDim} name="chevron-forward" size={iconSize.inline} />
     </Pressable>
   );
 }
@@ -165,7 +159,6 @@ function AllSubagentsRow({
       <View style={styles.rowText}>
         <Text style={styles.rowName}>All subagents · {total}</Text>
       </View>
-      <Ionicons color={colors.textDim} name="chevron-forward" size={iconSize.inline} />
     </Pressable>
   );
 }
