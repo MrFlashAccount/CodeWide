@@ -480,3 +480,65 @@ async fn artifact_size_reads_the_head_content_length_header() {
     server.await.expect("fixture completes");
     assert_eq!(size, 52_516_144);
 }
+
+/// The phase of `id` in the journal under `state`.
+fn phase_of(state: &Path, id: &str) -> HostUpdatePhase {
+    store::read_json::<OperationRecord>(&state.join("operations").join(format!("{id}.json")))
+        .expect("operation journal")
+        .journal
+        .phase
+}
+
+#[tokio::test]
+async fn a_product_restarted_by_activation_leaves_the_runners_operation_alone() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let state = directory.path().join("host-update-state");
+    let id = "upd_00000000000000000000000000000000";
+    // The runner restarted the product and checks its health; the phase stays
+    // `Installing` until it commits. Nothing here is preparable (no release,
+    // no artifact size), so a second preparation would fail the operation.
+    let mut restarted = operation(
+        id,
+        "idem_00000000000000000000",
+        7,
+        HostUpdatePhase::Installing,
+    );
+    restarted.journal.restart_started_at = Some(2);
+    point_at(&state, &restarted);
+    let guardian = test_guardian(directory.path().to_path_buf(), state.clone(), None);
+    guardian
+        .prepare_active()
+        .await
+        .expect("resume after restart");
+    assert_eq!(phase_of(&state, id), HostUpdatePhase::Installing);
+
+    // Activation requested, restart not started yet: the runner owns it too.
+    restarted.journal.restart_started_at = None;
+    point_at(&state, &restarted);
+    store::write_json(&state.join(ACTIVATION_REQUEST), &id).expect("activation request");
+    guardian
+        .prepare_active()
+        .await
+        .expect("resume before restart");
+    assert_eq!(phase_of(&state, id), HostUpdatePhase::Installing);
+}
+
+#[tokio::test]
+async fn a_queued_operation_without_activation_is_still_prepared() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let state = directory.path().join("host-update-state");
+    let id = "upd_00000000000000000000000000000000";
+    point_at(
+        &state,
+        &operation(
+            id,
+            "idem_00000000000000000000",
+            7,
+            HostUpdatePhase::Installing,
+        ),
+    );
+    let guardian = test_guardian(directory.path().to_path_buf(), state.clone(), None);
+    guardian.prepare_active().await.expect("preparation");
+    // Preparation ran: an operation without a release authority fails it.
+    assert_eq!(phase_of(&state, id), HostUpdatePhase::Failed);
+}
