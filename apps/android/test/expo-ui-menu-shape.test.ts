@@ -28,10 +28,15 @@ describe("Expo UI menu shape", () => {
     expect(patch).toContain("strokeLineJoin = strokeLineJoin");
     expect(patch).toContain("strokeLineMiter = strokeMiterLimit");
     expect(patch).toContain("takeUnless { it.alpha == 0f }");
-    // Menus centre on their anchor and keep a gap from it through Material's offset.
-    expect(patch).toContain("offsetX?: number");
+    // An aligned menu is placed by a Compose position provider from the anchor
+    // and menu bounds; an unaligned one keeps Material's placement and gap.
+    expect(patch).toContain("horizontalAlignment?: 'start' | 'center' | 'end'");
+    expect(patch).toContain("val horizontalAlignment: MenuHorizontalAlignment? = null");
     expect(patch).toContain("val offsetY: Float = 0f");
-    expect(patch).toContain("offset = DpOffset(props.offsetX.dp, props.offsetY.dp)");
+    expect(patch).toContain("offset = DpOffset(0.dp, props.offsetY.dp)");
+    expect(patch).toContain("popupPositionProvider = positionProvider");
+    expect(patch).toContain(") : PopupPositionProvider {");
+    expect(patch).not.toContain("offsetX?: number");
   });
 
   it("uses the menu radius and compiles the patched Compose source, not the prebuilt AAR", () => {

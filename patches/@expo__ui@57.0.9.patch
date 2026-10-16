@@ -205,14 +205,228 @@ index 202c2e55693f15b165127c4b56ee0c485e81013e..3398982592408fbd0c1c6effc08d433a
    /**
     * Parse dimension string (e.g., "24dp") to Compose Dp.
     */
+diff --git a/android/src/main/java/expo/modules/ui/menu/AnchoredMenuPopup.kt b/android/src/main/java/expo/modules/ui/menu/AnchoredMenuPopup.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..5520126d582b950b1b6808be251ac5ceee2d25b2
+--- /dev/null
++++ b/android/src/main/java/expo/modules/ui/menu/AnchoredMenuPopup.kt
+@@ -0,0 +1,207 @@
++package expo.modules.ui.menu
++
++import androidx.compose.animation.core.MutableTransitionState
++import androidx.compose.animation.core.animateFloat
++import androidx.compose.animation.core.rememberTransition
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.ColumnScope
++import androidx.compose.foundation.layout.IntrinsicSize
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.MenuDefaults
++import androidx.compose.material3.Surface
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.MutableState
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.Shape
++import androidx.compose.ui.graphics.TransformOrigin
++import androidx.compose.ui.graphics.graphicsLayer
++import androidx.compose.ui.platform.LocalDensity
++import androidx.compose.ui.unit.Density
++import androidx.compose.ui.unit.IntOffset
++import androidx.compose.ui.unit.IntRect
++import androidx.compose.ui.unit.IntSize
++import androidx.compose.ui.unit.LayoutDirection
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.window.Popup
++import androidx.compose.ui.window.PopupPositionProvider
++import androidx.compose.ui.window.PopupProperties
++import kotlin.math.max
++import kotlin.math.min
++
++// Material's own menu metrics (androidx.compose.material3 Menu.kt), which it keeps internal.
++private val MenuVerticalMargin = 48.dp
++private val MenuHorizontalMargin = 8.dp
++private val MenuVerticalPadding = 8.dp
++private const val ExpandedScale = 1f
++private const val ClosedScale = 0.8f
++private const val ExpandedAlpha = 1f
++private const val ClosedAlpha = 0f
++
++/**
++ * A dropdown menu lined up with its anchor by [alignment]: Material's
++ * `DropdownMenu` only opens at the anchor's start and takes no position
++ * provider, so this one hosts the same surface and motion in a [Popup] whose
++ * [PopupPositionProvider] places it from the anchor and menu bounds of the
++ * layout pass itself.
++ */
++@Composable
++internal fun AnchoredMenuPopup(
++  expanded: Boolean,
++  onDismissRequest: () -> Unit,
++  alignment: MenuHorizontalAlignment,
++  gap: Float,
++  shape: Shape,
++  containerColor: Color,
++  content: @Composable ColumnScope.() -> Unit
++) {
++  val expandedState = remember { MutableTransitionState(false) }
++  expandedState.targetState = expanded
++  if (!expandedState.currentState && !expandedState.targetState) {
++    return
++  }
++  val density = LocalDensity.current
++  val transformOrigin = remember { mutableStateOf(TransformOrigin.Center) }
++  val positionProvider = remember(alignment, gap, density) {
++    AlignedMenuPositionProvider(alignment, gap, density) { anchor, menu ->
++      transformOrigin.value = menuTransformOrigin(anchor, menu)
++    }
++  }
++  Popup(
++    onDismissRequest = onDismissRequest,
++    popupPositionProvider = positionProvider,
++    properties = PopupProperties(focusable = true)
++  ) {
++    AnchoredMenuSurface(expandedState, transformOrigin, shape, containerColor, content)
++  }
++}
++
++@Composable
++private fun AnchoredMenuSurface(
++  expandedState: MutableTransitionState<Boolean>,
++  transformOrigin: MutableState<TransformOrigin>,
++  shape: Shape,
++  containerColor: Color,
++  content: @Composable ColumnScope.() -> Unit
++) {
++  val transition = rememberTransition(expandedState, "AnchoredMenu")
++  val motion = MaterialTheme.motionScheme
++  val scale by transition.animateFloat(transitionSpec = { motion.fastSpatialSpec() }) { open ->
++    if (open) ExpandedScale else ClosedScale
++  }
++  val alpha by transition.animateFloat(transitionSpec = { motion.fastEffectsSpec() }) { open ->
++    if (open) ExpandedAlpha else ClosedAlpha
++  }
++  Surface(
++    modifier = Modifier.graphicsLayer {
++      scaleX = scale
++      scaleY = scale
++      this.alpha = alpha
++      this.transformOrigin = transformOrigin.value
++    },
++    shape = shape,
++    color = containerColor,
++    tonalElevation = MenuDefaults.TonalElevation,
++    shadowElevation = MenuDefaults.ShadowElevation
++  ) {
++    Column(
++      modifier = Modifier
++        .padding(vertical = MenuVerticalPadding)
++        .width(IntrinsicSize.Max)
++        .verticalScroll(rememberScrollState()),
++      content = content
++    )
++  }
++}
++
++/**
++ * Lines the menu up with the anchor's start, centre or end and keeps it inside
++ * the window's horizontal margins; opens it [gap] below the anchor, or above
++ * it when it does not fit below, as Material's menu does.
++ */
++internal class AlignedMenuPositionProvider(
++  private val alignment: MenuHorizontalAlignment,
++  gap: Float,
++  density: Density,
++  private val onPositionCalculated: (anchor: IntRect, menu: IntRect) -> Unit
++) : PopupPositionProvider {
++  private val gapPx = with(density) { gap.dp.roundToPx() }
++  private val horizontalMarginPx = with(density) { MenuHorizontalMargin.roundToPx() }
++  private val verticalMarginPx = with(density) { MenuVerticalMargin.roundToPx() }
++
++  override fun calculatePosition(
++    anchorBounds: IntRect,
++    windowSize: IntSize,
++    layoutDirection: LayoutDirection,
++    popupContentSize: IntSize
++  ): IntOffset {
++    val x = alignedX(anchorBounds, windowSize.width, layoutDirection, popupContentSize.width)
++    val y = verticalY(anchorBounds, windowSize.height, popupContentSize.height)
++    onPositionCalculated(
++      anchorBounds,
++      IntRect(x, y, x + popupContentSize.width, y + popupContentSize.height)
++    )
++    return IntOffset(x, y)
++  }
++
++  private fun alignedX(
++    anchor: IntRect,
++    windowWidth: Int,
++    layoutDirection: LayoutDirection,
++    menuWidth: Int
++  ): Int {
++    val leading = layoutDirection == LayoutDirection.Ltr
++    val preferred = when (alignment) {
++      MenuHorizontalAlignment.START -> if (leading) anchor.left else anchor.right - menuWidth
++      MenuHorizontalAlignment.CENTER -> anchor.left + (anchor.width - menuWidth) / 2
++      MenuHorizontalAlignment.END -> if (leading) anchor.right - menuWidth else anchor.left
++    }
++    val maxX = windowWidth - horizontalMarginPx - menuWidth
++    // A menu wider than the window's usable width starts at its margin.
++    return if (maxX < horizontalMarginPx) horizontalMarginPx else preferred.coerceIn(horizontalMarginPx, maxX)
++  }
++
++  private fun verticalY(anchor: IntRect, windowHeight: Int, menuHeight: Int): Int {
++    val below = anchor.bottom + gapPx
++    if (below + menuHeight <= windowHeight - verticalMarginPx) {
++      return below
++    }
++    val above = anchor.top - gapPx - menuHeight
++    if (above >= verticalMarginPx) {
++      return above
++    }
++    // Neither side fits: the side with more room, kept inside the margins.
++    val maxY = max(verticalMarginPx, windowHeight - verticalMarginPx - menuHeight)
++    return (if (anchor.center.y < windowHeight / 2) below else above).coerceIn(verticalMarginPx, maxY)
++  }
++}
++
++/** The menu grows from where it meets its anchor, as Material's menu does. */
++private fun menuTransformOrigin(anchor: IntRect, menu: IntRect): TransformOrigin {
++  val pivotX = when {
++    menu.left >= anchor.right -> 0f
++    menu.right <= anchor.left -> 1f
++    menu.width == 0 -> 0f
++    else -> {
++      val center = (max(anchor.left, menu.left) + min(anchor.right, menu.right)) / 2
++      (center - menu.left).toFloat() / menu.width
++    }
++  }
++  val pivotY = when {
++    menu.top >= anchor.bottom -> 0f
++    menu.bottom <= anchor.top -> 1f
++    menu.height == 0 -> 0f
++    else -> {
++      val center = (max(anchor.top, menu.top) + min(anchor.bottom, menu.bottom)) / 2
++      (center - menu.top).toFloat() / menu.height
++    }
++  }
++  return TransformOrigin(pivotX, pivotY)
++}
 diff --git a/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt b/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt
-index 1791eace9a68362520bd39a41c6f8c55d32eb9c2..0cfe31d273b010fafb4bc71580b1a885e7d651b5 100644
+index 1791eace9a68362520bd39a41c6f8c55d32eb9c2..ff93acffad6c3a08b84afe3baec171c5c7efeba3 100644
 --- a/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt
 +++ b/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt
-@@ -1,9 +1,12 @@
+@@ -1,9 +1,13 @@
  package expo.modules.ui.menu
  
  import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.ColumnScope
 +import androidx.compose.foundation.shape.RoundedCornerShape
  import androidx.compose.material3.DropdownMenu
  import androidx.compose.material3.MenuDefaults
@@ -222,32 +436,75 @@ index 1791eace9a68362520bd39a41c6f8c55d32eb9c2..0cfe31d273b010fafb4bc71580b1a885
  import expo.modules.kotlin.views.FunctionalComposableScope
  import expo.modules.ui.UIComposableScope
  import expo.modules.ui.ModifierRegistry
-@@ -25,7 +28,9 @@ fun FunctionalComposableScope.DropdownMenuContent(
-     DropdownMenu(
-       containerColor = props.color?.composeOrNull ?: MenuDefaults.containerColor,
-       expanded = props.expanded,
+@@ -22,11 +26,9 @@ fun FunctionalComposableScope.DropdownMenuContent(
+     // Trigger - non-items children
+     Children(UIComposableScope(), filter = { !isSlotView(it) })
+ 
+-    DropdownMenu(
+-      containerColor = props.color?.composeOrNull ?: MenuDefaults.containerColor,
+-      expanded = props.expanded,
 -      onDismissRequest = onDismissRequest
-+      onDismissRequest = onDismissRequest,
-+      shape = props.cornerRadius?.let { RoundedCornerShape(it.dp) } ?: MenuDefaults.shape,
-+      offset = DpOffset(props.offsetX.dp, props.offsetY.dp)
-     ) {
+-    ) {
++    val containerColor = props.color?.composeOrNull ?: MenuDefaults.containerColor
++    val shape = props.cornerRadius?.let { RoundedCornerShape(it.dp) } ?: MenuDefaults.shape
++    val items: @Composable ColumnScope.() -> Unit = {
        itemsSlotView?.let {
          with(UIComposableScope()) {
+           with(it) {
+@@ -35,5 +37,26 @@ fun FunctionalComposableScope.DropdownMenuContent(
+         }
+       }
+     }
++    val alignment = props.horizontalAlignment
++    if (alignment == null) {
++      DropdownMenu(
++        containerColor = containerColor,
++        expanded = props.expanded,
++        onDismissRequest = onDismissRequest,
++        shape = shape,
++        offset = DpOffset(0.dp, props.offsetY.dp),
++        content = items
++      )
++    } else {
++      AnchoredMenuPopup(
++        expanded = props.expanded,
++        onDismissRequest = onDismissRequest,
++        alignment = alignment,
++        gap = props.offsetY,
++        shape = shape,
++        containerColor = containerColor,
++        content = items
++      )
++    }
+   }
+ }
 diff --git a/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt b/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt
-index 02620bb716b853d79fc29be2c4157d97e1b25c5e..020f9410e4523e1e41300a8c911805ff48b1de00 100644
+index 02620bb716b853d79fc29be2c4157d97e1b25c5e..01ec62491aa7229a26f56ce5624939de7a5d8124 100644
 --- a/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt
 +++ b/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt
-@@ -16,5 +16,8 @@ data class DropdownMenuProps(
+@@ -11,10 +11,20 @@ enum class ActivationMethod(val value: String) : Enumerable {
+   LONG_PRESS("longPress")
+ }
+ 
++/** Where the menu lines up with its anchor; `null` keeps Material's own placement. */
++enum class MenuHorizontalAlignment(val value: String) : Enumerable {
++  START("start"),
++  CENTER("center"),
++  END("end")
++}
++
+ @OptimizedComposeProps
+ data class DropdownMenuProps(
    val activationMethod: ActivationMethod = ActivationMethod.SINGLE_PRESS,
    val expanded: Boolean = false,
    val color: Color? = null,
 +  val cornerRadius: Float? = null,
-+  val offsetX: Float = 0f,
++  val horizontalAlignment: MenuHorizontalAlignment? = null,
 +  val offsetY: Float = 0f,
    val modifiers: ModifierList = emptyList()
  ) : ComposeProps
 diff --git a/build/jetpack-compose/DropdownMenu/index.d.ts b/build/jetpack-compose/DropdownMenu/index.d.ts
-index 05d6909108a74317ac3117327ad19b0c9661b082..bd959598c34925b14e1e5633dbac08f4ecd73d19 100644
+index 05d6909108a74317ac3117327ad19b0c9661b082..e871b7d5dde5250d713399987e353ee5c86f7ca5 100644
 --- a/build/jetpack-compose/DropdownMenu/index.d.ts
 +++ b/build/jetpack-compose/DropdownMenu/index.d.ts
 @@ -23,6 +23,21 @@ export interface DropdownMenuProps {
@@ -260,10 +517,10 @@ index 05d6909108a74317ac3117327ad19b0c9661b082..bd959598c34925b14e1e5633dbac08f4
 +     */
 +    cornerRadius?: number;
 +    /**
-+     * Horizontal shift of the menu from its default position at the anchor's
-+     * start, in density-independent pixels. Material keeps it inside the window.
++     * Lines the menu up with the start, centre or end of its anchor, inside the
++     * window; omitted keeps Material's own placement at the anchor's start.
 +     */
-+    offsetX?: number;
++    horizontalAlignment?: 'start' | 'center' | 'end';
 +    /**
 +     * Gap between the anchor and the menu, in density-independent pixels; it
 +     * applies above or below, wherever Material opens the menu.
@@ -301,7 +558,7 @@ index ddf89aa5ac11610459f6db8abd96a3673f01054f..bf14f12159c4d69336b8f594a50088ff
       * Immediately opens the bottom sheet in full screen.
       * @default false
 diff --git a/src/jetpack-compose/DropdownMenu/index.tsx b/src/jetpack-compose/DropdownMenu/index.tsx
-index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..7eda22e81e1d3f1da3d179b80c4d0d9b4893e6f1 100644
+index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..c881091fd039dbb5e055c42a05eee0ec3572c0b3 100644
 --- a/src/jetpack-compose/DropdownMenu/index.tsx
 +++ b/src/jetpack-compose/DropdownMenu/index.tsx
 @@ -42,6 +42,23 @@ export interface DropdownMenuProps {
@@ -315,10 +572,10 @@ index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..7eda22e81e1d3f1da3d179b80c4d0d9b
 +  cornerRadius?: number;
 +
 +  /**
-+   * Horizontal shift of the menu from its default position at the anchor's
-+   * start, in density-independent pixels. Material keeps it inside the window.
++   * Lines the menu up with the start, centre or end of its anchor, inside the
++   * window; omitted keeps Material's own placement at the anchor's start.
 +   */
-+  offsetX?: number;
++  horizontalAlignment?: 'start' | 'center' | 'end';
 +  /**
 +   * Gap between the anchor and the menu, in density-independent pixels; it
 +   * applies above or below, wherever Material opens the menu.
@@ -333,7 +590,7 @@ index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..7eda22e81e1d3f1da3d179b80c4d0d9b
    onDismissRequest?: () => void;
    color?: ColorValue;
 +  cornerRadius?: number;
-+  offsetX?: number;
++  horizontalAlignment?: 'start' | 'center' | 'end';
 +  offsetY?: number;
    style?: StyleProp<ViewStyle>;
    modifiers?: ModifierConfig[];
