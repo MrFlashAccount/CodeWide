@@ -1,7 +1,6 @@
 mod activity_metrics_live;
 pub mod agent;
 pub mod auth;
-pub mod build_shelf;
 pub mod content;
 pub mod device_tls;
 pub mod diagnostics;

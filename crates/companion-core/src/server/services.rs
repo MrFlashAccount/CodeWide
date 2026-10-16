@@ -101,13 +101,6 @@ fn telemetry_error(error: &TelemetryError) -> Response {
     }
 }
 
-async fn build_shelf_proxy(State(state): State<AppState>, request: Request) -> Response {
-    let Some(proxy) = state.services.build_shelf else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    proxy.proxy(request).await
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateTunnelRequest {

@@ -299,7 +299,6 @@ impl ManagedRuntime {
         )
         .await?;
         let services = CompanionServices {
-            build_shelf: None,
             files: Some(file_transfer),
             content: Some(content),
             image_previews: Some(image_previews.clone()),

@@ -10,7 +10,6 @@ RuntimeDirectory=codewide
 RuntimeDirectoryMode=0700
 Environment=HOME=%h
 Environment=CODEX_HOME=%h/.codex
-Environment=CODEWIDE_BUILD_SHELF_ORIGIN=http://127.0.0.1:4190
 Environment=MALLOC_ARENA_MAX=2
 ExecStartPre=/usr/bin/test -S %h/.codex/app-server-control/app-server-control.sock
 ExecStartPre=/usr/bin/test -s %h/.codewide/host.token

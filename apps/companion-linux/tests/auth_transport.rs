@@ -171,7 +171,6 @@ async fn pairing_proof_session_and_full_grant_work_over_wire()
         "/v1/pairing/claim",
         "/v1/sessions/challenge",
         "/v1/sessions",
-        "/latest.apk",
     ] {
         assert_eq!(
             public_client

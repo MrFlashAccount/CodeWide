@@ -15,7 +15,6 @@ use serde_json::json;
 
 use crate::{
     auth::{AuthError, AuthorizationContext, DeviceRegistry, PairingClaim, SessionProof},
-    build_shelf::BuildShelfProxy,
     content::{ContentQuery, PrivateContentService},
     device_tls::DeviceTlsConnectInfo,
     file_uploads::FileTransfer,
@@ -63,7 +62,6 @@ pub struct CompanionRouters {
 
 #[derive(Clone, Default)]
 pub struct CompanionServices {
-    pub build_shelf: Option<BuildShelfProxy>,
     /// Files and their upload staging are one unit: neither is served without the other.
     pub files: Option<FileTransfer>,
     pub content: Option<Arc<PrivateContentService>>,
@@ -256,16 +254,6 @@ fn build_router(
         )
         .layer(DefaultBodyLimit::max(256 * 1024))
         .layer(v1_compression());
-    let build_shelf = Router::new()
-        .route("/", any(build_shelf_proxy))
-        .route("/api/builds", any(build_shelf_proxy))
-        .route("/api/updates", any(build_shelf_proxy))
-        .route("/api/updates/assets/", any(build_shelf_proxy))
-        .route("/api/updates/assets/{*path}", any(build_shelf_proxy))
-        .route("/latest.apk", any(build_shelf_proxy))
-        .route("/CodeWide.apk", any(build_shelf_proxy))
-        .route("/download/", any(build_shelf_proxy))
-        .route("/download/{*path}", any(build_shelf_proxy));
     core.merge(files)
         .merge(text)
         .merge(images)
@@ -273,25 +261,13 @@ fn build_router(
         .merge(telemetry)
         .merge(diagnostic_ingress_routes())
         .merge(diagnostic_control_routes())
-        .merge(build_shelf)
         .with_state(state)
 }
 
 fn build_outer_router(state: AppState) -> Router {
-    let build_shelf = Router::new()
-        .route("/", any(build_shelf_proxy))
-        .route("/api/builds", any(build_shelf_proxy))
-        .route("/api/updates", any(build_shelf_proxy))
-        .route("/api/updates/assets/", any(build_shelf_proxy))
-        .route("/api/updates/assets/{*path}", any(build_shelf_proxy))
-        .route("/latest.apk", any(build_shelf_proxy))
-        .route("/CodeWide.apk", any(build_shelf_proxy))
-        .route("/download/", any(build_shelf_proxy))
-        .route("/download/{*path}", any(build_shelf_proxy));
     Router::new()
         .route("/v1/e2ee-tunnel", get(e2ee_tunnel))
         .route("/v1/e2ee-bootstrap-tunnel", get(e2ee_bootstrap_tunnel))
-        .merge(build_shelf)
         .with_state(state)
 }
 
@@ -419,16 +395,6 @@ fn build_secure_router(state: AppState) -> Router {
         .route("/v1/telemetry/events", post(telemetry_ingest))
         .layer(DefaultBodyLimit::max(256 * 1024))
         .layer(v1_compression());
-    let build_shelf = Router::new()
-        .route("/", any(build_shelf_proxy))
-        .route("/api/builds", any(build_shelf_proxy))
-        .route("/api/updates", any(build_shelf_proxy))
-        .route("/api/updates/assets/", any(build_shelf_proxy))
-        .route("/api/updates/assets/{*path}", any(build_shelf_proxy))
-        .route("/latest.apk", any(build_shelf_proxy))
-        .route("/CodeWide.apk", any(build_shelf_proxy))
-        .route("/download/", any(build_shelf_proxy))
-        .route("/download/{*path}", any(build_shelf_proxy));
     transport
         .merge(files)
         .merge(text)
@@ -436,7 +402,6 @@ fn build_secure_router(state: AppState) -> Router {
         .merge(media)
         .merge(telemetry)
         .merge(diagnostic_ingress_routes())
-        .merge(build_shelf)
         .layer(axum::middleware::from_fn_with_state(
             authorization,
             enforce_tls_device_binding,

@@ -1,5 +1,4 @@
 use codewide_companion::{
-    build_shelf::PUBLIC_BUILD_SHELF_PATHS,
     global_supervisor_limits::{GLOBAL_SUPERVISOR_LIMITS_V1, GlobalSupervisorLimitsV1},
     thread_patch::{THREAD_PATCH_FIELD, compile_thread_patch},
     thread_view::READ_MODEL_VERSION,
@@ -15,7 +14,6 @@ struct V1Contract {
     web_socket_paths: Vec<String>,
     http_routes: Vec<String>,
     rpc_policy: RpcPolicy,
-    public_build_shelf_paths: Vec<String>,
     thread_projection_patch: ThreadProjectionPatchContract,
     global_supervisor_limits_v1: GlobalSupervisorLimitsV1Contract,
 }
@@ -106,7 +104,6 @@ fn companion_implements_the_frozen_v1_contract() -> Result<(), Box<dyn std::erro
         GLOBAL_SUPERVISOR_LIMITS_V1
     );
     assert_eq!(contract.web_socket_paths, ["/v1/app-server", "/v1/sync"]);
-    assert_eq!(contract.public_build_shelf_paths, PUBLIC_BUILD_SHELF_PATHS);
     assert_eq!(contract.thread_projection_patch.field, THREAD_PATCH_FIELD);
     assert_eq!(contract.thread_projection_patch.version, 1);
     for expected in &contract.thread_projection_patch.operations {

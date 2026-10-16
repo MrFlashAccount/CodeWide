@@ -29,16 +29,16 @@
     "package": {
       "cache": false,
       "executor": "nx:run-commands",
-      "outputs": ["{workspaceRoot}/builds"],
+      "outputs": ["{workspaceRoot}/apps/android/android/app/build/outputs/apk/release"],
       "options": {
-        "command": "./scripts/release-apk --dry-run",
+        "command": "./scripts/build-android-apk",
         "cwd": "."
       }
     },
     "release": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "./scripts/release-apk",
+        "command": "gh workflow run android-release.yml",
         "cwd": ".",
         "forwardAllArgs": true
       }
