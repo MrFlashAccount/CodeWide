@@ -2,6 +2,7 @@ import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RpcClient } from "@codewide/sync-client";
 import { appLogger } from "../observability/logger";
 import { reconcileActiveThreadCommands } from "./command-delivery";
+import { createExternalThreadRefreshScheduler } from "./externalThreadRefresh";
 import { recordTiming } from "./operational-metrics";
 import { readPrivateAssetText } from "./private-transfer";
 import {
@@ -23,6 +24,7 @@ import { createThreadSyncItems } from "./thread-sync-items";
 import type { ThreadSyncAuthority, ThreadWindow } from "./thread-sync-types";
 
 const RESOLVED_VOID_PROMISE = Promise.resolve();
+const EXTERNAL_THREAD_REFRESH_DELAY_MS = 750;
 /** Retains shared source authority, read serialization and desired live observation. */
 export function createThreadSyncRuntime({
   clearInvalidationArchived,
@@ -40,6 +42,7 @@ export function createThreadSyncRuntime({
   const historyReadAuthority = new ThreadHistoryReadAuthority();
   const threadObserverDesired = new Map<string, string>();
   const retainedObservers = new Map<string, { owners: number; threadId: string }>();
+  const writeOwnership = new Map<string, "external" | "owned">();
   function captureThreadHistoryRead(
     connectionId: string,
     session: RpcClient,
@@ -166,6 +169,7 @@ export function createThreadSyncRuntime({
               : { sourceWitness: catchUp.sourceWitness }),
             isCurrent,
           });
+          writeOwnership.set(requestKey, response.writeOwnership);
           if (!isCurrent()) {
             throw new Error("History read was superseded");
           }
@@ -222,6 +226,23 @@ export function createThreadSyncRuntime({
     const cached = getDetails()?.getThread(connectionId, threadId);
     return readThread(connectionId, threadId, cached, true);
   };
+  const externalRefreshScheduler = createExternalThreadRefreshScheduler({
+    delayMs: EXTERNAL_THREAD_REFRESH_DELAY_MS,
+    isDesired: (connectionId, threadId) => threadObserverDesired.get(connectionId) === threadId,
+    isExternal: (connectionId, threadId) =>
+      writeOwnership.get(`${connectionId}\u0000${threadId}`) === "external",
+    onError: (connectionId, threadId, error) => {
+      appLogger.warnCaught({
+        error,
+        event: "thread_external_writer.background_refresh.failed",
+        fields: { connectionId, threadId },
+      });
+    },
+    refresh: async (connectionId, threadId) => {
+      await repairThreadProjection(connectionId, threadId);
+    },
+  });
+  const scheduleExternalThreadRefresh = externalRefreshScheduler.schedule;
   const { loadCanonicalThreadTail, loadNewerTurns, loadOlderTurns, loadTurnsBefore } =
     createThreadSyncHistory({
       captureThreadHistoryRead,
@@ -235,6 +256,13 @@ export function createThreadSyncRuntime({
   const forgetObservedThread = (connectionId: string) => {
     threadObserverDesired.delete(connectionId);
     retainedObservers.delete(connectionId);
+    externalRefreshScheduler.forgetConnection(connectionId);
+    const prefix = `${connectionId}\u0000`;
+    for (const key of writeOwnership.keys()) {
+      if (key.startsWith(prefix)) {
+        writeOwnership.delete(key);
+      }
+    }
   };
   const retainObservedThread = (connectionId: string, threadId: string): (() => void) => {
     const previous = retainedObservers.get(connectionId);
@@ -283,6 +311,7 @@ export function createThreadSyncRuntime({
     readThread,
     repairThreadProjection,
     retainObservedThread,
+    scheduleExternalThreadRefresh,
   };
 }
 function residentThreadWindow(thread: Thread, limit = THREAD_RESIDENT_TURN_LIMIT): Thread {

@@ -110,6 +110,9 @@ export function createThreadSyncProjection({
             patch.operation.archived === true,
           );
         }
+        if (!isCatalogExcluded(event.payload) && patch?.operation.kind === "threadProgress") {
+          sync.scheduleExternalThreadRefresh(connectionId, patch.threadId);
+        }
         const subagentRoot = subagentActivityRootThreadId(event.payload);
         if (subagentRoot !== null) {
           subagentRoots.add(subagentRoot);

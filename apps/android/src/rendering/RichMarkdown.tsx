@@ -36,6 +36,7 @@ import { usePerformanceExperiment } from "../data/performance-experiments";
 import { useEvent } from "../react/useEvent";
 import { AppText } from "../ui/Typography";
 import { useAppDialog } from "../ui/AppDialog";
+import { useAppFullscreenOverlay } from "../ui/AppFullscreenOverlay";
 import { isRemoteFileHref, remoteFileKind } from "./document-preview";
 import { parseDiagnosticRichMarkdown } from "./diagnostic-markdown";
 import { safeImageUri } from "./image-source";
@@ -54,6 +55,7 @@ import type { MarkdownDocumentBlock } from "./markdown-document-blocks";
 import { AsciiDiagram, MermaidDiagram } from "./MermaidDiagram";
 import { NativeCodeBlock } from "./NativeCodeBlock";
 import { CodeBlockHeader } from "./CodeBlockHeader";
+import { FullscreenCodeBlock } from "./FullscreenCodeBlock";
 import { NativeRevealSurface } from "./NativeRevealSurface";
 import { InlineMediaFrame, INLINE_MEDIA_PREVIEW_HEIGHT } from "./InlineMediaFrame";
 import type { MarkupImageDimensions } from "./markup-image-dimensions";
@@ -708,16 +710,23 @@ function MarkupBlock({
 function CopyableCodeBlock({ language, value }: { language: string; value: string }) {
   const [copied, copy] = useCopyFeedback(value);
   const scale = useContext(RichMarkdownTextScaleContext);
+  const fullscreenOverlay = useAppFullscreenOverlay();
+  const openFullscreen = useEvent(() => {
+    fullscreenOverlay.present(({ close }) => (
+      <FullscreenCodeBlock language={language} onClose={close} onCopy={copy} value={value} />
+    ));
+  });
   return (
-    <Pressable
-      accessibilityLabel={`Copy ${language} code block`}
-      accessibilityRole="button"
-      onPress={copy}
-      style={({ pressed }) => [styles.codeContainer, pressed && styles.copyPressed]}
-    >
-      <CodeBlockHeader copied={copied} language={language} scale={scale} />
+    <View style={styles.codeContainer}>
+      <CodeBlockHeader
+        copied={copied}
+        language={language}
+        onCopy={copy}
+        onOpenFullscreen={openFullscreen}
+        scale={scale}
+      />
       <NativeCodeBlock language={language} value={value} />
-    </Pressable>
+    </View>
   );
 }
 
@@ -805,7 +814,7 @@ function useCopyFeedback(value: string): [boolean, () => void] {
   const dialog = useAppDialog();
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const copy = () => {
+  const copy = useEvent(() => {
     Clipboard.setStringAsync(value).then(
       () => {
         setCopied(true);
@@ -821,7 +830,7 @@ function useCopyFeedback(value: string): [boolean, () => void] {
       timerRef.current = null;
       setCopied(false);
     }, 900);
-  };
+  });
   return [copied, copy];
 }
 
@@ -1176,7 +1185,6 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   copyHintDone: { color: colors.green },
-  copyPressed: { opacity: 0.76 },
   deleted: {
     color: colors.textMuted,
     textDecorationLine: "line-through",

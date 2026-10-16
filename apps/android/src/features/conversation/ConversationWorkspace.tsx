@@ -123,6 +123,7 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
           resources: {
             loadTurnItems: props.features.conversation.loadTurnItems,
             putThreadHistory: props.runtime.resources?.putThreadHistory,
+            retryThreadAccess: props.features.conversation.retryThreadAccess,
             threadDetails: props.runtime.threadDetails,
             threadHistoryModel: props.runtime.resources?.threadHistories ?? null,
             threadSummaryDatabase: props.runtime.threadSummaries,
@@ -136,6 +137,7 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
             resources: {
               loadTurnItems: props.features.conversation.loadTurnItems,
               putThreadHistory: props.runtime.resources?.putThreadHistory,
+              retryThreadAccess: props.features.conversation.retryThreadAccess,
               threadDetails: props.runtime.threadDetails,
               threadHistoryModel: props.runtime.resources?.threadHistories ?? null,
               threadSummaryDatabase: props.runtime.threadSummaries,

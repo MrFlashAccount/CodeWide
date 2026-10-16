@@ -139,11 +139,14 @@ export function createConversationChromeContent({
       composerContent={composerView.composerContent}
       currentOutcome={currentOutcome}
       failureNotice={timelineRead.conversationPresentationBinding.failureNotice}
+      onFork={actionsInputs.onFork}
+      onRetryWriteOwnership={readInputs.retryWriteOwnership}
       readOnly={readOnly}
       remoteThread={readInputs.remoteThread}
       reportBottomChromeHeight={timelineState.timelineViewportStateBinding.reportBottomChromeHeight}
       requestPrompt={requestPrompt}
       timeline={timelineRead.conversationTimelineBinding.timeline}
+      writeOwnership={readInputs.writeOwnership}
     />
   );
   return { bottomChrome, headerContent, jumpContent, searchContent };

@@ -26,7 +26,9 @@ import {
 it("preserves workspace integration contracts", () => {
   expect(ownerNewServerRoute).toContain("<ConnectionSheet");
   expect(ownerSettingsRoute).toContain("<SubscribedConnectionSettings");
-  expect(ownerNewThreadRoute).toContain("<NewThreadServerSheet");
+  expect(ownerNewThreadRoute).toContain("<ActiveWorkspaceConversation");
+  expect(ownerNewThreadRoute).toContain("onChangeDraftProject=");
+  expect(ownerNewThreadRoute).not.toContain("<NewThreadServerSheet");
   expect(ownerWorkspaceLayout).toMatch(
     /<WorkspaceVoiceAura(?=[^>]*controller=\{workspaceRuntime\.voiceController\})(?=[^>]*resources=\{resources\.runtime\.resources\})[^>]*>/u,
   );
@@ -36,7 +38,7 @@ it("preserves workspace integration contracts", () => {
   expect(ownerWorkspaceComposition).toContain("viewportWidth: windowLayout.width");
   expect(ownerWorkspaceThreadList).toContain("width: desktopThreadSidebarWidth(viewportWidth)");
   expect(ownerWorkspaceLayout).toContain(
-    '<Stack.Screen name="browser/[sessionId]" options={v1FullscreenScreenOptions} />',
+    '<Stack.Screen name="browser/[sessionId]" options={v1BrowserScreenOptions} />',
   );
   expect(ownerWorkspaceLayout).toContain(
     '<Stack.Screen name="drawing/[sessionId]" options={v1FullscreenScreenOptions} />',
@@ -67,9 +69,9 @@ it("preserves workspace integration contracts", () => {
   );
   expect(ownerFullscreenRouteOverlay).toContain("useAppFullscreenOverlay({ lifecycle, scope })");
   expect(ownerFullscreenRouteOverlay).toContain("present(({ close }) =>");
-  for (const fullscreenRoute of [ownerBrowserRoute, ownerDrawingRoute]) {
-    expect(fullscreenRoute).toContain("<RouteFullscreenOverlay");
-  }
+  expect(ownerBrowserRoute).toContain("browserPresentation.show({");
+  expect(ownerBrowserRoute).toContain("browserPresentation.hide(session.id)");
+  expect(ownerDrawingRoute).toContain("<RouteFullscreenOverlay");
   for (const conversationFullscreenRoute of [
     ownerAgentsRoute,
     ownerChangesRoute,

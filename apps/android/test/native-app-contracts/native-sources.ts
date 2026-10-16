@@ -192,9 +192,23 @@ export const diagramPreviewModule = readFileSync(
   ),
   "utf8",
 );
-export const nativeShimmerView = readFileSync(
+export const textShimmerAttachment = readFileSync(
   new URL(
-    "../../android/app/src/main/java/dev/codewide/app/rendering/NativeShimmerTextView.kt",
+    "../../android/app/src/main/java/dev/codewide/app/rendering/TextShimmerAttachment.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+export const textShimmerDrawable = readFileSync(
+  new URL(
+    "../../android/app/src/main/java/dev/codewide/app/rendering/TextShimmerDrawable.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+export const textShimmerModule = readFileSync(
+  new URL(
+    "../../android/app/src/main/java/dev/codewide/app/rendering/TextShimmerModule.kt",
     import.meta.url,
   ),
   "utf8",

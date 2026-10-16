@@ -93,7 +93,12 @@ describe("port forwarding manager", () => {
     expect(ownerForwardingRow).toContain('unavailable ? "Unavailable"');
     expect(nativeManager).toContain("inventoryReconciler.reconcile(pending.serverId, inventory)");
     expect(manager).not.toContain("Saved ports");
-    expect(ownerPortListProjection).toContain("const currentProfiles = props.profiles.filter");
+    expect(ownerPortListProjection).toContain(
+      "const currentProfileEntries = projectPortProfileEntries(props.discoveredPorts, props.profiles)",
+    );
+    expect(ownerPortListProjection).toContain(
+      'profile.preference !== "excluded" && profile.status !== "unavailable"',
+    );
     expect(nativeManager).toContain("profile.serviceKey != currentKey");
     expect(nativeManager).toContain('502 -> PortForwardFailure("unavailable"');
   });

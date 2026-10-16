@@ -6,6 +6,7 @@ import type { ThreadCurrentOutcome } from "../../data/thread-current-outcome";
 import type { ThreadHistoryModel } from "../../data/thread-history-model";
 import type { ThreadHistoryViewport } from "../../data/use-thread-history-controller";
 import type { ThreadUiStateRead } from "../../data/use-thread-ui-state";
+import type { ThreadWriteOwnership } from "../../data/thread-cursor-sync";
 import type { MessageListState } from "../../ui/MessageListBoundary";
 import type { SearchConversationWindow } from "../search/search-conversation-window";
 /** Qualified capabilities consumed by the conversation owner in conversation composition. */
@@ -27,6 +28,7 @@ export type MainThreadReadCapabilities = {
   remoteLiveTurns: readonly Thread["turns"][number][] | undefined;
   remoteSealedTurns: readonly Thread["turns"][number][] | undefined;
   remoteThread: Thread | null | undefined;
+  retryWriteOwnership: (() => Promise<void>) | undefined;
   saveScrollOffset:
     | ((
         connectionId: string,
@@ -39,4 +41,5 @@ export type MainThreadReadCapabilities = {
   searchWindow: SearchConversationWindow | null;
   threadChatModel: ThreadChatModel | null;
   timelineEntries: readonly ProjectedThreadChatTimelineEntry[] | undefined;
+  writeOwnership: ThreadWriteOwnership;
 };

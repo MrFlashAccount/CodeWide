@@ -9,6 +9,7 @@ import type { ThreadDetailDatabase } from "../../data/thread-detail-database-con
 import type { ThreadHistoryModel, ThreadHistoryRow } from "../../data/thread-history-model";
 import type { ThreadSummaryDatabase } from "../../data/thread-summary-database";
 import type { ThreadUiStateDatabase } from "../../data/thread-ui-state-database-contract";
+import type { ThreadWriteOwnership } from "../../data/thread-cursor-sync";
 import type { ThreadHistoryViewport } from "../../data/use-thread-history-controller";
 import type { ThreadUiStateRead } from "../../data/use-thread-ui-state";
 import type { MessageListState } from "../../ui/MessageListBoundary";
@@ -17,6 +18,7 @@ import type { SearchConversationWindow } from "../search/search-conversation-win
 export type ConversationDetailResources = {
   loadTurnItems: (connectionId: string, threadId: string, turnId: string) => Promise<Turn["items"]>;
   putThreadHistory: ((row: Omit<ThreadHistoryRow, "updatedAt">) => void) | undefined;
+  retryThreadAccess: (connectionId: string, threadId: string) => Promise<void>;
   threadDetails: ThreadDetailDatabase | null;
   threadHistoryModel: ThreadHistoryModel | null;
   threadSummaryDatabase: ThreadSummaryDatabase | null;
@@ -40,10 +42,12 @@ export type ConversationDetailSnapshot = {
   remoteLiveTurns: readonly Turn[];
   remoteSealedTurns: readonly Turn[];
   remoteThread: Thread | null;
+  retryWriteOwnership?: () => Promise<void>;
   searchWindow?: SearchConversationWindow | null;
   subagentSummaryDatabase: ThreadSummaryDatabase | null;
   threadChatModel?: ThreadChatModel;
   timelineEntries: readonly ProjectedThreadChatTimelineEntry[];
+  writeOwnership: ThreadWriteOwnership;
 };
 /** Destination metadata plus a presentation slot; no composer or tool implementation crosses this boundary. */
 export type ConversationDestinationBaseProps = {

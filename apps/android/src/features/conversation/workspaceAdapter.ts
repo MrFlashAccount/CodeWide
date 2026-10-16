@@ -39,12 +39,22 @@ export function createConversationWorkspaceAdapter({
     connectionId,
     threadId,
   ) => (await readThreadSummary(connectionId, threadId)).thread;
+  const retryThreadAccess: ConversationWorkspaceCapabilities["retryThreadAccess"] = async (
+    connectionId,
+    threadId,
+  ) => {
+    const result = await readThread(connectionId, threadId, undefined, true, true);
+    if (result === null) {
+      throw new Error("Thread access refresh returned no thread");
+    }
+  };
   return {
     loadScrollOffset,
     loadTurnItems,
     observeThread,
     readThread,
     readThreadMetadata,
+    retryThreadAccess,
     saveScrollOffset,
   };
 }

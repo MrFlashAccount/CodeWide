@@ -12,6 +12,8 @@ import { nativeMarkupConfig } from "../src/rendering/native-markup-config";
 import { markupTableGrid, markupTableRowHeights } from "../src/rendering/markup-table-layout";
 import { RichContentWidthProvider } from "../src/rendering/RichContentLayout";
 import { CodeBlockHeader } from "../src/rendering/CodeBlockHeader";
+import { FullscreenCodeBlock } from "../src/rendering/FullscreenCodeBlock";
+import { FullscreenWindowReadyProvider } from "../src/ui/FullscreenWindowReady";
 import {
   MessageAttachmentGrid,
   MessageAttachmentTile,
@@ -216,15 +218,60 @@ it("shows only known file size and disables unavailable file actions", () => {
   expect(result.queryByText(/KB/)).toBeNull();
 });
 
-it("keeps the copy action on one line while truncating a long language label", () => {
+it("keeps icon-only code actions visible while truncating a long language label", () => {
   const language = "a-very-long-language-description";
-  const result = render(<CodeBlockHeader language={language} copied={false} scale={1.4} />);
-  expect(result.getByText("Copy").props.numberOfLines).toBe(1);
+  const onCopy = jest.fn();
+  const onOpenFullscreen = jest.fn();
+  const result = render(
+    <CodeBlockHeader
+      language={language}
+      copied={false}
+      onCopy={onCopy}
+      onOpenFullscreen={onOpenFullscreen}
+      scale={1.4}
+    />,
+  );
   expect(result.getByText(language).props.ellipsizeMode).toBe("tail");
-  expect(result.getByText("Copy")).toHaveStyle({ flexShrink: 0 });
   expect(result.getByText(language)).toHaveStyle({ flex: 1, minWidth: 0 });
-  result.rerender(<CodeBlockHeader language={language} copied scale={1.4} />);
-  expect(result.getByText("Copied").props.accessibilityLiveRegion).toBe("polite");
+  const copyButton = result.getByRole("button", { name: `Copy ${language} code block` });
+  const fullscreenButton = result.getByRole("button", { name: "Open code block fullscreen" });
+  expect(result.queryByText("Copy")).toBeNull();
+  fireEvent.press(copyButton);
+  expect(onCopy).toHaveBeenCalledTimes(1);
+  fireEvent.press(fullscreenButton);
+  expect(onOpenFullscreen).toHaveBeenCalledTimes(1);
+  result.rerender(
+    <CodeBlockHeader
+      language={language}
+      copied
+      onCopy={onCopy}
+      onOpenFullscreen={onOpenFullscreen}
+      scale={1.4}
+    />,
+  );
+  expect(result.getByRole("button", { name: `Copied ${language} code block` })).toBeTruthy();
+});
+
+it("owns copy and close actions in the fullscreen code surface", () => {
+  const onClose = jest.fn();
+  const onCopy = jest.fn();
+  const result = render(
+    <FullscreenWindowReadyProvider ready>
+      <FullscreenCodeBlock
+        language="typescript"
+        onClose={onClose}
+        onCopy={onCopy}
+        value="const answer = 42;"
+      />
+    </FullscreenWindowReadyProvider>,
+  );
+  fireEvent(result.getByTestId("fullscreen-code-viewport"), "layout", {
+    nativeEvent: { layout: { height: 640, width: 360, x: 0, y: 0 } },
+  });
+  fireEvent.press(result.getByRole("button", { name: "Copy typescript code block" }));
+  fireEvent.press(result.getByRole("button", { name: "Close code block" }));
+  expect(onCopy).toHaveBeenCalledTimes(1);
+  expect(onClose).toHaveBeenCalledTimes(1);
 });
 
 it("renders LaTeX through native SVG and preserves unsupported input", async () => {

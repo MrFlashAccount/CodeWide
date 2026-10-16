@@ -6,6 +6,7 @@ import {
   listMenus,
   threadRow,
   threadRowNativeTrigger,
+  rowActionTrigger,
   migratedThreadListWorkspace,
   migratedThreadListProjection,
   migratedMobileThreads,
@@ -25,8 +26,9 @@ it("preserves threadList integration contracts", () => {
   expect(threadFilterMenu).not.toContain("<AppSheet");
   expect(threadFilterMenu).not.toContain("<AppPopover");
   expect(threadRow).not.toContain("Pressable");
-  expect(threadRowNativeTrigger).toContain("Gesture.Race(longPress, tap)");
-  expect(threadRowNativeTrigger).toContain(".maxDistance(THREAD_ROW_TAP_MAX_DISTANCE)");
+  expect(threadRowNativeTrigger).toContain("<RowActionTrigger");
+  expect(rowActionTrigger).toContain("Gesture.Race(longPress, tap)");
+  expect(rowActionTrigger).toContain(".maxDistance(ROW_ACTION_TAP_MAX_DISTANCE)");
   expect(listMenus).toContain("function ThreadFilterMenu(");
   expect(listMenus).toContain('? "Thread filters, no filters selected"');
   expect(migratedThreadListWorkspace).toContain(

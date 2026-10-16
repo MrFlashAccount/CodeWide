@@ -64,7 +64,12 @@ describe("conversation-owned message actions", () => {
     expect(codeWideMenu).not.toContain(">✓</Text>");
     expect(nativeMenu).not.toContain("requestAnimationFrame");
     expect(nativeMenu).not.toContain("Menu.Portal");
-    expect(codeWideMenu).toContain('<Host colorScheme="dark" matchContents');
+    expect(
+      sourceHasJsxElement(codeWideMenu, "Host", [
+        'colorScheme="dark"',
+        "matchContents={triggerSize === undefined}",
+      ]),
+    ).toBe(true);
     expect(codeWideMenu).toContain("<RNHostView matchContents>{trigger}</RNHostView>");
     // The trigger bounds must come from the RN host, not a synthetic Compose anchor.
     const trigger = codeWideMenu.match(

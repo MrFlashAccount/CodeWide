@@ -80,11 +80,14 @@ it("preserves runtime integration contracts", () => {
   expect(voiceWorkspace).not.toContain("mirrorQueuedCommands");
   expect(voiceWorkspace).not.toContain("sameConnections(");
   expect(ownerWorkspaceRuntime).toContain("supervisor.replaceConnections(initialProfiles)");
-  const browserWorkspaceStyles = readFileSync(
-    new URL("../../src/features/browser/BrowserWorkspace.styles.ts", import.meta.url),
+  const browserPageFeedbackStyles = readFileSync(
+    new URL("../../src/features/browser/BrowserPageFeedback.styles.ts", import.meta.url),
     "utf8",
   );
-  expect(browserWorkspaceStyles).toContain("backgroundColor: colors.errorContainer");
+  const browserFailureStyle = sourceObjectDeclaration(browserPageFeedbackStyles, "failure");
+  expect(browserFailureStyle).toContain("backgroundColor: colors.background");
+  expect(browserFailureStyle).toContain('position: "absolute"');
+  expect(browserFailureStyle).toContain("inset: 0");
   const composerDeliveryMenu = readFileSync(
     new URL("../../src/features/composer/ComposerDeliveryMenu.native.tsx", import.meta.url),
     "utf8",

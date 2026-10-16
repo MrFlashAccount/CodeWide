@@ -35,6 +35,13 @@ struct ThreadExecutionSettingsSnapshot {
     sandbox_policy: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ThreadWriteOwnership {
+    Owned,
+    External,
+}
+
 #[derive(Clone)]
 pub struct ThreadViewService {
     upstream: UpstreamHandle,
@@ -112,7 +119,8 @@ impl ThreadViewService {
             .and_then(|value| usize::try_from(value).ok())
             .unwrap_or(36);
 
-        let (result, execution_settings, shell_fence) = self.read_thread_shell(thread_id).await?;
+        let (result, execution_settings, write_ownership, shell_fence) =
+            self.read_thread_shell(thread_id).await?;
         let mut thread = result
             .get("thread")
             .cloned()
@@ -126,22 +134,18 @@ impl ThreadViewService {
             .as_object_mut()
             .ok_or(ThreadViewError::InvalidStatus)?
             .insert("turns".into(), Value::Array(Vec::new()));
-        let (mut active_turn, fence) = if active {
+        let (mut active_turn, fence) = if write_ownership == ThreadWriteOwnership::External {
+            (
+                self.read_external_active_turn(thread_id).await?,
+                shell_fence,
+            )
+        } else if active {
             let (active_turn, active_fence) = self.read_active_turn(thread_id).await?;
             (active_turn, active_fence)
         } else {
             (Value::Null, shell_fence)
         };
-        let active_turn_id = if active {
-            Some(
-                active_turn
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .ok_or(ThreadViewError::InvalidActiveTurn)?,
-            )
-        } else {
-            None
-        };
+        let active_turn_id = active_turn.get("id").and_then(Value::as_str);
         let history = match self
             .history
             .sync_thread_history_with_source(
@@ -179,6 +183,7 @@ impl ThreadViewService {
             "throughCursor": through_cursor,
             "thread": thread,
             "executionSettings": execution_settings,
+            "writeOwnership": write_ownership,
             "history": history,
             "activeTurn": active_turn,
         }))
@@ -191,6 +196,7 @@ impl ThreadViewService {
         (
             Value,
             Option<ThreadExecutionSettingsSnapshot>,
+            ThreadWriteOwnership,
             UpstreamFence,
         ),
         ThreadViewError,
@@ -218,14 +224,75 @@ impl ThreadViewService {
                         "params": {"threadId": thread_id, "includeTurns": false},
                     }))
                     .await?;
-                Ok((rpc_result(&stored)?, None, stored_fence))
+                Ok((
+                    rpc_result(&stored)?,
+                    None,
+                    ThreadWriteOwnership::Owned,
+                    stored_fence,
+                ))
+            }
+            Err(ThreadViewError::Rpc(message))
+                if is_active_writer_conflict(&message, thread_id) =>
+            {
+                // Another App Server owns mutation, but thread/read and the
+                // canonical rollout remain safe read-only authorities.
+                let (stored, stored_fence) = self
+                    .upstream
+                    .request_fenced(json!({
+                        "id": "thread-view-read-external",
+                        "method": "thread/read",
+                        "params": {"threadId": thread_id, "includeTurns": false},
+                    }))
+                    .await?;
+                Ok((
+                    rpc_result(&stored)?,
+                    None,
+                    ThreadWriteOwnership::External,
+                    stored_fence,
+                ))
             }
             result => {
                 let result = result?;
                 let execution_settings = thread_execution_settings(&result)?;
-                Ok((result, Some(execution_settings), fence))
+                Ok((
+                    result,
+                    Some(execution_settings),
+                    ThreadWriteOwnership::Owned,
+                    fence,
+                ))
             }
         }
+    }
+
+    async fn read_external_active_turn(&self, thread_id: &str) -> Result<Value, ThreadViewError> {
+        let params = json!({
+            "threadId": thread_id,
+            "cursor": null,
+            "limit": 1,
+            "sortDirection": "desc",
+            "itemsView": "summary",
+        });
+        let Some(page) = self
+            .history
+            .try_turns_page("thread/turns/list", &params)
+            .await
+        else {
+            return Err(ThreadViewError::InvalidActiveTurn);
+        };
+        let page = match page {
+            Ok(page) => page,
+            Err(HistoryServiceError::Catalog(crate::catalog::CatalogError::NotFound(_))) => {
+                return Ok(Value::Null);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        Ok(page
+            .get("data")
+            .and_then(Value::as_array)
+            .and_then(|turns| turns.first())
+            .filter(|turn| turn.get("status").and_then(Value::as_str) == Some("inProgress"))
+            .cloned()
+            .unwrap_or(Value::Null))
     }
 
     /// Reads the complete semantic mutable head. Large content is externalized
@@ -258,6 +325,10 @@ impl ThreadViewService {
             .ok_or(ThreadViewError::InvalidActiveTurn)?;
         Ok((turn, fence))
     }
+}
+
+fn is_active_writer_conflict(message: &str, thread_id: &str) -> bool {
+    message == format!("thread {thread_id} already has an active writer")
 }
 
 fn thread_execution_settings(

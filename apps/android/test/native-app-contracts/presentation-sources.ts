@@ -25,6 +25,11 @@ export const appRootProviders = readFileSync(
   "utf8",
 );
 export const waveText = readFileSync(new URL("../../src/ui/WaveText.tsx", import.meta.url), "utf8");
+export const appText = readFileSync(new URL("../../src/ui/AppText.tsx", import.meta.url), "utf8");
+export const textShimmer = readFileSync(
+  new URL("../../src/ui/TextShimmer.tsx", import.meta.url),
+  "utf8",
+);
 export const appSheet = readFileSync(
   new URL("../../src/ui/AppSheet.android.tsx", import.meta.url),
   "utf8",

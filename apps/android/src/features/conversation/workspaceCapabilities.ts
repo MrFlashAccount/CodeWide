@@ -20,6 +20,7 @@ export type ConversationWorkspaceCapabilities = {
   ) => Promise<ThreadWindow | null>;
   /** Reads the persisted thread shell without resuming it or waiting for history. */
   readThreadMetadata: (connectionId: string, threadId: string) => Promise<Thread>;
+  retryThreadAccess: (connectionId: string, threadId: string) => Promise<void>;
   // WHY: This extracted V1 signature is shared by existing callers; changing its call shape would expand this behavior-preserving cleanup into an API migration.
   // oxlint-disable-next-line eslint/max-params
   saveScrollOffset: (

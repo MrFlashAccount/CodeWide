@@ -452,6 +452,81 @@ async fn unloaded_subagent_sync_reads_history_without_resuming_its_parent()
 }
 
 #[tokio::test]
+async fn externally_owned_thread_sync_follows_the_canonical_rollout_read_only()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let sessions = directory.path().join("sessions");
+    std::fs::create_dir_all(&sessions)?;
+    let mut rollout = std::fs::File::create(sessions.join(format!(
+        "rollout-2026-10-09T00-00-00-{EXTERNAL_THREAD_ID}.jsonl"
+    )))?;
+    for line in [
+        r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"external-turn","started_at":10}}"#,
+        r#"{"type":"event_msg","payload":{"type":"user_message","message":"external question"}}"#,
+        r#"{"type":"event_msg","payload":{"type":"agent_message","message":"partial external answer"}}"#,
+    ] {
+        writeln!(rollout, "{line}")?;
+    }
+    rollout.sync_all()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut requests) = mpsc::channel(4);
+    let fake = tokio::spawn(run_thread_shell_app_server(
+        socket_path.clone(),
+        observed,
+        Some("thread 019fe7af-e2fa-70f3-88e8-99d59e10bd63 already has an active writer"),
+    ));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+    send_json(
+        &mut client,
+        &json!({
+            "type": "rpc",
+            "request": {
+                "id": "follow-external",
+                "method": "companion/thread/sync",
+                "params": {"threadId": EXTERNAL_THREAD_ID, "limit": 36}
+            }
+        }),
+    )
+    .await?;
+    let response = receive_type(&mut client, "rpc").await?;
+    let result = &response["response"]["result"];
+    assert_eq!(result["writeOwnership"], "external");
+    assert_eq!(result["thread"]["status"]["type"], "notLoaded");
+    assert_eq!(result["activeTurn"]["id"], "external-turn");
+    assert!(
+        result["activeTurn"]["items"]
+            .as_array()
+            .ok_or("missing active items")?
+            .iter()
+            .any(|item| item["text"] == "partial external answer")
+    );
+    assert!(
+        result["history"]["turns"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+    assert_eq!(requests.recv().await.as_deref(), Some("thread/resume"));
+    assert_eq!(requests.recv().await.as_deref(), Some("thread/read"));
+    assert!(
+        requests.try_recv().is_err(),
+        "read-only sync must not request the external writer's active turn"
+    );
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_sync_does_not_hide_unrelated_resume_errors()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;

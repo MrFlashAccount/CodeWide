@@ -4,7 +4,7 @@ import {
   newChat,
   ownerNewChatSubmission,
   projectWorkspaceAdapter,
-  newThreadServerSheet,
+  newChatProjectPicker,
   projectPickerContent,
   projectPickerRows,
   projectPicker,
@@ -21,14 +21,16 @@ import { ownerComposerMenu } from "./composer-sources";
 import { threadDetailDatabase } from "./thread-runtime-sources";
 import { nativeTransport } from "./native-sources";
 
-const ownerActiveConversationScope = readFileSync(new URL("../../src/features/conversation/activeConversationScope.ts", import.meta.url), "utf8");
+const ownerActiveConversationScope = readFileSync(
+  new URL("../../src/features/conversation/activeConversationScope.ts", import.meta.url),
+  "utf8",
+);
 
 it("keeps a server-scoped new chat local until the first send", () => {
-  expect(newChat).toContain("resolveNewThreadRoute({");
-  expect(newChat).toContain(
-    "project.projectWorkspace.defaultProjectCwd(destination.serverId)",
-  );
-  expect(ownerActiveConversationScope).toContain("title: \"New Chat\"");
+  expect(newChat).toContain("newThreadService.resumeOrOpen(connectionId, cwd)");
+  expect(newChat).toContain("ensureV1NewThreadRoute(route.router, route.pathname");
+  expect(newChat).toContain("project.projectWorkspace.defaultProjectCwd(connectionId)");
+  expect(ownerActiveConversationScope).toContain('title: "New Chat"');
   expect(ownerConversationWorkspace).toMatch(
     /createConversationScopeBindings\(\s*props\.features,\s*scope\.newChatDraft !== null/u,
   );
@@ -40,17 +42,22 @@ it("keeps a server-scoped new chat local until the first send", () => {
   );
   expect(ownerNewChatSubmission).toContain("const commandId = await commands.sendText(");
   expect(ownerNewChatSubmission).toContain("{ ...options, workspaceRequestId: draftChat.id }");
-  expect(newThreadServerSheet).toContain("function NewThreadServerSheet");
+  expect(newChatProjectPicker).toContain("function NewChatProjectPicker");
+  expect(newChatProjectPicker).toContain("<ProjectPickerSurface");
   expect(screen).not.toContain("function NewThreadSheet");
   expect(ownerConversationEmptyState).toContain('testID="new-chat-empty-state"');
   expect(ownerConversationEmptyState).toContain("What would you like to work on?");
   expect(conversationOverlay).toContain("<ProjectPickerSheet");
   expect(projectPickerContent).toContain("<LegendList");
   expect(projectPickerContent).toContain("recycleItems");
-  expect(projectPickerRows).toContain('id: "section:recent"');
-  expect(projectPickerRows).toContain('id: "section:other"');
+  expect(projectPickerRows).toContain(
+    'append("Recent", unpinnedProjects.slice(0, RECENT_PROJECT_LIMIT), "recent")',
+  );
+  expect(projectPickerRows).toContain(
+    'append("Other", unpinnedProjects.slice(RECENT_PROJECT_LIMIT), "other")',
+  );
   expect(projectPicker).not.toContain("<Accordion");
-  expect(projectPickerHeader).toContain('accessibilityLabel="Add project"');
+  expect(projectPickerHeader).toContain('accessibilityLabel="Manage Projects"');
   expect(projectWorkspaceAdapter).toContain(
     "const started = seedThreadExecutionSettings(response.thread",
   );

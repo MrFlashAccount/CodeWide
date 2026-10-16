@@ -7,6 +7,7 @@ import {
   timelineList,
   richMarkdown,
   nativeCodeBlock,
+  fullscreenCodeBlock,
   nativeCodeBlockHost,
   mermaidNative,
   documentPreviewHost,
@@ -66,7 +67,23 @@ it("preserves platform integration contracts — 1", () => {
   expect(richMarkdown).toContain("const openImagePreview = useImagePreview()");
   expect(richMarkdown).not.toContain("<Modal visible={open}");
   expect(screen).not.toContain("<Modal visible={open}");
-  expect(richMarkdown).toContain("accessibilityLabel={`Copy ${language} code block`}");
+  expect(
+    sourceHasJsxElement(richMarkdown, "CodeBlockHeader", [
+      "onCopy={copy}",
+      "onOpenFullscreen={openFullscreen}",
+    ]),
+  ).toBe(true);
+  expect(richMarkdown).toContain("fullscreenOverlay.present(({ close }) => (");
+  expect(
+    sourceHasJsxElement(richMarkdown, "FullscreenCodeBlock", [
+      "language={language}",
+      "onClose={close}",
+      "value={value}",
+    ]),
+  ).toBe(true);
+  expect(fullscreenCodeBlock).toContain('accessibilityLabel="Close code block"');
+  expect(fullscreenCodeBlock).toContain("embeddedInParentScroll={false}");
+  expect(fullscreenCodeBlock).toContain("maxHeight={viewportHeight}");
   expect(
     sourceHasJsxElement(richMarkdown, "NativeCodeBlock", ["value={value}", "language={language}"]),
   ).toBe(true);

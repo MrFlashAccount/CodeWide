@@ -130,10 +130,12 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         remoteLiveTurns: props.snapshot.remoteLiveTurns,
         remoteSealedTurns: props.snapshot.remoteSealedTurns,
         remoteThread: props.snapshot.remoteThread,
+        retryWriteOwnership: props.snapshot.retryWriteOwnership,
         saveScrollOffset: props.features.conversation.saveScrollOffset,
         searchWindow: props.snapshot.searchWindow ?? null,
         threadChatModel: props.snapshot.threadChatModel ?? null,
         timelineEntries: props.snapshot.timelineEntries,
+        writeOwnership: props.snapshot.writeOwnership,
       }}
       requests={{
         onRespondToRequest: props.conversationActions.onRespondToRequest,
@@ -150,7 +152,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         newChat: props.newChatDraft !== null,
         onBack: props.desktop ? undefined : props.closeActiveConversation,
         onViewedLatest: props.markActiveThreadRead,
-        readOnly: false,
+        readOnly: props.snapshot.writeOwnership === "external",
         server: props.servers.find((server) => server.id === props.activeConnectionId),
         thread: visibleThread,
         unread: props.activeThread?.unread ?? 0,

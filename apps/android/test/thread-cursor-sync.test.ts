@@ -3,8 +3,23 @@ import { describe, expect, it } from "vitest";
 import { preserveProjectedTurnMetadata, projectedThreadExecutionSettings, projectedTurnMetadata, seedThreadExecutionSettings } from "@codewide/sync-client";
 
 import { ThreadSyncCatchUp, ThreadSyncLane, assertThreadSyncReachedHead, hydrateThreadSyncActiveText, latestSealedTurnId, materializeThreadSync, parseThreadSyncResponse } from "../src/data/thread-cursor-sync";
+import { threadWriteOwnership } from "../src/data/threadWriteOwnership";
 
 describe("thread cursor sync", () => {
+  it("defaults old Companion responses to local ownership and preserves an external writer", () => {
+    const base = {
+      activeTurn: null, executionSettings: null,
+      history: { hasMore: false, headTurnId: null, kind: "current", olderCursor: null, turns: [] },
+      readModelVersion: 4, thread: thread([]), throughCursor: 0,
+    } as const;
+    expect(threadWriteOwnership(materializeThreadSync(null, parseThreadSyncResponse(base), null).thread)).toBe("owned");
+    expect(threadWriteOwnership(materializeThreadSync(null, parseThreadSyncResponse({
+      ...base, writeOwnership: "external",
+    }), null).thread)).toBe("external");
+    expect(() => parseThreadSyncResponse({ ...base, writeOwnership: "shared" }))
+      .toThrow("invalid response");
+  });
+
   it("accepts the deployed v3 history contract without inventing Fast settings", () => {
     const response = parseThreadSyncResponse({
       readModelVersion: 3, throughCursor: 17, thread: thread([]), activeTurn: null,

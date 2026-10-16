@@ -17,6 +17,7 @@ function harness(initial = summary("worker", { status: { type: "active", activeF
     archived: false,
     thread: createV1TestThread("worker", null, 1, []),
   }));
+  const scheduleExternalThreadRefresh = vi.fn();
   const applyEvents = async (connectionId: string, events: SyncEvent[]) => {
     for (const event of events) {
       const mutation = projectThreadSummaryEvent(
@@ -48,11 +49,12 @@ function harness(initial = summary("worker", { status: { type: "active", activeF
         await applyEvents(connectionId, events);
       },
     },
-    sync: {},
+    sync: { scheduleExternalThreadRefresh },
   } as unknown as Ports;
   return {
     store: createThreadSyncProjection(ports),
     refreshConnectionWindows,
+    scheduleExternalThreadRefresh,
     readThreadSummary,
     get,
     read: () => current,
@@ -87,6 +89,7 @@ describe("live progress catalog demand", () => {
     }
     expect(test.read()?.preview).toBe("Progress 100");
     expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
+    expect(test.scheduleExternalThreadRefresh).toHaveBeenCalledTimes(100);
   });
 
   it("coalesces a batch's metadata lookup and preserves terminal repair", async () => {
@@ -134,5 +137,6 @@ it("does not turn server-excluded supervisor progress into catalog repair work",
     ]);
   }
   expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
+  expect(test.scheduleExternalThreadRefresh).not.toHaveBeenCalled();
   expect(test.get).not.toHaveBeenCalled();
 });

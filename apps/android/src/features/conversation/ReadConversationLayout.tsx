@@ -36,11 +36,14 @@ export function renderReadConversationLayout({
                   composerContent={props.footerContent}
                   currentOutcome={null}
                   failureNotice={read.presentation.failureNotice}
+                  onFork={undefined}
+                  onRetryWriteOwnership={undefined}
                   readOnly
                   remoteThread={props.remoteThread}
                   reportBottomChromeHeight={props.viewport.reportBottomChromeHeight}
                   requestPrompt={null}
                   timeline={read.timeline}
+                  writeOwnership="owned"
                 />
               }
               compact={props.compact}

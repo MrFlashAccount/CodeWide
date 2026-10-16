@@ -165,6 +165,7 @@ export function NewConversationDetail({
         searchWindow: conversation.searchWindow,
         subagentSummaryDatabase: resources.threadSummaryDatabase,
         timelineEntries: [],
+        writeOwnership: "owned",
       })}
     </>
   );

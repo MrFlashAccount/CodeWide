@@ -23,6 +23,7 @@ import dev.codewide.app.BuildConfig
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.roundToInt
 
 class NativeCodeBlockView(context: Context) : FrameLayout(context) {
   private val generation = AtomicInteger(0)
@@ -32,8 +33,8 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
     setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11f)
     typeface = Typeface.MONOSPACE
     includeFontPadding = false
-    setLineSpacing(dp(3f), 1f)
-    // Copying is owned by the surrounding React Native card. A selectable
+    setLineHeight(dp(CODE_LINE_HEIGHT_DP).roundToInt())
+    // Copying is owned by the caller's React Native action. A selectable
     // TextView consumes horizontal drags before HorizontalScrollView can pan,
     // which made long code and diff rows look permanently clipped.
     setTextIsSelectable(false)
@@ -46,7 +47,7 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
     setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11f)
     typeface = Typeface.MONOSPACE
     includeFontPadding = false
-    setLineSpacing(dp(3f), 1f)
+    setLineHeight(dp(CODE_LINE_HEIGHT_DP).roundToInt())
     setHorizontallyScrolling(true)
     setPadding(dp(4f).toInt(), dp(4f).toInt(), dp(5f).toInt(), dp(4f).toInt())
     setBackgroundColor(GUTTER_BACKGROUND)
@@ -79,37 +80,16 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
   private var maxLines: Int = 0
   private var pendingTask: Future<*>? = null
   private var scheduledHighlight: Runnable? = null
+  private var embeddedInParentScroll = true
   private var touchStartX = 0f
   private var touchStartY = 0f
   private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
-  private val embeddedHorizontalGestureListener = View.OnTouchListener { view, event ->
-    when (event.actionMasked) {
-      MotionEvent.ACTION_DOWN -> {
-        touchStartX = event.x
-        touchStartY = event.y
-        // An embedded code block must reserve the gesture until its direction
-        // is known, otherwise the timeline steals horizontal panning.
-        view.parent?.requestDisallowInterceptTouchEvent(true)
-      }
-      MotionEvent.ACTION_MOVE -> {
-        val deltaX = kotlin.math.abs(event.x - touchStartX)
-        val deltaY = kotlin.math.abs(event.y - touchStartY)
-        if (deltaX > touchSlop || deltaY > touchSlop) {
-          view.parent?.requestDisallowInterceptTouchEvent(deltaX >= deltaY)
-        }
-      }
-      MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-        view.parent?.requestDisallowInterceptTouchEvent(false)
-    }
-    false
-  }
 
   init {
     clipChildren = true
     clipToPadding = true
     setBackgroundColor(Color.TRANSPARENT)
     addView(verticalScroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-    horizontalScroll.setOnTouchListener(embeddedHorizontalGestureListener)
   }
 
   fun setCode(value: String?) {
@@ -117,10 +97,38 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
   }
 
   fun setEmbeddedInParentScroll(value: Boolean) {
-    // A fullscreen viewer has no competing timeline. Let NestedScrollView own
-    // vertical interception from ACTION_DOWN instead of releasing it one move late.
-    horizontalScroll.setOnTouchListener(if (value) embeddedHorizontalGestureListener else null)
-    if (!value) horizontalScroll.parent?.requestDisallowInterceptTouchEvent(false)
+    embeddedInParentScroll = value
+    if (!value) parent?.requestDisallowInterceptTouchEvent(false)
+  }
+
+  override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+    if (embeddedInParentScroll) {
+      when (event.actionMasked) {
+        MotionEvent.ACTION_DOWN -> {
+          touchStartX = event.x
+          touchStartY = event.y
+          // Reserve the gesture from the timeline while this view determines
+          // whether the horizontal or vertical code viewport owns it.
+          parent?.requestDisallowInterceptTouchEvent(true)
+        }
+        MotionEvent.ACTION_MOVE -> {
+          val deltaX = kotlin.math.abs(event.x - touchStartX)
+          val deltaY = kotlin.math.abs(event.y - touchStartY)
+          if (deltaX > touchSlop || deltaY > touchSlop) {
+            val childOwnsGesture = if (deltaX >= deltaY) {
+              true
+            } else {
+              val scrollDirection = if (event.y < touchStartY) 1 else -1
+              verticalScroll.canScrollVertically(scrollDirection)
+            }
+            parent?.requestDisallowInterceptTouchEvent(childOwnsGesture)
+          }
+        }
+        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+          parent?.requestDisallowInterceptTouchEvent(false)
+      }
+    }
+    return super.dispatchTouchEvent(event)
   }
 
   fun setSearchQuery(value: String?) {
@@ -227,6 +235,8 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
     private val GUTTER_COLOR = Color.rgb(105, 112, 122)
     private val GUTTER_BACKGROUND = Color.rgb(27, 28, 30)
     private const val HIGHLIGHT_DEBOUNCE_MS = 32L
+    // Mirrored by NATIVE_CODE_LINE_HEIGHT in native-code-block.ts.
+    private const val CODE_LINE_HEIGHT_DP = 16f
     private const val PERF_TAG = "CodeWidePerf"
     private val EXECUTOR = Executors.newFixedThreadPool(2) { runnable ->
       Thread(runnable, "codex-native-code").apply { priority = Thread.NORM_PRIORITY - 1 }

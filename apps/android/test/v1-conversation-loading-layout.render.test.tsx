@@ -267,11 +267,14 @@ it("reserves the measured composer and header space while loading, including geo
           composerContent={<View testID="ready-composer" />}
           currentOutcome={null}
           failureNotice={null}
+          onFork={undefined}
+          onRetryWriteOwnership={undefined}
           readOnly
           reportBottomChromeHeight={reportBottomChromeHeight}
           remoteThread={null}
           requestPrompt={null}
           timeline={[]}
+          writeOwnership="owned"
         />
       </View>
     );
@@ -310,6 +313,37 @@ it("resets only the pending skeleton on direct chat switches", () => {
   expect(view.getByTestId("ready-timeline")).toBeVisible();
   act(() => jest.advanceTimersByTime(500));
   expect(view.queryByTestId("message-list-skeleton")).toBeNull();
+});
+
+it("replaces the composer for an externally owned chat and exposes retry and fork", async () => {
+  const retry = jest.fn(async () => undefined);
+  const fork = jest.fn(async () => undefined);
+  const screen = render(
+    <ConversationBottomChrome
+      composerContent={<View testID="active-composer" />}
+      currentOutcome={null}
+      failureNotice={null}
+      onFork={fork}
+      onRetryWriteOwnership={retry}
+      readOnly
+      remoteThread={null}
+      reportBottomChromeHeight={jest.fn()}
+      requestPrompt={null}
+      timeline={[]}
+      writeOwnership="external"
+    />,
+  );
+
+  expect(screen.getByText("This is open in another app")).toBeOnTheScreen();
+  expect(screen.queryByTestId("active-composer")).toBeNull();
+  await act(async () => fireEvent.press(screen.getByText("Retry")));
+  expect(retry).toHaveBeenCalledTimes(1);
+  await act(async () => fireEvent.press(screen.getByText("Fork")));
+  expect(fork).toHaveBeenCalledTimes(1);
+  expect(fork).toHaveBeenCalledWith({
+    boundary: { kind: "all" },
+    ephemeral: false,
+  });
 });
 
 it("keeps an immediate load error and its retry action clear of the composer", () => {

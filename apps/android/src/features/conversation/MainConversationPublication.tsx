@@ -1,6 +1,7 @@
 import { startTransition } from "react";
 import type { ThreadChatWindowRequest } from "../../data/thread-chat-model";
 import { recordThreadNavigationVisualEvent } from "../../data/thread-navigation-metrics";
+import { threadWriteOwnership } from "../../data/threadWriteOwnership";
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import type { useThreadChatWindow } from "../../data/use-thread-chat-window";
 import type { useThreadHistoryCursor } from "../../data/use-thread-history";
@@ -160,6 +161,7 @@ export function renderMainConversationPublication({
         remoteLiveTurns: history.projection.remoteLiveTurns,
         remoteSealedTurns: history.projection.remoteSealedTurns,
         remoteThread: history.remoteThread,
+        retryWriteOwnership: async () => resources.retryThreadAccess(connectionId, threadId),
         searchWindow: searchWindow,
         subagentSummaryDatabase: resources.threadSummaryDatabase,
         threadChatModel: chatDatabase.chat,
@@ -167,6 +169,7 @@ export function renderMainConversationPublication({
           searchState === null
             ? history.projection.timeline
             : (searchState.page?.turns ?? []).map((turn) => ({ kind: "turn", turn })),
+        writeOwnership: threadWriteOwnership(history.remoteThread),
       })}
     </>
   );

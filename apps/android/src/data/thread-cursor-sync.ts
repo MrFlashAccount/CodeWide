@@ -37,7 +37,10 @@ type ThreadSyncContent = {
   history: ThreadSyncHistory;
   thread: Thread;
   throughCursor: number;
+  writeOwnership: ThreadWriteOwnership;
 };
+
+export type ThreadWriteOwnership = "external" | "owned";
 
 export type ThreadSyncResponse = ThreadSyncContent &
   (
@@ -109,6 +112,7 @@ export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
   const kind = history.kind;
   const turns = parseHistoryTurns(history.turns);
   const activeTurn = parseActiveTurn(response.activeTurn);
+  const writeOwnership = parseThreadWriteOwnership(response.writeOwnership);
   if (
     (response.readModelVersion !== HISTORY_READ_MODEL_VERSION &&
       response.readModelVersion !== EXECUTION_SETTINGS_READ_MODEL_VERSION) ||
@@ -122,7 +126,8 @@ export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
     (history.headTurnId !== null && typeof history.headTurnId !== "string") ||
     (history.olderCursor !== null && typeof history.olderCursor !== "string") ||
     (history.sourceWitness !== undefined && !isThreadHistorySourceWitness(history.sourceWitness)) ||
-    activeTurn === undefined
+    activeTurn === undefined ||
+    writeOwnership === null
   ) {
     throw new Error("Companion thread sync returned an invalid response");
   }
@@ -138,6 +143,7 @@ export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
     },
     thread,
     throughCursor: response.throughCursor,
+    writeOwnership,
   };
   // v4 adds execution settings; APK and Companion upgrades are independent.
   // v3 has the same cursor/history semantics, but cannot establish Fast state.
@@ -217,7 +223,11 @@ export function materializeThreadSync(
   if (activeTurn !== null) {
     turns.push(activeTurn);
   }
-  const thread = { ...response.thread, turns };
+  const thread = {
+    ...response.thread,
+    codewideWriteOwnership: response.writeOwnership,
+    turns,
+  };
   if (response.executionSettings !== null) {
     seedThreadExecutionSettings(thread, response.executionSettings);
   }
@@ -226,6 +236,13 @@ export function materializeThreadSync(
       response.history.kind === "reset" ? response.history.olderCursor : currentHistoryCursor,
     thread,
   };
+}
+
+function parseThreadWriteOwnership(value: unknown): ThreadWriteOwnership | null {
+  if (value === undefined || value === "owned") {
+    return "owned";
+  }
+  return value === "external" ? "external" : null;
 }
 
 function parseThreadExecutionSettings(value: unknown): ThreadExecutionSettingsSnapshot | null {

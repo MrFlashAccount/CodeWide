@@ -148,9 +148,8 @@ describe("tool output presentation", () => {
     expect(ownerFullContentViewerBody).toContain("embeddedInParentScroll={false}");
     expect(nativeCodeBlock).toContain("embeddedInParentScroll = true");
     expect(nativeCodeBlock).toContain("embeddedInParentScroll={embeddedInParentScroll}");
-    expect(nativeCodeView).toContain(
-      "horizontalScroll.setOnTouchListener(if (value) embeddedHorizontalGestureListener else null)",
-    );
+    expect(nativeCodeView).toContain("override fun dispatchTouchEvent(event: MotionEvent)");
+    expect(nativeCodeView).toContain("verticalScroll.canScrollVertically(scrollDirection)");
   });
 
   it("presents command output as a terminal both inline and in full content", () => {

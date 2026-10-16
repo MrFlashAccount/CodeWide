@@ -137,11 +137,14 @@ it("keeps an active-turn question visible when older activity is collapsed", asy
       composerContent={<View />}
       currentOutcome={null}
       failureNotice={null}
+      onFork={undefined}
+      onRetryWriteOwnership={undefined}
       readOnly={false}
       reportBottomChromeHeight={jest.fn()}
       remoteThread={thread}
       requestPrompt={null}
       timeline={timeline}
+      writeOwnership="owned"
     />
   );
   const value = {
