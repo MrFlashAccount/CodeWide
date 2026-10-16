@@ -679,7 +679,8 @@ mod tests {
             })
         );
         assert_eq!(thread.status, agent_core::model::ThreadStatus::Active);
-        assert_eq!(thread.preview, "Run the build");
+        // The newest conversation message, not the delegated prompt.
+        assert_eq!(thread.preview, "answer to Run the build");
 
         let row = threads.metadata(child_id.as_str()).ok_or("child row")?;
         assert_eq!(row.parent_thread_id.as_deref(), Some("thread-s"));

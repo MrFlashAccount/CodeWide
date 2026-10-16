@@ -269,6 +269,17 @@ While a turn runs, the thread list shows what the agent is doing now instead of 
 - `-32602 "<model> is a <Provider> model; this thread runs on <Provider>. Fork the thread to switch agents."` — `turn/start`, `thread/settings/update` or `turn/settings/update` of an existing thread names a model that only another enabled provider lists (multi-provider mode; catalogs cached for 5 minutes, re-read once for an unknown model). A model no catalog lists stays with the thread's provider. A queued turn fails once with the same message.
 - `-32071` is not used: there is no session cap.
 
+## Codex sub-agent threads
+
+The backend owns a sub-agent thread's content; the client renders it as served. A Codex sub-agent child (`session_meta.source.subagent.thread_spawn` in the first record of its rollout) is a thread of its own turns only:
+
+- A child spawned with the parent's turns (`fork_turns` other than `"none"`) starts with a copy of the parent's history inline in its rollout — the parent's `session_meta`, a `compacted` record and parent turns under the parent's turn ids. Its first `session_meta` names `forked_from_id` and `subagent_history_start_ordinal`, the zero-based index of the record its own history starts at (Codex 0.161 and later). The companion resolves that record's byte offset once per rollout (`rollout_origin.rs`) and serves no turn that starts before it: sync resets and deltas, `thread/turns/list` summary and `notLoaded` pages, `companion/thread/history/before|after`, thread-list previews and rollout invalidation previews. A copied turn id is unknown to the child (an anchor on it is an expired cursor).
+- A child naming `forked_from_id` without the ordinal (older CLIs) owns the turns whose UUIDv7 id is no older than the child's own UUIDv7 id; the cut applies only when both ids are UUIDv7. A child without `forked_from_id` copied nothing and owns every turn.
+- A child never continues another rollout: inherited bases (`history_base`) are followed only for paginated user forks, which keep their inherited history.
+- The history source witness of a child with a cut carries `excludes_inherited`; a witness issued while the copy was served lacks it, so a client that cached the copied turns gets one reset.
+- Full item views and the active turn are the App Server's (`thread/turns/list` with `itemsView: full`, `thread/items/list`): for a paginated child it serves them from its own thread history projection, which starts at the child's own records (checked on 0.161.0 and 0.162.1 children against App Server 0.163.0), so the companion does not filter them.
+- Thread metadata comes only from a rollout's first record: the parent header copied into a child never overwrites the parent's thread-index row.
+
 ## Compatibility surfaces
 
 | Surface | Decision | Owner | Removal condition | Negative check |

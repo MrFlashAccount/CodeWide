@@ -12,14 +12,14 @@ use serde_json::{Value, json};
 use super::{HistoryService, HistoryServiceError};
 use crate::catalog::SessionCatalog;
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+pub(super) type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const PARENT: &str = "019fe7af-0000-7000-8000-000000000001";
-const FORK: &str = "019fe7af-0000-7000-8000-000000000002";
+pub(super) const PARENT: &str = "019fe7af-0000-7000-8000-000000000001";
+pub(super) const FORK: &str = "019fe7af-0000-7000-8000-000000000002";
 const NESTED_FORK: &str = "019fe7af-0000-7000-8000-000000000003";
 const MISSING: &str = "019fe7af-0000-7000-8000-0000000000ff";
 
-fn service(root: &Path) -> Result<HistoryService, Box<dyn std::error::Error>> {
+pub(super) fn service(root: &Path) -> Result<HistoryService, Box<dyn std::error::Error>> {
     Ok(HistoryService::new(
         Arc::new(SessionCatalog::scan(root)),
         Arc::new(crate::test_support::open_rollout_store(
@@ -28,13 +28,13 @@ fn service(root: &Path) -> Result<HistoryService, Box<dyn std::error::Error>> {
     ))
 }
 
-fn rollout_path(root: &Path, thread_id: &str) -> std::io::Result<PathBuf> {
+pub(super) fn rollout_path(root: &Path, thread_id: &str) -> std::io::Result<PathBuf> {
     let sessions = root.join("sessions/2026/10/12");
     std::fs::create_dir_all(&sessions)?;
     Ok(sessions.join(format!("rollout-2026-10-12T00-00-00-{thread_id}.jsonl")))
 }
 
-fn append(path: &Path, records: &[Value]) -> std::io::Result<u64> {
+pub(super) fn append(path: &Path, records: &[Value]) -> std::io::Result<u64> {
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -46,7 +46,7 @@ fn append(path: &Path, records: &[Value]) -> std::io::Result<u64> {
     Ok(std::fs::metadata(path)?.len())
 }
 
-fn session_meta(thread_id: &str, base: Option<(&str, u64)>) -> Value {
+pub(super) fn session_meta(thread_id: &str, base: Option<(&str, u64)>) -> Value {
     let mut payload = json!({"id": thread_id, "history_mode": "paginated"});
     if let Some((base_thread_id, end_byte_offset)) = base {
         payload["forked_from_id"] = json!(base_thread_id);
@@ -56,11 +56,11 @@ fn session_meta(thread_id: &str, base: Option<(&str, u64)>) -> Value {
     json!({"type": "session_meta", "payload": payload})
 }
 
-fn event(payload: &Value) -> Value {
+pub(super) fn event(payload: &Value) -> Value {
     json!({"type": "event_msg", "payload": payload})
 }
 
-fn completed_turn(id: &str) -> Vec<Value> {
+pub(super) fn completed_turn(id: &str) -> Vec<Value> {
     vec![
         event(&json!({"type": "task_started", "turn_id": id})),
         event(&json!({"type": "user_message", "message": format!("question {id}")})),
@@ -73,13 +73,13 @@ fn completed_turn(id: &str) -> Vec<Value> {
     ]
 }
 
-fn completed_turns(ids: &[&str]) -> Vec<Value> {
+pub(super) fn completed_turns(ids: &[&str]) -> Vec<Value> {
     ids.iter().flat_map(|id| completed_turn(id)).collect()
 }
 
 /// A base thread forked while its turn `p5` was running: the fork inherits
 /// `p0`..`p4` and the start of `p5`. Returns the fork point.
-fn write_parent_forked_mid_turn(root: &Path) -> Result<u64, Box<dyn std::error::Error>> {
+pub(super) fn write_parent_forked_mid_turn(root: &Path) -> Result<u64, Box<dyn std::error::Error>> {
     let parent = rollout_path(root, PARENT)?;
     append(&parent, &[session_meta(PARENT, None)])?;
     append(&parent, &completed_turns(&["p0", "p1", "p2", "p3", "p4"]))?;
@@ -106,7 +106,7 @@ fn write_parent_forked_mid_turn(root: &Path) -> Result<u64, Box<dyn std::error::
     Ok(fork_point)
 }
 
-fn write_fork(
+pub(super) fn write_fork(
     root: &Path,
     base: (&str, u64),
     turns: &[&str],
@@ -125,7 +125,7 @@ fn write_thread(
     Ok(append(&path, &completed_turns(turns))?)
 }
 
-fn ids(turns: &Value) -> Vec<&str> {
+pub(super) fn ids(turns: &Value) -> Vec<&str> {
     turns
         .as_array()
         .into_iter()
@@ -139,7 +139,7 @@ fn turn<'a>(turns: &'a Value, id: &str) -> Option<&'a Value> {
 }
 
 /// Every turn of `thread_id`, newest first, through `thread/turns/list` pages.
-async fn all_pages(
+pub(super) async fn all_pages(
     service: &HistoryService,
     thread_id: &str,
     limit: usize,
@@ -164,7 +164,7 @@ async fn all_pages(
     }
 }
 
-fn page_ids(pages: &[Value]) -> Vec<Vec<&str>> {
+pub(super) fn page_ids(pages: &[Value]) -> Vec<Vec<&str>> {
     pages.iter().map(|page| ids(&page["data"])).collect()
 }
 
@@ -531,7 +531,7 @@ async fn bench_real_fork_history() -> TestResult {
             let waited = std::time::Instant::now();
             let catalog = SessionCatalog::scan(Path::new(&home));
             let own = catalog.resolve(&thread)?;
-            let mut chain = super::BaseChain::new(&catalog, &own);
+            let mut chain = super::BaseChain::new(&catalog, &service.store, &own);
             while let Some(base) = chain.next()? {
                 if !indexed_completely(&service, &base.path).await? {
                     for _ in 0..600 {

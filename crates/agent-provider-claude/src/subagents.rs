@@ -11,14 +11,12 @@
 use agent_core::model::{
     AgentItem, AgentThread, AgentTurn, AppThreadId, NativeSessionReadResult, ProviderId,
     SubagentStatus, ThreadOrigin, ThreadSettings, ThreadSpawn, ThreadStatus, TurnStatus,
-    UserContent,
 };
 use companion_host::thread_index::IndexedThreadMetadata;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 const AGENT_THREAD_SEPARATOR: &str = ":agent:";
-const PREVIEW_MAX_CHARS: usize = 200;
 
 /// The child thread of sub-agent `agent_id` under `parent`.
 #[must_use]
@@ -143,25 +141,6 @@ pub fn listed_differently(previous: &[IndexedSubagent], next: &[IndexedSubagent]
     !previous.iter().map(listed).eq(next.iter().map(listed))
 }
 
-/// The first user text of a transcript, shortened like a list preview.
-fn preview(turns: &[AgentTurn]) -> String {
-    turns
-        .iter()
-        .flat_map(|turn| turn.items.iter())
-        .find_map(|item| match item {
-            AgentItem::UserMessage { content, .. } => {
-                content.iter().find_map(|block| match block {
-                    UserContent::Text { text } => {
-                        Some(text.chars().take(PREVIEW_MAX_CHARS).collect())
-                    }
-                    UserContent::Image { .. } | UserContent::LocalImage { .. } => None,
-                })
-            }
-            _ => None,
-        })
-        .unwrap_or_default()
-}
-
 /// One indexed child thread: where it lives and its turns.
 pub struct ChildThread {
     pub thread_id: AppThreadId,
@@ -181,7 +160,8 @@ impl ChildThread {
             provider: provider.clone(),
             cwd: self.cwd.clone(),
             name: self.subagent.description.clone(),
-            preview: preview(&self.turns),
+            // The newest conversation message, as every thread's list preview.
+            preview: crate::preview::newest_message(&self.turns).unwrap_or_default(),
             created_at,
             updated_at: self.subagent.updated_at.unwrap_or(created_at),
             recency_at: None,

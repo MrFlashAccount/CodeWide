@@ -422,7 +422,9 @@ describe("fullscreen workspace presentation", () => {
     expect(subagentRenderer).toContain("<ReadOnlyComposerContext");
     expect(subagentRenderer).toContain("onOpenSubagentThread={onOpenSubagent}");
     expect(subagentRenderer).not.toContain("<SubagentTranscript");
-    expect(agentsRoute).toContain("parentThread={request.parentThread}");
+    // The adapter serves the subagent thread as its own content; nothing of the
+    // parent is carried into the sheet to rewrite it.
+    expect(agentsRoute).not.toContain("parentThread=");
     expect(agentsRoute).toContain("summaries={request.summaries}");
     expect(screen).not.toContain('testID="subagent-task-card"');
     expect(subagentSheet).not.toContain("onLoadResources");
@@ -441,7 +443,8 @@ describe("fullscreen workspace presentation", () => {
   it("keeps the model-owned cached subagent text visible and updates recycled selection", () => {
     expect(subagentSheet).toContain("applyThreadSummaryMetadata(materializedThread, summary)");
     expect(subagentSheet).toContain("did not materialize from its ready window");
-    expect(subagentSheet).toContain("if (conversation === null)");
+    expect(subagentSheet).toContain("if (thread === null)");
+    expect(subagentSheet).not.toContain("projectSubagentConversation");
     expect(subagentSheet).toContain("summary.remoteThreadId === selectedId");
     expect(subagentSheet).not.toContain("remoteThreadResource");
     expect(subagentWorkspace).toContain("extraData={selected?.remoteThreadId ?? null}");

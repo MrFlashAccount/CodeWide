@@ -21,7 +21,6 @@ import {
   type QuestionOpportunity,
   type StoredThreadSummary,
 } from "./thread-summary-types";
-import { subagentOwnTurns } from "./subagent-projection";
 import { latestThreadMessagePreview, plainThreadPreview } from "./thread-cache";
 
 function isClosedTurnStart(
@@ -74,10 +73,9 @@ export function projectThreadSummarySnapshot(
   archived: boolean,
   previous?: StoredThreadSummary,
 ): StoredThreadSummary {
-  const isSubagent = typeof thread.parentThreadId === "string";
-  const previewThread = isSubagent ? { ...thread, turns: subagentOwnTurns(thread) } : thread;
-  const snapshotPreview =
-    previewThread.turns.length > 0 ? latestThreadMessagePreview(previewThread) : "";
+  // A subagent thread arrives as its own content: its provider adapter leaves
+  // out what the agent inherited, so its preview is read as any thread's.
+  const snapshotPreview = thread.turns.length > 0 ? latestThreadMessagePreview(thread) : "";
   const listedPreview = plainThreadPreview(thread.preview);
   const pin = threadPinFromSnapshot(thread);
   return {
@@ -107,18 +105,14 @@ export function projectThreadSummarySnapshot(
     latestActivityCursor: previous?.latestActivityCursor ?? 0,
     pendingQuestion:
       thread.turns.length > 0
-        ? questionOpportunity(previewThread.turns)
+        ? questionOpportunity(thread.turns)
         : thread.status.type === "active" && thread.updatedAt === previous?.updatedAt
           ? (previous.pendingQuestion ?? null)
           : null,
     pendingRequestCount: previous?.pendingRequestCount ?? 0,
     pinCursor: Math.max(previous?.pinCursor ?? 0, pin.cursor),
     pinned: (previous?.pinCursor ?? 0) > pin.cursor ? (previous?.pinned ?? false) : pin.pinned,
-    preview: selectPreview(
-      snapshotPreview,
-      listedPreview,
-      isSubagent && (previous?.latestActivityCursor ?? 0) <= 0 ? undefined : previous?.preview,
-    ),
+    preview: selectPreview(snapshotPreview, listedPreview, previous?.preview),
     projectionCursor: previous === undefined ? 0 : threadSummaryProjectionCursor(previous),
     recencyAt: thread.recencyAt,
     skippedQuestions: previous?.skippedQuestions ?? null,
