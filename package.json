@@ -33,6 +33,7 @@
     "release:gate": "sh scripts/cargo-target-budget.sh && export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CARGO_INCREMENTAL=0 && pnpm typecheck && pnpm format:agents:check && pnpm lint:agents && pnpm test && pnpm test:companion && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && pnpm build:companion && pnpm bench:fixtures && pnpm bench:large-content && pnpm security:scan-artifacts && pnpm security:scan-secrets",
     "test:watch": "vitest",
     "protocol:generate": "node scripts/generate-codex-protocol.ts",
+    "ci:rust": "tsx scripts/ci-rust.ts",
     "validate:android:v1": "pnpm --filter @codewide/android validate:v1",
     "lint:agents": "pnpm --filter @codewide/agent-protocol lint",
     "format:agents:check": "pnpm --filter @codewide/agent-protocol format:check",

@@ -37,7 +37,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-
       - name: Set up Java
         uses: actions/setup-java@v6.0.1
         with:
@@ -58,23 +57,21 @@ jobs:
           restore-keys: |
             nx-linux-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-
 
-      - name: Restore Cargo cache
-        uses: actions/cache@v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-linux-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            cargo-linux-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
-
       - name: Install pinned Rust toolchain
         run: |
           rustup toolchain install --no-self-update
           cargo --version
           cargo clippy --version
+
+      # Dependencies only (workspace crates and incremental state are left
+      # out), keyed by Cargo.lock and the toolchain, saved from main only:
+      # one entry per lockfile instead of one per commit and branch, so the
+      # repository cache budget keeps the release jobs' caches.
+      - name: Restore Cargo dependency cache
+        uses: Swatinem/rust-cache@v2.9.2
+        with:
+          shared-key: ci-linux
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -86,7 +83,15 @@ jobs:
         run: pnpm release:compatibility
 
       - name: Check, test, and build affected Linux and Android projects
-        run: pnpm nx affected -t check test build --exclude=macos --parallel=3
+        run: pnpm nx affected -t check test build --exclude='macos,tag:language:rust' --parallel=3
+
+      # One cargo invocation over every affected Rust project, so shared
+      # dependencies are compiled once per profile (scripts/ci-rust.ts).
+      - name: Check and test affected Rust projects
+        run: pnpm ci:rust
+
+      - name: Build affected Rust applications
+        run: pnpm nx affected -t build --exclude='*,!tag:language:rust'
 
   macos:
     runs-on: macos-26
@@ -119,22 +124,20 @@ jobs:
           restore-keys: |
             nx-macos-${{ hashFiles('pnpm-lock.yaml', 'Cargo.lock') }}-
 
-      - name: Restore Cargo cache
-        uses: actions/cache@v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            cargo-macos-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
-
       - name: Install pinned Rust toolchain
         run: |
           rustup toolchain install --no-self-update
           cargo --version
+
+      # Dependencies only (workspace crates and incremental state are left
+      # out), keyed by Cargo.lock and the toolchain, saved from main only:
+      # one entry per lockfile instead of one per commit and branch, so the
+      # repository cache budget keeps the release jobs' caches.
+      - name: Restore Cargo dependency cache
+        uses: Swatinem/rust-cache@v2.9.2
+        with:
+          shared-key: ci-macos
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

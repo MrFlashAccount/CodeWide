@@ -24,13 +24,6 @@
         "command": "cargo test -p codewide-host-resolver --all-features",
         "cwd": "."
       }
-    },
-    "build": {
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "cargo build -p codewide-host-resolver --release",
-        "cwd": "."
-      }
     }
   }
 }
