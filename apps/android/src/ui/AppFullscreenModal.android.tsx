@@ -11,8 +11,10 @@ import {
 import { SafeAreaProvider, SafeAreaView, type Edge } from "react-native-safe-area-context";
 
 import { configureNativeFullscreenWindow } from "../native/native-transport";
+import { useConstant } from "../react/useConstant";
 import { useEvent } from "../react/useEvent";
 import { colors } from "../theme";
+import { FullscreenBackProvider, FullscreenBackStack } from "./FullscreenBack";
 import { FullscreenWindowReadyProvider } from "./FullscreenWindowReady";
 import { OverlaySurfaceProvider } from "./OverlaySurfaceContext";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
@@ -42,18 +44,25 @@ export function AppFullscreenModal(props: FullscreenModalProps) {
 
 function VisibleFullscreenModal(props: FullscreenModalProps) {
   const { width } = useWindowDimensions();
-  const close = useEvent(props.onClose);
+  const backStack = useConstant(() => new FullscreenBackStack());
+  // Back first steps back inside the window (a child conversation to its list);
+  // the window closes only when nothing in it claims Back.
+  const back = useEvent(() => {
+    if (!backStack.handleBack()) {
+      props.onClose();
+    }
+  });
   useEffect(() => {
     // Compose owns dialog Back. Activity-delivered Back must also stop at this window,
     // whose app-level host is outside the focused Router screen.
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      close();
+      back();
       return true;
     });
     return () => {
       subscription.remove();
     };
-  }, [close]);
+  }, [back]);
   const [windowReady, setWindowReady] = useState(false);
   const readyRef = useRef(false);
   const frameRef = useRef<number | null>(null);
@@ -91,7 +100,7 @@ function VisibleFullscreenModal(props: FullscreenModalProps) {
     <Host colorScheme="dark" pointerEvents="none" style={{ position: "absolute", width }}>
       <BasicAlertDialog
         modifiers={FULLSCREEN_MODIFIERS}
-        onDismissRequest={props.onClose}
+        onDismissRequest={back}
         properties={DIALOG_PROPERTIES}
       >
         <RNHostView matchContents={false}>
@@ -111,7 +120,9 @@ function VisibleFullscreenModal(props: FullscreenModalProps) {
               >
                 <FullscreenWindowReadyProvider ready={windowReady}>
                   <OverlaySurfaceProvider surface="fullscreen-modal">
-                    {props.children}
+                    <FullscreenBackProvider value={backStack}>
+                      {props.children}
+                    </FullscreenBackProvider>
                   </OverlaySurfaceProvider>
                 </FullscreenWindowReadyProvider>
               </RecoverableRenderBoundary>

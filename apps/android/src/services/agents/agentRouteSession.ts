@@ -1,5 +1,3 @@
-import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
-
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { RouteSessionRegistry, ROUTE_SESSION_TTL_MS } from "../routeSessionPolicy";
 import { sameRouteSessionOwner, type V1RouteSessionOwner } from "../threads/threadRouteParams";
@@ -9,7 +7,6 @@ const MAX_AGENT_SESSIONS = 4;
 /** Captured V1 subagent workspace input retained outside serializable route parameters. */
 export type AgentRouteRequest = {
   readonly initialThreadId: string | null;
-  readonly parentThread: Thread | null;
   readonly parentThreadId: string;
   readonly summaries: readonly StoredThreadSummary[];
 };

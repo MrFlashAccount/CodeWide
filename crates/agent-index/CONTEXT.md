@@ -41,6 +41,8 @@ migration plan: [`docs/claude-rust-migration.md`](../../docs/claude-rust-migrati
   (`indexed_from..indexed_bytes`); a crash never exposes a hole as history.
 - Rows keyed by file id and offset never change meaning without a logic
   version bump; a bump drops only the provider's tables.
+- Thread metadata is published only from a file's first record (its header);
+  a later record of the same shape (a copied header) never publishes.
 - Malformed records are the source's to tolerate: a boundary record that
   does not parse fails the scan (`IndexError::InvalidBoundary`); a summary
   that cannot fold a record skips it.

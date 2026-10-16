@@ -1,8 +1,7 @@
-import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { Suspense, useState, useTransition, type ReactNode } from "react";
 import { type LayoutChangeEvent, useWindowDimensions } from "react-native";
 
-import { projectSubagentConversation, subagentsForThread } from "../../data/subagent-projection";
+import { subagentsForThread } from "../../data/subagent-projection";
 import { applyThreadSummaryMetadata } from "../../data/thread-chat-projection";
 import {
   materializeThreadDetails,
@@ -28,7 +27,6 @@ export function SubagentSheet({
   connectionId,
   initialThreadId = null,
   onClose,
-  parentThread,
   parentThreadId,
   renderThread,
   summaries,
@@ -37,7 +35,6 @@ export function SubagentSheet({
   readonly connectionId: string;
   readonly initialThreadId?: string | null;
   readonly onClose: () => void;
-  readonly parentThread: Thread | null;
   readonly parentThreadId: string;
   readonly renderThread: (view: SubagentThreadView) => ReactNode;
   readonly summaries: readonly StoredThreadSummary[];
@@ -84,7 +81,6 @@ export function SubagentSheet({
         onBack={resetSelection}
         onClose={close}
         onOpenSubagent={openById}
-        parentThread={parentThread}
         renderThread={renderThread}
         summary={selected}
         threadDetails={threadDetails}
@@ -114,7 +110,6 @@ function SubagentDetailBoundary({
   onBack,
   onClose,
   onOpenSubagent,
-  parentThread,
   renderThread,
   summary,
   threadDetails,
@@ -124,7 +119,6 @@ function SubagentDetailBoundary({
   readonly onBack: () => void;
   readonly onClose: () => void;
   readonly onOpenSubagent: (threadId: string) => void;
-  readonly parentThread: Thread | null;
   readonly renderThread: (view: SubagentThreadView) => ReactNode;
   readonly summary: StoredThreadSummary;
   readonly threadDetails: ThreadDetailDatabase;
@@ -153,7 +147,6 @@ function SubagentDetailBoundary({
           connectionId={connectionId}
           onBack={onBack}
           onOpenSubagent={onOpenSubagent}
-          parentThread={parentThread}
           renderThread={renderThread}
           summary={summary}
           threadDetails={threadDetails}
@@ -168,7 +161,6 @@ function SubagentConversationDetail({
   connectionId,
   onBack,
   onOpenSubagent,
-  parentThread,
   renderThread,
   summary,
   threadDetails,
@@ -177,7 +169,6 @@ function SubagentConversationDetail({
   readonly connectionId: string;
   readonly onBack: () => void;
   readonly onOpenSubagent: (threadId: string) => void;
-  readonly parentThread: Thread | null;
   readonly renderThread: (view: SubagentThreadView) => ReactNode;
   readonly summary: StoredThreadSummary;
   readonly threadDetails: ThreadDetailDatabase;
@@ -196,9 +187,10 @@ function SubagentConversationDetail({
     materializeThreadDetails(detailRows, threadDetails.sessionId).find(
       (snapshot) => snapshot.connectionId === connectionId && snapshot.thread.id === threadId,
     )?.thread ?? null;
+  // The provider adapter serves the subagent thread as its own content: it is
+  // rendered as it arrives.
   const thread = applyThreadSummaryMetadata(materializedThread, summary);
-  const conversation = thread === null ? null : projectSubagentConversation(thread, parentThread);
-  if (conversation === null) {
+  if (thread === null) {
     throw new Error(`Subagent conversation ${threadId} did not materialize from its ready window`);
   }
   return renderThread({
@@ -207,6 +199,6 @@ function SubagentConversationDetail({
     ...(compact ? { onBack } : {}),
     onOpenSubagent,
     summary,
-    thread: conversation.thread,
+    thread,
   });
 }

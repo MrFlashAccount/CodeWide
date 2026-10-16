@@ -132,7 +132,6 @@ export function SubagentConversation({
       void refresh?.(thread.id).catch(() => undefined);
       routeNavigation.openAgents({
         initialThreadId,
-        parentThread: thread,
         parentThreadId: thread.id,
         summaries: children,
       });

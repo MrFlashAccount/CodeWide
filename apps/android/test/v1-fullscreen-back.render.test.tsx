@@ -1,5 +1,5 @@
 import { act, fireEvent, render } from "@testing-library/react-native";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { BackHandler, Pressable, Text } from "react-native";
 
 import {
@@ -7,6 +7,10 @@ import {
   AppFullscreenOverlayProvider,
   useAppFullscreenOverlay,
 } from "../src/ui/AppFullscreenOverlay";
+import { useAndroidBackHandler } from "../src/ui/use-android-back-handler";
+
+// WHY: The app-root overlay host renders inside the Router; this harness has no navigator.
+jest.mock("expo-router", () => ({ useIsFocused: () => true }));
 
 // WHY: Compose windows cannot run in Node; retain their native dismissal callback.
 jest.mock("@expo/ui/jetpack-compose", () => {
@@ -129,4 +133,68 @@ it("retains native dialog dismissal and removes the fallback on unmount", () => 
     expect(pressSystemBack()).toBe(false);
   });
   expect(underlyingBack).toHaveBeenCalledTimes(1);
+});
+
+/** A child conversation inside the window: Back first returns to its list. */
+function NestedDetail({ onStepBack }: { readonly onStepBack: () => void }) {
+  const [detail, setDetail] = useState(true);
+  useAndroidBackHandler(detail, () => {
+    onStepBack();
+    setDetail(false);
+  });
+  return <Text>{detail ? "Agent conversation" : "Agent list"}</Text>;
+}
+
+function NestedLauncher({
+  onClose,
+  onStepBack,
+}: {
+  readonly onClose: () => void;
+  readonly onStepBack: () => void;
+}) {
+  const overlay = useAppFullscreenOverlay({ lifecycle: { didClose: onClose } });
+  return (
+    <Pressable
+      onPress={() => {
+        overlay.present(() => <NestedDetail onStepBack={onStepBack} />);
+      }}
+    >
+      <Text>Open agents</Text>
+    </Pressable>
+  );
+}
+
+it.each([
+  ["the native dialog", "dialog"],
+  ["the Activity", "activity"],
+] as const)("steps back inside the window before closing it when %s receives Back", (_, source) => {
+  const onClose = jest.fn();
+  const onStepBack = jest.fn();
+  const view = render(
+    <AppFullscreenOverlayProvider>
+      <NestedLauncher onClose={onClose} onStepBack={onStepBack} />
+      <AppFullscreenOverlayHost />
+    </AppFullscreenOverlayProvider>,
+  );
+  fireEvent.press(view.getByText("Open agents"));
+  const back = () => {
+    if (source === "dialog") {
+      fireEvent(view.getByTestId("fullscreen-window"), "dismissRequest");
+    } else {
+      act(() => {
+        expect(pressSystemBack()).toBe(true);
+      });
+    }
+  };
+
+  back();
+  expect(onStepBack).toHaveBeenCalledTimes(1);
+  expect(onClose).not.toHaveBeenCalled();
+  expect(view.getByText("Agent list")).toBeVisible();
+
+  back();
+  expect(onStepBack).toHaveBeenCalledTimes(1);
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(view.queryByText("Agent list")).toBeNull();
+  expect(underlyingBack).not.toHaveBeenCalled();
 });
