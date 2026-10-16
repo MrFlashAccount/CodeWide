@@ -4,7 +4,7 @@
   "projectType": "library",
   "sourceRoot": "crates/companion-swift-ffi/src",
   "tags": ["language:rust", "type:ffi", "platform:macos"],
-  "implicitDependencies": ["companion-core"],
+  "implicitDependencies": ["companion-core", "host-update"],
   "metadata": {
     "description": "Narrow UniFFI and static-library adapter for Swift"
   },
