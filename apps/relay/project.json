@@ -4,7 +4,7 @@
   "projectType": "application",
   "sourceRoot": "apps/relay/src",
   "tags": ["language:rust", "type:application", "platform:linux"],
-  "implicitDependencies": ["host-resolver", "release-contracts"],
+  "implicitDependencies": ["host-resolver", "release-contracts", "host-update"],
   "metadata": {
     "description": "Blind CodeWide Relay runtime",
     "codewideRelease": {
