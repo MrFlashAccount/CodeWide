@@ -18,6 +18,87 @@ const signing = {
 } as const;
 
 const version = "0.4.1";
+
+type HostUpdateTarget = {
+  readonly artifactUrl: string;
+  readonly platform: string;
+  readonly sha256: string;
+  readonly sourceRevision: string;
+  readonly rollbackCompatibleFrom: readonly string[];
+};
+
+type HostUpdateDescriptor = {
+  readonly sequence: number;
+  readonly targets: readonly HostUpdateTarget[];
+};
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringArray(value: unknown): readonly string[] | null {
+  if (!Array.isArray(value)) return null;
+  const strings: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") return null;
+    strings.push(entry);
+  }
+  return strings;
+}
+
+function signedPayload(path: string): { readonly payload: string; readonly signature: string } {
+  const envelope: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (
+    !isRecord(envelope) ||
+    typeof envelope.payload !== "string" ||
+    typeof envelope.signature !== "string"
+  ) {
+    throw new Error("Release manifest envelope is invalid");
+  }
+  return { payload: envelope.payload, signature: envelope.signature };
+}
+
+function hostUpdateDescriptor(path: string): HostUpdateDescriptor {
+  const envelope = signedPayload(path);
+  const descriptor: unknown = JSON.parse(
+    Buffer.from(envelope.payload, "base64url").toString("utf8"),
+  );
+  if (
+    !isRecord(descriptor) ||
+    typeof descriptor.sequence !== "number" ||
+    !Array.isArray(descriptor.targets)
+  ) {
+    throw new Error("Release manifest descriptor is invalid");
+  }
+  const targets = descriptor.targets.map((value): HostUpdateTarget => {
+    const rollbackCompatibleFrom = isRecord(value)
+      ? stringArray(value.rollbackCompatibleFrom)
+      : null;
+    if (
+      !isRecord(value) ||
+      typeof value.artifactUrl !== "string" ||
+      typeof value.platform !== "string" ||
+      typeof value.sha256 !== "string" ||
+      typeof value.sourceRevision !== "string" ||
+      rollbackCompatibleFrom === null
+    ) {
+      throw new Error("Release manifest target is invalid");
+    }
+    return {
+      artifactUrl: value.artifactUrl,
+      platform: value.platform,
+      sha256: value.sha256,
+      sourceRevision: value.sourceRevision,
+      rollbackCompatibleFrom,
+    };
+  });
+  return { sequence: descriptor.sequence, targets };
+}
+
+function hostUpdateTargets(path: string): readonly HostUpdateTarget[] {
+  return hostUpdateDescriptor(path).targets;
+}
+
 function artifactFiles(releaseVersion: string) {
   return [
     [`codewide-relay-${releaseVersion}-linux-x86_64`, "codewide-relay-x86_64-unknown-linux-musl"],
@@ -93,6 +174,49 @@ function fixture(
   return { planPath, artifacts, output };
 }
 
+function prepareReusedRelease(
+  root: string,
+  previousOutput: string,
+  releaseVersion: string,
+  previousManifestPaths: readonly string[],
+): string {
+  const previousManifestPath = join(previousOutput, "assets", "release-manifest.json");
+  const inventory = readReleaseProducts(JSON.parse(readFileSync(previousManifestPath, "utf8")));
+  const previousVersion = inventory[0]?.version;
+  if (previousVersion === undefined) throw new Error("Previous release inventory is empty");
+  const artifacts = join(root, "artifacts");
+  const reusedProducts = join(artifacts, "reused-products");
+  mkdirSync(reusedProducts, { recursive: true });
+  for (const product of inventory) {
+    for (const asset of product.assets) {
+      copyFileSync(join(previousOutput, "assets", asset.name), join(reusedProducts, asset.name));
+    }
+  }
+  const sourceRevision = execFileSync("git", ["rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+  const planPath = join(root, "plan.json");
+  writeFileSync(
+    planPath,
+    JSON.stringify({
+      base: sourceRevision,
+      sourceRevision,
+      version: releaseVersion,
+      previousVersion,
+      tag: "release-2026-10-16.1",
+      affected: [],
+      targets: inventory.map((product) => ({
+        ...product,
+        previousVersion: product.version,
+        delivery: "reuse",
+      })),
+    }),
+  );
+  const output = join(root, "output");
+  prepareReleaseSet(planPath, artifacts, output, { ...signing, previousManifestPaths });
+  return join(output, "assets", "release-manifest.json");
+}
+
 describe("atomic release package", () => {
   it("stages all products with verifiable checksums and human-readable notes", () => {
     const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
@@ -113,10 +237,8 @@ describe("atomic release package", () => {
         const digest = createHash("sha256").update(payload).digest("hex");
         expect(readFileSync(join(assets, `${name}.sha256`), "utf8")).toBe(`${digest}  ${name}\n`);
       }
-      const manifest = JSON.parse(readFileSync(join(assets, "release-manifest.json"), "utf8")) as {
-        readonly payload: string;
-        readonly signature: string;
-      };
+      const manifestPath = join(assets, "release-manifest.json");
+      const manifest = signedPayload(manifestPath);
       const payload = Buffer.from(manifest.payload, "base64url");
       expect(
         verify(
@@ -126,16 +248,7 @@ describe("atomic release package", () => {
           Buffer.from(manifest.signature, "base64"),
         ),
       ).toBe(true);
-      const descriptor = JSON.parse(payload.toString("utf8")) as {
-        readonly sequence: number;
-        readonly targets: readonly {
-          readonly platform: string;
-          readonly artifactUrl: string;
-          readonly sourceRevision: string;
-          readonly sha256: string;
-          readonly rollbackCompatibleFrom: readonly string[];
-        }[];
-      };
+      const descriptor = hostUpdateDescriptor(manifestPath);
       expect(descriptor.sequence).toBe(4_000_001);
       const relayTarget = descriptor.targets.find(({ platform }) => platform === "relay-linux-x86-64");
       expect(relayTarget?.artifactUrl.endsWith("/codewide-relay-x86_64-unknown-linux-musl.tar.gz")).toBe(true);
@@ -346,39 +459,51 @@ describe("atomic release package", () => {
     }
   });
 
-  it("certifies only digests from the verified immediate predecessor", () => {
+  it("preserves the signed update lineage when a later release reuses a product", () => {
     const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
     try {
       const baseline = fixture(join(root, "baseline"));
       prepareReleaseSet(baseline.planPath, baseline.artifacts, baseline.output, signing);
-      const previousManifestPath = join(baseline.output, "assets", "release-manifest.json");
+      const baselineManifestPath = join(baseline.output, "assets", "release-manifest.json");
       const next = fixture(join(root, "next"), "0.4.2");
       prepareReleaseSet(next.planPath, next.artifacts, next.output, {
         ...signing,
-        previousManifestPath,
+        previousManifestPaths: [baselineManifestPath],
       });
-      const previousEnvelope = JSON.parse(readFileSync(previousManifestPath, "utf8")) as {
-        readonly payload: string;
-      };
-      const previousDescriptor = JSON.parse(
-        Buffer.from(previousEnvelope.payload, "base64url").toString("utf8"),
-      ) as {
-        readonly targets: readonly { readonly platform: string; readonly sha256: string }[];
-      };
-      const nextEnvelope = JSON.parse(
-        readFileSync(join(next.output, "assets", "release-manifest.json"), "utf8"),
-      ) as { readonly payload: string };
-      const nextDescriptor = JSON.parse(
-        Buffer.from(nextEnvelope.payload, "base64url").toString("utf8"),
-      ) as {
-        readonly targets: readonly {
-          readonly platform: string;
-          readonly rollbackCompatibleFrom: readonly string[];
-        }[];
-      };
-      for (const target of nextDescriptor.targets) {
-        const previous = previousDescriptor.targets.find(({ platform }) => platform === target.platform);
-        expect(target.rollbackCompatibleFrom).toEqual([previous?.sha256]);
+      const nextManifestPath = join(next.output, "assets", "release-manifest.json");
+      const reusedManifestPath = prepareReusedRelease(join(root, "reused"), next.output, "0.4.3", [
+        nextManifestPath,
+      ]);
+
+      const baselineTargets = hostUpdateTargets(baselineManifestPath);
+      const reusedTargets = hostUpdateTargets(reusedManifestPath);
+      for (const target of reusedTargets) {
+        const baselineTarget = baselineTargets.find(({ platform }) => platform === target.platform);
+        expect(target.rollbackCompatibleFrom).toEqual([baselineTarget?.sha256]);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers a skipped official build from signed release history", () => {
+    const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
+    try {
+      const baseline = fixture(join(root, "baseline"));
+      prepareReleaseSet(baseline.planPath, baseline.artifacts, baseline.output, signing);
+      const baselineManifestPath = join(baseline.output, "assets", "release-manifest.json");
+      const next = fixture(join(root, "next"), "0.4.2");
+      prepareReleaseSet(next.planPath, next.artifacts, next.output, signing);
+      const nextManifestPath = join(next.output, "assets", "release-manifest.json");
+      const reusedManifestPath = prepareReusedRelease(join(root, "reused"), next.output, "0.4.3", [
+        baselineManifestPath,
+        nextManifestPath,
+      ]);
+
+      const baselineTargets = hostUpdateTargets(baselineManifestPath);
+      for (const target of hostUpdateTargets(reusedManifestPath)) {
+        const baselineTarget = baselineTargets.find(({ platform }) => platform === target.platform);
+        expect(target.rollbackCompatibleFrom).toEqual([baselineTarget?.sha256]);
       }
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -391,14 +516,17 @@ describe("atomic release package", () => {
       const baseline = fixture(join(root, "baseline"));
       prepareReleaseSet(baseline.planPath, baseline.artifacts, baseline.output, signing);
       const previousManifestPath = join(baseline.output, "assets", "release-manifest.json");
-      const envelope = JSON.parse(readFileSync(previousManifestPath, "utf8")) as { payload: string };
-      envelope.payload = `${envelope.payload.startsWith("A") ? "B" : "A"}${envelope.payload.slice(1)}`;
-      writeFileSync(previousManifestPath, JSON.stringify(envelope));
+      const envelopeValue: unknown = JSON.parse(readFileSync(previousManifestPath, "utf8"));
+      if (!isRecord(envelopeValue) || typeof envelopeValue.payload !== "string") {
+        throw new Error("Release manifest envelope is invalid");
+      }
+      const payload = `${envelopeValue.payload.startsWith("A") ? "B" : "A"}${envelopeValue.payload.slice(1)}`;
+      writeFileSync(previousManifestPath, JSON.stringify({ ...envelopeValue, payload }));
       const next = fixture(join(root, "next"), "0.4.2");
       expect(() =>
         prepareReleaseSet(next.planPath, next.artifacts, next.output, {
           ...signing,
-          previousManifestPath,
+          previousManifestPaths: [previousManifestPath],
         }),
       ).toThrow("Previous release manifest signature is invalid");
     } finally {

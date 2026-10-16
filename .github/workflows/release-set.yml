@@ -262,22 +262,33 @@ jobs:
         with:
           path: release-artifacts
 
-      - name: Resolve rollback-certified predecessor
+      - name: Resolve rollback-certified lineage
         env:
           GH_TOKEN: ${{ github.token }}
           HOST_UPDATE_KEY_ID: ${{ vars.HOST_UPDATE_SIGNING_KEY_ID || 'host-update-v1' }}
         run: |
-          mkdir -p previous-release
-          if gh release download --pattern release-manifest.json --dir previous-release; then
+          mkdir -p previous-releases
+          manifest_list=previous-releases/manifests.txt
+          : > "$manifest_list"
+          release_inventory=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft == false) | [.tag_name, any(.assets[]; .name == "release-manifest.json")] | @tsv')
+          while IFS=$'\t' read -r tag has_manifest; do
+            [[ -n "$tag" ]] || continue
+            [[ "$has_manifest" == true ]] || continue
+            release_dir="previous-releases/$tag"
+            mkdir -p "$release_dir"
+            gh release download "$tag" --pattern release-manifest.json --dir "$release_dir"
+            manifest="$release_dir/release-manifest.json"
             if jq -e --arg key "$HOST_UPDATE_KEY_ID" \
               '.schemaVersion == 1 and .algorithm == "ES256" and .keyId == $key and (.signature | type == "string")' \
-              previous-release/release-manifest.json >/dev/null; then
-              echo "CODEWIDE_PREVIOUS_RELEASE_MANIFEST=previous-release/release-manifest.json" >> "$GITHUB_ENV"
-            else
-              echo "Latest release predates signed host-update manifests; this release is the manual baseline."
+              "$manifest" >/dev/null; then
+              printf '%s\n' "$manifest" >> "$manifest_list"
             fi
+          done <<< "$release_inventory"
+          if [[ -s "$manifest_list" ]]; then
+            echo "CODEWIDE_PREVIOUS_RELEASE_MANIFEST_LIST=$manifest_list" >> "$GITHUB_ENV"
           else
-            echo "No predecessor manifest exists; this release is the manual baseline."
+            echo "No signed predecessor manifests exist; this release is the manual baseline."
           fi
 
       - name: Assemble release and generate notes

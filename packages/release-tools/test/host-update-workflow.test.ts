@@ -7,6 +7,17 @@ const readRepoFile = (path: string): string =>
   readFileSync(new URL(`../../../${path}`, import.meta.url), "utf8");
 
 describe("host-update release trust", () => {
+  it("builds rollback lineage from signed release history", () => {
+    const releaseSet = readWorkflow("release-set.yml");
+
+    expect(releaseSet).toContain('gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100"');
+    expect(releaseSet).toContain('gh release download "$tag" --pattern release-manifest.json');
+    expect(releaseSet).toContain("CODEWIDE_PREVIOUS_RELEASE_MANIFEST_LIST");
+    expect(releaseSet).toContain(
+      '.schemaVersion == 1 and .algorithm == "ES256" and .keyId == $key',
+    );
+  });
+
   it("threads the release key id and public SPKI into the macOS artifact build", () => {
     const releaseSet = readWorkflow("release-set.yml");
     const macosRelease = readWorkflow("macos-release.yml");
