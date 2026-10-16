@@ -130,7 +130,9 @@ impl LinuxHostUpdateGuardian {
             .map_err(internal)?;
             operation = self.read_operation(&operation_id)?;
         }
-        if operation.journal.phase != HostUpdatePhase::Installing {
+        if operation.journal.phase != HostUpdatePhase::Installing
+            || self.activation_owns(&operation)?
+        {
             return Ok(());
         }
         let Some(artifact_size) = operation.artifact_size.filter(|size| *size > 0) else {
@@ -186,6 +188,22 @@ impl LinuxHostUpdateGuardian {
             &operation_id,
         )
         .map_err(internal)
+    }
+
+    /// Whether the activation runner owns `operation`: its activation was
+    /// requested or it has restarted the product. The runner keeps the phase
+    /// `Installing` until the target is healthy, so the product it restarted
+    /// finds the operation still `Installing`; preparing it again would
+    /// download the artifact a second time and, on any failure, fail an
+    /// update the runner is about to commit or roll back.
+    fn activation_owns(&self, operation: &OperationRecord) -> Result<bool, GuardianError> {
+        if operation.journal.restart_started_at.is_some() {
+            return Ok(true);
+        }
+        let requested =
+            store::read_optional_json::<String>(&self.inner.state_root.join(ACTIVATION_REQUEST))
+                .map_err(internal)?;
+        Ok(requested.as_deref() == Some(operation.journal.operation_id.as_str()))
     }
 
     /// The embedded release key, once the stable guardian it hands updates to is installed.
