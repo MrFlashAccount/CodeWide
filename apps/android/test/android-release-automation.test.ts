@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
-  deriveUpdateEndpoint,
   nextPatchVersion,
   readAndroidReleaseVersion,
   updateAndroidReleaseVersion,
@@ -16,32 +15,20 @@ const manifest = readFileSync(
   "utf8",
 );
 const packageJson = readFileSync(new URL("../../../package.json", import.meta.url), "utf8");
-const otaPublisher = readFileSync(
-  new URL("../../../scripts/publish-android-ota.ts", import.meta.url),
+const buildApkCommand = readFileSync(
+  new URL("../../../scripts/build-android-apk", import.meta.url),
   "utf8",
 );
-const releaseAndroid = readFileSync(
-  new URL("../../../scripts/release-android.ts", import.meta.url),
-  "utf8",
-);
-const releaseApk = readFileSync(new URL("../../../scripts/release-apk", import.meta.url), "utf8");
-const releaseOta = readFileSync(new URL("../../../scripts/release-ota", import.meta.url), "utf8");
 
 const releaseWaitNotice =
   "This command may take a while. Do not report intermediate progress; wait silently until it finishes.";
 
 describe("Android release automation", () => {
-  it("derives the deployment endpoint from an existing OTA asset", () => {
-    expect(
-      deriveUpdateEndpoint("https://codex.garin.dev/api/updates/assets/runtime/update/index.hbc"),
-    ).toBe("https://codex.garin.dev/api/updates");
-  });
-
   it("increments the patch, native runtime, and version code atomically", () => {
     const current = readAndroidReleaseVersion({ appConfig, gradle, manifest });
     const updated = updateAndroidReleaseVersion(
       { appConfig, gradle, manifest },
-      { requestedVersion: undefined, published: undefined },
+      { requestedVersion: undefined, requestedVersionCode: undefined },
     );
 
     expect(updated.next).toEqual({
@@ -53,29 +40,9 @@ describe("Android release automation", () => {
     expect(() =>
       updateAndroidReleaseVersion(
         { appConfig, gradle, manifest },
-        { requestedVersion: current.versionName, published: undefined },
+        { requestedVersion: current.versionName, requestedVersionCode: undefined },
       ),
     ).toThrow(/must increase/u);
-  });
-
-  it("advances from the published APK when the checkout release version is stale", () => {
-    const current = readAndroidReleaseVersion({ appConfig, gradle, manifest });
-    const published = {
-      versionName: nextPatchVersion(current.versionName),
-      versionCode: current.versionCode + 4,
-    };
-    const updated = updateAndroidReleaseVersion(
-      { appConfig, gradle, manifest },
-      { requestedVersion: undefined, published },
-    );
-
-    expect(updated.previous).toEqual(current);
-    expect(updated.next).toEqual({
-      versionName: nextPatchVersion(published.versionName),
-      versionCode: published.versionCode + 1,
-      runtimeVersion: `${nextPatchVersion(published.versionName)}-native-${published.versionCode + 1}`,
-    });
-    expect(readAndroidReleaseVersion(updated)).toEqual(updated.next);
   });
 
   it("accepts a CI-owned monotonic version code without weakening version checks", () => {
@@ -86,7 +53,6 @@ describe("Android release automation", () => {
       {
         requestedVersion: nextPatchVersion(current.versionName),
         requestedVersionCode,
-        published: undefined,
       },
     );
 
@@ -100,52 +66,20 @@ describe("Android release automation", () => {
         {
           requestedVersion: nextPatchVersion(current.versionName),
           requestedVersionCode: current.versionCode,
-          published: undefined,
         },
       ),
     ).toThrow(/version code must increase/u);
   });
 
-  it("exposes one-shot OTA and APK commands", () => {
+  it("exposes one APK build command", () => {
     expect(JSON.parse(packageJson).scripts).toMatchObject({
-      "ota:publish": "tsx scripts/release-android.ts ota",
-      "ota:publish:raw": "tsx scripts/publish-android-ota.ts",
-      "release:ota": "tsx scripts/release-android.ts ota",
-      "release:apk": "tsx scripts/release-android.ts apk",
+      "build:android-apk": "tsx scripts/build-android-apk.ts",
     });
   });
 
-  it("tells agents to wait silently before either release command starts", () => {
-    for (const [script, command] of [
-      [releaseApk, "exec pnpm release:apk"],
-      [releaseOta, "exec pnpm release:ota"],
-    ]) {
-      const noticeIndex = script.indexOf(releaseWaitNotice);
-      expect(noticeIndex).toBeGreaterThan(-1);
-      expect(noticeIndex).toBeLessThan(script.indexOf(command));
-    }
-  });
-
-  it("runs the authoritative V1 gate before either dry-run can return", () => {
-    expect(releaseAndroid).toContain('await run("pnpm", ["validate:android:v1"]);');
-    expect(releaseAndroid).not.toContain('await run("pnpm", ["validate:android:v2"]);');
-    expect(releaseAndroid).not.toContain(
-      'await run("pnpm", ["validate:android:device-evidence"]);',
-    );
-    expect(JSON.parse(packageJson).scripts["test:android-device"]).toBe(
-      "tsx scripts/android-device-gate.ts",
-    );
-    for (const functionName of ["releaseOta", "releaseApk"]) {
-      const bodyStart = releaseAndroid.indexOf(`async function ${functionName}`);
-      const nextFunction = releaseAndroid.indexOf("\nasync function ", bodyStart + 1);
-      const body = releaseAndroid.slice(bodyStart, nextFunction);
-      const gateIndex = body.indexOf("await runReleaseChecks(");
-      expect(gateIndex).toBeGreaterThan(-1);
-      expect(gateIndex).toBeLessThan(body.indexOf("if (dryRun)"));
-    }
-  });
-
-  it("does not ship Expo asset maps containing private build-machine paths", () => {
-    expect(otaPublisher).not.toContain("--dump-assetmap");
+  it("tells agents to wait silently before the APK build starts", () => {
+    const noticeIndex = buildApkCommand.indexOf(releaseWaitNotice);
+    expect(noticeIndex).toBeGreaterThan(-1);
+    expect(noticeIndex).toBeLessThan(buildApkCommand.indexOf("exec pnpm build:android-apk"));
   });
 });

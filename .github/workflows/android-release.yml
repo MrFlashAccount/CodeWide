@@ -157,7 +157,7 @@ jobs:
           test -n "$CODEWIDE_RELEASE_STORE_PASSWORD"
           test -n "$CODEWIDE_RELEASE_KEY_ALIAS"
           test -n "$CODEWIDE_RELEASE_KEY_PASSWORD"
-          ./scripts/release-apk --dry-run \
+          ./scripts/build-android-apk \
             --version "$CODEWIDE_ANDROID_VERSION" \
             --version-code "$CODEWIDE_ANDROID_VERSION_CODE"
           sha256sum "$APK_PATH" | tee "$APK_PATH.sha256"
@@ -192,7 +192,7 @@ jobs:
           asset="CodeWide-$CODEWIDE_ANDROID_VERSION-$CODEWIDE_ANDROID_VERSION_CODE.apk"
           cp "$APK_PATH" "$RUNNER_TEMP/$asset"
           (cd "$RUNNER_TEMP" && sha256sum "$asset" > "$asset.sha256")
-          notes="CodeWide Android $CODEWIDE_ANDROID_VERSION (versionCode $CODEWIDE_ANDROID_VERSION_CODE). Signed APK; OTA publication is intentionally separate."
+          notes="CodeWide Android $CODEWIDE_ANDROID_VERSION (versionCode $CODEWIDE_ANDROID_VERSION_CODE). Signed APK."
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/$asset" "$RUNNER_TEMP/$asset.sha256" --clobber
           else

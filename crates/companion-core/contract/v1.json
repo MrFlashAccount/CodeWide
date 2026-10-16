@@ -91,15 +91,6 @@
     "POST /v1/telemetry/events",
     "GET /v1/telemetry/events"
   ],
-  "publicBuildShelfPaths": [
-    "/",
-    "/api/builds",
-    "/api/updates",
-    "/api/updates/assets/*",
-    "/latest.apk",
-    "/CodeWide.apk",
-    "/download/*"
-  ],
   "rpcPolicy": {
     "methodFilter": "none",
     "unknownMethodHandling": "forwardToAppServer",

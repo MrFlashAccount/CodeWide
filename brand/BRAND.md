@@ -22,7 +22,7 @@ Keep clear space of at least one stroke width around the mark. Below 16 px, use 
 - `codewide-mark*.svg`: UI, documentation, and splash mark.
 - `codewide-wordmark*.svg`: light/dark README and marketing lockups.
 - `codewide-menubar-template.svg` plus generated PNGs: future macOS menu bar template asset.
-- `codewide-favicon.svg` and generated PNG: web/build-shelf identity.
+- `codewide-favicon.svg` and generated PNG: web favicon identity.
 
 `scripts/generate-codewide-assets.mjs` regenerates raster platform assets from these SVG masters.
 

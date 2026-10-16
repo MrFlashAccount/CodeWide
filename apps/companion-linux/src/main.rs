@@ -15,7 +15,6 @@ use codewide_companion::{
     account_pool::AccountPoolService,
     agent::providers::codex::{CodexProvider, storage::CodexStorage},
     auth::DeviceRegistry,
-    build_shelf::BuildShelfProxy,
     catalog::SessionCatalog,
     content::{ContentProjector, PrivateContentService},
     dictation::DictationService,
@@ -1367,7 +1366,6 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     ));
     update_guardian.resume_preparation();
     let services = server::CompanionServices {
-        build_shelf: configured_build_shelf()?,
         files: Some(file_transfer),
         content: Some(content),
         image_previews: Some(image_previews),
@@ -1546,14 +1544,6 @@ fn configured_max_transfer_bytes() -> Result<Option<u64>, Box<dyn std::error::Er
     std::env::var("CODEWIDE_MAX_TRANSFER_BYTES")
         .ok()
         .map(|raw| raw.parse().map_err(Into::into))
-        .transpose()
-}
-
-fn configured_build_shelf() -> Result<Option<BuildShelfProxy>, Box<dyn std::error::Error>> {
-    std::env::var("CODEWIDE_BUILD_SHELF_ORIGIN")
-        .ok()
-        .filter(|raw| !raw.trim().is_empty())
-        .map(|raw| BuildShelfProxy::new(&raw).map_err(Into::into))
         .transpose()
 }
 

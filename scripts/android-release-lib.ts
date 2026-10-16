@@ -4,21 +4,15 @@ export type AndroidReleaseVersion = {
   runtimeVersion: string;
 };
 
-export type AndroidReleaseVersionBaseline = Pick<
-  AndroidReleaseVersion,
-  "versionName" | "versionCode"
->;
-
 export type AndroidReleaseVersionPlan = {
-  requestedVersion: string | undefined;
-  requestedVersionCode?: number | undefined;
-  published: AndroidReleaseVersionBaseline | undefined;
+  readonly requestedVersion: string | undefined;
+  readonly requestedVersionCode: number | undefined;
 };
 
-type ReleaseSourceFiles = {
-  appConfig: string;
-  gradle: string;
-  manifest: string;
+export type ReleaseSourceFiles = {
+  readonly appConfig: string;
+  readonly gradle: string;
+  readonly manifest: string;
 };
 
 type UpdatedReleaseSourceFiles = ReleaseSourceFiles & {
@@ -30,19 +24,6 @@ export function nextPatchVersion(version: string): string {
   const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version);
   if (match === null) throw new Error(`Android version must be MAJOR.MINOR.PATCH, received ${version}`);
   return `${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
-}
-
-export function deriveUpdateEndpoint(assetUrl: string): string {
-  const url = new URL(assetUrl);
-  const marker = "/assets/";
-  const markerIndex = url.pathname.indexOf(marker);
-  if (url.protocol !== "https:" || markerIndex === -1) {
-    throw new Error(`Could not derive an HTTPS Expo Updates endpoint from ${assetUrl}`);
-  }
-  url.pathname = url.pathname.slice(0, markerIndex);
-  url.search = "";
-  url.hash = "";
-  return url.toString().replace(/\/$/u, "");
 }
 
 export function readAndroidReleaseVersion(files: ReleaseSourceFiles): AndroidReleaseVersion {
@@ -65,19 +46,14 @@ export function updateAndroidReleaseVersion(
   plan: AndroidReleaseVersionPlan,
 ): UpdatedReleaseSourceFiles {
   const previous = readAndroidReleaseVersion(files);
-  const baselineVersionName =
-    plan.published !== undefined && compareVersions(plan.published.versionName, previous.versionName) > 0
-      ? plan.published.versionName
-      : previous.versionName;
-  const baselineVersionCode = Math.max(previous.versionCode, plan.published?.versionCode ?? 0);
-  const versionName = plan.requestedVersion ?? nextPatchVersion(baselineVersionName);
+  const versionName = plan.requestedVersion ?? nextPatchVersion(previous.versionName);
   if (!/^\d+\.\d+\.\d+$/u.test(versionName)) throw new Error(`Invalid Android version ${versionName}`);
-  if (compareVersions(versionName, baselineVersionName) <= 0) {
-    throw new Error(`Android version must increase from ${baselineVersionName}, received ${versionName}`);
+  if (compareVersions(versionName, previous.versionName) <= 0) {
+    throw new Error(`Android version must increase from ${previous.versionName}, received ${versionName}`);
   }
-  const versionCode = plan.requestedVersionCode ?? baselineVersionCode + 1;
-  if (!Number.isSafeInteger(versionCode) || versionCode <= baselineVersionCode) {
-    throw new Error(`Android version code must increase from ${baselineVersionCode}, received ${versionCode}`);
+  const versionCode = plan.requestedVersionCode ?? previous.versionCode + 1;
+  if (!Number.isSafeInteger(versionCode) || versionCode <= previous.versionCode) {
+    throw new Error(`Android version code must increase from ${previous.versionCode}, received ${versionCode}`);
   }
   const runtimeVersion = `${versionName}-native-${versionCode}`;
   const parsed = JSON.parse(files.appConfig) as {

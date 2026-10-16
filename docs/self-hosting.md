@@ -131,7 +131,7 @@ its SHA-256 SPKI pin in the QR. A current Android build establishes pinned inner
 TLS before it sends the one-time pairing token, public device key, or proof. The
 initial challenge/session exchange and all later private traffic stay inside it.
 The public carrier exposes no authentication or application data routes; it
-accepts only the blind `/v1/e2ee-tunnel` plus Build Shelf / update downloads.
+accepts only the blind `/v1/e2ee-tunnel` and `/v1/e2ee-bootstrap-tunnel`.
 
 Secure transport is mandatory. Pairing payloads and saved profiles without a
 Companion identity pin are rejected and must be paired again. There is no
@@ -147,10 +147,6 @@ is accepted only for loopback, the Android emulator host alias, or an SSH
 forward terminating on the device. `serve --insecure-http` is retained only as
 a hidden command-line compatibility no-op; it no longer disables or changes
 inner TLS.
-
-Build Shelf / OTA and Expo Updates intentionally remain carrier-level public
-traffic. They do not pass through the native inner proxy because an app must be
-able to download its own update before the application transport is available.
 
 Inspect the public identity without exposing its private key:
 

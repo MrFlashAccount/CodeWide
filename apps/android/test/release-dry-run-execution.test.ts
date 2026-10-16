@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -90,7 +91,7 @@ exit 97
     expect(readOptionalFile(join(fixture, "home/.local/lib/codewide/codewide-companion"))).toBe("");
   });
 
-  it("constructs OTA and APK artifacts without publishing either one", () => {
+  it("builds, signs and scans the APK at the requested version without changing the checkout", () => {
     const fixture = createAndroidFixture();
     const commands = createCommandDirectory(fixture);
     const commandLog = join(fixture, "commands.log");
@@ -98,23 +99,8 @@ exit 97
     const tsx = join(repositoryRoot, "node_modules/.bin/tsx");
     writeExecutable(join(commands, "pnpm"), `#!/bin/sh
 printf 'pnpm %s\\n' "$*" >>"$COMMAND_LOG"
-if [ "$1" = "ota:publish:raw" ]; then
-  exec "$TEST_TSX" scripts/publish-android-ota.ts --dry-run
-fi
-if [ "$1 $2" = "exec expo" ]; then
-  output=
-  previous=
-  for argument in "$@"; do
-    if [ "$previous" = "--output-dir" ]; then output=$argument; fi
-    previous=$argument
-  done
-  test -n "$output"
-  mkdir -p "$output"
-  printf '%s' '{"fileMetadata":{"android":{"bundle":"index.hbc","assets":[]}}}' >"$output/metadata.json"
-  printf bundle >"$output/index.hbc"
-  exit 0
-fi
 if [ "$1" = "android:gradle" ]; then
+  printf 'CODEWIDE_UPDATE_URL=%s\\n' "$CODEWIDE_UPDATE_URL" >>"$COMMAND_LOG"
   mkdir -p apps/android/android/app/build/outputs/apk/release
   printf apk >apps/android/android/app/build/outputs/apk/release/app-release.apk
   node -e 'const fs=require("fs");const app=JSON.parse(fs.readFileSync("apps/android/app.json","utf8")).expo;fs.writeFileSync("apps/android/android/app/build/outputs/apk/release/output-metadata.json",JSON.stringify({elements:[{outputFile:"app-release.apk",versionName:app.version,versionCode:app.android.versionCode}]}));'
@@ -129,68 +115,90 @@ exit 0
 
     const environment = {
       ANDROID_HOME: toolchain.androidHome,
-      CODEWIDE_OTA_PRIVATE_KEY: toolchain.privateKey,
       CODEWIDE_RELEASE_PASSWORD_FILE: toolchain.passwordFile,
       CODEWIDE_RELEASE_STORE_FILE: toolchain.keyStore,
-      CODEWIDE_UPDATE_URL: "https://dry-run.invalid/api/updates",
+      CODEWIDE_UPDATE_URL: "",
       COMMAND_LOG: commandLog,
       HOME: join(fixture, "home"),
       JAVA_HOME: toolchain.javaHome,
       PATH: `${commands}:${process.env.PATH ?? ""}`,
-      TEST_TSX: tsx,
       XDG_DATA_HOME: join(fixture, "data"),
     };
     const originalSources = readAndroidSources(fixture);
 
-    const ota = runCommand(tsx, ["scripts/release-android.ts", "ota", "--dry-run"], fixture, environment);
-    expect(ota.stdout).toContain('"artifact": "built-signed-scanned"');
-    expect(releaseFiles(fixture, "builds/ota")).toEqual([]);
-
     const apk = runCommand(
       tsx,
-      [
-        "scripts/release-android.ts",
-        "apk",
-        "--dry-run",
-        "--version",
-        "9.8.7",
-        "--version-code",
-        "9008007",
-      ],
+      ["scripts/build-android-apk.ts", "--version", "9.8.7", "--version-code", "9008007"],
       fixture,
       environment,
     );
-    expect(apk.stdout).toContain('"artifact": "built-signed-scanned"');
-    expect(apk.stdout).toContain('"dryRun": true');
-    expect(apk.stdout).toContain('"versionName": "9.8.7"');
-    expect(apk.stdout).toContain('"versionCode": 9008007');
+    const result = parseBuildResult(apk.stdout);
+    expect(result).toMatchObject({
+      ok: true,
+      kind: "apk",
+      next: { versionName: "9.8.7", versionCode: 9008007, runtimeVersion: "9.8.7-native-9008007" },
+      updatesEnabled: false,
+      updateUrl: null,
+      sha256: createHash("sha256").update("apk").digest("hex"),
+      artifact: "built-signed-scanned",
+    });
     expect(readAndroidSources(fixture)).toEqual(originalSources);
-    expect(releaseFiles(fixture, "builds/android")).toEqual([]);
 
-    const apkWithoutUpdates = runCommand(
+    const withUpdates = runCommand(
       tsx,
-      [
-        "scripts/release-android.ts",
-        "apk",
-        "--dry-run",
-        "--version",
-        "9.8.8",
-        "--version-code",
-        "9008008",
-      ],
+      ["scripts/build-android-apk.ts", "--version", "9.8.8", "--version-code", "9008008"],
       fixture,
-      { ...environment, CODEWIDE_UPDATE_URL: "" },
+      { ...environment, CODEWIDE_UPDATE_URL: "https://updates.invalid/api/updates" },
     );
-    expect(apkWithoutUpdates.stdout).toContain('"updatesEnabled": false');
-    expect(apkWithoutUpdates.stdout).toContain('"updateUrl": null');
+    expect(parseBuildResult(withUpdates.stdout)).toMatchObject({
+      updatesEnabled: true,
+      updateUrl: "https://updates.invalid/api/updates",
+    });
     expect(readAndroidSources(fixture)).toEqual(originalSources);
 
-    const log = readFileSync(commandLog, "utf8");
-    expect(log).toContain("pnpm ota:publish:raw -- --dry-run");
-    expect(log).toContain("pnpm exec expo export --platform android --output-dir");
-    expect(log).toContain("pnpm android:gradle -- :app:assembleRelease");
-    expect(log.match(/pnpm test:ota/gmu)).toHaveLength(2);
-    expect(log.match(/pnpm security:scan-artifacts/gmu)).toHaveLength(3);
+    const log = readFileSync(commandLog, "utf8").split("\n");
+    const gate = log.indexOf("pnpm validate:android:v1");
+    const build = log.indexOf("pnpm android:gradle -- :app:assembleRelease");
+    expect(gate).toBeGreaterThan(-1);
+    expect(build).toBeGreaterThan(gate);
+    expect(log).toContain("CODEWIDE_UPDATE_URL=");
+    expect(log).toContain("CODEWIDE_UPDATE_URL=https://updates.invalid/api/updates");
+    expect(log.filter((line) => line.startsWith("pnpm security:scan-artifacts"))).toHaveLength(2);
+  });
+
+  it("restores the checkout version when the APK build fails", () => {
+    const fixture = createAndroidFixture();
+    const commands = createCommandDirectory(fixture);
+    const toolchain = createFakeAndroidToolchain(fixture);
+    writeExecutable(join(commands, "pnpm"), `#!/bin/sh
+if [ "$1" = "android:gradle" ]; then exit 1; fi
+exit 0
+`);
+    const originalSources = readAndroidSources(fixture);
+
+    const result = spawnSync(
+      join(repositoryRoot, "node_modules/.bin/tsx"),
+      ["scripts/build-android-apk.ts", "--version", "9.8.7", "--version-code", "9008007"],
+      {
+        cwd: fixture,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ANDROID_HOME: toolchain.androidHome,
+          CODEWIDE_RELEASE_PASSWORD_FILE: toolchain.passwordFile,
+          CODEWIDE_RELEASE_STORE_FILE: toolchain.keyStore,
+          CODEWIDE_UPDATE_URL: "",
+          HOME: join(fixture, "home"),
+          JAVA_HOME: toolchain.javaHome,
+          PATH: `${commands}:${process.env.PATH ?? ""}`,
+          XDG_DATA_HOME: join(fixture, "data"),
+        },
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("pnpm failed");
+    expect(readAndroidSources(fixture)).toEqual(originalSources);
   });
 });
 
@@ -206,9 +214,8 @@ function createAndroidFixture(): string {
   const root = createFixture("android");
   writeFileSync(join(root, "package.json"), '{"type":"module"}\n');
   for (const path of [
-    "scripts/release-android.ts",
+    "scripts/build-android-apk.ts",
     "scripts/android-release-lib.ts",
-    "scripts/publish-android-ota.ts",
     "apps/android/app.json",
     "apps/android/android/app/build.gradle",
     "apps/android/android/app/src/main/AndroidManifest.xml",
@@ -249,7 +256,6 @@ function createFakeAndroidToolchain(fixture: string): {
   javaHome: string;
   keyStore: string;
   passwordFile: string;
-  privateKey: string;
 } {
   const javaHome = join(fixture, "java");
   const androidHome = join(fixture, "android-sdk");
@@ -264,19 +270,7 @@ function createFakeAndroidToolchain(fixture: string): {
   writeFileSync(keyStore, "fake", { mode: 0o600 });
   writeFileSync(passwordFile, "test-password\n", { mode: 0o600 });
 
-  const privateKey = join(signingRoot, "private-key.pem");
-  const certificate = join(fixture, "apps/android/certs/certificate.pem");
-  mkdirSync(dirname(certificate), { recursive: true });
-  const generated = spawnSync("openssl", [
-    "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-    "-keyout", privateKey,
-    "-out", certificate,
-    "-days", "1",
-    "-subj", "/CN=CodeWide dry run test",
-  ], { encoding: "utf8" });
-  if (generated.status !== 0) throw new Error(`Could not generate test certificate: ${generated.stderr}`);
-  chmodSync(privateKey, 0o600);
-  return { androidHome, javaHome, keyStore, passwordFile, privateKey };
+  return { androidHome, javaHome, keyStore, passwordFile };
 }
 
 function joinWithDirectory(root: string, relativePath: string): string {
@@ -293,13 +287,8 @@ function readAndroidSources(fixture: string): string[] {
   ].map((path) => readFileSync(join(fixture, path), "utf8"));
 }
 
-function releaseFiles(fixture: string, relativePath: string): string[] {
-  const root = join(fixture, relativePath);
-  try {
-    return readdirSync(root, { recursive: true }).map(String).sort();
-  } catch {
-    return [];
-  }
+function parseBuildResult(stdout: string): unknown {
+  return JSON.parse(stdout.slice(stdout.indexOf("{")));
 }
 
 function readOptionalFile(path: string): string {

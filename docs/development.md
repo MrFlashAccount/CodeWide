@@ -42,21 +42,6 @@ history and the tracked/untracked non-ignored working tree. The verified binary
 is cached outside the repository; set `CODEWIDE_GITLEAKS_BIN` to use an existing
 installation instead.
 
-Serve every locally available Android APK from a compact build shelf with a
-stable latest-build marker and resumable byte-range downloads:
-
-```sh
-python3 scripts/build-shelf-server.py --host 127.0.0.1 --port 4190
-```
-
-The shelf scans Gradle APK outputs and archived test builds on every request.
-While it is running, each new `release/app-release.apk` is also copied once into
-`builds/android/`, with its version metadata and SHA-256, so rebuilding does not
-erase the recent download history. The archive keeps the eight newest APKs and
-their metadata. `/latest.apk` always resolves to the highest release version
-code; `/api/builds` exposes the current catalog; `/healthz` is the lightweight
-tunnel probe.
-
 Run the logical multi-server recovery soak (24 hours by default):
 
 ```sh
@@ -85,7 +70,9 @@ pnpm dev:android
 The debug application id is `dev.codexremote.app.dev`, so it can remain
 installed beside the signed release app. Open the `codewide://` URL printed
 by the helper once; subsequent JS/TS edits arrive through Fast Refresh. Metro
-signs its development manifest with the same local OTA key. On Linux it also needs a sufficiently large
+signs its development manifest with the local OTA key
+(`CODEWIDE_OTA_PRIVATE_KEY`, default `codewide/ota/private-key.pem` in the user
+data directory; only the public certificate is checked in). On Linux it also needs a sufficiently large
 inotify budget (`fs.inotify.max_user_watches=524288` and
 `fs.inotify.max_user_instances=1024`).
 
@@ -93,34 +80,14 @@ The `dev.codexremote.app` package identity and related legacy storage, service,
 and deep-link aliases are retained intentionally. They let existing installs
 upgrade to CodeWide without losing local state or breaking saved links.
 
-For the signed release app, publish JS/TS, message-renderer, and asset changes
-without rebuilding or reinstalling the APK:
-
-```sh
-./scripts/release-ota
-```
-
-The one-shot command discovers the private OTA key and public update endpoint,
-runs the Android release checks, publishes atomically, verifies the public
-manifest and bundle hash, and prints the update ID as JSON. Use `--dry-run` to
-validate release configuration without publishing.
-
-The build shelf serves the signed Expo Updates protocol at `/api/updates`.
-A release app checks once when its UI opens and at most once every 30 minutes
-while it remains active, downloads a new compatible bundle, and immediately
-recreates its JS runtime with that bundle. The Android process does not need to
-be force-stopped; transient UI state may be reset. The signing key defaults to
-the user data directory under `codewide/ota/private-key.pem` and can be
-overridden with `CODEWIDE_OTA_PRIVATE_KEY`. Only the public certificate is
-checked in.
-
-Changes to Kotlin, the Android manifest, native libraries, or native dependency
-versions still require a new APK and a new `runtimeVersion`; the updater rejects
-bundles built for a different native runtime.
+Android releases are native APKs only: there is no OTA publishing. Any change
+reaches phones through a new APK published by CI.
 
 ## Update and Metro endpoints
 
-Set the Android build's update endpoint explicitly:
+The in-app Expo Updates client is retained but inert: an APK built without
+`CODEWIDE_UPDATE_URL` has no update endpoint, and CI does not set one. A build
+may still opt in explicitly:
 
 ```sh
 export CODEWIDE_UPDATE_URL=https://updates.example.com/api/updates
@@ -131,21 +98,21 @@ through `CODEWIDE_METRO_URL`; the repository has no default public tunnel.
 
 ## Releases
 
-Release builds never fall back to the debug signing key. The normal release path
-is one command:
+Release builds never fall back to the debug signing key. Signed APKs are
+published only by CI: the `Release Affected Products` workflow, or the
+`Android APK Release` workflow on its own, builds the APK and uploads it to a
+GitHub Release. Both call the same build command, which can also run locally:
 
 ```sh
-./scripts/release-apk
+./scripts/build-android-apk --version X.Y.Z --version-code N
 ```
 
-It discovers the private signing material, increments the patch version,
-version code and native runtime together, runs the release checks, builds and
-verifies the signed arm64 APK, publishes it to the build shelf, downloads it
-through the public endpoint, verifies its SHA-256, and prints the release data
-as JSON. Source versions roll back if the build fails before publication. Use
-`--dry-run` to inspect the next version and validate credentials without
-changing files or publishing. `--version X.Y.Z` overrides the automatic patch
-version while the version code still increments by one.
+It discovers the private signing material, applies the requested version,
+version code and native runtime to the native sources for the duration of the
+build, runs the release checks, builds, verifies and scans the signed arm64
+APK, restores the checked-in versions, and prints the result as JSON. Without
+`--version` it uses the next patch version; without `--version-code` it
+increments the checked-in version code. It never publishes the APK.
 
 The low-level Gradle/signing variables below remain available for debugging or
 nonstandard builds:

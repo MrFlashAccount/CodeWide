@@ -35,8 +35,7 @@ Current target policy:
 - sync contract changes affect both Companion hosts and Android;
 - Android JavaScript, native, configuration, and shared-package changes select
   a new APK;
-- OTA remains available through `./scripts/release-ota`, but is not selected or
-  published by CI;
+- there is no OTA publishing; every Android change ships as a new APK;
 - documentation-only changes do not publish a product.
 
 The current Relay crate contains both the server and the client/runtime support
@@ -140,9 +139,10 @@ The Android release environment requires:
   `/api/updates` endpoint. When it is absent, the APK is built with Expo Updates
   disabled and does not perform update checks.
 
-The APK is published as an asset of the combined GitHub Release. The existing local
-`./scripts/release-apk` path still publishes to Build Shelf; the two channels do
-not silently impersonate one another.
+The APK is published as an asset of the combined GitHub Release. This is the
+only Android publishing channel. The workflow builds it with
+`./scripts/build-android-apk --version <version> --version-code <code>`, which
+builds, signs, verifies and scans the APK but never publishes it.
 
 ## Compatibility contract
 
@@ -288,11 +288,11 @@ The one-shot delivery owners remain:
 
 - `./scripts/release-relay-linux <version>`
 - `./scripts/release-companion-linux <version>`
-- `./scripts/release-apk`
-- `./scripts/release-ota` for an explicit manual OTA only
 
-`pnpm nx run <project>:release -- <arguments>` delegates to these scripts. Nx
-does not reimplement signing, version mutation, publication, or rollback.
+`pnpm nx run <project>:release -- <arguments>` delegates to these scripts. The
+Android `release` target dispatches the `Android APK Release` workflow
+(`gh workflow run android-release.yml -f version=<version>`). Nx does not
+reimplement signing, version mutation, publication, or rollback.
 
 ## Android OTA activation
 
