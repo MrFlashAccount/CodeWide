@@ -298,7 +298,7 @@ it("draws an agent's report with its avatar, not a terminal icon", () => {
   expect(view.queryByText("terminal-outline")).toBeNull();
 });
 
-it("fits a report line to its container, not the window, and reserves its height before", () => {
+it("bounds a report pill to half its container, not the window, and reserves its height before", () => {
   const woken = completedTurn("narrow", [
     taskReport("long", "wake", "Reuse backend images, build the frontend and bring the stand up"),
     answer("narrow-answer", "Done."),
@@ -311,10 +311,10 @@ it("fits a report line to its container, not the window, and reserves its height
   expect(view.getByTestId("task-notification-line-row")).toHaveStyle({ minHeight: 40 });
 
   layOut(view, "task-notification-line-row", 320);
-  expect(view.getByTestId("task-notification-line")).toHaveStyle({ maxWidth: 320 });
+  expect(view.getByTestId("task-notification-line")).toHaveStyle({ maxWidth: 160 });
 
   layOut(view, "task-notification-line-row", 280);
-  expect(view.getByTestId("task-notification-line")).toHaveStyle({ maxWidth: 280 });
+  expect(view.getByTestId("task-notification-line")).toHaveStyle({ maxWidth: 140 });
 });
 
 it("opens a plain list of reports with fixed rows and a declared height", () => {

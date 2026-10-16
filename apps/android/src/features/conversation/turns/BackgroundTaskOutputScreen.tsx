@@ -45,10 +45,15 @@ const EXIT_LINE = /\[exited with code (-?\d+)\]\s*$/u;
 /** A text's resident weight: two bytes per UTF-16 unit. */
 const BYTES_PER_UNIT = 2;
 
+/** The screen's title; the command itself is pinned above its output. */
+const TITLE = "Background command";
+/** A long command shows this many lines above the output. */
+const COMMAND_LINES = 3;
+
 /**
  * A background task's output on its own screen, framed like the full command
- * output: a header with its name, the output as a terminal between them, and
- * a footer with its status. The screen reads the output by itself and follows
+ * output: a header, the task's command pinned above its output in the
+ * terminal, and a footer with its status. The screen reads the output by itself and follows
  * a running task until it closes.
  */
 export function BackgroundTaskOutputScreen({
@@ -74,11 +79,12 @@ export function BackgroundTaskOutputScreen({
   const plain = stripTerminalControlSequences(output.text);
   return (
     <View style={viewerStyles.fullContentViewer} testID="background-task-output-screen">
-      <TaskOutputHeader name={request.name} onClose={onClose} plain={plain} />
+      <TaskOutputHeader onClose={onClose} plain={plain} />
       {resource.error === null ? null : (
         <Text style={styles.error}>Could not read the output: {resource.error}</Text>
       )}
       <View style={viewerStyles.fullContentViewport}>
+        <TaskCommandLine command={request.name} />
         <TaskOutputTerminal output={output} />
       </View>
       <TaskOutputFooter output={output} plain={plain} />
@@ -86,13 +92,11 @@ export function BackgroundTaskOutputScreen({
   );
 }
 
-/** Close, the task's name and copying the whole output. */
+/** Close, the title and copying the whole output. */
 function TaskOutputHeader({
-  name,
   onClose,
   plain,
 }: {
-  readonly name: string;
   readonly onClose: () => void;
   readonly plain: string;
 }): ReactElement {
@@ -109,10 +113,30 @@ function TaskOutputHeader({
       <View style={viewerStyles.fullContentHeaderIcon}>
         <Ionicons color={colors.textMuted} name="terminal-outline" size={iconSize.inline} />
       </View>
-      <Text accessibilityRole="header" numberOfLines={2} style={styles.title}>
-        {name}
+      <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
+        {TITLE}
       </Text>
       {plain === "" ? null : <CopyButton text={plain} />}
+    </View>
+  );
+}
+
+/**
+ * The command (or Claude's description of it) as a prompt line on the
+ * terminal's surface, pinned while the output scrolls under it.
+ */
+function TaskCommandLine({ command }: { readonly command: string }): ReactElement {
+  return (
+    <View style={styles.command} testID="background-task-command">
+      <Text style={styles.commandPrompt}>$</Text>
+      <Text
+        ellipsizeMode="tail"
+        numberOfLines={COMMAND_LINES}
+        selectable
+        style={styles.commandText}
+      >
+        {command}
+      </Text>
     </View>
   );
 }

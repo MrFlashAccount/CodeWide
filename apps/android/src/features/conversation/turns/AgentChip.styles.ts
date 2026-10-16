@@ -14,6 +14,14 @@ export const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
+  /** Why a single report could not open, under its pill. */
+  lineError: {
+    color: colors.red,
+    marginTop: spacing.xxs,
+    maxWidth: "100%",
+    textAlign: "center",
+    ...typeScale.label,
+  },
   lineRow: {
     alignItems: "center",
     paddingVertical: spacing.xxs,
