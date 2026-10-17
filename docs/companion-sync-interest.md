@@ -61,7 +61,8 @@ Contract sections in `crates/companion-core/contract/v1.json`:
 
 - `syncInterest`: `threadTopicKinds` (the eight kinds above, the single source
   the Rust predicate and the device `HIGH_FREQUENCY_SUMMARY_PATCHES` set must
-  equal), `maxInterestThreads: 64`, `helloInterestRequired: true`.
+  equal), `maxInterestThreads: 64` (bounds both one frame list and the
+  resulting set), `maxThreadIdChars: 256`, `helloInterestRequired: true`.
 - `threadPreview`: `method: companion/thread/preview/updated`,
   `kind: threadPreview`, `publishIntervalMs: 1500`, `maxTextChars: 2000`.
 - `threadProjectionPatch.operations` gains the `threadPreview` operation.
@@ -205,8 +206,11 @@ All closes use code 1008 like the neighbouring control-frame errors:
 
 - `interest_required`: `hello` without the `interest` key.
 - `invalid_interest`: `interest` is not an array of strings, an element is empty
-  or longer than 256 characters, or a frame carries more than 64 elements.
-- `interest_limit_exceeded`: the socket's set would exceed 64 threads.
+  or longer than 256 characters, or one list (`hello.interest`, `add` or
+  `remove`) carries more than 64 elements, duplicates included. The list bound
+  is checked before deduplication, so the work per frame is bounded.
+- `interest_limit_exceeded`: every list is within 64 elements, but the socket's
+  set would exceed 64 threads, for example after several `add` frames.
 
 Companion close logs carry the reason and the sizes involved, never a `threadId`
 from the frame and never preview text. The device reconnects under its normal
@@ -217,10 +221,15 @@ working range.
 ## Ownership
 
 - `crates/companion-core/src/sync.rs`: `accept_hello` requires `interest`,
-  `run_session` applies `interest` frames inline, the three send sites go
-  through `ReplayDelivery`, ingest calls the preview tracker.
+  `run_session` hands each `interest` frame inline to the interest owner and
+  closes the socket on rejection, ingest calls the preview tracker.
 - `crates/companion-core/src/sync/interest.rs`: interest parsing and limits,
-  delivery predicate, `afterCursor` chain, `event`/`advance` frame assembly.
+  applying and logging `hello.interest` and `interest` frames (reason and
+  sizes, never thread ids), delivery predicate, `afterCursor` chain,
+  `event`/`advance` frame assembly.
+- `crates/companion-core/src/sync/replay.rs`: `deliver_replay_page` is the
+  shared page-delivery owner for the hello replay, the post-snapshot replay and
+  the live task; it sends one page through a `ReplayDelivery` snapshot.
 - `crates/companion-core/src/thread_preview.rs`: preview rate and shape; a
   separate owner from `thread_activity.rs` because its reason to change differs.
 - `crates/companion-core/src/thread_patch.rs`: compiles

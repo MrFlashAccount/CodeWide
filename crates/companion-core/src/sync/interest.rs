@@ -26,6 +26,7 @@ use std::{
 };
 
 use serde_json::{Map, Value, json};
+use tracing::{debug, warn};
 
 use crate::{thread_activity::LIVE_ACTIVITY_FIELD, thread_patch::THREAD_PATCH_FIELD};
 
@@ -58,8 +59,9 @@ pub const INTEREST_CLOSE_CODE: u16 = 1008;
 pub enum InterestRejection {
     /// `hello` has no `interest` key.
     InterestRequired,
-    /// `interest`/`add`/`remove` is not an array of non-empty strings within
-    /// [`MAX_INTEREST_THREAD_ID_CHARS`].
+    /// `interest`/`add`/`remove` is not an array of at most
+    /// [`MAX_INTEREST_THREADS`] non-empty strings within
+    /// [`MAX_INTEREST_THREAD_ID_CHARS`], counting duplicates.
     InvalidInterest,
     /// The resulting set would hold more than [`MAX_INTEREST_THREADS`].
     InterestLimitExceeded,
@@ -177,14 +179,72 @@ pub(crate) fn lock_interest(interest: &SharedInterest) -> MutexGuard<'_, SocketI
     }
 }
 
+/// Parses `hello.interest` into the socket's shared interest. A rejection is
+/// logged with its reason and the requested size only; the caller closes the
+/// socket with [`INTEREST_CLOSE_CODE`].
+///
+/// # Errors
+///
+/// Returns the rejection to close the socket with.
+pub(crate) fn accept_hello_interest(hello: &Value) -> Result<SharedInterest, InterestRejection> {
+    SocketInterest::from_hello(hello)
+        .map(|interest| Arc::new(Mutex::new(interest)))
+        .inspect_err(|rejection| {
+            let requested = list_len(hello.get(INTEREST_FIELD));
+            warn!(
+                reason = rejection.reason(),
+                requested, "sync client hello rejected"
+            );
+        })
+}
+
+/// Applies one `interest` frame to the socket's shared interest and logs the
+/// outcome with sizes only, never thread ids. The caller closes the socket
+/// with [`INTEREST_CLOSE_CODE`] on rejection.
+///
+/// # Errors
+///
+/// Returns the rejection to close the socket with; the set is unchanged.
+pub(crate) fn apply_interest_frame(
+    interest: &SharedInterest,
+    frame: &Value,
+) -> Result<(), InterestRejection> {
+    let mut interest = lock_interest(interest);
+    match interest.apply(frame) {
+        Ok(change) => {
+            debug!(
+                added = change.added,
+                removed = change.removed,
+                threads = change.threads,
+                "sync client interest updated"
+            );
+            Ok(())
+        }
+        Err(rejection) => {
+            warn!(
+                reason = rejection.reason(),
+                add = list_len(frame.get("add")),
+                remove = list_len(frame.get("remove")),
+                threads = interest.len(),
+                "sync client interest frame rejected"
+            );
+            Err(rejection)
+        }
+    }
+}
+
 /// Length of an interest list for diagnostics; ids themselves are not logged.
-pub(crate) fn list_len(list: Option<&Value>) -> usize {
+fn list_len(list: Option<&Value>) -> usize {
     list.and_then(Value::as_array).map_or(0, Vec::len)
 }
 
-/// Validates one interest list and yields its ids.
+/// Validates one interest list and yields its ids. The element bound applies
+/// before deduplication, so the work per frame is bounded at the boundary.
 fn thread_ids(list: &Value) -> Result<impl Iterator<Item = &str>, InterestRejection> {
     let items = list.as_array().ok_or(InterestRejection::InvalidInterest)?;
+    if items.len() > MAX_INTEREST_THREADS {
+        return Err(InterestRejection::InvalidInterest);
+    }
     let mut ids = Vec::with_capacity(items.len());
     for item in items {
         let id = item.as_str().ok_or(InterestRejection::InvalidInterest)?;
@@ -367,7 +427,13 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             SocketInterest::from_hello(&json!({"interest": too_many})).err(),
-            Some(InterestRejection::InterestLimitExceeded)
+            Some(InterestRejection::InvalidInterest)
+        );
+        let duplicates = vec!["same"; MAX_INTEREST_THREADS + 1];
+        assert_eq!(
+            SocketInterest::from_hello(&json!({"interest": duplicates})).err(),
+            Some(InterestRejection::InvalidInterest),
+            "the element bound counts duplicates"
         );
         assert!(interest(&[])?.is_empty());
         assert_eq!(interest(&["a", "a", "b"])?.len(), 2);
@@ -412,12 +478,20 @@ mod tests {
             socket.apply(&json!({"type": "interest", "add": "b"})).err(),
             Some(InterestRejection::InvalidInterest)
         );
+        assert_eq!(
+            socket
+                .apply(&json!({"remove": vec!["b"; MAX_INTEREST_THREADS + 1]}))
+                .err(),
+            Some(InterestRejection::InvalidInterest),
+            "every list of a frame is bounded, duplicates included"
+        );
         let fill = (0..MAX_INTEREST_THREADS)
             .map(|index| format!("fill-{index}"))
             .collect::<Vec<_>>();
         assert_eq!(
             socket.apply(&json!({"add": fill})).err(),
-            Some(InterestRejection::InterestLimitExceeded)
+            Some(InterestRejection::InterestLimitExceeded),
+            "frames within the element bound may not grow the set past it"
         );
         assert_eq!(socket.len(), 1, "a rejected frame leaves the set unchanged");
         Ok(())
@@ -501,6 +575,81 @@ mod tests {
         socket.apply(&json!({"add": ["mine"]}))?;
         assert!(!delivery.delivers(&patched("mine", "itemTextDelta")));
         assert!(socket.delivers(&patched("mine", "itemTextDelta")));
+        Ok(())
+    }
+}
+
+/// The journaled thread preview travels as a catalog topic, so a socket with
+/// no interest still sees the answer streaming in an unsubscribed thread.
+#[cfg(test)]
+mod journal_tests {
+    use std::sync::Arc;
+
+    use serde_json::{Value, json};
+
+    use super::{InterestRejection, SocketInterest};
+    use crate::{
+        store::IndexStore,
+        sync::{IngestInput, ingest_events, tests::ingest_context},
+        thread_patch::THREAD_PATCH_FIELD,
+    };
+
+    #[tokio::test]
+    async fn a_streamed_answer_journals_a_catalog_preview_after_its_delta()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("preview.redb"))?);
+        let (ingest, receiver) = tokio::sync::mpsc::channel(8);
+        let (signals, _) = tokio::sync::broadcast::channel(8);
+        let (fence, resolved) = tokio::sync::oneshot::channel();
+        let context = ingest_context(&store, signals);
+        let task = tokio::spawn(ingest_events(receiver, context));
+        let delta = |text: &str| {
+            json!({"method": "item/agentMessage/delta", "params": {
+                "threadId": "thread", "turnId": "turn", "itemId": "answer", "delta": text
+            }})
+        };
+        // Both deltas arrive in one batch and coalesce into one journal entry.
+        ingest.send(IngestInput::Payload(delta("Hel"))).await?;
+        ingest.send(IngestInput::Payload(delta("lo"))).await?;
+        ingest.send(IngestInput::Fence(fence)).await?;
+        assert_eq!(
+            resolved.await??,
+            2,
+            "one delta entry plus one preview entry"
+        );
+
+        let journal = store
+            .replay_after(Some(0))?
+            .entries
+            .into_iter()
+            .map(|(_, bytes)| serde_json::from_slice::<Value>(&bytes))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(journal[0]["method"], "item/agentMessage/delta");
+        assert_eq!(journal[0]["params"]["delta"], "Hello");
+        assert_eq!(
+            journal[0][THREAD_PATCH_FIELD]["operation"]["kind"],
+            "itemTextDelta"
+        );
+        assert_eq!(
+            journal[1]["method"],
+            crate::thread_preview::THREAD_PREVIEW_METHOD
+        );
+        assert_eq!(journal[1][THREAD_PATCH_FIELD]["threadId"], "thread");
+        assert_eq!(
+            journal[1][THREAD_PATCH_FIELD]["operation"]["kind"],
+            crate::thread_preview::THREAD_PREVIEW_KIND
+        );
+        assert_eq!(
+            journal[1][THREAD_PATCH_FIELD]["operation"]["summary"]["previewText"],
+            "Hello"
+        );
+        let interest = SocketInterest::from_hello(&json!({"interest": []}))
+            .map_err(InterestRejection::reason)?;
+        assert!(!interest.delivers(&journal[0]));
+        assert!(interest.delivers(&journal[1]));
+        drop(ingest);
+        task.await?;
         Ok(())
     }
 }

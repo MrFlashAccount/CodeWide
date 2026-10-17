@@ -1,3 +1,5 @@
+import { appLogger, type Logger } from "../observability/logger";
+
 /**
  * Per-connection thread interest declared to the native engine.
  *
@@ -20,9 +22,13 @@ type ConnectionInterest = {
 
 const RESOLVED_DECLARATION = Promise.resolve();
 
-/** Creates the interest port over the engine's full-set declaration method. */
+/**
+ * Creates the interest port over the engine's full-set declaration method.
+ * Each rejected declaration is logged once with its size only, never thread ids.
+ */
 export function createThreadInterestPort(
   declare: (connectionId: string, threadIds: readonly string[]) => Promise<void>,
+  logger: Logger = appLogger,
 ): ThreadInterestPort {
   const connections = new Map<string, ConnectionInterest>();
 
@@ -44,9 +50,16 @@ export function createThreadInterestPort(
   const startDeclaration = (connectionId: string, current: ConnectionInterest): void => {
     current.scheduled = false;
     current.failed = false;
-    const declaration = declare(connectionId, [...current.threads]);
+    const threadIds = [...current.threads];
+    const declaration = declare(connectionId, threadIds);
     current.declaration = declaration;
-    declaration.catch(() => {
+    // The single log site: the scheduled wrapper forwards this same rejection.
+    declaration.catch((error: unknown) => {
+      logger.warnCaught({
+        error,
+        event: "thread_interest.declare.failed",
+        fields: { threads: threadIds.length },
+      });
       if (current.declaration === declaration) {
         current.failed = true;
       }
@@ -66,6 +79,7 @@ export function createThreadInterestPort(
       });
     });
     current.declaration = scheduled;
+    // Already logged by the declaration it forwards.
     scheduled.catch(() => undefined);
   };
 

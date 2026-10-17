@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createThreadChatModel } from "../src/data/thread-chat-model";
+import { createLogger, type LogRecord } from "../src/observability/logger";
 import { createThreadInterestPort } from "../src/data/threadSyncInterest";
 import { createThreadSyncRemoteLoader } from "../src/data/thread-sync-remote-loader";
 import type { ThreadDetailDatabase } from "../src/data/thread-detail-database";
@@ -114,6 +115,40 @@ describe("thread interest port", () => {
     await port.declared("server", "a");
     expect(declare).toHaveBeenLastCalledWith("server", ["a"]);
     expect(declare).toHaveBeenCalledTimes(2);
+  });
+
+  it("logs a rejected declaration once without thread ids and redeclares on the next update", async () => {
+    const rejection = new Error("Connection service is not running");
+    const declare = vi
+      .fn<(connectionId: string, threadIds: readonly string[]) => Promise<void>>()
+      .mockRejectedValueOnce(rejection)
+      .mockResolvedValue(undefined);
+    const records: LogRecord[] = [];
+    const port = createThreadInterestPort(
+      declare,
+      createLogger((record) => {
+        records.push(record);
+      }),
+    );
+
+    port.update("server", "secret-thread", true);
+    await expect(port.declared("server", "secret-thread")).rejects.toBe(rejection);
+    await settle();
+
+    expect(records).toEqual([
+      expect.objectContaining({
+        err: rejection,
+        event: "thread_interest.declare.failed",
+        fields: { threads: 1 },
+        level: "warn",
+      }),
+    ]);
+    expect(JSON.stringify(records[0]?.fields)).not.toContain("secret-thread");
+
+    port.update("server", "other", true);
+    await port.declared("server", "other");
+    expect(declare).toHaveBeenLastCalledWith("server", ["secret-thread", "other"]);
+    expect(records).toHaveLength(1);
   });
 });
 

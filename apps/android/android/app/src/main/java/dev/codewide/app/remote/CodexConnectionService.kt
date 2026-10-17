@@ -390,7 +390,7 @@ class CodexConnectionService : Service() {
   /** Replaces the connection's interest set; without a session it only persists for the next hello. */
   fun replaceInterest(connectionId: String, threadIds: List<String>) {
     val session = sessions[connectionId]
-    if (session == null) frameStore.storeInterest(connectionId, threadIds.distinct())
+    if (session == null) NativeSyncInterest.storeWithoutSession(frameStore, connectionId, threadIds)
     else session.replaceInterest(threadIds)
   }
 

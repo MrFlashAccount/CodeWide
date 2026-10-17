@@ -113,7 +113,8 @@ class NativeInterestAcceptanceTest {
       test.engine.onSocketClosed()
 
       assertEquals(listOf("non_contiguous_sync_cursor"), test.resets)
-      assertEquals(10L, test.store.syncCursor(test.connectionId))
+      // Event 12 continued the chain from 10 and stays committed; only 15 broke it.
+      assertEquals(12L, test.store.syncCursor(test.connectionId))
     } finally {
       test.engine.close()
     }
@@ -191,6 +192,28 @@ class NativeInterestAcceptanceTest {
       }
       assertTrue(test.sent("interest").isEmpty())
       assertTrue(test.store.interest(test.connectionId).isEmpty())
+    } finally {
+      test.engine.close()
+    }
+  }
+
+  @Test fun aSessionlessDeclarationIsValidatedByTheSameOwnerAndKeepsThePersistedSet() {
+    val test = Fixture("interest-sessionless")
+    try {
+      NativeSyncInterest.storeWithoutSession(test.store, test.connectionId, listOf("a", "a", "b"))
+      assertEquals(listOf("a", "b"), test.store.interest(test.connectionId))
+
+      val overLimit = List(NativeSyncInterest.MAX_INTEREST_THREADS + 1) { "a" }
+      val tooLong = listOf("x".repeat(NativeSyncInterest.MAX_INTEREST_THREAD_ID_CHARS + 1))
+      for (invalid in listOf(overLimit, tooLong, listOf(""))) {
+        assertThrows(IllegalArgumentException::class.java) {
+          NativeSyncInterest.storeWithoutSession(test.store, test.connectionId, invalid)
+        }
+      }
+      assertEquals("a rejected set leaves the persisted one", listOf("a", "b"), test.store.interest(test.connectionId))
+
+      test.open(head = 0)
+      assertEquals(listOf("a", "b"), test.sent("hello").single().getJSONArray("interest").strings())
     } finally {
       test.engine.close()
     }

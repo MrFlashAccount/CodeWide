@@ -65,7 +65,8 @@ mod replay;
 mod search_routing;
 
 use interest::{
-    INTEREST_CLOSE_CODE, INTEREST_FIELD, SharedInterest, SocketInterest, list_len, lock_interest,
+    INTEREST_CLOSE_CODE, INTEREST_FIELD, SharedInterest, accept_hello_interest,
+    apply_interest_frame,
 };
 use outbox::{PumpContext, reconcile_direct_turn_start, run_outbox_pump};
 #[cfg(test)]
@@ -906,14 +907,9 @@ impl SyncHub {
             close_with(socket, 1008, "hello_required").await;
             return None;
         }
-        let interest = match SocketInterest::from_hello(&hello) {
-            Ok(interest) => Arc::new(std::sync::Mutex::new(interest)),
+        let interest = match accept_hello_interest(&hello) {
+            Ok(interest) => interest,
             Err(rejection) => {
-                let requested = list_len(hello.get(INTEREST_FIELD));
-                warn!(
-                    reason = rejection.reason(),
-                    requested, "sync client hello rejected"
-                );
                 close_with(socket, INTEREST_CLOSE_CODE, rejection.reason()).await;
                 return None;
             }
@@ -1153,28 +1149,9 @@ impl SyncHub {
                                 Some(INTEREST_FIELD) => {
                                     // Applied inline, before the next incoming frame is read:
                                     // an RPC that follows sees the updated set.
-                                    let applied = lock_interest(&interest).apply(&message);
-                                    match applied {
-                                        Ok(change) => debug!(
-                                            added = change.added,
-                                            removed = change.removed,
-                                            threads = change.threads,
-                                            "sync client interest updated"
-                                        ),
-                                        Err(rejection) => {
-                                            let add = list_len(message.get("add"));
-                                            let remove = list_len(message.get("remove"));
-                                            let threads = lock_interest(&interest).len();
-                                            warn!(
-                                                reason = rejection.reason(),
-                                                add,
-                                                remove,
-                                                threads,
-                                                "sync client interest frame rejected"
-                                            );
-                                            close_with(&socket, INTEREST_CLOSE_CODE, rejection.reason()).await;
-                                            break;
-                                        }
+                                    if let Err(rejection) = apply_interest_frame(&interest, &message) {
+                                        close_with(&socket, INTEREST_CLOSE_CODE, rejection.reason()).await;
+                                        break;
                                     }
                                 }
                                 Some("liveSubscribe" | "liveUnsubscribe") => {
@@ -2842,25 +2819,14 @@ fn split_resource_routes(
     (payloads, without_resources, own_resources)
 }
 
-/// One payload ready for the journal and the synthetic thread preview its
-/// streamed text published, if any. The batch owns where the preview is
-/// appended (right after its delta).
-struct JournalProjection {
-    payload: Value,
-    preview: Option<Value>,
-}
-
 /// Adds the companion-owned projections to one payload before it is
-/// journaled: usage, activity metrics, live activity, the thread preview
-/// observation and content references.
+/// journaled: usage, activity metrics, live activity and content references.
 fn project_journal_payload(
     context: &IngestContext,
     projector: Option<&ContentProjector>,
     live_activity: &mut crate::thread_activity::LiveActivityTracker,
-    thread_preview: &mut ThreadPreviewTracker,
-    now: Instant,
     payload: Value,
-) -> Result<JournalProjection, ()> {
+) -> Result<Value, ()> {
     let (usage, replay_pricing, thread_pricing) = {
         let mut projector = match context.usage_projector.lock() {
             Ok(projector) => projector,
@@ -2884,10 +2850,9 @@ fn project_journal_payload(
     .map_err(|_| {
         let _ = context.events.send(DurableSignal::Failed);
     })?;
-    // Streamed reasoning and answer text are read before content projection
-    // may externalize them.
+    // Streamed reasoning text is read before content projection may
+    // externalize it.
     let activity = live_activity.observe(&payload);
-    let preview = thread_preview.observe(&payload, now);
     let payload = match projector {
         Some(projector) => projector.project_notification(payload),
         None => payload,
@@ -2900,10 +2865,10 @@ fn project_journal_payload(
         ),
         metrics,
     );
-    Ok(JournalProjection {
-        payload: agent_core::usage::prepare_replay_payload(projected, replay_pricing),
-        preview,
-    })
+    Ok(agent_core::usage::prepare_replay_payload(
+        projected,
+        replay_pricing,
+    ))
 }
 
 async fn ingest_payload_batch(
@@ -2950,27 +2915,16 @@ async fn ingest_payload_batch(
     let now = Instant::now();
     let mut projected_payloads = Vec::with_capacity(payloads.len());
     for payload in payloads {
-        let projection = project_journal_payload(
-            context,
-            projector.as_deref(),
-            live_activity,
-            thread_preview,
-            now,
-            payload,
-        )?;
-        projected_payloads.push(projection.payload);
-        if let Some(preview) = projection.preview {
-            projected_payloads.push(
-                project_journal_payload(
-                    context,
-                    projector.as_deref(),
-                    live_activity,
-                    thread_preview,
-                    now,
-                    preview,
-                )?
-                .payload,
-            );
+        // Streamed answer text is read before content projection may
+        // externalize it; projections only read the payload until then.
+        let preview = thread_preview.observe(&payload, now);
+        for payload in std::iter::once(payload).chain(preview) {
+            projected_payloads.push(project_journal_payload(
+                context,
+                projector.as_deref(),
+                live_activity,
+                payload,
+            )?);
         }
     }
     payloads = projected_payloads;
@@ -3454,17 +3408,15 @@ mod tests {
     use super::*;
     use crate::store::OutboxPresentation;
 
-    #[tokio::test]
-    async fn durable_fence_resolves_after_every_preceding_payload_is_committed()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let store = Arc::new(IndexStore::open(directory.path().join("fence.redb"))?);
-        let (ingest, receiver) = tokio::sync::mpsc::channel(4);
-        let (signals, _) = tokio::sync::broadcast::channel(4);
-        let (fence, resolved) = tokio::sync::oneshot::channel();
-        let context = IngestContext {
+    /// An ingest context over `store` with no content projector, resources or
+    /// pricing, publishing durable signals to `events`.
+    pub(super) fn ingest_context(
+        store: &Arc<IndexStore>,
+        events: tokio::sync::broadcast::Sender<DurableSignal>,
+    ) -> IngestContext {
+        IngestContext {
             store: store.clone(),
-            events: signals,
+            events,
             server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
             content_projector: Arc::new(std::sync::RwLock::new(None)),
             resources: None,
@@ -3478,7 +3430,18 @@ mod tests {
                 std::collections::HashMap::new(),
                 ProviderId::from_static("codex"),
             ),
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_fence_resolves_after_every_preceding_payload_is_committed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("fence.redb"))?);
+        let (ingest, receiver) = tokio::sync::mpsc::channel(4);
+        let (signals, _) = tokio::sync::broadcast::channel(4);
+        let (fence, resolved) = tokio::sync::oneshot::channel();
+        let context = ingest_context(&store, signals);
         let task = tokio::spawn(ingest_events(receiver, context));
         ingest
             .send(IngestInput::Payload(json!({
@@ -3509,23 +3472,7 @@ mod tests {
         let (ingest, receiver) = tokio::sync::mpsc::channel(8);
         let (signals, _) = tokio::sync::broadcast::channel(8);
         let (fence, resolved) = tokio::sync::oneshot::channel();
-        let context = IngestContext {
-            store: store.clone(),
-            events: signals,
-            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
-            content_projector: Arc::new(std::sync::RwLock::new(None)),
-            resources: None,
-            usage_projector: Arc::new(std::sync::Mutex::new(
-                crate::usage::LiveUsageProjector::new(
-                    store.clone(),
-                    agent_core::usage::UsagePricing::default(),
-                ),
-            )),
-            user_text: crate::user_message_projection::UserTextCleaners::new(
-                std::collections::HashMap::new(),
-                ProviderId::from_static("codex"),
-            ),
-        };
+        let context = ingest_context(&store, signals);
         let task = tokio::spawn(ingest_events(receiver, context));
         let item = |id: &str| {
             json!({"method": "item/started", "params": {
@@ -3567,107 +3514,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_streamed_answer_journals_a_catalog_preview_after_its_delta()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let store = Arc::new(IndexStore::open(directory.path().join("preview.redb"))?);
-        let (ingest, receiver) = tokio::sync::mpsc::channel(8);
-        let (signals, _) = tokio::sync::broadcast::channel(8);
-        let (fence, resolved) = tokio::sync::oneshot::channel();
-        let context = IngestContext {
-            store: store.clone(),
-            events: signals,
-            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
-            content_projector: Arc::new(std::sync::RwLock::new(None)),
-            resources: None,
-            usage_projector: Arc::new(std::sync::Mutex::new(
-                crate::usage::LiveUsageProjector::new(
-                    store.clone(),
-                    agent_core::usage::UsagePricing::default(),
-                ),
-            )),
-            user_text: crate::user_message_projection::UserTextCleaners::new(
-                std::collections::HashMap::new(),
-                ProviderId::from_static("codex"),
-            ),
-        };
-        let task = tokio::spawn(ingest_events(receiver, context));
-        let delta = |text: &str| {
-            json!({"method": "item/agentMessage/delta", "params": {
-                "threadId": "thread", "turnId": "turn", "itemId": "answer", "delta": text
-            }})
-        };
-        // Both deltas arrive in one batch and coalesce into one journal entry.
-        ingest.send(IngestInput::Payload(delta("Hel"))).await?;
-        ingest.send(IngestInput::Payload(delta("lo"))).await?;
-        ingest.send(IngestInput::Fence(fence)).await?;
-        assert_eq!(
-            resolved.await??,
-            2,
-            "one delta entry plus one preview entry"
-        );
-
-        let journal = store
-            .replay_after(Some(0))?
-            .entries
-            .into_iter()
-            .map(|(_, bytes)| serde_json::from_slice::<Value>(&bytes))
-            .collect::<Result<Vec<_>, _>>()?;
-        assert_eq!(journal[0]["method"], "item/agentMessage/delta");
-        assert_eq!(journal[0]["params"]["delta"], "Hello");
-        assert_eq!(
-            journal[0][crate::thread_patch::THREAD_PATCH_FIELD]["operation"]["kind"],
-            "itemTextDelta"
-        );
-        assert_eq!(
-            journal[1]["method"],
-            crate::thread_preview::THREAD_PREVIEW_METHOD
-        );
-        assert_eq!(
-            journal[1][crate::thread_patch::THREAD_PATCH_FIELD]["threadId"],
-            "thread"
-        );
-        assert_eq!(
-            journal[1][crate::thread_patch::THREAD_PATCH_FIELD]["operation"]["kind"],
-            crate::thread_preview::THREAD_PREVIEW_KIND
-        );
-        assert_eq!(
-            journal[1][crate::thread_patch::THREAD_PATCH_FIELD]["operation"]["summary"]["previewText"],
-            "Hello"
-        );
-        let interest = SocketInterest::from_hello(&json!({"interest": []}))
-            .map_err(interest::InterestRejection::reason)?;
-        assert!(!interest.delivers(&journal[0]));
-        assert!(interest.delivers(&journal[1]));
-        drop(ingest);
-        task.await?;
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn a_provider_history_change_is_journaled_as_a_thread_invalidation()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let store = Arc::new(IndexStore::open(directory.path().join("history.redb"))?);
         let (ingest, receiver) = tokio::sync::mpsc::channel(4);
         let (signals, mut delivered) = tokio::sync::broadcast::channel(4);
-        let context = IngestContext {
-            store: store.clone(),
-            events: signals,
-            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
-            content_projector: Arc::new(std::sync::RwLock::new(None)),
-            resources: None,
-            usage_projector: Arc::new(std::sync::Mutex::new(
-                crate::usage::LiveUsageProjector::new(
-                    store.clone(),
-                    agent_core::usage::UsagePricing::default(),
-                ),
-            )),
-            user_text: crate::user_message_projection::UserTextCleaners::new(
-                std::collections::HashMap::new(),
-                ProviderId::from_static("codex"),
-            ),
-        };
+        let context = ingest_context(&store, signals);
         let ingest_task = tokio::spawn(ingest_events(receiver, context));
         let (local, local_rx) = tokio::sync::mpsc::channel(4);
         let local_task = tokio::spawn(forward_local_events(local_rx, ingest));
@@ -3708,23 +3561,7 @@ mod tests {
         let store = Arc::new(IndexStore::open(directory.path().join("history.redb"))?);
         let (ingest, receiver) = tokio::sync::mpsc::channel(4);
         let (signals, mut delivered) = tokio::sync::broadcast::channel(4);
-        let context = IngestContext {
-            store: store.clone(),
-            events: signals,
-            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
-            content_projector: Arc::new(std::sync::RwLock::new(None)),
-            resources: None,
-            usage_projector: Arc::new(std::sync::Mutex::new(
-                crate::usage::LiveUsageProjector::new(
-                    store.clone(),
-                    agent_core::usage::UsagePricing::default(),
-                ),
-            )),
-            user_text: crate::user_message_projection::UserTextCleaners::new(
-                std::collections::HashMap::new(),
-                ProviderId::from_static("codex"),
-            ),
-        };
+        let context = ingest_context(&store, signals);
         let ingest_task = tokio::spawn(ingest_events(receiver, context));
         let (local, local_rx) = tokio::sync::mpsc::channel(4);
         let local_task = tokio::spawn(forward_local_events(local_rx, ingest));

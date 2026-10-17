@@ -209,6 +209,7 @@ async fn hello_without_interest_or_with_invalid_interest_is_closed()
     let too_many = (0..=MAX_INTEREST_THREADS)
         .map(|index| format!("thread-{index}"))
         .collect::<Vec<_>>();
+    let duplicates = vec![THREAD; MAX_INTEREST_THREADS + 1];
     for (hello, reason) in [
         (
             json!({"type": "hello", "protocolVersion": 1, "cursor": null}),
@@ -224,7 +225,11 @@ async fn hello_without_interest_or_with_invalid_interest_is_closed()
         ),
         (
             json!({"type": "hello", "protocolVersion": 1, "cursor": null, "interest": too_many}),
-            "interest_limit_exceeded",
+            "invalid_interest",
+        ),
+        (
+            json!({"type": "hello", "protocolVersion": 1, "cursor": null, "interest": duplicates}),
+            "invalid_interest",
         ),
     ] {
         let mut socket = harness.authenticated().await?;
@@ -246,11 +251,24 @@ async fn invalid_interest_frames_close_the_session() -> Result<(), Box<dyn std::
         (INTEREST_CLOSE_CODE, "invalid_interest".to_owned())
     );
 
-    let (mut socket, _) = harness.connect(json!([THREAD])).await?;
-    let fill = (0..MAX_INTEREST_THREADS)
-        .map(|index| format!("thread-{index}"))
-        .collect::<Vec<_>>();
-    send_json(&mut socket, &json!({"type": "interest", "add": fill})).await?;
+    // A frame list longer than the set bound is invalid, duplicates included.
+    let (mut socket, _) = harness.connect(json!([])).await?;
+    let duplicates = vec![THREAD; MAX_INTEREST_THREADS + 1];
+    send_json(&mut socket, &json!({"type": "interest", "add": duplicates})).await?;
+    assert_eq!(
+        receive_close(&mut socket).await?,
+        (INTEREST_CLOSE_CODE, "invalid_interest".to_owned())
+    );
+
+    // Frames within the list bound may not grow the set past it.
+    let (mut socket, _) = harness.connect(json!([])).await?;
+    let half = MAX_INTEREST_THREADS / 2;
+    for range in [0..half, half..MAX_INTEREST_THREADS + 1] {
+        let add = range
+            .map(|index| format!("thread-{index}"))
+            .collect::<Vec<_>>();
+        send_json(&mut socket, &json!({"type": "interest", "add": add})).await?;
+    }
     assert_eq!(
         receive_close(&mut socket).await?,
         (INTEREST_CLOSE_CODE, "interest_limit_exceeded".to_owned())
@@ -437,7 +455,21 @@ async fn interest_add_before_thread_sync_loses_no_delta() -> Result<(), Box<dyn 
         &json!({"type": "interest", "remove": [THREAD]}),
     )
     .await?;
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    // The server applies an interest frame before reading the next one, so an
+    // answered RPC on the same socket fences the remove.
+    send_json(
+        &mut socket,
+        &json!({
+            "type": "rpc",
+            "request": {
+                "id": "remove-fence",
+                "method": "companion/thread/sync",
+                "params": {"threadId": THREAD, "afterTurnId": null, "limit": 1}
+            }
+        }),
+    )
+    .await?;
+    while receive_frame(&mut socket).await?["type"] != "rpc" {}
     harness.journal(turn_diff(THREAD)).await?; // 5
     assert_eq!(
         receive_type(&mut socket, "advance").await?["afterCursor"],

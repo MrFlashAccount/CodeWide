@@ -42,6 +42,9 @@ struct StreamingAnswer {
     /// The first [`THREAD_PREVIEW_MAX_TEXT_CHARS`] characters of the answer.
     text: String,
     chars: usize,
+    /// Characters of `text` at the last published preview. The text only
+    /// grows within one item, so equal counts mean unchanged text.
+    published_chars: usize,
     last_published_at: Option<Instant>,
 }
 
@@ -52,6 +55,7 @@ impl StreamingAnswer {
             turn_id: turn_id.map(str::to_owned),
             text: String::new(),
             chars: 0,
+            published_chars: 0,
             last_published_at: None,
         }
     }
@@ -67,10 +71,13 @@ impl StreamingAnswer {
         }
     }
 
+    /// Whether a preview is published now: the text changed since the last
+    /// preview (it stops changing at the cap) and the interval has elapsed.
     fn due(&self, now: Instant) -> bool {
-        self.last_published_at.is_none_or(|published| {
-            now.duration_since(published) >= THREAD_PREVIEW_PUBLISH_INTERVAL
-        })
+        self.chars != self.published_chars
+            && self.last_published_at.is_none_or(|published| {
+                now.duration_since(published) >= THREAD_PREVIEW_PUBLISH_INTERVAL
+            })
     }
 }
 
@@ -140,6 +147,7 @@ impl ThreadPreviewTracker {
             return None;
         }
         answer.last_published_at = Some(now);
+        answer.published_chars = answer.chars;
         let mut event_params = Map::from_iter([
             ("threadId".into(), Value::String(thread_id.to_owned())),
             ("itemId".into(), Value::String(answer.item_id.clone())),
@@ -298,6 +306,35 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(text.chars().count(), THREAD_PREVIEW_MAX_TEXT_CHARS);
         assert!(!text.contains("One"));
+    }
+
+    #[test]
+    fn a_capped_answer_publishes_its_capped_text_once() {
+        let mut tracker = ThreadPreviewTracker::default();
+        let start = Instant::now();
+        let chunk = "x".repeat(THREAD_PREVIEW_MAX_TEXT_CHARS / 4);
+        let published = (0..12)
+            .filter_map(|interval| {
+                tracker.observe(
+                    &delta("thread", "answer", &chunk),
+                    start + THREAD_PREVIEW_PUBLISH_INTERVAL * interval,
+                )
+            })
+            .map(|event| {
+                event["params"][THREAD_PREVIEW_TEXT_FIELD]
+                    .as_str()
+                    .map_or(0, |text| text.chars().count())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            published
+                .iter()
+                .filter(|&&chars| chars == THREAD_PREVIEW_MAX_TEXT_CHARS)
+                .count(),
+            1,
+            "unchanged capped text is not republished"
+        );
+        assert_eq!(published.last(), Some(&THREAD_PREVIEW_MAX_TEXT_CHARS));
     }
 
     #[test]
