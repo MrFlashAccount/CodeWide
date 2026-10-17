@@ -20,17 +20,18 @@ use crate::{
         HistoryError, SUMMARY_PROJECTION_VERSION, SummaryProjectionState,
         summary_projection_state_from_file,
     },
-    history_base::read_history_base,
     rollout::{
-        IndexError, RolloutWitness, backfill_rollout_prefix, current_indexed_anchor_from_file,
-        current_indexed_coverage_from_file, current_indexed_turns_from_file,
-        frozen_indexed_anchor_from_file, frozen_indexed_coverage_from_file,
-        frozen_indexed_turns_from_file, index_rollout, index_rollout_through_anchor,
-        rollout_file_id, rollout_witness_from_file, rollout_witness_matches,
-        scan_frozen_tail_turns_from_file, scan_frozen_turns_before_from_file,
-        scan_tail_turns_from_file, scan_turns_after_from_file, scan_turns_before_from_file,
+        IndexError, IndexedTurnPage, RolloutWitness, backfill_rollout_prefix,
+        current_indexed_anchor_from_file, current_indexed_coverage_from_file,
+        current_indexed_turns_from_file, frozen_indexed_anchor_from_file,
+        frozen_indexed_coverage_from_file, frozen_indexed_turns_from_file, index_rollout,
+        index_rollout_through_anchor, rollout_file_id, rollout_witness_from_file,
+        rollout_witness_matches, scan_frozen_tail_turns_from_file,
+        scan_frozen_turns_before_from_file, scan_tail_turns_from_file, scan_turns_after_from_file,
+        scan_turns_before_from_file,
     },
     rollout_monitor::{self, RolloutChange},
+    rollout_origin::OwnTurns,
     rollout_store::{RolloutStore, TurnRef},
 };
 
@@ -51,6 +52,12 @@ struct HistorySourceWitness {
     #[serde(flatten)]
     rollout: RolloutWitness,
     projection_version: u8,
+    /// Set when the history leaves out records of another thread that the
+    /// rollout holds (a sub-agent child's copy of its parent's history).
+    /// Witnesses issued while those records were served lack it, so a client
+    /// that cached them resets once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    excludes_inherited: bool,
 }
 
 impl<'de> Deserialize<'de> for HistorySourceWitness {
@@ -62,20 +69,16 @@ impl<'de> Deserialize<'de> for HistorySourceWitness {
             Some(version) => u8::deserialize(version).map_err(serde::de::Error::custom)?,
             None => 0,
         };
+        let excludes_inherited = match value.get("excludes_inherited") {
+            Some(flag) => bool::deserialize(flag).map_err(serde::de::Error::custom)?,
+            None => false,
+        };
         let rollout = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
         Ok(Self {
             rollout,
             projection_version,
+            excludes_inherited,
         })
-    }
-}
-
-impl HistorySourceWitness {
-    const fn current(rollout: RolloutWitness) -> Self {
-        Self {
-            rollout,
-            projection_version: SUMMARY_PROJECTION_VERSION,
-        }
     }
 }
 
@@ -1148,6 +1151,9 @@ struct HistoryReader<'a> {
     /// The end of an inherited base: the reader sees only records before it,
     /// and a turn the fork point cut ends there, interrupted.
     frozen_end: Option<u64>,
+    /// The turns of the rollout that are this thread's own; the others are
+    /// never read.
+    own: OwnTurns,
 }
 
 impl<'a> HistoryReader<'a> {
@@ -1168,6 +1174,7 @@ impl<'a> HistoryReader<'a> {
             file,
             source,
             frozen_end: None,
+            own: store.rollout_origin(path)?.own_turns(),
         })
     }
 
@@ -1197,11 +1204,23 @@ impl<'a> HistoryReader<'a> {
             file,
             source,
             frozen_end: Some(base.end),
+            // A fork inherits its base's prefix exactly as the base wrote it.
+            own: OwnTurns::All,
         })
+    }
+
+    /// The witness of the history this reader serves.
+    fn witness(&self) -> HistorySourceWitness {
+        HistorySourceWitness {
+            rollout: self.source.clone(),
+            projection_version: SUMMARY_PROJECTION_VERSION,
+            excludes_inherited: self.own.excludes_inherited(),
+        }
     }
 
     fn validate_source(&self, source: &HistorySourceWitness) -> Result<(), HistoryServiceError> {
         if source.projection_version == SUMMARY_PROJECTION_VERSION
+            && source.excludes_inherited == self.own.excludes_inherited()
             && rollout_witness_matches(&self.file, self.source.durable_bytes, &source.rollout)?
         {
             Ok(())
@@ -1218,7 +1237,31 @@ impl<'a> HistoryReader<'a> {
         if !rollout_witness_matches(&self.file, bytes, &self.source)? {
             return Err(HistoryServiceError::HistorySourceChanged);
         }
-        encode_source_witness(&self.source)
+        encode_source_witness(&self.witness())
+    }
+
+    /// The indexed own turns before `before`, newest first, when the index
+    /// covers them; a page that reached the start of the thread's own
+    /// history has no more.
+    fn indexed_turns(
+        &self,
+        before: Option<u64>,
+        limit: usize,
+    ) -> Result<Option<IndexedTurnPage>, HistoryServiceError> {
+        let page = current_indexed_turns_from_file(
+            self.store,
+            self.path,
+            &self.file,
+            self.source.durable_bytes,
+            before,
+            limit,
+        )?;
+        Ok(page.map(|mut page| {
+            if self.own.retain(&mut page.turns) {
+                page.has_more = false;
+            }
+            page
+        }))
     }
 
     fn latest(
@@ -1229,18 +1272,12 @@ impl<'a> HistoryReader<'a> {
         if let Some(end) = self.frozen_end {
             return self.frozen_latest(end, before, limit);
         }
-        if let Some(indexed) = current_indexed_turns_from_file(
-            self.store,
-            self.path,
-            &self.file,
-            self.source.durable_bytes,
-            before,
-            limit,
-        )? && !indexed.has_more
+        if let Some(indexed) = self.indexed_turns(before, limit)?
+            && !indexed.has_more
         {
             return Ok((indexed.turns, true));
         }
-        let turns =
+        let mut turns =
             scan_tail_turns_from_file(&self.file, self.source.durable_bytes, before, limit)?
                 .turns
                 .into_iter()
@@ -1251,6 +1288,7 @@ impl<'a> HistoryReader<'a> {
                     completed: turn.completed,
                 })
                 .collect();
+        self.own.retain(&mut turns);
         Ok((turns, false))
     }
 
@@ -1350,18 +1388,20 @@ impl<'a> HistoryReader<'a> {
             self.source.durable_bytes,
             anchor_id,
         )? {
-            if anchor.end_offset == 0 {
+            // A turn of the copied parent history is unknown to the thread.
+            if anchor.end_offset == 0 || !self.own.owns(&anchor) {
                 return Ok(None);
             }
             return match direction {
-                HistoryDirection::After => Ok(Some((
-                    self.store.turns_asc_after(
+                HistoryDirection::After => {
+                    let mut turns = self.store.turns_asc_after(
                         &rollout_file_id(self.path),
                         anchor.start_offset,
                         limit,
-                    )?,
-                    true,
-                ))),
+                    )?;
+                    self.own.retain(&mut turns);
+                    Ok(Some((turns, true)))
+                }
                 HistoryDirection::Before => self.latest(Some(anchor.start_offset), limit).map(Some),
             };
         }
@@ -1386,7 +1426,10 @@ impl<'a> HistoryReader<'a> {
                 limit,
             )?,
         };
-        Ok(turns.map(|turns| (turns, false)))
+        Ok(turns.map(|mut turns| {
+            self.own.retain(&mut turns);
+            (turns, false)
+        }))
     }
 
     fn project(&self, turns: &[TurnRef], indexed: bool) -> Result<Vec<Value>, HistoryServiceError> {
@@ -1450,12 +1493,13 @@ async fn index_inherited_history(
     thread_id: &str,
 ) {
     let chain_catalog = catalog.clone();
+    let chain_store = store.clone();
     let chain_thread_id = thread_id.to_owned();
     let bases = tokio::task::spawn_blocking(move || {
         let own = chain_catalog
             .resolve(&chain_thread_id)
             .map_err(|error| error.to_string())?;
-        let mut chain = BaseChain::new(&chain_catalog, &own);
+        let mut chain = BaseChain::new(&chain_catalog, &chain_store, &own);
         let mut paths = Vec::new();
         while let Some(base) = chain.next().map_err(|error| error.to_string())? {
             paths.push(base.path);
@@ -1506,17 +1550,20 @@ async fn index_inherited_history(
 /// The most nested bases followed; each paginated fork of a fork adds one.
 const MAX_BASE_DEPTH: usize = 64;
 
-/// Walks a thread's inherited bases from its own rollout to the oldest.
+/// Walks a thread's inherited bases from its own rollout to the oldest. Only
+/// a paginated fork continues a base; a sub-agent child never does.
 struct BaseChain<'a> {
     catalog: &'a SessionCatalog,
+    store: &'a RolloutStore,
     current: PathBuf,
     visited: HashSet<PathBuf>,
 }
 
 impl<'a> BaseChain<'a> {
-    fn new(catalog: &'a SessionCatalog, own: &Path) -> Self {
+    fn new(catalog: &'a SessionCatalog, store: &'a RolloutStore, own: &Path) -> Self {
         Self {
             catalog,
+            store,
             current: own.to_path_buf(),
             visited: HashSet::from([own.to_path_buf()]),
         }
@@ -1529,7 +1576,8 @@ impl<'a> BaseChain<'a> {
             tracing::warn!("paginated fork history is nested too deeply; older bases are skipped");
             return Ok(None);
         }
-        let Some(base) = read_history_base(&self.current).map_err(IndexError::from)? else {
+        let origin = self.store.rollout_origin(&self.current)?;
+        let Some(base) = origin.base() else {
             return Ok(None);
         };
         let path = match self.catalog.resolve_rollout(&base.rollout_id) {
@@ -1587,7 +1635,7 @@ enum InheritedStart<'a> {
 struct InheritedPosition {
     depth: NonZeroUsize,
     start_offset: u64,
-    source: RolloutWitness,
+    source: HistorySourceWitness,
 }
 
 /// Inherited immutable turns, newest first.
@@ -1608,7 +1656,7 @@ impl InheritedPage {
             direction: "desc".into(),
             offset,
             source_offset: Some(oldest.start_offset),
-            source: Some(HistorySourceWitness::current(oldest.source.clone())),
+            source: Some(oldest.source.clone()),
             segment: Some(oldest.depth),
         }))
     }
@@ -1627,7 +1675,7 @@ fn inherited_page(
     start: &InheritedStart<'_>,
     limit: usize,
 ) -> Result<Option<InheritedPage>, HistoryServiceError> {
-    let mut chain = BaseChain::new(catalog, own_path);
+    let mut chain = BaseChain::new(catalog, store, own_path);
     let (mut depth, mut before, mut source, mut anchor) = match *start {
         InheritedStart::Below {
             depth,
@@ -1669,7 +1717,7 @@ fn inherited_page(
                 page.oldest = Some(InheritedPosition {
                     depth,
                     start_offset: oldest.start_offset,
-                    source: reader.source.clone(),
+                    source: reader.witness(),
                 });
             }
             let witness = reader.finish()?;
@@ -1909,20 +1957,13 @@ fn turns_page(
     }
     // The initial descending surface may publish a short indexed tail while
     // prefix coverage warms. Semantic pages instead require a proven sentinel.
-    let (discovered, indexed_exact, indexed_has_more) = if let Some(indexed) =
-        current_indexed_turns_from_file(
-            store,
-            &path,
-            &reader.file,
-            reader.source.durable_bytes,
-            source_offset,
-            scan_limit,
-        )? {
-        (indexed.turns, true, indexed.has_more)
-    } else {
-        let (turns, indexed) = reader.latest(source_offset, scan_limit)?;
-        (turns, indexed, false)
-    };
+    let (discovered, indexed_exact, indexed_has_more) =
+        if let Some(indexed) = reader.indexed_turns(source_offset, scan_limit)? {
+            (indexed.turns, true, indexed.has_more)
+        } else {
+            let (turns, indexed) = reader.latest(source_offset, scan_limit)?;
+            (turns, indexed, false)
+        };
     let page_refs: Vec<_> = if source_offset.is_some() {
         discovered
     } else {
@@ -1939,7 +1980,7 @@ fn turns_page(
                 direction: "desc".into(),
                 offset: logical_offset.saturating_add(selected.len()),
                 source_offset: Some(turn.start_offset),
-                source: Some(HistorySourceWitness::current(reader.source.clone())),
+                source: Some(reader.witness()),
                 segment: None,
             })
         })
@@ -2146,7 +2187,7 @@ fn sync_history_with_source(
         thread_id,
         limit,
         active_turn_id,
-        &reader.source,
+        &reader.witness(),
     );
     let mut turns = reader.project(&reset.turns, latest_refs_are_indexed)?;
     let witness = reader.finish()?;
@@ -2238,7 +2279,7 @@ fn latest_reset(
     thread_id: &str,
     limit: usize,
     active_turn_id: Option<&str>,
-    source: &RolloutWitness,
+    source: &HistorySourceWitness,
 ) -> LatestReset {
     let mut turns = latest_refs
         .into_iter()
@@ -2255,7 +2296,7 @@ fn latest_reset(
                 direction: "desc".into(),
                 offset: turns.len(),
                 source_offset: Some(turn.start_offset),
-                source: Some(HistorySourceWitness::current(source.clone())),
+                source: Some(source.clone()),
                 segment: None,
             })
         })
@@ -2474,9 +2515,8 @@ fn encode_cursor(cursor: &Cursor) -> String {
     format!("{CURSOR_PREFIX}{}", URL_SAFE_NO_PAD.encode(raw))
 }
 
-fn encode_source_witness(source: &RolloutWitness) -> Result<String, HistoryServiceError> {
-    let raw = serde_json::to_vec(&HistorySourceWitness::current(source.clone()))
-        .map_err(companion_host::index::StoreError::from)?;
+fn encode_source_witness(source: &HistorySourceWitness) -> Result<String, HistoryServiceError> {
+    let raw = serde_json::to_vec(source).map_err(companion_host::index::StoreError::from)?;
     Ok(format!(
         "{SOURCE_WITNESS_PREFIX}{}",
         URL_SAFE_NO_PAD.encode(raw)
@@ -2539,6 +2579,8 @@ fn decode_cursor(
 
 #[cfg(test)]
 mod fork_tests;
+#[cfg(test)]
+mod subagent_tests;
 
 #[cfg(test)]
 mod tests {

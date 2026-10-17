@@ -7,14 +7,21 @@
 //! [`ROLLOUT_INDEX_SCHEMA`] creates them in the index's opening migration
 //! and drops them when the companion schema asks for a rebuild or when the
 //! logic version changes; the indexer then rebuilds them from the unchanged
-//! rollouts.
+//! rollouts. Each rollout's origin (which of its records are its thread's
+//! own, `rollout_origin`) is resolved once per file and kept in memory.
 
-use std::{ops::Deref, path::PathBuf, sync::Arc};
+use std::{
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use agent_index::{IndexStore, IndexTables};
+use agent_index::{IndexError, IndexStore, IndexTables};
 use companion_host::{index::StoreError, thread_index::HostThreadIndex};
 use redb::Database;
 use serde::{Deserialize, Serialize};
+
+use crate::rollout_origin::{RolloutOrigin, RolloutOrigins};
 
 pub use agent_index::{FileState, RecordRef, TurnRef};
 
@@ -34,15 +41,19 @@ pub const ROLLOUT_INDEX_SCHEMA: IndexTables = IndexTables {
     logic_version: ROLLOUT_LOGIC_VERSION,
 };
 
-/// The rollout index over the shared host index database, and the
-/// companion thread index the rollout indexer publishes metadata to.
-pub struct RolloutStore(IndexStore);
+/// The rollout index over the shared host index database, the companion
+/// thread index the rollout indexer publishes metadata to, and each
+/// rollout's origin (which of its records are its thread's own).
+pub struct RolloutStore {
+    index: IndexStore,
+    origins: RolloutOrigins,
+}
 
 impl Deref for RolloutStore {
     type Target = IndexStore;
 
     fn deref(&self) -> &IndexStore {
-        &self.0
+        &self.index
     }
 }
 
@@ -58,16 +69,20 @@ impl RolloutStore {
         database: Arc<Database>,
         threads: Arc<dyn HostThreadIndex>,
     ) -> Result<Self, StoreError> {
-        Ok(Self(IndexStore::attach(
-            database,
-            threads,
-            ROLLOUT_INDEX_SCHEMA,
-        )?))
+        Ok(Self {
+            index: IndexStore::attach(database, threads, ROLLOUT_INDEX_SCHEMA)?,
+            origins: RolloutOrigins::default(),
+        })
+    }
+
+    /// The origin of the rollout at `path`, resolved once per file.
+    pub(crate) fn rollout_origin(&self, path: &Path) -> Result<RolloutOrigin, IndexError> {
+        Ok(self.origins.origin(agent_index::file_id(path), path)?)
     }
 
     /// The per-rollout lane serializing scans and qualified reads.
     pub(crate) fn rollout_index_lock(&self, file_id: [u8; 32]) -> Arc<std::sync::Mutex<()>> {
-        self.0.index_lock(file_id)
+        self.index.index_lock(file_id)
     }
 
     /// Resolves canonical rollout records that were proven to contain the
@@ -76,7 +91,7 @@ impl RolloutStore {
         &self,
         digest: &[u8; 32],
     ) -> Result<Vec<RolloutContentLocator>, StoreError> {
-        self.0
+        self.index
             .content(digest)?
             .iter()
             .map(|locator| serde_json::from_slice(locator).map_err(StoreError::from))

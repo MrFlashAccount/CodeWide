@@ -92,7 +92,8 @@ pub trait IndexSource: Send + Sync {
         None
     }
 
-    /// The companion thread metadata a record publishes (a session header).
+    /// The companion thread metadata a file's header publishes. Only the
+    /// file's first record is asked; later records never publish metadata.
     fn thread_metadata(
         &self,
         path: &Path,
@@ -345,7 +346,11 @@ pub fn index_file<S: IndexSource>(
         }
         let record = source_record(source, offset, bytes, &line)?;
         let length = record.length;
-        if let Some(metadata) = source.thread_metadata(path, modified_at, &line) {
+        // Only the header names this file's thread: a copied header later in
+        // the file is another thread's and must not overwrite its row.
+        if offset == 0
+            && let Some(metadata) = source.thread_metadata(path, modified_at, &line)
+        {
             store.threads().put_thread_metadata(&metadata)?;
         }
         pending.records.push(indexed_record(&id, record));
@@ -676,7 +681,11 @@ fn index_prefix_range<S: IndexSource>(
         }
         let record = source_record(source, offset, bytes, &line)?;
         let length = record.length;
-        if let Some(metadata) = source.thread_metadata(path, modified_at, &line) {
+        // Only the header names this file's thread: a copied header later in
+        // the file is another thread's and must not overwrite its row.
+        if offset == 0
+            && let Some(metadata) = source.thread_metadata(path, modified_at, &line)
+        {
             store.threads().put_thread_metadata(&metadata)?;
         }
         pending.records.push(indexed_record(id, record));

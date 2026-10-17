@@ -223,16 +223,17 @@ describe("thread summary projection", () => {
     expect(projectThreadSummarySnapshot("server", child, false, summary("Stale parent preview")).preview).toBe("Child result");
   });
 
-  it("clears a stale inherited subagent preview when no child message exists", () => {
+  it("previews a subagent thread from its own turns as any thread", () => {
+    // The provider adapter serves only the agent's own turns.
     const child = {
-      ...thread([{ id: "parent-turn", startedAt: 19, items: [{ type: "userMessage", content: [{ type: "text", text: "Parent chat" }] }] }]),
+      ...thread([{ id: "child-turn", startedAt: 20, items: [{ type: "userMessage", content: [{ type: "text", text: "Audit the parser" }] }] }]),
       id: "child",
       parentThreadId: "root",
       createdAt: 20,
       preview: "",
     } as Thread;
 
-    expect(projectThreadSummarySnapshot("server", child, false, summary("Stale parent preview")).preview).toBe("");
+    expect(projectThreadSummarySnapshot("server", child, false, summary("Stale preview")).preview).toBe("Audit the parser");
   });
 
   it("keeps an event-derived child preview across a metadata-only refresh", () => {

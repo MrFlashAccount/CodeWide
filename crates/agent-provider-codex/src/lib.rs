@@ -32,6 +32,7 @@ pub mod rollout;
 mod rollout_changes;
 pub mod rollout_content;
 pub mod rollout_monitor;
+mod rollout_origin;
 pub mod rollout_store;
 pub mod storage;
 #[cfg(test)]

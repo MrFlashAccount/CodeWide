@@ -120,7 +120,6 @@ function ValidAgentsRoute({
           connectionId={connectionId}
           initialThreadId={initialThreadId ?? request.initialThreadId}
           onClose={closeOverlay}
-          parentThread={request.parentThread}
           parentThreadId={request.parentThreadId}
           renderThread={(view) => (
             <SubagentConversation
