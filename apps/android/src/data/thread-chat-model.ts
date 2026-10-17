@@ -156,6 +156,9 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   // for multiple commits without meaning that navigation left this resource.
   // Older windows remain in the bounded LRU; SQLite owns evicted windows.
   let residentResourceScope: string | null = null;
+  // The resident scope after its last owner released it: kept for a cached
+  // return, excluded from interest until a route resource or owner claims it.
+  let dormantResidentScope: string | null = null;
 
   const reportResidentRowCount = (): void => {
     if (options.onResidentRowCountChange === undefined) {
@@ -191,9 +194,28 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     return node;
   };
 
+  const isInterested = (scope: string): boolean => {
+    if (closed) {
+      return false;
+    }
+    if ((retainCounts.get(scope) ?? 0) > 0) {
+      return true;
+    }
+    return scope === residentResourceScope && scope !== dormantResidentScope;
+  };
+
+  const markLeftResident = (scope: string): void => {
+    if (closed || scope !== residentResourceScope || (retainCounts.get(scope) ?? 0) > 0) {
+      return;
+    }
+    // The route resource lost its last owner and no destination replaced it:
+    // the chat was left. Its window stays resident for a cached return, but it
+    // no longer consumes live content, so its interest ends.
+    dormantResidentScope = scope;
+  };
+
   const reconcileInterest = (scope: string, connectionId: string, threadId: string): void => {
-    const interested =
-      !closed && (scope === residentResourceScope || (retainCounts.get(scope) ?? 0) > 0);
+    const interested = isInterested(scope);
     if (interested === interestScopes.has(scope)) {
       return;
     }
@@ -230,6 +252,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   };
 
   const evictReleasedWindow = (scope: string): void => {
+    markLeftResident(scope);
     reconcileInterestScope(scope);
     if (closed || scope === residentResourceScope || (retainCounts.get(scope) ?? 0) > 0) {
       return;
@@ -263,6 +286,9 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       return () => undefined;
     }
     const scope = threadChatScope(connectionId, threadId);
+    if (dormantResidentScope === scope) {
+      dormantResidentScope = null;
+    }
     retainCounts.set(scope, (retainCounts.get(scope) ?? 0) + 1);
     reconcileInterest(scope, connectionId, threadId);
     let retained = true;
@@ -576,6 +602,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     },
     close() {
       residentResourceScope = null;
+      dormantResidentScope = null;
       closed = true;
       // Deleting the visited entry keeps Map iteration well defined.
       for (const scope of interestScopes.keys()) {
@@ -608,6 +635,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         residentResourceScope.startsWith(`${connectionId}\u0000`)
       ) {
         residentResourceScope = null;
+        dormantResidentScope = null;
       }
       // A forgotten connection has no socket to subscribe, even while a
       // component still holds its retain.
@@ -768,6 +796,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       }
       const previousResidentScope = residentResourceScope;
       residentResourceScope = scope;
+      dormantResidentScope = null;
       reconcileInterest(scope, request.connectionId, request.threadId);
       if (previousResidentScope !== null && previousResidentScope !== scope) {
         // The former route resource keeps its subscription through the same

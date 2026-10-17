@@ -38,7 +38,9 @@ Machine-readable limits live only in `crates/companion-core/contract/v1.json`.
 - **residency**: membership of a thread in the device `ThreadDetailSource`, the
   target of the live transcript projection.
 - **window**: a chat window owned by `data/thread-chat-model.ts`; mounted means
-  a positive retain count or the resident resource scope.
+  a positive retain count or the resident resource scope. When the resident route
+  resource loses its last owner at the settled release point, its interest ends
+  while its window stays cached, so leaving a chat ends its live content.
 
 ## Wire contract
 

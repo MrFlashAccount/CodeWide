@@ -68,6 +68,37 @@ describe("thread chat interest membership", () => {
     ]);
   });
 
+  it("unsubscribes a left chat once its route resource loses the last owner", async () => {
+    const { changes, model } = membershipModel();
+    const loader = vi.fn(async () => undefined);
+    model.resource({ anchorTurnId: null, connectionId: "server", threadId: "a" }, loader);
+    const release = model.retainWindow("server", "a");
+    expect(changes).toEqual([["a", true]]);
+
+    release();
+    // The release settles one task after the resource resolves.
+    await settle();
+    await settle();
+    expect(changes).toEqual([
+      ["a", true],
+      ["a", false],
+    ]);
+  });
+
+  it("keeps a left chat subscribed when it is reopened before the release settles", async () => {
+    const { changes, model } = membershipModel();
+    const loader = vi.fn(async () => new Promise<never>(() => undefined));
+    model.resource({ anchorTurnId: null, connectionId: "server", threadId: "a" }, loader);
+    const release = model.retainWindow("server", "a");
+
+    release();
+    model.resource({ anchorTurnId: null, connectionId: "server", threadId: "a" }, loader);
+    const reopened = model.retainWindow("server", "a");
+    await settle();
+    expect(changes).toEqual([["a", true]]);
+    reopened();
+  });
+
   it("releases every subscription on close and on a forgotten connection", () => {
     const { changes, model } = membershipModel();
     model.retainWindow("server", "a");
