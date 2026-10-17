@@ -5,6 +5,7 @@ import type { ThreadDetailDatabase } from "../src/data/thread-detail-database-co
 import type { ThreadSummaryDatabase } from "../src/data/thread-summary-database-contract";
 import { createThreadSyncRuntime } from "../src/data/thread-sync-runtime";
 import { createThreadSyncForeground } from "../src/data/thread-sync-foreground";
+import { createV1TestThread } from "./fixtures/v1Thread";
 
 function runtime() {
   return createThreadSyncRuntime({
@@ -163,5 +164,149 @@ describe("V1 shared thread sync lifetime", () => {
     }
     expect(removed).toEqual([["server", ["gone"]]]);
     expect(missing).toEqual(["server/gone"]);
+  });
+});
+
+const settle = async () =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+
+function interestRuntime(options: {
+  declareInterest: (connectionId: string, threadIds: readonly string[]) => Promise<void>;
+  getSession: () => RpcClient | undefined;
+  rpc: (method: string) => void;
+}) {
+  const done = () => undefined;
+  const cached = createV1TestThread("a", null, 1, []);
+  // WHY: readThread touches only these members on the cached-read and pre-sync paths; a full detail database is SQLite-backed.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const details = {
+    beginProjectionSnapshot: () => done,
+    chat: { beginBackendRefresh: () => done },
+    getThread: () => cached,
+    hasPendingDelivery: () => false,
+    historyCursor: () => null,
+    historySourceWitness: () => undefined,
+    latestSealedTurnId: async () => null,
+    liveRevision: () => 0,
+    reconcileNativeCommands: async () => undefined,
+  } as unknown as ThreadDetailDatabase;
+  const sync = createThreadSyncRuntime({
+    clearInvalidationArchived: () => undefined,
+    declareInterest: options.declareInterest,
+    getDetails: () => details,
+    getSession: options.getSession,
+    getSummaries: () => null,
+    loadTurnControls: async () => {
+      throw new Error("no controls");
+    },
+    readInvalidationArchived: () => undefined,
+    refreshSubagents: async () => undefined,
+    refreshThreadCatalog: async () => undefined,
+    rpcAfterAttach: async (_session, method) => {
+      options.rpc(method);
+      throw new Error("sync stopped by test");
+    },
+    transferAccess: async () => {
+      throw new Error("no transfer authority");
+    },
+  });
+  return { cached, sync };
+}
+
+describe("readThread interest ordering", () => {
+  it("serves the cache without a session and declares nothing", async () => {
+    const declareInterest = vi.fn(async () => {
+      throw new Error("Workspace sync supervisor is not running");
+    });
+    const rpcs: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { cached, sync } = interestRuntime({
+        declareInterest,
+        getSession: () => undefined,
+        rpc: (method) => rpcs.push(method),
+      });
+      // The window's membership change is declared and rejected before any read.
+      sync.interest.update("server", "a", true);
+      await settle();
+      declareInterest.mockClear();
+      warn.mockClear();
+
+      await expect(sync.readThread("server", "a")).resolves.toEqual({
+        nextCursor: null,
+        thread: cached,
+      });
+      await settle();
+
+      expect(declareInterest).not.toHaveBeenCalled();
+      expect(rpcs).toEqual([]);
+      expect(warn).not.toHaveBeenCalled();
+      expect(sync.interest.threadIds("server")).toEqual(["a"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("issues companion/thread/sync only after the pending declaration resolves", async () => {
+    const declaration = Promise.withResolvers<void>();
+    const declareInterest = vi.fn(async () => declaration.promise);
+    const rpcs: string[] = [];
+    const session = {};
+    const { sync } = interestRuntime({
+      declareInterest,
+      // WHY: the session is only compared by identity; the RPC goes through rpcAfterAttach.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+      getSession: () => session as RpcClient,
+      rpc: (method) => rpcs.push(method),
+    });
+    sync.interest.update("server", "a", true);
+
+    const read = sync.readThread("server", "a");
+    await settle();
+    expect(declareInterest).toHaveBeenCalledExactlyOnceWith("server", ["a"]);
+    expect(rpcs).toEqual([]);
+
+    declaration.resolve();
+    await expect(read).rejects.toThrow("sync stopped by test");
+    expect(rpcs).toEqual(["companion/thread/sync"]);
+  });
+
+  it("re-sends a declaration rejected before the session existed and awaits it before sync", async () => {
+    const retried = Promise.withResolvers<void>();
+    const declareInterest = vi
+      .fn<(connectionId: string, threadIds: readonly string[]) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("Workspace sync supervisor is not running"))
+      .mockImplementationOnce(async () => retried.promise);
+    const rpcs: string[] = [];
+    let session: RpcClient | undefined;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { sync } = interestRuntime({
+        declareInterest,
+        getSession: () => session,
+        rpc: (method) => rpcs.push(method),
+      });
+      sync.interest.update("server", "a", true);
+      await settle();
+      expect(declareInterest).toHaveBeenCalledOnce();
+
+      // WHY: the session is only compared by identity; the RPC goes through rpcAfterAttach.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+      session = {} as RpcClient;
+      const read = sync.readThread("server", "a");
+      await settle();
+      expect(declareInterest).toHaveBeenCalledTimes(2);
+      expect(declareInterest).toHaveBeenLastCalledWith("server", ["a"]);
+      expect(rpcs).toEqual([]);
+
+      retried.resolve();
+      await expect(read).rejects.toThrow("sync stopped by test");
+      expect(rpcs).toEqual(["companion/thread/sync"]);
+      expect(sync.interest.threadIds("server")).toEqual(["a"]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
