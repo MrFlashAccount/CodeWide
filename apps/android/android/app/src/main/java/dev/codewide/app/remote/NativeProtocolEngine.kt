@@ -68,7 +68,7 @@ internal class NativeProtocolEngine(
   private var appServer = "unknown"
   private var maximumObservedCursor = 0L
   private var lastAckCursor = 0L
-  private val journalFrames = mutableListOf<IncomingJournalFrame>()
+  private val journalFrames = mutableListOf<IncomingJournalEntry>()
   private var journalBytes = 0
   private var journalFlush: Runnable? = null
   private var journalFlushAtMs: Long? = null
@@ -83,6 +83,8 @@ internal class NativeProtocolEngine(
   private var ingressWindowEvents = 0
   private var ingressWindowBytes = 0L
   private var liveSubscription: LiveSubscription? = null
+  /** True once this socket carried `hello`; `interest` frames are valid only after it. */
+  private var helloSent = false
 
   @Synchronized
   fun onSocketOpen() {
@@ -100,6 +102,7 @@ internal class NativeProtocolEngine(
       .put("protocolVersion", 1)
       .put("portInventory", true)
       .put("cursor", frameStore.syncCursor(connectionId) ?: JSONObject.NULL)
+      .put("interest", JSONArray(frameStore.interest(connectionId)))
     val helloText = hello.toString()
     telemetry.record(NativeTelemetryMetric(
       "sync.hello_sent",
@@ -112,6 +115,7 @@ internal class NativeProtocolEngine(
       resetTransport("native_hello_failed")
       return
     }
+    helloSent = true
     startKeepalive()
   }
 
@@ -119,6 +123,7 @@ internal class NativeProtocolEngine(
   fun onSocketClosed(message: String = "Connection interrupted") {
     companionTransport = "backoff"
     appServer = "unknown"
+    helloSent = false
     stopKeepalive()
     flushIngressTelemetry()
     flushJournalFrames()
@@ -133,6 +138,7 @@ internal class NativeProtocolEngine(
 
   @Synchronized
   fun close(message: String = "Connection session closed") {
+    helloSent = false
     stopKeepalive()
     flushJournalFrames()
     upstreamLive = false
@@ -189,6 +195,7 @@ internal class NativeProtocolEngine(
       "hello" -> handleHello(envelope, frameBytes)
       "rpc" -> resolveRpc(envelope.optJSONObject("response"), frameBytes)
       "event" -> handleEvent(envelope, text, frameBytes)
+      "advance" -> handleAdvance(envelope, frameBytes)
       "caughtUp" -> handleCaughtUp(envelope, frameBytes)
       "serverResponseAccepted" -> resolveServerResponse(envelope, true)
       "serverResponseRejected" -> resolveServerResponse(envelope, false)
@@ -226,6 +233,35 @@ internal class NativeProtocolEngine(
     val subscription = liveSubscription ?: return false
     if (subscription.channelId != channelId) return false
     return sendFrame(JSONObject().put("type", "liveUnsubscribe").put("channelId", channelId).toString())
+  }
+
+  /**
+   * Replaces this connection's interest set. The set is persisted before the
+   * wire frame so a closed socket declares it in the next `hello`; an open
+   * socket receives only the difference as `interest { add, remove }`.
+   */
+  @Synchronized
+  fun replaceInterest(threadIds: List<String>) {
+    NativeSyncInterest.requireValid(threadIds)
+    val next = LinkedHashSet(threadIds)
+    val previous = frameStore.interest(connectionId).toSet()
+    val add = next.filterNot(previous::contains)
+    val remove = previous.filterNot(next::contains)
+    if (add.isEmpty() && remove.isEmpty()) return
+    frameStore.storeInterest(connectionId, next)
+    if (!helloSent) return
+    val frame = JSONObject().put("type", "interest")
+    if (add.isNotEmpty()) frame.put("add", JSONArray(add))
+    if (remove.isNotEmpty()) frame.put("remove", JSONArray(remove))
+    telemetry.record(NativeTelemetryMetric(
+      "sync.interest_sent",
+      values = mapOf("added" to add.size, "removed" to remove.size, "interestSize" to next.size),
+    ))
+    if (!sendFrame(frame.toString())) {
+      // The set is already persisted; the replacement socket declares it in hello.
+      helloSent = false
+      resetTransport("interest_send_failed")
+    }
   }
 
   private fun handleLiveSubscribed(envelope: JSONObject) {
@@ -520,8 +556,9 @@ internal class NativeProtocolEngine(
 
   private fun handleEvent(envelope: JSONObject, text: String, frameBytes: Int) {
     val cursor = envelope.optLong("cursor", -1L)
+    val afterCursor = deliveryAfterCursor(envelope, cursor)
     val payload = envelope.optJSONObject("payload")
-    if (cursor < 0L || payload == null) {
+    if (cursor < 0L || afterCursor == null || payload == null) {
       resetTransport("invalid_event")
       return
     }
@@ -533,11 +570,35 @@ internal class NativeProtocolEngine(
     }
     val method = payload.optString("method")
     queueJournalFrame(
-      IncomingJournalFrame(cursor, text, payload.takeIf(NativeFrameStore::changesPendingRequests)),
+      IncomingJournalEntry.Event(cursor, afterCursor, text, payload.takeIf(NativeFrameStore::changesPendingRequests)),
       frameBytes,
       ProjectionBatchPolicy.shouldFlushImmediately(method),
       ProjectionBatchPolicy.flushDelayMs(method),
     )
+  }
+
+  private fun handleAdvance(envelope: JSONObject, frameBytes: Int) {
+    val cursor = envelope.optLong("cursor", -1L)
+    val afterCursor = deliveryAfterCursor(envelope, cursor)
+    if (cursor < 0L || afterCursor == null) {
+      resetTransport("invalid_advance")
+      return
+    }
+    maximumObservedCursor = maxOf(maximumObservedCursor, cursor)
+    queueJournalFrame(
+      IncomingJournalEntry.Advance(cursor, afterCursor),
+      frameBytes,
+      false,
+      ProjectionBatchPolicy.NORMAL_FLUSH_DELAY_MS,
+    )
+  }
+
+  /** `afterCursor` is required on every delivery; a non-integer or non-preceding value is invalid. */
+  private fun deliveryAfterCursor(envelope: JSONObject, cursor: Long): Long? {
+    val raw = envelope.opt("afterCursor") as? Number ?: return null
+    val afterCursor = raw.toLong()
+    if (raw.toDouble() != afterCursor.toDouble() || afterCursor < 0L || afterCursor >= cursor) return null
+    return afterCursor
   }
 
   private fun handleCaughtUp(envelope: JSONObject, frameBytes: Int) {
@@ -734,7 +795,7 @@ internal class NativeProtocolEngine(
   }
 
   @Synchronized
-  private fun queueJournalFrame(frame: IncomingJournalFrame, bytes: Int, flushImmediately: Boolean, flushDelayMs: Long) {
+  private fun queueJournalFrame(frame: IncomingJournalEntry, bytes: Int, flushImmediately: Boolean, flushDelayMs: Long) {
     if (journalFrames.isNotEmpty() && (journalFrames.size >= MAX_JOURNAL_BATCH || journalBytes + bytes > MAX_JOURNAL_BYTES)) {
       flushJournalFrames()
     }
@@ -778,7 +839,9 @@ internal class NativeProtocolEngine(
       JournalAppendStatus.NON_CONTIGUOUS -> resetTransport("non_contiguous_sync_cursor")
       JournalAppendStatus.COMMITTED -> {
         result.acknowledgedCursor?.let(::acknowledge)
-        result.frames.lastOrNull()?.cursor?.let {
+        // A frame-less advance still moves the stored cursor: the JS drain
+        // reads it as a closed skipped range and acknowledges it.
+        result.committedCursor?.let {
           emitJournalAdvanced(
             it,
             recovery = false,
@@ -788,7 +851,7 @@ internal class NativeProtocolEngine(
             storage = frameStore.storageStats(),
           )
         }
-        if (result.frames.isNotEmpty() && batch.any { it.pendingRequestPayload != null }) {
+        if (result.frames.isNotEmpty() && batch.any { it is IncomingJournalEntry.Event && it.pendingRequestPayload != null }) {
           CodeWideModule.emitEngineEvent(connectionId, "pendingRequests", frameStore.pendingRequestsJson(connectionId), null)
         }
       }

@@ -42,16 +42,6 @@ history and the tracked/untracked non-ignored working tree. The verified binary
 is cached outside the repository; set `CODEWIDE_GITLEAKS_BIN` to use an existing
 installation instead.
 
-Run the logical multi-server recovery soak (24 hours by default):
-
-```sh
-pnpm soak:sync
-```
-
-It writes a private mode-`0600` progress/result artifact under
-`test-results/soak/`. This exercises replay, network drops and JS runtime
-recreation; it does not replace the physical Android Doze/device gate.
-
 Run the UI in a browser during renderer development:
 
 ```sh

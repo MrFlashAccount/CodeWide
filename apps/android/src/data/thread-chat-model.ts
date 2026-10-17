@@ -118,6 +118,13 @@ function clearResourceTimers(resource: ThreadChatResourceRecord | undefined): vo
 
 export type ThreadChatModelOptions = {
   onEvictWindow?: (connectionId: string, threadId: string) => void;
+  /**
+   * Interest membership changed for one thread. A thread is interesting while
+   * it is the resident resource scope or any owner retains its window; the
+   * loss is published at the settled release point, so a re-retain inside
+   * that deferral keeps the subscription.
+   */
+  onInterestChange?: (connectionId: string, threadId: string, interested: boolean) => void;
   onResidentRowCountChange?: (rowCount: number) => void;
   onRetainWindow?: (connectionId: string, threadId: string) => () => void;
 };
@@ -137,6 +144,8 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   const windowLayoutSignatures = new Map<string, string>();
   const changedRowIdsByScope = new Map<string, Set<string>>();
   const resources = new Map<string, ThreadChatResourceRecord>();
+  // The only record of which mounted scopes want live thread content.
+  const interestScopes = new Map<string, { connectionId: string; threadId: string }>();
   let closed = false;
   let reportedResidentRowCount = -1;
   // Only this owner installs, deletes or evicts row values. Metadata updates
@@ -182,6 +191,27 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     return node;
   };
 
+  const reconcileInterest = (scope: string, connectionId: string, threadId: string): void => {
+    const interested =
+      !closed && (scope === residentResourceScope || (retainCounts.get(scope) ?? 0) > 0);
+    if (interested === interestScopes.has(scope)) {
+      return;
+    }
+    if (interested) {
+      interestScopes.set(scope, { connectionId, threadId });
+    } else {
+      interestScopes.delete(scope);
+    }
+    options.onInterestChange?.(connectionId, threadId, interested);
+  };
+
+  const reconcileInterestScope = (scope: string): void => {
+    const identity = interestScopes.get(scope);
+    if (identity !== undefined) {
+      reconcileInterest(scope, identity.connectionId, identity.threadId);
+    }
+  };
+
   const evictWindow = (scope: string): void => {
     const identity = windowIdentities.get(scope);
     const resource = resources.get(scope);
@@ -200,6 +230,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   };
 
   const evictReleasedWindow = (scope: string): void => {
+    reconcileInterestScope(scope);
     if (closed || scope === residentResourceScope || (retainCounts.get(scope) ?? 0) > 0) {
       return;
     }
@@ -233,6 +264,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     }
     const scope = threadChatScope(connectionId, threadId);
     retainCounts.set(scope, (retainCounts.get(scope) ?? 0) + 1);
+    reconcileInterest(scope, connectionId, threadId);
     let retained = true;
     return () => {
       if (!retained) {
@@ -545,6 +577,10 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     close() {
       residentResourceScope = null;
       closed = true;
+      // Deleting the visited entry keeps Map iteration well defined.
+      for (const scope of interestScopes.keys()) {
+        reconcileInterestScope(scope);
+      }
       for (const resource of resources.values()) {
         clearResourceTimers(resource);
       }
@@ -572,6 +608,14 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         residentResourceScope.startsWith(`${connectionId}\u0000`)
       ) {
         residentResourceScope = null;
+      }
+      // A forgotten connection has no socket to subscribe, even while a
+      // component still holds its retain.
+      for (const [scope, identity] of interestScopes) {
+        if (identity.connectionId === connectionId) {
+          interestScopes.delete(scope);
+          options.onInterestChange?.(identity.connectionId, identity.threadId, false);
+        }
       }
       pruneUnreferencedRows();
     },
@@ -722,7 +766,16 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
           windowNodes.set(scope, resident);
         }
       }
+      const previousResidentScope = residentResourceScope;
       residentResourceScope = scope;
+      reconcileInterest(scope, request.connectionId, request.threadId);
+      if (previousResidentScope !== null && previousResidentScope !== scope) {
+        // The former route resource keeps its subscription through the same
+        // transient handoff that protects its window from eviction.
+        queueMicrotask(() => {
+          reconcileInterestScope(previousResidentScope);
+        });
+      }
       const requestKey = threadChatRequestKey(request);
       let record = resources.get(scope);
       if (record === undefined) {

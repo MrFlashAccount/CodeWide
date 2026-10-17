@@ -205,7 +205,8 @@ class CodexConnectionService : Service() {
     if (existing != null && existing.endpoint == endpoint && existing.token == token && existing.tlsPinSha256 == tlsPinSha256 && existing.relay == relay) {
       // Attaching a recreated React runtime must not cancel the service-owned
       // socket. Replay the latest protocol checkpoint and durable event tail so
-      // the new SyncSession can resume immediately on the existing transport.
+      // the recreated JS runtime's native engine session can resume
+      // immediately on the existing transport.
       existing.attachRuntime()
       return
     }
@@ -386,6 +387,13 @@ class CodexConnectionService : Service() {
 
   fun unsubscribeLive(connectionId: String, channelId: String): Boolean =
     sessions[connectionId]?.unsubscribeLive(channelId) == true
+
+  /** Replaces the connection's interest set; without a session it only persists for the next hello. */
+  fun replaceInterest(connectionId: String, threadIds: List<String>) {
+    val session = sessions[connectionId]
+    if (session == null) NativeSyncInterest.storeWithoutSession(frameStore, connectionId, threadIds)
+    else session.replaceInterest(threadIds)
+  }
 
   internal fun enqueueCommand(
     connectionId: String,
@@ -974,6 +982,8 @@ class CodexConnectionService : Service() {
 
     fun unsubscribeLive(channelId: String): Boolean =
       !closed && protocolEngine.unsubscribeLive(channelId)
+
+    fun replaceInterest(threadIds: List<String>) = protocolEngine.replaceInterest(threadIds)
 
     fun drainOutbox() {
       if (closed || outboxDrainRunning || !protocolEngine.isLive()) return

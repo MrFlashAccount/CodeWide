@@ -25,6 +25,7 @@ import { recordThreadHistoryTelemetry } from "./thread-history-telemetry";
 import { THREAD_RESIDENT_TURN_LIMIT } from "./thread-pagination";
 import { createThreadSyncForeground } from "./thread-sync-foreground";
 import { createThreadSyncHistory } from "./thread-sync-history";
+import { createThreadInterestPort } from "./threadSyncInterest";
 import { createThreadSyncItems } from "./thread-sync-items";
 import type { ThreadSyncAuthority, ThreadWindow } from "./thread-sync-types";
 
@@ -32,6 +33,7 @@ const RESOLVED_VOID_PROMISE = Promise.resolve();
 /** Retains shared source authority, read serialization and desired live observation. */
 export function createThreadSyncRuntime({
   clearInvalidationArchived,
+  declareInterest,
   getDetails,
   getSession,
   getSummaries,
@@ -43,6 +45,10 @@ export function createThreadSyncRuntime({
   transferAccess,
 }: ThreadSyncAuthority) {
   const threadSyncLane = new ThreadSyncLane<ThreadWindow | null>();
+  // Single owner of the desired interest set. A read with a session awaits
+  // the declaration containing its thread; a fresh engine session declares
+  // the owner's set as its baseline.
+  const interest = createThreadInterestPort(declareInterest);
   const historyReadAuthority = new ThreadHistoryReadAuthority();
   const threadObserverDesired = new Map<string, string>();
   const retainedObservers = new Map<string, { owners: number; threadId: string }>();
@@ -116,6 +122,11 @@ export function createThreadSyncRuntime({
           let response: ThreadSyncResponse;
           let rawResponse: unknown;
           let materialized;
+          // The interest add precedes companion/thread/sync on the same socket,
+          // so every delta above the sync fence is delivered. This also
+          // redeclares a set rejected before the engine existed, on every
+          // activation, reconnect and foreground repair read.
+          await interest.declared(connectionId, threadId);
           for (;;) {
             rawResponse = await rpcAfterAttach<unknown>(session, "companion/thread/sync", {
               afterTurnId,
@@ -315,6 +326,7 @@ export function createThreadSyncRuntime({
     bindForegroundRepair,
     desiredThreadId,
     forgetObservedThread,
+    interest,
     invalidateHistoryReads,
     loadNewerTurns,
     loadOlderTurns,

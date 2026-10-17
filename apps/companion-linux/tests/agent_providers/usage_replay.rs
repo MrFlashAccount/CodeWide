@@ -55,6 +55,20 @@ async fn provider_context_prices_live_events_and_reconnect_replay() -> TestResul
         )
     }));
     let thread_id = AppThreadId::parse(&harness.new_fake_thread().await?).ok_or("thread id")?;
+    // Usage is a thread topic: the device mounts the thread's window first.
+    // The sync answer orders the inline interest frame before the events.
+    send_json(
+        &mut harness.client,
+        &json!({"type": "interest", "add": [thread_id.as_str()]}),
+    )
+    .await?;
+    harness
+        .rpc(
+            "window",
+            "companion/thread/sync",
+            json!({"threadId": thread_id.as_str(), "afterTurnId": null, "limit": 36}),
+        )
+        .await?;
     let last = TokenUsage {
         input_tokens: 1000,
         cached_input_tokens: 0,
@@ -112,7 +126,7 @@ async fn provider_context_prices_live_events_and_reconnect_replay() -> TestResul
         send_json(
             &mut client,
             &json!({"type": "hello", "protocolVersion": 1,
-            "cursor": started["cursor"]}),
+            "cursor": started["cursor"], "interest": [thread_id.as_str()]}),
         )
         .await?;
         let replayed = event(&mut client, "thread/tokenUsage/updated").await?;

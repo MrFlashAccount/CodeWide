@@ -1,17 +1,69 @@
 //! Reconstructs delivered events using the thread's durable provider context.
 //! Pricing belongs to that provider; native storage only adds catalog metadata.
+//! Page delivery sends the projected events through the socket's interest.
 
 use std::sync::Arc;
 
 use agent_core::usage::{UsagePricing, price_replay_payload};
 use serde_json::Value;
 
-use crate::agent::{
-    bindings::BindingStore,
-    model::{AppThreadId, Capability},
-    provider::NativeSurface,
-    registry::ProviderRegistry,
+use super::{
+    SessionSocket,
+    interest::{ReplayDelivery, SharedInterest, lock_interest},
+    send_json,
 };
+use crate::{
+    agent::{
+        bindings::BindingStore,
+        model::{AppThreadId, Capability},
+        provider::NativeSurface,
+        registry::ProviderRegistry,
+    },
+    store::ReplayPage,
+};
+
+/// Why one replay page could not be delivered: the journal entry could not be
+/// decoded or projected, or the socket is gone.
+pub(super) enum ReplayDeliveryError {
+    Journal,
+    Socket,
+}
+
+/// Sends one replay page through the socket's interest and returns the socket
+/// position afterwards (the page head). Shared by the hello replay, the
+/// post-snapshot replay and the live task so the predicate and the
+/// `afterCursor` chain exist once. The interest snapshot is taken after the
+/// page was read: an `interest add` applied later has a
+/// `companion/thread/sync` fence at or past this page's head.
+pub(super) async fn deliver_replay_page(
+    socket: &SessionSocket,
+    projector: &ReplayProjector,
+    interest: &SharedInterest,
+    position: u64,
+    page: ReplayPage,
+) -> Result<u64, ReplayDeliveryError> {
+    let mut delivery = ReplayDelivery::new(&lock_interest(interest), position);
+    for (cursor, payload) in page.entries {
+        let payload =
+            serde_json::from_slice::<Value>(&payload).map_err(|_| ReplayDeliveryError::Journal)?;
+        if !delivery.delivers(&payload) {
+            continue;
+        }
+        let payload = projector
+            .project(payload)
+            .await
+            .map_err(|_| ReplayDeliveryError::Journal)?;
+        send_json(socket, &delivery.event_frame(cursor, payload))
+            .await
+            .map_err(|_| ReplayDeliveryError::Socket)?;
+    }
+    if let Some(advance) = delivery.advance_frame(page.head_cursor) {
+        send_json(socket, &advance)
+            .await
+            .map_err(|_| ReplayDeliveryError::Socket)?;
+    }
+    Ok(delivery.position())
+}
 
 pub(super) struct ReplayProjector {
     registry: Arc<ProviderRegistry>,

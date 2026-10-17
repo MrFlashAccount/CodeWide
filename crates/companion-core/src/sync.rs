@@ -51,17 +51,25 @@ use crate::{
         reject_oversized_dynamic_tool_requests, remove_server_request,
         retry_oversized_dynamic_tool_rejections, rpc_id_key,
     },
+    thread_preview::ThreadPreviewTracker,
     thread_view::ThreadViewService,
     workspaces::WorkspaceService,
 };
 
+pub mod interest;
 mod outbox;
 mod outbox_state;
+#[cfg(test)]
+mod preview_journal_tests;
 mod provider_rpc;
 mod queue;
 mod replay;
 mod search_routing;
 
+use interest::{
+    INTEREST_CLOSE_CODE, INTEREST_FIELD, SharedInterest, accept_hello_interest,
+    apply_interest_frame,
+};
 use outbox::{PumpContext, reconcile_direct_turn_start, run_outbox_pump};
 #[cfg(test)]
 use outbox_state::turn_with_client_message;
@@ -71,7 +79,7 @@ use outbox_state::{
 };
 use provider_rpc::{RpcResultObservers, forward_rpc_response};
 use queue::{queue_changed_thread_id, queue_command, queue_rpc};
-use replay::ReplayProjector;
+use replay::{ReplayDeliveryError, ReplayProjector, deliver_replay_page};
 
 /// `companion/thread/sync` of a thread that does not exist (deleted, or never
 /// known here): the client forgets the thread instead of retrying.
@@ -191,6 +199,7 @@ struct IngestContext {
 }
 
 struct InitialSession {
+    interest: SharedInterest,
     port_inventory: bool,
     ready: bool,
     snapshot_cursor: Option<u64>,
@@ -390,6 +399,7 @@ fn spawn_live_replay_task(
     replay: Arc<ReplayProjector>,
     socket: SessionSocket,
     store: Arc<IndexStore>,
+    interest: SharedInterest,
     mut events: tokio::sync::broadcast::Receiver<DurableSignal>,
     mut delivered_cursor: u64,
     task_failed: tokio::sync::mpsc::UnboundedSender<()>,
@@ -401,9 +411,14 @@ fn spawn_live_replay_task(
                     if head <= delivered_cursor {
                         continue;
                     }
-                    let result =
-                        send_live_replay_after(&socket, store.clone(), delivered_cursor, &replay)
-                            .await;
+                    let result = send_live_replay_after(
+                        &socket,
+                        store.clone(),
+                        &interest,
+                        delivered_cursor,
+                        &replay,
+                    )
+                    .await;
                     if matches!(result, Err(LiveReplayError::SnapshotRequired)) {
                         warn!(
                             delivered_cursor,
@@ -415,7 +430,14 @@ fn spawn_live_replay_task(
                 Ok(DurableSignal::Failed) => Err(LiveReplayError::Journal),
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                     debug!(skipped, "sync client coalesced live wake-up signals");
-                    send_live_replay_after(&socket, store.clone(), delivered_cursor, &replay).await
+                    send_live_replay_after(
+                        &socket,
+                        store.clone(),
+                        &interest,
+                        delivered_cursor,
+                        &replay,
+                    )
+                    .await
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
@@ -887,6 +909,13 @@ impl SyncHub {
             close_with(socket, 1008, "hello_required").await;
             return None;
         }
+        let interest = match accept_hello_interest(&hello) {
+            Ok(interest) => interest,
+            Err(rejection) => {
+                close_with(socket, INTEREST_CLOSE_CODE, rejection.reason()).await;
+                return None;
+            }
+        };
         let cursor = hello.get("cursor").and_then(Value::as_u64);
         let store = self.store.clone();
         let Ok(Ok(replay)) = tokio::task::spawn_blocking(move || store.replay_after(cursor)).await
@@ -933,25 +962,16 @@ impl SyncHub {
         }
 
         let mut ready = false;
-        if !snapshot_required {
-            for (cursor, payload) in replay.entries {
-                let payload = match serde_json::from_slice::<Value>(&payload) {
-                    Ok(payload) => self.replay.project(payload).await,
-                    Err(error) => Err(error.to_string()),
-                };
-                let Ok(payload) = payload else {
+        // A null cursor always requires a snapshot, so a replayed page starts
+        // at the client's own cursor: the position is defined.
+        if let Some(position) = cursor.filter(|_| !snapshot_required) {
+            match deliver_replay_page(socket, &self.replay, &interest, position, replay).await {
+                Ok(_) => {}
+                Err(ReplayDeliveryError::Journal) => {
                     close_with(socket, 1011, "replay_journal_failed").await;
                     return None;
-                };
-                if send_json(
-                    socket,
-                    &json!({ "type": "event", "cursor": cursor, "payload": payload }),
-                )
-                .await
-                .is_err()
-                {
-                    return None;
                 }
+                Err(ReplayDeliveryError::Socket) => return None,
             }
             ready = true;
             if send_json(socket, &json!({ "type": "caughtUp", "cursor": head }))
@@ -964,6 +984,7 @@ impl SyncHub {
         }
 
         Some(InitialSession {
+            interest,
             port_inventory: hello.get("portInventory").and_then(Value::as_bool) == Some(true),
             ready,
             snapshot_cursor: snapshot_required.then_some(head),
@@ -983,6 +1004,7 @@ impl SyncHub {
         mut authorization_changes: Option<tokio::sync::broadcast::Receiver<AuthorizationChange>>,
     ) {
         let mut snapshot_cursor = session.snapshot_cursor;
+        let interest = session.interest.clone();
         let mut port_inventory = if session.port_inventory {
             self.port_inventory
                 .as_ref()
@@ -1016,6 +1038,7 @@ impl SyncHub {
                 self.replay.clone(),
                 socket.clone(),
                 self.store.clone(),
+                interest.clone(),
                 events,
                 session.delivered_cursor,
                 task_failed_tx.clone(),
@@ -1097,24 +1120,14 @@ impl SyncHub {
                                         snapshot_started_at = Some(Instant::now());
                                         continue;
                                     }
-                                    for (cursor, payload) in replay.entries {
-                                        let payload = match serde_json::from_slice::<Value>(&payload) {
-                                            Ok(payload) => self.replay.project(payload).await,
-                                            Err(error) => Err(error.to_string()),
-                                        };
-                                        let Ok(payload) = payload else {
+                                    // The position is defined now: the accepted snapshot cursor.
+                                    match deliver_replay_page(&socket, &self.replay, &interest, applied_cursor, replay).await {
+                                        Ok(_) => {}
+                                        Err(ReplayDeliveryError::Journal) => {
                                             close_with(&socket, 1011, "replay_journal_failed").await;
                                             break 'session;
-                                        };
-                                        if send_json(
-                                            &socket,
-                                            &json!({ "type": "event", "cursor": cursor, "payload": payload }),
-                                        )
-                                        .await
-                                        .is_err()
-                                        {
-                                            break 'session;
                                         }
+                                        Err(ReplayDeliveryError::Socket) => break 'session,
                                     }
                                     if send_json(&socket, &json!({ "type": "caughtUp", "cursor": head })).await.is_err() { break; }
                                     info!(cursor = head, "sync client caught up");
@@ -1124,9 +1137,10 @@ impl SyncHub {
                                         && let Some(events) = replay_events.take()
                                     {
                                         replay_task = Some(spawn_live_replay_task(
-                            self.replay.clone(),
+                                            self.replay.clone(),
                                             socket.clone(),
                                             self.store.clone(),
+                                            interest.clone(),
                                             events,
                                             head,
                                             task_failed_tx.clone(),
@@ -1134,6 +1148,14 @@ impl SyncHub {
                                     }
                                 }
                                 Some("ack") => {}
+                                Some(INTEREST_FIELD) => {
+                                    // Applied inline, before the next incoming frame is read:
+                                    // an RPC that follows sees the updated set.
+                                    if let Err(rejection) = apply_interest_frame(&interest, &message) {
+                                        close_with(&socket, INTEREST_CLOSE_CODE, rejection.reason()).await;
+                                        break;
+                                    }
+                                }
                                 Some("liveSubscribe" | "liveUnsubscribe") => {
                                     match self.live_channels.handle_control(
                                         &live_owner_id,
@@ -2432,6 +2454,7 @@ async fn send_passthrough_rpc_response(
 async fn send_live_replay_after(
     socket: &SessionSocket,
     store: Arc<IndexStore>,
+    interest: &SharedInterest,
     cursor: u64,
     projector: &ReplayProjector,
 ) -> Result<u64, LiveReplayError> {
@@ -2442,21 +2465,12 @@ async fn send_live_replay_after(
     if replay.snapshot_required {
         return Err(LiveReplayError::SnapshotRequired);
     }
-    for (event_cursor, payload) in replay.entries {
-        let payload =
-            serde_json::from_slice::<Value>(&payload).map_err(|_| LiveReplayError::Journal)?;
-        let payload = projector
-            .project(payload)
-            .await
-            .map_err(|_| LiveReplayError::Journal)?;
-        send_json(
-            socket,
-            &json!({ "type": "event", "cursor": event_cursor, "payload": payload }),
-        )
+    deliver_replay_page(socket, projector, interest, cursor, replay)
         .await
-        .map_err(|_| LiveReplayError::Socket)?;
-    }
-    Ok(replay.head_cursor)
+        .map_err(|error| match error {
+            ReplayDeliveryError::Journal => LiveReplayError::Journal,
+            ReplayDeliveryError::Socket => LiveReplayError::Socket,
+        })
 }
 
 /// One provider's ordered forwarder: observes thread bindings, projects
@@ -2663,6 +2677,7 @@ async fn ingest_events(
 ) {
     let mut stream_diagnostics = AgentStreamDiagnostics::default();
     let mut live_activity = crate::thread_activity::LiveActivityTracker::default();
+    let mut thread_preview = ThreadPreviewTracker::default();
     while let Some(first) = ingest.recv().await {
         let first = match first {
             IngestInput::Payload(payload) => {
@@ -2727,6 +2742,7 @@ async fn ingest_events(
             &context,
             &mut stream_diagnostics,
             &mut live_activity,
+            &mut thread_preview,
             payloads,
         )
         .await
@@ -2861,6 +2877,7 @@ async fn ingest_payload_batch(
     context: &IngestContext,
     stream_diagnostics: &mut AgentStreamDiagnostics,
     live_activity: &mut crate::thread_activity::LiveActivityTracker,
+    thread_preview: &mut ThreadPreviewTracker,
     batch: Vec<(Value, ResourceRoute)>,
 ) -> Result<(), ()> {
     let (mut payloads, without_resources, own_resources) = split_resource_routes(batch);
@@ -2895,8 +2912,14 @@ async fn ingest_payload_batch(
     // deltas can otherwise discard a repeated content reference.
     stream_diagnostics.observe_input_batch(&payloads);
     payloads = coalesce_stream_text_deltas(payloads);
+    // After coalescing, a delta publishes at most one preview; the synthetic
+    // catalog event follows its delta in the same durable batch.
+    let now = Instant::now();
     let mut projected_payloads = Vec::with_capacity(payloads.len());
-    for payload in payloads {
+    for payload in payloads
+        .into_iter()
+        .flat_map(|payload| thread_preview.followed_by_preview(payload, now))
+    {
         projected_payloads.push(project_journal_payload(
             context,
             projector.as_deref(),
@@ -3385,17 +3408,15 @@ mod tests {
     use super::*;
     use crate::store::OutboxPresentation;
 
-    #[tokio::test]
-    async fn durable_fence_resolves_after_every_preceding_payload_is_committed()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let store = Arc::new(IndexStore::open(directory.path().join("fence.redb"))?);
-        let (ingest, receiver) = tokio::sync::mpsc::channel(4);
-        let (signals, _) = tokio::sync::broadcast::channel(4);
-        let (fence, resolved) = tokio::sync::oneshot::channel();
-        let context = IngestContext {
+    /// An ingest context over `store` with no content projector, resources or
+    /// pricing, publishing durable signals to `events`.
+    pub(super) fn ingest_context(
+        store: &Arc<IndexStore>,
+        events: tokio::sync::broadcast::Sender<DurableSignal>,
+    ) -> IngestContext {
+        IngestContext {
             store: store.clone(),
-            events: signals,
+            events,
             server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
             content_projector: Arc::new(std::sync::RwLock::new(None)),
             resources: None,
@@ -3409,7 +3430,18 @@ mod tests {
                 std::collections::HashMap::new(),
                 ProviderId::from_static("codex"),
             ),
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_fence_resolves_after_every_preceding_payload_is_committed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("fence.redb"))?);
+        let (ingest, receiver) = tokio::sync::mpsc::channel(4);
+        let (signals, _) = tokio::sync::broadcast::channel(4);
+        let (fence, resolved) = tokio::sync::oneshot::channel();
+        let context = ingest_context(&store, signals);
         let task = tokio::spawn(ingest_events(receiver, context));
         ingest
             .send(IngestInput::Payload(json!({
@@ -3424,8 +3456,9 @@ mod tests {
             .await?;
         ingest.send(IngestInput::Fence(fence)).await?;
 
-        assert_eq!(resolved.await??, 1);
-        assert_eq!(store.replay_head()?, 1);
+        // The streamed answer journals its delta and its catalog preview.
+        assert_eq!(resolved.await??, 2);
+        assert_eq!(store.replay_head()?, 2);
         drop(ingest);
         task.await?;
         Ok(())
@@ -3439,23 +3472,7 @@ mod tests {
         let (ingest, receiver) = tokio::sync::mpsc::channel(8);
         let (signals, _) = tokio::sync::broadcast::channel(8);
         let (fence, resolved) = tokio::sync::oneshot::channel();
-        let context = IngestContext {
-            store: store.clone(),
-            events: signals,
-            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
-            content_projector: Arc::new(std::sync::RwLock::new(None)),
-            resources: None,
-            usage_projector: Arc::new(std::sync::Mutex::new(
-                crate::usage::LiveUsageProjector::new(
-                    store.clone(),
-                    agent_core::usage::UsagePricing::default(),
-                ),
-            )),
-            user_text: crate::user_message_projection::UserTextCleaners::new(
-                std::collections::HashMap::new(),
-                ProviderId::from_static("codex"),
-            ),
-        };
+        let context = ingest_context(&store, signals);
         let task = tokio::spawn(ingest_events(receiver, context));
         let item = |id: &str| {
             json!({"method": "item/started", "params": {
@@ -3503,23 +3520,7 @@ mod tests {
         let store = Arc::new(IndexStore::open(directory.path().join("history.redb"))?);
         let (ingest, receiver) = tokio::sync::mpsc::channel(4);
         let (signals, mut delivered) = tokio::sync::broadcast::channel(4);
-        let context = IngestContext {
-            store: store.clone(),
-            events: signals,
-            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
-            content_projector: Arc::new(std::sync::RwLock::new(None)),
-            resources: None,
-            usage_projector: Arc::new(std::sync::Mutex::new(
-                crate::usage::LiveUsageProjector::new(
-                    store.clone(),
-                    agent_core::usage::UsagePricing::default(),
-                ),
-            )),
-            user_text: crate::user_message_projection::UserTextCleaners::new(
-                std::collections::HashMap::new(),
-                ProviderId::from_static("codex"),
-            ),
-        };
+        let context = ingest_context(&store, signals);
         let ingest_task = tokio::spawn(ingest_events(receiver, context));
         let (local, local_rx) = tokio::sync::mpsc::channel(4);
         let local_task = tokio::spawn(forward_local_events(local_rx, ingest));
@@ -3560,23 +3561,7 @@ mod tests {
         let store = Arc::new(IndexStore::open(directory.path().join("history.redb"))?);
         let (ingest, receiver) = tokio::sync::mpsc::channel(4);
         let (signals, mut delivered) = tokio::sync::broadcast::channel(4);
-        let context = IngestContext {
-            store: store.clone(),
-            events: signals,
-            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
-            content_projector: Arc::new(std::sync::RwLock::new(None)),
-            resources: None,
-            usage_projector: Arc::new(std::sync::Mutex::new(
-                crate::usage::LiveUsageProjector::new(
-                    store.clone(),
-                    agent_core::usage::UsagePricing::default(),
-                ),
-            )),
-            user_text: crate::user_message_projection::UserTextCleaners::new(
-                std::collections::HashMap::new(),
-                ProviderId::from_static("codex"),
-            ),
-        };
+        let context = ingest_context(&store, signals);
         let ingest_task = tokio::spawn(ingest_events(receiver, context));
         let (local, local_rx) = tokio::sync::mpsc::channel(4);
         let local_task = tokio::spawn(forward_local_events(local_rx, ingest));

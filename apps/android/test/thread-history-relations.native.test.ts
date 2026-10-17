@@ -339,6 +339,16 @@ afterEach(() => {
   platform.database = null;
 });
 
+/**
+ * The conversation under test is open: a mounted window makes the thread part
+ * of the interest set, which is the only way it stays resident in the source.
+ */
+function mountedThreadDetailDatabase(threadId = "thread") {
+  const details = createThreadDetailDatabase();
+  details.chat.retainWindow("server", threadId);
+  return details;
+}
+
 describe("sidebar access paths", () => {
   it("keeps catalog rows across index replacement and orders scoped, global, project and subagent lists without sorting", async () => {
     let storage = createThreadSummarySqlite();
@@ -920,6 +930,8 @@ describe("relational thread history", () => {
         },
       );
       details.setRemoteLoader({
+        ensureInterest: () => undefined,
+        releaseInterest: () => undefined,
         hydrateWindow: async () => undefined,
         reconcilePending: async () => undefined,
         repairProjection: async () => undefined,
@@ -1018,6 +1030,8 @@ describe("relational thread history", () => {
       },
     );
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       hydrateWindow: async () => undefined,
       reconcilePending: async () => undefined,
       repairProjection: async () => undefined,
@@ -1039,7 +1053,7 @@ describe("relational thread history", () => {
   });
 
   it("rejects a response whose authority expires during its SQLite lookup", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot(
       "server",
@@ -1070,7 +1084,7 @@ describe("relational thread history", () => {
   });
 
   it("reconciles overlapping concurrent pages and rejects their obsolete epoch after a tail switch", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.synchronizeThread({
       connectionId: "server",
@@ -1178,7 +1192,7 @@ describe("relational thread history", () => {
   });
 
   it("supersedes pending ranges when a source reset retains the same turn identities", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot(
       "server",
@@ -1234,6 +1248,8 @@ describe("relational thread history", () => {
     const before = visible();
     const storage = createThreadDetailSqlite(() => undefined);
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       hydrateWindow: async () => undefined,
       reconcilePending: async () => undefined,
       repairProjection: async () => undefined,
@@ -1876,6 +1892,8 @@ describe("relational thread history", () => {
       );
     });
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       hydrateWindow: hydration,
       reconcilePending: async () => undefined,
       repairProjection: async () => undefined,

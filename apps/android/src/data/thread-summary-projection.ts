@@ -243,7 +243,11 @@ const METADATA_SUMMARY_PATCHES = new Set([
   "itemUpsert",
 ]);
 
-const HIGH_FREQUENCY_SUMMARY_PATCHES = new Set([
+/**
+ * Patch kinds the summary ignores because Companion delivers them only by
+ * thread interest; must equal `contract/v1.json` `syncInterest.threadTopicKinds`.
+ */
+export const HIGH_FREQUENCY_SUMMARY_PATCHES: ReadonlySet<string> = new Set([
   "itemTextDelta",
   "fileChanges",
   "mcpProgress",

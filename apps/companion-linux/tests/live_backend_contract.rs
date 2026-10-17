@@ -746,7 +746,7 @@ impl SyncClient {
             pending: VecDeque::new(),
         };
         client
-            .send(&json!({"type": "hello", "protocolVersion": 1, "cursor": null}))
+            .send(&json!({"type": "hello", "protocolVersion": 1, "cursor": null, "interest": []}))
             .await?;
         let hello = client.receive_type("hello").await?;
         if hello["snapshotRequired"] != true {

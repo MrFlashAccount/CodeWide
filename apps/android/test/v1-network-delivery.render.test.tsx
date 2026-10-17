@@ -81,7 +81,10 @@ function Conversation({ details }: { details: ReturnType<typeof createThreadDeta
       ? [<Text key={item.id}>{item.text}</Text>] : []) : [])}</View>;
 }
 
-async function setup(resident: boolean) {
+async function setup(
+  resident: boolean,
+  declareInterest: (connectionId: string, threadIds: readonly string[]) => Promise<void> = async () => undefined,
+) {
   const details = createThreadDetailDatabase();
   await details.prepare();
   await details.importThreadSnapshot("server", createV1TestThread("thread", null, 1, resident ? [answer] : []), "initial", null);
@@ -94,7 +97,8 @@ async function setup(resident: boolean) {
     projection: details,
   });
   const sync = createThreadSyncRuntime({
-    clearInvalidationArchived() {}, getDetails: () => details, getSession: () => session,
+    clearInvalidationArchived() {}, declareInterest,
+    getDetails: () => details, getSession: () => session,
     getSummaries: () => null, loadTurnControls: async () => { throw new Error("Not needed"); },
     readInvalidationArchived: () => undefined, refreshSubagents: async () => undefined,
     refreshThreadCatalog: async () => undefined,
@@ -137,6 +141,30 @@ beforeEach(() => {
     result: method === "companion/thread/sync" ? wireSnapshot(1) : { data: [], nextCursor: null } }));
 });
 afterEach(() => { cleanup(); mockSqlite.close(); jest.useRealTimers(); });
+
+it("declares an interest set rejected before the engine existed ahead of the repair thread sync", async () => {
+  const order: string[] = [];
+  let engineRunning = false;
+  const test = await setup(true, async (_connectionId, threadIds) => {
+    order.push(`interest:${threadIds.join(",")}`);
+    if (!engineRunning) throw new Error("Workspace sync supervisor is not running");
+  });
+  mockNative.engineRpc.mockImplementation(async (_id, method) => {
+    order.push(method);
+    return JSON.stringify({ ok: true, result: method === "companion/thread/sync" ? wireSnapshot(1) : { data: [], nextCursor: null } });
+  });
+  test.sync.interest.update("server", "thread", true);
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  expect(test.sync.interest.threadIds("server")).toEqual(["thread"]);
+  engineRunning = true;
+  // The reconnect and foreground repair path: an authoritative read without a window.
+  await test.sync.readThread("server", "thread", undefined, true);
+  // The rejected declaration, its retry, then the sync that the retry fences.
+  expect(order.slice(0, order.indexOf("companion/thread/sync") + 1)).toEqual([
+    "interest:thread", "interest:thread", "companion/thread/sync",
+  ]);
+  await test.close();
+});
 
 it("repairs an incoming frame with Companion v3, publishes text, ACKs only after projection and reopens", async () => {
   const test = await setup(false);

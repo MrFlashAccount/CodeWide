@@ -37,6 +37,7 @@ pub mod terminal;
 pub mod thread_activity;
 pub mod thread_patch;
 mod thread_pins;
+pub mod thread_preview;
 pub mod thread_view;
 pub mod tunnels;
 pub mod usage;
