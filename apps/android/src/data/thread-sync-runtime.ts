@@ -45,7 +45,8 @@ export function createThreadSyncRuntime({
   transferAccess,
 }: ThreadSyncAuthority) {
   const threadSyncLane = new ThreadSyncLane<ThreadWindow | null>();
-  // Session interest port: window hydration awaits it, readThread never does.
+  // Session interest port: window hydration with a session awaits it,
+  // readThread never does.
   const interest = createThreadInterestPort(declareInterest);
   const historyReadAuthority = new ThreadHistoryReadAuthority();
   const threadObserverDesired = new Map<string, string>();
@@ -319,6 +320,7 @@ export function createThreadSyncRuntime({
     bindForegroundRepair,
     desiredThreadId,
     forgetObservedThread,
+    hasSession: (connectionId: string): boolean => getSession(connectionId) !== undefined,
     interest,
     invalidateHistoryReads,
     loadNewerTurns,

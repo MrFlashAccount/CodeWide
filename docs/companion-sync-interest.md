@@ -67,8 +67,12 @@ Contract sections in `crates/companion-core/contract/v1.json`:
   `kind: threadPreview`, `publishIntervalMs: 1500`, `maxTextChars: 2000`.
 - `threadProjectionPatch.operations` gains the `threadPreview` operation.
 
-Extending `threadTopicKinds` is a contract change verified by
-`apps/companion-linux/tests/v1_contract.rs`, never a local edit on one side.
+Extending `threadTopicKinds` is a contract change, never a local edit on one
+side. `apps/companion-linux/tests/v1_contract.rs` checks the section against
+the Rust predicate and limits, `apps/android/test/sync-interest-contract.test.ts`
+checks it against the device high-frequency kinds and `NativeSyncInterest`
+limits, and `apps/companion-linux/tests/sync_interest.rs` exercises the
+resulting `/v1/sync` delivery end to end.
 Wire fixtures stay with the sync-wire owners (`contract/v1.json`, the Rust
 contract and transport tests, Android literal vectors); nothing is added to
 `packages/agent-protocol`.
@@ -239,8 +243,9 @@ working range.
 - Android native: `NativeSyncInterest` (`NativeSyncInterest.kt`) is the single
   device owner of the interest limits: it validates every set before it is
   persisted or sent, both through `NativeProtocolEngine` on a live session and
-  through `CodexConnectionService` persisting a set for a connection without a
-  session. `NativeProtocolEngine` owns `hello.interest`, `interest`, `advance`
+  through `NativeSyncInterest.storeWithoutSession`, which persists a set for a
+  connection without a session; `CodexConnectionService.replaceInterest` only
+  routes to one of the two. `NativeProtocolEngine` owns `hello.interest`, `interest`, `advance`
   and persistence; `NativeFrameStore` owns the acceptance rule and the column;
   `CodeWideModule` is only the bridge.
 - `apps/android/test/sync-interest-contract.test.ts` mirrors

@@ -205,7 +205,8 @@ class CodexConnectionService : Service() {
     if (existing != null && existing.endpoint == endpoint && existing.token == token && existing.tlsPinSha256 == tlsPinSha256 && existing.relay == relay) {
       // Attaching a recreated React runtime must not cancel the service-owned
       // socket. Replay the latest protocol checkpoint and durable event tail so
-      // the new SyncSession can resume immediately on the existing transport.
+      // the recreated JS runtime's native engine session can resume
+      // immediately on the existing transport.
       existing.attachRuntime()
       return
     }

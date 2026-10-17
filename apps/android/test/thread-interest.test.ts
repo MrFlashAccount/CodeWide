@@ -167,7 +167,9 @@ describe("thread sync remote loader", () => {
     });
     // WHY: The loader reads only these runtime members on the tested paths.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const sync = { interest, readThread } as unknown as ReturnType<typeof createThreadSyncRuntime>;
+    const sync = { hasSession: () => true, interest, readThread } as unknown as ReturnType<
+      typeof createThreadSyncRuntime
+    >;
     // WHY: hydrateWindow does not touch the detail database.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const loader = createThreadSyncRemoteLoader({} as ThreadDetailDatabase, sync);
@@ -185,6 +187,59 @@ describe("thread sync remote loader", () => {
     declaration.resolve();
     await hydration;
     expect(order).toEqual(["declare:a", "declared", "thread/sync"]);
+  });
+
+  it("serves a cached window without a session even when the declaration rejects", async () => {
+    const order: string[] = [];
+    const declare = vi.fn(async (_connectionId: string, threadIds: readonly string[]) => {
+      order.push(`declare:${threadIds.join(",")}`);
+    });
+    const records: LogRecord[] = [];
+    const interest = createThreadInterestPort(
+      declare,
+      createLogger((record) => {
+        records.push(record);
+      }),
+    );
+    let session = false;
+    const readThread = vi.fn(async () => {
+      order.push("readThread");
+      return null;
+    });
+    // WHY: The loader reads only these runtime members on the tested paths.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const sync = { hasSession: () => session, interest, readThread } as unknown as ReturnType<
+      typeof createThreadSyncRuntime
+    >;
+    // WHY: hydrateWindow does not touch the detail database.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const loader = createThreadSyncRemoteLoader({} as ThreadDetailDatabase, sync);
+    const hydrate = async () =>
+      loader.hydrateWindow({
+        cachedThread: null,
+        reason: "activation",
+        request: { anchorTurnId: null, connectionId: "server", threadId: "a" },
+        requireAuthoritative: false,
+      });
+
+    // The membership declaration made before any session fails once.
+    declare.mockRejectedValueOnce(new Error("Workspace sync supervisor is not running"));
+    loader.ensureInterest({ connectionId: "server", threadId: "a" });
+    await settle();
+    expect(records).toHaveLength(1);
+    records.length = 0;
+    order.length = 0;
+
+    await expect(hydrate()).resolves.toBeUndefined();
+    await settle();
+    expect(order).toEqual(["readThread"]);
+    expect(records).toEqual([]);
+
+    // Once a session exists, hydration redeclares the failed set before the read.
+    session = true;
+    await hydrate();
+    expect(order).toEqual(["readThread", "declare:a", "readThread"]);
+    expect(records).toEqual([]);
   });
 
   it("repairs a projection without declaring interest", async () => {

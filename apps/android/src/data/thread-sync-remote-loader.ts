@@ -15,7 +15,11 @@ export function createThreadSyncRemoteLoader(
     async hydrateWindow({ cachedThread, reason, request, requireAuthoritative }) {
       // The interest add precedes companion/thread/sync on the same socket,
       // so every delta above the sync fence is delivered to this window.
-      await sync.interest.declared(request.connectionId, request.threadId);
+      // Without a session the read serves the cache and sends no sync, so it
+      // must not fail on a declaration; the session's baseline declares later.
+      if (sync.hasSession(request.connectionId)) {
+        await sync.interest.declared(request.connectionId, request.threadId);
+      }
       await sync.readThread(
         request.connectionId,
         request.threadId,
