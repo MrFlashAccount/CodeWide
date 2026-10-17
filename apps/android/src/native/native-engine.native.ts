@@ -782,14 +782,15 @@ export class NativeEngineSupervisor {
     | undefined;
   readonly #sessions = new Map<string, NativeEngineSession>();
   readonly #fingerprints = new Map<string, string>();
-  // Last interest set declared per connection, re-declared once per session
-  // so a fresh runtime replaces the set persisted by its predecessor.
-  readonly #interest = new Map<string, readonly string[]>();
+  // The JS desired set is declared once per session so a fresh runtime
+  // replaces the set persisted by its predecessor.
+  readonly #desiredInterest: (connectionId: string) => readonly string[];
   readonly #interestBaselines = new WeakSet<NativeEngineSession>();
   readonly #subscription: { remove: () => void } | null;
 
   constructor(options: NativeEngineSupervisorOptions) {
     this.#connectionState = options.connectionState;
+    this.#desiredInterest = options.desiredInterest;
     this.#projection = options.projection;
     this.#onPendingRequests = options.onPendingRequests;
     this.#onOutboxChange = options.onOutboxChange;
@@ -856,7 +857,7 @@ export class NativeEngineSupervisor {
     }
     this.#interestBaselines.add(session);
     const { connectionId } = session;
-    this.interest(connectionId, this.#interest.get(connectionId) ?? []).catch((error: unknown) => {
+    this.interest(connectionId, this.#desiredInterest(connectionId)).catch((error: unknown) => {
       this.#interestBaselines.delete(session);
       appLogger.warnCaught({
         error,
@@ -930,7 +931,6 @@ export class NativeEngineSupervisor {
     if (bridge === undefined) {
       throw new Error("Native thread interest is unavailable");
     }
-    this.#interest.set(connectionId, threadIds);
     await bridge.engineInterest(connectionId, JSON.stringify(threadIds));
   }
 

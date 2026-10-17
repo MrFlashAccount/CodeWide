@@ -23,6 +23,7 @@ vi.mock("react-native", () => ({
   Platform: { OS: "android" },
 }));
 
+import { createThreadInterestPort } from "../src/data/threadSyncInterest";
 import { NativeEngineSupervisor } from "../src/native/native-engine.native";
 
 const supervisors: NativeEngineSupervisor[] = [];
@@ -31,9 +32,10 @@ const settle = async () =>
     setTimeout(resolve, 0);
   });
 
-function setup() {
+function setup(desiredInterest: (connectionId: string) => readonly string[] = () => []) {
   const supervisor = new NativeEngineSupervisor({
     connectionState: { setConnectionState: () => undefined },
+    desiredInterest,
     projection: {
       applyEvents: async () => ({ checkpoint: Promise.resolve(), threads: new Map() }),
       applySnapshot: async () => undefined,
@@ -84,27 +86,36 @@ describe("native interest baseline", () => {
     expect(declared()).toEqual([["server", []]]);
   });
 
-  it("redeclares the last JS-known set on the first state event only", async () => {
-    const test = setup();
-    await test.supervisor.interest("server", ["a", "b"]);
+  it("declares the JS-owned set, including changes made before the supervisor existed", async () => {
+    let supervisor: NativeEngineSupervisor | null = null;
+    const port = createThreadInterestPort(async (connectionId, threadIds) => {
+      if (supervisor === null) {
+        throw new Error("Workspace sync supervisor is not running");
+      }
+      await supervisor.interest(connectionId, threadIds);
+    });
+    port.update("server", "a", true);
+    port.update("server", "b", true);
+    await settle();
+    expect(declared()).toEqual([]);
 
+    const test = setup((connectionId) => port.threadIds(connectionId));
+    supervisor = test.supervisor;
     test.state();
     test.state();
     await settle();
 
-    expect(declared()).toEqual([
-      ["server", ["a", "b"]],
-      ["server", ["a", "b"]],
-    ]);
+    expect(declared()).toEqual([["server", ["a", "b"]]]);
   });
 
-  it("retries a rejected baseline on the next state event", async () => {
-    const test = setup();
-    await test.supervisor.interest("server", ["a"]);
+  it("retries a rejected baseline with the current JS set on the next state event", async () => {
+    let threadIds: readonly string[] = ["a"];
+    const test = setup(() => threadIds);
     native.engineInterest.mockRejectedValueOnce(new Error("Connection service is not running"));
 
     test.state();
     await settle();
+    threadIds = ["a", "b"];
     test.state();
     await settle();
     test.state();
@@ -112,8 +123,7 @@ describe("native interest baseline", () => {
 
     expect(declared()).toEqual([
       ["server", ["a"]],
-      ["server", ["a"]],
-      ["server", ["a"]],
+      ["server", ["a", "b"]],
     ]);
   });
 });

@@ -294,6 +294,7 @@ async function startWorkspaceRuntime(): Promise<void> {
           connectionState.setState(connectionId, state, diagnostic, rpcAvailable);
         },
       },
+      desiredInterest: (connectionId) => workspaceThreadSync.interest.threadIds(connectionId),
       onEvents: (connectionId, events) => {
         globalSupervisorIngress.publishThreadEvents(connectionId, events);
       },

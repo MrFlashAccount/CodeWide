@@ -3,13 +3,17 @@ import { appLogger, type Logger } from "../observability/logger";
 /**
  * Per-connection thread interest declared to the native engine.
  *
- * The chat model decides membership; this owner only turns membership changes
- * into ordered full-set declarations and lets window hydration await the
- * declaration that contains its thread. It never adds a thread by itself.
+ * The chat model decides membership; this owner is the single source of the
+ * desired set. It turns membership changes into ordered full-set declarations,
+ * lets a thread sync await the declaration that contains its thread, and
+ * serves the set a fresh engine session declares as its baseline. It never
+ * adds a thread by itself.
  */
 export type ThreadInterestPort = {
   /** Resolves once the declaration containing `threadId` reached the engine. */
   declared: (connectionId: string, threadId: string) => Promise<void>;
+  /** Snapshot of the connection's desired set for a full-set declaration. */
+  threadIds: (connectionId: string) => readonly string[];
   update: (connectionId: string, threadId: string, interested: boolean) => void;
 };
 
@@ -89,11 +93,16 @@ export function createThreadInterestPort(
       if (current?.threads.has(threadId) !== true) {
         return;
       }
-      // A failed declaration is retried by the hydration that needs it.
+      // A failed declaration, such as one made before the engine existed, is
+      // retried by the thread sync that needs it.
       if (current.failed) {
         startDeclaration(connectionId, current);
       }
       await current.declaration;
+    },
+    threadIds(connectionId) {
+      const current = connections.get(connectionId);
+      return current === undefined ? [] : [...current.threads];
     },
     update(connectionId, threadId, interested) {
       const current = connection(connectionId);

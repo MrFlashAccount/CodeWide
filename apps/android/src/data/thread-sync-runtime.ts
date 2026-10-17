@@ -45,8 +45,9 @@ export function createThreadSyncRuntime({
   transferAccess,
 }: ThreadSyncAuthority) {
   const threadSyncLane = new ThreadSyncLane<ThreadWindow | null>();
-  // Session interest port: window hydration with a session awaits it,
-  // readThread never does.
+  // Single owner of the desired interest set. A read with a session awaits
+  // the declaration containing its thread; a fresh engine session declares
+  // the owner's set as its baseline.
   const interest = createThreadInterestPort(declareInterest);
   const historyReadAuthority = new ThreadHistoryReadAuthority();
   const threadObserverDesired = new Map<string, string>();
@@ -121,6 +122,11 @@ export function createThreadSyncRuntime({
           let response: ThreadSyncResponse;
           let rawResponse: unknown;
           let materialized;
+          // The interest add precedes companion/thread/sync on the same socket,
+          // so every delta above the sync fence is delivered. This also
+          // redeclares a set rejected before the engine existed, on every
+          // activation, reconnect and foreground repair read.
+          await interest.declared(connectionId, threadId);
           for (;;) {
             rawResponse = await rpcAfterAttach<unknown>(session, "companion/thread/sync", {
               afterTurnId,
@@ -320,7 +326,6 @@ export function createThreadSyncRuntime({
     bindForegroundRepair,
     desiredThreadId,
     forgetObservedThread,
-    hasSession: (connectionId: string): boolean => getSession(connectionId) !== undefined,
     interest,
     invalidateHistoryReads,
     loadNewerTurns,

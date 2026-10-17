@@ -152,94 +152,48 @@ describe("thread interest port", () => {
   });
 });
 
+describe("thread interest desired set", () => {
+  it("serves the current set, including changes whose declaration was rejected", async () => {
+    const declare = vi.fn(async () => {
+      throw new Error("Workspace sync supervisor is not running");
+    });
+    // A silent logger keeps the expected rejection out of the test output.
+    const port = createThreadInterestPort(declare, createLogger(() => undefined));
+
+    port.update("server", "a", true);
+    port.update("server", "b", true);
+    port.update("other", "c", true);
+    port.update("server", "a", false);
+    await settle();
+
+    expect(port.threadIds("server")).toEqual(["b"]);
+    expect(port.threadIds("other")).toEqual(["c"]);
+    expect(port.threadIds("unknown")).toEqual([]);
+  });
+});
+
 describe("thread sync remote loader", () => {
-  it("awaits the interest declaration before the authoritative thread sync", async () => {
-    const order: string[] = [];
-    const declaration = deferred();
-    const interest = createThreadInterestPort(async (_connectionId, threadIds) => {
-      order.push(`declare:${threadIds.join(",")}`);
-      await declaration.promise;
-      order.push("declared");
-    });
-    const readThread = vi.fn(async () => {
-      order.push("thread/sync");
-      return null;
-    });
+  it("hydrates a window through readThread, which owns the interest declaration", async () => {
+    const declare = vi.fn(async () => undefined);
+    const readThread = vi.fn(async () => null);
     // WHY: The loader reads only these runtime members on the tested paths.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const sync = { hasSession: () => true, interest, readThread } as unknown as ReturnType<
+    const sync = { interest: createThreadInterestPort(declare), readThread } as unknown as ReturnType<
       typeof createThreadSyncRuntime
     >;
     // WHY: hydrateWindow does not touch the detail database.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const loader = createThreadSyncRemoteLoader({} as ThreadDetailDatabase, sync);
 
-    loader.ensureInterest({ connectionId: "server", threadId: "a" });
-    const hydration = loader.hydrateWindow({
+    await loader.hydrateWindow({
       cachedThread: null,
       reason: "activation",
       request: { anchorTurnId: null, connectionId: "server", threadId: "a" },
       requireAuthoritative: true,
     });
-    await settle();
-    expect(order).toEqual(["declare:a"]);
 
-    declaration.resolve();
-    await hydration;
-    expect(order).toEqual(["declare:a", "declared", "thread/sync"]);
-  });
-
-  it("serves a cached window without a session even when the declaration rejects", async () => {
-    const order: string[] = [];
-    const declare = vi.fn(async (_connectionId: string, threadIds: readonly string[]) => {
-      order.push(`declare:${threadIds.join(",")}`);
-    });
-    const records: LogRecord[] = [];
-    const interest = createThreadInterestPort(
-      declare,
-      createLogger((record) => {
-        records.push(record);
-      }),
-    );
-    let session = false;
-    const readThread = vi.fn(async () => {
-      order.push("readThread");
-      return null;
-    });
-    // WHY: The loader reads only these runtime members on the tested paths.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const sync = { hasSession: () => session, interest, readThread } as unknown as ReturnType<
-      typeof createThreadSyncRuntime
-    >;
-    // WHY: hydrateWindow does not touch the detail database.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const loader = createThreadSyncRemoteLoader({} as ThreadDetailDatabase, sync);
-    const hydrate = async () =>
-      loader.hydrateWindow({
-        cachedThread: null,
-        reason: "activation",
-        request: { anchorTurnId: null, connectionId: "server", threadId: "a" },
-        requireAuthoritative: false,
-      });
-
-    // The membership declaration made before any session fails once.
-    declare.mockRejectedValueOnce(new Error("Workspace sync supervisor is not running"));
-    loader.ensureInterest({ connectionId: "server", threadId: "a" });
-    await settle();
-    expect(records).toHaveLength(1);
-    records.length = 0;
-    order.length = 0;
-
-    await expect(hydrate()).resolves.toBeUndefined();
-    await settle();
-    expect(order).toEqual(["readThread"]);
-    expect(records).toEqual([]);
-
-    // Once a session exists, hydration redeclares the failed set before the read.
-    session = true;
-    await hydrate();
-    expect(order).toEqual(["readThread", "declare:a", "readThread"]);
-    expect(records).toEqual([]);
+    expect(readThread).toHaveBeenCalledExactlyOnceWith("server", "a", null, true, false);
+    expect(declare).not.toHaveBeenCalled();
   });
 
   it("repairs a projection without declaring interest", async () => {

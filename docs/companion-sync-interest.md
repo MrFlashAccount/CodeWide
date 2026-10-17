@@ -130,12 +130,21 @@ changes only through `interest` frames. The module does not import
   snapshot covers the whole page; an `add` applied after it has a sync fence
   `F >= head` of that page, so the skipped entries of that page are covered by
   the `companion/thread/sync` answer. No catch-up signal is needed.
-- **Device awaits interest before sync.** Window hydration awaits the native
-  `engineInterest` declaration containing the thread before issuing `companion/thread/sync`. Both
-  native calls travel in call order through the one connection service to the
-  protocol engine. If the socket is closed, the interest set is already
-  persisted and goes out in the next `hello`; the RPC is deferred until the
-  session is live, which is after that `hello`.
+- **Device awaits interest before sync.** Every thread read with an engine
+  session (window hydration, reconnect, foreground and history repair) awaits
+  the native `engineInterest` declaration containing the thread before issuing
+  `companion/thread/sync`. Both native calls travel in call order through the
+  one connection service to the protocol engine. If the socket is closed, the
+  interest set is already persisted and goes out in the next `hello`; the RPC is
+  deferred until the session is live, which is after that `hello`.
+- **One desired-set owner.** The JS `ThreadInterestPort`
+  (`apps/android/src/data/threadSyncInterest.ts`) is the single owner of the
+  desired set per connection; the native engine supervisor keeps no copy. A
+  read without a session serves only the cache and sends no sync, so it awaits
+  no declaration. A declaration made before the supervisor or session exists
+  is rejected, but the set still records the change. When the session appears,
+  its baseline declares the port's current set, and the first read with a
+  session redeclares a rejected set before its `companion/thread/sync`.
 - Every delta of a subscribed thread is covered exactly once: `cursor <= F` by
   the sync answer, `cursor > F` by a delivered frame applied above the
   projection cursor behind the existing `beginProjectionSnapshot` gate.
@@ -170,9 +179,10 @@ as `interest { add, remove }` on an open socket (the wire contract is
 unchanged). The persisted set is read on socket open for `hello.interest`.
 `attachRuntime` never touches interest: it also runs on foreground repair,
 projection recovery and home reconnect of a live runtime, whose mounted windows
-must stay subscribed. Instead each JS engine session declares its full set once
-when the native session first reports state; a fresh runtime declares an empty
-set, which overwrites interest persisted by its predecessor. `engineInterest`
+must stay subscribed. Instead each JS engine session declares the
+`ThreadInterestPort` set once when the native session first reports state; a
+fresh runtime with no open windows declares an empty set, which overwrites
+interest persisted by its predecessor. `engineInterest`
 is a required method of the native engine contract; the device never checks the
 Companion version and never feature-detects the method.
 
@@ -293,7 +303,8 @@ subscription).
 - Android: Robolectric acceptance test of `event(afterCursor)`, `advance`,
   duplicates, a chain break (`non_contiguous_sync_cursor`) and a frame without
   `afterCursor` (`invalid_event`); JS drain of pages with gaps and empty pages
-  with a moved head; window hydration awaits interest before sync; repair never
+  with a moved head; every read with a session awaits interest before sync,
+  including a set rejected before the engine existed; repair never
   touches interest or residency. Gates: `pnpm validate:android:v1`,
   `pnpm --filter @codewide/android compile:android`, Gradle unit tests of the
   `remote` module.
