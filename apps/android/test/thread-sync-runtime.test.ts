@@ -309,4 +309,33 @@ describe("readThread interest ordering", () => {
       warn.mockRestore();
     }
   });
+
+  it("rejects with the declaration error and never syncs when a live declaration fails", async () => {
+    const failure = new Error("interest declaration rejected by test");
+    const declareInterest = vi.fn(async () => {
+      throw failure;
+    });
+    const rpcs: string[] = [];
+    const session = {};
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { sync } = interestRuntime({
+        declareInterest,
+        // WHY: the session is only compared by identity; the RPC goes through rpcAfterAttach.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+        getSession: () => session as RpcClient,
+        rpc: (method) => rpcs.push(method),
+      });
+      sync.interest.update("server", "a", true);
+
+      await expect(sync.readThread("server", "a")).rejects.toBe(failure);
+      await settle();
+
+      expect(declareInterest).toHaveBeenCalledWith("server", ["a"]);
+      expect(rpcs).toEqual([]);
+      expect(sync.interest.threadIds("server")).toEqual(["a"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });
