@@ -20,7 +20,7 @@ function readKotlinInterestLimits(): Map<string, number> {
   const kotlin = readFileSync(
     resolve(
       import.meta.dirname,
-      "../android/app/src/main/java/dev/codewide/app/remote/NativeProtocolEngine.kt",
+      "../android/app/src/main/java/dev/codewide/app/remote/NativeSyncInterest.kt",
     ),
     "utf8",
   );

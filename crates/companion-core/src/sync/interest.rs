@@ -569,87 +569,23 @@ mod tests {
     }
 
     #[test]
+    fn a_thread_preview_reaches_a_socket_without_interest_but_its_delta_does_not() -> TestResult {
+        let empty = interest(&[])?;
+        assert!(empty.delivers(&patched(
+            "thread",
+            crate::thread_preview::THREAD_PREVIEW_KIND
+        )));
+        assert!(!empty.delivers(&patched("thread", "itemTextDelta")));
+        Ok(())
+    }
+
+    #[test]
     fn interest_snapshot_is_independent_of_later_changes() -> TestResult {
         let mut socket = interest(&[])?;
         let delivery = ReplayDelivery::new(&socket, 0);
         socket.apply(&json!({"add": ["mine"]}))?;
         assert!(!delivery.delivers(&patched("mine", "itemTextDelta")));
         assert!(socket.delivers(&patched("mine", "itemTextDelta")));
-        Ok(())
-    }
-}
-
-/// The journaled thread preview travels as a catalog topic, so a socket with
-/// no interest still sees the answer streaming in an unsubscribed thread.
-#[cfg(test)]
-mod journal_tests {
-    use std::sync::Arc;
-
-    use serde_json::{Value, json};
-
-    use super::{InterestRejection, SocketInterest};
-    use crate::{
-        store::IndexStore,
-        sync::{IngestInput, ingest_events, tests::ingest_context},
-        thread_patch::THREAD_PATCH_FIELD,
-    };
-
-    #[tokio::test]
-    async fn a_streamed_answer_journals_a_catalog_preview_after_its_delta()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let store = Arc::new(IndexStore::open(directory.path().join("preview.redb"))?);
-        let (ingest, receiver) = tokio::sync::mpsc::channel(8);
-        let (signals, _) = tokio::sync::broadcast::channel(8);
-        let (fence, resolved) = tokio::sync::oneshot::channel();
-        let context = ingest_context(&store, signals);
-        let task = tokio::spawn(ingest_events(receiver, context));
-        let delta = |text: &str| {
-            json!({"method": "item/agentMessage/delta", "params": {
-                "threadId": "thread", "turnId": "turn", "itemId": "answer", "delta": text
-            }})
-        };
-        // Both deltas arrive in one batch and coalesce into one journal entry.
-        ingest.send(IngestInput::Payload(delta("Hel"))).await?;
-        ingest.send(IngestInput::Payload(delta("lo"))).await?;
-        ingest.send(IngestInput::Fence(fence)).await?;
-        assert_eq!(
-            resolved.await??,
-            2,
-            "one delta entry plus one preview entry"
-        );
-
-        let journal = store
-            .replay_after(Some(0))?
-            .entries
-            .into_iter()
-            .map(|(_, bytes)| serde_json::from_slice::<Value>(&bytes))
-            .collect::<Result<Vec<_>, _>>()?;
-        assert_eq!(journal[0]["method"], "item/agentMessage/delta");
-        assert_eq!(journal[0]["params"]["delta"], "Hello");
-        assert_eq!(
-            journal[0][THREAD_PATCH_FIELD]["operation"]["kind"],
-            "itemTextDelta"
-        );
-        assert_eq!(
-            journal[1]["method"],
-            crate::thread_preview::THREAD_PREVIEW_METHOD
-        );
-        assert_eq!(journal[1][THREAD_PATCH_FIELD]["threadId"], "thread");
-        assert_eq!(
-            journal[1][THREAD_PATCH_FIELD]["operation"]["kind"],
-            crate::thread_preview::THREAD_PREVIEW_KIND
-        );
-        assert_eq!(
-            journal[1][THREAD_PATCH_FIELD]["operation"]["summary"]["previewText"],
-            "Hello"
-        );
-        let interest = SocketInterest::from_hello(&json!({"interest": []}))
-            .map_err(InterestRejection::reason)?;
-        assert!(!interest.delivers(&journal[0]));
-        assert!(interest.delivers(&journal[1]));
-        drop(ingest);
-        task.await?;
         Ok(())
     }
 }

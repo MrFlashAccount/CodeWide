@@ -18,6 +18,7 @@
 
 use std::{
     collections::HashMap,
+    iter, option,
     time::{Duration, Instant},
 };
 
@@ -121,6 +122,20 @@ impl ThreadPreviewTracker {
             }
             _ => None,
         }
+    }
+
+    /// Observes `payload` at `now`, then yields it followed by the preview it
+    /// published, if any, so the catalog event directly follows its delta.
+    /// Observation happens on the call: flat-mapping a batch lazily keeps
+    /// each payload observed before its content projection may externalize
+    /// the streamed text.
+    pub fn followed_by_preview(
+        &mut self,
+        payload: Value,
+        now: Instant,
+    ) -> iter::Chain<iter::Once<Value>, option::IntoIter<Value>> {
+        let preview = self.observe(&payload, now);
+        iter::once(payload).chain(preview)
     }
 
     fn observe_delta(
@@ -230,6 +245,27 @@ mod tests {
             Some(Value::String("Hello, world".into())),
             "the preview carries the accumulated text, not only the sampled delta"
         );
+    }
+
+    #[test]
+    fn the_preview_directly_follows_the_delta_that_published_it() {
+        let mut tracker = ThreadPreviewTracker::default();
+        let start = Instant::now();
+        let first = tracker
+            .followed_by_preview(delta("thread", "answer", "Hello"), start)
+            .map(|event| event["method"].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            first,
+            [
+                json!("item/agentMessage/delta"),
+                json!(THREAD_PREVIEW_METHOD)
+            ]
+        );
+        let throttled = tracker
+            .followed_by_preview(delta("thread", "answer", "!"), start)
+            .collect::<Vec<_>>();
+        assert_eq!(throttled, [delta("thread", "answer", "!")]);
     }
 
     #[test]

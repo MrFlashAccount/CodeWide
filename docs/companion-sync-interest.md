@@ -186,10 +186,11 @@ streams text so that an unsubscribed list row keeps a current preview:
   per thread the `itemId`, the accumulated text capped at 2000 characters and
   the last publication time, for at most 4096 threads (the `LiveActivityTracker`
   bound). It is cleared on `item/completed` of the same item, `turn/completed`
-  and `thread/deleted`. Observation happens 1:1 in `project_journal_payload`
-  before content projection; the synthetic event is appended by
-  `ingest_payload_batch` directly after the delta that produced it, after
-  stream-text coalescing and before serialization.
+  and `thread/deleted`. After stream-text coalescing, `ingest_payload_batch`
+  passes every payload through `ThreadPreviewTracker::followed_by_preview`,
+  which observes it before content projection and yields it followed by the
+  synthetic event it produced, so the preview is journaled directly after its
+  delta and before serialization.
 - On the device the detail projection treats the unknown kind as a no-op. The
   summary projection applies the ordinary `previewText` branch: the preview
   bumps `updatedAt` and `latestActivityCursor`, carries no `recencyAt` and does
@@ -222,7 +223,8 @@ working range.
 
 - `crates/companion-core/src/sync.rs`: `accept_hello` requires `interest`,
   `run_session` hands each `interest` frame inline to the interest owner and
-  closes the socket on rejection, ingest calls the preview tracker.
+  closes the socket on rejection, ingest expands each payload through the
+  preview tracker.
 - `crates/companion-core/src/sync/interest.rs`: interest parsing and limits,
   applying and logging `hello.interest` and `interest` frames (reason and
   sizes, never thread ids), delivery predicate, `afterCursor` chain,
@@ -234,9 +236,16 @@ working range.
   separate owner from `thread_activity.rs` because its reason to change differs.
 - `crates/companion-core/src/thread_patch.rs`: compiles
   `companion/thread/preview/updated` into the `threadPreview` operation.
-- Android native: `NativeProtocolEngine` owns `hello.interest`, `interest`,
-  `advance` and persistence; `NativeFrameStore` owns the acceptance rule and the
-  column; `CodeWideModule` is only the bridge.
+- Android native: `NativeSyncInterest` (`NativeSyncInterest.kt`) is the single
+  device owner of the interest limits: it validates every set before it is
+  persisted or sent, both through `NativeProtocolEngine` on a live session and
+  through `CodexConnectionService` persisting a set for a connection without a
+  session. `NativeProtocolEngine` owns `hello.interest`, `interest`, `advance`
+  and persistence; `NativeFrameStore` owns the acceptance rule and the column;
+  `CodeWideModule` is only the bridge.
+- `apps/android/test/sync-interest-contract.test.ts` mirrors
+  `contract/v1.json` `syncInterest` against the device high-frequency kinds and
+  the `NativeSyncInterest` limits, so the paired sides cannot drift apart.
 - Android JS: see [`data/CONTEXT.md`](../apps/android/src/data/CONTEXT.md).
 - `packages/sync-client`: the former JS wire client (`SyncSession`,
   `MultiConnectionSupervisor`) is deleted; it had no application consumer and

@@ -59,6 +59,8 @@ use crate::{
 pub mod interest;
 mod outbox;
 mod outbox_state;
+#[cfg(test)]
+mod preview_journal_tests;
 mod provider_rpc;
 mod queue;
 mod replay;
@@ -2914,18 +2916,16 @@ async fn ingest_payload_batch(
     // catalog event follows its delta in the same durable batch.
     let now = Instant::now();
     let mut projected_payloads = Vec::with_capacity(payloads.len());
-    for payload in payloads {
-        // Streamed answer text is read before content projection may
-        // externalize it; projections only read the payload until then.
-        let preview = thread_preview.observe(&payload, now);
-        for payload in std::iter::once(payload).chain(preview) {
-            projected_payloads.push(project_journal_payload(
-                context,
-                projector.as_deref(),
-                live_activity,
-                payload,
-            )?);
-        }
+    for payload in payloads
+        .into_iter()
+        .flat_map(|payload| thread_preview.followed_by_preview(payload, now))
+    {
+        projected_payloads.push(project_journal_payload(
+            context,
+            projector.as_deref(),
+            live_activity,
+            payload,
+        )?);
     }
     payloads = projected_payloads;
     stream_diagnostics.observe_emitted_batch(&payloads);

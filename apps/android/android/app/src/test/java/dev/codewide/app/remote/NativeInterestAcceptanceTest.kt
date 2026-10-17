@@ -113,8 +113,10 @@ class NativeInterestAcceptanceTest {
       test.engine.onSocketClosed()
 
       assertEquals(listOf("non_contiguous_sync_cursor"), test.resets)
-      // Event 12 continued the chain from 10 and stays committed; only 15 broke it.
-      assertEquals(12L, test.store.syncCursor(test.connectionId))
+      // The breaking frame is never committed. Whether event 12, which
+      // continued the chain from 10, was committed first depends on batching.
+      val cursor = test.store.syncCursor(test.connectionId)
+      assertTrue("cursor $cursor is not chain-valid", cursor == 10L || cursor == 12L)
     } finally {
       test.engine.close()
     }
