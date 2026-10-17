@@ -51,10 +51,12 @@ use crate::{
         reject_oversized_dynamic_tool_requests, remove_server_request,
         retry_oversized_dynamic_tool_rejections, rpc_id_key,
     },
+    thread_preview::ThreadPreviewTracker,
     thread_view::ThreadViewService,
     workspaces::WorkspaceService,
 };
 
+pub mod interest;
 mod outbox;
 mod outbox_state;
 mod provider_rpc;
@@ -62,6 +64,9 @@ mod queue;
 mod replay;
 mod search_routing;
 
+use interest::{
+    INTEREST_CLOSE_CODE, INTEREST_FIELD, SharedInterest, SocketInterest, list_len, lock_interest,
+};
 use outbox::{PumpContext, reconcile_direct_turn_start, run_outbox_pump};
 #[cfg(test)]
 use outbox_state::turn_with_client_message;
@@ -71,7 +76,7 @@ use outbox_state::{
 };
 use provider_rpc::{RpcResultObservers, forward_rpc_response};
 use queue::{queue_changed_thread_id, queue_command, queue_rpc};
-use replay::ReplayProjector;
+use replay::{ReplayDeliveryError, ReplayProjector, deliver_replay_page};
 
 /// `companion/thread/sync` of a thread that does not exist (deleted, or never
 /// known here): the client forgets the thread instead of retrying.
@@ -191,6 +196,7 @@ struct IngestContext {
 }
 
 struct InitialSession {
+    interest: SharedInterest,
     port_inventory: bool,
     ready: bool,
     snapshot_cursor: Option<u64>,
@@ -390,6 +396,7 @@ fn spawn_live_replay_task(
     replay: Arc<ReplayProjector>,
     socket: SessionSocket,
     store: Arc<IndexStore>,
+    interest: SharedInterest,
     mut events: tokio::sync::broadcast::Receiver<DurableSignal>,
     mut delivered_cursor: u64,
     task_failed: tokio::sync::mpsc::UnboundedSender<()>,
@@ -401,9 +408,14 @@ fn spawn_live_replay_task(
                     if head <= delivered_cursor {
                         continue;
                     }
-                    let result =
-                        send_live_replay_after(&socket, store.clone(), delivered_cursor, &replay)
-                            .await;
+                    let result = send_live_replay_after(
+                        &socket,
+                        store.clone(),
+                        &interest,
+                        delivered_cursor,
+                        &replay,
+                    )
+                    .await;
                     if matches!(result, Err(LiveReplayError::SnapshotRequired)) {
                         warn!(
                             delivered_cursor,
@@ -415,7 +427,14 @@ fn spawn_live_replay_task(
                 Ok(DurableSignal::Failed) => Err(LiveReplayError::Journal),
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                     debug!(skipped, "sync client coalesced live wake-up signals");
-                    send_live_replay_after(&socket, store.clone(), delivered_cursor, &replay).await
+                    send_live_replay_after(
+                        &socket,
+                        store.clone(),
+                        &interest,
+                        delivered_cursor,
+                        &replay,
+                    )
+                    .await
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
@@ -887,6 +906,18 @@ impl SyncHub {
             close_with(socket, 1008, "hello_required").await;
             return None;
         }
+        let interest = match SocketInterest::from_hello(&hello) {
+            Ok(interest) => Arc::new(std::sync::Mutex::new(interest)),
+            Err(rejection) => {
+                let requested = list_len(hello.get(INTEREST_FIELD));
+                warn!(
+                    reason = rejection.reason(),
+                    requested, "sync client hello rejected"
+                );
+                close_with(socket, INTEREST_CLOSE_CODE, rejection.reason()).await;
+                return None;
+            }
+        };
         let cursor = hello.get("cursor").and_then(Value::as_u64);
         let store = self.store.clone();
         let Ok(Ok(replay)) = tokio::task::spawn_blocking(move || store.replay_after(cursor)).await
@@ -933,25 +964,16 @@ impl SyncHub {
         }
 
         let mut ready = false;
-        if !snapshot_required {
-            for (cursor, payload) in replay.entries {
-                let payload = match serde_json::from_slice::<Value>(&payload) {
-                    Ok(payload) => self.replay.project(payload).await,
-                    Err(error) => Err(error.to_string()),
-                };
-                let Ok(payload) = payload else {
+        // A null cursor always requires a snapshot, so a replayed page starts
+        // at the client's own cursor: the position is defined.
+        if let Some(position) = cursor.filter(|_| !snapshot_required) {
+            match deliver_replay_page(socket, &self.replay, &interest, position, replay).await {
+                Ok(_) => {}
+                Err(ReplayDeliveryError::Journal) => {
                     close_with(socket, 1011, "replay_journal_failed").await;
                     return None;
-                };
-                if send_json(
-                    socket,
-                    &json!({ "type": "event", "cursor": cursor, "payload": payload }),
-                )
-                .await
-                .is_err()
-                {
-                    return None;
                 }
+                Err(ReplayDeliveryError::Socket) => return None,
             }
             ready = true;
             if send_json(socket, &json!({ "type": "caughtUp", "cursor": head }))
@@ -964,6 +986,7 @@ impl SyncHub {
         }
 
         Some(InitialSession {
+            interest,
             port_inventory: hello.get("portInventory").and_then(Value::as_bool) == Some(true),
             ready,
             snapshot_cursor: snapshot_required.then_some(head),
@@ -983,6 +1006,7 @@ impl SyncHub {
         mut authorization_changes: Option<tokio::sync::broadcast::Receiver<AuthorizationChange>>,
     ) {
         let mut snapshot_cursor = session.snapshot_cursor;
+        let interest = session.interest.clone();
         let mut port_inventory = if session.port_inventory {
             self.port_inventory
                 .as_ref()
@@ -1016,6 +1040,7 @@ impl SyncHub {
                 self.replay.clone(),
                 socket.clone(),
                 self.store.clone(),
+                interest.clone(),
                 events,
                 session.delivered_cursor,
                 task_failed_tx.clone(),
@@ -1097,24 +1122,14 @@ impl SyncHub {
                                         snapshot_started_at = Some(Instant::now());
                                         continue;
                                     }
-                                    for (cursor, payload) in replay.entries {
-                                        let payload = match serde_json::from_slice::<Value>(&payload) {
-                                            Ok(payload) => self.replay.project(payload).await,
-                                            Err(error) => Err(error.to_string()),
-                                        };
-                                        let Ok(payload) = payload else {
+                                    // The position is defined now: the accepted snapshot cursor.
+                                    match deliver_replay_page(&socket, &self.replay, &interest, applied_cursor, replay).await {
+                                        Ok(_) => {}
+                                        Err(ReplayDeliveryError::Journal) => {
                                             close_with(&socket, 1011, "replay_journal_failed").await;
                                             break 'session;
-                                        };
-                                        if send_json(
-                                            &socket,
-                                            &json!({ "type": "event", "cursor": cursor, "payload": payload }),
-                                        )
-                                        .await
-                                        .is_err()
-                                        {
-                                            break 'session;
                                         }
+                                        Err(ReplayDeliveryError::Socket) => break 'session,
                                     }
                                     if send_json(&socket, &json!({ "type": "caughtUp", "cursor": head })).await.is_err() { break; }
                                     info!(cursor = head, "sync client caught up");
@@ -1124,9 +1139,10 @@ impl SyncHub {
                                         && let Some(events) = replay_events.take()
                                     {
                                         replay_task = Some(spawn_live_replay_task(
-                            self.replay.clone(),
+                                            self.replay.clone(),
                                             socket.clone(),
                                             self.store.clone(),
+                                            interest.clone(),
                                             events,
                                             head,
                                             task_failed_tx.clone(),
@@ -1134,6 +1150,33 @@ impl SyncHub {
                                     }
                                 }
                                 Some("ack") => {}
+                                Some(INTEREST_FIELD) => {
+                                    // Applied inline, before the next incoming frame is read:
+                                    // an RPC that follows sees the updated set.
+                                    let applied = lock_interest(&interest).apply(&message);
+                                    match applied {
+                                        Ok(change) => debug!(
+                                            added = change.added,
+                                            removed = change.removed,
+                                            threads = change.threads,
+                                            "sync client interest updated"
+                                        ),
+                                        Err(rejection) => {
+                                            let add = list_len(message.get("add"));
+                                            let remove = list_len(message.get("remove"));
+                                            let threads = lock_interest(&interest).len();
+                                            warn!(
+                                                reason = rejection.reason(),
+                                                add,
+                                                remove,
+                                                threads,
+                                                "sync client interest frame rejected"
+                                            );
+                                            close_with(&socket, INTEREST_CLOSE_CODE, rejection.reason()).await;
+                                            break;
+                                        }
+                                    }
+                                }
                                 Some("liveSubscribe" | "liveUnsubscribe") => {
                                     match self.live_channels.handle_control(
                                         &live_owner_id,
@@ -2432,6 +2475,7 @@ async fn send_passthrough_rpc_response(
 async fn send_live_replay_after(
     socket: &SessionSocket,
     store: Arc<IndexStore>,
+    interest: &SharedInterest,
     cursor: u64,
     projector: &ReplayProjector,
 ) -> Result<u64, LiveReplayError> {
@@ -2442,21 +2486,12 @@ async fn send_live_replay_after(
     if replay.snapshot_required {
         return Err(LiveReplayError::SnapshotRequired);
     }
-    for (event_cursor, payload) in replay.entries {
-        let payload =
-            serde_json::from_slice::<Value>(&payload).map_err(|_| LiveReplayError::Journal)?;
-        let payload = projector
-            .project(payload)
-            .await
-            .map_err(|_| LiveReplayError::Journal)?;
-        send_json(
-            socket,
-            &json!({ "type": "event", "cursor": event_cursor, "payload": payload }),
-        )
+    deliver_replay_page(socket, projector, interest, cursor, replay)
         .await
-        .map_err(|_| LiveReplayError::Socket)?;
-    }
-    Ok(replay.head_cursor)
+        .map_err(|error| match error {
+            ReplayDeliveryError::Journal => LiveReplayError::Journal,
+            ReplayDeliveryError::Socket => LiveReplayError::Socket,
+        })
 }
 
 /// One provider's ordered forwarder: observes thread bindings, projects
@@ -2663,6 +2698,7 @@ async fn ingest_events(
 ) {
     let mut stream_diagnostics = AgentStreamDiagnostics::default();
     let mut live_activity = crate::thread_activity::LiveActivityTracker::default();
+    let mut thread_preview = ThreadPreviewTracker::default();
     while let Some(first) = ingest.recv().await {
         let first = match first {
             IngestInput::Payload(payload) => {
@@ -2727,6 +2763,7 @@ async fn ingest_events(
             &context,
             &mut stream_diagnostics,
             &mut live_activity,
+            &mut thread_preview,
             payloads,
         )
         .await
@@ -2805,14 +2842,25 @@ fn split_resource_routes(
     (payloads, without_resources, own_resources)
 }
 
+/// One payload ready for the journal and the synthetic thread preview its
+/// streamed text published, if any. The batch owns where the preview is
+/// appended (right after its delta).
+struct JournalProjection {
+    payload: Value,
+    preview: Option<Value>,
+}
+
 /// Adds the companion-owned projections to one payload before it is
-/// journaled: usage, activity metrics, live activity and content references.
+/// journaled: usage, activity metrics, live activity, the thread preview
+/// observation and content references.
 fn project_journal_payload(
     context: &IngestContext,
     projector: Option<&ContentProjector>,
     live_activity: &mut crate::thread_activity::LiveActivityTracker,
+    thread_preview: &mut ThreadPreviewTracker,
+    now: Instant,
     payload: Value,
-) -> Result<Value, ()> {
+) -> Result<JournalProjection, ()> {
     let (usage, replay_pricing, thread_pricing) = {
         let mut projector = match context.usage_projector.lock() {
             Ok(projector) => projector,
@@ -2836,9 +2884,10 @@ fn project_journal_payload(
     .map_err(|_| {
         let _ = context.events.send(DurableSignal::Failed);
     })?;
-    // Streamed reasoning text is read before content projection may
-    // externalize it.
+    // Streamed reasoning and answer text are read before content projection
+    // may externalize them.
     let activity = live_activity.observe(&payload);
+    let preview = thread_preview.observe(&payload, now);
     let payload = match projector {
         Some(projector) => projector.project_notification(payload),
         None => payload,
@@ -2851,16 +2900,17 @@ fn project_journal_payload(
         ),
         metrics,
     );
-    Ok(agent_core::usage::prepare_replay_payload(
-        projected,
-        replay_pricing,
-    ))
+    Ok(JournalProjection {
+        payload: agent_core::usage::prepare_replay_payload(projected, replay_pricing),
+        preview,
+    })
 }
 
 async fn ingest_payload_batch(
     context: &IngestContext,
     stream_diagnostics: &mut AgentStreamDiagnostics,
     live_activity: &mut crate::thread_activity::LiveActivityTracker,
+    thread_preview: &mut ThreadPreviewTracker,
     batch: Vec<(Value, ResourceRoute)>,
 ) -> Result<(), ()> {
     let (mut payloads, without_resources, own_resources) = split_resource_routes(batch);
@@ -2895,14 +2945,33 @@ async fn ingest_payload_batch(
     // deltas can otherwise discard a repeated content reference.
     stream_diagnostics.observe_input_batch(&payloads);
     payloads = coalesce_stream_text_deltas(payloads);
+    // After coalescing, a delta publishes at most one preview; the synthetic
+    // catalog event follows its delta in the same durable batch.
+    let now = Instant::now();
     let mut projected_payloads = Vec::with_capacity(payloads.len());
     for payload in payloads {
-        projected_payloads.push(project_journal_payload(
+        let projection = project_journal_payload(
             context,
             projector.as_deref(),
             live_activity,
+            thread_preview,
+            now,
             payload,
-        )?);
+        )?;
+        projected_payloads.push(projection.payload);
+        if let Some(preview) = projection.preview {
+            projected_payloads.push(
+                project_journal_payload(
+                    context,
+                    projector.as_deref(),
+                    live_activity,
+                    thread_preview,
+                    now,
+                    preview,
+                )?
+                .payload,
+            );
+        }
     }
     payloads = projected_payloads;
     stream_diagnostics.observe_emitted_batch(&payloads);
@@ -3424,8 +3493,9 @@ mod tests {
             .await?;
         ingest.send(IngestInput::Fence(fence)).await?;
 
-        assert_eq!(resolved.await??, 1);
-        assert_eq!(store.replay_head()?, 1);
+        // The streamed answer journals its delta and its catalog preview.
+        assert_eq!(resolved.await??, 2);
+        assert_eq!(store.replay_head()?, 2);
         drop(ingest);
         task.await?;
         Ok(())
@@ -3491,6 +3561,84 @@ mod tests {
             [Some(json!({"kind": "webSearch"})), None, Some(Value::Null)],
             "replaying the journal reproduces each change once"
         );
+        drop(ingest);
+        task.await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_streamed_answer_journals_a_catalog_preview_after_its_delta()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("preview.redb"))?);
+        let (ingest, receiver) = tokio::sync::mpsc::channel(8);
+        let (signals, _) = tokio::sync::broadcast::channel(8);
+        let (fence, resolved) = tokio::sync::oneshot::channel();
+        let context = IngestContext {
+            store: store.clone(),
+            events: signals,
+            server_requests: Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
+            content_projector: Arc::new(std::sync::RwLock::new(None)),
+            resources: None,
+            usage_projector: Arc::new(std::sync::Mutex::new(
+                crate::usage::LiveUsageProjector::new(
+                    store.clone(),
+                    agent_core::usage::UsagePricing::default(),
+                ),
+            )),
+            user_text: crate::user_message_projection::UserTextCleaners::new(
+                std::collections::HashMap::new(),
+                ProviderId::from_static("codex"),
+            ),
+        };
+        let task = tokio::spawn(ingest_events(receiver, context));
+        let delta = |text: &str| {
+            json!({"method": "item/agentMessage/delta", "params": {
+                "threadId": "thread", "turnId": "turn", "itemId": "answer", "delta": text
+            }})
+        };
+        // Both deltas arrive in one batch and coalesce into one journal entry.
+        ingest.send(IngestInput::Payload(delta("Hel"))).await?;
+        ingest.send(IngestInput::Payload(delta("lo"))).await?;
+        ingest.send(IngestInput::Fence(fence)).await?;
+        assert_eq!(
+            resolved.await??,
+            2,
+            "one delta entry plus one preview entry"
+        );
+
+        let journal = store
+            .replay_after(Some(0))?
+            .entries
+            .into_iter()
+            .map(|(_, bytes)| serde_json::from_slice::<Value>(&bytes))
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(journal[0]["method"], "item/agentMessage/delta");
+        assert_eq!(journal[0]["params"]["delta"], "Hello");
+        assert_eq!(
+            journal[0][crate::thread_patch::THREAD_PATCH_FIELD]["operation"]["kind"],
+            "itemTextDelta"
+        );
+        assert_eq!(
+            journal[1]["method"],
+            crate::thread_preview::THREAD_PREVIEW_METHOD
+        );
+        assert_eq!(
+            journal[1][crate::thread_patch::THREAD_PATCH_FIELD]["threadId"],
+            "thread"
+        );
+        assert_eq!(
+            journal[1][crate::thread_patch::THREAD_PATCH_FIELD]["operation"]["kind"],
+            crate::thread_preview::THREAD_PREVIEW_KIND
+        );
+        assert_eq!(
+            journal[1][crate::thread_patch::THREAD_PATCH_FIELD]["operation"]["summary"]["previewText"],
+            "Hello"
+        );
+        let interest = SocketInterest::from_hello(&json!({"interest": []}))
+            .map_err(interest::InterestRejection::reason)?;
+        assert!(!interest.delivers(&journal[0]));
+        assert!(interest.delivers(&journal[1]));
         drop(ingest);
         task.await?;
         Ok(())

@@ -23,6 +23,7 @@ function runtime() {
     },
     readInvalidationArchived: () => undefined,
     clearInvalidationArchived: () => undefined,
+    declareInterest: async () => undefined,
     refreshThreadCatalog: async () => undefined,
   });
 }
@@ -130,6 +131,7 @@ describe("V1 shared thread sync lifetime", () => {
     } as unknown as ThreadSummaryDatabase;
     const sync = createThreadSyncRuntime({
       clearInvalidationArchived: () => undefined,
+      declareInterest: async () => undefined,
       getDetails: () => details,
       // WHY: the session is only compared by identity; the RPC goes through rpcAfterAttach.
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion

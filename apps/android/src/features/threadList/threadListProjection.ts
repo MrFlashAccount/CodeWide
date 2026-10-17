@@ -3,16 +3,31 @@ import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { serverScopeIncludes, type ServerScope } from "../../services/servers/serverScope";
 import type { ThreadListItem } from "./threadListTypes";
 
+/**
+ * Maps projected summary rows to list items with a per-row cache keyed by row
+ * identity. An unchanged summary row keeps its item identity, so one changed row
+ * rebuilds one item; the upstream projection already gives a row a new identity
+ * when its pending requests change its attention state.
+ */
 export class ThreadListItemProjection {
   #source: readonly StoredThreadSummary[] | null = null;
+  #items: ReadonlyMap<StoredThreadSummary, ThreadListItem> = new Map();
   #value: ThreadListItem[] = [];
 
+  /** Returns the items for `source` in its order, reusing each unchanged row's item. */
   project(source: readonly StoredThreadSummary[]): ThreadListItem[] {
     if (source === this.#source) {
       return this.#value;
     }
+    const previous = this.#items;
+    const items = new Map<StoredThreadSummary, ThreadListItem>();
     this.#source = source;
-    this.#value = source.map(storedThreadToListItem);
+    this.#value = source.map((row) => {
+      const item = previous.get(row) ?? storedThreadToListItem(row);
+      items.set(row, item);
+      return item;
+    });
+    this.#items = items;
     return this.#value;
   }
 }

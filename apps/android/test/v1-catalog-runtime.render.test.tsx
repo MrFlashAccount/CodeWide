@@ -103,3 +103,75 @@ it("reads a root's subagents on every request and shares a concurrent read", asy
   expect(reads).toHaveBeenCalledTimes(2);
   expect(replaced).toEqual([["root:agent:a1:active"], ["root:agent:a1:idle"]]);
 });
+
+it("coalesces connection refreshes into one in-flight and one trailing run, also after a failure", async () => {
+  const replies: Array<{ resolve: (value: unknown) => void; reject: (error: Error) => void }> = [];
+  const listCalls = jest.fn();
+  // WHY: RpcClient has a caller-selected generic result. This fixture answers pin reads
+  // with their validated wire shape and holds each thread/list reply until the test settles it.
+  const session = {
+    rpc: (method: string) => {
+      if (method === "companion/thread/pins/list") {
+        return Promise.resolve({ archivedThreadIds: [], cursor: 0, threadIds: [] });
+      }
+      listCalls();
+      return new Promise((resolve, reject) => {
+        replies.push({ reject, resolve });
+      });
+    },
+  } as unknown as RpcClient;
+  let loadCatalog: ((request: ThreadSummaryViewRequest) => Promise<boolean>) | undefined;
+  // WHY: The catalog runtime consumes this established database port, while
+  // this behavior test intentionally supplies only the catalog-facing methods.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const summaries = {
+    loadPendingPinMigration: jest.fn(async () => []),
+    applyPinSnapshot: jest.fn(async () => undefined),
+    mergeSnapshots: jest.fn(async () => undefined),
+    removeCatalogEntries: jest.fn(async () => undefined),
+    applyCatalogPage: jest.fn(async () => undefined),
+    beginCatalogRead: () => ({ changed: new Set<string>(), release: jest.fn() }),
+    model: { activeRequests: () => [archivedRequest] },
+    setCatalogLoader(loader: (request: ThreadSummaryViewRequest) => Promise<boolean>) {
+      loadCatalog = loader;
+    },
+  } as ThreadSummaryDatabase;
+  const runtime = createCatalogRuntime({
+    desiredThreadId: () => undefined,
+    enabledConnectionIds: () => ["server"],
+    getSession: () => session,
+    getSummaries: () => summaries,
+    readThread: async () => null,
+  });
+  runtime.bindSummaryDemand(summaries);
+  if (loadCatalog === undefined) {
+    throw new Error("Catalog loader was not bound");
+  }
+  const loaded = loadCatalog(archivedRequest);
+  await waitFor(() => {
+    expect(replies).toHaveLength(1);
+  });
+  replies[0]?.resolve({ data: [], nextCursor: null });
+  await loaded;
+
+  for (let call = 0; call < 5; call += 1) {
+    runtime.refreshConnectionWindows("server");
+  }
+  await waitFor(() => {
+    expect(listCalls).toHaveBeenCalledTimes(2);
+  });
+  replies[1]?.reject(new Error("thread/list failed"));
+  await waitFor(() => {
+    expect(listCalls).toHaveBeenCalledTimes(3);
+  });
+  replies[2]?.resolve({ data: [], nextCursor: null });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(listCalls).toHaveBeenCalledTimes(3);
+
+  // The settled coalescer accepts the next refresh at once.
+  runtime.refreshConnectionWindows("server");
+  await waitFor(() => {
+    expect(listCalls).toHaveBeenCalledTimes(4);
+  });
+  replies[3]?.resolve({ data: [], nextCursor: null });
+});

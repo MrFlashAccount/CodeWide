@@ -94,7 +94,8 @@ async function setup(resident: boolean) {
     projection: details,
   });
   const sync = createThreadSyncRuntime({
-    clearInvalidationArchived() {}, getDetails: () => details, getSession: () => session,
+    clearInvalidationArchived() {}, declareInterest: async () => undefined,
+    getDetails: () => details, getSession: () => session,
     getSummaries: () => null, loadTurnControls: async () => { throw new Error("Not needed"); },
     readInvalidationArchived: () => undefined, refreshSubagents: async () => undefined,
     refreshThreadCatalog: async () => undefined,

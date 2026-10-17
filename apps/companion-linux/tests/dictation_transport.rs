@@ -95,7 +95,7 @@ async fn dictation_stays_local_retries_and_replays_completed_result()
     let (mut socket, _) = connect_async(request).await?;
     socket
         .send(Message::Text(
-            json!({"type":"hello","protocolVersion":1,"cursor":0})
+            json!({"type":"hello","protocolVersion":1,"cursor":0,"interest":[]})
                 .to_string()
                 .into(),
         ))

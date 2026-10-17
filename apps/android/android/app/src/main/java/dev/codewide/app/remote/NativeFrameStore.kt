@@ -8,16 +8,31 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal data class StoredFrame(val id: Long, val cursor: Long, val payload: String)
-internal data class IncomingJournalFrame(
-  val cursor: Long,
-  val payload: String,
-  val pendingRequestPayload: JSONObject?,
-)
+/**
+ * One accepted Companion delivery in arrival order. Both kinds carry the
+ * socket position they continue from; only an [Event] owns a journal row.
+ */
+internal sealed interface IncomingJournalEntry {
+  val cursor: Long
+  val afterCursor: Long
+
+  data class Event(
+    override val cursor: Long,
+    override val afterCursor: Long,
+    val payload: String,
+    val pendingRequestPayload: JSONObject?,
+  ) : IncomingJournalEntry
+
+  /** Closes a run of journal entries the Companion filtered out for this socket. */
+  data class Advance(override val cursor: Long, override val afterCursor: Long) : IncomingJournalEntry
+}
 internal enum class JournalAppendStatus { COMMITTED, NON_CONTIGUOUS, OVERFLOW }
 internal data class JournalAppendResult(
   val status: JournalAppendStatus,
   val frames: List<StoredFrame>,
   val acknowledgedCursor: Long?,
+  /** Stored cursor after this batch when it moved, including a frame-less advance. */
+  val committedCursor: Long?,
 )
 internal data class CommittedFramePage(
   val baseCursor: Long?,
@@ -81,6 +96,7 @@ internal class NativeFrameStore(context: Context) {
     ensureColumn("native_sync_state", "projected_cursor", "INTEGER")
     ensureColumn("native_sync_state", "journal_frames", "INTEGER NOT NULL DEFAULT 0")
     ensureColumn("native_sync_state", "journal_bytes", "INTEGER NOT NULL DEFAULT 0")
+    ensureColumn("native_sync_state", "interest_json", "TEXT NOT NULL DEFAULT '[]'")
     database.execSQL(
       "UPDATE native_sync_state SET snapshot_cursor = cursor WHERE snapshot_cursor IS NULL AND snapshot_json IS NOT NULL",
     )
@@ -116,25 +132,33 @@ internal class NativeFrameStore(context: Context) {
     rebuildJournalCounters()
   }
 
+  /**
+   * Accepts a batch only as a continuous `afterCursor` chain from the stored
+   * cursor `C`: `cursor <= C` is a duplicate, `afterCursor == C` continues the
+   * chain, anything else is a real break. `C == null` (before the first
+   * snapshot) accepts any position. An [IncomingJournalEntry.Advance] moves
+   * `C` without a `native_frames` row.
+   */
   @Synchronized
-  fun appendEvents(connectionId: String, incoming: List<IncomingJournalFrame>): JournalAppendResult {
-    if (incoming.isEmpty()) return JournalAppendResult(JournalAppendStatus.COMMITTED, emptyList(), null)
+  fun appendEvents(connectionId: String, incoming: List<IncomingJournalEntry>): JournalAppendResult {
+    if (incoming.isEmpty()) return JournalAppendResult(JournalAppendStatus.COMMITTED, emptyList(), null, null)
     database.beginTransaction()
     try {
       val state = journalState(connectionId)
       var cursor = state.cursor
-      val fresh = mutableListOf<IncomingJournalFrame>()
-      for (frame in incoming) {
-        if (cursor != null && frame.cursor <= cursor) continue
-        if (cursor != null && frame.cursor != cursor + 1L) {
-          return JournalAppendResult(JournalAppendStatus.NON_CONTIGUOUS, emptyList(), null)
+      val fresh = mutableListOf<IncomingJournalEntry.Event>()
+      for (entry in incoming) {
+        if (cursor != null && entry.cursor <= cursor) continue
+        if (cursor != null && entry.afterCursor != cursor) {
+          return JournalAppendResult(JournalAppendStatus.NON_CONTIGUOUS, emptyList(), null, null)
         }
-        fresh += frame
-        cursor = frame.cursor
+        if (entry is IncomingJournalEntry.Event) fresh += entry
+        cursor = entry.cursor
       }
-      if (fresh.isEmpty()) {
+      val acknowledgedCursor = incoming.maxOf { it.cursor }
+      if (cursor == state.cursor) {
         database.setTransactionSuccessful()
-        return JournalAppendResult(JournalAppendStatus.COMMITTED, emptyList(), incoming.maxOf { it.cursor })
+        return JournalAppendResult(JournalAppendStatus.COMMITTED, emptyList(), acknowledgedCursor, null)
       }
 
       val payloadBytes = fresh.sumOf { it.payload.toByteArray(Charsets.UTF_8).size.toLong() }
@@ -147,7 +171,7 @@ internal class NativeFrameStore(context: Context) {
       ) {
         resetJournal(connectionId, state.frameCount, state.payloadBytes)
         database.setTransactionSuccessful()
-        return JournalAppendResult(JournalAppendStatus.OVERFLOW, emptyList(), null)
+        return JournalAppendResult(JournalAppendStatus.OVERFLOW, emptyList(), null, null)
       }
 
       val now = System.currentTimeMillis()
@@ -171,15 +195,17 @@ internal class NativeFrameStore(context: Context) {
           journal_bytes = native_sync_state.journal_bytes + excluded.journal_bytes,
           updated_at = excluded.updated_at
         """.trimIndent(),
-        arrayOf<Any?>(connectionId, fresh.last().cursor, fresh.size, payloadBytes, now),
+        arrayOf<Any?>(connectionId, cursor, fresh.size, payloadBytes, now),
       )
-      database.execSQL(
-        "UPDATE native_journal_totals SET frame_count = frame_count + ?, payload_bytes = payload_bytes + ? WHERE singleton = 1",
-        arrayOf<Any?>(fresh.size, payloadBytes),
-      )
+      if (fresh.isNotEmpty()) {
+        database.execSQL(
+          "UPDATE native_journal_totals SET frame_count = frame_count + ?, payload_bytes = payload_bytes + ? WHERE singleton = 1",
+          arrayOf<Any?>(fresh.size, payloadBytes),
+        )
+      }
       applyPendingRequestEvents(connectionId, fresh.mapNotNull { it.pendingRequestPayload })
       database.setTransactionSuccessful()
-      return JournalAppendResult(JournalAppendStatus.COMMITTED, stored, incoming.maxOf { it.cursor })
+      return JournalAppendResult(JournalAppendStatus.COMMITTED, stored, acknowledgedCursor, cursor)
     } finally {
       database.endTransaction()
     }
@@ -240,6 +266,32 @@ internal class NativeFrameStore(context: Context) {
         updated_at = excluded.updated_at
       """.trimIndent(),
       arrayOf<Any?>(connectionId, pendingRequestsJson, System.currentTimeMillis()),
+    )
+  }
+
+  /** Thread ids the next `hello.interest` declares for this connection. */
+  @Synchronized
+  fun interest(connectionId: String): List<String> = database.rawQuery(
+    "SELECT interest_json FROM native_sync_state WHERE connection_id = ?",
+    arrayOf(connectionId),
+  ).use { row ->
+    if (!row.moveToFirst() || row.isNull(0)) return@use emptyList()
+    val stored = runCatching { JSONArray(row.getString(0)) }.getOrElse { JSONArray() }
+    (0 until stored.length()).mapNotNull { index -> stored.optString(index).takeIf(String::isNotEmpty) }
+  }
+
+  /** Persists the interest set before its wire frame is sent. */
+  @Synchronized
+  fun storeInterest(connectionId: String, threadIds: Collection<String>) {
+    database.execSQL(
+      """
+      INSERT INTO native_sync_state(connection_id, interest_json, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(connection_id) DO UPDATE SET
+        interest_json = excluded.interest_json,
+        updated_at = excluded.updated_at
+      """.trimIndent(),
+      arrayOf<Any?>(connectionId, JSONArray(threadIds).toString(), System.currentTimeMillis()),
     )
   }
 

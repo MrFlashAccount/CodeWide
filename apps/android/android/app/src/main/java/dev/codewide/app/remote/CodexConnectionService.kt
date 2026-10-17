@@ -387,6 +387,13 @@ class CodexConnectionService : Service() {
   fun unsubscribeLive(connectionId: String, channelId: String): Boolean =
     sessions[connectionId]?.unsubscribeLive(channelId) == true
 
+  /** Replaces the connection's interest set; without a session it only persists for the next hello. */
+  fun replaceInterest(connectionId: String, threadIds: List<String>) {
+    val session = sessions[connectionId]
+    if (session == null) frameStore.storeInterest(connectionId, threadIds.distinct())
+    else session.replaceInterest(threadIds)
+  }
+
   internal fun enqueueCommand(
     connectionId: String,
     commandId: String,
@@ -974,6 +981,8 @@ class CodexConnectionService : Service() {
 
     fun unsubscribeLive(channelId: String): Boolean =
       !closed && protocolEngine.unsubscribeLive(channelId)
+
+    fun replaceInterest(threadIds: List<String>) = protocolEngine.replaceInterest(threadIds)
 
     fun drainOutbox() {
       if (closed || outboxDrainRunning || !protocolEngine.isLive()) return

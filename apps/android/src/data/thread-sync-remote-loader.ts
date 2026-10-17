@@ -9,7 +9,13 @@ export function createThreadSyncRemoteLoader(
   sync: ReturnType<typeof createThreadSyncRuntime>,
 ): ThreadRemoteLoader {
   return {
+    ensureInterest({ connectionId, threadId }) {
+      sync.interest.update(connectionId, threadId, true);
+    },
     async hydrateWindow({ cachedThread, reason, request, requireAuthoritative }) {
+      // The interest add precedes companion/thread/sync on the same socket,
+      // so every delta above the sync fence is delivered to this window.
+      await sync.interest.declared(request.connectionId, request.threadId);
       await sync.readThread(
         request.connectionId,
         request.threadId,
@@ -32,6 +38,9 @@ export function createThreadSyncRemoteLoader(
     },
     async reconcilePending({ connectionId, threadId }) {
       await reconcileActiveThreadCommands(details, connectionId, threadId);
+    },
+    releaseInterest({ connectionId, threadId }) {
+      sync.interest.update(connectionId, threadId, false);
     },
     async repairProjection({ connectionId, threadId }) {
       const repaired = await sync.repairThreadProjection(connectionId, threadId);

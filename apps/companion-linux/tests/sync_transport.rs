@@ -84,7 +84,7 @@ async fn opted_in_inventory_arrives_before_chat_snapshot_acknowledgement()
     send_json(
         &mut client,
         &json!({
-            "type": "hello", "protocolVersion": 1, "cursor": null, "portInventory": true
+            "type": "hello", "protocolVersion": 1, "cursor": null, "interest": [], "portInventory": true
         }),
     )
     .await?;
@@ -2366,7 +2366,7 @@ async fn connect_client(
     let (mut socket, _response) = connect_async(request).await?;
     send_json(
         &mut socket,
-        &json!({"type": "hello", "protocolVersion": 1, "cursor": cursor}),
+        &json!({"type": "hello", "protocolVersion": 1, "cursor": cursor, "interest": []}),
     )
     .await?;
     let hello = receive_type(&mut socket, "hello").await?;
@@ -2395,7 +2395,7 @@ async fn connect_replay_client(
     let (mut socket, _response) = connect_async(request).await?;
     send_json(
         &mut socket,
-        &json!({"type": "hello", "protocolVersion": 1, "cursor": cursor}),
+        &json!({"type": "hello", "protocolVersion": 1, "cursor": cursor, "interest": []}),
     )
     .await?;
     let hello = receive_type(&mut socket, "hello").await?;

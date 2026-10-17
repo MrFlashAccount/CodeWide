@@ -47,7 +47,8 @@
       { "method": "turn/plan/updated", "kind": "turnPlan" },
       { "method": "item/reasoning/summaryPartAdded", "kind": "reasoningPart", "field": "summary" },
       { "method": "item/reasoning/summaryTextDelta", "kind": "reasoningDelta", "field": "summary" },
-      { "method": "item/reasoning/textDelta", "kind": "reasoningDelta", "field": "content" }
+      { "method": "item/reasoning/textDelta", "kind": "reasoningDelta", "field": "content" },
+      { "method": "companion/thread/preview/updated", "kind": "threadPreview" }
     ],
     "liveActivity": {
       "field": "operation.liveActivity",
@@ -63,6 +64,27 @@
         { "kind": "compacting", "fields": [] }
       ]
     }
+  },
+  "syncInterest": {
+    "threadTopicKinds": [
+      "itemTextDelta",
+      "reasoningDelta",
+      "reasoningPart",
+      "turnPlan",
+      "turnDiff",
+      "fileChanges",
+      "mcpProgress",
+      "tokenUsage"
+    ],
+    "maxInterestThreads": 64,
+    "maxThreadIdChars": 256,
+    "helloInterestRequired": true
+  },
+  "threadPreview": {
+    "method": "companion/thread/preview/updated",
+    "kind": "threadPreview",
+    "publishIntervalMs": 1500,
+    "maxTextChars": 2000
   },
   "webSocketPaths": [
     "/v1/app-server",

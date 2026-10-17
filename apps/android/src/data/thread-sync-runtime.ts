@@ -25,6 +25,7 @@ import { recordThreadHistoryTelemetry } from "./thread-history-telemetry";
 import { THREAD_RESIDENT_TURN_LIMIT } from "./thread-pagination";
 import { createThreadSyncForeground } from "./thread-sync-foreground";
 import { createThreadSyncHistory } from "./thread-sync-history";
+import { createThreadInterestPort } from "./threadSyncInterest";
 import { createThreadSyncItems } from "./thread-sync-items";
 import type { ThreadSyncAuthority, ThreadWindow } from "./thread-sync-types";
 
@@ -32,6 +33,7 @@ const RESOLVED_VOID_PROMISE = Promise.resolve();
 /** Retains shared source authority, read serialization and desired live observation. */
 export function createThreadSyncRuntime({
   clearInvalidationArchived,
+  declareInterest,
   getDetails,
   getSession,
   getSummaries,
@@ -43,6 +45,8 @@ export function createThreadSyncRuntime({
   transferAccess,
 }: ThreadSyncAuthority) {
   const threadSyncLane = new ThreadSyncLane<ThreadWindow | null>();
+  // Session interest port: window hydration awaits it, readThread never does.
+  const interest = createThreadInterestPort(declareInterest);
   const historyReadAuthority = new ThreadHistoryReadAuthority();
   const threadObserverDesired = new Map<string, string>();
   const retainedObservers = new Map<string, { owners: number; threadId: string }>();
@@ -315,6 +319,7 @@ export function createThreadSyncRuntime({
     bindForegroundRepair,
     desiredThreadId,
     forgetObservedThread,
+    interest,
     invalidateHistoryReads,
     loadNewerTurns,
     loadOlderTurns,

@@ -606,6 +606,13 @@ const workspaceThreadSync = createThreadSyncRuntime({
   clearInvalidationArchived: (key) => {
     workspaceCatalog.clearInvalidationArchived(key);
   },
+  declareInterest: async (connectionId, threadIds) => {
+    const supervisor = workspaceRuntime.supervisor;
+    if (supervisor === null) {
+      throw new Error("Workspace sync supervisor is not running");
+    }
+    await supervisor.interest(connectionId, threadIds);
+  },
   getDetails: () => workspaceRuntime.snapshot.threadDetails,
   getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
   getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
