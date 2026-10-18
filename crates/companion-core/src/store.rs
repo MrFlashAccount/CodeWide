@@ -572,9 +572,12 @@ impl IndexStore {
         let retained_entries = replay.len()?;
         let snapshot_required = match cursor {
             None => true,
+            // A cursor behind head is replayable only when the retained suffix
+            // starts at or before its successor; an empty or gapped window loses entries.
             Some(cursor) => {
                 cursor > head_cursor
-                    || oldest.is_some_and(|oldest| cursor < oldest.saturating_sub(1))
+                    || (cursor < head_cursor
+                        && oldest.is_none_or(|oldest| oldest > cursor.saturating_add(1)))
             }
         };
         let mut entries = Vec::new();
@@ -1734,6 +1737,22 @@ mod tests {
         )?;
         assert!(store.thread_pin_snapshot()?.thread_ids.is_empty());
         assert_eq!(store.thread_pin("old-chat")?.cursor, cursor);
+        Ok(())
+    }
+
+    #[test]
+    fn an_emptied_replay_window_requires_a_snapshot_behind_head()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = IndexStore::open(directory.path().join("state.redb"))?;
+        store.append_replay_batch(&[vec![b'x'; 64]], 10, 32)?;
+        let head = store.replay_head()?;
+        let behind = store.replay_after(Some(0))?;
+        assert_eq!(behind.retained_entries, 0);
+        assert!(behind.snapshot_required);
+        let current = store.replay_after(Some(head))?;
+        assert!(!current.snapshot_required);
+        assert!(current.entries.is_empty());
         Ok(())
     }
 

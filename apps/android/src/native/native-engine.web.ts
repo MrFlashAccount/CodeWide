@@ -35,5 +35,10 @@ export class NativeEngineSupervisor {
   async unsubscribeLive(_connectionId: string, _channelId: string): Promise<void> {
     await Promise.resolve();
   }
+
+  async interest(_connectionId: string, _threadIds: readonly string[]): Promise<void> {
+    await Promise.resolve();
+    throw new Error("Native thread interest is unavailable on web");
+  }
   stop(): void {}
 }

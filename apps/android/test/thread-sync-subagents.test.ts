@@ -112,6 +112,7 @@ function syncRuntime(database: ReturnType<typeof createThreadSummaryDatabase>, a
   const refreshSubagents = vi.fn(async (_connectionId: string, _rootThreadId: string) => undefined);
   const sync = createThreadSyncRuntime({
     clearInvalidationArchived: () => undefined,
+    declareInterest: async () => undefined,
     getDetails: () => details,
     getSession: () => session,
     getSummaries: () => database,

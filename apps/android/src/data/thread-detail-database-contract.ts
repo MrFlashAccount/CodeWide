@@ -195,6 +195,11 @@ export type ThreadWindowCoverage = {
 
 /** Loads and observes authoritative thread ranges from the remote server. */
 export type ThreadRemoteLoader = {
+  /**
+   * A mounted chat window wants live content of this thread. Called only from
+   * the chat model's interest membership; repair and reconnect reads never call it.
+   */
+  ensureInterest: (input: { connectionId: string; threadId: string }) => void;
   hydrateWindow: (input: {
     cachedThread: Thread | null;
     reason: ThreadWindowCoverage["reason"] | "activation";
@@ -221,6 +226,8 @@ export type ThreadRemoteLoader = {
   }) => Promise<void>;
   observe?: (input: { connectionId: string; threadId: string }) => () => void;
   reconcilePending: (input: { connectionId: string; threadId: string }) => Promise<void>;
+  /** The last mounted window of this thread settled its release. */
+  releaseInterest: (input: { connectionId: string; threadId: string }) => void;
   repairProjection: (input: { connectionId: string; threadId: string }) => Promise<void>;
   shouldRepairProjection?: (input: { connectionId: string; threadId: string }) => boolean;
 };

@@ -83,6 +83,16 @@ import {
   threadWindowCoverage,
 } from "../src/data/thread-detail-database.native";
 
+/**
+ * The conversation under test is open: a mounted window makes the thread part
+ * of the interest set, which is the only way it stays resident in the source.
+ */
+function mountedThreadDetailDatabase(threadId = "thread") {
+  const details = createThreadDetailDatabase();
+  details.chat.retainWindow("server", threadId);
+  return details;
+}
+
 function authoritativeThread(commandId: string): Thread {
   const turn = completedTurn("remote-turn", commandId);
   return {
@@ -251,7 +261,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("rolls back a failed cold import so the next thread writer can proceed", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     harness.failNextWrite = true;
 
@@ -271,7 +281,7 @@ describe("thread detail ownership races", () => {
   it("hydrates a cold thread without a browser structuredClone global", async () => {
     const originalStructuredClone = globalThis.structuredClone;
     Object.defineProperty(globalThis, "structuredClone", { configurable: true, value: undefined });
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     const coldThread = authoritativeThread("command-1");
     coldThread.turns = [
       {
@@ -332,6 +342,8 @@ describe("thread detail ownership races", () => {
       },
     );
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending,
       hydrateWindow,
       repairProjection: async () => undefined,
@@ -377,6 +389,8 @@ describe("thread detail ownership races", () => {
     harness.loadResolvedWindow.mockResolvedValue(completeResolvedWindow());
     const details = createThreadDetailDatabase();
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow: async () => {
         throw new Error("upstream unavailable");
@@ -414,6 +428,8 @@ describe("thread detail ownership races", () => {
     const hydrateWindow = vi.fn(async () => await refresh.promise);
     const details = createThreadDetailDatabase();
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow,
       repairProjection: async () => undefined,
@@ -449,6 +465,8 @@ describe("thread detail ownership races", () => {
     harness.loadResolvedWindow.mockResolvedValue(completeEmptyResolvedWindow());
     const details = createThreadDetailDatabase();
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow: async () => {
         throw new Error("offline");
@@ -483,6 +501,8 @@ describe("thread detail ownership races", () => {
     );
     const details = createThreadDetailDatabase();
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow,
       repairProjection: async () => undefined,
@@ -525,6 +545,8 @@ describe("thread detail ownership races", () => {
     const hydrateWindow = vi.fn(async () => undefined);
     const details = createThreadDetailDatabase();
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow,
       repairProjection: async () => undefined,
@@ -614,7 +636,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("publishes a cold server hydration from committed memory without rereading SQLite", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     const hydrateWindow = vi.fn(async () => {
       await details.replaceThreadSnapshot(
         "server",
@@ -624,6 +646,8 @@ describe("thread detail ownership races", () => {
       );
     });
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow,
       repairProjection: async () => undefined,
@@ -656,6 +680,8 @@ describe("thread detail ownership races", () => {
       );
     });
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow,
       repairProjection: async () => undefined,
@@ -693,6 +719,8 @@ describe("thread detail ownership races", () => {
     const hydrateWindow = vi.fn(async () => undefined);
     const details = createThreadDetailDatabase();
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow,
       repairProjection: async () => undefined,
@@ -731,6 +759,8 @@ describe("thread detail ownership races", () => {
     const hydrateWindow = vi.fn(async () => undefined);
     const details = createThreadDetailDatabase();
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow,
       repairProjection: async () => undefined,
@@ -762,6 +792,8 @@ describe("thread detail ownership races", () => {
     const hydrateWindow = vi.fn(async () => await repair);
     const details = createThreadDetailDatabase();
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow,
       repairProjection: async () => undefined,
@@ -842,6 +874,8 @@ describe("thread detail ownership races", () => {
     });
     const details = createThreadDetailDatabase();
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow,
       repairProjection: async () => undefined,
@@ -1111,6 +1145,8 @@ describe("thread detail ownership races", () => {
       },
     );
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow: async () => undefined,
       repairProjection: async () => undefined,
@@ -1200,6 +1236,8 @@ describe("thread detail ownership races", () => {
       },
     );
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow: async () => undefined,
       repairProjection: async () => undefined,
@@ -1337,7 +1375,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("does not let an optimistic rollback or tombstone clobber an authoritative same-key turn", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     const pending = details.createPending({
       connectionId: "server",
@@ -1398,7 +1436,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("keeps the Companion receipt until the authoritative turn takes over its stable key", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     const pending = details.createPending({
       connectionId: "server",
@@ -1451,7 +1489,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("does not materialize a missing optimistic row from a transient outbox delta", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot("server", authoritativeThread("canonical"), "initial");
     const delivery = {
@@ -1827,7 +1865,7 @@ describe("thread detail ownership races", () => {
   it.each(["turn/start", "turn/steer"] as const)(
     "keeps a committed %s when a pre-enqueue ledger read arrives before the canonical user item",
     async (method) => {
-      const details = createThreadDetailDatabase();
+      const details = mountedThreadDetailDatabase();
       await details.prepare();
       await details.importThreadSnapshot("server", authoritativeThread("previous"), "initial");
       const pending = details.createPending({
@@ -1950,7 +1988,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("appends canonical turns by stable id without replacing sealed history", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot("server", authoritativeThread("first"), "initial");
     const first = details.getThread("server", "thread")!.turns[0]!;
@@ -1968,7 +2006,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("overlays a complete canonical tail onto a short cached window idempotently", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     const tail = Array.from({ length: 15 }, (_, index) =>
       completedTurn(`turn-${index}`, `command-${index}`),
@@ -1999,7 +2037,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("keeps a concurrently projected active turn when a disconnected tail becomes current", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     const active = liveThread("active-command").turns[0]!;
     await details.importThreadSnapshot(
@@ -2027,7 +2065,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("projects consecutive user items into the same active turn", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot("server", liveThread("initial"), "initial");
 
@@ -2075,7 +2113,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("replaces a missing live item from a cursor-fenced snapshot and skips its covered delta", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot("server", liveThread("initial"), "initial");
     const recoveredAgent = {
@@ -2089,6 +2127,8 @@ describe("thread detail ownership races", () => {
     } satisfies Turn["items"][number];
     let repaired = false;
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow: async () => undefined,
       async repairProjection() {
@@ -2154,11 +2194,13 @@ describe("thread detail ownership races", () => {
   });
 
   it("defers projection-gap repair for a background conversation", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot("server", liveThread("initial"), "initial");
     const repairProjection = vi.fn(async () => undefined);
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow: async () => undefined,
       shouldRepairProjection: () => false,
@@ -2196,7 +2238,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("holds the event tail until the cursor-fenced thread snapshot is durable", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot("server", liveThread("initial"), "initial");
     const tailItem = {
@@ -2252,7 +2294,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("keeps sealed content metadata and ordinal as one immutable fact family", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     const stable = {
       ...completedTurn("remote-turn", "command"),
@@ -2311,9 +2353,11 @@ describe("thread detail ownership races", () => {
       itemsView: "summary",
       items: [user, final],
     } as Turn;
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow: async () => undefined,
       repairProjection: async () => undefined,
@@ -2397,11 +2441,13 @@ describe("thread detail ownership races", () => {
   });
 
   it("repairs a sparse completion authoritatively before acknowledging it", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     const sparse = sparseCompletedTurn("remote-turn", "command");
     const repaired = completedTurn("remote-turn", "command");
     details.setRemoteLoader({
+      ensureInterest: () => undefined,
+      releaseInterest: () => undefined,
       reconcilePending: async () => undefined,
       hydrateWindow: async () => undefined,
       async repairProjection() {
@@ -2449,7 +2495,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("keeps a metadata-only turn local to Conversation until complete history repairs it", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     const incomplete = {
       id: "remote-turn",
@@ -2502,7 +2548,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("keeps a materialized not-loaded history turn mutable until complete history repairs it", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     const incomplete = {
       ...completedTurn("remote-turn", "command"),
@@ -2545,7 +2591,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("keeps resident items when a reconnect refresh carries materialized turn metadata", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     const complete = authoritativeThread("command");
     await details.importThreadSnapshot("server", complete, "initial");
@@ -2573,7 +2619,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("keeps the active projection when a catalog snapshot updates metadata", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot("server", liveThread("command"), "initial");
 
@@ -2611,7 +2657,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("does not acknowledge live projection updates before their durable SQLite commit", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot(
       "server",
@@ -2659,7 +2705,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("persists the authoritative active turn before exposing it as recovered", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot("server", authoritativeThread("sealed"), "initial");
     harness.commits.length = 0;
@@ -2681,7 +2727,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("commits sealed history and the active head atomically without overwriting a concurrent live patch", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     const active = {
       ...liveThread("streaming").turns[0]!,
@@ -2739,7 +2785,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("replaces a disconnected sealed history when the server returns reset", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot(
       "server",
@@ -2764,7 +2810,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("repairs sealed messages in the same turn after a projection reset", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot(
       "server",
@@ -2806,7 +2852,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("rolls back the complete server reset when its atomic write fails", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     const stale = authoritativeThread("stale");
     await details.importThreadSnapshot("server", stale, "initial", "stale-older");
@@ -2826,7 +2872,7 @@ describe("thread detail ownership races", () => {
   });
 
   it("persists the older-history cursor with the durable thread epoch", async () => {
-    const details = createThreadDetailDatabase();
+    const details = mountedThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot(
       "server",

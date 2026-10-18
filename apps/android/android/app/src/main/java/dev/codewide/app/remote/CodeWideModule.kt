@@ -47,6 +47,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 
@@ -645,6 +646,28 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       promise.resolve(null)
     } catch (error: Throwable) {
       promise.reject("ENGINE_LIVE_UNSUBSCRIBE_FAILED", error.message, error)
+    }
+  }
+
+  /**
+   * Required engine method: replaces the connection's thread interest set.
+   * Resolves after the set is persisted and, on an open socket, sent.
+   */
+  @ReactMethod
+  fun engineInterest(connectionId: String, threadIdsJson: String, promise: Promise) {
+    try {
+      require(connectionId.isNotBlank() && threadIdsJson.length <= MAX_INTEREST_ARGUMENT_BYTES) {
+        "Invalid native engine interest input"
+      }
+      val raw = JSONArray(threadIdsJson)
+      val threadIds = (0 until raw.length()).map { index ->
+        raw.opt(index) as? String ?: throw IllegalArgumentException("Interest thread id is invalid")
+      }
+      val service = CodexConnectionService.instance ?: error("Connection service is not running")
+      service.replaceInterest(connectionId, threadIds)
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("ENGINE_INTEREST_FAILED", error.message, error)
     }
   }
 
@@ -1495,6 +1518,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     private const val AUDIO_LOG_TAG = "CodeWideAudio"
     private const val VOICE_AURA_LOG_TAG = "CodeWideVoiceAura"
     private const val MAX_ENGINE_ARGUMENT_BYTES = 64 * 1024 * 1024
+    private const val MAX_INTEREST_ARGUMENT_BYTES = 64 * 1024
     private const val NATIVE_BRIDGE_CONTRACT_VERSION = 2
     private const val MAX_COMMITTED_FRAME_PAGE = 128
     private const val MAX_COMMITTED_FRAME_BYTES = 512 * 1024

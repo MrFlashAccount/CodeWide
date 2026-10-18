@@ -17,7 +17,6 @@
     "bench:large-content": "sh scripts/cargo-target-budget.sh && CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CARGO_INCREMENTAL=0 cargo test -p codewide-companion --test content_transport deterministic_large_content_projection_is_bounded -- --nocapture",
     "bench:markdown-parser": "tsx packages/rendering-core/scripts/benchmark-markdown-parser.mjs",
     "brand:generate": "node scripts/generate-codewide-assets.mjs",
-    "soak:sync": "tsx scripts/soak-sync.ts",
     "test:android-device": "tsx scripts/android-device-gate.ts",
     "android:gradle": "sh scripts/android-gradle.sh",
     "dev:android": "sh scripts/android-fast-refresh.sh",

@@ -479,26 +479,58 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   const sessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const source = new ThreadDetailSource();
   let remoteLoader: ThreadRemoteLoader | null = null;
-  const chat = createThreadChatModel({
-    onEvictWindow: (connectionId, threadId) => {
-      source.removeThreadLoaded(connectionId, threadId);
-    },
-    onResidentRowCountChange: setThreadDetailResidentRows,
-    onRetainWindow: (connectionId, threadId) =>
-      remoteLoader?.observe?.({ connectionId, threadId }) ?? (() => undefined),
-  });
   // A new thread can receive its first turn before React switches from the
   // synthetic New Chat scope to the real thread query. Keep only a bounded
   // set of those empty shells so their live events can restart the window
   // controller instead of being reduced to an invalidation that appears only
   // after reopening the conversation.
   const startedThreadShells = new Map<string, Thread>();
-  const stagedPendingOverlays = new Map<string, PendingTimelineOverlay & { owner: number }>();
-  let nextStagedPendingOwner = 1;
+  // Mirror of the chat model's interest membership. The source holds a thread
+  // only while it is in this set or a started shell; durable rows outlive it.
+  const interestThreads = new Map<string, { connectionId: string; threadId: string }>();
+  const writes = new SerialTaskQueue();
   let closing = false;
   let disposed = false;
+  const isResidentThread = (connectionId: string, threadId: string): boolean => {
+    const scope = threadScope(connectionId, threadId);
+    return interestThreads.has(scope) || startedThreadShells.has(scope);
+  };
+  const boundThreadResidency = (connectionId: string, threadId: string): void => {
+    if (!isResidentThread(connectionId, threadId)) {
+      source.removeThreadLoaded(connectionId, threadId);
+    }
+  };
+  const chat = createThreadChatModel({
+    onEvictWindow: (connectionId, threadId) => {
+      source.removeThreadLoaded(connectionId, threadId);
+    },
+    onInterestChange: (connectionId, threadId, interested) => {
+      const scope = threadScope(connectionId, threadId);
+      const identity = { connectionId, threadId };
+      if (interested) {
+        interestThreads.set(scope, identity);
+        remoteLoader?.ensureInterest(identity);
+        return;
+      }
+      interestThreads.delete(scope);
+      remoteLoader?.releaseInterest(identity);
+      // Serialized behind any in-flight write of the same thread.
+      writes
+        .run(async () => {
+          await Promise.resolve();
+          if (!disposed) {
+            boundThreadResidency(connectionId, threadId);
+          }
+        })
+        .catch(() => undefined);
+    },
+    onResidentRowCountChange: setThreadDetailResidentRows,
+    onRetainWindow: (connectionId, threadId) =>
+      remoteLoader?.observe?.({ connectionId, threadId }) ?? (() => undefined),
+  });
+  const stagedPendingOverlays = new Map<string, PendingTimelineOverlay & { owner: number }>();
+  let nextStagedPendingOwner = 1;
   let closePromise: Promise<void> | null = null;
-  const writes = new SerialTaskQueue();
   const rangePulls = new Map<string, Promise<boolean>>();
   // Process-local only: this counter closes the RPC-response/live-patch write
   // race. It is not a protocol cursor, persisted epoch, or replay mechanism.
@@ -1319,6 +1351,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       pruneMissingMutable: mode === "authoritative",
       replaceExisting: mode === "reset",
     });
+    // A repair or reconnect read of a thread without a window persists its
+    // rows but never makes it resident.
+    boundThreadResidency(connectionId, thread.id);
   };
 
   const publishLiveSlice = async (
@@ -2337,6 +2372,11 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           sessionId,
         );
         if (current === null) {
+          if (!isResidentThread(connectionId, threadId)) {
+            // The residency bound released this thread after its authoritative
+            // publication; its window hydrates the tail when it mounts.
+            return;
+          }
           throw new Error(`Cannot merge a tail page before thread ${threadId} is hydrated`);
         }
         // A canonical tail replaces the active traversal boundary, not the
@@ -3058,6 +3098,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     sessionId,
     setRemoteLoader(loader) {
       remoteLoader = loader;
+      for (const identity of interestThreads.values()) {
+        loader.ensureInterest(identity);
+      }
     },
     stagePendingMutation(mutation) {
       if (closing || disposed) {

@@ -157,6 +157,8 @@ export type WorkspaceSyncSession = RpcClient & {
 };
 
 export type WorkspaceSyncSupervisor = {
+  /** Required engine method: replaces the connection's thread interest set. */
+  interest: (connectionId: string, threadIds: readonly string[]) => Promise<void>;
   reattachRuntime: (connectionId: string) => Promise<void>;
   replaceConnections: (connections: RemoteConnection[]) => void;
   session: (connectionId: string) => WorkspaceSyncSession | undefined;

@@ -34,6 +34,7 @@ export function createCatalogRuntime({
   const threadCatalogWindows = new Map<string, ThreadCatalogWindow>();
   const threadCatalogRefreshedAt = new Map<string, number>();
   const subagentRefreshInFlight = new Map<string, Promise<void>>();
+  const connectionRefreshes = new Map<string, ConnectionRefresh>();
   const refreshThreadCatalog = async (connectionId: string, force = false): Promise<void> => {
     const now = Date.now();
     if (
@@ -284,21 +285,49 @@ export function createCatalogRuntime({
     threadCatalogRefreshedAt.delete(connectionId);
     closeCatalogWindows(connectionId);
   }
+  /**
+   * Fences counts and closes undemanded windows at once, then refreshes the connection's
+   * pins and windows with at most one run in flight: calls during a run collapse into one
+   * trailing run after it settles, whether it succeeded or failed.
+   */
   function refreshConnectionWindows(connectionId: string): void {
-    void pins.ensure(connectionId, true).catch((error: unknown) => {
-      appLogger.warnCaught({ error, event: "thread_pins.refresh.failed" });
-    });
     catalogSummaryModel.invalidate(connectionId);
     const summaries = getSummaries();
-    if (summaries === null) {
-      return;
+    if (summaries !== null) {
+      pruneInactiveCatalogWindows(summaries);
     }
-    pruneInactiveCatalogWindows(summaries);
-    for (const [key, window] of threadCatalogWindows) {
-      if (key.startsWith(`${connectionId}\u0000`)) {
-        void window.refresh().catch(() => undefined);
+    const state = connectionRefreshes.get(connectionId);
+    if (state === undefined) {
+      runConnectionRefresh(connectionId);
+    } else {
+      state.trailing = true;
+    }
+  }
+  function runConnectionRefresh(connectionId: string): void {
+    const state: ConnectionRefresh = { trailing: false };
+    connectionRefreshes.set(connectionId, state);
+    const refreshes = [
+      pins.ensure(connectionId, true).catch((error: unknown) => {
+        appLogger.warnCaught({ error, event: "thread_pins.refresh.failed" });
+      }),
+    ];
+    // Without a summary database the windows have nowhere to publish; only pins refresh.
+    if (getSummaries() !== null) {
+      for (const [key, window] of threadCatalogWindows) {
+        if (key.startsWith(`${connectionId}\u0000`)) {
+          refreshes.push(window.refresh().catch(() => undefined));
+        }
       }
     }
+    const settle = (): void => {
+      connectionRefreshes.delete(connectionId);
+      if (state.trailing) {
+        runConnectionRefresh(connectionId);
+      }
+    };
+    // Each refresh already absorbs its own failure; settling on either outcome keeps
+    // a failed run from wedging the coalescer.
+    void Promise.all(refreshes).then(settle, settle);
   }
   return {
     bindSummaryDemand,
@@ -317,3 +346,5 @@ export function createCatalogRuntime({
   };
 }
 const THREAD_CATALOG_REPAIR_INTERVAL_MS = 10 * 60 * 1000;
+/** The in-flight `refreshConnectionWindows` run of one connection. */
+type ConnectionRefresh = { trailing: boolean };

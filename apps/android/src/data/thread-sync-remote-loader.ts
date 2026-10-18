@@ -9,7 +9,11 @@ export function createThreadSyncRemoteLoader(
   sync: ReturnType<typeof createThreadSyncRuntime>,
 ): ThreadRemoteLoader {
   return {
+    ensureInterest({ connectionId, threadId }) {
+      sync.interest.update(connectionId, threadId, true);
+    },
     async hydrateWindow({ cachedThread, reason, request, requireAuthoritative }) {
+      // readThread declares this window's interest before companion/thread/sync.
       await sync.readThread(
         request.connectionId,
         request.threadId,
@@ -32,6 +36,9 @@ export function createThreadSyncRemoteLoader(
     },
     async reconcilePending({ connectionId, threadId }) {
       await reconcileActiveThreadCommands(details, connectionId, threadId);
+    },
+    releaseInterest({ connectionId, threadId }) {
+      sync.interest.update(connectionId, threadId, false);
     },
     async repairProjection({ connectionId, threadId }) {
       const repaired = await sync.repairThreadProjection(connectionId, threadId);

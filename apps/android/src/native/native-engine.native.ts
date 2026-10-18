@@ -80,6 +80,7 @@ type NativeBridge = {
   acknowledgeProjection: (connectionId: string, projectionCursor: number) => void;
   addListener: (eventName: string) => void;
   attachSocket: (connectionId: string) => Promise<void>;
+  engineInterest: (connectionId: string, threadIdsJson: string) => Promise<void>;
   engineLiveSubscribe: (connectionId: string, channelId: string, threadId: string) => Promise<void>;
   engineLiveUnsubscribe: (connectionId: string, channelId: string) => Promise<void>;
   engineRpc: (connectionId: string, method: string, paramsJson: string) => Promise<string>;
@@ -101,6 +102,7 @@ type NativeCommittedFramePage = {
 // oxlint-disable-next-line typescript/no-unsafe-type-assertion
 const bridge = NativeModules.CodeWideNative as NativeBridge | undefined;
 const MAX_COALESCED_LIVE_EVENTS = 1024;
+const RESOLVED_CHECKPOINT = Promise.resolve();
 
 type EventProjectionWork = ProjectionWork & {
   readonly eventProjection: {
@@ -457,6 +459,14 @@ export class NativeEngineSession implements RpcClient {
         );
       }
       if (page.frames.length === 0) {
+        // The Companion filters thread content per socket, so the native
+        // cursor can move past entries that own no journal row. An empty page
+        // below a moved head is that closed skipped range.
+        if (page.headCursor !== undefined && page.headCursor > (this.#journalReadCursor ?? -1)) {
+          this.#journalReadCursor = page.headCursor;
+          this.#enqueueSkippedRange(page.headCursor, this.#journalRecoveryRequested);
+          this.#journalRecoveryRequested = false;
+        }
         if ((this.#journalReadCursor ?? -1) >= requestedHead) {
           if (this.#journalHeadCursor === requestedHead) {
             this.#journalHeadCursor = undefined;
@@ -473,8 +483,8 @@ export class NativeEngineSession implements RpcClient {
         if (!Number.isSafeInteger(stored.cursor) || typeof stored.payload !== "string") {
           throw new Error("Native committed frame is invalid");
         }
-        if (previousCursor !== undefined && stored.cursor !== previousCursor + 1) {
-          throw new Error("Native committed frame cursor is not contiguous");
+        if (previousCursor !== undefined && stored.cursor <= previousCursor) {
+          throw new Error("Native committed frame cursor is not increasing");
         }
         const envelope = unknownRecord(
           parseJson<unknown>(stored.payload, "native committed frame"),
@@ -549,6 +559,27 @@ export class NativeEngineSession implements RpcClient {
       });
     }
     this.#projectionGate.enqueue(this.#eventProjectionWork(events, projectionCursor, recovery));
+  }
+
+  /** Acknowledges a frame-less cursor range in projection order. */
+  #enqueueSkippedRange(projectionCursor: number, recovery: boolean): void {
+    this.#projectionGate.enqueue({
+      acknowledge: () => {
+        this.#projectionAcknowledger.enqueue({
+          acknowledge: () => {
+            if (!this.#stopped) {
+              bridge?.acknowledgeProjection(this.connectionId, projectionCursor);
+            }
+          },
+          checkpoint: RESOLVED_CHECKPOINT,
+          recovery,
+        });
+      },
+      apply: async () => {
+        await RESOLVED_CHECKPOINT;
+      },
+      recovery,
+    });
   }
 
   #enqueueProjectionFailure(error: unknown, recovery: boolean): void {
@@ -751,10 +782,15 @@ export class NativeEngineSupervisor {
     | undefined;
   readonly #sessions = new Map<string, NativeEngineSession>();
   readonly #fingerprints = new Map<string, string>();
+  // The JS desired set is declared once per session so a fresh runtime
+  // replaces the set persisted by its predecessor.
+  readonly #desiredInterest: (connectionId: string) => readonly string[];
+  readonly #interestBaselines = new WeakSet<NativeEngineSession>();
   readonly #subscription: { remove: () => void } | null;
 
   constructor(options: NativeEngineSupervisorOptions) {
     this.#connectionState = options.connectionState;
+    this.#desiredInterest = options.desiredInterest;
     this.#projection = options.projection;
     this.#onPendingRequests = options.onPendingRequests;
     this.#onOutboxChange = options.onOutboxChange;
@@ -807,7 +843,28 @@ export class NativeEngineSupervisor {
   #receiveBridgeEvent(event: NativeEngineEvent): void {
     this.#publishOutbox(event);
     this.#publishLiveRealtime(event);
-    this.#sessions.get(event.connectionId)?.receive(event);
+    const session = this.#sessions.get(event.connectionId);
+    session?.receive(event);
+    if (session !== undefined && event.type === "state") {
+      this.#declareInterestBaseline(session);
+    }
+  }
+
+  // The first engine state proves the native session exists to receive it.
+  #declareInterestBaseline(session: NativeEngineSession): void {
+    if (this.#interestBaselines.has(session)) {
+      return;
+    }
+    this.#interestBaselines.add(session);
+    const { connectionId } = session;
+    this.interest(connectionId, this.#desiredInterest(connectionId)).catch((error: unknown) => {
+      this.#interestBaselines.delete(session);
+      appLogger.warnCaught({
+        error,
+        event: "native_engine.interest_baseline.failed",
+        fields: { connectionId },
+      });
+    });
   }
 
   replaceConnections(connections: RemoteConnection[]): void {
@@ -864,6 +921,17 @@ export class NativeEngineSupervisor {
       throw new Error("Native live subscription is unavailable");
     }
     await bridge.engineLiveUnsubscribe(connectionId, channelId);
+  }
+
+  /**
+   * Replaces the connection's thread interest set. Resolves after the native
+   * engine persisted it and, on an open socket, sent the difference.
+   */
+  async interest(connectionId: string, threadIds: readonly string[]): Promise<void> {
+    if (bridge === undefined) {
+      throw new Error("Native thread interest is unavailable");
+    }
+    await bridge.engineInterest(connectionId, JSON.stringify(threadIds));
   }
 
   stop(): void {

@@ -34,6 +34,8 @@ export type NativeConnectionStateProjection = {
 /** Injected projections and observers used to construct the native engine supervisor. */
 export type NativeEngineSupervisorOptions = {
   connectionState: NativeConnectionStateProjection;
+  /** Desired thread interest set, owned by JS, declared as each session's baseline. */
+  desiredInterest: (connectionId: string) => readonly string[];
   onEvents?: (connectionId: string, events: readonly SyncEvent[]) => void;
   onLiveRealtime?: (connectionId: string, event: NativeLiveRealtimeEvent) => void;
   onOutboxChange?: (delivery: NativeCommandDelivery) => void;

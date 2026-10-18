@@ -65,7 +65,7 @@ class TransportRouteDeliveryTest {
     }
 
     fun message(cursor: Long, text: String) {
-      engine.onFrame(JSONObject().put("type", "event").put("cursor", cursor)
+      engine.onFrame(JSONObject().put("type", "event").put("cursor", cursor).put("afterCursor", cursor - 1)
         .put("payload", JSONObject().put("method", "item/agentMessage/delta")
           .put("params", JSONObject().put("threadId", "thread").put("turnId", "turn")
             .put("itemId", "answer").put("delta", text))).toString())

@@ -1,7 +1,10 @@
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::thread_activity::{LIVE_ACTIVITY_FIELD, LiveActivityChange};
+use crate::{
+    thread_activity::{LIVE_ACTIVITY_FIELD, LiveActivityChange},
+    thread_preview::{THREAD_PREVIEW_KIND, THREAD_PREVIEW_METHOD, THREAD_PREVIEW_TEXT_FIELD},
+};
 
 pub const THREAD_PATCH_FIELD: &str = "codewideThreadPatch";
 
@@ -88,6 +91,7 @@ pub fn compile_thread_patch(payload: &Value) -> Option<Value> {
             with_string(operation("reasoningDelta"), "field", "summary")
         }
         "item/reasoning/textDelta" => with_string(operation("reasoningDelta"), "field", "content"),
+        THREAD_PREVIEW_METHOD => operation(THREAD_PREVIEW_KIND),
         _ => return None,
     };
     if let Some(summary) = summary_projection(method, params)
@@ -162,6 +166,9 @@ fn with_bool(mut value: Value, key: &str, field: bool) -> Value {
 }
 
 fn summary_projection(method: &str, params: &serde_json::Map<String, Value>) -> Option<Value> {
+    if method == THREAD_PREVIEW_METHOD {
+        return Some(preview_summary(params));
+    }
     if !is_thread_activity(method) {
         return None;
     }
@@ -184,6 +191,21 @@ fn summary_projection(method: &str, params: &serde_json::Map<String, Value>) -> 
         summary.insert("recencyAt".into(), Value::Number(recency_at.into()));
     }
     Some(summary)
+}
+
+/// The summary of a companion thread preview: activity without a
+/// conversation message or final answer, so the list row updates its preview,
+/// `updatedAt` and `latestActivityCursor` but neither `recencyAt` nor
+/// `unread`.
+fn preview_summary(params: &serde_json::Map<String, Value>) -> Value {
+    json!({
+        "activity": true,
+        "conversationMessage": false,
+        "finalAgentResponse": false,
+        "previewText": bounded_non_empty(
+            params.get(THREAD_PREVIEW_TEXT_FIELD).and_then(Value::as_str)
+        ),
+    })
 }
 
 fn preview_from_event(
@@ -264,7 +286,12 @@ fn bounded_non_empty(value: Option<&str>) -> Option<String> {
     if value.is_empty() {
         return None;
     }
-    Some(value.chars().take(2_000).collect())
+    Some(
+        value
+            .chars()
+            .take(crate::thread_preview::THREAD_PREVIEW_MAX_TEXT_CHARS)
+            .collect(),
+    )
 }
 
 fn turn_has_agent_response(turn: Option<&serde_json::Map<String, Value>>) -> bool {
@@ -532,6 +559,40 @@ mod tests {
                 json!({"type":"agentMessage","phase":"final_answer","text":"Incomplete"})
             )
             .is_null()
+        );
+    }
+
+    #[test]
+    fn compiles_the_companion_thread_preview_as_a_summary_only_catalog_patch() {
+        let projected = attach_thread_patch(json!({
+            "method": THREAD_PREVIEW_METHOD,
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "answer",
+                "previewText": "  Streaming answer "
+            }
+        }));
+        let operation = &projected[THREAD_PATCH_FIELD]["operation"];
+        assert_eq!(projected[THREAD_PATCH_FIELD]["threadId"], "thread-1");
+        assert_eq!(operation["kind"], THREAD_PREVIEW_KIND);
+        assert_eq!(
+            operation["summary"],
+            json!({
+                "activity": true,
+                "conversationMessage": false,
+                "finalAgentResponse": false,
+                "previewText": "Streaming answer"
+            })
+        );
+        assert!(operation.get("terminalProjection").is_none());
+        let without_text = attach_thread_patch(json!({
+            "method": THREAD_PREVIEW_METHOD,
+            "params": {"threadId": "thread-1"}
+        }));
+        assert_eq!(
+            without_text[THREAD_PATCH_FIELD]["operation"]["summary"]["previewText"],
+            Value::Null
         );
     }
 

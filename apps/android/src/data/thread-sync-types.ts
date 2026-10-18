@@ -28,6 +28,8 @@ export type CaptureThreadHistoryRead = (
 /** Existing lower read, projection and related resource authorities. */
 export type ThreadSyncAuthority = {
   clearInvalidationArchived: (key: string) => void;
+  /** Replaces the connection's thread interest set in the native engine. */
+  declareInterest: (connectionId: string, threadIds: readonly string[]) => Promise<void>;
   getDetails: () => ThreadDetailDatabase | null;
   getSession: (connectionId: string) => RpcClient | undefined;
   getSummaries: () => ThreadSummaryDatabase | null;
