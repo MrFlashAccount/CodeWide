@@ -75,7 +75,7 @@ Use only the repository-owned one-shot release commands:
 - Build, validate, and publish Relay: `./scripts/release-relay-linux <version>`
 - Build, validate, and publish the macOS app: `./scripts/release-macos <patch|minor|major>`
 - Calculate affected release targets: `pnpm release:plan -- --base <ref> --head <ref>`
-- Calculate the shared release version and affected products: `pnpm release:set-plan -- --bump <patch|minor|major>`
+- Calculate the affected products and each product's next version: `pnpm release:set-plan -- --bump <patch|minor|major>`
 - Build all four products and publish one GitHub Release from CI: dispatch `Release Affected Products`
 - Validate a release path without publishing: append `--dry-run`
 
