@@ -69,9 +69,10 @@ tag that conflicts with the inventory is rejected rather than silently
 downgrading or replacing that product.
 
 Legacy releases have no complete product inventory. The first dated release
-therefore builds all four products once, using the latest stable `vX.Y.Z` as
-the version baseline. The requested minor transition from `v0.4.0` produces
-product versions `0.5.0`. Subsequent releases reuse unchanged products.
+therefore builds all four products once. Each product continues its own version
+line from its latest stable product tag, or from its configured baseline when it
+has none. There is no shared release version: a rebuilt product increments its
+own previous version, and subsequent releases reuse unchanged products.
 
 Each product workflow runs in validation mode and uploads its artifact to the
 parent run. The final job checks the available files, source checksums, and
@@ -96,9 +97,11 @@ The signed `release-manifest.json` uses a dedicated P-256 key from the
 `HOST_UPDATE_P256_PRIVATE_KEY` release-environment secret. The release job
 proves it matches `HOST_UPDATE_P256_PUBLIC_KEY_SPKI`; platform guardians pin
 that public SPKI and verify the ES256 signature before considering any
-target. The signed payload has a monotonic semantic-version sequence,
-issue/expiry timestamps, and exact Linux/macOS build, source revision, artifact
-digest, bootstrap/journal requirement, state epoch, and rollback source digest.
+target. The signed payload has a monotonic feed sequence, one above the highest
+verified predecessor (or `1` for the manual baseline) and independent of product
+versions, issue/expiry timestamps, and exact Linux/macOS build, source
+revision, artifact digest, bootstrap/journal requirement, state epoch, and
+rollback source digest.
 The immediately preceding signed manifest is verified with the same key before
 its target digests are admitted into `rollbackCompatibleFrom`.
 

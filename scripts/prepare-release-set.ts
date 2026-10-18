@@ -17,8 +17,6 @@ import {
 type ReleasePlan = {
   readonly base: string;
   readonly sourceRevision: string;
-  readonly version: string;
-  readonly previousVersion: string;
   readonly tag: string;
   readonly affected: readonly string[];
   readonly targets: readonly ReleasePlanTarget[];
@@ -63,9 +61,7 @@ function stringList(value: unknown, field: string): readonly string[] {
 function readPlan(path: string): ReleasePlan {
   const value: unknown = JSON.parse(readFileSync(path, "utf8"));
   const plan = record(value, "release plan");
-  const version = releaseVersion(plan.version);
   const tag = releaseTag(plan.tag);
-  const previousVersion = releaseVersion(plan.previousVersion);
   const sourceRevision = string(plan.sourceRevision, "sourceRevision");
   if (!/^[0-9a-f]{40}$/u.test(sourceRevision))
     throw new Error("sourceRevision must be a full Git SHA");
@@ -94,25 +90,10 @@ function readPlan(path: string): ReleasePlan {
   return {
     base: string(plan.base, "base"),
     sourceRevision,
-    version,
-    previousVersion,
     tag,
     affected: stringList(plan.affected, "affected"),
     targets,
   };
-}
-
-function releaseSequence(version: string): number {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version);
-  if (match === null) throw new Error("Invalid release version");
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  const patch = Number(match[3]);
-  const sequence = major * 1_000_000_000_000 + minor * 1_000_000 + patch;
-  if (!Number.isSafeInteger(sequence) || major > 20 || minor > 999 || patch > 99999) {
-    throw new Error("Release version cannot be represented as a monotonic sequence");
-  }
-  return sequence;
 }
 
 function signingOptionsFromEnvironment(): HostUpdateSigningOptions {
@@ -180,7 +161,6 @@ function verifiedPreviousDescriptor(
   path: string,
   publicKey: ReturnType<typeof createPublicKey>,
   keyId: string,
-  maximumSequence: number,
   expectedPlatforms: ReadonlySet<string>,
 ): PreviousDescriptor {
   const envelopeValue: unknown = JSON.parse(readFileSync(path, "utf8"));
@@ -202,10 +182,9 @@ function verifiedPreviousDescriptor(
     typeof sequence !== "number" ||
     !Number.isSafeInteger(sequence) ||
     sequence <= 0 ||
-    sequence >= maximumSequence ||
     !Array.isArray(descriptor.targets)
   ) {
-    throw new Error("Previous release manifest sequence is not older than this release");
+    throw new Error("Previous release manifest descriptor is invalid");
   }
   const targets: PreviousTarget[] = [];
   const platforms = new Set<string>();
@@ -235,19 +214,26 @@ function verifiedPreviousDescriptor(
   return { sequence, targets };
 }
 
+type PreviousLineage = {
+  /** Sequence for the descriptor being issued: one above every verified predecessor. */
+  readonly sequence: number;
+  readonly rollback: ReadonlyMap<string, readonly string[]>;
+};
+
+/**
+ * The descriptor sequence is a release-feed counter, independent of product
+ * versions: products keep separate version lines, so no version can order the feed.
+ */
 function previousTargetLineages(
   paths: readonly string[] | undefined,
   publicKey: ReturnType<typeof createPublicKey>,
   keyId: string,
-  maximumSequence: number,
   expectedVersions: ReadonlyMap<string, string>,
-): ReadonlyMap<string, readonly string[]> {
-  if (paths === undefined || paths.length === 0) return new Map();
+): PreviousLineage {
+  if (paths === undefined || paths.length === 0) return { sequence: 1, rollback: new Map() };
   const expectedPlatforms = new Set(expectedVersions.keys());
   const descriptors = paths
-    .map((path) =>
-      verifiedPreviousDescriptor(path, publicKey, keyId, maximumSequence, expectedPlatforms),
-    )
+    .map((path) => verifiedPreviousDescriptor(path, publicKey, keyId, expectedPlatforms))
     .sort((left, right) => right.sequence - left.sequence);
   for (let index = 1; index < descriptors.length; index += 1) {
     if (descriptors[index]?.sequence === descriptors[index - 1]?.sequence) {
@@ -277,9 +263,14 @@ function previousTargetLineages(
       for (const digest of target.rollbackCompatibleFrom) platformDigests.add(digest);
     }
   }
-  return new Map(
-    [...digests].map(([platform, platformDigests]) => [platform, [...platformDigests]]),
-  );
+  const sequence = newest.sequence + 1;
+  if (!Number.isSafeInteger(sequence)) throw new Error("Release manifest sequence is exhausted");
+  return {
+    sequence,
+    rollback: new Map(
+      [...digests].map(([platform, platformDigests]) => [platform, [...platformDigests]]),
+    ),
+  };
 }
 
 function signedHostUpdateManifest(
@@ -311,12 +302,10 @@ function signedHostUpdateManifest(
     ["macos-universal", requiredPlanTarget(plan, "macos").previousVersion],
     ["relay-linux-x86-64", requiredPlanTarget(plan, "relay").previousVersion],
   ]);
-  const sequence = releaseSequence(plan.version);
-  const rollback = previousTargetLineages(
+  const { sequence, rollback } = previousTargetLineages(
     options.previousManifestPaths,
     publicKey,
     options.keyId,
-    sequence,
     expectedPreviousVersions,
   );
   const issuedAt = Math.floor((options.nowMs ?? Date.now()) / 1000);

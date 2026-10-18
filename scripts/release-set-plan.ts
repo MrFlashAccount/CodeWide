@@ -40,8 +40,6 @@ type ReleaseSetPlan = {
   readonly bump: Bump;
   readonly sourceRevision: string;
   readonly base: string;
-  readonly previousVersion: string;
-  readonly version: string;
   readonly tag: string;
   readonly affected: readonly string[];
   readonly targets: readonly ReleaseSetTarget[];
@@ -140,9 +138,6 @@ function planReleaseSet(options: CliOptions): ReleaseSetPlan {
   const previousProducts =
     previousManifest === undefined ? [] : readReleaseProducts(previousManifest);
   const latestTag = latestStableTag("v", sourceRevision);
-  const macos = projects.find(({ id }) => id === "macos");
-  if (macos === undefined)
-    throw new Error("macOS release metadata is required for the shared version baseline");
   const firstCommit = runGit(["rev-list", "--max-parents=0", sourceRevision]).split("\n")[0];
   if (firstCommit === undefined || firstCommit.length === 0)
     throw new Error("Could not resolve the first repository commit");
@@ -150,17 +145,6 @@ function planReleaseSet(options: CliOptions): ReleaseSetPlan {
     previousManifest === undefined ? undefined : releaseRevision(previousManifest.sourceRevision);
   if (previousManifest !== undefined) releaseTag(previousManifest.tag);
   const base = options.base ?? inventoryBase ?? latestTag ?? firstCommit;
-  const previousVersion =
-    previousProducts.length === 0
-      ? latestTag === undefined
-        ? macos.baselineVersion
-        : version(latestTag.slice(1), `tag ${latestTag}`)
-      : previousProducts.reduce(
-          (highest, product) =>
-            compareVersions(product.version, highest) > 0 ? product.version : highest,
-          "0.0.0",
-        );
-  const nextVersion = bumpVersion(previousVersion, options.bump);
   const tag = nextDatedReleaseTag(options.date, reservedReleaseTags(options.reservedTags));
   const affected = readAffectedTargetIds(
     options.files === undefined
@@ -181,7 +165,6 @@ function planReleaseSet(options: CliOptions): ReleaseSetPlan {
             affected,
             previousProducts,
             base,
-            nextVersion,
             sourceRevision,
             tag,
             options.bump,
@@ -205,8 +188,6 @@ function planReleaseSet(options: CliOptions): ReleaseSetPlan {
     bump: options.bump,
     sourceRevision,
     base,
-    previousVersion,
-    version: nextVersion,
     tag,
     affected: projects.filter(({ id }) => affected.has(id)).map(({ id }) => id),
     targets,
@@ -218,7 +199,6 @@ function planProduct(
   affected: ReadonlySet<string>,
   previousProducts: readonly ReleaseProduct[],
   base: string,
-  nextVersion: string,
   sourceRevision: string,
   tag: string,
   bump: Bump,
@@ -228,7 +208,8 @@ function planProduct(
   if (!affected.has(id) && previous !== undefined) {
     return { ...project, ...previous, delivery: "reuse", base, previousVersion: previous.version };
   }
-  // Older releases have no inventory. Bootstrap a proven inventory instead of guessing provenance.
+  // Each product owns its version line. A product absent from the previous
+  // inventory continues from its own legacy tag or baseline, never a sibling's.
   const legacyTag = latestStableTag(project.tagPrefix, sourceRevision);
   const previousProductVersion =
     previous?.version ??
@@ -241,7 +222,7 @@ function planProduct(
     delivery: "build",
     base,
     previousVersion: previousProductVersion,
-    version: previous === undefined ? nextVersion : bumpVersion(previous.version, bump),
+    version: bumpVersion(previousProductVersion, bump),
     sourceRevision,
     sourceTag: tag,
   };

@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, generateKeyPairSync, verify } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -99,6 +99,30 @@ function hostUpdateTargets(path: string): readonly HostUpdateTarget[] {
   return hostUpdateDescriptor(path).targets;
 }
 
+/**
+ * Re-signs a produced manifest with another feed sequence, modelling a
+ * predecessor published by an earlier release under the same trusted key.
+ */
+function resignWithSequence(path: string, sequence: number): void {
+  const envelope: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (!isRecord(envelope) || typeof envelope.payload !== "string") {
+    throw new Error("Release manifest envelope is invalid");
+  }
+  const descriptor: unknown = JSON.parse(
+    Buffer.from(envelope.payload, "base64url").toString("utf8"),
+  );
+  if (!isRecord(descriptor)) throw new Error("Release manifest descriptor is invalid");
+  const payload = Buffer.from(JSON.stringify({ ...descriptor, sequence }), "utf8");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      ...envelope,
+      payload: payload.toString("base64url"),
+      signature: sign("sha256", payload, releaseKey.privateKey).toString("base64"),
+    }),
+  );
+}
+
 function artifactFiles(releaseVersion: string) {
   return [
     [`codewide-relay-${releaseVersion}-linux-x86_64`, "codewide-relay-x86_64-unknown-linux-musl"],
@@ -113,23 +137,29 @@ function artifactFiles(releaseVersion: string) {
   ] as const;
 }
 
+type FixtureOptions = {
+  readonly releaseVersion?: string;
+  readonly previousVersion?: string;
+  readonly linuxSourceRevision?: string;
+};
+
 function fixture(
   root: string,
-  releaseVersion = version,
-  linuxSourceRevision?: string,
+  options: FixtureOptions = {},
 ): { readonly planPath: string; readonly artifacts: string; readonly output: string } {
+  const releaseVersion = options.releaseVersion ?? version;
+  const linuxSourceRevision = options.linuxSourceRevision;
   mkdirSync(root, { recursive: true });
   const sourceRevision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const base = execFileSync("git", ["rev-parse", "HEAD~1"], { encoding: "utf8" }).trim();
   const planPath = join(root, "plan.json");
   const artifacts = join(root, "artifacts");
   const output = join(root, "output");
-  const previousVersion = releaseVersion === version ? "0.4.0" : version;
+  const previousVersion =
+    options.previousVersion ?? (releaseVersion === version ? "0.4.0" : version);
   writeFileSync(planPath, JSON.stringify({
     base,
     sourceRevision,
-    version: releaseVersion,
-    previousVersion,
     tag: `v${releaseVersion}`,
     affected: ["android-apk"],
     targets: ["relay", "companion-linux", "macos", "android-apk"].map((id) => ({
@@ -177,13 +207,10 @@ function fixture(
 function prepareReusedRelease(
   root: string,
   previousOutput: string,
-  releaseVersion: string,
   previousManifestPaths: readonly string[],
 ): string {
   const previousManifestPath = join(previousOutput, "assets", "release-manifest.json");
   const inventory = readReleaseProducts(JSON.parse(readFileSync(previousManifestPath, "utf8")));
-  const previousVersion = inventory[0]?.version;
-  if (previousVersion === undefined) throw new Error("Previous release inventory is empty");
   const artifacts = join(root, "artifacts");
   const reusedProducts = join(artifacts, "reused-products");
   mkdirSync(reusedProducts, { recursive: true });
@@ -201,8 +228,6 @@ function prepareReusedRelease(
     JSON.stringify({
       base: sourceRevision,
       sourceRevision,
-      version: releaseVersion,
-      previousVersion,
       tag: "release-2026-10-16.1",
       affected: [],
       targets: inventory.map((product) => ({
@@ -218,7 +243,7 @@ function prepareReusedRelease(
 }
 
 describe("atomic release package", () => {
-  it("stages all products with verifiable checksums and human-readable notes", () => {
+  it("stages all products with verifiable checksums and human-readable notes as the first feed entry", () => {
     const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
     try {
       const paths = fixture(root);
@@ -249,7 +274,7 @@ describe("atomic release package", () => {
         ),
       ).toBe(true);
       const descriptor = hostUpdateDescriptor(manifestPath);
-      expect(descriptor.sequence).toBe(4_000_001);
+      expect(descriptor.sequence).toBe(1);
       const relayTarget = descriptor.targets.find(({ platform }) => platform === "relay-linux-x86-64");
       expect(relayTarget?.artifactUrl.endsWith("/codewide-relay-x86_64-unknown-linux-musl.tar.gz")).toBe(true);
       expect(descriptor.targets).toHaveLength(3);
@@ -304,8 +329,6 @@ describe("atomic release package", () => {
         JSON.stringify({
           base: sourceRevision,
           sourceRevision,
-          version: "0.5.0",
-          previousVersion: version,
           tag: "release-2026-09-30.1",
           affected: [],
           targets: inventory.map((product) => ({
@@ -333,8 +356,6 @@ describe("atomic release package", () => {
         JSON.stringify({
           base: sourceRevision,
           sourceRevision,
-          version: "0.5.0",
-          previousVersion: version,
           tag: "release-2026-10-01.1",
           affected: [],
           targets: products.map((product) => ({
@@ -392,8 +413,6 @@ describe("atomic release package", () => {
         JSON.stringify({
           base: sourceRevision,
           sourceRevision,
-          version: nextVersion,
-          previousVersion: version,
           tag,
           affected: ["android-apk"],
           targets: inventory.map((product) =>
@@ -434,7 +453,7 @@ describe("atomic release package", () => {
   it("rejects Linux generation provenance that disagrees with the signed release plan", () => {
     const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
     try {
-      const paths = fixture(root, version, "b".repeat(40));
+      const paths = fixture(root, { linuxSourceRevision: "b".repeat(40) });
       expect(() => prepareReleaseSet(paths.planPath, paths.artifacts, paths.output, signing)).toThrow(
         "Linux Companion bundle provenance does not match the release plan",
       );
@@ -465,13 +484,13 @@ describe("atomic release package", () => {
       const baseline = fixture(join(root, "baseline"));
       prepareReleaseSet(baseline.planPath, baseline.artifacts, baseline.output, signing);
       const baselineManifestPath = join(baseline.output, "assets", "release-manifest.json");
-      const next = fixture(join(root, "next"), "0.4.2");
+      const next = fixture(join(root, "next"), { releaseVersion: "0.4.2" });
       prepareReleaseSet(next.planPath, next.artifacts, next.output, {
         ...signing,
         previousManifestPaths: [baselineManifestPath],
       });
       const nextManifestPath = join(next.output, "assets", "release-manifest.json");
-      const reusedManifestPath = prepareReusedRelease(join(root, "reused"), next.output, "0.4.3", [
+      const reusedManifestPath = prepareReusedRelease(join(root, "reused"), next.output, [
         nextManifestPath,
       ]);
 
@@ -492,10 +511,12 @@ describe("atomic release package", () => {
       const baseline = fixture(join(root, "baseline"));
       prepareReleaseSet(baseline.planPath, baseline.artifacts, baseline.output, signing);
       const baselineManifestPath = join(baseline.output, "assets", "release-manifest.json");
-      const next = fixture(join(root, "next"), "0.4.2");
+      const next = fixture(join(root, "next"), { releaseVersion: "0.4.2" });
       prepareReleaseSet(next.planPath, next.artifacts, next.output, signing);
       const nextManifestPath = join(next.output, "assets", "release-manifest.json");
-      const reusedManifestPath = prepareReusedRelease(join(root, "reused"), next.output, "0.4.3", [
+      // The later release was issued after the baseline without certifying it.
+      resignWithSequence(nextManifestPath, 2);
+      const reusedManifestPath = prepareReusedRelease(join(root, "reused"), next.output, [
         baselineManifestPath,
         nextManifestPath,
       ]);
@@ -505,6 +526,60 @@ describe("atomic release package", () => {
         const baselineTarget = baselineTargets.find(({ platform }) => platform === target.platform);
         expect(target.rollbackCompatibleFrom).toEqual([baselineTarget?.sha256]);
       }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("issues the next feed sequence after a predecessor whose sequence exceeds every product version", () => {
+    const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
+    try {
+      // release-2026-10-16.2 signed sequence 6000013 while its newest product was 0.6.12.
+      const previous = fixture(join(root, "previous"), {
+        releaseVersion: "0.6.12",
+        previousVersion: "0.6.11",
+      });
+      prepareReleaseSet(previous.planPath, previous.artifacts, previous.output, signing);
+      const previousManifestPath = join(previous.output, "assets", "release-manifest.json");
+      resignWithSequence(previousManifestPath, 6_000_013);
+      const next = fixture(join(root, "next"), {
+        releaseVersion: "0.6.13",
+        previousVersion: "0.6.12",
+      });
+      prepareReleaseSet(next.planPath, next.artifacts, next.output, {
+        ...signing,
+        previousManifestPaths: [previousManifestPath],
+      });
+
+      const descriptor = hostUpdateDescriptor(join(next.output, "assets", "release-manifest.json"));
+      expect(descriptor.sequence).toBe(6_000_014);
+      const previousTargets = hostUpdateTargets(previousManifestPath);
+      for (const target of descriptor.targets) {
+        const previousTarget = previousTargets.find(({ platform }) => platform === target.platform);
+        expect(target.rollbackCompatibleFrom).toEqual([previousTarget?.sha256]);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects predecessors that share a feed sequence", () => {
+    const root = mkdtempSync(join(tmpdir(), "codewide-release-"));
+    try {
+      const first = fixture(join(root, "first"));
+      prepareReleaseSet(first.planPath, first.artifacts, first.output, signing);
+      const second = fixture(join(root, "second"));
+      prepareReleaseSet(second.planPath, second.artifacts, second.output, signing);
+      const next = fixture(join(root, "next"), { releaseVersion: "0.4.2" });
+      expect(() =>
+        prepareReleaseSet(next.planPath, next.artifacts, next.output, {
+          ...signing,
+          previousManifestPaths: [
+            join(first.output, "assets", "release-manifest.json"),
+            join(second.output, "assets", "release-manifest.json"),
+          ],
+        }),
+      ).toThrow("duplicate sequence");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -522,7 +597,7 @@ describe("atomic release package", () => {
       }
       const payload = `${envelopeValue.payload.startsWith("A") ? "B" : "A"}${envelopeValue.payload.slice(1)}`;
       writeFileSync(previousManifestPath, JSON.stringify({ ...envelopeValue, payload }));
-      const next = fixture(join(root, "next"), "0.4.2");
+      const next = fixture(join(root, "next"), { releaseVersion: "0.4.2" });
       expect(() =>
         prepareReleaseSet(next.planPath, next.artifacts, next.output, {
           ...signing,

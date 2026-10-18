@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,7 +22,28 @@ type Plan = {
   readonly targets: readonly Target[];
 };
 
+const productIds = ["relay", "companion-linux", "macos", "android-apk"] as const;
+type ProductId = (typeof productIds)[number];
+
+/** Versions of the previous published inventory, which always lists every product. */
+type Inventory = Readonly<Record<ProductId, string>>;
+
+const defaultInventory: Inventory = {
+  relay: "0.4.0",
+  "companion-linux": "0.4.0",
+  macos: "0.4.0",
+  "android-apk": "0.4.0",
+};
+
 function plan(files: readonly string[], bump = "patch", androidVersion = "0.4.0"): Plan {
+  return parsePlan(planJson(files, bump, { ...defaultInventory, "android-apk": androidVersion }));
+}
+
+function planJson(
+  files: readonly string[],
+  bump: string,
+  inventory: Inventory | undefined,
+): unknown {
   const root = mkdtempSync(join(tmpdir(), "codewide-release-inventory-"));
   const manifest = join(root, "manifest.json");
   const revision = execFileSync("git", ["rev-parse", "HEAD"], {
@@ -34,9 +55,9 @@ function plan(files: readonly string[], bump = "patch", androidVersion = "0.4.0"
     JSON.stringify({
       tag: "release-2026-09-29.1",
       sourceRevision: revision,
-      products: ["relay", "companion-linux", "macos", "android-apk"].map((id) => ({
+      products: productIds.map((id) => ({
         id,
-        version: id === "android-apk" ? androidVersion : "0.4.0",
+        version: inventory?.[id],
         sourceRevision: revision,
         sourceTag: "v0.4.0",
         assets: [{ name: `${id}.artifact`, sha256: "b".repeat(64), size: 1 }],
@@ -52,38 +73,64 @@ function plan(files: readonly string[], bump = "patch", androidVersion = "0.4.0"
         files.join(","),
         "--bump",
         bump,
-        "--previous-manifest",
-        manifest,
+        ...(inventory === undefined ? [] : ["--previous-manifest", manifest]),
         "--date",
         "2026-09-30",
         "--json",
       ],
       { cwd: repoRoot, encoding: "utf8" },
     );
-    const value: unknown = JSON.parse(output);
-    if (
-      !isRecord(value) ||
-      !Array.isArray(value.targets) ||
-      typeof value.tag !== "string" ||
-      !Array.isArray(value.affected)
-    ) {
-      throw new Error("release-set plan is invalid");
-    }
-    const targets = value.targets.map((target) => {
-      if (
-        !isRecord(target) ||
-        typeof target.id !== "string" ||
-        typeof target.version !== "string" ||
-        typeof target.delivery !== "string"
-      ) {
-        throw new Error("release-set target is invalid");
-      }
-      return { id: target.id, version: target.version, delivery: target.delivery };
-    });
-    return { tag: value.tag, affected: value.affected, targets };
+    return JSON.parse(output);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+function parsePlan(value: unknown): Plan {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.targets) ||
+    typeof value.tag !== "string" ||
+    !Array.isArray(value.affected)
+  ) {
+    throw new Error("release-set plan is invalid");
+  }
+  const targets = value.targets.map((target) => {
+    if (
+      !isRecord(target) ||
+      typeof target.id !== "string" ||
+      typeof target.version !== "string" ||
+      typeof target.delivery !== "string"
+    ) {
+      throw new Error("release-set target is invalid");
+    }
+    return { id: target.id, version: target.version, delivery: target.delivery };
+  });
+  return { tag: value.tag, affected: value.affected, targets };
+}
+
+/** A product's own previous version line: its latest stable tag, else its configured baseline. */
+function ownPreviousVersion(project: string, tagPrefix: string): string {
+  const tag = execFileSync(
+    "git",
+    ["tag", "--merged", "HEAD", "--list", `${tagPrefix}[0-9]*`, "--sort=-version:refname"],
+    { cwd: repoRoot, encoding: "utf8" },
+  )
+    .split("\n")
+    .find((candidate) => /^\d+\.\d+\.\d+$/u.test(candidate.slice(tagPrefix.length)));
+  if (tag !== undefined) return tag.slice(tagPrefix.length);
+  const metadata: unknown = JSON.parse(
+    readFileSync(new URL(`../../../apps/${project}/project.json`, import.meta.url), "utf8"),
+  );
+  if (
+    !isRecord(metadata) ||
+    !isRecord(metadata.metadata) ||
+    !isRecord(metadata.metadata.codewideRelease) ||
+    typeof metadata.metadata.codewideRelease.baselineVersion !== "string"
+  ) {
+    throw new Error(`${project} has no release baseline`);
+  }
+  return metadata.metadata.codewideRelease.baselineVersion;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -138,6 +185,39 @@ describe("release-set planner", () => {
       { id: "macos", version: "0.4.1", delivery: "build" },
       { id: "android-apk", version: "0.8.2", delivery: "reuse" },
     ]);
+  });
+
+  it("bootstraps each product without an inventory entry from its own version line", () => {
+    const result = parsePlan(planJson(["apps/android/src/ui/Button.tsx"], "minor", undefined));
+    expect(result.targets).toEqual([
+      {
+        id: "relay",
+        version: bumpVersion(ownPreviousVersion("relay", "relay-v"), "minor"),
+        delivery: "build",
+      },
+      {
+        id: "companion-linux",
+        version: bumpVersion(ownPreviousVersion("companion-linux", "companion-linux-v"), "minor"),
+        delivery: "build",
+      },
+      {
+        id: "macos",
+        version: bumpVersion(ownPreviousVersion("companion-macos", "v"), "minor"),
+        delivery: "build",
+      },
+      {
+        id: "android-apk",
+        version: bumpVersion(ownPreviousVersion("android", "android-v"), "minor"),
+        delivery: "build",
+      },
+    ]);
+  });
+
+  it("does not carry a shared release version", () => {
+    const value = planJson(["apps/android/src/ui/Button.tsx"], "patch", defaultInventory);
+    if (!isRecord(value)) throw new Error("release-set plan is invalid");
+    expect(value).not.toHaveProperty("version");
+    expect(value).not.toHaveProperty("previousVersion");
   });
 
   it("does not publish documentation-only changes", () => {
