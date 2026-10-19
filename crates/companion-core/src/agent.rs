@@ -13,6 +13,7 @@ pub mod bindings;
 pub mod client_wire;
 pub mod fork;
 pub mod orchestration;
+pub(crate) mod permission_profiles;
 pub mod provider_status;
 pub mod providers;
 pub mod registry;

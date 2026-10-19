@@ -16,6 +16,7 @@ use crate::{
             StartWhileActiveMode, ThreadChange, ThreadStatus, ToolCallParams, ToolCallResult,
             ToolResultContent, TurnId, TurnOrigin, TurnStatus,
         },
+        permission_profiles::ProfileObservations,
         provider::{AgentProvider, ClientToolHost},
         registry::ProviderRegistry,
         testing::{ScriptedProvider, thread},
@@ -98,7 +99,12 @@ async fn harness(parent_profile: &str) -> Result<Harness, Box<dyn std::error::Er
         .await?;
     let gateway = Arc::new(ClientWireGateway::new(registry, bindings));
     let (journal_tx, journal) = tokio::sync::mpsc::channel(16);
-    let service = OrchestrationService::new(gateway.clone(), store.clone(), journal_tx);
+    let service = OrchestrationService::new(
+        gateway.clone(),
+        store.clone(),
+        journal_tx,
+        Arc::new(ProfileObservations::default()),
+    );
     Ok(Harness {
         service,
         codex,
@@ -643,8 +649,12 @@ async fn links_and_status_survive_a_restart() -> TestResult {
     );
     // A new service over the same store: the tracker starts empty.
     let (journal, _journal_rx) = tokio::sync::mpsc::channel(1);
-    let restarted =
-        OrchestrationService::new(harness.gateway.clone(), harness.store.clone(), journal);
+    let restarted = OrchestrationService::new(
+        harness.gateway.clone(),
+        harness.store.clone(),
+        journal,
+        Arc::new(ProfileObservations::default()),
+    );
     let (_, listed) = call(
         &restarted,
         "codex",

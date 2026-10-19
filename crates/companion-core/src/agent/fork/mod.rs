@@ -3,7 +3,8 @@
 //! that provider. The new thread's first turn carries a context handoff
 //! built from the source thread's neutral history (`handoff`); the source
 //! thread is unchanged. The handoff waits, durably, for the user's first
-//! message unless the request carries `codewideInitialPrompt`.
+//! message unless the request carries `codewideInitialPrompt`; while it
+//! waits, the inherited title durably materializes an otherwise empty target.
 //!
 //! A fork to the thread's own provider is today's native fork with the
 //! extension fields removed. See `docs/agent-providers.md#fork-into-another-agent`.
@@ -25,8 +26,10 @@ use crate::{
         },
         model::{
             AgentTurn, Capability, ERROR_INVALID_PARAMS, ItemsView, ProviderId, SortDirection,
-            ThreadSettings, ThreadTurnsParams, TurnStartParams, UserContent,
+            ThreadChange, ThreadSettings, ThreadTurnsParams, ThreadUpdateParams, TurnStartParams,
+            UserContent,
         },
+        permission_profiles::{ProfileObservations, READ_ONLY},
         provider::AgentProvider,
     },
     store::IndexStore,
@@ -95,6 +98,7 @@ pub struct ForkService {
     gateway: Arc<ClientWireGateway>,
     store: Arc<IndexStore>,
     journal: tokio::sync::mpsc::Sender<Value>,
+    profiles: Arc<ProfileObservations>,
     /// Threads whose first turn still needs the handoff → handoff text.
     pending: Mutex<HashMap<String, String>>,
 }
@@ -106,6 +110,7 @@ impl ForkService {
         gateway: Arc<ClientWireGateway>,
         store: Arc<IndexStore>,
         journal: tokio::sync::mpsc::Sender<Value>,
+        profiles: Arc<ProfileObservations>,
     ) -> Arc<Self> {
         let pending = match load_pending(&store) {
             Ok(pending) => pending,
@@ -118,6 +123,7 @@ impl ForkService {
             gateway,
             store,
             journal,
+            profiles,
             pending: Mutex::new(pending),
         })
     }
@@ -147,6 +153,9 @@ impl ForkService {
             .await
             .map_err(|error| RpcFailure::from_provider(&error))?
             .thread;
+        let source_profile = Some(source_thread.settings.permission_profile.clone())
+            .filter(|profile| !profile.is_empty())
+            .or_else(|| self.profiles.get(source.thread_id.as_str()));
         let turns = source_turns(&source.provider, source, params).await?;
         let preamble = handoff::handoff_preamble(
             source.thread_id.as_str(),
@@ -155,13 +164,31 @@ impl ForkService {
             handoff::DEFAULT_HANDOFF_BUDGET,
         );
         let wire = self.gateway.wire(&target);
-        let (cwd, settings) = fork_settings(&target, &source_thread, params).await?;
-        let thread = self
+        let (cwd, settings) =
+            fork_settings(&target, &source_thread, source_profile.as_deref(), params).await?;
+        let mut thread = self
             .gateway
             .create_thread(&target, &wire, cwd, settings)
             .await?;
         let forked = thread.app_thread_id.clone();
         let initial_prompt = text_field(params, FORK_INITIAL_PROMPT_FIELD);
+        if initial_prompt.is_none() {
+            // Codex does not write a rollout for an otherwise empty
+            // `thread/start`. Persisting the fork's inherited title is a real
+            // fork mutation and makes the thread resumable before the user's
+            // delayed first message, without starting a synthetic model turn.
+            let name = fork_name(&source_thread);
+            target
+                .thread_update(ThreadUpdateParams {
+                    app_thread_id: forked.clone(),
+                    change: ThreadChange::Name {
+                        name: Some(name.clone()),
+                    },
+                })
+                .await
+                .map_err(|error| RpcFailure::from_provider(&error))?;
+            thread.name = Some(name);
+        }
         let record = ForkRecord {
             v: FORK_RECORD_VERSION,
             forked_from_id: source.thread_id.as_str().to_owned(),
@@ -331,6 +358,19 @@ fn text_field(params: &Value, field: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn fork_name(source: &crate::agent::model::AgentThread) -> String {
+    source
+        .name
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            let preview = source.preview.trim();
+            (!preview.is_empty()).then(|| preview.chars().take(80).collect())
+        })
+        .unwrap_or_else(|| "Forked chat".to_owned())
+}
+
 /// The fork's working directory and settings: the request's `cwd`, `model`
 /// and `permissions`, else the source thread's (the target's default model);
 /// the request's `config.model_reasoning_effort` and `serviceTier`, else the
@@ -338,6 +378,7 @@ fn text_field(params: &Value, field: &str) -> Option<String> {
 async fn fork_settings(
     target: &Arc<dyn AgentProvider>,
     source: &crate::agent::model::AgentThread,
+    source_profile: Option<&str>,
     params: &Value,
 ) -> Result<(String, ThreadSettings), RpcFailure> {
     let requested = decode::requested_settings(params);
@@ -346,10 +387,12 @@ async fn fork_settings(
         None => default_model(target).await?,
     };
     let permission_profile = text_field(params, "permissions")
-        .or_else(|| {
-            Some(source.settings.permission_profile.clone()).filter(|profile| !profile.is_empty())
-        })
-        .unwrap_or_else(|| ":workspace".to_owned());
+        .or_else(|| source_profile.map(str::to_owned))
+        .unwrap_or_else(|| READ_ONLY.to_owned());
+    let permission_profile =
+        crate::agent::permission_profiles::for_provider(target, permission_profile)
+            .await
+            .map_err(|message| RpcFailure::new(ERROR_INVALID_PARAMS, message))?;
     Ok((
         text_field(params, "cwd").unwrap_or_else(|| source.cwd.clone()),
         ThreadSettings {
@@ -480,51 +523,74 @@ mod tests {
 
     struct Harness {
         fork: Arc<ForkService>,
-        claude: Arc<ScriptedProvider>,
         gateway: Arc<ClientWireGateway>,
         store: Arc<IndexStore>,
         journal: tokio::sync::mpsc::Receiver<Value>,
+        profiles: Arc<ProfileObservations>,
+        target: Arc<ScriptedProvider>,
+        target_provider: ProviderId,
         _directory: tempfile::TempDir,
     }
 
     async fn harness(target_forks: bool) -> Result<Harness, Box<dyn std::error::Error>> {
+        harness_for("codex", ":workspace", "claude", &[], target_forks).await
+    }
+
+    async fn harness_for(
+        source_provider: &'static str,
+        source_profile: &str,
+        target_provider: &'static str,
+        target_profiles: &[&'static str],
+        target_forks: bool,
+    ) -> Result<Harness, Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-        let mut source = thread("codex", SOURCE, 5);
+        let mut source = thread(source_provider, SOURCE, 5);
         source.cwd = "/repo".into();
-        let codex =
-            Arc::new(ScriptedProvider::new("codex", capabilities(true)).with_thread(source));
-        codex.set_turns(
+        source.name = Some("Parser work".into());
+        source.settings.permission_profile = source_profile.into();
+        let source = Arc::new(
+            ScriptedProvider::new(source_provider, capabilities(true)).with_thread(source),
+        );
+        source.set_turns(
             SOURCE,
             vec![
                 turn("t1", "first question", "first answer"),
                 turn("t2", "second question", "second answer"),
             ],
         );
-        let claude = Arc::new(ScriptedProvider::new("claude", capabilities(target_forks)));
-        let codex_dyn: Arc<dyn AgentProvider> = codex;
-        let claude_dyn: Arc<dyn AgentProvider> = claude.clone();
+        let target = Arc::new(
+            ScriptedProvider::new(target_provider, capabilities(target_forks))
+                .with_profiles(target_profiles),
+        );
+        let source_dyn: Arc<dyn AgentProvider> = source;
+        let target_dyn: Arc<dyn AgentProvider> = target.clone();
+        let source_provider = ProviderId::from_static(source_provider);
+        let target_provider = ProviderId::from_static(target_provider);
         let registry = Arc::new(ProviderRegistry::new(
-            vec![codex_dyn, claude_dyn],
-            &ProviderId::from_static("codex"),
+            vec![source_dyn, target_dyn],
+            &source_provider,
             Vec::new(),
         )?);
         let bindings = Arc::new(BindingStore::new(store.clone()));
         bindings
             .bind(
                 &AppThreadId::from_static(SOURCE),
-                &ProviderId::from_static("codex"),
+                &source_provider,
                 BindingOrigin::Created,
             )
             .await?;
         let gateway = Arc::new(ClientWireGateway::new(registry, bindings));
         let (journal_tx, journal) = tokio::sync::mpsc::channel(8);
+        let profiles = Arc::new(ProfileObservations::default());
         Ok(Harness {
-            fork: ForkService::new(gateway.clone(), store.clone(), journal_tx),
-            claude,
+            fork: ForkService::new(gateway.clone(), store.clone(), journal_tx, profiles.clone()),
             gateway,
             store,
             journal,
+            profiles,
+            target,
+            target_provider,
             _directory: directory,
         })
     }
@@ -533,7 +599,7 @@ mod tests {
         let source = harness.gateway.resolve_thread(SOURCE, None).await?;
         harness
             .fork
-            .fork(&source, &ProviderId::from_static("claude"), params)
+            .fork(&source, &harness.target_provider, params)
             .await
     }
 
@@ -575,12 +641,20 @@ mod tests {
             .ok_or("no thread id")?
             .to_owned();
         assert_eq!(response["thread"]["forkedFromId"], SOURCE);
-        let created = harness.claude.created();
+        let created = harness.target.created();
         assert_eq!(created.len(), 1);
         assert_eq!(created[0].cwd, "/repo");
         assert_eq!(created[0].settings.model, "claude-default");
+        assert_eq!(response["thread"]["name"], "Parser work");
+        assert_eq!(harness.target.updated().len(), 1);
+        assert_eq!(
+            harness.target.updated()[0].change,
+            ThreadChange::Name {
+                name: Some("Parser work".into())
+            }
+        );
         assert!(
-            harness.claude.started().is_empty(),
+            harness.target.started().is_empty(),
             "no turn before the user's message"
         );
         let announced = harness.journal.recv().await.ok_or("no thread/started")?;
@@ -603,7 +677,12 @@ mod tests {
 
         // The handoff survives a restart until a turn of the thread starts.
         let (journal, _rx) = tokio::sync::mpsc::channel(1);
-        let restarted = ForkService::new(harness.gateway.clone(), harness.store.clone(), journal);
+        let restarted = ForkService::new(
+            harness.gateway.clone(),
+            harness.store.clone(),
+            journal,
+            harness.profiles.clone(),
+        );
         assert_ne!(
             restarted.inject("turn/start", turn_start(&forked)),
             turn_start(&forked)
@@ -618,8 +697,12 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 let (journal, _rx) = tokio::sync::mpsc::channel(1);
-                let reopened =
-                    ForkService::new(harness.gateway.clone(), harness.store.clone(), journal);
+                let reopened = ForkService::new(
+                    harness.gateway.clone(),
+                    harness.store.clone(),
+                    journal,
+                    harness.profiles.clone(),
+                );
                 if reopened.inject("turn/start", turn_start(&forked)) == turn_start(&forked) {
                     break;
                 }
@@ -644,8 +727,12 @@ mod tests {
             .as_str()
             .ok_or("no thread id")?
             .to_owned();
-        assert_eq!(harness.claude.created()[0].settings.model, "opus");
-        let started = harness.claude.started();
+        assert_eq!(harness.target.created()[0].settings.model, "opus");
+        assert!(
+            harness.target.updated().is_empty(),
+            "the first turn materializes the target without an extra title write"
+        );
+        let started = harness.target.started();
         assert_eq!(started.len(), 1);
         let input = serde_json::to_value(&started[0].input)?;
         let preamble = input[0]["text"].as_str().ok_or("no handoff")?;
@@ -696,7 +783,7 @@ mod tests {
         .await
         .map_err(|failure| failure.message)?;
         let settings: Vec<ThreadSettings> = harness
-            .claude
+            .target
             .created()
             .into_iter()
             .map(|created| created.settings)
@@ -722,6 +809,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_cross_provider_fork_uses_the_targets_full_access_profile_id() -> TestResult {
+        let harness = harness_for(
+            "claude",
+            ":full-access",
+            "codex",
+            &[":read-only", ":workspace", ":danger-full-access"],
+            true,
+        )
+        .await?;
+        fork(
+            &harness,
+            &json!({"threadId": SOURCE, "codewideAgentProvider": "codex"}),
+        )
+        .await
+        .map_err(|failure| failure.message)?;
+
+        assert_eq!(
+            harness.target.created()[0].settings.permission_profile,
+            ":danger-full-access"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_cross_provider_fork_inherits_the_observed_codex_sandbox() -> TestResult {
+        let harness = harness_for(
+            "codex",
+            "",
+            "claude",
+            &[":read-only", ":workspace", ":full-access"],
+            true,
+        )
+        .await?;
+        harness.profiles.observe_rpc_result(
+            "thread/resume",
+            &json!({"thread": {"id": SOURCE}, "activePermissionProfile": null,
+                "sandbox": {"type": "dangerFullAccess"}}),
+        );
+        fork(
+            &harness,
+            &json!({"threadId": SOURCE, "codewideAgentProvider": "claude"}),
+        )
+        .await
+        .map_err(|failure| failure.message)?;
+
+        assert_eq!(
+            harness.target.created()[0].settings.permission_profile,
+            ":full-access"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_cross_provider_fork_with_an_unknown_source_profile_fails_closed() -> TestResult {
+        let harness = harness_for(
+            "codex",
+            "",
+            "claude",
+            &[":read-only", ":workspace", ":full-access"],
+            true,
+        )
+        .await?;
+        fork(
+            &harness,
+            &json!({"threadId": SOURCE, "codewideAgentProvider": "claude"}),
+        )
+        .await
+        .map_err(|failure| failure.message)?;
+
+        assert_eq!(
+            harness.target.created()[0].settings.permission_profile,
+            ":read-only"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn a_target_without_the_capability_is_refused_before_any_write() -> TestResult {
         let harness = harness(false).await?;
         let failure = fork(
@@ -736,7 +900,7 @@ mod tests {
             failure.data,
             Some(json!({"capability": "threads.crossProviderFork", "provider": "claude"}))
         );
-        assert!(harness.claude.created().is_empty());
+        assert!(harness.target.created().is_empty());
         Ok(())
     }
 }

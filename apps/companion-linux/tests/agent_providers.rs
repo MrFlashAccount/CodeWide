@@ -1625,6 +1625,21 @@ fn parent_answer(request: &Value) -> Value {
     }
 }
 
+const CODEX_FORKED: &str = "01a1550d-3e21-7cd0-861e-8dc69c452dc8";
+
+fn codex_fork_target_answer(request: &Value) -> Value {
+    match request["method"].as_str() {
+        Some("thread/start") => json!({"result": {
+            "thread": {
+                "id": CODEX_FORKED, "cwd": "/work", "model": "gpt-5.5", "preview": "",
+                "createdAt": 2, "updatedAt": 2, "status": {"type": "idle"}
+            }
+        }}),
+        Some("thread/name/set") => json!({"result": {}}),
+        _ => default_answer(request),
+    }
+}
+
 #[tokio::test]
 async fn a_codex_model_spawns_an_agent_on_another_provider_shown_as_a_subagent() -> TestResult {
     let mut harness = Harness::start(parent_answer, |_| {
@@ -1810,6 +1825,46 @@ async fn thread_fork_into_another_provider_hands_off_the_context_with_the_first_
     .await?
     .ok_or("the native fork was not forwarded")?;
     assert_eq!(native["params"], json!({"threadId": CODEX_PARENT}));
+    harness.stop();
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_fork_into_codex_materializes_the_empty_rollout_without_a_model_turn() -> TestResult
+{
+    let mut harness = Harness::start(codex_fork_target_answer, |_| Vec::new()).await?;
+    let source = harness.new_fake_thread().await?;
+    let forked = harness
+        .rpc(
+            "fork-to-codex",
+            "thread/fork",
+            json!({"threadId": source, "codewideAgentProvider": "codex"}),
+        )
+        .await?;
+    assert_eq!(forked["result"]["thread"]["id"], CODEX_FORKED);
+    assert_eq!(forked["result"]["thread"]["name"], "fake thread");
+
+    let requests = std::iter::from_fn(|| harness.observed.try_recv().ok()).collect::<Vec<_>>();
+    let methods = requests
+        .iter()
+        .filter_map(|request| request["method"].as_str())
+        .collect::<Vec<_>>();
+    let start = methods
+        .iter()
+        .position(|method| *method == "thread/start")
+        .ok_or("thread/start missing")?;
+    let name = methods
+        .iter()
+        .position(|method| *method == "thread/name/set")
+        .ok_or("thread/name/set missing")?;
+    assert!(start < name, "{methods:?}");
+    assert!(
+        !methods.contains(&"turn/start"),
+        "materialization must not call the model: {methods:?}"
+    );
+    let name_request = &requests[name];
+    assert_eq!(name_request["params"]["threadId"], CODEX_FORKED);
+    assert_eq!(name_request["params"]["name"], "fake thread");
     harness.stop();
     Ok(())
 }
