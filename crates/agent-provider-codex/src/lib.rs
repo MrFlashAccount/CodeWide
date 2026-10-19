@@ -14,6 +14,7 @@
 //! See `CONTEXT.md`.
 
 pub mod account_pool;
+mod active_compactions;
 pub mod catalog;
 mod catalog_summary;
 mod catalog_visibility;
@@ -67,6 +68,7 @@ use tracing::error;
 
 use crate::{
     account_pool::{AccountPoolError, AccountPoolService},
+    active_compactions::{ActiveCompactions, TurnsPage},
     client_tools::CodexClientTools,
 };
 
@@ -113,6 +115,7 @@ pub struct CodexProvider {
     account_pool: RwLock<Option<Arc<AccountPoolService>>>,
     storage: Option<Arc<storage::CodexStorage>>,
     client_tools: Arc<CodexClientTools>,
+    compactions: Arc<ActiveCompactions>,
     id: ProviderId,
 }
 
@@ -125,6 +128,7 @@ impl CodexProvider {
             account_pool: RwLock::new(None),
             storage: None,
             client_tools: Arc::new(CodexClientTools::default()),
+            compactions: Arc::new(ActiveCompactions::default()),
             id: codex_provider_id(),
         }
     }
@@ -307,10 +311,12 @@ async fn forward_native_events(
     mut upstream: mpsc::Receiver<OrderedUpstreamEvent>,
     events: mpsc::Sender<ProviderEvent>,
     interception: ToolInterception,
+    compactions: Arc<ActiveCompactions>,
 ) {
     while let Some(event) = upstream.recv().await {
         let forwarded = match event {
             OrderedUpstreamEvent::Notification(payload) => {
+                compactions.observe(&payload);
                 if interception.tools.intercept(
                     &payload,
                     &interception.upstream,
@@ -396,6 +402,7 @@ impl AgentProvider for CodexProvider {
                 upstream: self.upstream.clone(),
                 provider: self.id.clone(),
             },
+            self.compactions.clone(),
         ));
         receiver
     }
@@ -677,10 +684,16 @@ impl AgentProvider for CodexProvider {
 impl NativeSurface for CodexProvider {
     async fn request(&self, mut request: Value) -> Result<Value, ProviderError> {
         self.client_tools.declare_on_thread_start(&mut request);
-        self.upstream
+        let page = TurnsPage::of(&request);
+        let mut response = self
+            .upstream
             .request(request)
             .await
-            .map_err(transport_error)
+            .map_err(transport_error)?;
+        if let Some(page) = &page {
+            self.compactions.complete_turns_page(page, &mut response);
+        }
+        Ok(response)
     }
 
     async fn request_fenced(
@@ -688,11 +701,15 @@ impl NativeSurface for CodexProvider {
         mut request: Value,
     ) -> Result<(Value, ProviderFence), ProviderError> {
         self.client_tools.declare_on_thread_start(&mut request);
-        let (response, fence) = self
+        let page = TurnsPage::of(&request);
+        let (mut response, fence) = self
             .upstream
             .request_fenced(request)
             .await
             .map_err(transport_error)?;
+        if let Some(page) = &page {
+            self.compactions.complete_turns_page(page, &mut response);
+        }
         Ok((
             response,
             ProviderFence::new(async move { fence.wait().await.map_err(transport_error) }),
