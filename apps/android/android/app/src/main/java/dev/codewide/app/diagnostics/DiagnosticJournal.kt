@@ -30,6 +30,8 @@ internal class DiagnosticJournal(private val directory: File) {
   fun pending(): java.nio.file.DirectoryStream<java.nio.file.Path> =
     Files.newDirectoryStream(directory.toPath(), "*.json")
 
+  fun hasPending(): Boolean = pending().use { paths -> paths.iterator().hasNext() }
+
   @Synchronized
   fun target(file: File, fallbackConnectionId: String): String {
     val target = File(directory, "${file.nameWithoutExtension}.target")
