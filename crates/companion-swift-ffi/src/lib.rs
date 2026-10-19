@@ -12,6 +12,7 @@ use companion_core::runtime_host::{
 };
 use companion_core::{
     host_identity::HostDisplayName,
+    http_proxy::HttpProxyConfig,
     managed_runtime::{
         AppServerConnection, ManagedRuntime, ManagedRuntimeConfig, PairingPresentation,
         relay_connection_label,
@@ -189,11 +190,14 @@ impl CoreHost {
             .join("Updater");
         let updates =
             codewide_host_update::macos::MacosSparkleUpdater::new(&updater_root, installed);
+        let dictation_proxy = HttpProxyConfig::from_dotenv(&codex_home.join(".env"))
+            .map_err(CompanionFfiError::runtime)?;
         let config = ManagedRuntimeConfig::desktop(
             state_directory.into(),
             codex_home.clone(),
             host_display_name,
         )
+        .with_dictation_proxy(dictation_proxy)
         .with_secret_storage_policy(SecretStoragePolicy::PrivateFileOnly)
         .with_listen_address(listen_address.parse().map_err(CompanionFfiError::runtime)?)
         .with_host_update_guardian(updates.clone());

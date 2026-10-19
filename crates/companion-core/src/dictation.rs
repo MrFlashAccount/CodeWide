@@ -25,6 +25,7 @@ use tracing::{info, warn};
 
 mod metrics;
 
+use crate::http_proxy::HttpProxyConfig;
 use metrics::{
     MeasuredResponse, MetricsConnectorLayer, MetricsDnsResolver, RequestNetworkProbe,
     next_request_id, request_metrics,
@@ -239,6 +240,8 @@ pub enum DictationError {
     Timeout,
     #[error("ChatGPT transcription transport failed")]
     Transport,
+    #[error("Codex proxy configuration is invalid")]
+    ProxyConfiguration,
     #[error("ChatGPT transcription returned an invalid response")]
     InvalidResponse,
     #[error("ChatGPT transcription returned no text")]
@@ -284,8 +287,31 @@ impl DictationService {
     ///
     /// Returns an error if its HTTP client or private temporary directory
     /// cannot be created.
-    pub async fn open(auth_file: PathBuf, temp_root: PathBuf) -> Result<Self, DictationError> {
-        Self::open_with_endpoint(auth_file, temp_root, DEFAULT_ENDPOINT.to_owned()).await
+    pub async fn open(
+        auth_file: PathBuf,
+        temp_root: PathBuf,
+        proxy: HttpProxyConfig,
+    ) -> Result<Self, DictationError> {
+        info!(
+            status = "dictation-proxy-configured",
+            http_proxy = proxy.http_is_configured(),
+            https_proxy = proxy.https_is_configured(),
+            no_proxy = proxy.no_proxy_is_configured(),
+        );
+        Self::open_with_options(
+            auth_file,
+            temp_root,
+            DEFAULT_ENDPOINT.to_owned(),
+            DictationLimits {
+                max_audio_bytes: MAX_AUDIO_BYTES,
+                max_chunk_bytes: MAX_CHUNK_BYTES,
+                segment_ms: SEGMENT_MS,
+                automatic_retries: AUTOMATIC_RETRIES,
+                base_retry_delay: BASE_RETRY_DELAY,
+            },
+            proxy,
+        )
+        .await
     }
 
     /// Creates the service with an explicit transcription endpoint. This is
@@ -311,6 +337,7 @@ impl DictationService {
                 automatic_retries: AUTOMATIC_RETRIES,
                 base_retry_delay: BASE_RETRY_DELAY,
             },
+            HttpProxyConfig::default(),
         )
         .await
     }
@@ -320,6 +347,7 @@ impl DictationService {
         temp_root: PathBuf,
         endpoint: String,
         options: DictationLimits,
+        proxy: HttpProxyConfig,
     ) -> Result<Self, DictationError> {
         fs::create_dir_all(&temp_root)
             .await
@@ -327,7 +355,9 @@ impl DictationService {
         fs::set_permissions(&temp_root, std::fs::Permissions::from_mode(0o700))
             .await
             .map_err(|_| DictationError::Storage)?;
-        let client = reqwest::Client::builder()
+        let client = proxy
+            .apply(reqwest::Client::builder())
+            .map_err(|_| DictationError::ProxyConfiguration)?
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_mins(15))
             .pool_idle_timeout(Duration::from_mins(30))

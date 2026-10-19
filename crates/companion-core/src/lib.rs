@@ -11,6 +11,7 @@ pub mod file_uploads;
 pub mod files;
 pub mod global_supervisor_limits;
 pub mod host_identity;
+pub mod http_proxy;
 pub use codewide_host_update as host_update;
 pub mod identity;
 pub mod image_previews;
