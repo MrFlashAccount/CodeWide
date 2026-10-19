@@ -5,6 +5,7 @@ import { View } from "react-native";
 import type { ServerIconId } from "../src/data/serverIcons";
 import { ServerIconPicker } from "../src/features/connections/ServerIconPicker";
 import { touchTarget } from "../src/theme";
+import { layOutContentMenus } from "./fixtures/contentMenuLayout";
 
 jest.mock("@expo/ui/jetpack-compose", () => {
   const NativeView = require("react-native").View;
@@ -17,6 +18,7 @@ jest.mock("@expo/ui/jetpack-compose", () => {
 });
 
 jest.mock("@expo/ui/jetpack-compose/modifiers", () => ({
+  height: (value: number) => ({ height: value }),
   width: (value: number) => ({ width: value }),
 }));
 
@@ -42,6 +44,7 @@ it("opens an anchored icon grid, exposes selection and chooses directly in the p
   expect(trigger.props.accessibilityState).toEqual({ expanded: false });
 
   fireEvent.press(trigger);
+  layOutContentMenus(view);
   expect(view.getByTestId("server-icon-menu").props.expanded).toBe(true);
   const options = view.getAllByRole("radio");
   expect(options.length).toBeGreaterThanOrEqual(16);

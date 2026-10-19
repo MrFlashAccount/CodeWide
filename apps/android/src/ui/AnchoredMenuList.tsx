@@ -1,68 +1,83 @@
 import type { ReactNode } from "react";
-import { ScrollView, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { colors, menuContentInset, radii, spacing, typeScale } from "../theme";
+import { MENU_ROW_MIN_HEIGHT } from "./menuGeometry";
 import { AppText as Text } from "./Typography";
 
-/** Space between rows and around the list, for menus that declare their height. */
-export const LIST_GAP = spacing.xxs;
-export const LIST_PADDING = spacing.xs;
-
 /**
- * How tall the list is: measured from its rows up to `maxHeight`, or a
- * declared `height` for rows of fixed height, which the anchored popup then
- * does not have to measure.
- */
-type ListHeight =
-  | { readonly height?: never; readonly maxHeight: number }
-  | { readonly height: number; readonly maxHeight?: never };
-
-/**
- * The body of an anchored list menu, like the live plan's: a clipped rounded
- * surface, an optional quiet heading and scrolling rows.
+ * The body of an anchored list menu: an optional quiet heading and rows, with
+ * the native menu's geometry. `ContentMenu` sizes the popup to it and scrolls
+ * it; the list itself has no height of its own.
  */
 export function AnchoredMenuList({
   children,
   testID,
   title,
-  ...size
-}: ListHeight & {
+}: {
   readonly children: ReactNode;
   readonly testID: string;
   readonly title?: string;
 }): React.JSX.Element {
-  const bound = size.height === undefined ? { maxHeight: size.maxHeight } : { height: size.height };
   return (
-    <View style={[styles.menu, bound]}>
-      <ScrollView
-        contentContainerStyle={styles.list}
-        nestedScrollEnabled
-        showsVerticalScrollIndicator={false}
-        style={bound}
-        testID={testID}
-      >
-        {title === undefined ? null : (
-          <Text accessibilityRole="header" style={styles.title}>
-            {title}
-          </Text>
-        )}
-        {children}
-      </ScrollView>
+    <View testID={testID}>
+      {title === undefined ? null : (
+        <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
+          {title}
+        </Text>
+      )}
+      {children}
     </View>
   );
 }
 
+/** One pressable row of an anchored list menu, as the native menu draws its items. */
+export function AnchoredMenuRow({
+  accessibilityLabel,
+  children,
+  disabled = false,
+  onPress,
+  testID,
+}: {
+  readonly accessibilityLabel: string;
+  readonly children: ReactNode;
+  /** A row that opens nothing. */
+  readonly disabled?: boolean;
+  readonly onPress: () => void;
+  readonly testID: string;
+}): React.JSX.Element {
+  return (
+    <Pressable
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      testID={testID}
+    >
+      {children}
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  list: {
-    gap: LIST_GAP,
-    paddingHorizontal: menuContentInset,
-    paddingVertical: LIST_PADDING,
+  row: {
+    alignItems: "center",
+    borderRadius: radii.selected,
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginHorizontal: spacing.xs,
+    minHeight: MENU_ROW_MIN_HEIGHT,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xs,
   },
-  menu: {
-    borderRadius: radii.large,
-    overflow: "hidden",
+  rowPressed: {
+    backgroundColor: colors.menuHighlight,
   },
   title: {
-    color: colors.textMuted,
+    color: colors.textDim,
     ...typeScale.label,
+    paddingBottom: spacing.xxs,
+    paddingHorizontal: menuContentInset,
+    paddingTop: spacing.xs,
   },
 });

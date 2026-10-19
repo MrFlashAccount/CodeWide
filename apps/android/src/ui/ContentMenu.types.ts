@@ -5,8 +5,13 @@ import type { PressableProps } from "react-native";
 export interface ContentMenuProps {
   readonly align?: "start" | "center" | "end";
   readonly children: ReactNode;
-  /** A body of known height; otherwise the popup measures it. */
-  readonly height?: number;
+  /**
+   * Bounds of the popup's height. The menu sizes itself to its body between
+   * them and scrolls beyond `maxHeight`; `maxHeight` defaults to the window's
+   * anchored-menu bound.
+   */
+  readonly maxHeight?: number;
+  readonly minHeight?: number;
   onOpenChange: (open: boolean) => void;
   readonly open: boolean;
   readonly placement?: "top" | "bottom" | "left" | "right";

@@ -7,6 +7,7 @@ import {
   VirtualizedTurnLeadItem,
   VirtualizedTurnTimelineItem,
 } from "../src/features/conversation/turns/VirtualizedTurnTimelineItem";
+import { layOutContentMenus } from "./fixtures/contentMenuLayout";
 
 type TurnItem = Extract<TimelineItem, { kind: "turn" }>;
 
@@ -317,7 +318,7 @@ it("bounds a report pill to half its container, not the window, and reserves its
   expect(view.getByTestId("task-notification-line")).toHaveStyle({ maxWidth: 140 });
 });
 
-it("opens a plain list of reports with fixed rows and a declared height", () => {
+it("opens a plain list of reports sized by the anchored menu", () => {
   const woken = completedTurn("listed", [
     taskReport("a", "wake", "Map sources"),
     taskReport("b", "wake", "Review spec"),
@@ -327,20 +328,12 @@ it("opens a plain list of reports with fixed rows and a declared height", () => 
   layOut(view, "task-notification-line-row", 900);
 
   fireEvent.press(view.getByTestId("task-notification-line"));
+  layOutContentMenus(view, 120);
 
-  // No heading: the list is the menu. Each row keeps the height its two lines
-  // need, and the list declares the sum instead of being measured.
+  // No heading: the list is the menu, and the menu takes the list's height.
   expect(view.queryByText(/background task|reports/iu)).toBeNull();
-  const rows = view.getAllByTestId("task-notification-row");
-  expect(rows).toHaveLength(2);
-  const heights = rows.map((row) => StyleSheet.flatten(row.props.style).height);
-  const [rowHeight] = heights;
-  expect(typeof rowHeight).toBe("number");
-  expect(rowHeight).toBeGreaterThanOrEqual(48);
-  expect(heights.every((height) => height === rowHeight)).toBe(true);
-  expect(view.getByTestId("task-notification-list")).toHaveStyle({
-    height: Number(rowHeight) * 2 + 4 + 8 * 2,
-  });
+  expect(view.getAllByTestId("task-notification-row")).toHaveLength(2);
+  expect(view.getByTestId("content-menu")).toHaveStyle({ height: 120 });
   expect(view.queryByText(/finished/u)).toBeNull();
 });
 

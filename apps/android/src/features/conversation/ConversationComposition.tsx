@@ -182,7 +182,6 @@ export function ConversationComposition(
       onOpen={(threadId) => {
         toolsBinding.openSubagents(subagents.catalog, threadId);
       }}
-      total={subagents.total}
       working={subagents.working}
     />
   );

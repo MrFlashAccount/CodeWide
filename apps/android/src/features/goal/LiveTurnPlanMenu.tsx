@@ -1,6 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { createElement, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 
 import { liveTurnPlanProgress, type LiveTurnPlan } from "../../rendering/live-turn-plan";
 import { occurrenceKey } from "../../rendering/listKey";
@@ -17,12 +17,8 @@ import {
   typeWeight,
 } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
+import { useAnchoredMenuSize } from "../../ui/useAnchoredMenuSize";
 
-const MENU_MIN_DIMENSION = 1;
-const MENU_MAX_WIDTH = 400;
-const MENU_WIDTH_GUTTER = 24;
-const MENU_MAX_HEIGHT = 440;
-const MENU_HEIGHT_GUTTER = 96;
 const TRIGGER_PRESSED_OPACITY = 0.72;
 const TRIGGER_ELEVATION = 4;
 
@@ -30,19 +26,11 @@ type PlanStep = LiveTurnPlan["steps"][number];
 
 export function LiveTurnPlanMenu({ plan }: { readonly plan: LiveTurnPlan }): React.JSX.Element {
   const [open, setOpen] = useState(false);
-  const { height, width } = useWindowDimensions();
+  const menu = useAnchoredMenuSize();
   const progress = liveTurnPlanProgress(plan);
   const currentIsRunning = progress.current?.status === "inProgress";
   const currentLabel = progress.current?.step ?? "Plan complete";
   const progressLabel = `${String(progress.completed)}/${String(plan.steps.length)}`;
-  const contentWidth = Math.max(
-    MENU_MIN_DIMENSION,
-    Math.min(MENU_MAX_WIDTH, width - MENU_WIDTH_GUTTER),
-  );
-  const contentMaxHeight = Math.max(
-    MENU_MIN_DIMENSION,
-    Math.min(MENU_MAX_HEIGHT, height - MENU_HEIGHT_GUTTER),
-  );
   const toggleOpen = useEvent(() => {
     setOpen((current) => !current);
   });
@@ -61,13 +49,9 @@ export function LiveTurnPlanMenu({ plan }: { readonly plan: LiveTurnPlan }): Rea
       open={open}
       placement="top"
       trigger={trigger}
-      width={contentWidth}
+      width={menu.width}
     >
-      <LiveTurnPlanContent
-        contentMaxHeight={contentMaxHeight}
-        plan={plan}
-        progressLabel={progressLabel}
-      />
+      <LiveTurnPlanContent plan={plan} progressLabel={progressLabel} />
     </ContentMenu>
   );
 }
@@ -130,47 +114,19 @@ function LiveTurnPlanCurrent({
 }
 
 function LiveTurnPlanContent({
-  contentMaxHeight,
   plan,
   progressLabel,
 }: {
-  readonly contentMaxHeight: number;
   readonly plan: LiveTurnPlan;
   readonly progressLabel: string;
 }): React.JSX.Element {
+  // The anchored menu sizes the popup to this body and scrolls it.
   return (
-    <View style={StyleSheet.flatten([styles.menu, { maxHeight: contentMaxHeight }])}>
-      <LiveTurnPlanScroll
-        contentMaxHeight={contentMaxHeight}
-        plan={plan}
-        progressLabel={progressLabel}
-      />
-    </View>
-  );
-}
-
-function LiveTurnPlanScroll({
-  contentMaxHeight,
-  plan,
-  progressLabel,
-}: {
-  readonly contentMaxHeight: number;
-  readonly plan: LiveTurnPlan;
-  readonly progressLabel: string;
-}): React.JSX.Element {
-  return (
-    <ScrollView
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-      nestedScrollEnabled
-      showsVerticalScrollIndicator={false}
-      style={{ maxHeight: contentMaxHeight }}
-      testID="live-plan-menu"
-    >
+    <View style={styles.content} testID="live-plan-menu">
       <LiveTurnPlanHeading progressLabel={progressLabel} />
       <LiveTurnPlanExplanation explanation={plan.explanation} />
       <LiveTurnPlanSteps steps={plan.steps} />
-    </ScrollView>
+    </View>
   );
 }
 
@@ -304,11 +260,6 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     justifyContent: "space-between",
     minHeight: typeScale.body.lineHeight,
-  },
-  menu: {
-    borderRadius: radii.large,
-    overflow: "hidden",
-    padding: 0,
   },
   pressed: { opacity: TRIGGER_PRESSED_OPACITY },
   progress: {
