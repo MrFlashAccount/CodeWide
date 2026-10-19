@@ -30,7 +30,6 @@ use tracing::{error, info, warn};
 
 use self::{
     children::{ChildLink, ChildLinks, LinkError},
-    profiles::ProfileObservations,
     tools::{
         AgentStatus, CancelResult, ListResult, ListedAgent, SendMode, SendRequest, SendResult,
         SendStatus, SpawnRequest, SpawnResult, ToolRequest, WaitRequest, WaitResult,
@@ -49,6 +48,7 @@ use crate::{
             ThreadUpdateParams, ToolCallParams, ToolCallResult, TurnId, TurnInterruptParams,
             TurnStartParams, TurnStartResult, TurnStatus, TurnSteerParams, UserContent,
         },
+        permission_profiles::ProfileObservations,
         provider::{AgentProvider, ClientToolHost},
     },
     store::IndexStore,
@@ -78,7 +78,7 @@ pub struct OrchestrationService {
     gateway: Arc<ClientWireGateway>,
     links: ChildLinks,
     tracker: ChildTracker,
-    profiles: ProfileObservations,
+    profiles: Arc<ProfileObservations>,
     /// Durable client-wire journal input (`thread/started` of threads created
     /// on providers without the native surface).
     journal: tokio::sync::mpsc::Sender<Value>,
@@ -96,6 +96,7 @@ impl OrchestrationService {
         gateway: Arc<ClientWireGateway>,
         store: Arc<IndexStore>,
         journal: tokio::sync::mpsc::Sender<Value>,
+        profiles: Arc<ProfileObservations>,
     ) -> Arc<Self> {
         let links = ChildLinks::new(store);
         let known = links.child_ids().unwrap_or_else(|err| {
@@ -106,7 +107,7 @@ impl OrchestrationService {
             gateway,
             links,
             tracker: ChildTracker::with_known(known),
-            profiles: ProfileObservations::default(),
+            profiles,
             journal,
             specs: tools::specs(),
             turn_ends: tokio::sync::broadcast::channel(256).0,
@@ -295,22 +296,8 @@ impl OrchestrationService {
             parent_profile.as_deref(),
             request.permission_profile.as_deref(),
         )?;
-        let permission_profile = match target.catalog_permission_profiles().await {
-            Ok(catalog) => profiles::for_target(
-                &permission_profile,
-                &catalog
-                    .profiles
-                    .iter()
-                    .map(|profile| profile.id.as_str())
-                    .collect::<Vec<_>>(),
-            )?,
-            Err(err) => {
-                // Without the catalog the profile goes as chosen; the
-                // provider rejects one it does not know.
-                warn!(err = %err, provider = %wire.descriptor.id, "agent provider's permission profiles are unavailable");
-                permission_profile
-            }
-        };
+        let permission_profile =
+            crate::agent::permission_profiles::for_provider(&target, permission_profile).await?;
         Ok(SpawnPlan {
             target,
             wire,

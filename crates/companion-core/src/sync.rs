@@ -511,11 +511,17 @@ impl SyncHub {
         let usage_projector = Arc::new(std::sync::Mutex::new(
             crate::usage::LiveUsageProjector::new(store.clone(), usage_pricing),
         ));
+        let permission_profiles =
+            Arc::new(crate::agent::permission_profiles::ProfileObservations::default());
         // A passive shadow never executes requests, so it declares no tools
         // and answers no tool call.
         let orchestration = (mutation_mode == MutationMode::Active).then(|| {
-            let service =
-                OrchestrationService::new(gateway.clone(), store.clone(), local_events.clone());
+            let service = OrchestrationService::new(
+                gateway.clone(),
+                store.clone(),
+                local_events.clone(),
+                permission_profiles.clone(),
+            );
             for provider in registry.enabled() {
                 let host: Arc<dyn agent_core::provider::ClientToolHost> = service.clone();
                 provider.install_client_tools(Arc::downgrade(&host));
@@ -524,7 +530,12 @@ impl SyncHub {
         });
         let agents = AgentObservers {
             orchestration,
-            fork: ForkService::new(gateway.clone(), store.clone(), local_events.clone()),
+            fork: ForkService::new(
+                gateway.clone(),
+                store.clone(),
+                local_events.clone(),
+                permission_profiles,
+            ),
         };
         // One ordered forwarder per provider; each keeps its own fence order.
         for provider in registry.enabled() {
