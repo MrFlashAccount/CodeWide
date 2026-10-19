@@ -8,6 +8,7 @@ import { CodeWideSlider } from "../src/ui/CodeWideSlider.native";
 import { sliderProgressAt, sliderStopAt, sliderStopCenter } from "../src/ui/sliderGeometry";
 import { controlSize, radii } from "../src/theme";
 import { ModelThinkingMenu } from "../src/ui/TurnControlMenus";
+import { layOutContentMenus } from "./fixtures/contentMenuLayout";
 
 // WHY: Node cannot mount Expo's Compose popup; the adapter stays at the native boundary.
 jest.mock("@expo/ui/jetpack-compose", () => {
@@ -22,6 +23,7 @@ jest.mock("@expo/ui/jetpack-compose", () => {
 
 // WHY: The modifier entrypoint imports native Expo internals unavailable in Jest.
 jest.mock("@expo/ui/jetpack-compose/modifiers", () => ({
+  height: (value: number) => ({ height: value }),
   width: (value: number) => ({ width: value }),
 }));
 
@@ -66,6 +68,7 @@ function mount(selectedServiceTier: string | null = null) {
     />,
   );
   fireEvent.press(view.getByRole("button", { name: "Model and thinking" }));
+  layOutContentMenus(view);
   return { view, onApplySettings, onClose };
 }
 
@@ -110,6 +113,7 @@ it("discards Fast and effort edits when dismissed", () => {
   expect(onApplySettings).not.toHaveBeenCalled();
   expect(onClose).toHaveBeenCalledTimes(1);
   fireEvent.press(view.getByRole("button", { name: "Model and thinking" }));
+  layOutContentMenus(view);
   expect(view.getByLabelText("Thinking level, High")).toBeVisible();
   expect(view.getByRole("switch", { name: "Fast mode" }).props.accessibilityState).toEqual({
     checked: false,

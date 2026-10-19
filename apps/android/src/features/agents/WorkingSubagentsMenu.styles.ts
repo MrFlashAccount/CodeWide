@@ -19,13 +19,6 @@ export const styles = StyleSheet.create({
   pressed: {
     opacity: PRESSED_OPACITY,
   },
-  row: {
-    alignItems: "center",
-    borderRadius: radii.medium,
-    flexDirection: "row",
-    gap: spacing.sm,
-    minHeight: controlSize.touch,
-  },
   rowName: {
     color: colors.text,
     ...typeScale.body,

@@ -23,6 +23,7 @@ import {
   typeWeight,
 } from "../theme";
 import type { ActionMenuIconName } from "./ActionMenu.types";
+import { MENU_ROW_MIN_HEIGHT } from "./menuGeometry";
 import { AppText } from "./Typography";
 
 export type CodeWideMenuAction = {
@@ -38,7 +39,6 @@ export type CodeWideMenuAction = {
 
 const DEFAULT_MENU_WIDTH = 264;
 const MENU_ICON_SLOT_WIDTH = 26;
-const MENU_MIN_ROW_HEIGHT = 50;
 const DISABLED_OPACITY = 0.4;
 
 type CodeWideMenuProps = {
@@ -283,7 +283,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.sm,
     marginHorizontal: spacing.xs,
-    minHeight: MENU_MIN_ROW_HEIGHT,
+    minHeight: MENU_ROW_MIN_HEIGHT,
     paddingHorizontal: spacing.xs,
     paddingVertical: spacing.xs,
   },

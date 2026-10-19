@@ -25,7 +25,10 @@ export function ContentMenu(props: ContentMenuProps): React.JSX.Element {
         content={props.children}
         maxHeight={Math.max(
           MIN_MENU_DIMENSION,
-          window.height - spacing.md - spacing.md - spacing.xs - spacing.xs,
+          Math.min(
+            props.maxHeight ?? Number.POSITIVE_INFINITY,
+            window.height - spacing.md - spacing.md - spacing.xs - spacing.xs,
+          ),
         )}
         open={props.open}
         width={width}

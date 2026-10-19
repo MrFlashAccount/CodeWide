@@ -2,6 +2,7 @@ import { fireEvent, render } from "@testing-library/react-native";
 import { View } from "react-native";
 import type { StoredThreadSummary } from "../src/data/thread-summary-types";
 import { WorkingSubagentsMenu } from "../src/features/agents/WorkingSubagentsMenu";
+import { layOutContentMenus } from "./fixtures/contentMenuLayout";
 
 function child(id: string, name: string, active: boolean): StoredThreadSummary {
   return {
@@ -26,19 +27,18 @@ function child(id: string, name: string, active: boolean): StoredThreadSummary {
   };
 }
 
-it("shows the working children as one floating chip that opens them and every subagent", () => {
+it("shows the working children as one floating chip whose list opens each of them", () => {
   const children = [
     child("a", "Map sources", true),
     child("b", "Review spec", true),
     child("c", "Old audit", false),
   ];
-  const opened: (string | null)[] = [];
+  const opened: string[] = [];
   const view = render(
     <WorkingSubagentsMenu
       onOpen={(threadId) => {
         opened.push(threadId);
       }}
-      total={children.length}
       working={children.filter((summary) => summary.status.type === "active")}
     />,
   );
@@ -46,16 +46,15 @@ it("shows the working children as one floating chip that opens them and every su
   expect(view.getByText("2 working")).toBeOnTheScreen();
   fireEvent.press(view.getByTestId("working-subagents-chip"));
   const rows = view.getAllByTestId("working-subagent-row");
+  // Only the working agents: no row for every subagent.
   expect(rows).toHaveLength(2);
+  expect(view.queryByText(/All subagents/u)).toBeNull();
   fireEvent.press(rows[1]!);
-  fireEvent.press(view.getByTestId("working-subagents-chip"));
-  expect(view.getByText("All subagents · 3")).toBeOnTheScreen();
-  fireEvent.press(view.getByTestId("all-subagents-row"));
-  expect(opened).toEqual(["b", null]);
+  expect(opened).toEqual(["b"]);
 });
 
 it("floats nothing while no subagent works", () => {
-  const view = render(<WorkingSubagentsMenu onOpen={() => undefined} total={1} working={[]} />);
+  const view = render(<WorkingSubagentsMenu onOpen={() => undefined} working={[]} />);
 
   expect(view.queryByTestId("working-subagents-chip")).toBeNull();
 });
@@ -64,11 +63,11 @@ it("opens the list centred on the chip with a gap, and draws no arrows", () => {
   const view = render(
     <WorkingSubagentsMenu
       onOpen={() => undefined}
-      total={1}
       working={[child("a", "Map sources", true)]}
     />,
   );
   fireEvent.press(view.getByTestId("working-subagents-chip"));
+  layOutContentMenus(view);
 
   // Compose lines the menu up with its anchor from its own layout pass; the
   // trigger is not measured or wrapped on the React Native side.

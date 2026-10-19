@@ -1,12 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import { createElement, useContext, useState } from "react";
-import { Pressable, View, useWindowDimensions } from "react-native";
+import { Pressable, View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
-import { colors, controlSize, iconSize, spacing, typeScale } from "../../../theme";
+import { colors, iconSize } from "../../../theme";
 import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
-import { AnchoredMenuList, LIST_GAP, LIST_PADDING } from "../../../ui/AnchoredMenuList";
+import { AnchoredMenuList, AnchoredMenuRow } from "../../../ui/AnchoredMenuList";
 import { ContentMenu } from "../../../ui/ContentMenu";
 import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
 import { useLayoutWidth } from "../../../ui/useLayoutWidth";
@@ -19,10 +19,6 @@ import {
   reportOutcome,
 } from "./taskNotificationPresentation";
 import { BackgroundTaskContext, SubagentNavigationContext } from "./turnContexts";
-
-/** Each row shows a name and a detail line; its height never depends on measurement. */
-const ROW_TEXT_HEIGHT = typeScale.body.lineHeight + typeScale.label.lineHeight;
-const ROW_PADDING = spacing.xs;
 
 /** The pill takes at most this share of the conversation's width. */
 const PILL_WIDTH_SHARE = 0.5;
@@ -107,17 +103,12 @@ function ReportListPill({
 }): React.JSX.Element {
   const [open, setOpen] = useRecyclingState(false);
   const menu = useAnchoredMenuSize();
-  const { fontScale } = useWindowDimensions();
   const toggleOpen = useEvent(() => {
     setOpen((current) => !current);
   });
   const close = useEvent(() => {
     setOpen(false);
   });
-  const rowHeight = Math.max(
-    controlSize.touch,
-    ROW_TEXT_HEIGHT * fontScale + ROW_PADDING + ROW_PADDING,
-  );
   const trigger = createElement(TaskNotificationPill, {
     loading: false,
     maxWidth: lineWidth * PILL_WIDTH_SHARE,
@@ -125,25 +116,18 @@ function ReportListPill({
     open,
     reports,
   });
-  // Rows have a fixed height, so the list declares its height instead of
-  // the popup measuring it; Compose keeps the list inside the window.
-  const listHeight = Math.min(
-    menu.maxHeight,
-    reports.length * rowHeight + (reports.length - 1) * LIST_GAP + LIST_PADDING + LIST_PADDING,
-  );
   return (
     <ContentMenu
       align="center"
-      height={listHeight}
       onOpenChange={setOpen}
       open={open}
       placement="bottom"
       trigger={trigger}
       width={Math.min(menu.width, lineWidth)}
     >
-      <AnchoredMenuList height={listHeight} testID="task-notification-list">
+      <AnchoredMenuList testID="task-notification-list">
         {reports.map((report) => (
-          <ReportRow height={rowHeight} key={report.id} onNavigate={close} report={report} />
+          <ReportRow key={report.id} onNavigate={close} report={report} />
         ))}
       </AnchoredMenuList>
     </ContentMenu>
@@ -192,11 +176,9 @@ function TaskNotificationPill({
 }
 
 function ReportRow({
-  height,
   onNavigate,
   report,
 }: {
-  readonly height: number;
   readonly onNavigate: () => void;
   readonly report: TaskNotificationReport;
 }): React.JSX.Element {
@@ -205,12 +187,10 @@ function ReportRow({
   const target = useReportTarget(report, [opening, setOpening], onNavigate);
   const details = reportDetails(report);
   return (
-    <Pressable
+    <AnchoredMenuRow
       accessibilityLabel={`${reportName(report)}, ${reportOutcome(report).phrase}, ${details}`}
-      accessibilityRole="button"
       disabled={target.kind === "none"}
       onPress={target.press}
-      style={({ pressed }) => [styles.row, { height }, pressed && styles.pressed]}
       testID="task-notification-row"
     >
       <AgentAvatar
@@ -226,7 +206,7 @@ function ReportRow({
       {target.kind === "none" ? null : (
         <Ionicons color={colors.textDim} name="chevron-forward" size={iconSize.inline} />
       )}
-    </Pressable>
+    </AnchoredMenuRow>
   );
 }
 
