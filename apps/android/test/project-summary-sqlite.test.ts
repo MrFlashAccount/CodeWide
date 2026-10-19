@@ -1,3 +1,4 @@
+import { listedThread, rowsFrame, streamGeneration, testListStream } from "./fixtures/threadListRows";
 import { questionAnswerDelivery } from "./fixtures/questionAnswer";
 import { storedThreadToListItem } from "../src/features/threadList/threadListProjection";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -89,7 +90,7 @@ describe("persisted project catalog", () => {
     for (const value of [...projectRows, ...untouched]) writer.write({ type: "insert", value });
     await writer.commit({ durable: true });
     await writer.close();
-    const database = createThreadSummaryDatabase();
+    const database = createThreadSummaryDatabase(testListStream().options);
     await database.prepare();
     await database.loadView({ ...request, recentLimit: 1 });
     expect(database.projectUnread.projects$.peek()).toContain("server\u0000/repo");
@@ -132,7 +133,7 @@ describe("persisted project catalog", () => {
     await writer.commit({ durable: true });
     await writer.close();
 
-    const database = createThreadSummaryDatabase();
+    const database = createThreadSummaryDatabase(testListStream().options);
     await database.prepare();
     await database.markUnread("server", "manual");
     expect((await database.get("server", "manual"))?.unread).toBe(1);
@@ -187,7 +188,7 @@ describe("persisted project catalog", () => {
     await writer.commit({ durable: true });
     await writer.close();
 
-    const database = createThreadSummaryDatabase();
+    const database = createThreadSummaryDatabase(testListStream().options);
     await database.prepare();
     await database.markRead("server", "anchored");
 
@@ -277,10 +278,10 @@ describe("persisted project catalog", () => {
       writer.write({ type: "insert", value: row });
     await writer.commit({ durable: true });
     await writer.close();
-    const database = createThreadSummaryDatabase();
+    const database = createThreadSummaryDatabase(testListStream().options);
     await database.prepare();
     const read = database.beginCatalogRead("server");
-    await database.applyCatalogPage("server", [], false, new Set(), read, true, "/repo");
+    await database.applyCatalogPage("server", { generation: null, rows: [] }, false, new Set(), read, true, "/repo");
     expect(await database.get("server", "mine")).toBeNull();
     expect((await database.get("server", "other"))?.cwd).toBe("/other");
     expect((await database.get("server", "unread"))?.unread).toBe(1);
@@ -299,7 +300,7 @@ describe("persisted project catalog", () => {
     writer.write({ type: "insert", value: summary("ordinary", { unread: 1 }) });
     await writer.commit({ durable: true });
     await writer.close();
-    const database = createThreadSummaryDatabase();
+    const database = createThreadSummaryDatabase(testListStream().options);
     await database.prepare();
     expect(await database.get("server", "supervisor")).not.toBeNull();
     await database.removeCatalogEntries("server", ["supervisor"]);
@@ -313,8 +314,9 @@ describe("persisted project catalog", () => {
   });
 });
 
-it("does not reopen a completed sidebar row from an older thread read", async () => {
-  const database = createThreadSummaryDatabase();
+it("lets a thread read seed a missing row but never overwrite an existing row's server fields", async () => {
+  const { options, stream } = testListStream();
+  const database = createThreadSummaryDatabase(options);
   await database.prepare();
   const active = {
     ...createV1TestThread("thread", null, 1, []),
@@ -322,30 +324,19 @@ it("does not reopen a completed sidebar row from an older thread read", async ()
     status: { type: "active", activeFlags: [] } as const,
   };
   await database.mergeSnapshots("server", [{ archived: false, thread: active }]);
-  await database.applyEvents("server", [{
-    cursor: 20,
-    payload: {
-      method: "turn/completed",
-      params: { threadId: "thread" },
-      codewideThreadPatch: {
-        version: 1,
-        threadId: "thread",
-        operation: {
-          kind: "turnCompleted",
-          summary: { activity: true, finalAgentResponse: true, previewText: "Final answer" },
-        },
-      },
-    },
-  }]);
+  expect(await database.get("server", "thread")).toMatchObject({ preview: "Old answer", status: active.status });
 
-  expect((await database.get("server", "thread"))?.status).toEqual({ type: "idle" });
-  await database.mergeSnapshots("server", [{ archived: false, thread: active }], 19);
-  const afterStaleRead = await database.get("server", "thread");
-  expect(afterStaleRead?.status).toEqual({ type: "idle" });
-  expect(afterStaleRead?.preview).toBe("Final answer");
-
+  stream.accept("server", { generation: 1, kind: "generation" });
+  await database.applyServerRows("server", streamGeneration(stream), rowsFrame([
+    listedThread({ ...active, preview: "Listed answer", status: { type: "idle" }, updatedAt: 5 }, { cursor: 20 }),
+  ]));
   await database.mergeSnapshots("server", [{ archived: false, thread: active }], 21);
-  expect((await database.get("server", "thread"))?.status).toEqual(active.status);
+
+  expect(await database.get("server", "thread")).toMatchObject({
+    preview: "Listed answer",
+    status: { type: "idle" },
+    updatedAt: 5,
+  });
   await database.close();
 });
 
@@ -357,7 +348,7 @@ it("obeys server membership on live/replayed events and private metadata, withou
     codewideCatalogExcluded: false,
   };
   const home = { ...createV1TestThread("home", null, 1, []), codewideCatalogExcluded: true };
-  const database = createThreadSummaryDatabase();
+  const database = createThreadSummaryDatabase(testListStream().options);
   await database.prepare();
   await database.mergeSnapshots("server", [
     { archived: false, thread: ordinary },
@@ -401,14 +392,14 @@ it("obeys server membership on live/replayed events and private metadata, withou
 });
 
 it("persists a skipped async question through catalog replay and database reopen", async () => {
-  const database = createThreadSummaryDatabase();
+  const database = createThreadSummaryDatabase(testListStream().options);
   await database.prepare();
   const thread = createV1TestThread("question-thread", null, 1, []);
   await database.mergeSnapshots("server", [{ thread, archived: false }]);
   await database.skipQuestion({ connectionId: "server", threadId: thread.id, turnId: "turn", itemId: "question" });
   await database.mergeSnapshots("server", [{ thread, archived: false }]);
   database.close();
-  const restored = createThreadSummaryDatabase();
+  const restored = createThreadSummaryDatabase(testListStream().options);
   await restored.prepare();
   expect((await restored.get("server", thread.id))?.skippedQuestions).toEqual({ turnId: "turn", itemIds: ["question"] });
   restored.close();
@@ -422,7 +413,7 @@ it("updates only the answered catalog row from native events without refetch and
   writer.write({ type: "insert", value: summary("unrelated") });
   await writer.commit({ durable: true });
   await writer.close();
-  const database = createThreadSummaryDatabase();
+  const database = createThreadSummaryDatabase(testListStream().options);
   await database.prepare();
   await database.loadView(request);
   const remote = vi.fn(async () => false);
@@ -445,7 +436,7 @@ it("updates only the answered catalog row from native events without refetch and
   expect(publish).toHaveBeenCalledTimes(1);
   expect(remote).not.toHaveBeenCalled();
   database.close();
-  const reopened = createThreadSummaryDatabase();
+  const reopened = createThreadSummaryDatabase(testListStream().options);
   await reopened.prepare();
   const persisted = await reopened.get("server", "question-thread");
   expect(persisted && storedThreadToListItem(persisted).needsAttention).toBe(false);
@@ -470,16 +461,13 @@ it("captures legacy pins before clearing their display flags and preserves unrea
   sqlite.native.exec(`UPDATE codewide_thread_summaries SET pinned = 1,
     __payload = json_remove(json_set(__payload, '$.pinned', json('true')), '$.pinCursor')
     WHERE thread_id = 'legacy'`);
-  const database = createThreadSummaryDatabase();
+  const database = createThreadSummaryDatabase(testListStream().options);
   await database.prepare();
   expect(await database.get("server", "legacy")).toMatchObject({ pinned: false, unread: 1 });
   expect(await database.loadPendingPinMigration("server")).toEqual(["legacy"]);
   expect(await database.loadPendingPinMigration("other")).toEqual([]);
   await database.applyPinSnapshot("server", { cursor: 10, threadIds: ["legacy"] });
-  await database.applyEvents("server", [{ cursor: 11, payload: {
-    method: "companion/thread/pin/updated", params: { threadId: "legacy", pinned: false, pinCursor: 11 },
-    codewideThreadPatch: { version: 1, threadId: "legacy", operation: { kind: "threadPinned" } },
-  } }]);
+  await database.applyPinSnapshot("server", { cursor: 11, threadIds: [] });
   await database.applyPinSnapshot("server", { cursor: 10, threadIds: ["legacy"] });
   expect(await database.get("server", "legacy")).toMatchObject({ pinned: false, pinCursor: 11, unread: 1 });
   expect(await database.get("other", "server-pin")).toMatchObject({ pinned: true, pinCursor: 7 });
@@ -522,77 +510,15 @@ it("rolls back legacy capture and flag clearing together when an upgrade transac
 });
 
 it("retains confirmed pins outside a bounded reconnect snapshot", async () => {
-  const database = createThreadSummaryDatabase();
+  const database = createThreadSummaryDatabase(testListStream().options);
   await database.prepare();
   await database.mergeSnapshots("server", [{ archived: false, thread: createV1TestThread("old-pin", null, 1, []) }]);
   await database.applyPinSnapshot("server", { cursor: 10, threadIds: ["old-pin"] });
-  await database.applySnapshot("server", [{ archived: false, thread: createV1TestThread("recent", null, 2, []) }], 10);
+  await database.applySnapshot("server", [{ archived: false, thread: listedThread(createV1TestThread("recent", null, 2, []), { cursor: 10 }) }], 10);
+  expect(await database.get("server", "recent")).not.toBeNull();
   expect(await database.get("server", "old-pin")).toMatchObject({ pinned: true, pinCursor: 10 });
   await database.applyPinSnapshot("server", { cursor: 11, threadIds: [] });
   expect(await database.get("server", "old-pin")).toMatchObject({ pinned: false, pinCursor: 11 });
   database.close();
 });
 
-describe("catalog reads racing live events", () => {
-  const seed = async (...rows: ReturnType<typeof summary>[]): Promise<void> => {
-    const writer = createThreadSummarySqlite();
-    await writer.prepare();
-    writer.begin();
-    for (const value of rows) writer.write({ type: "insert", value });
-    await writer.commit({ durable: true });
-    await writer.close();
-  };
-  const listed = (id: string, recencyAt: number) => ({
-    archived: false,
-    thread: { ...createV1TestThread(id, null, 1, []), cwd: "/repo", recencyAt, status: { type: "notLoaded" as const } },
-  });
-  const turnStarted = (cursor: number, threadId: string) => ({
-    cursor,
-    payload: {
-      method: "turn/started",
-      params: { threadId },
-      codewideThreadPatch: { version: 1, threadId, operation: { kind: "turnStarted", summary: { activity: true } } },
-    },
-  });
-
-  it("keeps a running chat and its order when a lagging page lists it as not loaded", async () => {
-    await seed(summary("running", { recencyAt: 200, status: { type: "active", activeFlags: [] } }));
-    const database = createThreadSummaryDatabase();
-    await database.prepare();
-    const read = database.beginCatalogRead("server");
-    await database.applyCatalogPage("server", [listed("running", 100)], false, new Set(["running"]), read, true, "/repo");
-    read.release();
-    const row = await database.get("server", "running");
-    expect(row).toMatchObject({ recencyAt: 200, status: { type: "active" } });
-    expect(row === null ? null : storedThreadToListItem(row).state).toBe("running");
-    database.close();
-  });
-
-  it("accepts a not-loaded page for an idle chat and evicts only idle rows absent from the head", async () => {
-    await seed(
-      summary("idle", { recencyAt: 50 }),
-      summary("absent-running", { recencyAt: 300, status: { type: "active", activeFlags: [] } }),
-      summary("absent-idle", { recencyAt: 250 }),
-    );
-    const database = createThreadSummaryDatabase();
-    await database.prepare();
-    const read = database.beginCatalogRead("server");
-    await database.applyCatalogPage("server", [listed("idle", 120)], false, new Set(["idle"]), read, true, "/repo");
-    read.release();
-    expect(await database.get("server", "idle")).toMatchObject({ recencyAt: 120, status: { type: "notLoaded" } });
-    expect(await database.get("server", "absent-running")).toMatchObject({ status: { type: "active" } });
-    expect(await database.get("server", "absent-idle")).toBeNull();
-    database.close();
-  });
-
-  it("keeps a turn that starts while the chat is being archived", async () => {
-    await seed(summary("chat", { name: "old" }));
-    const database = createThreadSummaryDatabase();
-    await database.prepare();
-    const archiving = database.updateArchived("server", "chat", true);
-    const started = database.applyEvents("server", [turnStarted(5, "chat")]);
-    await Promise.all([archiving, started]);
-    expect(await database.get("server", "chat")).toMatchObject({ archived: true, status: { type: "active" } });
-    database.close();
-  });
-});

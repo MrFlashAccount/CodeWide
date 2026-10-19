@@ -69,7 +69,7 @@ it("preserves runtime integration contracts", () => {
   expect(voiceWorkspace).not.toContain(
     'requireStore(storeRef.current).setConnectionState(connectionId, "connecting")',
   );
-  expect(ownerWorkspaceRuntime).toContain("createThreadSummaryDatabase()");
+  expect(ownerWorkspaceRuntime).toContain("createThreadSummaryDatabase({");
   expect(voiceWorkspace).not.toContain("reconcileBeforeSummary");
   expect(uiCachePersistence).toContain("registerUiCacheCollectionFlusher");
   expect(uiCachePersistence).not.toContain("createReactNativeSQLitePersistence");

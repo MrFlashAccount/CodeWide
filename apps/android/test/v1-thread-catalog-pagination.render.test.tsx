@@ -1,3 +1,4 @@
+import { listedThread, testListStream } from "./fixtures/threadListRows";
 import type { RpcClient } from "@codewide/sync-client";
 import { LegendList } from "@legendapp/list/react-native";
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
@@ -135,7 +136,7 @@ async function setup(
     gate?: (cursor: string | null) => Promise<void>;
   } = {},
 ) {
-  const database = createThreadSummaryDatabase();
+  const database = createThreadSummaryDatabase(testListStream().options);
   const threads = Array.from({ length: options.count ?? 110 }, (_, index) => catalogThread(index));
   const connections = options.connections === 2 ? ["server", "second"] : ["server"];
   const rpc = jest.fn(
@@ -151,9 +152,12 @@ async function setup(
         data: threads
           .slice(start, start + 36)
           .map((thread) =>
-            connections.length === 1
-              ? thread
-              : { ...thread, name: `${connectionId}: ${thread.name}` },
+            listedThread(
+              connections.length === 1
+                ? thread
+                : { ...thread, name: `${connectionId}: ${thread.name}` },
+              { archived: params.archived, cursor: 1 },
+            ),
           ),
         nextCursor: start + 36 < threads.length ? String(start + 36) : null,
       };
@@ -173,7 +177,9 @@ async function setup(
     enabledConnectionIds: () => connections,
     getSession: session,
     getSummaries: () => database,
+    listGeneration: () => null,
     readThread: async () => null,
+    setListStreamVisible: async () => undefined,
   });
   runtime.bindSummaryDemand(database);
   await database.prepare();
@@ -282,7 +288,9 @@ it("publishes a requested tail before a concurrent background refresh can restar
       "server",
     ),
   );
-  act(() => test.runtime.refreshConnectionWindows("server"));
+  act(() => {
+    void test.runtime.refreshThreadCatalog("server");
+  });
   await act(async () => tail.resolve());
   await waitFor(() => expect(test.view.getByText("Chat 71")).toBeVisible());
   await act(async () => refreshedHead.resolve());

@@ -671,6 +671,23 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
+  /**
+   * Required engine method: sets whether Companion pushes thread-list rows to
+   * this connection. Resolves after the value is retained and, on an open
+   * socket, sent, so a following RPC reaches Companion after it.
+   */
+  @ReactMethod
+  fun engineListStream(connectionId: String, visible: Boolean, promise: Promise) {
+    try {
+      require(connectionId.isNotBlank()) { "Invalid native engine list stream input" }
+      val service = CodexConnectionService.instance ?: error("Connection service is not running")
+      service.setListStreamVisible(connectionId, visible)
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("ENGINE_LIST_STREAM_FAILED", error.message, error)
+    }
+  }
+
   @ReactMethod
   fun engineEnqueueCommand(
     connectionId: String,
@@ -1288,6 +1305,8 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     microphone.close()
     mainHandler.removeCallbacksAndMessages(null)
     contexts -= context
+    // Rows pushed with no React context would only be dropped; Companion stops sending them.
+    if (contexts.isEmpty()) CodexConnectionService.instance?.hideListStreams()
     browserDevTools.close()
     context.runOnUiQueueThread {
       voiceAura.clear()

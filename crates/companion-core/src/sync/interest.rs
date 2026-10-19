@@ -2,11 +2,16 @@
 //!
 //! The durable journal stays unfiltered and at-least-once for every socket.
 //! Filtering happens at send time: a journal entry whose attached
-//! `codewideThreadPatch` has one of the eight high-frequency *thread topic*
-//! kinds (see [`THREAD_TOPIC_KINDS`], mirrored in `contract/v1.json`
+//! `codewideThreadPatch` has one of the *thread topic* kinds (see
+//! [`THREAD_TOPIC_KINDS`], mirrored in `contract/v1.json`
 //! `syncInterest.threadTopicKinds`) is delivered only to sockets interested
-//! in that thread. Everything else is a *catalog topic* and is always
-//! delivered, including any patch that carries a `liveActivity` change.
+//! in that thread, except an `itemUpsert` of a catalog item type
+//! ([`CATALOG_ITEM_TYPES`], or a `dynamicToolCall` of a
+//! [`CATALOG_DYNAMIC_TOOLS`] tool), which every socket still needs for
+//! notifications, unread state, questions, receipts and sub-agents.
+//! Everything else is a *catalog topic* and is always delivered. Live
+//! activity and the streamed preview reach the list through the
+//! `threadListRows` stream (`thread_list`), not through this journal.
 //!
 //! Interest-based delivery is the only mode: `hello.interest` is mandatory and
 //! every `event` frame carries `afterCursor`, the socket position before the
@@ -28,11 +33,11 @@ use std::{
 use serde_json::{Map, Value, json};
 use tracing::{debug, warn};
 
-use crate::{thread_activity::LIVE_ACTIVITY_FIELD, thread_patch::THREAD_PATCH_FIELD};
+use crate::thread_patch::THREAD_PATCH_FIELD;
 
 /// `codewideThreadPatch.operation.kind` values delivered only by interest.
 /// One list shared with `contract/v1.json`; extending it is a contract change.
-pub const THREAD_TOPIC_KINDS: [&str; 8] = [
+pub const THREAD_TOPIC_KINDS: [&str; 10] = [
     "itemTextDelta",
     "reasoningDelta",
     "reasoningPart",
@@ -41,7 +46,21 @@ pub const THREAD_TOPIC_KINDS: [&str; 8] = [
     "fileChanges",
     "mcpProgress",
     "tokenUsage",
+    "threadProgress",
+    "itemUpsert",
 ];
+/// `item.type` values whose `itemUpsert` every socket receives
+/// (`contract/v1.json syncInterest.catalogItemTypes`).
+pub const CATALOG_ITEM_TYPES: [&str; 5] = [
+    "userMessage",
+    "agentMessage",
+    "collabAgentToolCall",
+    "subAgentActivity",
+    "contextCompaction",
+];
+/// `dynamicToolCall` tools whose `itemUpsert` every socket receives
+/// (`contract/v1.json syncInterest.catalogDynamicTools`).
+pub const CATALOG_DYNAMIC_TOOLS: [&str; 1] = ["codewide_spawn_agent"];
 /// Largest interest set one socket may hold.
 pub const MAX_INTEREST_THREADS: usize = 64;
 /// Longest thread id accepted in an interest list, in characters.
@@ -164,6 +183,12 @@ impl SocketInterest {
     pub fn delivers(&self, payload: &Value) -> bool {
         delivers_to(&self.threads, payload)
     }
+
+    /// Whether the thread is in this socket's interest.
+    #[must_use]
+    pub fn contains(&self, thread_id: &str) -> bool {
+        self.threads.contains(thread_id)
+    }
 }
 
 /// One socket's interest, written inline by the session loop and read by the
@@ -256,26 +281,42 @@ fn thread_ids(list: &Value) -> Result<impl Iterator<Item = &str>, InterestReject
     Ok(ids.into_iter())
 }
 
-/// The delivery predicate: catalog topics always, thread topics only for
-/// interested threads, and any `liveActivity`-bearing patch always.
+/// The delivery predicate: catalog topics always, catalog item types of an
+/// `itemUpsert` always, other thread topics only for interested threads.
 fn delivers_to(threads: &HashSet<String>, payload: &Value) -> bool {
     let Some(patch) = payload.get(THREAD_PATCH_FIELD) else {
         return true;
     };
-    let Some(operation) = patch.get("operation") else {
+    let Some(kind) = patch
+        .get("operation")
+        .and_then(|operation| operation.get("kind"))
+        .and_then(Value::as_str)
+    else {
         return true;
     };
-    let is_thread_topic = operation
-        .get("kind")
-        .and_then(Value::as_str)
-        .is_some_and(|kind| THREAD_TOPIC_KINDS.contains(&kind));
-    if !is_thread_topic || operation.get(LIVE_ACTIVITY_FIELD).is_some() {
+    if !THREAD_TOPIC_KINDS.contains(&kind) || (kind == "itemUpsert" && is_catalog_item(payload)) {
         return true;
     }
     patch
         .get("threadId")
         .and_then(Value::as_str)
         .is_none_or(|thread_id| threads.contains(thread_id))
+}
+
+/// Whether an `itemUpsert` carries a catalog item type or a catalog dynamic
+/// tool call.
+fn is_catalog_item(payload: &Value) -> bool {
+    let Some(item) = payload.pointer("/params/item") else {
+        return false;
+    };
+    match item.get("type").and_then(Value::as_str) {
+        Some("dynamicToolCall") => item
+            .get("tool")
+            .and_then(Value::as_str)
+            .is_some_and(|tool| CATALOG_DYNAMIC_TOOLS.contains(&tool)),
+        Some(item_type) => CATALOG_ITEM_TYPES.contains(&item_type),
+        None => false,
+    }
 }
 
 /// The last cursor the socket is considered to have accepted. Defined once a
@@ -497,6 +538,12 @@ mod tests {
         Ok(())
     }
 
+    fn item(thread_id: &str, item: &Value) -> Value {
+        let mut payload = patched(thread_id, "itemUpsert");
+        payload["params"]["item"] = item.clone();
+        payload
+    }
+
     #[test]
     fn thread_topics_reach_interested_sockets_only() -> TestResult {
         let subscribed = interest(&["mine"])?;
@@ -506,14 +553,15 @@ mod tests {
             assert!(!subscribed.delivers(&patched("other", kind)), "{kind}");
             assert!(!empty.delivers(&patched("mine", kind)), "{kind}");
         }
+        assert!(subscribed.contains("mine"));
+        assert!(!subscribed.contains("other"));
         Ok(())
     }
 
     #[test]
-    fn catalog_topics_and_live_activity_always_deliver() -> TestResult {
+    fn catalog_topics_always_deliver_and_live_activity_no_longer_does() -> TestResult {
         let empty = interest(&[])?;
         for kind in [
-            "itemUpsert",
             "turnStarted",
             "turnCompleted",
             "threadStatus",
@@ -523,23 +571,52 @@ mod tests {
             "threadArchived",
             "threadSettings",
             "threadPinned",
+            "threadInvalidated",
             "modelRerouted",
-            "threadPreview",
         ] {
             assert!(empty.delivers(&patched("other", kind)), "{kind}");
         }
         let mut with_activity = patched("other", "reasoningDelta");
-        with_activity[THREAD_PATCH_FIELD]["operation"][LIVE_ACTIVITY_FIELD] =
+        with_activity[THREAD_PATCH_FIELD]["operation"]["liveActivity"] =
             json!({"kind": "reasoning", "title": "Plan"});
-        assert!(empty.delivers(&with_activity));
-        let mut cleared = patched("other", "turnPlan");
-        cleared[THREAD_PATCH_FIELD]["operation"][LIVE_ACTIVITY_FIELD] = Value::Null;
         assert!(
-            empty.delivers(&cleared),
-            "a cleared activity is a change too"
+            !empty.delivers(&with_activity),
+            "live activity travels in the list row"
         );
         assert!(empty.delivers(&json!({"method": "account/updated", "params": {}})));
         assert!(empty.delivers(&json!({"method": "companion/history/changed"})));
+        Ok(())
+    }
+
+    #[test]
+    fn only_catalog_item_types_of_an_item_upsert_reach_every_socket() -> TestResult {
+        let empty = interest(&[])?;
+        let subscribed = interest(&["mine"])?;
+        for item_type in CATALOG_ITEM_TYPES {
+            let payload = item("other", &json!({"type": item_type, "id": "i"}));
+            assert!(empty.delivers(&payload), "{item_type}");
+        }
+        let spawn = item(
+            "other",
+            &json!({"type": "dynamicToolCall", "id": "i", "tool": "codewide_spawn_agent"}),
+        );
+        assert!(empty.delivers(&spawn));
+        for tool_item in [
+            json!({"type": "commandExecution", "id": "i"}),
+            json!({"type": "fileChange", "id": "i"}),
+            json!({"type": "mcpToolCall", "id": "i"}),
+            json!({"type": "webSearch", "id": "i"}),
+            json!({"type": "reasoning", "id": "i"}),
+            json!({"type": "dynamicToolCall", "id": "i", "tool": "other_tool"}),
+            json!({"id": "untyped"}),
+        ] {
+            assert!(!empty.delivers(&item("other", &tool_item)), "{tool_item}");
+            assert!(
+                subscribed.delivers(&item("mine", &tool_item)),
+                "{tool_item}"
+            );
+        }
+        assert!(!empty.delivers(&patched("other", "threadProgress")));
         Ok(())
     }
 
@@ -565,17 +642,6 @@ mod tests {
             Some(json!({"type": "advance", "cursor": 15, "afterCursor": 13}))
         );
         assert_eq!(delivery.position(), 15);
-        Ok(())
-    }
-
-    #[test]
-    fn a_thread_preview_reaches_a_socket_without_interest_but_its_delta_does_not() -> TestResult {
-        let empty = interest(&[])?;
-        assert!(empty.delivers(&patched(
-            "thread",
-            crate::thread_preview::THREAD_PREVIEW_KIND
-        )));
-        assert!(!empty.delivers(&patched("thread", "itemTextDelta")));
         Ok(())
     }
 

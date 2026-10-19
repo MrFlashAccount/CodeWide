@@ -47,8 +47,7 @@
       { "method": "turn/plan/updated", "kind": "turnPlan" },
       { "method": "item/reasoning/summaryPartAdded", "kind": "reasoningPart", "field": "summary" },
       { "method": "item/reasoning/summaryTextDelta", "kind": "reasoningDelta", "field": "summary" },
-      { "method": "item/reasoning/textDelta", "kind": "reasoningDelta", "field": "content" },
-      { "method": "companion/thread/preview/updated", "kind": "threadPreview" }
+      { "method": "item/reasoning/textDelta", "kind": "reasoningDelta", "field": "content" }
     ],
     "liveActivity": {
       "field": "operation.liveActivity",
@@ -74,17 +73,33 @@
       "turnDiff",
       "fileChanges",
       "mcpProgress",
-      "tokenUsage"
+      "tokenUsage",
+      "threadProgress",
+      "itemUpsert"
     ],
+    "catalogItemTypes": [
+      "userMessage",
+      "agentMessage",
+      "collabAgentToolCall",
+      "subAgentActivity",
+      "contextCompaction"
+    ],
+    "catalogDynamicTools": ["codewide_spawn_agent"],
     "maxInterestThreads": 64,
     "maxThreadIdChars": 256,
     "helloInterestRequired": true
   },
-  "threadPreview": {
-    "method": "companion/thread/preview/updated",
-    "kind": "threadPreview",
-    "publishIntervalMs": 1500,
-    "maxTextChars": 2000
+  "threadListStream": {
+    "frame": "threadListRows",
+    "controlFrame": "listStream",
+    "helloField": "listStream",
+    "rowField": "codewideList",
+    "coalesceIntervalMs": 1500,
+    "interestFlushIntervalMs": 250,
+    "maxRowsPerFrame": 100,
+    "maxPreviewChars": 2000,
+    "maxTrackedRows": 4096,
+    "rowSourceKinds": ["cli", "vscode"]
   },
   "webSocketPaths": [
     "/v1/app-server",

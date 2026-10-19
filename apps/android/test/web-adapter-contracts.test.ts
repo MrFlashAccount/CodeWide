@@ -1,3 +1,4 @@
+import { testListStream } from "./fixtures/threadListRows";
 import { describe, expect, it } from "vitest";
 import { createConnectionProfileDatabase } from "../src/data/connection-profile-database.web";
 import { createThreadUiStateDatabase } from "../src/data/thread-ui-state-database.web";
@@ -31,6 +32,6 @@ describe("browser database adapter contracts", () => {
   it("rejects unavailable persisted stores explicitly", () => {
     expect(() => createPendingRequestDatabase()).toThrow("Android only");
     expect(() => createThreadDetailDatabase()).toThrow("Android only");
-    expect(() => createThreadSummaryDatabase()).toThrow("Android build only");
+    expect(() => createThreadSummaryDatabase(testListStream().options)).toThrow("Android build only");
   });
 });

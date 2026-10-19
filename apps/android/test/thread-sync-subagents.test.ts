@@ -1,3 +1,4 @@
+import { testListStream } from "./fixtures/threadListRows";
 import type { RpcClient } from "@codewide/sync-client";
 import type { SqliteExecutor, SqliteValue } from "@codewide/tanstack-db-sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -64,7 +65,7 @@ async function seedWorkingAgent() {
   });
   await writer.commit({ durable: true });
   await writer.close();
-  const database = createThreadSummaryDatabase();
+  const database = createThreadSummaryDatabase(testListStream().options);
   await database.prepare();
   return database;
 }

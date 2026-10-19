@@ -1,3 +1,4 @@
+import { testListStream } from "./fixtures/threadListRows";
 import type { RpcClient } from "@codewide/sync-client";
 import { createThreadPinsCatalog } from "../src/data/threadPinsCatalog";
 import { createThreadSummaryDatabase } from "../src/data/thread-summary-database.native";
@@ -11,7 +12,7 @@ beforeEach(() => { mockSqlite = sqliteFixture(); });
 afterEach(async () => { await mockSqlite.settled(); mockSqlite.native.close(); });
 
 it("restores a pinned chat outside recent pagination on an empty device and keeps archive membership", async () => {
-  const summaries = createThreadSummaryDatabase();
+  const summaries = createThreadSummaryDatabase(testListStream().options);
   const old = catalogThread(1000);
   const rpc = jest.fn(async (method: string) => {
     if (method === "companion/thread/pins/list") {
@@ -36,7 +37,7 @@ it("restores a pinned chat outside recent pagination on an empty device and keep
 });
 
 it("rejects malformed snapshots without wiping confirmed pins", async () => {
-  const summaries = createThreadSummaryDatabase();
+  const summaries = createThreadSummaryDatabase(testListStream().options);
   await summaries.prepare();
   await summaries.mergeSnapshots("server", [{ archived: false, thread: catalogThread(1) }]);
   await summaries.applyPinSnapshot("server", { cursor: 4, threadIds: ["thread-1"] });
@@ -50,7 +51,7 @@ it("rejects malformed snapshots without wiping confirmed pins", async () => {
 });
 
 it("keeps newer server metadata when an older pin snapshot finishes hydrating", async () => {
-  const summaries = createThreadSummaryDatabase();
+  const summaries = createThreadSummaryDatabase(testListStream().options);
   await summaries.prepare();
   const old = catalogThread(1000);
   // WHY: The RPC adapter validates both DTOs; this models an unpin committed
@@ -66,7 +67,7 @@ it("keeps newer server metadata when an older pin snapshot finishes hydrating", 
 });
 
 it("repeats a pending read after invalidation instead of losing another device's pin change", async () => {
-  const summaries = createThreadSummaryDatabase();
+  const summaries = createThreadSummaryDatabase(testListStream().options);
   await summaries.prepare();
   let release: (() => void) | undefined;
   const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -91,7 +92,7 @@ it("repeats a pending read after invalidation instead of losing another device's
 });
 
 async function seedLegacyPins(): Promise<void> {
-  const summaries = createThreadSummaryDatabase();
+  const summaries = createThreadSummaryDatabase(testListStream().options);
   await summaries.prepare();
   await summaries.mergeSnapshots("server", [{ archived: false, thread: catalogThread(1) }]);
   await summaries.mergeSnapshots("other", [{ archived: false, thread: catalogThread(2) }]);
@@ -105,7 +106,7 @@ async function seedLegacyPins(): Promise<void> {
 
 it("keeps offline imports through restart, scopes them by server and clears only durable acknowledgements", async () => {
   await seedLegacyPins();
-  const initial = createThreadSummaryDatabase();
+  const initial = createThreadSummaryDatabase(testListStream().options);
   const failedRpc = jest.fn(async () => { throw new Error("Disconnected before acknowledgement"); });
   // WHY: The RPC rejects before producing a generic DTO; all local persistence remains real SQLite.
   const offline = { rpc: failedRpc } as unknown as RpcClient;
@@ -116,7 +117,7 @@ it("keeps offline imports through restart, scopes them by server and clears only
   initial.close();
   await mockSqlite.settled();
 
-  const reopened = createThreadSummaryDatabase();
+  const reopened = createThreadSummaryDatabase(testListStream().options);
   const rpc = jest.fn(async (method: string) => method === "companion/thread/pins/import"
     ? { cursor: 7 }
     : { archivedThreadIds: [], cursor: 7, threadIds: ["thread-1"] });
@@ -132,14 +133,14 @@ it("keeps offline imports through restart, scopes them by server and clears only
   expect(rpc.mock.calls.filter(([method]) => method === "companion/thread/pins/import")).toHaveLength(1);
   reopened.close();
   await mockSqlite.settled();
-  const acknowledged = createThreadSummaryDatabase();
+  const acknowledged = createThreadSummaryDatabase(testListStream().options);
   expect(await acknowledged.loadPendingPinMigration("server")).toEqual([]);
   acknowledged.close();
 });
 
 it("retains the migration batch when the server returns an invalid acknowledgement", async () => {
   await seedLegacyPins();
-  const summaries = createThreadSummaryDatabase();
+  const summaries = createThreadSummaryDatabase(testListStream().options);
   const rpc = jest.fn(async () => ({ cursor: "invalid" }));
   // WHY: The deliberately malformed generic RPC receipt must be rejected at the adapter boundary.
   const session = { rpc } as unknown as RpcClient;

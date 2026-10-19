@@ -442,7 +442,7 @@ async fn dynamic_tool_request_is_snapshotted_separately_and_removed_only_after_r
     let mut client = authenticated_client(&format!("ws://{address}/v1/sync")).await?;
     send_json(
         &mut client,
-        &json!({"type": "hello", "protocolVersion": 1, "cursor": null, "interest": []}),
+        &json!({"type": "hello", "protocolVersion": 1, "listStream": {"visible": false}, "cursor": null, "interest": []}),
     )
     .await?;
     let hello = receive_type(&mut client, "hello").await?;
@@ -498,7 +498,7 @@ async fn dynamic_tool_request_is_snapshotted_separately_and_removed_only_after_r
     let mut second = authenticated_client(&format!("ws://{address}/v1/sync")).await?;
     send_json(
         &mut second,
-        &json!({"type": "hello", "protocolVersion": 1, "cursor": null, "interest": []}),
+        &json!({"type": "hello", "protocolVersion": 1, "listStream": {"visible": false}, "cursor": null, "interest": []}),
     )
     .await?;
     let second_hello = receive_type(&mut second, "hello").await?;
@@ -582,7 +582,7 @@ async fn connect_caught_up(url: &str) -> Result<ClientSocket, Box<dyn std::error
     let mut socket = authenticated_client(url).await?;
     send_json(
         &mut socket,
-        &json!({"type": "hello", "protocolVersion": 1, "cursor": null, "interest": []}),
+        &json!({"type": "hello", "protocolVersion": 1, "listStream": {"visible": false}, "cursor": null, "interest": []}),
     )
     .await?;
     let hello = receive_type(&mut socket, "hello").await?;
@@ -607,7 +607,7 @@ async fn connect_with_cursor(
     let mut socket = authenticated_client(url).await?;
     send_json(
         &mut socket,
-        &json!({"type": "hello", "protocolVersion": 1, "cursor": cursor, "interest": []}),
+        &json!({"type": "hello", "protocolVersion": 1, "listStream": {"visible": false}, "cursor": cursor, "interest": []}),
     )
     .await?;
     assert_eq!(

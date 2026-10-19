@@ -1,8 +1,9 @@
 //! `/v1/sync` interest contract: mandatory `hello.interest`, send-time
-//! filtering of thread topics, the `afterCursor` chain with `advance`, the
-//! interest-before-`companion/thread/sync` ordering and the catalog preview of
-//! a streaming answer. Events enter the journal through the provider-local
-//! event channel, so no App Server traffic is needed except for the sync RPC.
+//! filtering of thread topics (catalog item types excepted), the
+//! `afterCursor` chain with `advance` and the
+//! interest-before-`companion/thread/sync` ordering. Events enter the journal
+//! through the provider-local event channel, so no App Server traffic is
+//! needed except for the sync RPC.
 
 #![cfg(unix)]
 
@@ -16,9 +17,8 @@ use codewide_companion::{
     store::IndexStore,
     sync::{
         SyncHub,
-        interest::{INTEREST_CLOSE_CODE, MAX_INTEREST_THREADS},
+        interest::{CATALOG_ITEM_TYPES, INTEREST_CLOSE_CODE, MAX_INTEREST_THREADS},
     },
-    thread_preview::{THREAD_PREVIEW_KIND, THREAD_PREVIEW_METHOD},
     upstream::{ConnectionStatus, UpstreamHandle},
 };
 use futures_util::{SinkExt, StreamExt};
@@ -116,7 +116,7 @@ impl Harness {
         let mut socket = self.authenticated().await?;
         send_json(
             &mut socket,
-            &json!({"type": "hello", "protocolVersion": 1, "cursor": null, "interest": interest}),
+            &json!({"type": "hello", "protocolVersion": 1, "listStream": {"visible": false}, "cursor": null, "interest": interest}),
         )
         .await?;
         let hello = receive_type(&mut socket, "hello").await?;
@@ -143,7 +143,7 @@ impl Harness {
         let mut socket = self.authenticated().await?;
         send_json(
             &mut socket,
-            &json!({"type": "hello", "protocolVersion": 1, "cursor": cursor, "interest": interest}),
+            &json!({"type": "hello", "protocolVersion": 1, "listStream": {"visible": false}, "cursor": cursor, "interest": interest}),
         )
         .await?;
         let hello = receive_type(&mut socket, "hello").await?;
@@ -170,13 +170,6 @@ impl Harness {
     }
 }
 
-fn delta(thread_id: &str, item_id: &str, text: &str) -> Value {
-    json!({
-        "method": "item/agentMessage/delta",
-        "params": {"threadId": thread_id, "turnId": "turn", "itemId": item_id, "delta": text}
-    })
-}
-
 fn turn_diff(thread_id: &str) -> Value {
     json!({
         "method": "turn/diff/updated",
@@ -191,14 +184,17 @@ fn turn_started(thread_id: &str) -> Value {
     })
 }
 
-fn item_completed(thread_id: &str, item_id: &str, text: &str) -> Value {
+fn item_completed(thread_id: &str, item: &Value) -> Value {
     json!({
         "method": "item/completed",
-        "params": {
-            "threadId": thread_id,
-            "turnId": "turn",
-            "item": {"type": "agentMessage", "id": item_id, "phase": "final_answer", "text": text}
-        }
+        "params": {"threadId": thread_id, "turnId": "turn", "item": item}
+    })
+}
+
+fn reasoning_with_activity(thread_id: &str) -> Value {
+    json!({
+        "method": "item/reasoning/summaryTextDelta",
+        "params": {"threadId": thread_id, "turnId": "turn", "itemId": "r", "delta": "**Plan**"}
     })
 }
 
@@ -384,7 +380,7 @@ async fn reconnect_replays_through_interest_with_advance_before_caught_up()
     let mut socket = harness.authenticated().await?;
     send_json(
         &mut socket,
-        &json!({"type": "hello", "protocolVersion": 1, "cursor": 9, "interest": []}),
+        &json!({"type": "hello", "protocolVersion": 1, "listStream": {"visible": false}, "cursor": 9, "interest": []}),
     )
     .await?;
     assert_eq!(
@@ -480,48 +476,58 @@ async fn interest_add_before_thread_sync_loses_no_delta() -> Result<(), Box<dyn 
 }
 
 #[tokio::test]
-async fn a_streaming_answer_reaches_the_list_as_a_rate_limited_preview()
+async fn only_catalog_items_reach_a_socket_without_interest()
 -> Result<(), Box<dyn std::error::Error>> {
     let harness = Harness::start().await?;
     let (mut list_only, _) = harness.connect(json!([])).await?;
-    harness.journal(delta(THREAD, "answer", "Hello")).await?;
-    let preview = receive_type(&mut list_only, "event").await?;
-    assert_eq!(preview["payload"]["method"], THREAD_PREVIEW_METHOD);
-    assert_eq!(preview["cursor"], 2, "the preview follows its delta");
+    let (mut subscribed, _) = harness.connect(json!([THREAD])).await?;
+    let mut list_chain = CursorChain::after(0);
+    let mut subscribed_chain = CursorChain::after(0);
+    let mut catalog = Vec::new();
+    for item_type in CATALOG_ITEM_TYPES {
+        catalog.push(item_completed(
+            THREAD,
+            &json!({"type": item_type, "id": item_type, "text": "x"}),
+        ));
+    }
+    catalog.push(item_completed(
+        THREAD,
+        &json!({"type": "dynamicToolCall", "id": "spawn", "tool": "codewide_spawn_agent"}),
+    ));
+    let skipped = [
+        item_completed(
+            THREAD,
+            &json!({"type": "commandExecution", "id": "command"}),
+        ),
+        item_completed(
+            THREAD,
+            &json!({"type": "dynamicToolCall", "id": "tool", "tool": "other_tool"}),
+        ),
+        // Its live activity travels in the list row, not in the journal.
+        reasoning_with_activity(THREAD),
+    ];
+    let mut catalog_cursors = Vec::new();
+    for payload in &catalog {
+        catalog_cursors.push(harness.journal(payload.clone()).await?);
+    }
+    let mut head = 0;
+    for payload in &skipped {
+        head = harness.journal(payload.clone()).await?;
+    }
+    while list_chain.position < head {
+        list_chain.observe(&receive_frame(&mut list_only).await?)?;
+    }
+    while subscribed_chain.position < head {
+        subscribed_chain.observe(&receive_frame(&mut subscribed).await?)?;
+    }
     assert_eq!(
-        preview["afterCursor"], 0,
-        "the skipped delta did not move the position"
+        list_chain.delivered, catalog_cursors,
+        "skipped topics only advance"
     );
-    let patch = &preview["payload"]["codewideThreadPatch"];
-    assert_eq!(patch["threadId"], THREAD);
-    assert_eq!(patch["operation"]["kind"], THREAD_PREVIEW_KIND);
     assert_eq!(
-        patch["operation"]["summary"],
-        json!({
-            "activity": true,
-            "conversationMessage": false,
-            "finalAgentResponse": false,
-            "previewText": "Hello"
-        })
-    );
-
-    // Inside the interval the next delta is skipped without a preview.
-    harness.journal(delta(THREAD, "answer", ", world")).await?;
-    assert_eq!(
-        receive_type(&mut list_only, "advance").await?,
-        json!({"type": "advance", "cursor": 3, "afterCursor": 2})
-    );
-
-    // Completion carries the full text as today and clears the stream.
-    harness
-        .journal(item_completed(THREAD, "answer", "Hello, world!"))
-        .await?;
-    let completed = receive_type(&mut list_only, "event").await?;
-    assert_eq!(completed["cursor"], 4);
-    assert_eq!(completed["afterCursor"], 3);
-    assert_eq!(
-        completed["payload"]["codewideThreadPatch"]["operation"]["summary"]["previewText"],
-        "Hello, world!"
+        subscribed_chain.delivered,
+        (1..=head).collect::<Vec<_>>(),
+        "an interested socket receives every topic"
     );
     harness.stop();
     Ok(())

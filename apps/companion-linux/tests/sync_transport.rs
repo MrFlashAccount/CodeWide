@@ -84,7 +84,7 @@ async fn opted_in_inventory_arrives_before_chat_snapshot_acknowledgement()
     send_json(
         &mut client,
         &json!({
-            "type": "hello", "protocolVersion": 1, "cursor": null, "interest": [], "portInventory": true
+            "type": "hello", "protocolVersion": 1, "listStream": {"visible": false}, "cursor": null, "interest": [], "portInventory": true
         }),
     )
     .await?;
@@ -1187,6 +1187,15 @@ async fn large_command_output_is_bounded_before_replay_and_rpc_reach_the_sync_cl
         SyncHub::with_mutations(upstream, store.clone(), history).with_content_projector(projector);
     let (address, server_task) = start_server(store.clone(), sync).await?;
     let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+    // A command item reaches only sockets interested in its thread; the pong
+    // proves the interest frame was applied before the notification.
+    send_json(
+        &mut client,
+        &json!({"type": "interest", "add": ["large-output-thread"]}),
+    )
+    .await?;
+    send_json(&mut client, &json!({"type": "ping"})).await?;
+    receive_type(&mut client, "pong").await?;
 
     notifications
         .send(json!({
@@ -2366,7 +2375,7 @@ async fn connect_client(
     let (mut socket, _response) = connect_async(request).await?;
     send_json(
         &mut socket,
-        &json!({"type": "hello", "protocolVersion": 1, "cursor": cursor, "interest": []}),
+        &json!({"type": "hello", "protocolVersion": 1, "listStream": {"visible": false}, "cursor": cursor, "interest": []}),
     )
     .await?;
     let hello = receive_type(&mut socket, "hello").await?;
@@ -2395,7 +2404,7 @@ async fn connect_replay_client(
     let (mut socket, _response) = connect_async(request).await?;
     send_json(
         &mut socket,
-        &json!({"type": "hello", "protocolVersion": 1, "cursor": cursor, "interest": []}),
+        &json!({"type": "hello", "protocolVersion": 1, "listStream": {"visible": false}, "cursor": cursor, "interest": []}),
     )
     .await?;
     let hello = receive_type(&mut socket, "hello").await?;

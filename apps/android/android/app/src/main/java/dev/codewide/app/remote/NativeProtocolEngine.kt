@@ -26,6 +26,9 @@ internal class NativeProtocolEngine(
   private val onPortInventory: (String) -> Unit,
   private val telemetry: NativeTelemetryRecorder,
   private val onRpcHealth: (Boolean) -> Unit = {},
+  /** The owning session's transport generation; each socket reports the value it opened with. */
+  private val currentGeneration: () -> Long = { 0L },
+  initialListStreamVisible: Boolean = false,
 ) {
   private data class PendingRpc(
     val method: String,
@@ -85,9 +88,13 @@ internal class NativeProtocolEngine(
   private var liveSubscription: LiveSubscription? = null
   /** True once this socket carried `hello`; `interest` frames are valid only after it. */
   private var helloSent = false
+  private val listStream = NativeListStreamChannel(
+    connectionId, initialListStreamVisible, sendFrame, resetTransport, telemetry,
+  )
 
   @Synchronized
   fun onSocketOpen() {
+    listStream.onSocketOpen(currentGeneration())
     companionTransport = "connected"
     appServer = "unknown"
     upstreamLive = false
@@ -103,6 +110,7 @@ internal class NativeProtocolEngine(
       .put("portInventory", true)
       .put("cursor", frameStore.syncCursor(connectionId) ?: JSONObject.NULL)
       .put("interest", JSONArray(frameStore.interest(connectionId)))
+      .put(NativeListStream.HELLO_FIELD, listStream.helloField())
     val helloText = hello.toString()
     telemetry.record(NativeTelemetryMetric(
       "sync.hello_sent",
@@ -116,6 +124,7 @@ internal class NativeProtocolEngine(
       return
     }
     helloSent = true
+    listStream.onHelloSent()
     startKeepalive()
   }
 
@@ -124,6 +133,7 @@ internal class NativeProtocolEngine(
     companionTransport = "backoff"
     appServer = "unknown"
     helloSent = false
+    listStream.onSocketClosed()
     stopKeepalive()
     flushIngressTelemetry()
     flushJournalFrames()
@@ -139,6 +149,7 @@ internal class NativeProtocolEngine(
   @Synchronized
   fun close(message: String = "Connection session closed") {
     helloSent = false
+    listStream.onSocketClosed()
     stopKeepalive()
     flushJournalFrames()
     upstreamLive = false
@@ -204,6 +215,7 @@ internal class NativeProtocolEngine(
       "liveUnsubscribed" -> handleLiveUnsubscribed(envelope)
       "liveEvent" -> handleLiveEvent(envelope, text, frameBytes)
       "liveOverflow" -> handleLiveTerminal(envelope, envelope.optString("reason", "liveOverflow"))
+      NativeListStream.FRAME -> listStream.onFrame(envelope, text, frameBytes)
       "pong" -> Unit
       else -> resetTransport("unknown_sync_message")
     }
@@ -263,6 +275,10 @@ internal class NativeProtocolEngine(
       resetTransport("interest_send_failed")
     }
   }
+
+  /** Sets whether Companion pushes `threadListRows`; see [NativeListStreamChannel]. */
+  @Synchronized
+  fun setListStreamVisible(visible: Boolean) = listStream.setVisible(visible)
 
   private fun handleLiveSubscribed(envelope: JSONObject) {
     val subscription = liveSubscription ?: return
@@ -893,6 +909,7 @@ internal class NativeProtocolEngine(
     val payload = JSONObject()
       .put("state", next)
       .put("rpcAvailable", upstreamLive)
+      .put("generation", listStream.generation)
       .put("path", JSONObject()
         .put("network", JSONObject().put("status", networkAvailability.wireValue).put("epoch", networkEpoch))
         .put("companion", companionTransport)

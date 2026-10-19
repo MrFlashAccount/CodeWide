@@ -125,7 +125,7 @@ async fn provider_context_prices_live_events_and_reconnect_replay() -> TestResul
         let (mut client, _) = connect_async(request).await?;
         send_json(
             &mut client,
-            &json!({"type": "hello", "protocolVersion": 1,
+            &json!({"type": "hello", "protocolVersion": 1, "listStream": {"visible": false},
             "cursor": started["cursor"], "interest": [thread_id.as_str()]}),
         )
         .await?;

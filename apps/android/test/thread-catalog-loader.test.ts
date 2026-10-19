@@ -2,8 +2,13 @@ import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RpcClient } from "@codewide/sync-client";
 import { describe, expect, it, vi } from "vitest";
 import { loadThreadCatalogPage } from "../src/data/thread-catalog-loader";
+import { listedThread } from "./fixtures/threadListRows";
 
-export function catalogThread(id: string): Thread {
+export function catalogThread(id: string, archived = false): Thread {
+  return listedThread(threadMetadata(id), { archived, cursor: 1 });
+}
+
+function threadMetadata(id: string): Thread {
   return {
     environments: null,
     projectId: null,
@@ -105,9 +110,10 @@ describe("bounded thread catalog page", () => {
   });
 
   it("loads an explicitly requested archived continuation", async () => {
-    const test = client({ data: [catalogThread("old")], nextCursor: null });
+    const test = client({ data: [catalogThread("old", true)], nextCursor: null });
     const page = await loadThreadCatalogPage(test.session, { archived: true, cursor: "older" });
     expect(page.threads[0]?.archived).toBe(true);
+    expect(page.rows[0]?.meta).toEqual({ archived: true, cursor: 1, liveActivity: null });
     expect(test.rpc).toHaveBeenCalledExactlyOnceWith(
       "thread/list",
       expect.objectContaining({
@@ -116,6 +122,29 @@ describe("bounded thread catalog page", () => {
         limit: 36,
       }),
     );
+  });
+
+  it("takes each row's archive state and list cursor from codewideList, not the request", async () => {
+    const unarchived = listedThread(threadMetadata("restored"), { archived: false, cursor: 42 });
+    const test = client({ data: [unarchived], nextCursor: null });
+    const page = await loadThreadCatalogPage(test.session, { archived: true, cursor: null });
+    expect(page.threads).toEqual([{ archived: false, thread: unarchived }]);
+    expect(page.rows.map((row) => [row.threadId, row.meta.cursor])).toEqual([["restored", 42]]);
+  });
+
+  it.each([
+    { codewideList: undefined },
+    { codewideList: { archived: false, cursor: -1, liveActivity: null } },
+    { codewideList: { archived: "no", cursor: 1, liveActivity: null } },
+    { codewideList: { archived: false, cursor: 1 } },
+  ])("rejects a row without valid list metadata", async (meta) => {
+    const row = { ...threadMetadata("row"), ...meta };
+    await expect(
+      loadThreadCatalogPage(client({ data: [row], nextCursor: null }).session, {
+        archived: false,
+        cursor: null,
+      }),
+    ).rejects.toThrow("invalid list metadata");
   });
 
   it.each([null, {}, { data: [], nextCursor: 42 }, { data: [null], nextCursor: null }])(

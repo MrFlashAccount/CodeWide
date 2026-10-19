@@ -51,25 +51,23 @@ use crate::{
         reject_oversized_dynamic_tool_requests, remove_server_request,
         retry_oversized_dynamic_tool_rejections, rpc_id_key,
     },
-    thread_preview::ThreadPreviewTracker,
     thread_view::ThreadViewService,
     workspaces::WorkspaceService,
 };
 
 pub mod interest;
+mod list_rows;
 mod outbox;
 mod outbox_state;
-#[cfg(test)]
-mod preview_journal_tests;
 mod provider_rpc;
 mod queue;
 mod replay;
 mod search_routing;
 
 use interest::{
-    INTEREST_CLOSE_CODE, INTEREST_FIELD, SharedInterest, accept_hello_interest,
-    apply_interest_frame,
+    INTEREST_CLOSE_CODE, INTEREST_FIELD, SharedInterest, apply_interest_frame, lock_interest,
 };
+use list_rows::RowFeed;
 use outbox::{PumpContext, reconcile_direct_turn_start, run_outbox_pump};
 #[cfg(test)]
 use outbox_state::turn_with_client_message;
@@ -120,6 +118,7 @@ pub struct SyncHub {
     projects: Arc<std::sync::RwLock<Option<Arc<ProjectService>>>>,
     workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
     agents: AgentObservers,
+    list_feed: RowFeed,
 }
 
 /// The agent-layer services that observe every provider's client-wire
@@ -196,10 +195,12 @@ struct IngestContext {
     usage_projector: Arc<std::sync::Mutex<crate::usage::LiveUsageProjector>>,
     /// Each provider's cleaner of its own formats in user text.
     user_text: crate::user_message_projection::UserTextCleaners,
+    list_feed: RowFeed,
 }
 
 struct InitialSession {
     interest: SharedInterest,
+    list_stream_visible: bool,
     port_inventory: bool,
     ready: bool,
     snapshot_cursor: Option<u64>,
@@ -579,6 +580,7 @@ impl SyncHub {
         {
             tokio::spawn(forward_subagent_changes(changes, local_events.clone()));
         }
+        let list_feed = RowFeed::new(gateway.clone(), store.clone());
         let ingest_context = IngestContext {
             store: store.clone(),
             events: events.clone(),
@@ -589,6 +591,7 @@ impl SyncHub {
                 .and_then(|provider| provider.native_surface()?.thread_resources()),
             usage_projector: usage_projector.clone(),
             user_text: registry.user_text_cleaners(),
+            list_feed: list_feed.clone(),
         };
         tokio::spawn(ingest_events(ordered_ingest_rx, ingest_context));
         if let Some(owner) = registry.owner(Capability::RequestsDynamicToolCall) {
@@ -638,6 +641,7 @@ impl SyncHub {
             projects,
             workspaces,
             agents,
+            list_feed,
         }
     }
 
@@ -909,13 +913,8 @@ impl SyncHub {
             close_with(socket, 1008, "hello_required").await;
             return None;
         }
-        let interest = match accept_hello_interest(&hello) {
-            Ok(interest) => interest,
-            Err(rejection) => {
-                close_with(socket, INTEREST_CLOSE_CODE, rejection.reason()).await;
-                return None;
-            }
-        };
+        let (interest, list_stream_visible) =
+            list_rows::accept_hello_streams(socket, &hello).await?;
         let cursor = hello.get("cursor").and_then(Value::as_u64);
         let store = self.store.clone();
         let Ok(Ok(replay)) = tokio::task::spawn_blocking(move || store.replay_after(cursor)).await
@@ -926,27 +925,7 @@ impl SyncHub {
         let head = replay.head_cursor;
         let snapshot_required = replay.snapshot_required;
         log_replay_selection("initial", cursor, &replay);
-        let pending_requests = self
-            .server_requests
-            .lock()
-            .await
-            .requests
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        if send_json(
-            socket,
-            &json!({
-                "type": "hello",
-                "protocolVersion": 1,
-                "headCursor": head,
-                "snapshotRequired": snapshot_required,
-                "pendingRequests": pending_requests
-            }),
-        )
-        .await
-        .is_err()
-        {
+        if self.send_hello(socket, &replay).await.is_err() {
             return None;
         }
         let status = if self.upstream_status() == ProviderStatus::Live {
@@ -985,12 +964,41 @@ impl SyncHub {
 
         Some(InitialSession {
             interest,
+            list_stream_visible,
             port_inventory: hello.get("portInventory").and_then(Value::as_bool) == Some(true),
             ready,
             snapshot_cursor: snapshot_required.then_some(head),
             snapshot_started_at: snapshot_required.then(Instant::now),
             delivered_cursor: head,
         })
+    }
+
+    /// The server `hello` for a selected replay page, with the pending
+    /// requests a device must show.
+    async fn send_hello(
+        &self,
+        socket: &SessionSocket,
+        replay: &ReplayPage,
+    ) -> Result<(), axum::Error> {
+        let pending_requests = self
+            .server_requests
+            .lock()
+            .await
+            .requests
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        send_json(
+            socket,
+            &json!({
+                "type": "hello",
+                "protocolVersion": 1,
+                "headCursor": replay.head_cursor,
+                "snapshotRequired": replay.snapshot_required,
+                "pendingRequests": pending_requests
+            }),
+        )
+        .await
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1005,6 +1013,7 @@ impl SyncHub {
     ) {
         let mut snapshot_cursor = session.snapshot_cursor;
         let interest = session.interest.clone();
+        let list_stream = self.list_feed.subscribe(session.list_stream_visible);
         let mut port_inventory = if session.port_inventory {
             self.port_inventory
                 .as_ref()
@@ -1049,6 +1058,9 @@ impl SyncHub {
                 _ = keepalive.tick() => {
                     if socket.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
                 }
+                frames = list_stream.next_frames(|thread_id| lock_interest(&interest).contains(thread_id)) => {
+                    if list_rows::send_frames(&socket, &frames).await.is_err() { break; }
+                }
                 inventory = crate::port_inventory::next_inventory(&mut port_inventory) => {
                     if send_json(&socket, &json!({
                         "type": "portInventory", "revision": inventory.revision,
@@ -1092,29 +1104,7 @@ impl SyncHub {
                                     let head = replay.head_cursor;
                                     let snapshot_required = replay.snapshot_required;
                                     log_replay_selection("post_snapshot", Some(applied_cursor), &replay);
-                                    let pending_requests = self
-                                        .server_requests
-                                        .lock()
-                                        .await
-                                        .requests
-                                        .values()
-                                        .cloned()
-                                        .collect::<Vec<_>>();
-                                    if send_json(
-                                        &socket,
-                                        &json!({
-                                            "type": "hello",
-                                            "protocolVersion": 1,
-                                            "headCursor": head,
-                                            "snapshotRequired": snapshot_required,
-                                            "pendingRequests": pending_requests
-                                        }),
-                                    )
-                                    .await
-                                    .is_err()
-                                    {
-                                        break;
-                                    }
+                                    if self.send_hello(&socket, &replay).await.is_err() { break; }
                                     if snapshot_required {
                                         snapshot_cursor = Some(head);
                                         snapshot_started_at = Some(Instant::now());
@@ -1155,6 +1145,10 @@ impl SyncHub {
                                         close_with(&socket, INTEREST_CLOSE_CODE, rejection.reason()).await;
                                         break;
                                     }
+                                }
+                                Some(crate::thread_list::CONTROL_FRAME_TYPE) => {
+                                    // Applied inline, like `interest`.
+                                    if list_rows::apply_control_frame(&socket, &list_stream, &message).await.is_err() { break; }
                                 }
                                 Some("liveSubscribe" | "liveUnsubscribe") => {
                                     match self.live_channels.handle_control(
@@ -2661,10 +2655,14 @@ async fn process_ingest_control(context: &IngestContext, control: IngestInput) -
         }
         IngestInput::ThreadPin(request, completion) => {
             let store = context.store.clone();
+            let (thread_id, pinned) = (request.thread_id.clone(), request.pinned);
             let result = tokio::task::spawn_blocking(move || {
                 store.commit_thread_pin(&request, MAX_REPLAY_ENTRIES, MAX_REPLAY_BYTES)
             })
             .await;
+            if let Ok(Ok(cursor)) = &result {
+                context.list_feed.apply_pin(thread_id, pinned, *cursor);
+            }
             complete_pin_commit(context, completion, result)
         }
         IngestInput::Payload(_) | IngestInput::ProviderPayload { .. } => Err(()),
@@ -2677,7 +2675,6 @@ async fn ingest_events(
 ) {
     let mut stream_diagnostics = AgentStreamDiagnostics::default();
     let mut live_activity = crate::thread_activity::LiveActivityTracker::default();
-    let mut thread_preview = ThreadPreviewTracker::default();
     while let Some(first) = ingest.recv().await {
         let first = match first {
             IngestInput::Payload(payload) => {
@@ -2742,7 +2739,6 @@ async fn ingest_events(
             &context,
             &mut stream_diagnostics,
             &mut live_activity,
-            &mut thread_preview,
             payloads,
         )
         .await
@@ -2877,7 +2873,6 @@ async fn ingest_payload_batch(
     context: &IngestContext,
     stream_diagnostics: &mut AgentStreamDiagnostics,
     live_activity: &mut crate::thread_activity::LiveActivityTracker,
-    thread_preview: &mut ThreadPreviewTracker,
     batch: Vec<(Value, ResourceRoute)>,
 ) -> Result<(), ()> {
     let (mut payloads, without_resources, own_resources) = split_resource_routes(batch);
@@ -2912,14 +2907,12 @@ async fn ingest_payload_batch(
     // deltas can otherwise discard a repeated content reference.
     stream_diagnostics.observe_input_batch(&payloads);
     payloads = coalesce_stream_text_deltas(payloads);
-    // After coalescing, a delta publishes at most one preview; the synthetic
-    // catalog event follows its delta in the same durable batch.
-    let now = Instant::now();
+    // The streamed preview is read before content projection may externalize
+    // the delta text; the rows apply it after the commit.
+    let mut streamed_previews = Vec::with_capacity(payloads.len());
     let mut projected_payloads = Vec::with_capacity(payloads.len());
-    for payload in payloads
-        .into_iter()
-        .flat_map(|payload| thread_preview.followed_by_preview(payload, now))
-    {
+    for payload in payloads {
+        streamed_previews.push(context.list_feed.observe_stream(&payload));
         projected_payloads.push(project_journal_payload(
             context,
             projector.as_deref(),
@@ -2952,6 +2945,9 @@ async fn ingest_payload_batch(
     if let Some(cursor) = cursors.last().copied() {
         let _ = context.events.send(DurableSignal::Committed(cursor));
     }
+    context
+        .list_feed
+        .apply_committed(&payloads, &cursors, streamed_previews);
     Ok(())
 }
 
@@ -3430,6 +3426,7 @@ mod tests {
                 std::collections::HashMap::new(),
                 ProviderId::from_static("codex"),
             ),
+            list_feed: list_rows::test_feed(store),
         }
     }
 
@@ -3456,9 +3453,10 @@ mod tests {
             .await?;
         ingest.send(IngestInput::Fence(fence)).await?;
 
-        // The streamed answer journals its delta and its catalog preview.
-        assert_eq!(resolved.await??, 2);
-        assert_eq!(store.replay_head()?, 2);
+        // The streamed answer journals its delta only: the preview reaches
+        // the list as a row, not as a journal entry.
+        assert_eq!(resolved.await??, 1);
+        assert_eq!(store.replay_head()?, 1);
         drop(ingest);
         task.await?;
         Ok(())

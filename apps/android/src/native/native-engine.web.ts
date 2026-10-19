@@ -40,5 +40,10 @@ export class NativeEngineSupervisor {
     await Promise.resolve();
     throw new Error("Native thread interest is unavailable on web");
   }
+
+  async listStreamVisible(_connectionId: string, _visible: boolean): Promise<void> {
+    await Promise.resolve();
+    throw new Error("Native thread-list stream is unavailable on web");
+  }
   stop(): void {}
 }

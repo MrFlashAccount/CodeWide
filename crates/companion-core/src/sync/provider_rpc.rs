@@ -2,7 +2,8 @@
 //!
 //! Native (`codex.native`) providers keep the byte-identical pass-through
 //! pipeline: request → activity enrichment → list visibility filter → list preview
-//! enrichment → pins → observers → content projection. Providers without
+//! enrichment → pins → observers → content projection; `thread/list` rows also
+//! pass the row hub (`codewideList`, journal head read before the page). Providers without
 //! the native surface are answered from neutral operations projected by
 //! `agent::client_wire`. Merged calls (`thread/list`, `model/list`,
 //! `permissionProfile/list`) take the primary provider's page and add the
@@ -740,6 +741,16 @@ async fn handle_thread_list(
         None
     };
     let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+    // The journal head before the provider reads: no provider content in the
+    // answer may claim a later cursor.
+    let head = if merged == MergedMethod::ThreadList {
+        let Ok(head) = hub.list_feed.page_head().await else {
+            return send_rpc_error(socket, id, -32020, STORAGE_UNAVAILABLE).await;
+        };
+        Some(head)
+    } else {
+        None
+    };
     // Only `thread/list` merges; the supervisor list is owned by the
     // providers declaring `globalSupervisor`, which the primary leads.
     let plan = list::prepare(
@@ -805,6 +816,11 @@ async fn handle_thread_list(
             }
         }
         hub.gateway.hide_continuations(result);
+        if let Some(head) = head
+            && hub.list_feed.observe_page(result, head, &params).is_err()
+        {
+            return send_rpc_error(socket, id, -32020, STORAGE_UNAVAILABLE).await;
+        }
     }
     forward_rpc_response(
         socket,

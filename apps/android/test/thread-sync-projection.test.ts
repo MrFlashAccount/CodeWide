@@ -1,73 +1,49 @@
 import type { SyncEvent } from "@codewide/sync-client";
 import { describe, expect, it, vi } from "vitest";
 import { createThreadSyncProjection } from "../src/data/thread-sync-projection";
-import { createV1TestThread } from "./fixtures/v1Thread";
-import {
-  projectThreadSummarySnapshot,
-  projectThreadSummaryEvent,
-} from "../src/data/thread-summary-projection";
+import { projectThreadSummaryEvent } from "../src/data/thread-summary-projection";
 import { summary } from "./fixtures/thread-summary";
 
 type Ports = Parameters<typeof createThreadSyncProjection>[0];
 function harness(initial = summary("worker", { status: { type: "active", activeFlags: [] } })) {
   let current: ReturnType<typeof summary> | null = initial;
-  const refreshConnectionWindows = vi.fn();
-  const refreshSubagents = vi.fn(async (_connectionId: string, _rootThreadId: string) => undefined);
-  const get = vi.fn(async () => current);
-  const readThreadSummary = vi.fn(async () => ({
-    archived: false,
-    thread: createV1TestThread("worker", null, 1, []),
-  }));
-  const applyEvents = async (connectionId: string, events: SyncEvent[]) => {
+  const catalog = {
+    refreshInvalidatedThread: vi.fn(),
+    refreshSubagents: vi.fn(async (_connectionId: string, _rootThreadId: string) => undefined),
+  };
+  const applyEvents = vi.fn(async (connectionId: string, events: SyncEvent[]) => {
     for (const event of events) {
       const mutation = projectThreadSummaryEvent(
         connectionId,
         event.payload,
         () => current ?? undefined,
-        undefined,
         event.cursor,
       );
       if (mutation !== null) current = mutation.value;
     }
-  };
+  });
   // WHY: The test exercises the real ordered projection through its catalog-facing
-  // ports; unrelated command, account and snapshot operations are not invoked.
+  // ports; unrelated command, account and snapshot operations are not invoked. The
+  // catalog port has no page or metadata read: a call to one would throw here.
   const applyChanged = vi.fn(() => true);
   const mergeProject = vi.fn();
   const ports = {
     accountRateLimits: {},
     agentProviders: { applyChanged },
     projects: { mergeProject },
-    catalog: {
-      readThreadSummary,
-      refreshConnectionWindows,
-      refreshInvalidatedThread: vi.fn(),
-      refreshSubagents,
-    },
+    catalog,
     details: { applyEvents: async () => ({ checkpoint: Promise.resolve(), threads: new Map() }) },
     resources: { threadResources: new Map() },
-    summaries: {
-      get,
-      applyEvents,
-      async applyRepairedEvents(
-        connectionId: string,
-        snapshot: SyncSnapshotThread,
-        events: SyncEvent[],
-      ) {
-        current ??= projectThreadSummarySnapshot(connectionId, snapshot.thread, snapshot.archived);
-        await applyEvents(connectionId, events);
-      },
-    },
+    summaries: { applyEvents },
     sync: {},
   } as unknown as Ports;
   return {
     store: createThreadSyncProjection(ports),
     applyChanged,
+    applyEvents,
+    catalog,
     mergeProject,
-    refreshConnectionWindows,
-    refreshSubagents,
-    readThreadSummary,
-    get,
+    refreshSubagents: catalog.refreshSubagents,
     read: () => current,
     remove: () => {
       current = null;
@@ -92,44 +68,45 @@ function progress(cursor: number, method = "companion/thread/progress"): SyncEve
   };
 }
 
-describe("live progress catalog demand", () => {
-  it("updates a known active chat without reloading catalog pages on every progress event", async () => {
+describe("event projection without catalog repair", () => {
+  it("projects membership and progress events without reading catalog pages or metadata", async () => {
     const test = harness();
-    for (let cursor = 1; cursor <= 100; cursor += 1) {
-      await test.store.applyEvents("server", [progress(cursor)]);
+    test.remove();
+    for (let cursor = 1; cursor <= 20; cursor += 1) {
+      await (await test.store.applyEvents("server", [progress(cursor)])).checkpoint;
     }
-    expect(test.read()?.preview).toBe("Progress 100");
-    expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
+    const lifecycle = (cursor: number, method: string, kind: string): SyncEvent => ({
+      cursor,
+      payload: {
+        method,
+        params: { threadId: "worker" },
+        codewideThreadPatch: { version: 1, threadId: "worker", operation: { kind } },
+      },
+    });
+    await test.store.applyEvents("server", [
+      lifecycle(21, "turn/started", "turnStarted"),
+      lifecycle(22, "thread/archived", "threadArchived"),
+      lifecycle(23, "companion/thread/pin/updated", "threadPinned"),
+    ]);
+
+    // A missing row gets no metadata read: its server row arrives in the list stream.
+    expect(test.read()).toBeNull();
+    expect(test.applyEvents).toHaveBeenCalledTimes(21);
+    expect(test.catalog.refreshInvalidatedThread).not.toHaveBeenCalled();
   });
 
-  it("coalesces a batch's metadata lookup and preserves terminal repair", async () => {
+  it("keeps an open chat's rollout invalidation repair and leaves its server fields alone", async () => {
     const test = harness();
-    await test.store.applyEvents("server", [progress(1), progress(2), progress(3)]);
-    expect(test.readThreadSummary).not.toHaveBeenCalled();
+    const before = test.read();
     await test.store.applyEvents("server", [progress(4, "companion/thread/invalidated")]);
-    expect(test.refreshConnectionWindows).toHaveBeenCalledExactlyOnceWith("server");
-  });
-
-  it("activates a known idle chat from progress without another catalog request", async () => {
-    const test = harness(summary("worker"));
-    await test.store.applyEvents("server", [progress(1)]);
-    expect(test.read()?.status.type).toBe("active");
-    expect(test.read()?.preview).toBe("Progress 1");
-    expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
-  });
-
-  it("discovers an unknown chat and repairs changed archive membership", async () => {
-    const missing = harness();
-    missing.remove();
-    await (
-      await missing.store.applyEvents("server", [progress(1)])
-    ).checkpoint;
-    expect(missing.readThreadSummary).toHaveBeenCalledExactlyOnceWith("server", "worker");
-    expect(missing.read()?.preview).toBe("Progress 1");
-    expect(missing.refreshConnectionWindows).toHaveBeenCalledOnce();
-    const archived = harness(summary("worker", { archived: true }));
-    await archived.store.applyEvents("server", [progress(1)]);
-    expect(archived.refreshConnectionWindows).toHaveBeenCalledOnce();
+    expect(test.catalog.refreshInvalidatedThread).toHaveBeenCalledExactlyOnceWith(
+      "server",
+      "worker",
+      false,
+    );
+    expect(test.read()?.preview).toBe(before?.preview);
+    expect(test.read()?.status).toEqual(before?.status);
+    expect(test.read()?.latestActivityCursor).toBe(4);
   });
 });
 
@@ -146,8 +123,7 @@ it("does not turn server-excluded supervisor progress into catalog repair work",
       { ...event, payload: { ...event.payload, codewideCatalogExcluded: true } },
     ]);
   }
-  expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
-  expect(test.get).not.toHaveBeenCalled();
+  expect(test.catalog.refreshInvalidatedThread).not.toHaveBeenCalled();
 });
 
 it("publishes a durable provider status change to the provider list owner", async () => {
@@ -157,7 +133,6 @@ it("publishes a durable provider status change to the provider list owner", asyn
     { cursor: 1, payload: { method: "companion/agentProviders/changed", params } },
   ]);
   expect(test.applyChanged).toHaveBeenCalledExactlyOnceWith("server", params);
-  expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
 });
 
 it("merges a project another device pinned or unpinned into the project catalog", async () => {
@@ -171,7 +146,6 @@ it("merges a project another device pinned or unpinned into the project catalog"
     "server",
     expect.objectContaining({ path: "/repo", pinned: false }),
   );
-  expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
 });
 
 it("reads a root's subagents again once the Companion invalidates them, open or not", async () => {
@@ -189,6 +163,5 @@ it("reads a root's subagents again once the Companion invalidates them, open or 
     ["server", "root"],
     ["server", "other-root"],
   ]);
-  expect(test.refreshConnectionWindows).not.toHaveBeenCalled();
-  expect(test.readThreadSummary).not.toHaveBeenCalled();
+  expect(test.catalog.refreshInvalidatedThread).not.toHaveBeenCalled();
 });
