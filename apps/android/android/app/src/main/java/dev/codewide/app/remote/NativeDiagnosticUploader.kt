@@ -15,11 +15,13 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONObject
 
-/** Native retry owner. Failed, interrupted, old-server and unacknowledged uploads stay on disk. */
+/** Native retry owner. Pending reports retry periodically; an empty outbox stays event-driven. */
 internal class NativeDiagnosticUploader(private val credentials: NativeSessionCredentialsStore) : AutoCloseable {
   private val executor = Executors.newSingleThreadScheduledExecutor { task -> Thread(task, "CodeWideDiagnosticUpload").apply { isDaemon = true } }
   private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
   private var scheduled: ScheduledFuture<*>? = null
+  private var wakeRequested = false
+  private var retryDelaySeconds = RETRY_INITIAL_DELAY_SECONDS
   @Volatile private var closed = false
   private data class CachedCredential(val saved: StoredNativeSession, val minted: MintedSessionCredential)
   private val authorization = mutableMapOf<String, CachedCredential>()
@@ -32,21 +34,29 @@ internal class NativeDiagnosticUploader(private val credentials: NativeSessionCr
 
   @Synchronized private fun wake() {
     if (closed) return
-    if (scheduled?.isDone == false && scheduled!!.getDelay(TimeUnit.MILLISECONDS) <= 0) return
+    retryDelaySeconds = RETRY_INITIAL_DELAY_SECONDS
+    if (scheduled?.isDone == false && scheduled!!.getDelay(TimeUnit.MILLISECONDS) <= 0) {
+      wakeRequested = true
+      return
+    }
+    wakeRequested = false
     scheduled?.cancel(false)
     scheduled = executor.schedule(::drain, 0, TimeUnit.MILLISECONDS)
   }
 
   private fun drain() {
+    var retryNeeded = false
     try {
       if (!historicalLogsCaptured) {
         // A failure to read logcat must never hold up already-persisted reports.
         runCatching { dev.codewide.app.diagnostics.HistoricalCrashLogs.capture() }
         historicalLogsCaptured = true
       }
+      val journal = NativeDiagnosticRuntime.outbox()
+      if (!journal.hasPending()) return
+      retryNeeded = true
       val sessions = credentials.list().filter { it.enabled && !it.revocationConfirmed }
       val first = sessions.firstOrNull() ?: return
-      val journal = NativeDiagnosticRuntime.outbox()
       val unavailableTargets = mutableSetOf<String>()
       journal.pending().use { paths ->
         for (path in paths) {
@@ -63,11 +73,28 @@ internal class NativeDiagnosticUploader(private val credentials: NativeSessionCr
           }
         }
       }
+      retryNeeded = journal.hasPending()
     } catch (_: Exception) {
       // No loss acknowledgement and no report data in transport-failure logging.
+      retryNeeded = runCatching { NativeDiagnosticRuntime.outbox().hasPending() }.getOrDefault(true)
     } finally {
       synchronized(this) {
-        if (!closed) scheduled = executor.schedule(::drain, 30, TimeUnit.SECONDS)
+        val requested = wakeRequested
+        wakeRequested = false
+        scheduled = if (!closed && (retryNeeded || requested)) {
+          val delaySeconds = if (requested) 0L else retryDelaySeconds
+          if (retryNeeded && !requested) {
+            retryDelaySeconds = (retryDelaySeconds * 2).coerceAtMost(RETRY_MAX_DELAY_SECONDS)
+          }
+          executor.schedule(
+            ::drain,
+            delaySeconds,
+            TimeUnit.SECONDS,
+          )
+        } else {
+          retryDelaySeconds = RETRY_INITIAL_DELAY_SECONDS
+          null
+        }
       }
     }
   }
@@ -118,5 +145,10 @@ internal class NativeDiagnosticUploader(private val credentials: NativeSessionCr
     executor.shutdownNow()
     client.connectionPool.evictAll()
     client.dispatcher.executorService.shutdown()
+  }
+
+  private companion object {
+    const val RETRY_INITIAL_DELAY_SECONDS = 30L
+    const val RETRY_MAX_DELAY_SECONDS = 15 * 60L
   }
 }

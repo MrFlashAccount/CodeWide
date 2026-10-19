@@ -168,6 +168,17 @@ describe("Global Voice background lifecycle", () => {
       "utf8",
     );
     expect(particlesSource).toContain("override val usesMainThreadAnimationClock = false");
+    const particlesGlSource = readFileSync(
+      new URL(
+        "../android/app/src/main/java/dev/codewide/app/rendering/ParticlesOrbGlView.kt",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(particlesGlSource).toContain("override fun onWindowVisibilityChanged");
+    expect(particlesGlSource).toContain("override fun onVisibilityAggregated");
+    expect(particlesGlSource).toContain("renderThread?.setRenderingEnabled(shouldRender())");
+    expect(particlesGlSource).toContain("if (!currentInput.reducedMotion) scheduleFrame()");
     const nebulaSource = readFileSync(
       new URL(
         "../android/app/src/main/java/dev/codewide/app/rendering/NebulaOrbView.kt",

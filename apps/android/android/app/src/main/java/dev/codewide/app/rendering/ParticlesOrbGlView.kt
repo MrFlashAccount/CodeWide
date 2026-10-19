@@ -9,10 +9,11 @@ import android.opengl.EGLDisplay
 import android.opengl.EGLSurface
 import android.os.Handler
 import android.os.Looper
-import dev.codewide.app.diagnostics.NativeAppLogger
 import android.view.Choreographer
 import android.view.Surface
 import android.view.TextureView
+import android.view.View
+import dev.codewide.app.diagnostics.NativeAppLogger
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -37,6 +38,7 @@ internal class ParticlesOrbGlView(context: Context) : TextureView(context), Text
     reducedMotion = false,
   )
   private var renderThread: ParticlesOrbRenderThread? = null
+  private var aggregatedVisible = true
 
   init {
     isOpaque = false
@@ -66,6 +68,7 @@ internal class ParticlesOrbGlView(context: Context) : TextureView(context), Text
     renderThread = ParticlesOrbRenderThread(
       density = resources.displayMetrics.density,
       input = { input },
+      renderingEnabled = shouldRender(),
       surface = Surface(surfaceTexture),
     ).also(Thread::start)
   }
@@ -80,24 +83,56 @@ internal class ParticlesOrbGlView(context: Context) : TextureView(context), Text
 
   override fun onSurfaceTextureUpdated(surfaceTexture: SurfaceTexture) = Unit
 
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    syncRenderingVisibility()
+  }
+
+  override fun onDetachedFromWindow() {
+    renderThread?.setRenderingEnabled(false)
+    super.onDetachedFromWindow()
+  }
+
+  override fun onWindowVisibilityChanged(visibility: Int) {
+    super.onWindowVisibilityChanged(visibility)
+    syncRenderingVisibility()
+  }
+
+  override fun onVisibilityAggregated(isVisible: Boolean) {
+    super.onVisibilityAggregated(isVisible)
+    aggregatedVisible = isVisible
+    syncRenderingVisibility()
+  }
+
   private fun updateInput(transform: (ParticlesOrbRenderInput) -> ParticlesOrbRenderInput) {
     synchronized(inputLock) {
       val next = transform(input)
       input = next.copy(generation = input.generation + 1L)
     }
+    renderThread?.requestFrame()
   }
+
+  private fun syncRenderingVisibility() {
+    renderThread?.setRenderingEnabled(shouldRender())
+  }
+
+  private fun shouldRender(): Boolean =
+    isAttachedToWindow && aggregatedVisible && isShown && windowVisibility == View.VISIBLE
 }
 
 private class ParticlesOrbRenderThread(
   private val density: Float,
   private val input: () -> ParticlesOrbRenderInput,
+  renderingEnabled: Boolean,
   private val surface: Surface,
 ) : Thread("CodeWide Particles GL") {
   private val ready = CountDownLatch(1)
   private val stopRequested = AtomicBoolean(false)
+  private val renderingEnabled = AtomicBoolean(renderingEnabled)
   @Volatile private var handler: Handler? = null
   @Volatile private var choreographer: Choreographer? = null
   @Volatile private var frameCallback: Choreographer.FrameCallback? = null
+  private var framePosted = false
 
   override fun run() {
     Looper.prepare()
@@ -118,16 +153,18 @@ private class ParticlesOrbRenderThread(
       choreographer = frameClock
       val callback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
-          if (stopRequested.get()) return
+          framePosted = false
+          if (stopRequested.get() || !renderingEnabled.get()) return
           try {
             val width = egl.width
             val height = egl.height
+            val currentInput = input()
             if (width > 0 && height > 0) {
-              if (renderer.draw(input(), frameTimeNanos, width, height)) {
+              if (renderer.draw(currentInput, frameTimeNanos, width, height)) {
                 egl.swapBuffers()
               }
             }
-            frameClock.postFrameCallback(this)
+            if (!currentInput.reducedMotion) scheduleFrame()
           } catch (error: RuntimeException) {
             NativeAppLogger.error(LOG_TAG, "Particles GL frame failed", error)
             stopRequested.set(true)
@@ -137,7 +174,7 @@ private class ParticlesOrbRenderThread(
       }
       frameCallback = callback
       ready.countDown()
-      frameClock.postFrameCallback(callback)
+      scheduleFrame()
       Looper.loop()
     } catch (error: RuntimeException) {
       NativeAppLogger.error(LOG_TAG, "Particles GL renderer failed to start", error)
@@ -153,12 +190,30 @@ private class ParticlesOrbRenderThread(
     }
   }
 
+  fun setRenderingEnabled(enabled: Boolean) {
+    if (renderingEnabled.getAndSet(enabled) == enabled) return
+    if (enabled) requestFrame()
+  }
+
+  fun requestFrame() {
+    handler?.post(::scheduleFrame)
+  }
+
+  private fun scheduleFrame() {
+    if (framePosted || stopRequested.get() || !renderingEnabled.get()) return
+    val callback = frameCallback ?: return
+    val frameClock = choreographer ?: return
+    framePosted = true
+    frameClock.postFrameCallback(callback)
+  }
+
   fun stopAndWait() {
     stopRequested.set(true)
     try {
       ready.await()
       handler?.post {
         frameCallback?.let { callback -> choreographer?.removeFrameCallback(callback) }
+        framePosted = false
         Looper.myLooper()?.quitSafely()
       }
       join()
