@@ -12,15 +12,11 @@ import { appLogger } from "../observability/logger";
 import type {
   ThreadRenameHandler,
   ThreadSummaryDatabase,
+  ThreadSummaryDatabaseOptions,
 } from "./thread-summary-database-contract";
 
 export type { ThreadSummaryDatabase } from "./thread-summary-database-contract";
-import {
-  threadIdFromEvent,
-  threadProjectionPatchFromEvent,
-  type SyncEvent,
-  type SyncSnapshotThread,
-} from "@codewide/sync-client";
+import { threadIdFromEvent, type SyncEvent, type SyncSnapshotThread } from "@codewide/sync-client";
 
 import type { NativeCommandDelivery } from "../native/native-transport";
 import {
@@ -30,24 +26,89 @@ import {
 } from "./thread-summary-types";
 import {
   projectThreadSummaryEvent,
-  catalogHeadEvictable,
   projectThreadSummarySnapshot,
-  retainLiveCatalogState,
   retainThreadSummaryMissingFromSnapshot,
   threadSummaryDescendantKeys,
+  threadSummaryEventAffectsDevice,
   threadSummaryKey,
+  threadSummaryTurnAttention,
 } from "./thread-summary-projection";
 import { SerialTaskQueue } from "./serial-task-queue";
 import { createThreadSummaryModel, type ThreadSummaryViewRequest } from "./thread-summary-model";
 import type { ThreadSummaryChange } from "./thread-summary-sqlite.native";
 import { createThreadSummarySqlite } from "./thread-summary-sqlite.native";
 import { ThreadCatalogReads } from "./thread-catalog-read";
-import { THREAD_CATALOG_PAGE_SIZE } from "./thread-catalog-loader";
 import { ProjectUnreadModel } from "./project-unread-model";
 import { isCatalogExcluded } from "./threadCatalogMembership";
 import { sameThreadAgent } from "./threadAgent";
+import { createServerRowWriter } from "./threadSummaryServerRows";
 
-export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
+const MAX_OVERLAY_THREADS = 256;
+const MAX_OVERLAY_EVENTS_PER_THREAD = 64;
+
+/**
+ * Device-field events of threads that have no row yet, held in memory until a
+ * server row arrives (bounded per connection; the oldest thread is dropped).
+ * Nothing reaches SQLite for such a thread before its row.
+ */
+class PendingDeviceOverlay {
+  readonly #connections = new Map<string, Map<string, SyncEvent[]>>();
+
+  hold(connectionId: string, threadId: string, event: SyncEvent): void {
+    let threads = this.#connections.get(connectionId);
+    if (threads === undefined) {
+      threads = new Map();
+      this.#connections.set(connectionId, threads);
+    }
+    let events = threads.get(threadId);
+    if (events === undefined) {
+      if (threads.size >= MAX_OVERLAY_THREADS) {
+        const oldest = threads.keys().next();
+        if (oldest.done !== true) {
+          threads.delete(oldest.value);
+        }
+      }
+      events = [];
+      threads.set(threadId, events);
+    }
+    events.push(event);
+    if (events.length > MAX_OVERLAY_EVENTS_PER_THREAD) {
+      events.shift();
+    }
+  }
+
+  discard(connectionId: string, threadId: string): void {
+    this.#connections.get(connectionId)?.delete(threadId);
+  }
+
+  /** Replays and drops a new row's held device-field events in their journal order. */
+  replayInto(connectionId: string, row: StoredThreadSummary): StoredThreadSummary {
+    const threads = this.#connections.get(connectionId);
+    const events = threads?.get(row.remoteThreadId) ?? [];
+    threads?.delete(row.remoteThreadId);
+    let current = row;
+    for (const event of events) {
+      const mutation = projectThreadSummaryEvent(
+        connectionId,
+        event.payload,
+        () => current,
+        event.cursor,
+      );
+      if (mutation !== null && mutation.value !== null) {
+        current = mutation.value;
+      }
+    }
+    return current;
+  }
+
+  forgetConnection(connectionId: string): void {
+    this.#connections.delete(connectionId);
+  }
+}
+
+export function createThreadSummaryDatabase(
+  options: ThreadSummaryDatabaseOptions,
+): ThreadSummaryDatabase {
   const catalogReads = new ThreadCatalogReads();
   let catalogLoader: ((request: ThreadSummaryViewRequest) => Promise<boolean>) | null = null;
   let renameHandler: ThreadRenameHandler | null = null;
@@ -56,6 +117,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
   const model = createThreadSummaryModel();
   const storage = createThreadSummarySqlite();
   const projectUnread = new ProjectUnreadModel();
+  const overlay = new PendingDeviceOverlay();
   let refreshScheduled = false;
 
   const loadConnectionRows = storage.loadConnectionRows;
@@ -437,11 +499,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     }
   };
 
-  const applyEventBatch = async (
-    connectionId: string,
-    events: SyncEvent[],
-    seeds: readonly SyncSnapshotThread[],
-  ): Promise<void> => {
+  const applyEventBatch = async (connectionId: string, events: SyncEvent[]): Promise<void> => {
     await writes.run(async () => {
       if (disposed || events.length === 0) {
         return;
@@ -459,37 +517,32 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         existing.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]),
       );
       const changed = new Map<string, StoredThreadSummary | null>();
-      const excludedSeeds = new Set<string>();
-      for (const snapshot of seeds) {
-        const key = threadSummaryKey(connectionId, snapshot.thread.id);
-        if (isCatalogExcluded(snapshot.thread)) {
-          excludedSeeds.add(snapshot.thread.id);
-          changed.set(key, null);
-        } else if (!current.has(key)) {
-          changed.set(key, seedThreadSummaryFromEvents(connectionId, snapshot, events));
-        }
-      }
+      const rowOf = (threadId: string): StoredThreadSummary | undefined => {
+        const key = threadSummaryKey(connectionId, threadId);
+        return changed.has(key) ? (changed.get(key) ?? undefined) : current.get(key);
+      };
       for (const event of events) {
         const threadId = threadIdFromEvent(event.payload);
-        if (
-          threadId !== null &&
-          (excludedSeeds.has(threadId) || isCatalogExcluded(event.payload))
-        ) {
+        if (threadId !== null && isCatalogExcluded(event.payload)) {
           changed.set(threadSummaryKey(connectionId, threadId), null);
           continue;
         }
         const mutation = projectThreadSummaryEvent(
           connectionId,
           event.payload,
-          (threadId) => {
-            const key = threadSummaryKey(connectionId, threadId);
-            return changed.has(key) ? (changed.get(key) ?? undefined) : current.get(key);
-          },
-          undefined,
+          rowOf,
           event.cursor,
         );
         if (mutation !== null) {
           changed.set(mutation.key, mutation.value);
+        } else if (
+          threadId !== null &&
+          !changed.has(threadSummaryKey(connectionId, threadId)) &&
+          !current.has(threadSummaryKey(connectionId, threadId)) &&
+          threadSummaryEventAffectsDevice(event.payload)
+        ) {
+          // The server row may arrive after this event; its device fields wait in memory.
+          overlay.hold(connectionId, threadId, event);
         }
       }
       await applyReportedSubagentStates({ changed, connectionId, current, events });
@@ -525,104 +578,28 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     });
   };
 
+  const serverRows = createServerRowWriter({
+    applySubagentActivity,
+    disposed: () => disposed,
+    listRace: options.listRace,
+    onServerRows: options.onServerRows,
+    overlay,
+    publish: publishModelChanges,
+    sameRow: sameThreadSummary,
+    storage,
+    viewMembershipChanged: summaryViewMembershipChanged,
+    writes,
+  });
+
   return {
     acknowledgePinMigration: storage.acknowledgePinMigration,
-    async applyCatalogPage(
-      connectionId,
-      snapshots,
-      archived,
-      prefixIds,
-      read,
-      replaceHead,
-      projectCwd,
-    ) {
-      await writes.run(async () => {
-        if (disposed) {
-          return;
-        }
-        const count = Math.max(THREAD_CATALOG_PAGE_SIZE, prefixIds.size);
-        const [window, existing] = await Promise.all([
-          storage.loadView({
-            connectionId,
-            ...(projectCwd === undefined ? {} : { projectCwd }),
-            archivedLimit: archived ? count : 0,
-            recentLimit: archived ? 0 : count,
-            selectedConnectionId: null,
-            selectedThreadId: null,
-            subagentConnectionId: null,
-            subagentLimit: 0,
-          }),
-          loadRows(
-            connectionId,
-            snapshots.map(({ thread }) => thread.id),
-          ),
-        ]);
-        const visibleWindow = window;
-        const current = new Map(existing.map((row) => [row.remoteThreadId, row]));
-        const changes: ThreadSummaryChange[] = [];
-        for (const row of replaceHead
-          ? archived
-            ? visibleWindow.archived
-            : visibleWindow.recent
-          : []) {
-          // Paging a catalog must not erase device-owned unread state outside its head.
-          if (
-            !prefixIds.has(row.remoteThreadId) &&
-            !row.pinned &&
-            row.unread === 0 &&
-            row.deleteCommandId === null &&
-            catalogHeadEvictable(row) &&
-            !read.changed.has(row.remoteThreadId)
-          ) {
-            // Evict only this stale cached prefix; absence is not a server
-            // thread deletion, and older cached ranges are left untouched.
-            changes.push({
-              key: threadSummaryKey(connectionId, row.remoteThreadId),
-              type: "delete",
-            });
-          }
-        }
-        for (const snapshot of snapshots) {
-          if (read.changed.has(snapshot.thread.id)) {
-            continue;
-          }
-          if (isCatalogExcluded(snapshot.thread)) {
-            changes.push({
-              key: threadSummaryKey(connectionId, snapshot.thread.id),
-              type: "delete",
-            });
-            continue;
-          }
-          const previous = current.get(snapshot.thread.id);
-          const page = projectThreadSummarySnapshot(
-            connectionId,
-            snapshot.thread,
-            archived,
-            previous,
-          );
-          const row = previous === undefined ? page : retainLiveCatalogState(page, previous);
-          if (previous === undefined || !sameThreadSummary(previous, row)) {
-            changes.push({ type: previous === undefined ? "insert" : "update", value: row });
-          }
-        }
-        if (changes.length === 0) {
-          return;
-        }
-        storage.begin();
-        for (const change of changes) {
-          storage.write(change);
-        }
-        const checkpoint = storage.commit({ durable: true });
-        publishModelChanges(changes, true);
-        await checkpoint;
-      });
-    },
+    applyCatalogPage: serverRows.applyCatalogPage,
     async applyCommandDelivery(delivery) {
       await applyDeleteDelivery(delivery);
       await applyQuestionDelivery(delivery);
     },
     async applyEvents(connectionId, events) {
-      await applyEventBatch(connectionId, events, []);
+      await applyEventBatch(connectionId, events);
     },
     async applyPinSnapshot(connectionId, snapshot) {
       await writes.run(async () => {
@@ -654,22 +631,8 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         await checkpoint;
       });
     },
-    async applyRepairedEvents(connectionId, snapshot, events) {
-      await applyEventBatch(connectionId, events, [snapshot]);
-    },
-    async applySnapshot(connectionId, snapshots, cursor) {
-      await replaceSnapshotRows(connectionId, snapshots, {
-        missingScope: (current) =>
-          new Set(
-            current
-              .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
-              .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
-          ),
-        // An authoritative snapshot replaces the rows it lists as they are.
-        retainLiveState: false,
-        throughCursor: cursor,
-      });
-    },
+    applyServerRows: serverRows.applyServerRows,
+    applySnapshot: serverRows.applySnapshot,
     beginCatalogRead: (connectionId) => catalogReads.begin(connectionId),
     async beginDelete(connectionId, threadId, commandId) {
       await rewrite(connectionId, threadId, (previous) =>
@@ -685,6 +648,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       });
     },
     async deleteConnection(connectionId) {
+      overlay.forgetConnection(connectionId);
       await writes.run(async () => {
         const rows = await loadConnectionRows(connectionId);
         if (rows.length === 0) {
@@ -792,8 +756,8 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
           }
           const previous = current.get(key);
           // A bounded thread read can finish after a newer live event has
-          // already updated the list. Never let that older read reopen a
-          // completed row or restore an outdated preview.
+          // already updated the row. Never let that older read reopen a
+          // completed question.
           if (
             previous !== undefined &&
             throughCursor !== undefined &&
@@ -801,13 +765,13 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
           ) {
             continue;
           }
-          const row = projectThreadSummarySnapshot(
-            connectionId,
-            snapshot.thread,
-            snapshot.archived,
-            previous,
-          );
-          row.projectionCursor = Math.max(row.projectionCursor ?? 0, throughCursor ?? 0);
+          // Server fields of an existing row belong to Companion list rows; a
+          // read only seeds a missing row and refreshes turn-derived attention.
+          const row =
+            previous === undefined
+              ? projectThreadSummarySnapshot(connectionId, snapshot.thread, snapshot.archived)
+              : { ...previous, ...threadSummaryTurnAttention(snapshot.thread, previous) };
+          row.projectionCursor = Math.max(threadSummaryProjectionCursor(row), throughCursor ?? 0);
           if (previous === undefined || !sameThreadSummary(previous, row)) {
             changed.set(key, row);
           }
@@ -998,19 +962,28 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
   };
 }
 
-function seedThreadSummaryFromEvents(
-  connectionId: string,
-  snapshot: SyncSnapshotThread,
-  events: readonly SyncEvent[],
+/**
+ * Keeps live state that a paginated catalog row must not roll back.
+ *
+ * The page comes from the provider state store and may describe an earlier moment than events
+ * already applied to the row. A listed `notLoaded` only says the provider does not hold the thread
+ * in memory; a turn that runs elsewhere is still active, and its end arrives as an ordered
+ * lifecycle event. Recency, which orders the list, never moves backwards.
+ */
+function retainLiveCatalogState(
+  page: StoredThreadSummary,
+  previous: StoredThreadSummary,
 ): StoredThreadSummary {
-  let archived = snapshot.archived;
-  for (const event of events) {
-    const patch = threadProjectionPatchFromEvent(event.payload);
-    if (patch?.threadId === snapshot.thread.id && typeof patch.operation.archived === "boolean") {
-      archived = patch.operation.archived;
-    }
+  if (page.status.type === "notLoaded" && previous.status.type === "active") {
+    page.status = previous.status;
   }
-  return projectThreadSummarySnapshot(connectionId, snapshot.thread, archived);
+  if (
+    previous.recencyAt !== null &&
+    (page.recencyAt === null || page.recencyAt < previous.recencyAt)
+  ) {
+    page.recencyAt = previous.recencyAt;
+  }
+  return page;
 }
 
 function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary): boolean {

@@ -1,74 +1,84 @@
-import type { SyncEvent } from "@codewide/sync-client";
+import type { LiveActivity } from "@codewide/sync-client";
 import { describe, expect, it } from "vitest";
 
-import type { ThreadProjectionStore } from "../src/data/thread-projection-store";
 import { threadSummaryKey } from "../src/data/thread-summary-projection";
-import {
-  createThreadLiveActivityProjection,
-  threadLiveActivity$,
-} from "../src/data/threadLiveActivity";
+import { applyServerRowLiveActivity, threadLiveActivity$ } from "../src/data/threadLiveActivity";
+import { parseThreadListRow, type ThreadListRow } from "../src/data/threadListRow";
+import { listedThread } from "./fixtures/threadListRows";
+import { createV1TestThread } from "./fixtures/v1Thread";
 
-let cursor = 0;
-
-function event(threadId: string, operation: Record<string, unknown>): SyncEvent {
-  cursor += 1;
-  return {
-    cursor,
-    payload: {
-      codewideThreadPatch: { operation: { kind: "itemUpsert", ...operation }, threadId, version: 1 },
-      method: "item/started",
-      params: { threadId, turnId: "turn" },
-    },
-  };
-}
-
-function projection(): { readonly snapshots: string[]; readonly store: ThreadProjectionStore } {
-  const snapshots: string[] = [];
-  return {
-    snapshots,
-    store: createThreadLiveActivityProjection({
-      async applyEvents() {
-        return { checkpoint: Promise.resolve(), threads: new Map() };
-      },
-      async applySnapshot(connectionId) {
-        snapshots.push(connectionId);
-      },
-    }),
-  };
+function row(threadId: string, liveActivity: LiveActivity | null, cursor = 1): ThreadListRow {
+  const parsed = parseThreadListRow(
+    listedThread(createV1TestThread(threadId, null, 1, []), { cursor, liveActivity }),
+  );
+  if (parsed.status === "error") {
+    throw new Error(parsed.error);
+  }
+  return parsed.value;
 }
 
 const activity = (connectionId: string, threadId: string) =>
   threadLiveActivity$.peek()[threadSummaryKey(connectionId, threadId)];
 
 describe("thread live activity owner", () => {
-  it("publishes set changes, keeps unchanged patches and removes cleared activity", async () => {
-    const { store } = projection();
-    await store.applyEvents("server", [
-      event("thread", { liveActivity: { command: "cargo test", kind: "command" } }),
-      event("other", { liveActivity: { kind: "webSearch" } }),
-    ]);
+  it("takes each admitted row's activity, clears a null one and removes deleted rows", () => {
+    applyServerRowLiveActivity("server", {
+      kind: "merge",
+      removedThreadIds: [],
+      rows: [
+        row("thread", { command: "cargo test", kind: "command" }),
+        row("other", { kind: "webSearch" }),
+        row("gone", { kind: "compacting" }),
+      ],
+    });
     expect(activity("server", "thread")).toEqual({ command: "cargo test", kind: "command" });
 
-    await store.applyEvents("server", [event("thread", {})]);
-    expect(activity("server", "thread")).toEqual({ command: "cargo test", kind: "command" });
+    applyServerRowLiveActivity("server", {
+      kind: "merge",
+      removedThreadIds: ["gone"],
+      rows: [row("thread", null, 2)],
+    });
 
-    await store.applyEvents("server", [
-      event("thread", { liveActivity: { kind: "compacting" } }),
-      event("thread", { kind: "turnCompleted", liveActivity: null }),
-    ]);
     expect(activity("server", "thread")).toBeUndefined();
+    expect(activity("server", "gone")).toBeUndefined();
     expect(activity("server", "other")).toEqual({ kind: "webSearch" });
   });
 
-  it("starts a connection from no activity after its snapshot without touching others", async () => {
-    const { snapshots, store } = projection();
-    await store.applyEvents("first", [event("thread", { liveActivity: { kind: "webSearch" } })]);
-    await store.applyEvents("second", [event("thread", { liveActivity: { kind: "webSearch" } })]);
+  it("keeps the published value when an equal activity arrives again", () => {
+    applyServerRowLiveActivity("server", {
+      kind: "merge",
+      removedThreadIds: [],
+      rows: [row("steady", { kind: "planStep", step: "Write tests" })],
+    });
+    const published = activity("server", "steady");
 
-    await store.applySnapshot("first", [], cursor);
+    applyServerRowLiveActivity("server", {
+      kind: "merge",
+      removedThreadIds: [],
+      rows: [row("steady", { kind: "planStep", step: "Write tests" }, 2)],
+    });
 
-    expect(snapshots).toEqual(["first"]);
-    expect(activity("first", "thread")).toBeUndefined();
-    expect(activity("second", "thread")).toEqual({ kind: "webSearch" });
+    expect(activity("server", "steady")).toBe(published);
+  });
+
+  it("replaces one connection's activity from a snapshot, retaining newer pushes only", () => {
+    for (const connectionId of ["first", "second"]) {
+      applyServerRowLiveActivity(connectionId, {
+        kind: "merge",
+        removedThreadIds: [],
+        rows: [row("stale", { kind: "webSearch" }), row("pushed", { kind: "compacting" })],
+      });
+    }
+
+    applyServerRowLiveActivity("first", {
+      kind: "replace",
+      retainedThreadIds: new Set(["pushed"]),
+      rows: [row("listed", { kind: "webSearch" })],
+    });
+
+    expect(activity("first", "stale")).toBeUndefined();
+    expect(activity("first", "pushed")).toEqual({ kind: "compacting" });
+    expect(activity("first", "listed")).toEqual({ kind: "webSearch" });
+    expect(activity("second", "stale")).toEqual({ kind: "webSearch" });
   });
 });

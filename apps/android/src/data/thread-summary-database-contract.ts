@@ -8,6 +8,34 @@ import type {
 } from "./thread-summary-model";
 import type { ThreadCatalogRead } from "./thread-catalog-read";
 import type { ProjectUnreadModel } from "./project-unread-model";
+import type { ListStreamGeneration, ThreadListRow, ThreadListRowsFrame } from "./threadListRow";
+import type { ThreadListRace } from "./threadListStream";
+
+/** Server rows the database admitted under the race rule, published after their commit. */
+export type ServerRowsChange =
+  | {
+      readonly kind: "merge";
+      readonly removedThreadIds: readonly string[];
+      readonly rows: readonly ThreadListRow[];
+    }
+  | {
+      /** A snapshot replaced the connection's rows; `retainedThreadIds` kept newer pushes. */
+      readonly kind: "replace";
+      readonly retainedThreadIds: ReadonlySet<string>;
+      readonly rows: readonly ThreadListRow[];
+    };
+
+/** One validated `thread/list` page read under one list-stream generation. */
+export type ThreadCatalogPageRows = {
+  readonly generation: ListStreamGeneration | null;
+  readonly rows: readonly ThreadListRow[];
+};
+
+/** Ports the summary database consults and notifies for server-owned rows. */
+export type ThreadSummaryDatabaseOptions = {
+  readonly listRace: ThreadListRace;
+  readonly onServerRows: (connectionId: string, change: ServerRowsChange) => void;
+};
 
 /** Owns persisted thread summaries and derived unread projections. */
 export type ThreadSummaryDatabase = {
@@ -17,7 +45,7 @@ export type ThreadSummaryDatabase = {
   // oxlint-disable-next-line eslint/max-params
   applyCatalogPage: (
     connectionId: string,
-    threads: SyncSnapshotThread[],
+    page: ThreadCatalogPageRows,
     archived: boolean,
     prefixIds: ReadonlySet<string>,
     read: ThreadCatalogRead,
@@ -25,17 +53,18 @@ export type ThreadSummaryDatabase = {
     projectCwd?: string,
   ) => Promise<void>;
   applyCommandDelivery: (delivery: NativeCommandDelivery) => Promise<void>;
+  /** Applies device-owned fields of ordered journal events; server fields come from rows. */
   applyEvents: (connectionId: string, events: SyncEvent[]) => Promise<void>;
   /** Replaces server-owned pins without overwriting newer live pin events. */
   applyPinSnapshot: (
     connectionId: string,
     snapshot: { readonly cursor: number; readonly threadIds: readonly string[] },
   ) => Promise<void>;
-  /** Atomically seeds a missing summary and replays its unacknowledged material events. */
-  applyRepairedEvents: (
+  /** Writes one pushed `threadListRows` frame in one non-durable transaction. */
+  applyServerRows: (
     connectionId: string,
-    snapshot: SyncSnapshotThread,
-    events: SyncEvent[],
+    generation: ListStreamGeneration,
+    frame: ThreadListRowsFrame,
   ) => Promise<void>;
   applySnapshot: (
     connectionId: string,
@@ -60,6 +89,10 @@ export type ThreadSummaryDatabase = {
   markProjectRead: (connectionId: string, projectCwd: string) => Promise<void>;
   markRead: (connectionId: string, threadId: string) => Promise<void>;
   markUnread: (connectionId: string, threadId: string) => Promise<void>;
+  /**
+   * Inserts a `thread/read` or `companion/thread/sync` thread whose row is
+   * missing; for an existing row it updates only device-owned turn attention.
+   */
   mergeSnapshots: (
     connectionId: string,
     threads: SyncSnapshotThread[],

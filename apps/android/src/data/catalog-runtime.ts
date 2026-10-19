@@ -11,73 +11,98 @@ import { ThreadCatalogWindow } from "./thread-catalog-window";
 import { shouldRepairThreadDetail } from "./thread-detail-refresh-policy";
 import type { ThreadSummaryDatabase } from "./thread-summary-database";
 import type { ThreadReadOperation } from "./thread-sync-types";
+import type { ListStreamGeneration, ThreadListRow } from "./threadListRow";
 /** Current catalog publication and observed-thread authority from the JS singleton. */
 export type CatalogRuntimeAuthority = {
   desiredThreadId: (connectionId: string) => string | undefined;
   enabledConnectionIds: () => string[];
   getSession: (connectionId: string) => RpcClient | undefined;
   getSummaries: () => ThreadSummaryDatabase | null;
+  /** Generation of the connection's list stream; a page read under another one is stale. */
+  listGeneration: (connectionId: string) => ListStreamGeneration | null;
   readThread: ThreadReadOperation;
+  /** Sets whether Companion pushes list rows; the lifecycle owner alone decides it. */
+  setListStreamVisible: (connectionId: string, visible: boolean) => Promise<void>;
 };
-/** Retains catalog windows, freshness, invalidation and subagent refresh ownership. */
+/**
+ * Retains catalog windows, page re-reads and subagent refresh ownership.
+ * Between re-reads the list stream keeps rows current, so a re-read is never
+ * throttled: reconnect and foreground always read every open window again.
+ */
 export function createCatalogRuntime({
   desiredThreadId,
   enabledConnectionIds,
   getSession,
   getSummaries,
+  listGeneration,
   readThread,
+  setListStreamVisible,
 }: CatalogRuntimeAuthority) {
   const pins = createThreadPinsCatalog({ getSession, getSummaries });
   const readThreadSummary = createThreadSummaryMetadataReader(getSession);
   const threadInvalidationArchived = new Map<string, boolean>();
-  const threadCatalogRefreshInFlight = new Map<string, Promise<void>>();
+  const catalogRefreshes = new Map<string, CatalogRefresh>();
   const threadCatalogWindows = new Map<string, ThreadCatalogWindow>();
-  const threadCatalogRefreshedAt = new Map<string, number>();
   const subagentRefreshInFlight = new Map<string, Promise<void>>();
-  const connectionRefreshes = new Map<string, ConnectionRefresh>();
-  const refreshThreadCatalog = async (connectionId: string, force = false): Promise<void> => {
-    const now = Date.now();
-    if (
-      !force &&
-      now - (threadCatalogRefreshedAt.get(connectionId) ?? 0) < THREAD_CATALOG_REPAIR_INTERVAL_MS
-    ) {
+  /** Re-reads the connection's pins and every open window from their first page. */
+  const refreshWindows = async (connectionId: string): Promise<void> => {
+    const session = getSession(connectionId);
+    const summaries = getSummaries();
+    if (session === undefined || summaries === null) {
       return;
     }
-    const pending = threadCatalogRefreshInFlight.get(connectionId);
-    if (pending !== undefined) {
-      return pending;
+    pruneInactiveCatalogWindows(summaries);
+    const active = threadCatalogWindows.get(catalogWindowKey(connectionId, false));
+    const refreshes = [
+      active === undefined
+        ? catalogWindow(connectionId, false).ensure(THREAD_CATALOG_PAGE_SIZE)
+        : active.refresh(),
+    ];
+    for (const [key, window] of threadCatalogWindows) {
+      if (
+        key.startsWith(`${connectionId}\u0000`) &&
+        key !== catalogWindowKey(connectionId, false)
+      ) {
+        refreshes.push(window.refresh());
+      }
     }
-    const operation = (async () => {
-      const session = getSession(connectionId);
-      const summaries = getSummaries();
-      if (session === undefined || summaries === null) {
-        return;
-      }
-      pruneInactiveCatalogWindows(summaries);
-      const active = threadCatalogWindows.get(catalogWindowKey(connectionId, false));
-      const refreshes = [
-        active === undefined
-          ? catalogWindow(connectionId, false).ensure(THREAD_CATALOG_PAGE_SIZE)
-          : active.refresh(),
-      ];
-      for (const [key, window] of threadCatalogWindows) {
-        if (
-          key.startsWith(`${connectionId}\u0000`) &&
-          key !== catalogWindowKey(connectionId, false)
-        ) {
-          refreshes.push(window.refresh());
-        }
-      }
-      await Promise.all([...refreshes, pins.ensure(connectionId, true)]);
-      threadCatalogRefreshedAt.set(connectionId, Date.now());
-    })().finally(() => {
-      if (threadCatalogRefreshInFlight.get(connectionId) === operation) {
-        threadCatalogRefreshInFlight.delete(connectionId);
+    await Promise.all([...refreshes, pins.ensure(connectionId, true)]);
+  };
+  /**
+   * Starts a re-read, or one trailing re-read after the running one: a caller
+   * that declared visibility after a run started still gets pages read after it.
+   */
+  const refreshThreadCatalog = async (connectionId: string): Promise<void> => {
+    const state = catalogRefreshes.get(connectionId);
+    if (state === undefined) {
+      const refresh: CatalogRefresh = { current: refreshWindows(connectionId), trailing: null };
+      catalogRefreshes.set(connectionId, refresh);
+      return settleRefresh(connectionId, refresh, refresh.current);
+    }
+    if (state.trailing === null) {
+      const trailing = state.current
+        .catch(() => undefined)
+        .then(async () => {
+          state.trailing = null;
+          state.current = trailing;
+          return refreshWindows(connectionId);
+        });
+      state.trailing = trailing;
+      return settleRefresh(connectionId, state, trailing);
+    }
+    return state.trailing;
+  };
+  async function settleRefresh(
+    connectionId: string,
+    state: CatalogRefresh,
+    run: Promise<void>,
+  ): Promise<void> {
+    return run.finally(() => {
+      if (state.current === run && state.trailing === null) {
+        catalogRefreshes.delete(connectionId);
       }
     });
-    threadCatalogRefreshInFlight.set(connectionId, operation);
-    return operation;
-  };
+  }
 
   /**
    * Reads one root's descendant index and replaces its subagent catalog. Callers are the
@@ -161,6 +186,11 @@ export function createCatalogRuntime({
     }
     let read: ThreadCatalogRead | null = null;
     let countRead: { count: number | null; revision: number } | null = null;
+    let loaded: {
+      readonly generation: ListStreamGeneration | null;
+      readonly rows: readonly ThreadListRow[];
+      readonly threads: readonly unknown[];
+    } | null = null;
     const window = new ThreadCatalogWindow(
       {
         close() {
@@ -177,6 +207,8 @@ export function createCatalogRuntime({
           const lease = summaries.beginCatalogRead(connectionId);
           read = lease;
           const revision = catalogSummaryModel.revision(connectionId);
+          // Captured before the read: a socket replaced meanwhile makes the page stale.
+          const generation = listGeneration(connectionId);
           try {
             const page = await loadThreadCatalogPage(session, {
               ...request,
@@ -184,6 +216,7 @@ export function createCatalogRuntime({
             });
             await summaries.removeCatalogEntries(connectionId, page.excludedThreadIds);
             countRead = { count: page.archivedCount ?? null, revision };
+            loaded = { generation, rows: page.rows, threads: page.threads };
             return page;
           } catch (error) {
             lease.release();
@@ -196,13 +229,19 @@ export function createCatalogRuntime({
         async publish(threads, partition, prefixIds, replaceHead) {
           const summaries = getSummaries();
           const lease = read;
+          const page = loaded;
+          loaded = null;
           if (summaries === null || lease === null) {
             return;
+          }
+          if (page?.threads !== threads) {
+            lease.release();
+            throw new Error("Catalog page publication does not match its read");
           }
           try {
             await summaries.applyCatalogPage(
               connectionId,
-              threads,
+              { generation: page.generation, rows: page.rows },
               partition,
               prefixIds,
               lease,
@@ -276,75 +315,29 @@ export function createCatalogRuntime({
   };
   const refreshThreadPins = async (connectionId: string): Promise<void> =>
     pins.ensure(connectionId, true);
-  const markRefreshed = (connectionId: string) => {
-    threadCatalogRefreshedAt.set(connectionId, Date.now());
-  };
-  const registerLifecycle = createCatalogLifecycle({ enabledConnectionIds, refreshThreadCatalog });
+  const lifecycle = createCatalogLifecycle({
+    enabledConnectionIds,
+    refreshThreadCatalog,
+    setListStreamVisible,
+  });
   function invalidateConnection(connectionId: string): void {
     pins.invalidate(connectionId);
-    threadCatalogRefreshedAt.delete(connectionId);
     closeCatalogWindows(connectionId);
-  }
-  /**
-   * Fences counts and closes undemanded windows at once, then refreshes the connection's
-   * pins and windows with at most one run in flight: calls during a run collapse into one
-   * trailing run after it settles, whether it succeeded or failed.
-   */
-  function refreshConnectionWindows(connectionId: string): void {
-    catalogSummaryModel.invalidate(connectionId);
-    const summaries = getSummaries();
-    if (summaries !== null) {
-      pruneInactiveCatalogWindows(summaries);
-    }
-    const state = connectionRefreshes.get(connectionId);
-    if (state === undefined) {
-      runConnectionRefresh(connectionId);
-    } else {
-      state.trailing = true;
-    }
-  }
-  function runConnectionRefresh(connectionId: string): void {
-    const state: ConnectionRefresh = { trailing: false };
-    connectionRefreshes.set(connectionId, state);
-    const refreshes = [
-      pins.ensure(connectionId, true).catch((error: unknown) => {
-        appLogger.warnCaught({ error, event: "thread_pins.refresh.failed" });
-      }),
-    ];
-    // Without a summary database the windows have nowhere to publish; only pins refresh.
-    if (getSummaries() !== null) {
-      for (const [key, window] of threadCatalogWindows) {
-        if (key.startsWith(`${connectionId}\u0000`)) {
-          refreshes.push(window.refresh().catch(() => undefined));
-        }
-      }
-    }
-    const settle = (): void => {
-      connectionRefreshes.delete(connectionId);
-      if (state.trailing) {
-        runConnectionRefresh(connectionId);
-      }
-    };
-    // Each refresh already absorbs its own failure; settling on either outcome keeps
-    // a failed run from wedging the coalescer.
-    void Promise.all(refreshes).then(settle, settle);
   }
   return {
     bindSummaryDemand,
     clearInvalidationArchived,
     closeCatalogWindows,
     invalidateConnection,
-    markRefreshed,
     readInvalidationArchived,
     readThreadSummary,
-    refreshConnectionWindows,
     refreshInvalidatedThread,
     refreshSubagents,
     refreshThreadCatalog,
     refreshThreadPins,
-    registerLifecycle,
+    refreshVisibleCatalog: lifecycle.refreshVisibleCatalog,
+    registerLifecycle: lifecycle.register,
   };
 }
-const THREAD_CATALOG_REPAIR_INTERVAL_MS = 10 * 60 * 1000;
-/** The in-flight `refreshConnectionWindows` run of one connection. */
-type ConnectionRefresh = { trailing: boolean };
+/** The running re-read of one connection and at most one trailing re-read after it. */
+type CatalogRefresh = { current: Promise<void>; trailing: Promise<void> | null };

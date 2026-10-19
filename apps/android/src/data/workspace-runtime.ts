@@ -69,10 +69,8 @@ import {
 import { readGlobalSupervisorWorkCatalog } from "./globalSupervisorWorkCatalog";
 import { createThreadSyncProjection } from "./thread-sync-projection";
 import { remoteProjectCatalogModel } from "./remoteProjectCatalog";
-import {
-  clearConnectionLiveActivity,
-  createThreadLiveActivityProjection,
-} from "./threadLiveActivity";
+import { applyServerRowLiveActivity, clearConnectionLiveActivity } from "./threadLiveActivity";
+import { createThreadListStream } from "./threadListStream";
 import { createThreadSyncReconnect } from "./thread-sync-reconnect";
 import { createThreadSyncRemoteLoader } from "./thread-sync-remote-loader";
 import { createThreadSyncRuntime } from "./thread-sync-runtime";
@@ -208,7 +206,10 @@ async function startWorkspaceRuntime(): Promise<void> {
       rpcAfterAttach,
     });
     workspaceRuntime.globalSupervisorBinding = globalSupervisor.binding;
-    const summaries = createThreadSummaryDatabase();
+    const summaries = createThreadSummaryDatabase({
+      listRace: threadListStream.race,
+      onServerRows: applyServerRowLiveActivity,
+    });
     const details = createThreadDetailDatabase();
     details.setRemoteLoader(createThreadSyncRemoteLoader(details, workspaceThreadSync));
     createdThreadDetails = details;
@@ -287,6 +288,8 @@ async function startWorkspaceRuntime(): Promise<void> {
       targetPolicy: globalSupervisor.targetPolicy,
     });
     const projectCommandDelivery = createCommandDeliveryProjection(details, summaries);
+    // Assigned below once connection state exists; generations seen earlier need no repair.
+    let reconnect: ReturnType<typeof createThreadSyncReconnect> | null = null;
     const nativeSupervisorOptions: ConstructorParameters<typeof NativeEngineSupervisor>[0] = {
       connectionState: {
         setConnectionPath: connectionState.setPath,
@@ -322,20 +325,25 @@ async function startWorkspaceRuntime(): Promise<void> {
           });
         });
       },
-      projection: createThreadLiveActivityProjection(
-        createGlobalSupervisorAttentionProjection(
-          createThreadSyncProjection({
-            accountRateLimits,
-            agentProviders,
-            catalog: workspaceCatalog,
-            details,
-            projects: remoteProjectCatalogModel,
-            resources,
-            summaries,
-            sync: workspaceThreadSync,
-          }),
-          globalSupervisorAttention,
-        ),
+      onThreadListStream: (connectionId, signal) => {
+        const acceptance = threadListStream.accept(connectionId, signal);
+        if (signal.kind === "generation") {
+          reconnect?.observeGeneration(connectionId, signal.generation);
+        }
+        return acceptance;
+      },
+      projection: createGlobalSupervisorAttentionProjection(
+        createThreadSyncProjection({
+          accountRateLimits,
+          agentProviders,
+          catalog: workspaceCatalog,
+          details,
+          projects: remoteProjectCatalogModel,
+          resources,
+          summaries,
+          sync: workspaceThreadSync,
+        }),
+        globalSupervisorAttention,
       ),
     };
     const supervisor: WorkspaceSyncSupervisor = new NativeEngineSupervisor(nativeSupervisorOptions);
@@ -380,7 +388,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       supervisor.replaceConnections(currentProfiles);
     });
     workspaceRuntime.connectionStateSubscription?.unsubscribe();
-    const reconnect = createThreadSyncReconnect({
+    const reconnectOwner = createThreadSyncReconnect({
       catalog: workspaceCatalog,
       details,
       readConnection: (connectionId) =>
@@ -389,13 +397,14 @@ async function startWorkspaceRuntime(): Promise<void> {
       refreshAgentProviders: async (connectionId) => agentProviders.refresh(connectionId),
       sync: workspaceThreadSync,
     });
-    const connectionChanges = connectionState.subscribeChanges(reconnect.accept, {
+    reconnect = reconnectOwner;
+    const connectionChanges = connectionState.subscribeChanges(reconnectOwner.accept, {
       includeInitialState: true,
     });
     workspaceRuntime.connectionStateSubscription = {
       unsubscribe() {
         connectionChanges.unsubscribe();
-        reconnect.close();
+        reconnectOwner.close();
       },
     };
     workspaceRuntime.update({
@@ -436,6 +445,16 @@ const { currentConnections, forgetHttpAuthorization, rpcAfterAttach, scopedHttpA
     randomUUID,
   });
 const globalSupervisorIngress = createGlobalSupervisorRuntimeIngress();
+/** Owns pushed thread-list rows and the cursor race shared with catalog pages. */
+const threadListStream = createThreadListStream({
+  applyRows: async (connectionId, generation, frame) => {
+    await workspaceRuntime.snapshot.threadSummaries?.applyServerRows(
+      connectionId,
+      generation,
+      frame,
+    );
+  },
+});
 const globalSupervisorAttention = createGlobalSupervisorAttentionOwner({
   now: () => Date.now(),
   storage: createGlobalSupervisorAttentionStorage(),
@@ -462,6 +481,7 @@ export async function deleteLocalConnectionData(connectionId: string): Promise<v
   await snapshot.threadDetails?.deleteConnection(connectionId);
   await snapshot.threadSummaries?.deleteConnection(connectionId);
   clearConnectionLiveActivity(connectionId);
+  threadListStream.forgetConnection(connectionId);
   await snapshot.threadUiState?.deleteConnection(connectionId);
   await snapshot.accountRateLimits?.deleteConnection(connectionId);
   await snapshot.resources?.deleteConnection(connectionId);
@@ -621,8 +641,7 @@ const workspaceThreadSync = createThreadSyncRuntime({
   readInvalidationArchived: (key) => workspaceCatalog.readInvalidationArchived(key),
   refreshSubagents: async (connectionId, threadId) =>
     workspaceCatalog.refreshSubagents(connectionId, threadId),
-  refreshThreadCatalog: async (connectionId, force) =>
-    workspaceCatalog.refreshThreadCatalog(connectionId, force),
+  refreshThreadCatalog: async (connectionId) => workspaceCatalog.refreshThreadCatalog(connectionId),
   rpcAfterAttach,
   transferAccess: async (connectionId, forceRefresh) => transferAccess(connectionId, forceRefresh),
 });
@@ -632,6 +651,7 @@ const workspaceCatalog = createCatalogRuntime({
   enabledConnectionIds: () => workspaceRuntime.enabledConnectionIds(),
   getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
   getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
+  listGeneration: (connectionId) => threadListStream.race.generation(connectionId),
   readThread: async (connectionId, threadId, cached, authoritative, repairShortWindow) =>
     workspaceThreadSync.readThread(
       connectionId,
@@ -640,6 +660,13 @@ const workspaceCatalog = createCatalogRuntime({
       authoritative,
       repairShortWindow,
     ),
+  setListStreamVisible: async (connectionId, visible) => {
+    const supervisor = workspaceRuntime.supervisor;
+    if (supervisor === null) {
+      throw new Error("Workspace sync supervisor is not running");
+    }
+    await supervisor.listStreamVisible(connectionId, visible);
+  },
 });
 
 // Runtime startup belongs to the application module, not to the lifetime of a

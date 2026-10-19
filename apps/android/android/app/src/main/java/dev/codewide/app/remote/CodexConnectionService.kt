@@ -49,6 +49,8 @@ class CodexConnectionService : Service() {
   private val journalThread = HandlerThread("CodeWideJournal")
   private lateinit var journalHandler: Handler
   private val sessions = ConcurrentHashMap<String, Session>()
+  /** List-stream visibility per connection; process memory only, so a new process starts hidden. */
+  private val listStreamVisibility = ConcurrentHashMap<String, Boolean>()
   @Volatile private var destroyed = false
   private val networkState = DefaultNetworkState<Network>()
   private var processExitTelemetryCollectionStarted = false
@@ -395,6 +397,20 @@ class CodexConnectionService : Service() {
     else session.replaceInterest(threadIds)
   }
 
+  /**
+   * Sets whether Companion pushes thread-list rows to this connection. Without
+   * a session the value is kept for that connection's next `hello`.
+   */
+  fun setListStreamVisible(connectionId: String, visible: Boolean) {
+    listStreamVisibility[connectionId] = visible
+    sessions[connectionId]?.setListStreamVisible(visible)
+  }
+
+  /** Hides every connection's list stream once no React context can apply its rows. */
+  fun hideListStreams() {
+    for (connectionId in listStreamVisibility.keys) setListStreamVisible(connectionId, false)
+  }
+
   internal fun enqueueCommand(
     connectionId: String,
     commandId: String,
@@ -738,6 +754,8 @@ class CodexConnectionService : Service() {
       onPortInventory = { payload -> portForwardManager.receiveInventory(id, payload) },
       telemetry = NativeTelemetryRecorder(::emitTelemetry),
       onRpcHealth = { available -> retryPolicy.observeRpc(available, SystemClock.elapsedRealtime()) },
+      currentGeneration = { transportGeneration },
+      initialListStreamVisible = listStreamVisibility[id] == true,
     )
 
     @Synchronized fun connect() {
@@ -984,6 +1002,8 @@ class CodexConnectionService : Service() {
       !closed && protocolEngine.unsubscribeLive(channelId)
 
     fun replaceInterest(threadIds: List<String>) = protocolEngine.replaceInterest(threadIds)
+
+    fun setListStreamVisible(visible: Boolean) = protocolEngine.setListStreamVisible(visible)
 
     fun drainOutbox() {
       if (closed || outboxDrainRunning || !protocolEngine.isLive()) return

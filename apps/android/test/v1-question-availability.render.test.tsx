@@ -1,3 +1,4 @@
+import { testListStream } from "./fixtures/threadListRows";
 import { render } from "@testing-library/react-native";
 import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 
@@ -45,7 +46,7 @@ it("shows a live async question while its separate catalog view loads, then hono
     startedAt: null,
     status: "inProgress",
   };
-  const summaries = createThreadSummaryDatabase();
+  const summaries = createThreadSummaryDatabase(testListStream().options);
   const value = {
     activeTurnId: turn.id,
     connectionId: "server",

@@ -20,8 +20,6 @@ import type { ThreadDetailDatabase } from "./thread-detail-database";
 import { threadPatchRequiresAuthoritativeRefresh } from "./thread-detail-refresh-policy";
 import type { ThreadProjectionStore } from "./thread-projection-store";
 import { createThreadProjectionStore } from "./thread-projection-store";
-import { createThreadCatalogInvalidation } from "./threadCatalogInvalidation";
-import { createThreadSummaryRepair } from "./threadSummaryRepair";
 import { projectThreadResourcePatch } from "./thread-resource-projection";
 import type { ThreadSummaryDatabase } from "./thread-summary-database";
 import type { createThreadSyncRuntime } from "./thread-sync-runtime";
@@ -48,20 +46,12 @@ export function createThreadSyncProjection({
   summaries: ThreadSummaryDatabase;
   sync: ReturnType<typeof createThreadSyncRuntime>;
 }): ThreadProjectionStore {
+  // Catalog membership and server row fields arrive in the thread-list stream;
+  // events project only device-owned summary fields here.
   const projection = createThreadProjectionStore({ details, summaries });
-  const repairSummaries = createThreadSummaryRepair({
-    readMetadata: catalog.readThreadSummary,
-    summaries,
-  });
-  const refreshCatalogForEvents = createThreadCatalogInvalidation({
-    readSummary: summaries.get,
-    refresh: catalog.refreshConnectionWindows,
-  });
   return {
     async applyEvents(connectionId, events) {
       const projected = await projection.applyEvents(connectionId, events);
-      const summaryCheckpoint = repairSummaries(connectionId, events);
-      void summaryCheckpoint.catch(() => undefined);
       const projectedThreads = projected.threads;
       const receiptThreadIds = new Set<string>();
       const deliveredReceiptThreads = new Set<string>();
@@ -165,7 +155,6 @@ export function createThreadSyncProjection({
           }
         }
       }
-      await refreshCatalogForEvents(connectionId, events);
       const receiptThreads: Thread[] = [];
       for (const threadId of receiptThreadIds) {
         const thread = projectedThreads.get(threadId)?.after;
@@ -205,21 +194,13 @@ export function createThreadSyncProjection({
           });
         });
       }
-      const checkpoint = Promise.all([projected.checkpoint, summaryCheckpoint]).then(
-        () => undefined,
-      );
-      void checkpoint.catch(() => undefined);
-      return {
-        checkpoint,
-        threads: projected.threads,
-      };
+      return projected;
     },
     async applySnapshot(connectionId, snapshots, cursor) {
       sync.invalidateHistoryReads(connectionId);
       details.invalidateHistoryExhaustion(connectionId);
       await projection.applySnapshot(connectionId, snapshots, cursor);
       await catalog.refreshThreadPins(connectionId);
-      catalog.markRefreshed(connectionId);
       // Catalog snapshots persist receipt evidence, but not canonical turn
       // content. Retain the native receipt until detail persistence takes over.
     },

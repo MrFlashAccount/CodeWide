@@ -1390,7 +1390,7 @@ async fn connect_client_with_hello(
     let (mut socket, _response) = connect_async(request).await?;
     send_json(
         &mut socket,
-        &json!({"type": "hello", "protocolVersion": 1, "cursor": null, "interest": []}),
+        &json!({"type": "hello", "protocolVersion": 1, "listStream": {"visible": false}, "cursor": null, "interest": []}),
     )
     .await?;
     let hello = receive_type_where(&mut socket, "hello").await?;

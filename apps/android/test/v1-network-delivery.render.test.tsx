@@ -110,7 +110,7 @@ async function setup(
   const reads = jest.spyOn(sync, "readThread");
   const refreshAgentProviders = jest.fn(async (_connectionId: string) => undefined);
   const reconnect = createThreadSyncReconnect({
-    catalog: { refreshThreadCatalog: async () => undefined }, details,
+    catalog: { refreshVisibleCatalog: async () => undefined }, details,
     readConnection: () => model.rows$.peek()[0],
     refreshAccountRateLimits: async () => undefined, refreshAgentProviders, sync,
   });

@@ -31,6 +31,7 @@ import {
   type TelemetryEventInput,
 } from "../data/telemetry";
 
+import type { ThreadListStreamAcceptance, ThreadListStreamSignal } from "../data/threadListStream";
 import { OrderedProjectionAcknowledger } from "./ordered-projection-acknowledger";
 import { nativeEngineErrorDiagnostic } from "./native-engine-error-diagnostic";
 import { parseNativeCommandDelivery, type NativeCommandDelivery } from "./native-transport.native";
@@ -53,7 +54,8 @@ type NativeEngineEvent = {
     | "liveSubscribed"
     | "liveTerminal"
     | "outbox"
-    | "telemetry";
+    | "telemetry"
+    | "threadListRows";
 };
 
 type NativeLiveEventType = Extract<
@@ -63,6 +65,8 @@ type NativeLiveEventType = Extract<
 
 type NativeEngineState = {
   error?: string;
+  /** Transport generation of the native socket this state describes. */
+  generation?: number;
   path?: unknown;
   rpcAvailable: boolean;
   state: RemoteConnectionState;
@@ -81,6 +85,7 @@ type NativeBridge = {
   addListener: (eventName: string) => void;
   attachSocket: (connectionId: string) => Promise<void>;
   engineInterest: (connectionId: string, threadIdsJson: string) => Promise<void>;
+  engineListStream: (connectionId: string, visible: boolean) => Promise<void>;
   engineLiveSubscribe: (connectionId: string, channelId: string, threadId: string) => Promise<void>;
   engineLiveUnsubscribe: (connectionId: string, channelId: string) => Promise<void>;
   engineRpc: (connectionId: string, method: string, paramsJson: string) => Promise<string>;
@@ -89,8 +94,14 @@ type NativeBridge = {
     afterCursor: number | null,
   ) => Promise<NativeCommittedFramePage>;
   removeListeners: (count: number) => void;
+  resetSocket: (connectionId: string, reason: string) => void;
   wakeSocket: (connectionId: string) => void;
 };
+
+type ThreadListStreamObserver = (
+  connectionId: string,
+  signal: ThreadListStreamSignal,
+) => ThreadListStreamAcceptance;
 
 type NativeCommittedFramePage = {
   baseCursor?: number;
@@ -121,6 +132,7 @@ export class NativeEngineSession implements RpcClient {
     | ((connectionId: string, requests: SyncServerRequest[]) => void)
     | undefined;
   readonly #onEvents: ((connectionId: string, events: readonly SyncEvent[]) => void) | undefined;
+  readonly #onThreadListStream: ThreadListStreamObserver;
   readonly #projectionGate: OrderedProjectionGate;
   readonly #projectionAcknowledger: OrderedProjectionAcknowledger;
   #stopped = false;
@@ -137,9 +149,11 @@ export class NativeEngineSession implements RpcClient {
     connectionState: NativeConnectionStateProjection;
     onEvents?: (connectionId: string, events: readonly SyncEvent[]) => void;
     onPendingRequests?: (connectionId: string, requests: SyncServerRequest[]) => void;
+    onThreadListStream: ThreadListStreamObserver;
     projection: NativeDomainProjection;
   }) {
     this.connectionId = options.connection.id;
+    this.#onThreadListStream = options.onThreadListStream;
     this.#connectionState = options.connectionState;
     this.#projection = options.projection;
     this.#onPendingRequests = options.onPendingRequests;
@@ -217,11 +231,20 @@ export class NativeEngineSession implements RpcClient {
     ) {
       return;
     }
+    if (event.type === "threadListRows") {
+      this.#receiveThreadListRows(event.data);
+      return;
+    }
     if (event.type === "state") {
       try {
         const state = parseJson<NativeEngineState>(event.data, "native engine state");
         if (typeof state.rpcAvailable !== "boolean") {
           throw new Error("Native engine state omitted RPC availability");
+        }
+        if (typeof state.generation === "number") {
+          // State precedes every frame of its socket, so the stream learns a
+          // generation before it can receive that generation's rows.
+          this.#publishThreadListStream({ generation: state.generation, kind: "generation" });
         }
         this.#connectionState.setConnectionPath?.(
           this.connectionId,
@@ -394,6 +417,29 @@ export class NativeEngineSession implements RpcClient {
       this.#enqueueSyncEvents(syncEvents, projectionCursor, recovery, event.data.length);
     } catch (error: unknown) {
       this.#enqueueProjectionFailure(error, event.type === "checkpointEvents");
+    }
+  }
+
+  /** List rows bypass the durable projection gate: they are not journaled or acknowledged. */
+  #receiveThreadListRows(data: string): void {
+    const envelope = parseNativeLiveEnvelope(data);
+    const generation = envelope?.generation;
+    if (envelope === null || typeof generation !== "number") {
+      this.#rejectThreadListRows();
+      return;
+    }
+    this.#publishThreadListStream({ frame: envelope.frame, generation, kind: "rows" });
+  }
+
+  #publishThreadListStream(signal: ThreadListStreamSignal): void {
+    if (this.#onThreadListStream(this.connectionId, signal) === "invalid") {
+      this.#rejectThreadListRows();
+    }
+  }
+
+  #rejectThreadListRows(): void {
+    if (!this.#stopped) {
+      bridge?.resetSocket(this.connectionId, "invalid_list_rows");
     }
   }
 
@@ -777,6 +823,7 @@ export class NativeEngineSupervisor {
     | undefined;
   readonly #onOutboxChange: ((delivery: NativeCommandDelivery) => void) | undefined;
   readonly #onEvents: ((connectionId: string, events: readonly SyncEvent[]) => void) | undefined;
+  readonly #onThreadListStream: ThreadListStreamObserver;
   readonly #onLiveRealtime:
     | ((connectionId: string, event: NativeLiveRealtimeEvent) => void)
     | undefined;
@@ -795,6 +842,7 @@ export class NativeEngineSupervisor {
     this.#onPendingRequests = options.onPendingRequests;
     this.#onOutboxChange = options.onOutboxChange;
     this.#onEvents = options.onEvents;
+    this.#onThreadListStream = options.onThreadListStream;
     this.#onLiveRealtime = options.onLiveRealtime;
     this.#subscription =
       bridge === undefined
@@ -890,6 +938,7 @@ export class NativeEngineSupervisor {
         ...(this.#onPendingRequests === undefined
           ? {}
           : { onPendingRequests: this.#onPendingRequests }),
+        onThreadListStream: this.#onThreadListStream,
       });
       this.#sessions.set(connection.id, session);
       this.#fingerprints.set(connection.id, fingerprint(connection));
@@ -932,6 +981,17 @@ export class NativeEngineSupervisor {
       throw new Error("Native thread interest is unavailable");
     }
     await bridge.engineInterest(connectionId, JSON.stringify(threadIds));
+  }
+
+  /**
+   * Sets whether Companion pushes thread-list rows to the connection. Resolves
+   * after the native engine retained the value and, on an open socket, sent it.
+   */
+  async listStreamVisible(connectionId: string, visible: boolean): Promise<void> {
+    if (bridge === undefined) {
+      throw new Error("Native thread-list stream is unavailable");
+    }
+    await bridge.engineListStream(connectionId, visible);
   }
 
   stop(): void {

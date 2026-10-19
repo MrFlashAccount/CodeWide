@@ -9,12 +9,14 @@ fallback on either side. Companion and the Android APK ship and roll back as one
 paired release.
 
 This document owns the wire contract, the socket position rules, the ordering
-rules between interest and `companion/thread/sync`, the thread preview
-semantics, the close reasons and limits, and the paired release/rollback rule.
+rules between interest and `companion/thread/sync`, the delivery predicate, the
+close reasons and limits, and the paired release/rollback rule. Thread list rows
+(preview, recency, `liveActivity`, membership) no longer travel as journal
+events for unsubscribed threads; they are owned by
+[Companion thread list stream](companion-thread-list-stream.md).
 Device-side ownership (interest membership, residency) is recorded in
 [`apps/android/src/data/CONTEXT.md`](../apps/android/src/data/CONTEXT.md);
-the incremental thread-list projection and the `turn/started` catalog guard are
-recorded in
+the thread-list projection is recorded in
 [`apps/android/src/features/threadList/CONTEXT.md`](../apps/android/src/features/threadList/CONTEXT.md).
 Machine-readable limits live only in `crates/companion-core/contract/v1.json`.
 
@@ -22,19 +24,22 @@ Machine-readable limits live only in `crates/companion-core/contract/v1.json`.
 
 - **interest**: the set of `threadId` values whose content a specific device
   socket subscribes to. Per socket, not per device or per Companion.
-- **catalog topic**: every journal event that is not a thread topic. Always
-  delivered to every socket.
-- **thread topic**: the eight high-frequency `codewideThreadPatch.operation.kind`
-  values `itemTextDelta`, `reasoningDelta`, `reasoningPart`, `turnPlan`,
-  `turnDiff`, `fileChanges`, `mcpProgress`, `tokenUsage`. Delivered only for
-  threads in the socket's interest.
+- **catalog topic**: every journal event that is not a thread topic, plus a
+  `catalogItem`. Always delivered to every socket.
+- **thread topic**: the ten `codewideThreadPatch.operation.kind` values
+  `itemTextDelta`, `reasoningDelta`, `reasoningPart`, `turnPlan`, `turnDiff`,
+  `fileChanges`, `mcpProgress`, `tokenUsage`, `threadProgress`, `itemUpsert`.
+  Delivered only for threads in the socket's interest, except a catalog item.
+- **catalog item**: an `itemUpsert` (`item/started` or `item/completed`) whose
+  `item.type` is in `catalogItemTypes` (`userMessage`, `agentMessage`,
+  `collabAgentToolCall`, `subAgentActivity`, `contextCompaction`), or a
+  `dynamicToolCall` whose `item.tool` is in `catalogDynamicTools`
+  (`codewide_spawn_agent`). Delivered to every socket for both item phases.
 - **socket position**: the last cursor the Companion considers accepted by this
   socket. The `afterCursor` of every sent frame equals the position before the
   send.
 - **advance**: a frame without payload that closes a trailing run of skipped
   journal entries at the end of a replay page.
-- **thread preview**: a synthetic catalog-topic event carrying the current text
-  of a streaming answer, published at most once per interval.
 - **residency**: membership of a thread in the device `ThreadDetailSource`, the
   target of the live transcript projection.
 - **window**: a chat window owned by `data/thread-chat-model.ts`; mounted means
@@ -54,27 +59,42 @@ Direction, fields and timing of every frame touched by interest delivery:
 | `advance`  | Companion → client | `cursor`, `afterCursor`                                   | a replay page ended with skipped entries                               |
 | `caughtUp` | Companion → client | `cursor`                                                  | unchanged; an `advance` for the same page precedes it                  |
 
-The `hello` answer, `status`, `snapshotRequired`/`snapshotApplied` and the RPC
-envelope are unchanged. The `interest` frame and the close reasons are literal
+`hello` also requires `listStream`, and the `listStream` and `threadListRows`
+frames exist; both belong to the
+[thread list stream](companion-thread-list-stream.md) contract. The `hello`
+answer, `status`, `snapshotRequired`/`snapshotApplied` and the RPC envelope are
+unchanged. The `interest` frame and the close reasons are literal
 discriminated unions on both sides; `afterCursor` is optional only at the
 parsing boundary, never inside the device store.
 
 Contract sections in `crates/companion-core/contract/v1.json`:
 
-- `syncInterest`: `threadTopicKinds` (the eight kinds above, the single source
-  the Rust predicate and the device `HIGH_FREQUENCY_SUMMARY_PATCHES` set must
-  equal), `maxInterestThreads: 64` (bounds both one frame list and the
-  resulting set), `maxThreadIdChars: 256`, `helloInterestRequired: true`.
-- `threadPreview`: `method: companion/thread/preview/updated`,
-  `kind: threadPreview`, `publishIntervalMs: 1500`, `maxTextChars: 2000`.
-- `threadProjectionPatch.operations` gains the `threadPreview` operation.
+```json
+"syncInterest": {
+  "threadTopicKinds": ["itemTextDelta","reasoningDelta","reasoningPart","turnPlan","turnDiff","fileChanges","mcpProgress","tokenUsage","threadProgress","itemUpsert"],
+  "catalogItemTypes": ["userMessage","agentMessage","collabAgentToolCall","subAgentActivity","contextCompaction"],
+  "catalogDynamicTools": ["codewide_spawn_agent"],
+  "maxInterestThreads": 64,
+  "maxThreadIdChars": 256,
+  "helloInterestRequired": true
+}
+```
 
-Extending `threadTopicKinds` is a contract change, never a local edit on one
-side. `apps/companion-linux/tests/v1_contract.rs` checks the section against
-the Rust predicate and limits, `apps/android/test/sync-interest-contract.test.ts`
-checks it against the device high-frequency kinds and `NativeSyncInterest`
-limits, and `apps/companion-linux/tests/sync_interest.rs` exercises the
-resulting `/v1/sync` delivery end to end.
+`threadTopicKinds`, `catalogItemTypes` and `catalogDynamicTools` are the single
+source the Rust predicate and the device constants must equal.
+`maxInterestThreads` bounds both one frame list and the resulting set. The
+former `threadPreview` section and the `threadPreview` operation of
+`threadProjectionPatch.operations` are removed together with the
+`companion/thread/preview/updated` event.
+
+Extending `threadTopicKinds`, `catalogItemTypes` or `catalogDynamicTools` is a
+contract change, never a local edit on one side.
+`apps/companion-linux/tests/v1_contract.rs` checks the section against the Rust
+predicate and limits, `apps/android/test/sync-interest-contract.test.ts` checks
+the device constants and `NativeSyncInterest` limits against the same literals,
+and `apps/companion-linux/tests/sync_interest.rs` exercises the resulting
+`/v1/sync` delivery end to end. Comparing `v1.json` with those literals is part
+of the paired integration step.
 Wire fixtures stay with the sync-wire owners (`contract/v1.json`, the Rust
 contract and transport tests, Android literal vectors); nothing is added to
 `packages/agent-protocol`.
@@ -88,14 +108,28 @@ at send time from the already attached `codewideThreadPatch`:
 
 1. No `codewideThreadPatch`: catalog topic, deliver.
 2. `operation.kind` not in `threadTopicKinds`: catalog topic, deliver.
-3. `operation.liveActivity` present: catalog topic, deliver. A reasoning title
-   or plan step therefore reaches an unsubscribed row.
+3. A catalog item (`itemUpsert` with `item.type` in `catalogItemTypes`, or
+   `dynamicToolCall` with `item.tool` in `catalogDynamicTools`): deliver.
 4. Otherwise deliver only when `threadId` is in the socket's interest; a
    skipped entry does not move the socket position.
 
-`itemUpsert` (`item/started`, `item/completed`), `turn/*`, thread status,
-`liveActivity`, pins, pending requests and every `companion/thread/*` event are
-never filtered. A predicate that drops any of them fails review.
+`operation.liveActivity` is no longer a delivery exception: a thread-topic
+frame that carries it is filtered like any other, and the row's `liveActivity`
+reaches unsubscribed sockets through `codewideList.liveActivity` of the
+[thread list stream](companion-thread-list-stream.md).
+
+`turn/*`, thread status, pins, pending requests (user-interaction requests) and
+every `companion/thread/*` event except `companion/thread/progress` are never
+filtered, and neither is a catalog item. They have consumers without another
+source: Kotlin turn-completion and approval notifications, the native pending
+request list, and the global voice supervisor's attention and speech state.
+Their rate follows turns, requests and messages, not tool steps or deltas. A
+predicate that drops any of them fails review.
+
+`agentMessage` stays a catalog item because the device derives async questions
+from it; moving that derivation to the Companion is a separate change.
+`item/started` of other types is not needed by the supervisor, which takes the
+`turnId` from `turn/started`.
 
 The predicate and the position are one owner, `crates/companion-core/src/sync/interest.rs`
 (`SocketInterest`, `SocketPosition`, `ReplayDelivery`), shared by the three
@@ -188,35 +222,6 @@ interest persisted by its predecessor. `engineInterest`
 is a required method of the native engine contract; the device never checks the
 Companion version and never feature-detects the method.
 
-## Thread preview
-
-A thread preview is a Companion-side catalog event, published while a thread
-streams text so that an unsubscribed list row keeps a current preview:
-
-- Event `companion/thread/preview/updated`, patch kind `threadPreview`,
-  `operation.summary = { activity: true, conversationMessage: false, finalAgentResponse: false, previewText }`.
-- Published on arrival of a text delta when at least 1500 ms passed since the
-  last publication for that thread; no Companion timer. The tail of the stream
-  is covered by `item/completed`, which carries the full text as today.
-- `ThreadPreviewTracker` (`crates/companion-core/src/thread_preview.rs`) keeps
-  per thread the `itemId`, the accumulated text capped at 2000 characters and
-  the last publication time, for at most 4096 threads (the `LiveActivityTracker`
-  bound). It is cleared on `item/completed` of the same item, `turn/completed`
-  and `thread/deleted`. After stream-text coalescing, `ingest_payload_batch`
-  passes every payload through `ThreadPreviewTracker::followed_by_preview`,
-  which observes it before content projection and yields it followed by the
-  synthetic event it produced, so the preview is journaled directly after its
-  delta and before serialization.
-- On the device the detail projection treats the unknown kind as a no-op. The
-  summary projection applies the ordinary `previewText` branch: the preview
-  bumps `updatedAt` and `latestActivityCursor`, carries no `recencyAt` and does
-  not touch `unread`, so rows that already have a `recencyAt` keep their order.
-- The acceptance comparison between a streaming thread's summary and a
-  `thread/list` re-read compares every `StoredThreadSummary` field except
-  `updatedAt`.
-- The preview text is a subset of already journaled delta text; it is never
-  written to logs on either side.
-
 ## Close reasons and limits
 
 All closes use code 1008 like the neighbouring control-frame errors:
@@ -230,7 +235,7 @@ All closes use code 1008 like the neighbouring control-frame errors:
   set would exceed 64 threads, for example after several `add` frames.
 
 Companion close logs carry the reason and the sizes involved, never a `threadId`
-from the frame and never preview text. The device reconnects under its normal
+from the frame and never message text. The device reconnects under its normal
 policy. The device structurally produces only a handful of mounted scopes
 (sidebar, conversation, search, subagent), so the limit is a safety bound, not a
 working range.
@@ -239,8 +244,9 @@ working range.
 
 - `crates/companion-core/src/sync.rs`: `accept_hello` requires `interest`,
   `run_session` hands each `interest` frame inline to the interest owner and
-  closes the socket on rejection, ingest expands each payload through the
-  preview tracker.
+  closes the socket on rejection. Ingest no longer expands payloads into preview
+  events; its list-row duties are recorded in the
+  [thread list stream](companion-thread-list-stream.md).
 - `crates/companion-core/src/sync/interest.rs`: interest parsing and limits,
   applying and logging `hello.interest` and `interest` frames (reason and
   sizes, never thread ids), delivery predicate, `afterCursor` chain,
@@ -248,10 +254,9 @@ working range.
 - `crates/companion-core/src/sync/replay.rs`: `deliver_replay_page` is the
   shared page-delivery owner for the hello replay, the post-snapshot replay and
   the live task; it sends one page through a `ReplayDelivery` snapshot.
-- `crates/companion-core/src/thread_preview.rs`: preview rate and shape; a
-  separate owner from `thread_activity.rs` because its reason to change differs.
-- `crates/companion-core/src/thread_patch.rs`: compiles
-  `companion/thread/preview/updated` into the `threadPreview` operation.
+- `crates/companion-core/src/thread_patch.rs` compiles no preview operation;
+  `thread_preview.rs` and its synthetic event are removed, and streaming
+  preview text is owned by `thread_list::preview`.
 - Android native: `NativeSyncInterest` (`NativeSyncInterest.kt`) is the single
   device owner of the interest limits: it validates every set before it is
   persisted or sent, both through `NativeProtocolEngine` on a live session and
@@ -260,9 +265,10 @@ working range.
   routes to one of the two. `NativeProtocolEngine` owns `hello.interest`, `interest`, `advance`
   and persistence; `NativeFrameStore` owns the acceptance rule and the column;
   `CodeWideModule` is only the bridge.
-- `apps/android/test/sync-interest-contract.test.ts` mirrors
-  `contract/v1.json` `syncInterest` against the device high-frequency kinds and
-  the `NativeSyncInterest` limits, so the paired sides cannot drift apart.
+- `apps/android/test/sync-interest-contract.test.ts` mirrors the
+  `syncInterest` literals against the device constants and the
+  `NativeSyncInterest` limits; `v1_contract.rs` mirrors them against the Rust
+  constants, so the paired sides cannot drift apart.
 - Android JS: see [`data/CONTEXT.md`](../apps/android/src/data/CONTEXT.md).
 - `packages/sync-client`: the former JS wire client (`SyncSession`,
   `MultiConnectionSupervisor`) is deleted; it had no application consumer and
@@ -284,22 +290,28 @@ lines are merged, neither side is published.
   pair is updated.
 
 Rollback is also paired: reverting the Companion slices and the APK slices is
-one release, because neither side understands the other's old mode. The thread
-list projection slice does not touch the wire and rolls back independently.
+one release, because neither side understands the other's old mode. The
+narrowed predicate and the thread list stream ship and roll back together:
+without the stream an unsubscribed row would lose its preview, recency and
+`liveActivity`.
 
 Rollback triggers after release: growth of `non_contiguous_sync_cursor` or
 `invalid_event` in native telemetry; `interest_required` closes in Companion
 logs (an unpaired update); summary fields diverging from `thread/list` in the
 acceptance check; a window that stays frozen after returning to it (a lost
-subscription).
+subscription); missing Kotlin turn-completion or approval notifications for a
+thread outside interest.
 
 ## Verification
 
 - Companion: `hello` without interest closes; `afterCursor` chain and `advance`
   before `caughtUp`; `interest add` followed by `companion/thread/sync` with
   deltas journaled in between loses no delta; an `add` arriving during a page
-  send is covered by the fence; preview rate, cap and clearing; reasoning
-  `liveActivity` reaches an unsubscribed socket. Gates: `pnpm test:companion`,
+  send is covered by the fence; an `itemUpsert` `commandExecution`, a
+  `threadProgress` frame and a thread-topic frame carrying `liveActivity` do not
+  reach a socket without interest; `userMessage`, `agentMessage`,
+  `subAgentActivity`, `contextCompaction` and `codewide_spawn_agent` items do.
+  Gates: `pnpm test:companion`,
   `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo fmt --all --check`.
 - Android: Robolectric acceptance test of `event(afterCursor)`, `advance`,
@@ -309,9 +321,12 @@ subscription).
   including a set rejected before the engine existed; repair never
   touches interest or residency. Gates: `pnpm validate:android:v1`,
   `pnpm --filter @codewide/android compile:android`, Gradle unit tests of the
-  `remote` module.
+  `remote` module, `pnpm exec vitest run apps/android/test` from the repository
+  root. Kotlin turn-completion and approval notifications still fire for a
+  thread outside interest.
 - Integration after both lines merge: new APK against new Companion, at least 8
   running threads, zero chat windows, 10 minutes; the native
-  `sync.ingress_window.eventCount` per minute follows the lifecycle, live
-  activity and preview rate rather than the delta rate, and every
-  `StoredThreadSummary` field matches a `thread/list` re-read.
+  `sync.ingress_window.eventCount` per minute follows turns, requests and
+  messages rather than tool steps or deltas, and every server field of
+  `StoredThreadSummary` matches a `thread/list` re-read (device-owned fields
+  excluded).

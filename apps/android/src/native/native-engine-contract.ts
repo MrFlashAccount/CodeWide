@@ -5,6 +5,7 @@ import type {
   SyncSnapshotThread,
 } from "@codewide/sync-client";
 import type { ThreadEventProjection } from "../data/thread-projection-store";
+import type { ThreadListStreamAcceptance, ThreadListStreamSignal } from "../data/threadListStream";
 import type { NativeCommandDelivery } from "./native-transport-contract";
 import type { ConnectionPath } from "../data/connectionPath";
 
@@ -40,6 +41,14 @@ export type NativeEngineSupervisorOptions = {
   onLiveRealtime?: (connectionId: string, event: NativeLiveRealtimeEvent) => void;
   onOutboxChange?: (delivery: NativeCommandDelivery) => void;
   onPendingRequests?: (connectionId: string, requests: SyncServerRequest[]) => void;
+  /**
+   * Receives each socket generation and every `threadListRows` frame outside
+   * the durable journal. `invalid` resets the transport closed.
+   */
+  onThreadListStream: (
+    connectionId: string,
+    signal: ThreadListStreamSignal,
+  ) => ThreadListStreamAcceptance;
   projection: NativeDomainProjection;
 };
 

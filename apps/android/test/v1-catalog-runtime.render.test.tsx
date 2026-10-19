@@ -43,7 +43,9 @@ it("refreshes the archive only while an archive view requests it", async () => {
     enabledConnectionIds: () => ["server"],
     getSession: () => session,
     getSummaries: () => summaries,
+    listGeneration: () => null,
     readThread: async () => null,
+    setListStreamVisible: async () => undefined,
   });
   runtime.bindSummaryDemand(summaries);
   if (loadCatalog === undefined) {
@@ -51,18 +53,17 @@ it("refreshes the archive only while an archive view requests it", async () => {
   }
 
   await loadCatalog(archivedRequest);
-  expect(rpc).toHaveBeenCalledTimes(1);
-  expect(rpc).toHaveBeenLastCalledWith("thread/list", expect.objectContaining({ archived: true }));
+  const archiveReads = () =>
+    rpc.mock.calls.filter(([, params]) => (params as { archived?: boolean }).archived === true).length;
+  expect(archiveReads()).toBe(1);
 
-  runtime.refreshConnectionWindows("server");
-  await waitFor(() => {
-    expect(rpc).toHaveBeenCalledTimes(2);
-  });
+  await runtime.refreshThreadCatalog("server");
+  expect(archiveReads()).toBe(2);
 
   requests = [{ ...archivedRequest, archivedLimit: 0, recentLimit: 36 }];
-  runtime.refreshConnectionWindows("server");
-  expect(rpc).toHaveBeenCalledTimes(2);
-  expect(release).toHaveBeenCalledTimes(2);
+  await runtime.refreshThreadCatalog("server");
+  expect(archiveReads()).toBe(2);
+  expect(release).toHaveBeenCalledTimes(rpc.mock.calls.length);
 });
 
 it("reads a root's subagents on every request and shares a concurrent read", async () => {
@@ -86,7 +87,9 @@ it("reads a root's subagents on every request and shares a concurrent read", asy
     enabledConnectionIds: () => ["server"],
     getSession: () => session,
     getSummaries: () => summaries,
+    listGeneration: () => null,
     readThread: async () => null,
+    setListStreamVisible: async () => undefined,
   });
   const row = {
     agentNickname: null, agentRole: "Explore", archived: false, cliVersion: "claude", createdAt: 1,
@@ -104,7 +107,7 @@ it("reads a root's subagents on every request and shares a concurrent read", asy
   expect(replaced).toEqual([["root:agent:a1:active"], ["root:agent:a1:idle"]]);
 });
 
-it("coalesces connection refreshes into one in-flight and one trailing run, also after a failure", async () => {
+it("re-reads on every request without a freshness window, with one trailing run behind a running one, also after a failure", async () => {
   const replies: Array<{ resolve: (value: unknown) => void; reject: (error: Error) => void }> = [];
   const listCalls = jest.fn();
   // WHY: RpcClient has a caller-selected generic result. This fixture answers pin reads
@@ -120,7 +123,6 @@ it("coalesces connection refreshes into one in-flight and one trailing run, also
       });
     },
   } as unknown as RpcClient;
-  let loadCatalog: ((request: ThreadSummaryViewRequest) => Promise<boolean>) | undefined;
   // WHY: The catalog runtime consumes this established database port, while
   // this behavior test intentionally supplies only the catalog-facing methods.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
@@ -131,47 +133,38 @@ it("coalesces connection refreshes into one in-flight and one trailing run, also
     removeCatalogEntries: jest.fn(async () => undefined),
     applyCatalogPage: jest.fn(async () => undefined),
     beginCatalogRead: () => ({ changed: new Set<string>(), release: jest.fn() }),
-    model: { activeRequests: () => [archivedRequest] },
-    setCatalogLoader(loader: (request: ThreadSummaryViewRequest) => Promise<boolean>) {
-      loadCatalog = loader;
-    },
-  } as ThreadSummaryDatabase;
+    model: { activeRequests: () => [] },
+    setCatalogLoader: () => undefined,
+  } as unknown as ThreadSummaryDatabase;
   const runtime = createCatalogRuntime({
     desiredThreadId: () => undefined,
     enabledConnectionIds: () => ["server"],
     getSession: () => session,
     getSummaries: () => summaries,
+    listGeneration: () => null,
     readThread: async () => null,
+    setListStreamVisible: async () => undefined,
   });
-  runtime.bindSummaryDemand(summaries);
-  if (loadCatalog === undefined) {
-    throw new Error("Catalog loader was not bound");
-  }
-  const loaded = loadCatalog(archivedRequest);
-  await waitFor(() => {
-    expect(replies).toHaveLength(1);
-  });
-  replies[0]?.resolve({ data: [], nextCursor: null });
-  await loaded;
 
-  for (let call = 0; call < 5; call += 1) {
-    runtime.refreshConnectionWindows("server");
-  }
+  const first = runtime.refreshThreadCatalog("server");
+  await waitFor(() => {
+    expect(listCalls).toHaveBeenCalledTimes(1);
+  });
+  const trailing = Array.from({ length: 5 }, () => runtime.refreshThreadCatalog("server"));
+  replies[0]?.reject(new Error("thread/list failed"));
+  await expect(first).rejects.toThrow("thread/list failed");
   await waitFor(() => {
     expect(listCalls).toHaveBeenCalledTimes(2);
   });
-  replies[1]?.reject(new Error("thread/list failed"));
+  replies[1]?.resolve({ data: [], nextCursor: null });
+  await Promise.all(trailing);
+  expect(listCalls).toHaveBeenCalledTimes(2);
+
+  // A settled connection re-reads again at once: there is no freshness window.
+  const next = runtime.refreshThreadCatalog("server");
   await waitFor(() => {
     expect(listCalls).toHaveBeenCalledTimes(3);
   });
   replies[2]?.resolve({ data: [], nextCursor: null });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(listCalls).toHaveBeenCalledTimes(3);
-
-  // The settled coalescer accepts the next refresh at once.
-  runtime.refreshConnectionWindows("server");
-  await waitFor(() => {
-    expect(listCalls).toHaveBeenCalledTimes(4);
-  });
-  replies[3]?.resolve({ data: [], nextCursor: null });
+  await next;
 });

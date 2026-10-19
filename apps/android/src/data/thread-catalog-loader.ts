@@ -1,7 +1,7 @@
 import { catalogExcludedThreadIds } from "./threadCatalogMembership";
 import type { RpcClient, SyncSnapshotThread } from "@codewide/sync-client";
 import { parseArchivedCatalogCount } from "./catalog-summary-model";
-import { isThread } from "./thread-cursor-sync";
+import { parseThreadListRow, type ThreadListRow } from "./threadListRow";
 import { unknownRecord } from "./unknownRecord";
 
 export const THREAD_CATALOG_PAGE_SIZE = 36;
@@ -16,6 +16,8 @@ export interface ThreadCatalogPage {
   archivedCount?: number | null;
   excludedThreadIds: readonly string[];
   nextCursor: string | null;
+  /** Validated rows with their `codewideList` cursor, archive state and live activity. */
+  rows: readonly ThreadListRow[];
   threads: SyncSnapshotThread[];
 }
 
@@ -50,24 +52,23 @@ export async function loadThreadCatalogPage(
   ) {
     throw new Error("thread/list returned a repeated catalog cursor");
   }
+  const rows: ThreadListRow[] = [];
   const threads: SyncSnapshotThread[] = [];
   for (const candidate of response.data) {
-    if (
-      !isThread(candidate) ||
-      typeof candidate.preview !== "string" ||
-      typeof candidate.updatedAt !== "number" ||
-      !Number.isFinite(candidate.updatedAt)
-    ) {
-      throw new Error("thread/list returned invalid thread metadata");
+    const row = parseThreadListRow(candidate);
+    if (row.status === "error") {
+      throw new Error(`thread/list returned ${row.error}`);
     }
-    const thread = candidate;
-    threads.push({ archived: request.archived, thread });
+    rows.push(row.value);
+    // The row's own archive state, not the request partition, is authoritative.
+    threads.push({ archived: row.value.meta.archived, thread: row.value.thread });
   }
   const archivedCount = parseArchivedCatalogCount(response.codewideCatalogSummary ?? null);
   return {
     archivedCount,
     excludedThreadIds: catalogExcludedThreadIds(response.codewideCatalogSummary),
     nextCursor: response.nextCursor,
+    rows,
     threads,
   };
 }

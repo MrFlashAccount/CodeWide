@@ -23,7 +23,11 @@ function cancelRecovery(recovery: Recovery | undefined): void {
   }
 }
 
-/** Repairs once per stable RPC recovery; presentation and OS facts cannot invalidate reads. */
+/**
+ * Repairs once per stable RPC recovery and once per new list-stream socket
+ * generation; presentation and OS facts cannot invalidate reads. The repair
+ * re-reads every open catalog window after the stream visibility is declared.
+ */
 export function createThreadSyncReconnect({
   catalog,
   details,
@@ -32,7 +36,7 @@ export function createThreadSyncReconnect({
   refreshAgentProviders,
   sync,
 }: {
-  catalog: Pick<ReturnType<typeof createCatalogRuntime>, "refreshThreadCatalog">;
+  catalog: Pick<ReturnType<typeof createCatalogRuntime>, "refreshVisibleCatalog">;
   details: Pick<ThreadDetailDatabase, "invalidateHistoryExhaustion">;
   readConnection: (connectionId: string) => ConnectionStateRow | undefined;
   refreshAccountRateLimits: ReturnType<typeof createAccountRateLimitsLoader>;
@@ -46,8 +50,13 @@ export function createThreadSyncReconnect({
     ReturnType<typeof createThreadSyncRuntime>,
     "invalidateHistoryReads" | "desiredThreadId" | "readThread"
   >;
-}): { readonly accept: (row: ConnectionStateRow) => void; readonly close: () => void } {
+}): {
+  readonly accept: (row: ConnectionStateRow) => void;
+  readonly close: () => void;
+  readonly observeGeneration: (connectionId: string, generation: number) => void;
+} {
   const recoveries = new Map<string, Recovery>();
+  const generations = new Map<string, number>();
   let closed = false;
   const repair = (connectionId: string): void => {
     details.invalidateHistoryExhaustion(connectionId);
@@ -61,7 +70,7 @@ export function createThreadSyncReconnect({
         });
       });
     }
-    void catalog.refreshThreadCatalog(connectionId).catch(() => {
+    void catalog.refreshVisibleCatalog(connectionId).catch(() => {
       appLogger.warn({
         event: "thread_catalog.reconnect_repair.failed",
         fields: { connectionId },
@@ -70,6 +79,18 @@ export function createThreadSyncReconnect({
     void refreshAccountRateLimits(connectionId, true).catch(() => undefined);
     // A failure stays in the resource's state; an older Companion reads as unsupported.
     void refreshAgentProviders(connectionId).catch(() => undefined);
+  };
+  const scheduleRepair = (connectionId: string): void => {
+    cancelRecovery(recoveries.get(connectionId));
+    const recovery: Recovery = { status: "usable", timer: null };
+    recoveries.set(connectionId, recovery);
+    recovery.timer = setTimeout(() => {
+      recovery.timer = null;
+      const current = readConnection(connectionId);
+      if (!closed && current?.enabled === true && current.rpcAvailable) {
+        repair(connectionId);
+      }
+    }, RPC_STABILITY_MS);
   };
   return {
     accept(row: ConnectionStateRow): void {
@@ -92,15 +113,7 @@ export function createThreadSyncReconnect({
         }
         return;
       }
-      const recovery: Recovery = { status, timer: null };
-      recoveries.set(row.connectionId, recovery);
-      recovery.timer = setTimeout(() => {
-        recovery.timer = null;
-        const current = readConnection(row.connectionId);
-        if (!closed && current?.enabled === true && current.rpcAvailable) {
-          repair(row.connectionId);
-        }
-      }, RPC_STABILITY_MS);
+      scheduleRepair(row.connectionId);
     },
     close(): void {
       closed = true;
@@ -108,6 +121,23 @@ export function createThreadSyncReconnect({
         cancelRecovery(recovery);
       }
       recoveries.clear();
+    },
+    /**
+     * A new socket generation forgot the stream's cursor map, so its rows must
+     * be re-read even when RPC never looked unusable to this owner.
+     */
+    observeGeneration(connectionId: string, generation: number): void {
+      const previous = generations.get(connectionId);
+      generations.set(connectionId, generation);
+      if (
+        closed ||
+        previous === undefined ||
+        previous === generation ||
+        recoveries.get(connectionId)?.status !== "usable"
+      ) {
+        return;
+      }
+      scheduleRepair(connectionId);
     },
   };
 }

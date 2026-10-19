@@ -1,4 +1,4 @@
-import { threadPinFromSnapshot, validPinCursor } from "./threadPinState";
+import { threadPinFromSnapshot } from "./threadPinState";
 import {
   closesAsyncQuestions,
   isFinalQuestionTurnMessage,
@@ -128,35 +128,6 @@ export function projectThreadSummarySnapshot(
   };
 }
 
-/**
- * Keeps live state that a paginated catalog row must not roll back.
- *
- * The page comes from the provider state store and may describe an earlier moment than events
- * already applied to the row. A listed `notLoaded` only says the provider does not hold the thread
- * in memory; a turn that runs elsewhere is still active, and its end arrives as an ordered
- * lifecycle event. Recency, which orders the list, never moves backwards.
- */
-export function retainLiveCatalogState(
-  page: StoredThreadSummary,
-  previous: StoredThreadSummary,
-): StoredThreadSummary {
-  if (page.status.type === "notLoaded" && previous.status.type === "active") {
-    page.status = previous.status;
-  }
-  if (
-    previous.recencyAt !== null &&
-    (page.recencyAt === null || page.recencyAt < previous.recencyAt)
-  ) {
-    page.recencyAt = previous.recencyAt;
-  }
-  return page;
-}
-
-/** A catalog head refresh evicts absent rows, but never one whose live turn or request is open. */
-export function catalogHeadEvictable(row: StoredThreadSummary): boolean {
-  return row.status.type !== "active" && row.pendingRequestCount === 0;
-}
-
 function selectPreview(
   snapshotPreview: string | null | undefined,
   listedPreview: string,
@@ -171,153 +142,193 @@ function selectPreview(
   return previousPreview ?? "";
 }
 
+/** A replayed cursor the row already applied is idempotent. */
+function cursorApplied(previous: StoredThreadSummary | undefined, cursor: number): boolean {
+  return cursor > 0 && previous !== undefined && cursor <= threadSummaryProjectionCursor(previous);
+}
+
+/** Applies one ordered journal event to the summary's device-owned fields. */
 export function projectThreadSummaryEvent(
   connectionId: string,
   payload: Record<string, unknown>,
   previousFor: (threadId: string) => StoredThreadSummary | undefined,
-  nowSeconds = Math.floor(Date.now() / 1000),
   cursor = 0,
 ): ThreadSummaryMutation | null {
   const patch = threadProjectionPatchFromEvent(payload);
-  if (patch === null || isHighFrequencySummaryPatch(patch.operation.kind)) {
+  if (patch === null || isTopicOnlySummaryPatch(patch.operation.kind)) {
     return null;
   }
-  const previous = previousFor(patch.threadId);
-  const previousCursor = previous === undefined ? 0 : threadSummaryProjectionCursor(previous);
-  if (summaryCursorAlreadyApplied(cursor, previousCursor)) {
+  if (cursorApplied(previousFor(patch.threadId), cursor)) {
     return null;
   }
-  const mutation = projectThreadSummaryPatch(connectionId, patch, previousFor, nowSeconds, cursor);
-  if (mutation !== null) {
-    advanceMutationCursor(mutation, cursor);
-  }
-  return mutation;
-}
-
-function summaryCursorAlreadyApplied(cursor: number, previousCursor: number): boolean {
-  return cursor > 0 && cursor <= previousCursor;
-}
-
-function advanceMutationCursor(mutation: ThreadSummaryMutation, cursor: number): void {
-  if (mutation.value !== null) {
+  const mutation = projectThreadSummaryPatch(connectionId, patch, previousFor, cursor);
+  if (mutation !== null && mutation.value !== null) {
     mutation.value.projectionCursor = Math.max(
       threadSummaryProjectionCursor(mutation.value),
       cursor,
     );
   }
+  return mutation;
 }
 
-/** Identifies material summary events whose missing row needs authoritative metadata. */
-export function threadSummaryEventNeedsMetadata(payload: Record<string, unknown>): boolean {
-  const patch = threadProjectionPatchFromEvent(payload);
-  if (patch === null) {
-    return false;
-  }
-  if (
-    patch.operation.kind === "threadStatus" &&
-    object(patch.operation.status)?.type === "notLoaded"
-  ) {
-    // An unloaded status does not create catalog membership. For an unknown
-    // row, thread/read cannot supply metadata because that RPC accepts only a
-    // thread already loaded by App Server; the catalog remains its authority.
-    return false;
-  }
-  return METADATA_SUMMARY_PATCHES.has(patch.operation.kind);
-}
-
-const METADATA_SUMMARY_PATCHES = new Set([
-  "threadName",
-  "threadStatus",
-  "threadArchived",
-  "threadPinned",
-  "turnStarted",
-  "turnCompleted",
+/**
+ * Device mirror of contract/v1.json `syncInterest.threadTopicKinds`: Companion
+ * delivers these patch kinds only for threads in the socket's interest set.
+ */
+export const INTEREST_TOPIC_PATCHES: ReadonlySet<string> = new Set([
+  "itemTextDelta",
+  "reasoningDelta",
+  "reasoningPart",
+  "turnPlan",
+  "turnDiff",
+  "fileChanges",
+  "mcpProgress",
+  "tokenUsage",
   "threadProgress",
-  "threadInvalidated",
   "itemUpsert",
 ]);
 
 /**
- * Patch kinds the summary ignores because Companion delivers them only by
- * thread interest; must equal `contract/v1.json` `syncInterest.threadTopicKinds`.
+ * `itemUpsert` is topic-gated only for item types outside `catalogItemTypes`;
+ * the catalog types (messages, sub-agent calls, compaction) reach every socket
+ * and carry the async-question and unread evidence the summary owns.
  */
-export const HIGH_FREQUENCY_SUMMARY_PATCHES: ReadonlySet<string> = new Set([
-  "itemTextDelta",
-  "fileChanges",
-  "mcpProgress",
-  "tokenUsage",
-  "turnDiff",
-  "turnPlan",
-  "reasoningPart",
-  "reasoningDelta",
-]);
-
-function isHighFrequencySummaryPatch(kind: string): boolean {
-  return HIGH_FREQUENCY_SUMMARY_PATCHES.has(kind);
+function isTopicOnlySummaryPatch(kind: string): boolean {
+  return kind !== "itemUpsert" && INTEREST_TOPIC_PATCHES.has(kind);
 }
 
-function projectThreadSummaryPatch(
-  connectionId: string,
-  patch: ThreadProjectionPatchV1,
-  previousFor: (threadId: string) => StoredThreadSummary | undefined,
-  nowSeconds: number,
-  cursor: number,
-): ThreadSummaryMutation | null {
-  const operation = patch.operation;
-  if (operation.kind === "threadStarted") {
-    const thread = operation.thread;
-    if (!isThread(thread)) {
-      return null;
-    }
-    const previous = previousFor(thread.id);
+const DEVICE_SUMMARY_PATCHES: ReadonlySet<string> = new Set([
+  "turnStarted",
+  "turnCompleted",
+  "itemUpsert",
+]);
+
+/**
+ * Whether an event for a thread without a row would change device-owned
+ * fields once that row arrives; such events wait in the pending overlay.
+ */
+export function threadSummaryEventAffectsDevice(payload: Record<string, unknown>): boolean {
+  const patch = threadProjectionPatchFromEvent(payload);
+  if (patch === null || isTopicOnlySummaryPatch(patch.operation.kind)) {
+    return false;
+  }
+  return (
+    DEVICE_SUMMARY_PATCHES.has(patch.operation.kind) ||
+    object(patch.operation.summary)?.activity === true
+  );
+}
+
+/** Device-owned question attention a detailed thread read proves from its turns. */
+export function threadSummaryTurnAttention(
+  thread: Thread,
+  previous: StoredThreadSummary,
+): Pick<StoredThreadSummary, "closedQuestionTurnId" | "pendingQuestion"> {
+  const latest = thread.turns.at(-1);
+  if (latest === undefined) {
     return {
-      key: threadSummaryKey(connectionId, thread.id),
+      closedQuestionTurnId: previous.closedQuestionTurnId ?? null,
+      pendingQuestion: previous.pendingQuestion ?? null,
+    };
+  }
+  return {
+    closedQuestionTurnId: questionTurnClosed(latest)
+      ? latest.id
+      : (previous.closedQuestionTurnId ?? null),
+    pendingQuestion: questionOpportunity(thread.turns),
+  };
+}
+
+/**
+ * Starts a provisional shell for a new thread. An existing row keeps its
+ * server fields and only gains the shell, which the next server row with newer
+ * activity retires.
+ */
+function projectStartedThread(
+  connectionId: string,
+  thread: Thread,
+  previous: StoredThreadSummary | undefined,
+): ThreadSummaryMutation | null {
+  const key = threadSummaryKey(connectionId, thread.id);
+  if (previous === undefined) {
+    return {
+      key,
       value: {
-        ...projectThreadSummarySnapshot(connectionId, thread, false, previous),
+        ...projectThreadSummarySnapshot(connectionId, thread, false),
         provisionalThread: thread,
       },
     };
   }
-  const key = threadSummaryKey(connectionId, patch.threadId);
-  if (operation.kind === "threadDeleted") {
-    return { key, value: null };
-  }
-  const previous = previousFor(patch.threadId);
-  if (previous === undefined) {
+  if (isThread(previous.provisionalThread) || thread.updatedAt < previous.updatedAt) {
     return null;
   }
-  if (isClosedTurnStart(operation, previous)) {
-    return null;
-  }
-  const next: StoredThreadSummary = { ...previous };
+  return { key, value: { ...previous, provisionalThread: thread } };
+}
+
+/** Moves unread and the first unread agent turn when the completed turn's answer arrived. */
+function applyFinalAgentResponse(
+  next: StoredThreadSummary,
+  operation: ThreadProjectionPatchV1["operation"],
+): void {
+  const completedTurnId = object(operation.turn)?.id;
+  const wasUnread = next.unread > 0;
+  next.unread = next.unread > 0 || next.latestActivityCursor > next.lastSeenCursor ? 1 : 0;
   if (
+    !wasUnread &&
+    next.unread > 0 &&
+    typeof completedTurnId === "string" &&
+    completedTurnId !== ""
+  ) {
+    next.firstUnreadAgentTurnId = completedTurnId;
+  }
+}
+
+/** A new turn, a closing item or the question turn's completion retires the open question. */
+function retiresPendingQuestion(
+  next: StoredThreadSummary,
+  operation: ThreadProjectionPatchV1["operation"],
+): boolean {
+  return (
     operation.kind === "turnStarted" ||
     (operation.kind === "itemUpsert" && closesAsyncQuestions(operation.item)) ||
     (operation.kind === "turnCompleted" &&
-      object(operation.turn)?.id === previous.pendingQuestion?.turnId)
+      object(operation.turn)?.id === next.pendingQuestion?.turnId)
+  );
+}
+
+function isAsyncQuestionItem(operation: ThreadProjectionPatchV1["operation"]): boolean {
+  return operation.kind === "itemUpsert" && hasAsyncQuestions(operation.item);
+}
+
+/** Adds an async-question item of an open turn to the pending question. */
+function recordAsyncQuestion(
+  next: StoredThreadSummary,
+  operation: ThreadProjectionPatchV1["operation"],
+): void {
+  const turnId = operation.turnId;
+  const itemId = object(operation.item)?.id;
+  if (
+    !isAsyncQuestionItem(operation) ||
+    typeof turnId !== "string" ||
+    turnId === next.closedQuestionTurnId ||
+    typeof itemId !== "string"
   ) {
-    next.pendingQuestion = null;
-  } else if (
-    operation.kind === "itemUpsert" &&
-    hasAsyncQuestions(operation.item) &&
-    typeof operation.turnId === "string" &&
-    operation.turnId !== next.closedQuestionTurnId
-  ) {
-    const itemId = object(operation.item)?.id;
-    if (typeof itemId === "string") {
-      const currentIds =
-        next.pendingQuestion?.turnId === operation.turnId ? next.pendingQuestion.itemIds : [];
-      next.pendingQuestion = {
-        itemIds: currentIds.includes(itemId) ? currentIds : [...currentIds, itemId],
-        turnId: operation.turnId,
-      };
-    }
+    return;
   }
-  if (operation.kind === "turnCompleted") {
-    const completedId = object(operation.turn)?.id;
-    if (typeof completedId === "string") {
-      next.closedQuestionTurnId = completedId;
-    }
+  const currentIds = next.pendingQuestion?.turnId === turnId ? next.pendingQuestion.itemIds : [];
+  next.pendingQuestion = {
+    itemIds: currentIds.includes(itemId) ? currentIds : [...currentIds, itemId],
+    turnId,
+  };
+}
+
+/** A completed turn or its final question message closes that turn's questions. */
+function closeQuestionTurn(
+  next: StoredThreadSummary,
+  operation: ThreadProjectionPatchV1["operation"],
+): void {
+  const completedId = object(operation.turn)?.id;
+  if (operation.kind === "turnCompleted" && typeof completedId === "string") {
+    next.closedQuestionTurnId = completedId;
   }
   if (
     operation.kind === "itemUpsert" &&
@@ -326,84 +337,72 @@ function projectThreadSummaryPatch(
   ) {
     next.closedQuestionTurnId = operation.turnId;
   }
+}
+
+/** Retires or records async-question attention for one ordered patch. */
+function applyQuestionAttention(
+  next: StoredThreadSummary,
+  operation: ThreadProjectionPatchV1["operation"],
+): void {
+  if (retiresPendingQuestion(next, operation)) {
+    next.pendingQuestion = null;
+  } else {
+    recordAsyncQuestion(next, operation);
+  }
+  closeQuestionTurn(next, operation);
+}
+
+/** Applies one patch to the device fields of an existing row. */
+function projectDevicePatch(
+  operation: ThreadProjectionPatchV1["operation"],
+  previous: StoredThreadSummary,
+  at: { readonly cursor: number; readonly key: string },
+): ThreadSummaryMutation | null {
+  const { cursor, key } = at;
+  const next: StoredThreadSummary = { ...previous };
+  applyQuestionAttention(next, operation);
   const attentionChanged =
     next.pendingQuestion !== previous.pendingQuestion ||
     next.closedQuestionTurnId !== previous.closedQuestionTurnId;
-  if (operation.kind === "threadPinned") {
-    if (
-      typeof operation.pinned !== "boolean" ||
-      !validPinCursor(operation.pinCursor) ||
-      operation.pinCursor < (next.pinCursor ?? 0)
-    ) {
-      return null;
-    }
-    next.pinCursor = operation.pinCursor;
-    next.pinned = operation.pinned;
-    return { key, value: next };
+  const summary = object(operation.summary);
+  if (summary?.activity !== true) {
+    return attentionChanged ? { key, value: next } : null;
   }
-  if (operation.kind === "threadName") {
-    next.name = typeof operation.threadName === "string" ? operation.threadName : null;
-  } else if (operation.kind === "threadStatus" && object(operation.status) !== null) {
-    next.status = normalizeThreadStatus(operation.status);
-  } else if (operation.kind === "threadArchived") {
-    next.archived = operation.archived === true;
-  } else {
-    // A rollout terminal boundary is the fallback when an App Server
-    // turn/completed notification was missed. Its turnActive bit comes from
-    // the persisted latest turn and must retire the sidebar's Running state.
-    if (operation.kind === "threadInvalidated" && operation.turnActive === false) {
-      if (next.status.type === "active") {
-        next.status = { type: "idle" };
-      }
-    } else if (operation.kind === "threadProgress" && operation.turnActive === true) {
-      if (next.status.type !== "active") {
-        next.status = { activeFlags: [], type: "active" };
-      }
-    }
-    const lifecycleChanged =
-      operation.kind === "turnStarted" ||
-      operation.kind === "turnCompleted" ||
-      next.status !== previous.status;
-    if (operation.kind === "turnStarted" && next.status.type !== "active") {
-      next.status = { activeFlags: [], type: "active" };
-    } else if (operation.kind === "turnCompleted") {
-      next.status = { type: "idle" };
-    }
-    const summary = object(operation.summary);
-    if (summary === null || summary.activity !== true) {
-      return lifecycleChanged || attentionChanged ? { key, value: next } : null;
-    }
-    if (typeof summary.previewText === "string") {
-      const preview = plainThreadPreview(summary.previewText);
-      if (preview !== "") {
-        next.preview = preview;
-      }
-    }
-    next.provisionalThread = null;
-    next.updatedAt = Math.max(next.updatedAt, nowSeconds);
-    next.latestActivityCursor = Math.max(next.latestActivityCursor, cursor);
-    if (
-      typeof summary.recencyAt === "number" &&
-      Number.isSafeInteger(summary.recencyAt) &&
-      summary.recencyAt >= 0
-    ) {
-      next.recencyAt = Math.max(next.recencyAt ?? 0, summary.recencyAt);
-    }
-    if (summary.finalAgentResponse === true) {
-      const completedTurnId = object(operation.turn)?.id;
-      const wasUnread = next.unread > 0;
-      next.unread = next.unread > 0 || next.latestActivityCursor > next.lastSeenCursor ? 1 : 0;
-      if (
-        !wasUnread &&
-        next.unread > 0 &&
-        typeof completedTurnId === "string" &&
-        completedTurnId !== ""
-      ) {
-        next.firstUnreadAgentTurnId = completedTurnId;
-      }
-    }
+  next.latestActivityCursor = Math.max(next.latestActivityCursor, cursor);
+  if (summary.finalAgentResponse === true) {
+    applyFinalAgentResponse(next, operation);
   }
   return { key, value: next };
+}
+
+/**
+ * Projects one ordered patch onto device-owned fields only: question
+ * attention, unread state and the activity cursor. Server fields (status,
+ * name, preview, recency, archive, pins) belong to Companion list rows; the
+ * only row this creates is the provisional `thread/started` shell, and the only
+ * removal is a `thread/deleted` membership change.
+ */
+function projectThreadSummaryPatch(
+  connectionId: string,
+  patch: ThreadProjectionPatchV1,
+  previousFor: (threadId: string) => StoredThreadSummary | undefined,
+  cursor: number,
+): ThreadSummaryMutation | null {
+  const operation = patch.operation;
+  if (operation.kind === "threadStarted") {
+    const thread = operation.thread;
+    return isThread(thread)
+      ? projectStartedThread(connectionId, thread, previousFor(thread.id))
+      : null;
+  }
+  const key = threadSummaryKey(connectionId, patch.threadId);
+  if (operation.kind === "threadDeleted") {
+    return { key, value: null };
+  }
+  const previous = previousFor(patch.threadId);
+  return previous === undefined || isClosedTurnStart(operation, previous)
+    ? null
+    : projectDevicePatch(operation, previous, { cursor, key });
 }
 
 function object(value: unknown): Record<string, unknown> | null {
