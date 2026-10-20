@@ -68,6 +68,43 @@ function Harness({ onClose }: { readonly onClose: () => void }) {
   );
 }
 
+function StatefulParentWorkspace() {
+  const child = useAppFullscreenOverlay();
+  const [activeTurn, setActiveTurn] = useState("Active turn: streaming");
+  return (
+    <>
+      <Text>{activeTurn}</Text>
+      <Pressable
+        onPress={() => {
+          setActiveTurn("Active turn: retained");
+        }}
+      >
+        <Text>Update active turn</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => {
+          child.present(() => <Text>Terminal workspace</Text>);
+        }}
+      >
+        <Text>Open terminal</Text>
+      </Pressable>
+    </>
+  );
+}
+
+function StatefulLauncher() {
+  const overlay = useAppFullscreenOverlay();
+  return (
+    <Pressable
+      onPress={() => {
+        overlay.present(() => <StatefulParentWorkspace />);
+      }}
+    >
+      <Text>Open stateful parent</Text>
+    </Pressable>
+  );
+}
+
 type BackListener = () => boolean | null | undefined;
 let backListeners: BackListener[] = [];
 const underlyingBack = jest.fn(() => false);
@@ -98,11 +135,14 @@ it("consumes Activity Back for only the top preview and releases it after the fi
   const view = render(<Harness onClose={onClose} />);
   fireEvent.press(view.getByText("Open Markdown"));
   fireEvent.press(view.getByText("Open Markdown"));
+  expect(view.getAllByTestId("fullscreen-window")).toHaveLength(2);
+  expect(view.getAllByText("README preview")).toHaveLength(2);
 
   act(() => {
     expect(pressSystemBack()).toBe(true);
   });
   expect(onClose).toHaveBeenCalledTimes(1);
+  expect(view.getAllByTestId("fullscreen-window")).toHaveLength(1);
   expect(view.getByText("README preview")).toBeVisible();
   expect(underlyingBack).not.toHaveBeenCalled();
 
@@ -133,6 +173,29 @@ it("retains native dialog dismissal and removes the fallback on unmount", () => 
     expect(pressSystemBack()).toBe(false);
   });
   expect(underlyingBack).toHaveBeenCalledTimes(1);
+});
+
+it("keeps parent conversation state mounted while a child native window is open", () => {
+  const view = render(
+    <AppFullscreenOverlayProvider>
+      <StatefulLauncher />
+      <AppFullscreenOverlayHost />
+    </AppFullscreenOverlayProvider>,
+  );
+  fireEvent.press(view.getByText("Open stateful parent"));
+  fireEvent.press(view.getByText("Update active turn"));
+  fireEvent.press(view.getByText("Open terminal"));
+
+  expect(view.getAllByTestId("fullscreen-window")).toHaveLength(2);
+  expect(view.getByText("Active turn: retained")).toBeVisible();
+  expect(view.getByText("Terminal workspace")).toBeVisible();
+
+  act(() => {
+    expect(pressSystemBack()).toBe(true);
+  });
+  expect(view.getAllByTestId("fullscreen-window")).toHaveLength(1);
+  expect(view.getByText("Active turn: retained")).toBeVisible();
+  expect(view.queryByText("Terminal workspace")).toBeNull();
 });
 
 /** A child conversation inside the window: Back first returns to its list. */

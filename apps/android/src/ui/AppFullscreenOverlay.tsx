@@ -62,7 +62,7 @@ type OverlayHostController = {
 type OverlayPresentation = {
   close: (id: string) => void;
   entries: readonly OverlayEntry[];
-  markAllShown: () => void;
+  markShown: (id: string) => void;
 };
 
 export type AppFullscreenOverlayController = {
@@ -99,14 +99,14 @@ export function AppFullscreenOverlayProvider({ children }: { children: ReactNode
     entriesRef.current = next;
     setEntries(next);
   };
-  const markShown = (id: string) => {
+  const markShown = useEvent((id: string) => {
     const entry = entriesRef.current.find((candidate) => candidate.id === id);
     if (entry === undefined || entry.shown) {
       return;
     }
     entry.shown = true;
     entry.lifecycle?.didOpen?.(entry.id);
-  };
+  });
 
   const close = useEvent((id: string) => {
     const current = entriesRef.current;
@@ -120,12 +120,6 @@ export function AppFullscreenOverlayProvider({ children }: { children: ReactNode
       entry.lifecycle?.didClose?.(entry.id);
     }
   });
-  const markAllShown = useEvent(() => {
-    for (const entry of entriesRef.current) {
-      markShown(entry.id);
-    }
-  });
-
   const controller = useConstant<OverlayHostController>(() => ({
     dismissScope(scope) {
       const matching = entriesRef.current.filter((entry) => entry.scope === scope);
@@ -166,13 +160,7 @@ export function AppFullscreenOverlayProvider({ children }: { children: ReactNode
         id,
         shown: false,
       };
-      const nativeModalAlreadyOpen = entriesRef.current.length > 0;
       publish([...entriesRef.current, entry]);
-      if (nativeModalAlreadyOpen) {
-        requestAnimationFrame(() => {
-          markShown(id);
-        });
-      }
       return {
         close: () => {
           close(id);
@@ -188,7 +176,7 @@ export function AppFullscreenOverlayProvider({ children }: { children: ReactNode
         value={{
           close,
           entries,
-          markAllShown,
+          markShown,
         }}
       >
         {children}
@@ -203,49 +191,38 @@ export function AppFullscreenOverlayHost() {
   if (presentation === null) {
     throw new Error("AppFullscreenOverlayHost must be used inside AppFullscreenOverlayProvider");
   }
-  const { close, entries, markAllShown } = presentation;
-  const active = entries.at(-1) ?? null;
-  if (active === null) {
+  const { close, entries, markShown } = presentation;
+  if (entries.length === 0) {
     return null;
   }
   return (
-    <AppFullscreenModal
-      isOpen
-      onClose={() => {
-        close(active.id);
-      }}
-      onShow={() => {
-        markAllShown();
-      }}
-    >
-      <View style={styles.stack}>
-        {entries.map((entry) => {
-          const isActive = entry.id === active.id;
-          return (
-            <View
-              accessibilityElementsHidden={!isActive}
-              importantForAccessibility={isActive ? "yes" : "no-hide-descendants"}
-              key={entry.id}
-              pointerEvents={isActive ? "auto" : "none"}
-              style={[styles.layer, !isActive && styles.hiddenLayer]}
+    <>
+      {entries.map((entry) => (
+        <AppFullscreenModal
+          isOpen
+          key={entry.id}
+          onClose={() => {
+            close(entry.id);
+          }}
+          onShow={() => {
+            markShown(entry.id);
+          }}
+        >
+          <View style={styles.layer}>
+            <RecoverableRenderBoundary
+              label="Fullscreen overlay content"
+              onDismiss={() => {
+                close(entry.id);
+              }}
+              resetKey={entry.id}
+              scope="dialog"
             >
-              <RecoverableRenderBoundary
-                label="Fullscreen overlay content"
-                onDismiss={() => {
-                  close(entry.id);
-                }}
-                resetKey={entry.id}
-                scope="dialog"
-              >
-                <Suspense fallback={<FullscreenOverlaySuspenseFallback />}>
-                  {entry.content}
-                </Suspense>
-              </RecoverableRenderBoundary>
-            </View>
-          );
-        })}
-      </View>
-    </AppFullscreenModal>
+              <Suspense fallback={<FullscreenOverlaySuspenseFallback />}>{entry.content}</Suspense>
+            </RecoverableRenderBoundary>
+          </View>
+        </AppFullscreenModal>
+      ))}
+    </>
   );
 }
 
@@ -331,22 +308,10 @@ export function useAppFullscreenOverlay(
 
 const styles = StyleSheet.create({
   layer: {
-    bottom: 0,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    top: 0,
-  },
-  stack: {
-    backgroundColor: "transparent",
     flex: 1,
     minHeight: 0,
     minWidth: 0,
   },
-  // Keep parent workspaces mounted while a child fullscreen surface is open.
-  // `display: none` preserves React and native view state (including ScrollView
-  // offset) without painting an inactive WebView behind the active layer.
-  hiddenLayer: { display: "none" },
   suspenseFallback: {
     alignItems: "center",
     backgroundColor: colors.background,
