@@ -251,7 +251,10 @@ it("preserves native integration contracts — 2", () => {
   expect(nativeCommandStore).toContain("if (lanes.add(laneKey(candidate))) add(candidate)");
   expect(connectionService).toContain("private fun scheduleOutboxWake()");
   expect(connectionService).not.toContain(
-    "handler.postDelayed({ drainOutbox() }, OUTBOX_RECONCILE_DELAY_MS)",
+    "handler.postDelayed({ drainOutbox() }, OUTBOX_RETRY_DELAY_MS)",
+  );
+  expect(connectionService).not.toContain(
+    "handler.postDelayed({ drainOutbox() }, OUTBOX_EVENT_WATCHDOG_MS)",
   );
   expect(manifest).toContain('android:windowSoftInputMode="adjustResize"');
   expect(appPackage.dependencies["@legendapp/list"]).toBeDefined();

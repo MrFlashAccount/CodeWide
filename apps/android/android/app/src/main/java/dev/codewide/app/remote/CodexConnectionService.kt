@@ -738,6 +738,13 @@ class CodexConnectionService : Service() {
     private var splashExitTelemetrySent = false
     private val activeThreads = ConcurrentHashMap.newKeySet<String>()
     private val pendingApprovals = ConcurrentHashMap.newKeySet<String>()
+    private val outboxLifecycleWake = NativeOutboxLifecycleWake(
+      expediteThread = { threadId -> commandStore.expediteTurnReconciliation(id, threadId) },
+      expediteServerRequest = { requestKey ->
+        commandStore.expediteServerResponseReconciliation(id, requestKey)
+      },
+      drain = { drainOutbox() },
+    )
     private val protocolEngine = NativeProtocolEngine(
       id,
       frameStore,
@@ -1047,7 +1054,7 @@ class CodexConnectionService : Service() {
         drainOutbox()
         return
       }
-      if (!pendingApprovals.contains(approvalRequestKey(requestId))) {
+      if (!pendingApprovals.contains(nativeServerRequestKey(requestId))) {
         val delivered = commandStore.markDelivered(command)
         CodeWideModule.emitEngineEvent(id, "outbox", commandStore.stateJson(delivered), null)
         outboxDrainRunning = false
@@ -1085,7 +1092,7 @@ class CodexConnectionService : Service() {
                 outboxDrainRunning = false
                 drainOutbox()
               } else if (turnsContainActiveTurn(response)) {
-                val retryAt = System.currentTimeMillis() + OUTBOX_RECONCILE_DELAY_MS
+                val retryAt = System.currentTimeMillis() + OUTBOX_EVENT_WATCHDOG_MS
                 val waiting = commandStore.markUncertain(command, "Waiting for authoritative thread reconciliation", retryAt)
                 CodeWideModule.emitEngineEvent(id, "outbox", commandStore.stateJson(waiting), null)
                 outboxDrainRunning = false
@@ -1098,7 +1105,7 @@ class CodexConnectionService : Service() {
               val waiting = commandStore.markUncertain(
                 command,
                 error.message ?: "Turn reconciliation interrupted",
-                System.currentTimeMillis() + OUTBOX_RECONCILE_DELAY_MS,
+                System.currentTimeMillis() + OUTBOX_RETRY_DELAY_MS,
               )
               CodeWideModule.emitEngineEvent(id, "outbox", commandStore.stateJson(waiting), null)
               outboxDrainRunning = false
@@ -1206,7 +1213,7 @@ class CodexConnectionService : Service() {
                 commandStore.markUncertain(
                   sending,
                   error.message ?: "Server response delivery interrupted",
-                  System.currentTimeMillis() + OUTBOX_RECONCILE_DELAY_MS,
+                  System.currentTimeMillis() + OUTBOX_RETRY_DELAY_MS,
                 )
               }
               CodeWideModule.emitEngineEvent(id, "outbox", commandStore.stateJson(updated), null)
@@ -1359,12 +1366,6 @@ class CodexConnectionService : Service() {
 
     fun pendingApprovalCount(): Int = pendingApprovals.size
 
-    private fun approvalRequestKey(value: Any): String = when (value) {
-      is Number -> "number:$value"
-      else -> "string:$value"
-    }
-
-
     private fun emitTransportStatus(status: String, diagnostic: String? = null) {
       protocolEngine.onTransportState(status, diagnostic)
     }
@@ -1382,7 +1383,7 @@ class CodexConnectionService : Service() {
               if (!USER_APPROVAL_METHODS.contains(request.optString("method"))) continue
               val requestId = request.opt("id")
               if (requestId == null || requestId === JSONObject.NULL) continue
-              val requestKey = approvalRequestKey(requestId)
+              val requestKey = nativeServerRequestKey(requestId)
               pendingApprovals.add(requestKey)
               if (!previous.contains(requestKey)) {
                 val threadId = request.optJSONObject("params")?.optString("threadId")?.takeIf { it.isNotBlank() }
@@ -1421,7 +1422,7 @@ class CodexConnectionService : Service() {
           "mcpServer/elicitation/request" -> {
             val requestId = payload.opt("id")
             if (requestId != null && requestId !== JSONObject.NULL) {
-              val requestKey = approvalRequestKey(requestId)
+              val requestKey = nativeServerRequestKey(requestId)
               changed = pendingApprovals.add(requestKey)
               if (changed) notifyApproval(id, threadId, requestKey)
             }
@@ -1429,12 +1430,13 @@ class CodexConnectionService : Service() {
           "serverRequest/resolved" -> {
             val requestId = params?.opt("requestId")
             if (requestId != null && requestId !== JSONObject.NULL) {
-              val requestKey = approvalRequestKey(requestId)
+              val requestKey = nativeServerRequestKey(requestId)
               changed = pendingApprovals.remove(requestKey)
               cancelApprovalNotification(id, requestKey)
             }
           }
         }
+        outboxLifecycleWake.observe(method, params)
         if (changed) updateNotification()
       }
     }
@@ -1541,7 +1543,9 @@ class CodexConnectionService : Service() {
     private const val TRANSFER_IDLE_TIMEOUT_MS = 30_000L
     private const val STALE_CONNECT_WAKE_MS = 8_000L
     private const val CONNECT_WATCHDOG_MS = 20_000L
-    private const val OUTBOX_RECONCILE_DELAY_MS = 2_000L
+    private const val OUTBOX_RETRY_DELAY_MS = 2_000L
+    // Lifecycle events are the primary wake-up path; this bounds recovery when one is lost.
+    private const val OUTBOX_EVENT_WATCHDOG_MS = 30_000L
     // Avoid monopolizing process capacity in the common case. If other native
     // resources consume the reserve, explicit work preempts the oldest headless owner.
     private val USER_APPROVAL_METHODS = setOf(

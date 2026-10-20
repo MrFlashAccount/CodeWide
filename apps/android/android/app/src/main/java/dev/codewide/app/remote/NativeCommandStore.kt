@@ -273,20 +273,35 @@ internal class NativeCommandStore(context: Context) {
   }
 
   @Synchronized
-  fun expediteTurnReconciliation(connectionId: String, threadId: String) {
+  fun expediteTurnReconciliation(connectionId: String, threadId: String): Boolean =
+    expediteReconciliation(connectionId) { command ->
+      (command.method == "turn/start" || command.method == "turn/steer") &&
+        command.state == "uncertain" &&
+        commandThreadId(command) == threadId
+    }
+
+  @Synchronized
+  fun expediteServerResponseReconciliation(connectionId: String, requestKey: String): Boolean =
+    expediteReconciliation(connectionId) { command ->
+      command.method == "serverRequest/respond" &&
+        command.state == "uncertain" &&
+        commandServerRequestKey(command) == requestKey
+    }
+
+  private fun expediteReconciliation(
+    connectionId: String,
+    matches: (NativeCommand) -> Boolean,
+  ): Boolean {
+    val commands = list(connectionId).filter(matches)
+    if (commands.isEmpty()) return false
     val now = System.currentTimeMillis()
-    list(connectionId)
-      .filter { command ->
-        (command.method == "turn/start" || command.method == "turn/steer") &&
-          command.state == "uncertain" &&
-          commandThreadId(command) == threadId
-      }
-      .forEach { command ->
-        database.execSQL(
-          "UPDATE native_commands SET next_attempt_at = 0, updated_at = ? WHERE connection_id = ? AND command_id = ?",
-          arrayOf<Any?>(now, command.connectionId, command.commandId),
-        )
-      }
+    commands.forEach { command ->
+      database.execSQL(
+        "UPDATE native_commands SET next_attempt_at = 0, updated_at = ? WHERE connection_id = ? AND command_id = ?",
+        arrayOf<Any?>(now, command.connectionId, command.commandId),
+      )
+    }
+    return true
   }
 
   @Synchronized
@@ -371,6 +386,12 @@ internal class NativeCommandStore(context: Context) {
     val params = JSONObject(command.paramsJson)
     params.optJSONObject("command")?.optString("remoteThreadId")?.takeIf { it.isNotBlank() }
       ?: params.optString("threadId").takeIf { it.isNotBlank() }
+  }.getOrNull()
+
+  private fun commandServerRequestKey(command: NativeCommand): String? = runCatching {
+    val requestId = JSONObject(command.paramsJson).opt("requestId")
+    if (requestId == null || requestId === JSONObject.NULL) null
+    else nativeServerRequestKey(requestId)
   }.getOrNull()
 
   private fun ensureColumn(table: String, column: String, sqlType: String) {
