@@ -68,10 +68,38 @@ export function TurnActivitySegment({
     ...(getTransferAccess === undefined ? {} : { getTransferAccess }),
     ...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock }),
   };
-  return insideActivity && !forceExpanded ? (
+  return opensActivitySheet({ forceExpanded, insideActivity, part, turnStatus }) ? (
     <SheetActivitySegment {...props} />
   ) : (
     <InlineActivitySegment {...props} />
+  );
+}
+
+/**
+ * Groups nested in another activity, and the finished tool groups of a running
+ * turn, open the activity sheet instead of growing the live conversation.
+ */
+function opensActivitySheet({
+  forceExpanded,
+  insideActivity,
+  part,
+  turnStatus,
+}: {
+  forceExpanded: boolean;
+  insideActivity: boolean;
+  part: Extract<TurnSequencePart, { kind: "activity" }>;
+  turnStatus: ActivitySegmentProps["turnStatus"];
+}): boolean {
+  if (forceExpanded) {
+    return false;
+  }
+  if (insideActivity) {
+    return true;
+  }
+  return (
+    turnStatus === "inProgress" &&
+    part.followedByAgent &&
+    activitySegmentKind(part.blocks) === "disclosure"
   );
 }
 
@@ -101,6 +129,7 @@ function SheetActivitySegment(props: ActivitySegmentProps): ReactElement {
         expanded={false}
         label={props.label}
         onToggle={openDetail}
+        opensSheet
         outputFootprint={props.outputFootprint}
       >
         {null}
@@ -273,6 +302,8 @@ export interface TurnActivityProps {
   label: string;
   loading?: boolean;
   onToggle: () => void;
+  /** The row opens the activity sheet rather than disclosing its actions in place. */
+  opensSheet?: boolean;
   outputFootprint?: ActivityFootprint | null;
   showToggle?: boolean;
 }
@@ -307,6 +338,7 @@ function renderActivityToggle(props: TurnActivityProps): ReactElement | null {
       label={props.label}
       loading={props.loading ?? false}
       onToggle={props.onToggle}
+      opensSheet={props.opensSheet ?? false}
       outputFootprint={props.outputFootprint ?? null}
     />
   );
@@ -332,6 +364,7 @@ function TurnActivityToggle({
   label,
   loading,
   onToggle,
+  opensSheet,
   outputFootprint,
 }: {
   compactHeader: boolean;
@@ -339,6 +372,7 @@ function TurnActivityToggle({
   label: string;
   loading: boolean;
   onToggle: () => void;
+  opensSheet: boolean;
   outputFootprint: ActivityFootprint | null;
 }): ReactElement {
   const labelContent = loading ? (
@@ -353,10 +387,10 @@ function TurnActivityToggle({
       {label}
     </Text>
   );
-  const chevron = expanded ? "chevron-up" : "chevron-down";
+  const chevron = activityChevron(opensSheet, expanded);
   return (
     <Pressable
-      accessibilityLabel={`${expanded ? "Collapse" : "Expand"} activity ${label}`}
+      accessibilityLabel={`${activityAction(opensSheet, expanded)} activity ${label}`}
       accessibilityRole="button"
       hitSlop={10}
       onPress={onToggle}
@@ -376,6 +410,23 @@ function TurnActivityToggle({
       </View>
     </Pressable>
   );
+}
+
+function activityChevron(
+  opensSheet: boolean,
+  expanded: boolean,
+): "chevron-forward" | "chevron-up" | "chevron-down" {
+  if (opensSheet) {
+    return "chevron-forward";
+  }
+  return expanded ? "chevron-up" : "chevron-down";
+}
+
+function activityAction(opensSheet: boolean, expanded: boolean): string {
+  if (opensSheet) {
+    return "Open";
+  }
+  return expanded ? "Collapse" : "Expand";
 }
 
 const LABEL_ICON_PROPS = { role: "label" } as const;

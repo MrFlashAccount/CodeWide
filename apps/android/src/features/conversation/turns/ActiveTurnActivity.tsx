@@ -51,7 +51,7 @@ export function ActiveTurnActivity(props: ActiveTurnActivityProps): ReactElement
   const label = activeGroupLabel(props, blockActivitySummary(props.part.blocks, metrics));
   return (
     <View testID="active-turn-activity">
-      <TurnActivity expanded={false} label={label} loading onToggle={openSheet}>
+      <TurnActivity expanded={false} label={label} loading onToggle={openSheet} opensSheet>
         {null}
       </TurnActivity>
       <CurrentActions blocks={currentActions(props.part.blocks)} turnKey={props.turn.key} />

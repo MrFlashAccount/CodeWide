@@ -11,6 +11,8 @@ import { selectTurnRenderWindow } from "../../../rendering/thread-render-window"
 import { chronologicalTurnSequence } from "../../../rendering/turn-sequence";
 import { AppText as Text } from "../../../ui/Typography";
 import { ProtocolBlock } from "../protocol/ProtocolBlock";
+import { useEvent } from "../../../react/useEvent";
+import { ActivityDetailSheet } from "./ActivityDetailSheet";
 import { usePersistentExpansion } from "./Card";
 import { hasCompletedTurnHistory } from "./completedHistoryVisibility";
 import { styles } from "./CompletedTurnHistory.styles";
@@ -19,6 +21,65 @@ import { ExpansionItemKeyContext } from "./turnContexts";
 import { projectThreadItem, turnActivityLabel, turnMetadataBlocks } from "./turnProjection";
 
 export function CollapsedTurnActivity(props: CollapsedTurnActivityProps) {
+  // A running turn keeps its earlier actions in the activity sheet so the
+  // live conversation does not grow while the agent works.
+  return props.item.turn.status === "inProgress" && !props.forceExpanded ? (
+    <SheetCollapsedTurnActivity {...props} />
+  ) : (
+    <InlineCollapsedTurnActivity {...props} />
+  );
+}
+
+function SheetCollapsedTurnActivity(props: CollapsedTurnActivityProps) {
+  const rawTurn = props.item.turn;
+  const [sheetVisible, setSheetVisible] = useRecyclingState(false);
+  const openSheet = useEvent(() => {
+    setSheetVisible(true);
+  });
+  const closeSheet = useEvent(() => {
+    setSheetVisible(false);
+  });
+  const activityKinds = props.indexes.flatMap((index) => {
+    const rawItem = rawTurn.items[index];
+    return rawItem === undefined ? [] : [rawItem.type];
+  });
+  const summary = collapsedActivitySummary(rawTurn, props.indexes);
+  // Projected only while the sheet shows; the collapsed row needs just the summary.
+  const blocks = sheetVisible
+    ? props.indexes.flatMap((index) => {
+        const rawItem = rawTurn.items[index];
+        return rawItem === undefined ? [] : [projectThreadItem(props.item, rawItem, index)];
+      })
+    : [];
+  return (
+    <>
+      <TurnActivity
+        expanded={false}
+        label={collapsedActivityLabel(summary, activityKinds, props.compact)}
+        onToggle={openSheet}
+        opensSheet
+        outputFootprint={summary?.outputFootprint ?? null}
+      >
+        {null}
+      </TurnActivity>
+      <ActivityDetailSheet
+        blocks={blocks}
+        onClose={closeSheet}
+        turnKey={props.item.key}
+        turnStatus="inProgress"
+        visible={sheetVisible}
+        {...(props.getTransferAccess === undefined
+          ? {}
+          : { getTransferAccess: props.getTransferAccess })}
+        {...(props.onFixUnsupportedBlock === undefined
+          ? {}
+          : { onFixUnsupportedBlock: props.onFixUnsupportedBlock })}
+      />
+    </>
+  );
+}
+
+function InlineCollapsedTurnActivity(props: CollapsedTurnActivityProps) {
   const rawTurn = props.item.turn;
   const [expanded, setExpanded] = usePersistentExpansion(
     `${props.item.key}:prior-activity:${String(props.indexes[0] ?? "empty")}`,
