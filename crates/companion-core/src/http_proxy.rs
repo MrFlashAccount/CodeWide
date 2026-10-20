@@ -14,6 +14,23 @@ pub struct HttpProxyConfig {
 }
 
 impl HttpProxyConfig {
+    /// Reads the proxy used by the running Companion and fills any missing
+    /// values from the Codex dotenv file.
+    ///
+    /// The process environment wins because service managers and launchers
+    /// install the effective runtime route there. The dotenv file remains a
+    /// fallback for desktop launches that do not inherit that environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a configured environment value is not valid
+    /// Unicode or when the dotenv file cannot be read or parsed.
+    pub fn from_process_environment_and_dotenv(path: &Path) -> Result<Self, HttpProxyConfigError> {
+        let mut config = Self::from_process_environment()?;
+        config.fill_missing(Self::from_dotenv(path)?);
+        Ok(config)
+    }
+
     /// Reads standard proxy variables from a dotenv file.
     ///
     /// A missing file means no explicit overrides. Other parse and I/O
@@ -82,6 +99,41 @@ impl HttpProxyConfig {
             _ => return,
         };
         *slot = Some(value);
+    }
+
+    fn from_process_environment() -> Result<Self, HttpProxyConfigError> {
+        let mut config = Self::default();
+        for name in [
+            HTTP_PROXY,
+            HTTPS_PROXY,
+            NO_PROXY,
+            "http_proxy",
+            "https_proxy",
+            "no_proxy",
+        ] {
+            let Some(value) = std::env::var_os(name) else {
+                continue;
+            };
+            config.set_if_supported(
+                name,
+                value
+                    .into_string()
+                    .map_err(|_| HttpProxyConfigError::Invalid)?,
+            );
+        }
+        Ok(config)
+    }
+
+    fn fill_missing(&mut self, fallback: Self) {
+        if self.http.is_none() {
+            self.http = fallback.http;
+        }
+        if self.https.is_none() {
+            self.https = fallback.https;
+        }
+        if self.no_proxy.is_none() {
+            self.no_proxy = fallback.no_proxy;
+        }
     }
 }
 
@@ -162,6 +214,30 @@ mod tests {
 
         assert_eq!(error.to_string(), "HTTP proxy environment is invalid");
         Ok(())
+    }
+
+    #[test]
+    fn process_values_win_while_dotenv_fills_missing_protocols() {
+        let mut process = HttpProxyConfig {
+            http: None,
+            https: Some("http://runtime-proxy.example:8080".into()),
+            no_proxy: None,
+        };
+        process.fill_missing(HttpProxyConfig {
+            http: Some("http://dotenv-http.example:8080".into()),
+            https: Some("http://dotenv-https.example:8080".into()),
+            no_proxy: Some("localhost".into()),
+        });
+
+        assert_eq!(
+            process.http.as_deref(),
+            Some("http://dotenv-http.example:8080")
+        );
+        assert_eq!(
+            process.https.as_deref(),
+            Some("http://runtime-proxy.example:8080")
+        );
+        assert_eq!(process.no_proxy.as_deref(), Some("localhost"));
     }
 
     #[tokio::test]

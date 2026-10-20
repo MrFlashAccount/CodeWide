@@ -55,6 +55,10 @@ export type V1MicrophoneLeaseRegistry = {
     handoff?: V1GlobalSupervisorMicrophoneHandoff,
   ) => V1MicrophoneLeaseAcquisition;
   readonly currentOwner: () => V1MicrophoneLeaseOwner | null;
+  readonly replaceDictation: (
+    lease: V1MicrophoneLease,
+    scope: string,
+  ) => V1MicrophoneLeaseAcquisition;
   readonly state: () => V1MicrophoneArbitrationState;
 };
 
@@ -264,6 +268,32 @@ export function createV1MicrophoneLeaseRegistry(
         return current.dictation.owner;
       }
       return null;
+    },
+    replaceDictation(lease, scope) {
+      if (current.phase !== "dictationOwned") {
+        const owner =
+          current.phase === "assistantOwned" || current.phase === "handoffToDictation"
+            ? current.assistant.owner
+            : current.phase === "handoffBack"
+              ? current.dictation.owner
+              : lease.owner;
+        return busy(owner);
+      }
+      if (lease.owner.kind !== "dictation") {
+        return busy(current.dictation.owner);
+      }
+      if (current.dictation.token !== lease.token) {
+        return busy(current.dictation.owner);
+      }
+      if (current.dictation.owner.scope !== lease.owner.scope) {
+        return busy(current.dictation.owner);
+      }
+      const dictation: DictationLeaseRecord = {
+        owner: { kind: "dictation", scope },
+        token: randomUUID(),
+      };
+      current = { assistant: current.assistant, dictation, phase: "dictationOwned" };
+      return { lease: dictationLease(dictation), status: "acquired" };
     },
     state() {
       if (current.phase === "assistantOwned") {

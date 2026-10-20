@@ -99,6 +99,7 @@ function setup() {
   return {
     servers: [server("buddy", "Buddy", "Personal account"), server("work", "Work", "Work account")],
     security: <Text>Biometric Lock setting</Text>,
+    chats: <Text>Chat controls</Text>,
     advanced: <Text>Advanced controls</Text>,
     version: <Text>Version test</Text>,
     onAddServer: jest.fn(),
@@ -169,9 +170,11 @@ it("opens only the chosen server's accounts inside the existing settings sheet",
   expect(view.queryByText("Personal account")).toBeNull();
 });
 
-it("opens Security as its own page and keeps only Servers as an overview section", () => {
+it("opens Security as its own page and keeps Servers and Chats as overview sections", () => {
   const view = render(<SettingsSheet {...setup()} />);
   expect(view.getByRole("header", { name: "Servers" })).toBeTruthy();
+  expect(view.getByRole("header", { name: "Chats" })).toBeTruthy();
+  expect(view.getByText("Chat controls")).toBeTruthy();
   expect(view.queryByRole("header", { name: "Security" })).toBeNull();
   expect(view.queryByRole("header", { name: "Voice Assistant" })).toBeNull();
   expect(view.getByTestId("settings-navigation-list")).toBeTruthy();

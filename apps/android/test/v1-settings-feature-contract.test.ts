@@ -33,6 +33,7 @@ describe("M1 feature integration contracts", () => {
     expect(source).not.toContain("ConversationLayoutFeatureFlag");
     expect(source).toContain('<SettingsSection title="Experiments">');
     expect(source).toContain("<TimelineRowMeasurementSettings />");
+    expect(source).toContain("chats={<ChatSettings />}");
   });
   it("ordinary chat and Voice Assistant share the model and thinking picker", () => {
     const composer = readFileSync(

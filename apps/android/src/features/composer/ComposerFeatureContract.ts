@@ -110,6 +110,7 @@ export type ComposerFeatureProps = {
   useAnchoredComposerMenu: boolean;
   voiceBackend: "android" | "remote";
   voiceController: VoiceInputController | null;
+  voiceDisabled: boolean;
   voiceError: string | null;
   voicePhase: "idle" | "starting" | "recording" | "finishing";
   voiceResource: VoiceInputRow | null;

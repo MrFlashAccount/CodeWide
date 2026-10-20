@@ -146,6 +146,7 @@ export function createConversationComposerContent({
         }
         voiceBackend={composerStateBinding.composerVoiceStateBinding.voiceBackend}
         voiceController={composerInputs.voiceController}
+        voiceDisabled={composerStateBinding.composerVoiceStateBinding.voiceDisabled}
         voiceError={composerStateBinding.composerVoiceStateBinding.voiceError}
         voicePhase={composerStateBinding.composerVoiceStateBinding.voicePhase}
         voiceResource={composerStateBinding.composerVoiceStateBinding.voiceResource}

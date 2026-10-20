@@ -39,6 +39,7 @@ export function useComposerState({
     workspaceResources,
     draftConnectionId,
     draftThreadId,
+    voiceController,
   );
   const composerMenuStateBinding = useComposerMenuState(composerScope);
   const largePasteStateBinding = useLargePasteState(composerScope);

@@ -190,8 +190,9 @@ impl CoreHost {
             .join("Updater");
         let updates =
             codewide_host_update::macos::MacosSparkleUpdater::new(&updater_root, installed);
-        let dictation_proxy = HttpProxyConfig::from_dotenv(&codex_home.join(".env"))
-            .map_err(CompanionFfiError::runtime)?;
+        let dictation_proxy =
+            HttpProxyConfig::from_process_environment_and_dotenv(&codex_home.join(".env"))
+                .map_err(CompanionFfiError::runtime)?;
         let config = ManagedRuntimeConfig::desktop(
             state_directory.into(),
             codex_home.clone(),

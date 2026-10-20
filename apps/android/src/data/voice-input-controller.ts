@@ -7,9 +7,12 @@ import {
   type CapturedAudioChunk,
 } from "../native/native-transport";
 import { insertTranscriptAtSelection, type DraftSelection } from "./voice-draft";
+import { voiceHandoffBehavior$ } from "./voiceHandoffState";
+import type { VoiceHandoffBehavior } from "./voiceHandoffPreferences";
 import { transcriptionLanguageHint } from "./transcription-language";
 import {
   createV1MicrophoneLeaseRegistry,
+  type V1MicrophoneLease,
   type V1MicrophoneLeaseRegistry,
 } from "./v1MicrophoneLease";
 import type { VoiceInputRow, WorkspaceResourceDatabase } from "./workspace-resource-database";
@@ -24,9 +27,8 @@ export type VoiceTranscriptionOptions = {
 };
 
 type AndroidFallbackRequest = {
-  readonly binding: VoiceBinding;
-  readonly operation: number;
-  readonly releaseMicrophone: () => void;
+  readonly operation: VoiceOperation;
+  readonly releaseMicrophone: () => Promise<void>;
   readonly renderTranscript: (text: string) => void;
 };
 
@@ -74,6 +76,25 @@ type VoiceBinding = {
   updateDraft: (text: string) => void;
 };
 
+type VoiceOperation = {
+  readonly binding: VoiceBinding;
+  capturedAudioChunks: number;
+  readonly captureStopped: Promise<void>;
+  finishPromise: Promise<void> | null;
+  insertionCursor: number;
+  microphoneLease: V1MicrophoneLease | null;
+  originalDraft: string;
+  readonly recording: AbortController;
+  readonly resolveCaptureStopped: () => void;
+  retrySendAfter: ((text: string) => void) | null;
+  retrySession: VoiceTranscriptionSession | null;
+  sendAfterFinish: ((text: string) => void) | null;
+  session: VoiceTranscriptionSession | null;
+  sessionPromise: Promise<VoiceTranscriptionSession> | null;
+  stopCapture: (() => void | Promise<void>) | null;
+  transcribedDraft: string;
+};
+
 type AppLockDictationState =
   | { readonly status: "inactive" }
   | { readonly scope: string; readonly status: "paused" }
@@ -93,35 +114,26 @@ const VOICE_SESSION_START_RETRIES = 3;
 const VOICE_SESSION_START_RETRY_BASE_MS = 250;
 const VOICE_ERROR_VISIBLE_MS = 3000;
 let compatibilityLeaseSequence = 0;
+const noop = (): void => undefined;
 
 /**
- * Process owner for the single Android microphone. React binds callbacks and
- * renders its TanStack projection, but component mount/unmount never owns the
- * capture, remote dictation session or retry payload.
+ * Process owner for the single Android microphone and scope-qualified
+ * transcription jobs. Only live capture is exclusive; once capture stops,
+ * remote transcription and retry payloads may coexist across input scopes.
+ * React binds callbacks and renders its TanStack projection, but component
+ * mount/unmount never owns either lifetime.
  */
 export class VoiceInputController {
   private readonly resources: WorkspaceResourceDatabase;
   private readonly microphoneLeases: V1MicrophoneLeaseRegistry;
+  private readonly handoffBehavior: () => VoiceHandoffBehavior;
   private binding: VoiceBinding | null = null;
-  private activeBinding: VoiceBinding | null = null;
-  private retryBinding: VoiceBinding | null = null;
-  private stopCapture: (() => void | Promise<void>) | null = null;
-  private session: VoiceTranscriptionSession | null = null;
-  private retrySession: VoiceTranscriptionSession | null = null;
-  private sessionPromise: Promise<VoiceTranscriptionSession> | null = null;
-  private finishPromise: Promise<void> | null = null;
+  private activeOperation: VoiceOperation | null = null;
+  private readonly activeCaptureSubscribers = new Set<() => void>();
+  private readonly operations = new Map<string, VoiceOperation>();
   private readonly levelByScope = new Map<string, number>();
   private readonly levelSubscribers = new Map<string, Set<() => void>>();
   private readonly errorTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private operation = 0;
-  // A recording survives recoverable attempts, but never an explicit discard.
-  private recording: AbortController | null = null;
-  private sendAfterFinish: ((text: string) => void) | null = null;
-  private retrySendAfter: ((text: string) => void) | null = null;
-  private insertionCursor = 0;
-  private transcribedDraft: string | null = null;
-  private originalDraft: string | null = null;
-  private capturedAudioChunks = 0;
   private appLockDictation: AppLockDictationState = { status: "inactive" };
 
   constructor(
@@ -129,9 +141,22 @@ export class VoiceInputController {
     microphoneLeases: V1MicrophoneLeaseRegistry = createV1MicrophoneLeaseRegistry(
       () => `dictation-compatibility-${String(++compatibilityLeaseSequence)}`,
     ),
+    handoffBehavior: () => VoiceHandoffBehavior = () => voiceHandoffBehavior$.get(),
   ) {
     this.resources = resources;
     this.microphoneLeases = microphoneLeases;
+    this.handoffBehavior = handoffBehavior;
+  }
+
+  activeCaptureScope(): string | null {
+    return this.activeOperation?.binding.scope ?? null;
+  }
+
+  subscribeActiveCapture(listener: () => void): () => void {
+    this.activeCaptureSubscribers.add(listener);
+    return () => {
+      this.activeCaptureSubscribers.delete(listener);
+    };
   }
 
   /**
@@ -177,99 +202,134 @@ export class VoiceInputController {
 
   async toggle(scope: string): Promise<void> {
     const binding = this.binding;
-    if (binding === null || binding.scope !== scope || this.finishPromise !== null) {
+    if (binding === null || binding.scope !== scope) {
       return;
     }
-    const processBinding = this.activeBinding;
-    if (processBinding !== null && processBinding.scope !== scope) {
-      return;
-    }
-    if (this.retryBinding !== null && this.retryBinding.scope !== scope) {
-      return;
-    }
-    const processState = this.state(processBinding?.scope ?? binding.scope);
-    if (processBinding !== null || processState.phase !== "idle" || this.stopCapture !== null) {
+    const existing = this.operations.get(scope);
+    if (existing !== undefined) {
+      if (this.activeOperation !== existing) {
+        return;
+      }
+      const processState = this.state(scope);
       if (processState.phase === "starting") {
-        this.operation += 1;
-        this.recording?.abort();
-        this.stopCaptureWithFeedback(processBinding?.scope ?? binding.scope);
-        if (processBinding !== null) {
-          this.resetUi(processBinding.scope);
-        }
-        this.activeBinding = null;
+        await this.discard(scope);
       } else if (processState.phase !== "finishing") {
         await this.finish(scope, false);
       }
       return;
     }
-    const operation = ++this.operation;
-    this.recording?.abort();
-    const recording = new AbortController();
-    this.recording = recording;
-    const staleRetry = this.retrySession;
-    this.retrySession = null;
-    this.retryBinding = null;
-    this.retrySendAfter = null;
-    this.transcribedDraft = null;
-    this.capturedAudioChunks = 0;
-    this.publishLevel(binding.scope, 0);
-    if (staleRetry !== null) {
-      void staleRetry.cancel().catch(() => undefined);
+    if (this.activeOperation !== null) {
+      const previous = this.activeOperation;
+      const behavior = this.handoffBehavior();
+      if (
+        behavior === "disable" ||
+        this.state(previous.binding.scope).phase !== "recording" ||
+        previous.microphoneLease === null
+      ) {
+        return;
+      }
+      const replacement = this.microphoneLeases.replaceDictation(
+        previous.microphoneLease,
+        binding.scope,
+      );
+      if (replacement.status === "busy") {
+        return;
+      }
+      const finishing = this.finish(previous.binding.scope, behavior === "send");
+      await previous.captureStopped;
+      void finishing.catch(() => undefined);
+      await this.start(binding, replacement.lease);
+      return;
     }
+    await this.start(binding);
+  }
+
+  private async start(
+    binding: VoiceBinding,
+    preparedLease: V1MicrophoneLease | null = null,
+  ): Promise<void> {
+    const recording = new AbortController();
+    const source = binding.source();
+    const selection = binding.selection();
+    let resolveCaptureStopped = noop;
+    const captureStopped = new Promise<void>((resolve) => {
+      resolveCaptureStopped = resolve;
+    });
+    const operation: VoiceOperation = {
+      binding,
+      capturedAudioChunks: 0,
+      captureStopped,
+      finishPromise: null,
+      insertionCursor: Math.max(0, Math.min(source.length, selection.start)),
+      microphoneLease: null,
+      originalDraft: source,
+      recording,
+      resolveCaptureStopped,
+      retrySendAfter: null,
+      retrySession: null,
+      sendAfterFinish: null,
+      session: null,
+      sessionPromise: null,
+      stopCapture: null,
+      transcribedDraft: source,
+    };
+    this.operations.set(binding.scope, operation);
+    this.setActiveOperation(operation);
+    this.publishLevel(binding.scope, 0);
     this.put(binding.scope, { ...IDLE_VOICE, phase: "starting" });
-    this.activeBinding = binding;
     let acquisition: Awaited<ReturnType<V1MicrophoneLeaseRegistry["acquireDictation"]>>;
     try {
-      acquisition = await this.microphoneLeases.acquireDictation(binding.scope);
+      acquisition =
+        preparedLease === null
+          ? await this.microphoneLeases.acquireDictation(binding.scope)
+          : { lease: preparedLease, status: "acquired" };
     } catch (error) {
-      if (operation === this.operation) {
-        this.failOperation(binding.scope, messageOf(error));
+      if (this.isCurrent(operation)) {
+        await this.failOperation(operation, messageOf(error));
       }
       return;
     }
     // A cancelled start must not reset a replacement recording when handoff settles.
-    if (operation !== this.operation || recording.signal.aborted) {
+    if (!this.isCurrent(operation) || recording.signal.aborted) {
       if (acquisition.status === "acquired") {
-        void acquisition.lease.release().catch(() => undefined);
+        await acquisition.lease.release().catch(() => undefined);
       }
       return;
     }
     if (acquisition.status === "busy") {
-      this.activeBinding = null;
-      this.recording = null;
+      this.removeOperation(operation);
       this.resetUi(binding.scope, { error: "Microphone is already in use" });
       return;
     }
     const microphoneLease = acquisition.lease;
-    const releaseMicrophone = (): void => {
-      void microphoneLease.release().catch((error: unknown) => {
-        if (operation === this.operation) {
+    operation.microphoneLease = microphoneLease;
+    let microphoneReleased = false;
+    const releaseMicrophone = async (): Promise<void> => {
+      if (microphoneReleased) {
+        return;
+      }
+      microphoneReleased = true;
+      await microphoneLease.release().catch((error: unknown) => {
+        if (this.isCurrent(operation)) {
           this.patch(binding.scope, {
             error: `Could not return microphone: ${messageOf(error)}`,
           });
         }
       });
     };
-    const source = binding.source();
-    this.originalDraft = source;
-    const selection = binding.selection();
-    this.transcribedDraft = source;
     const renderVoiceTranscript = (transcript: string, publishDraft = true) => {
       if (recording.signal.aborted) {
         return;
       }
       const insertion = insertTranscriptAtSelection(source, selection, transcript);
-      this.insertionCursor = insertion.cursor;
-      this.transcribedDraft = insertion.text;
+      operation.insertionCursor = insertion.cursor;
+      operation.transcribedDraft = insertion.text;
       if (publishDraft) {
         binding.updateDraft(insertion.text);
       }
     };
-    this.insertionCursor = Math.max(0, Math.min(source.length, selection.start));
-    this.sendAfterFinish = null;
     if (binding.startRemote === undefined) {
       await this.startAndroidFallback({
-        binding,
         operation,
         releaseMicrophone,
         renderTranscript: renderVoiceTranscript,
@@ -291,10 +351,10 @@ export class VoiceInputController {
       const capture = await startPcmCapture(
         { purpose: "dictation", token: microphoneLease.token },
         (chunk) => {
-          if (operation !== this.operation || recording.signal.aborted) {
+          if (!this.isCurrent(operation) || recording.signal.aborted) {
             return;
           }
-          this.capturedAudioChunks += 1;
+          operation.capturedAudioChunks += 1;
           this.publishLevel(binding.scope, chunk.level);
           if (streamingSession !== null) {
             streamingSession.appendAudio(chunk);
@@ -303,31 +363,26 @@ export class VoiceInputController {
           }
         },
         (message) => {
-          if (operation === this.operation && !recording.signal.aborted) {
+          if (this.isCurrent(operation) && !recording.signal.aborted) {
             this.failOperation(
-              binding.scope,
+              operation,
               `Microphone stopped · ${message.replaceAll("_", " ")}`,
-            );
+            ).catch(() => undefined);
           }
         },
       );
-      if (operation !== this.operation) {
-        Promise.resolve(capture.stop())
-          .catch((error: unknown) => {
-            this.patch(binding.scope, { error: `Could not stop microphone: ${messageOf(error)}` });
-          })
-          .finally(() => {
-            void microphoneLease.release().catch(() => undefined);
-          });
+      if (!this.isCurrent(operation)) {
+        await capture.stop().catch(() => undefined);
+        await microphoneLease.release().catch(() => undefined);
         return;
       }
-      this.stopCapture = async () => {
+      operation.stopCapture = async () => {
         try {
           await capture.stop();
         } finally {
-          // Capture is already closed. Reconnecting the assistant must not delay
-          // transcript finalization or the user's Send/Stop feedback.
-          releaseMicrophone();
+          // Capture is closed. Global Voice may reconnect in the background;
+          // its transport must not delay this dictation's finalization.
+          releaseMicrophone().catch(() => undefined);
         }
       };
       this.patch(binding.scope, { phase: "recording", seconds: 0 });
@@ -347,16 +402,16 @@ export class VoiceInputController {
           // the native rich editor immediately before submission clears the
           // draft creates a setValue(final) -> setValue("") race; a delayed
           // native change callback can then resurrect or repeat sent text.
-          renderTranscript(this.sendAfterFinish === null && this.retrySendAfter === null);
+          renderTranscript(operation.sendAfterFinish === null && operation.retrySendAfter === null);
         } else if (event.type === "error") {
-          this.failOperation(binding.scope, event.message);
+          this.failOperation(operation, event.message).catch(() => undefined);
         } else {
           this.failOperation(
-            binding.scope,
+            operation,
             event.reason === null
               ? "Transcription connection closed"
               : `Transcription stopped · ${event.reason}`,
-          );
+          ).catch(() => undefined);
         }
       };
       const language = transcriptionLanguageHint(binding.thread);
@@ -368,56 +423,54 @@ export class VoiceInputController {
       startSession = async () =>
         startVoiceSessionWithRetry(startRemote, listener, options, recording.signal);
       const sessionPromise = startSession();
-      this.sessionPromise = sessionPromise;
+      operation.sessionPromise = sessionPromise;
       const session = await sessionPromise;
-      if (this.sessionPromise === sessionPromise) {
-        this.sessionPromise = null;
+      if (operation.sessionPromise === sessionPromise) {
+        operation.sessionPromise = null;
       }
-      if (operation !== this.operation) {
+      if (!this.isCurrent(operation)) {
         await session.cancel().catch(() => undefined);
         return;
       }
       streamingSession = session;
-      this.session = session;
+      operation.session = session;
       for (const chunk of pendingAudio.splice(0)) {
         session.appendAudio(chunk);
       }
     } catch (error) {
-      releaseMicrophone();
-      if (operation !== this.operation) {
+      releaseMicrophone().catch(() => undefined);
+      if (!this.isCurrent(operation)) {
         return;
       }
-      const sendAfter = this.sendAfterFinish;
-      this.operation += 1;
-      this.stopCaptureWithFeedback(binding.scope);
-      this.sessionPromise = null;
-      this.session = null;
+      const sendAfter = operation.sendAfterFinish;
+      await this.stopOperationCapture(operation).catch(() => undefined);
+      operation.sessionPromise = null;
+      operation.session = null;
+      if (this.activeOperation === operation) {
+        this.setActiveOperation(null);
+      }
       if (pendingAudio.length > 0 && startSession !== null) {
-        this.retrySession = deferredVoiceSession(startSession, pendingAudio);
-        this.retryBinding = binding;
-        this.retrySendAfter = sendAfter;
+        operation.retrySession = deferredVoiceSession(startSession, pendingAudio);
+        operation.retrySendAfter = sendAfter;
         this.resetUi(binding.scope, {
           error: `OpenAI transcription: ${messageOf(error)}`,
           retryAvailable: true,
         });
       } else {
-        this.transcribedDraft = null;
+        this.removeOperation(operation);
         this.resetUi(binding.scope, { error: `OpenAI transcription: ${messageOf(error)}` });
       }
-      this.sendAfterFinish = null;
-      if (this.activeBinding === binding) {
-        this.activeBinding = null;
-      }
+      operation.sendAfterFinish = null;
     }
   }
 
   /** Ends protected capture into its draft; only successful app unlock may resume it. */
   async pauseForAppLock(): Promise<void> {
-    const binding = this.activeBinding;
-    if (binding === null) {
-      await this.finishPromise;
+    const operation = this.activeOperation;
+    if (operation === null) {
       return;
     }
+    const binding = operation.binding;
     const state = this.state(binding.scope);
     if (state.phase === "starting") {
       this.appLockDictation = { scope: binding.scope, status: "paused" };
@@ -425,7 +478,7 @@ export class VoiceInputController {
       return;
     }
     if (state.phase === "finishing") {
-      await this.finishPromise;
+      await operation.finishPromise;
       return;
     }
     this.appLockDictation = { scope: binding.scope, status: "paused" };
@@ -454,8 +507,19 @@ export class VoiceInputController {
     sendAfter: boolean,
     sendOverride?: (text: string) => void,
   ): Promise<void> {
-    const binding = this.activeBinding;
-    if (binding === null || binding.scope !== scope) {
+    const operation = this.operations.get(scope);
+    if (operation === undefined) {
+      return;
+    }
+    const binding = operation.binding;
+    if (sendAfter) {
+      operation.sendAfterFinish = sendOverride ?? binding.send;
+    }
+    if (operation.finishPromise !== null) {
+      await operation.finishPromise;
+      return;
+    }
+    if (this.activeOperation !== operation) {
       return;
     }
     // There is no audio yet. Abort the pending native start so its eventual
@@ -464,139 +528,118 @@ export class VoiceInputController {
       await this.discard(scope);
       return;
     }
-    if (sendAfter) {
-      this.sendAfterFinish = sendOverride ?? binding.send;
-    }
-    if (this.finishPromise !== null) {
-      await this.finishPromise;
-      return;
-    }
-    const finishing = this.finishCurrent(binding);
-    this.finishPromise = finishing;
+    const finishing = this.finishCurrent(operation);
+    operation.finishPromise = finishing;
     try {
       await finishing;
     } finally {
-      if (this.finishPromise === finishing) {
-        this.finishPromise = null;
+      if (operation.finishPromise === finishing) {
+        operation.finishPromise = null;
       }
     }
   }
 
   async retry(scope: string): Promise<void> {
-    if (this.retryBinding?.scope !== scope) {
+    const operation = this.operations.get(scope);
+    if (operation === undefined) {
       return;
     }
     // The retry affordance can render from the same atomic state update that
     // finishes the previous attempt. Do not drop a fast tap during the tiny
     // interval before that attempt clears its promise.
-    const previousFinish = this.finishPromise;
+    const previousFinish = operation.finishPromise;
     if (previousFinish !== null) {
       await previousFinish.catch(() => undefined);
     }
-    const binding = this.retryBinding;
-    const session = this.retrySession;
+    if (!this.isCurrent(operation)) {
+      return;
+    }
+    const binding = operation.binding;
+    const session = operation.retrySession;
     if (session === null) {
       return;
     }
-    const sendAfter = this.retrySendAfter;
-    const retryOperation = this.operation;
+    const sendAfter = operation.retrySendAfter;
     this.patch(binding.scope, { error: null, phase: "finishing", retryAvailable: false });
-    const operation = (async () => {
+    const retrying = (async () => {
       try {
         await session.finish();
-        if (retryOperation !== this.operation) {
+        if (!this.isCurrent(operation)) {
           return;
         }
-        this.recording?.abort();
-        this.retrySession = null;
-        this.retryBinding = null;
-        this.retrySendAfter = null;
-        if (this.activeBinding === binding) {
-          this.activeBinding = null;
-        }
+        operation.recording.abort();
+        operation.retrySession = null;
+        operation.retrySendAfter = null;
+        this.removeOperation(operation);
         this.resetUi(binding.scope, {
           pendingSelection:
-            sendAfter === null ? { end: this.insertionCursor, start: this.insertionCursor } : null,
+            sendAfter === null
+              ? { end: operation.insertionCursor, start: operation.insertionCursor }
+              : null,
         });
-        const finalDraft = this.transcribedDraft ?? binding.source();
-        this.transcribedDraft = null;
-        this.originalDraft = null;
-        sendAfter?.(finalDraft);
+        sendAfter?.(operation.transcribedDraft);
       } catch (error) {
-        if (retryOperation !== this.operation) {
+        if (!this.isCurrent(operation)) {
           return;
         }
         if (!(error instanceof UnretryableVoiceTranscriptionError)) {
-          this.retrySession = session;
-          this.retryBinding = binding;
-          this.retrySendAfter = sendAfter;
+          operation.retrySession = session;
+          operation.retrySendAfter = sendAfter;
           this.resetUi(binding.scope, { error: messageOf(error), retryAvailable: true });
         } else {
-          this.recording?.abort();
-          this.retrySession = null;
-          this.retryBinding = null;
-          this.retrySendAfter = null;
-          this.transcribedDraft = null;
+          operation.recording.abort();
+          operation.retrySession = null;
+          operation.retrySendAfter = null;
+          this.removeOperation(operation);
           void session.cancel().catch(() => undefined);
-          if (this.activeBinding === binding) {
-            this.activeBinding = null;
-          }
           this.resetUi(binding.scope, { error: messageOf(error) });
         }
       }
     })();
-    this.finishPromise = operation;
+    operation.finishPromise = retrying;
     try {
-      await operation;
+      await retrying;
     } finally {
-      if (this.finishPromise === operation) {
-        this.finishPromise = null;
+      if (operation.finishPromise === retrying) {
+        operation.finishPromise = null;
       }
     }
   }
 
   /** Discards the current/retryable recording and restores the pre-recording draft. */
   async discard(scope: string): Promise<void> {
-    const owner = this.activeBinding ?? this.retryBinding;
-    if (owner !== null && owner.scope !== scope) {
+    const operation = this.operations.get(scope);
+    if (operation === undefined) {
       return;
     }
-    const binding =
-      [this.activeBinding, this.retryBinding, this.binding].find(
-        (candidate) => candidate?.scope === scope,
-      ) ?? null;
-    const originalDraft = this.originalDraft;
-    this.operation += 1;
-    this.recording?.abort();
-    this.recording = null;
-    this.finishPromise = null;
-    this.stopCaptureWithFeedback(scope);
+    const { binding, originalDraft } = operation;
+    operation.recording.abort();
+    this.removeOperation(operation);
+    const stopping = this.stopOperationCapture(operation).catch((error: unknown) => {
+      this.patch(scope, { error: `Could not stop microphone: ${messageOf(error)}` });
+    });
     cancelVoiceRecognition();
-    const session = this.session;
-    const retrySession = this.retrySession;
-    const pendingSession = this.sessionPromise;
-    this.session = null;
-    this.retrySession = null;
-    this.sessionPromise = null;
-    this.activeBinding = null;
-    this.retryBinding = null;
-    this.sendAfterFinish = null;
-    this.retrySendAfter = null;
-    this.transcribedDraft = null;
-    this.originalDraft = null;
-    this.capturedAudioChunks = 0;
-    if (binding !== null && originalDraft !== null) {
-      binding.updateDraft(originalDraft);
-    }
+    const session = operation.session;
+    const retrySession = operation.retrySession;
+    const pendingSession = operation.sessionPromise;
+    operation.session = null;
+    operation.retrySession = null;
+    operation.sessionPromise = null;
+    operation.sendAfterFinish = null;
+    operation.retrySendAfter = null;
+    binding.updateDraft(originalDraft);
     this.resetUi(scope);
     await Promise.all([
-      session?.cancel().catch(() => undefined),
-      retrySession !== session ? retrySession?.cancel().catch(() => undefined) : undefined,
-      pendingSession
-        ?.then(async (pending) => {
-          await pending.cancel();
-        })
-        .catch(() => undefined),
+      stopping,
+      Promise.all([
+        session?.cancel().catch(() => undefined),
+        retrySession !== session ? retrySession?.cancel().catch(() => undefined) : undefined,
+        pendingSession
+          ?.then(async (pending) => {
+            await pending.cancel();
+          })
+          .catch(() => undefined),
+      ]),
     ]);
   }
 
@@ -608,58 +651,54 @@ export class VoiceInputController {
     this.patch(scope, { pendingSelection: selection });
   }
 
-  private async finishCurrent(binding: VoiceBinding): Promise<void> {
-    const operation = this.operation;
-    const stop = this.stopCapture;
-    this.stopCapture = null;
+  private async finishCurrent(operation: VoiceOperation): Promise<void> {
+    const { binding } = operation;
     // End the recording animation immediately; final audio still has to flush
     // before finish() is sent to the transcription server.
     this.patch(binding.scope, { phase: "finishing" });
     try {
-      await stop?.();
+      await this.stopOperationCapture(operation);
     } catch (error) {
-      if (operation === this.operation) {
-        this.failOperation(binding.scope, messageOf(error));
+      if (this.isCurrent(operation)) {
+        await this.failOperation(operation, messageOf(error));
       }
       return;
     }
-    if (operation !== this.operation) {
+    if (!this.isCurrent(operation)) {
       return;
     }
-    let session = this.session;
-    if (session === null && this.sessionPromise !== null) {
+    if (this.activeOperation === operation) {
+      this.setActiveOperation(null);
+    }
+    let session = operation.session;
+    if (session === null && operation.sessionPromise !== null) {
       try {
-        session = await this.sessionPromise;
+        session = await operation.sessionPromise;
       } catch (error) {
-        if (operation === this.operation) {
-          this.sessionPromise = null;
-          if (this.activeBinding === binding) {
-            this.activeBinding = null;
-          }
+        if (this.isCurrent(operation)) {
+          operation.sessionPromise = null;
+          this.removeOperation(operation);
           this.resetUi(binding.scope, { error: messageOf(error) });
         }
         return;
       }
     }
-    if (operation !== this.operation) {
+    if (!this.isCurrent(operation)) {
       return;
     }
-    this.sessionPromise = null;
-    const sendAfter = this.sendAfterFinish;
-    if (binding.startRemote !== undefined && this.capturedAudioChunks === 0) {
-      this.session = null;
+    operation.sessionPromise = null;
+    const sendAfter = operation.sendAfterFinish;
+    if (binding.startRemote !== undefined && operation.capturedAudioChunks === 0) {
+      operation.session = null;
       if (session !== null) {
         await session.cancel().catch(() => undefined);
       }
-      if (operation === this.operation) {
-        if (this.activeBinding === binding) {
-          this.activeBinding = null;
-        }
-        this.transcribedDraft = null;
+      if (this.isCurrent(operation)) {
+        this.removeOperation(operation);
         this.resetUi(binding.scope, {
           error: "Recording was too short · hold the microphone and try again",
         });
-        this.sendAfterFinish = null;
+        operation.sendAfterFinish = null;
       }
       return;
     }
@@ -667,80 +706,74 @@ export class VoiceInputController {
     try {
       if (session !== null) {
         await session.finish();
-        if (operation !== this.operation) {
+        if (!this.isCurrent(operation)) {
           return;
         }
-        this.session = null;
+        operation.session = null;
       } else {
         cancelVoiceRecognition();
       }
       completed = true;
     } catch (error) {
-      if (operation !== this.operation) {
+      if (!this.isCurrent(operation)) {
         return;
       }
-      this.session = null;
+      operation.session = null;
       if (session !== null && !(error instanceof UnretryableVoiceTranscriptionError)) {
-        if (operation === this.operation) {
-          this.retrySession = session;
-          this.retryBinding = binding;
-          this.retrySendAfter = sendAfter;
-          if (this.activeBinding === binding) {
-            this.activeBinding = null;
-          }
+        if (this.isCurrent(operation)) {
+          operation.retrySession = session;
+          operation.retrySendAfter = sendAfter;
           this.resetUi(binding.scope, { error: messageOf(error), retryAvailable: true });
         }
       } else {
         if (session !== null) {
           void session.cancel().catch(() => undefined);
         }
-        if (operation === this.operation) {
-          this.retryBinding = null;
-          this.retrySendAfter = null;
-          this.transcribedDraft = null;
-          if (this.activeBinding === binding) {
-            this.activeBinding = null;
-          }
+        if (this.isCurrent(operation)) {
+          operation.retrySession = null;
+          operation.retrySendAfter = null;
+          this.removeOperation(operation);
           this.resetUi(binding.scope, { error: messageOf(error) });
         }
       }
     } finally {
-      if (operation === this.operation) {
-        this.sendAfterFinish = null;
+      if (this.isCurrent(operation)) {
+        operation.sendAfterFinish = null;
       }
-      if (completed && operation === this.operation) {
-        this.recording?.abort();
-        if (this.activeBinding === binding) {
-          this.activeBinding = null;
-        }
+      if (completed && this.isCurrent(operation)) {
+        operation.recording.abort();
+        this.removeOperation(operation);
         this.resetUi(binding.scope, {
           pendingSelection:
-            sendAfter === null ? { end: this.insertionCursor, start: this.insertionCursor } : null,
+            sendAfter === null
+              ? { end: operation.insertionCursor, start: operation.insertionCursor }
+              : null,
         });
-        const finalDraft = this.transcribedDraft ?? binding.source();
-        this.transcribedDraft = null;
-        this.originalDraft = null;
-        sendAfter?.(finalDraft);
+        sendAfter?.(operation.transcribedDraft);
       }
     }
   }
 
   private async startAndroidFallback({
-    binding,
     operation,
     releaseMicrophone,
     renderTranscript,
   }: AndroidFallbackRequest): Promise<void> {
+    const { binding } = operation;
     try {
       const stop = await startVoiceRecognition((event) => {
-        if (operation !== this.operation) {
+        if (!this.isCurrent(operation)) {
           return;
         }
         if ((event.type === "partial" || event.type === "final") && event.text !== undefined) {
           renderTranscript(event.text);
         }
         if (event.type === "final" || event.type === "error") {
-          this.stopCaptureWithFeedback(binding.scope);
+          void this.stopOperationCapture(operation).catch((error: unknown) => {
+            this.patch(binding.scope, {
+              error: `Could not stop microphone: ${messageOf(error)}`,
+            });
+          });
           this.resetUi(
             binding.scope,
             event.type === "error"
@@ -749,36 +782,29 @@ export class VoiceInputController {
                 }
               : {},
           );
-          if (event.type === "final") {
-            this.originalDraft = null;
-          }
-          if (this.activeBinding === binding) {
-            this.activeBinding = null;
-          }
+          this.removeOperation(operation);
         }
       });
-      if (operation !== this.operation) {
+      if (!this.isCurrent(operation)) {
         stop();
-        releaseMicrophone();
+        releaseMicrophone().catch(() => undefined);
         return;
       }
-      this.stopCapture = () => {
+      operation.stopCapture = () => {
         try {
           stop();
         } finally {
-          releaseMicrophone();
+          releaseMicrophone().catch(() => undefined);
         }
       };
       this.patch(binding.scope, { backend: "android", phase: "recording" });
     } catch (error) {
-      releaseMicrophone();
-      if (operation !== this.operation) {
+      releaseMicrophone().catch(() => undefined);
+      if (!this.isCurrent(operation)) {
         return;
       }
+      this.removeOperation(operation);
       this.resetUi(binding.scope, { error: messageOf(error) });
-      if (this.activeBinding === binding) {
-        this.activeBinding = null;
-      }
     }
   }
 
@@ -793,36 +819,60 @@ export class VoiceInputController {
     await this.toggle(binding.scope);
   }
 
-  private failOperation(scope: string, message: string): void {
-    this.operation += 1;
-    this.recording?.abort();
-    this.stopCaptureWithFeedback(scope);
-    const session = this.session;
-    this.session = null;
-    this.sessionPromise = null;
-    this.sendAfterFinish = null;
-    this.retrySendAfter = null;
-    this.transcribedDraft = null;
+  private async failOperation(operation: VoiceOperation, message: string): Promise<void> {
+    if (!this.isCurrent(operation)) {
+      return;
+    }
+    const scope = operation.binding.scope;
+    operation.recording.abort();
+    this.removeOperation(operation);
+    await this.stopOperationCapture(operation).catch(() => undefined);
+    const session = operation.session;
+    operation.session = null;
+    operation.sessionPromise = null;
+    operation.sendAfterFinish = null;
+    operation.retrySendAfter = null;
     if (session !== null) {
       void session.cancel().catch(() => undefined);
     }
     this.resetUi(scope, { error: message });
-    if (this.activeBinding?.scope === scope) {
-      this.activeBinding = null;
+  }
+
+  private async stopOperationCapture(operation: VoiceOperation): Promise<void> {
+    const stop = operation.stopCapture;
+    operation.stopCapture = null;
+    if (stop === null) {
+      operation.resolveCaptureStopped();
+      return;
+    }
+    try {
+      await stop();
+    } finally {
+      operation.resolveCaptureStopped();
     }
   }
 
-  private stopCaptureWithFeedback(scope: string): void {
-    const stop = this.stopCapture;
-    this.stopCapture = null;
-    if (stop === null) {
+  private isCurrent(operation: VoiceOperation): boolean {
+    return this.operations.get(operation.binding.scope) === operation;
+  }
+
+  private removeOperation(operation: VoiceOperation): void {
+    if (this.operations.get(operation.binding.scope) === operation) {
+      this.operations.delete(operation.binding.scope);
+    }
+    if (this.activeOperation === operation) {
+      this.setActiveOperation(null);
+    }
+  }
+
+  private setActiveOperation(operation: VoiceOperation | null): void {
+    if (this.activeOperation === operation) {
       return;
     }
-    Promise.resolve()
-      .then(stop)
-      .catch((error: unknown) => {
-        this.patch(scope, { error: `Could not stop microphone: ${messageOf(error)}` });
-      });
+    this.activeOperation = operation;
+    for (const listener of this.activeCaptureSubscribers) {
+      listener();
+    }
   }
 
   private resetUi(

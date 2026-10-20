@@ -1,4 +1,5 @@
 import { useEvent } from "../../react/useEvent";
+import type { VoiceInputController } from "../../data/voice-input-controller";
 import { useMicrophoneAccess } from "../../ui/use-microphone-access";
 import type { ComposerSendPreference } from "./deliveryMode";
 import type { VoiceBindingCapabilities } from "./voice/voiceBindingCapabilities";
@@ -67,6 +68,7 @@ import type { View } from "react-native";
 import type { WorkspaceResourceDatabase } from "../../data/workspace-resource-database";
 import { useAppNotice } from "../../ui/useAppNotice";
 import { useScopedVoiceInputResource } from "../../ui/VoiceInputRuntime";
+import { useVoiceInputDisabled } from "../../ui/useVoiceInputDisabled";
 
 const VOICE_ERROR_NOTICE_DURATION_MS = 3000;
 
@@ -75,12 +77,14 @@ export function useComposerVoiceState(
   workspaceResources: WorkspaceResourceDatabase | null,
   draftConnectionId: string | null,
   draftThreadId: string | null,
+  voiceController: VoiceInputController | null = null,
 ) {
   const showNotice = useAppNotice().show;
   const voiceResource = useScopedVoiceInputResource(
     workspaceResources,
     draftConnectionId === null || draftThreadId === null ? null : composerScope,
   );
+  const voiceDisabled = useVoiceInputDisabled(voiceController, composerScope);
 
   const voicePhase = voiceResource?.phase ?? "idle";
 
@@ -104,6 +108,7 @@ export function useComposerVoiceState(
     microphoneButtonRef,
     pendingVoiceSelection,
     voiceBackend,
+    voiceDisabled,
     voiceError,
     voicePhase,
     voiceResource,

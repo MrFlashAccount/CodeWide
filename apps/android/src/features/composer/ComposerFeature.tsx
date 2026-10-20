@@ -163,6 +163,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 microphoneButtonRef={props.microphoneButtonRef}
                 retryVoice={props.retryVoice}
                 toggleVoice={props.toggleVoice}
+                voiceDisabled={props.voiceDisabled}
                 voicePhase={props.voicePhase}
                 voiceRetryAvailable={props.voiceRetryAvailable}
               />

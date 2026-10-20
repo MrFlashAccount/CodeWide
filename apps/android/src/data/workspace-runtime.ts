@@ -89,6 +89,7 @@ import {
   VOICE_ASSISTANT_PERSONALITY_PREFERENCE_ID,
 } from "./voiceAssistantPersonality";
 import { createVoiceTransport } from "./voice-transport";
+import { hydrateVoiceHandoffPreference } from "./voiceHandoffPreference";
 import { globalSupervisorConnectionReadiness } from "./globalSupervisorConnectionReadiness";
 import {
   decodeVoiceAssistantBackgroundModelPreference,
@@ -244,6 +245,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       globalSupervisorAttention.ready,
       hydrateGlobalVoiceOrbStylePreference(),
       hydrateTimelineRowPremeasurementPreference(),
+      hydrateVoiceHandoffPreference(),
       details.prepare(),
       profiles.collection.preload(),
       pendingRequests.collection.preload(),
