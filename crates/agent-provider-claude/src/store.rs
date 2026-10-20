@@ -49,8 +49,10 @@ const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// through the Claude host. 7: background task reports as items. 8: a
 /// nested background agent settled by a report in any transcript of its
 /// session (they stayed running forever), and the background task a
-/// `command` item started (`backgroundTaskId`).
-pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 8;
+/// `command` item started (`backgroundTaskId`). 9: a finished sub-agent a
+/// `SendMessage` call resumed is running again until that run reports (it
+/// stayed finished).
+pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 9;
 
 /// The Claude tables' schema in the host index.
 pub const CLAUDE_INDEX_SCHEMA: ClaudeIndexSchema = ClaudeIndexSchema;

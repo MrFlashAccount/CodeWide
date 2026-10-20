@@ -660,3 +660,190 @@ async fn a_nested_background_agent_settles_on_a_report_in_any_transcript()
     assert_eq!(running, ["outer1"]);
     Ok(())
 }
+
+fn wake(uuid: &str, parent: &str, second: u32, agent: &str, tool_use: &str) -> Value {
+    let mut wake = user(uuid, Some(parent), second, &json!(report(agent, tool_use)));
+    wake["origin"] = json!({"kind": "task-notification"});
+    wake
+}
+
+/// The result of a `SendMessage` call, as Claude stores it.
+fn send_result(uuid: &str, parent: &str, second: u32, result: &Value) -> Value {
+    let mut row = user(
+        uuid,
+        Some(parent),
+        second,
+        &json!([{"type": "tool_result", "tool_use_id": "toolu_send",
+            "content": [{"type": "text", "text": result.to_string()}]}]),
+    );
+    row["toolUseResult"] = result.clone();
+    row
+}
+
+/// A background agent that finished, then a `SendMessage` call answered with
+/// `send`; `ending` are the main conversation's rows after it.
+fn write_resumed_store(
+    root: &Path,
+    send: &Value,
+    ending: &[Value],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (projects, _) = fixture_paths(root);
+    let project = projects.join("-work");
+    let directory = project.join(SESSION).join("subagents");
+    std::fs::create_dir_all(&directory)?;
+    let mut session = vec![
+        user("p1", None, 1, &json!("Draft it")),
+        assistant(
+            "a1",
+            "p1",
+            2,
+            &json!([{"type": "tool_use", "id": "toolu_spawn", "name": "Agent",
+            "input": {"description": "Draft", "prompt": "Draft", "run_in_background": true}}]),
+        ),
+        user(
+            "r1",
+            Some("a1"),
+            3,
+            &json!([{"type": "tool_result", "tool_use_id": "toolu_spawn",
+            "content": "Async agent launched successfully.\nagentId: agent1"}]),
+        ),
+        assistant(
+            "a2",
+            "r1",
+            4,
+            &json!([{"type": "text", "text": "Started."}]),
+        ),
+        wake("w1", "a2", 10, "agent1", "toolu_spawn"),
+        assistant(
+            "a3",
+            "w1",
+            11,
+            &json!([{"type": "tool_use", "id": "toolu_send", "name": "SendMessage",
+            "input": {"to": "agent1", "message": "Revise it"}}]),
+        ),
+        send_result("r2", "a3", 12, send),
+        assistant("a4", "r2", 13, &json!([{"type": "text", "text": "Sent."}])),
+    ];
+    session.extend_from_slice(ending);
+    std::fs::write(
+        project.join(format!("{SESSION}.jsonl")),
+        session.iter().map(row).collect::<String>(),
+    )?;
+    let agent = [
+        sidechain(
+            "agent1",
+            "s1",
+            None,
+            3,
+            "user",
+            &json!({"role": "user", "content": "Draft"}),
+        ),
+        sidechain(
+            "agent1",
+            "s2",
+            Some("s1"),
+            9,
+            "assistant",
+            &json!({"id": "msg_s2", "role": "assistant", "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": "Drafted."}]}),
+        ),
+        {
+            let mut resumed = sidechain(
+                "agent1",
+                "s3",
+                Some("s2"),
+                12,
+                "user",
+                &json!({"role": "user", "content": "Revise it"}),
+            );
+            resumed["isMeta"] = json!(true);
+            resumed["origin"] = json!({"kind": "coordinator"});
+            resumed
+        },
+        sidechain(
+            "agent1",
+            "s4",
+            Some("s3"),
+            13,
+            "assistant",
+            &json!({"id": "msg_s4", "role": "assistant",
+                "content": [{"type": "tool_use", "id": "toolu_edit", "name": "Bash", "input": {"command": "edit"}}]}),
+        ),
+    ];
+    std::fs::write(
+        directory.join("agent-agent1.jsonl"),
+        agent.iter().map(row).collect::<String>(),
+    )?;
+    std::fs::write(
+        directory.join("agent-agent1.meta.json"),
+        r#"{"toolUseId":"toolu_spawn"}"#,
+    )?;
+    Ok(())
+}
+
+fn resumed() -> Value {
+    json!({"success": true, "message": "Resuming agent agent1", "resumedAgentId": "agent1"})
+}
+
+/// The spawning item's status and whether the index lists the agent running.
+async fn agent_state(root: &Path) -> Result<(SubagentStatus, bool), Box<dyn std::error::Error>> {
+    let read = sessions(root).read(SESSION).await?;
+    let status = read
+        .turns
+        .iter()
+        .flat_map(|turn| turn.items.iter())
+        .find_map(|item| match item {
+            AgentItem::Subagent { status, .. } => Some(*status),
+            _ => None,
+        })
+        .ok_or("spawn item")?;
+    let running = crate::subagents::index(&read)
+        .iter()
+        .any(|subagent| subagent.agent_id == "agent1" && subagent.running);
+    Ok((status, running))
+}
+
+#[tokio::test]
+async fn a_finished_agent_a_message_resumes_works_again_until_that_run_reports()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write_resumed_store(root.path(), &resumed(), &[])?;
+    assert_eq!(
+        agent_state(root.path()).await?,
+        (SubagentStatus::Running, true)
+    );
+    let read = sessions(root.path()).read(SESSION).await?;
+    assert_eq!(
+        read.subagents[0].turns.last().map(|turn| turn.status),
+        Some(TurnStatus::InProgress)
+    );
+
+    let finished = tempfile::tempdir()?;
+    write_resumed_store(
+        finished.path(),
+        &resumed(),
+        &[wake("w2", "a4", 20, "agent1", "toolu_send")],
+    )?;
+    assert_eq!(
+        agent_state(finished.path()).await?,
+        (SubagentStatus::Completed, false)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_message_that_resumes_no_agent_leaves_a_finished_agent_finished()
+-> Result<(), Box<dyn std::error::Error>> {
+    for send in [
+        json!({"success": true, "message": "Message queued for delivery to agent1"}),
+        json!({"success": false, "message": "Agent agent1 was stopped by the user"}),
+    ] {
+        let root = tempfile::tempdir()?;
+        write_resumed_store(root.path(), &send, &[])?;
+        assert_eq!(
+            agent_state(root.path()).await?,
+            (SubagentStatus::Completed, false)
+        );
+    }
+    Ok(())
+}
