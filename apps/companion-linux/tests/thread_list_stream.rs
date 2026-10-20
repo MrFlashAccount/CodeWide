@@ -138,13 +138,27 @@ impl Harness {
 
     /// Journals one event and waits until it is durable.
     async fn journal(&self, payload: Value) -> Result<u64, Box<dyn std::error::Error>> {
+        self.journal_all([payload]).await
+    }
+
+    /// Sends the events back to back, so the ingest journals them as one
+    /// batch, and waits until every one is durable. Journaling them one at a
+    /// time would make each wait for its own commit.
+    async fn journal_all(
+        &self,
+        payloads: impl IntoIterator<Item = Value>,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
         let before = self.store.replay_head()?;
-        self.events.send(payload)?;
+        let mut sent = 0;
+        for payload in payloads {
+            self.events.send(payload)?;
+            sent += 1;
+        }
         let store = self.store.clone();
         timeout(Duration::from_secs(2), async move {
             loop {
                 let head = store.replay_head()?;
-                if head > before {
+                if head >= before + sent {
                     return Ok::<u64, Box<dyn std::error::Error>>(head);
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -294,9 +308,9 @@ async fn page_rows_carry_the_pre_read_head_and_ten_changes_share_one_frame() -> 
     let first = receive_type(&mut socket, FRAME_TYPE).await?;
     assert_eq!(frame_ids(&first), [threads[0].clone()]);
     let started = Instant::now();
-    for id in &threads {
-        harness.journal(delta(id, " more")).await?;
-    }
+    harness
+        .journal_all(threads.iter().map(|id| delta(id, " more")))
+        .await?;
     assert!(
         started.elapsed() < COALESCE_INTERVAL,
         "the changes share one interval"

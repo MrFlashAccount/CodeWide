@@ -24,10 +24,10 @@ use agent_core::model::{
 };
 
 use super::{
-    agents::{NotifiedStatuses, SubagentItem},
+    agents::{SubagentItem, SubagentRuns, is_send_message_tool, resumed_agent_id},
     builder::{TurnBuilder, TurnBuilderContext, UserMessage},
     entries::{HistoryEntry, history_entries},
-    frames::ClaudeFrame,
+    frames::{AssistantBlock, ClaudeFrame},
     json::{JsonRecord, record_of as json_record, str_of},
     result::TurnOutcome,
     segments::{HistorySegment, SegmentHints, SegmentReport, history_segments},
@@ -322,36 +322,66 @@ fn replay_running_segment(segment: &HistorySegment, context: &HistoryContext) ->
     replay_entries(segment, None, context).snapshot()
 }
 
-/// Sub-agent items carry the final status a later task report of the
-/// same conversation level reported (a background agent finishes after the
-/// turn that started it).
-fn with_notified_statuses(turns: Vec<AgentTurn>, entries: &[HistoryEntry]) -> Vec<AgentTurn> {
-    let mut statuses = NotifiedStatuses::default();
-    record_wakes(&mut statuses, entries);
-    settle_subagent_items(turns, &statuses)
+/// Sub-agent items carry the status of their agent's latest run at the same
+/// conversation level: the final status a later task report reported (a
+/// background agent finishes after the turn that started it), or running
+/// again while a resume is unreported.
+fn with_subagent_runs(turns: Vec<AgentTurn>, entries: &[HistoryEntry]) -> Vec<AgentTurn> {
+    let mut runs = SubagentRuns::default();
+    record_runs(&mut runs, entries);
+    settle_subagent_items(turns, &runs)
 }
 
-fn record_wakes(statuses: &mut NotifiedStatuses, entries: &[HistoryEntry]) {
+fn record_runs(runs: &mut SubagentRuns, entries: &[HistoryEntry]) {
+    let mut send_message_calls = HashSet::new();
     for entry in entries {
-        if let HistoryEntry::Wake { reports, .. } = entry {
-            for report in reports {
-                statuses.record(report);
+        match entry {
+            HistoryEntry::Wake { reports, .. } => {
+                for report in reports {
+                    runs.record(report);
+                }
             }
+            HistoryEntry::Frame {
+                frame: ClaudeFrame::Assistant(assistant),
+                ..
+            } => {
+                for block in &assistant.blocks {
+                    if let AssistantBlock::ToolUse { id, name, .. } = block
+                        && is_send_message_tool(name)
+                    {
+                        send_message_calls.insert(id.as_str());
+                    }
+                }
+            }
+            HistoryEntry::Frame {
+                frame: ClaudeFrame::User(user),
+                ..
+            } => {
+                for result in &user.tool_results {
+                    if send_message_calls.contains(result.tool_use_id.as_str())
+                        && let Some(agent_id) = resumed_agent_id(result, &user.tool_use_result)
+                    {
+                        runs.record_resume(&result.tool_use_id, &agent_id);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
 
-/// Records the final status of every task report one stored transcript of a
-/// session holds: its report messages and the reports Claude queued into it
-/// as `queued_command` attachments. A report may reach a conversation other
-/// than the one that spawned its agent: a nested background agent reports
-/// to its parent sub-agent (a sub-agent transcript keeps that report only as
-/// an attachment) or, when that one is busy or done, to the main conversation.
-pub fn record_transcript_reports(statuses: &mut NotifiedStatuses, rows: &[&JsonRecord]) {
-    record_wakes(statuses, &history_entries(rows, subagent_parent(rows)));
+/// Records the sub-agent runs one stored transcript of a session holds: the
+/// final status of its task report messages and of the reports Claude queued
+/// into it as `queued_command` attachments, and its resuming `SendMessage`
+/// calls. A report may reach a conversation other than the one that spawned
+/// its agent: a nested background agent reports to its parent sub-agent (a
+/// sub-agent transcript keeps that report only as an attachment) or, when
+/// that one is busy or done, to the main conversation.
+pub fn record_transcript_runs(runs: &mut SubagentRuns, rows: &[&JsonRecord]) {
+    record_runs(runs, &history_entries(rows, subagent_parent(rows)));
     for prompt in rows.iter().filter_map(|row| queued_task_notification(row)) {
         for report in stored_task_reports(prompt) {
-            statuses.record(&report);
+            runs.record(&report);
         }
     }
 }
@@ -364,17 +394,17 @@ fn queued_task_notification(row: &JsonRecord) -> Option<&str> {
         .and_then(|attachment| str_of(attachment, "prompt"))
 }
 
-/// The turns with every still-running sub-agent item a report in `statuses`
-/// settled carrying that report's final status.
+/// The turns with every sub-agent item carrying the status of its agent's
+/// latest run in `runs` (see [`SubagentRuns::apply`]).
 #[must_use]
-pub fn settle_subagent_items(turns: Vec<AgentTurn>, statuses: &NotifiedStatuses) -> Vec<AgentTurn> {
+pub fn settle_subagent_items(turns: Vec<AgentTurn>, runs: &SubagentRuns) -> Vec<AgentTurn> {
     turns
         .into_iter()
         .map(|mut turn| {
             for item in &mut turn.items {
                 if let Some(subagent) = SubagentItem::from_item(item) {
                     let provenance = item.provenance().cloned();
-                    let mut updated = statuses.apply(subagent).into_item();
+                    let mut updated = runs.apply(subagent).into_item();
                     if let Some(provenance) = provenance {
                         updated.stamp(&provenance);
                     }
@@ -400,7 +430,7 @@ pub fn reconstruct_turns(
         .iter()
         .map(|segment| replay_segment(segment, records, context))
         .collect();
-    with_notified_statuses(turns, &entries)
+    with_subagent_runs(turns, &entries)
 }
 
 /// Where one rebuilt turn ends in the stored messages.
@@ -463,7 +493,7 @@ pub fn reconstruct_subagent_turns(
             }
         })
         .collect();
-    with_notified_statuses(turns, &entries)
+    with_subagent_runs(turns, &entries)
 }
 
 /// Agent ids whose spawning item, in any of `turns`, still reports `running`.

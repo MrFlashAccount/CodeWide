@@ -39,12 +39,12 @@ use serde_json::Value;
 use crate::{
     indexer::NativeSessions,
     transcript::{
-        agents::NotifiedStatuses,
+        agents::SubagentRuns,
         chain::active_branch,
         json::{JsonRecord, str_of},
         reconstruct::{
-            HistoryContext, reconstruct_subagent_turns, reconstruct_turns,
-            record_transcript_reports, running_agents, settle_subagent_items,
+            HistoryContext, reconstruct_subagent_turns, reconstruct_turns, record_transcript_runs,
+            running_agents, settle_subagent_items,
         },
         turn_index::TurnRecord,
     },
@@ -252,9 +252,9 @@ fn read(paths: &Paths, session_id: &str) -> Result<NativeSessionReadResult, Prov
         records,
     );
     let transcripts = subagent_transcripts(&file);
-    let statuses = session_statuses(&messages, &transcripts);
-    let turns = settle_subagent_items(turns, &statuses);
-    let subagents = native_subagents(&transcripts, &turns, &context, &statuses);
+    let runs = session_runs(&messages, &transcripts);
+    let turns = settle_subagent_items(turns, &runs);
+    let subagents = native_subagents(&transcripts, &turns, &context, &runs);
     let session = native_session(&file, meta, owner).ok_or_else(|| not_found(session_id))?;
     Ok(NativeSessionReadResult {
         session,
@@ -324,40 +324,38 @@ fn subagent_transcripts(session: &SessionFile) -> Vec<SubagentTranscript> {
         .collect()
 }
 
-/// The final status of every task report anywhere in the session: a
-/// report reaches whichever conversation was there to take it, not always
-/// the one that spawned its agent.
-fn session_statuses(
-    messages: &[&JsonRecord],
-    transcripts: &[SubagentTranscript],
-) -> NotifiedStatuses {
-    let mut statuses = NotifiedStatuses::default();
-    record_transcript_reports(&mut statuses, messages);
+/// The sub-agent runs recorded anywhere in the session: a report reaches
+/// whichever conversation was there to take it, not always the one that
+/// spawned its agent, and any conversation may resume an agent.
+fn session_runs(messages: &[&JsonRecord], transcripts: &[SubagentTranscript]) -> SubagentRuns {
+    let mut runs = SubagentRuns::default();
+    record_transcript_runs(&mut runs, messages);
     for transcript in transcripts {
         let rows = transcript
             .rows
             .iter()
             .filter_map(Value::as_object)
             .collect::<Vec<_>>();
-        record_transcript_reports(&mut statuses, &rows);
+        record_transcript_runs(&mut runs, &rows);
     }
-    statuses
+    runs
 }
 
 /// Each sub-agent transcript as neutral turns; a sub-agent its spawning item
 /// (in the main conversation or another sub-agent) reports `running` keeps
 /// its last turn in progress. A spawning item is running until a report
-/// anywhere in the session settles it.
+/// anywhere in the session settles it, and again while a resume of its agent
+/// is unreported.
 fn native_subagents(
     transcripts: &[SubagentTranscript],
     turns: &[AgentTurn],
     context: &HistoryContext,
-    statuses: &NotifiedStatuses,
+    runs: &SubagentRuns,
 ) -> Vec<NativeSubagent> {
     let subagent_turns = |transcript: &SubagentTranscript, running: bool| {
         settle_subagent_items(
             reconstruct_subagent_turns(&transcript_rows(&transcript.rows), context, running),
-            statuses,
+            runs,
         )
     };
     let settled = transcripts
