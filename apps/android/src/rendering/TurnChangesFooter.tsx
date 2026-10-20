@@ -18,7 +18,7 @@ export function TurnChangesFooter(props: TurnChangesFooterProps) {
   const present = useContext(TurnChangesContext);
   const open = useEvent(() => {
     if (present !== null) {
-      present(props.target, turnChangedFiles(props.diff));
+      present(props.target, turnChangedFiles(props.diff), "turn");
     }
   });
   if (present === null || props.diff.trim() === "") {

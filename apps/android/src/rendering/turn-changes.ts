@@ -32,6 +32,36 @@ export function turnItemChanges(items: readonly ThreadItem[]): readonly TurnChan
   return files;
 }
 
+/** Projects the structured changes of one rendered file-change item without widening to its turn. */
+export function recordedItemChanges(itemId: string, value: unknown): readonly TurnChangedFile[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const files: TurnChangedFile[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    if (typeof entry.path !== "string" || typeof entry.diff !== "string") {
+      continue;
+    }
+    const projection = projectFileChange(entry.diff, entry.kind);
+    files.push({
+      additions: projection.additions,
+      deletions: projection.deletions,
+      itemId,
+      kind: projection.kind,
+      patch: projection.renderSource,
+      path: entry.path,
+    });
+  }
+  return files;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 /** Only the recorded turn diff is accepted: no worktree/current-file fallback. */
 export function turnChangedFiles(diff: string): readonly TurnChangedFile[] {
   // Companion and the live reducer can truncate a turn-wide diff in the

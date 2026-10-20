@@ -13,12 +13,14 @@ import { renderToolRichItems } from "./ToolRichItems";
 /** V1 ToolContent owner, extracted without changing interaction or resource lifetime. */
 import { useContext } from "react";
 import { Linking, Pressable } from "react-native";
+import { useEvent } from "../../../react/useEvent";
 import { boundedJsonStringify } from "../../../rendering/bounded-json";
 import { isSafeHttpUrl } from "../../../rendering/http-link";
 import { collapsedCodePreview } from "../../../rendering/native-code-block";
 import { formatDuration } from "../../../ui/number-format";
 import { AppText as Text } from "../../../ui/Typography";
 import { EXPANDED_BODY_CHARS } from "../content/contentLimits";
+import { LargeContentViewerContext } from "../content/contentViewerContext";
 import { Card, usePersistentExpansion } from "../turns/Card";
 import { COLLAPSED_BODY_CHARS } from "../turns/disclosureState";
 import { ActiveToolCallContext, ExpansionItemKeyContext } from "../turns/turnContexts";
@@ -29,6 +31,18 @@ import { styles } from "./ToolContent.styles";
 export const TOOL_RESULT_MAX_HEIGHT = 400;
 
 export function ToolCallProtocolBlock({ block, getTransferAccess }: ToolCallProtocolBlockInput) {
+  const openContent = useContext(LargeContentViewerContext);
+  const content = protocolCopyText(block);
+  const openResult = useEvent(() => {
+    if (openContent !== null && content !== "") {
+      openContent({
+        kind: "inline",
+        presentation: "text",
+        text: content,
+        title: block.title,
+      });
+    }
+  });
   return (
     <Card
       icon="extension-puzzle-outline"
@@ -37,6 +51,9 @@ export function ToolCallProtocolBlock({ block, getTransferAccess }: ToolCallProt
       collapsible
       copyText={() => protocolCopyText(block)}
       initiallyExpanded={false}
+      {...(openContent !== null && content !== ""
+        ? { onOpen: openResult, openLabel: `Open ${block.title} output` }
+        : {})}
     >
       <ToolCallProtocolDetails
         block={block}

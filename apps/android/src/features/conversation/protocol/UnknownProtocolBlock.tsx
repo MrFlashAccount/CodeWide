@@ -1,13 +1,15 @@
 /** V1 UnknownProtocolBlock owner, extracted without changing interaction or resource lifetime. */
 import type { RenderBlock } from "@codewide/renderers";
 import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useInsideBubbleSurface } from "../../../rendering/Bubble";
+import { useEvent } from "../../../react/useEvent";
 import { colors, iconSize } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { AppText as Text } from "../../../ui/Typography";
 import { CopyButton } from "../turns/MessageActionRail";
+import { LargeContentViewerContext } from "../content/contentViewerContext";
 import { protocolCopyText } from "./protocolCopyText";
 import { styles } from "./UnknownProtocolBlock.styles";
 
@@ -19,9 +21,21 @@ export function UnknownProtocolBlock({
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
 }) {
   const insideBubbleSurface = useInsideBubbleSurface();
+  const openContent = useContext(LargeContentViewerContext);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rawType = typeof block.raw.type === "string" ? block.raw.type : block.kind;
+  const content = protocolCopyText(block);
+  const openRawContent = useEvent(() => {
+    if (openContent !== null && content !== "") {
+      openContent({
+        kind: "inline",
+        presentation: "text",
+        text: content,
+        title: `Unsupported · ${rawType}`,
+      });
+    }
+  });
   const fix = async () => {
     if (onFixUnsupportedBlock === undefined || busy) {
       return;
@@ -38,10 +52,16 @@ export function UnknownProtocolBlock({
   return (
     <View style={[styles.unknownCard, insideBubbleSurface && styles.bubbleNestedSurface]}>
       <Ionicons color={colors.amber} name="cube-outline" size={iconSize.action} />
-      <View style={styles.flex}>
+      <Pressable
+        accessibilityLabel={`Open unsupported block ${rawType}`}
+        accessibilityRole="button"
+        disabled={openContent === null || content === ""}
+        onPress={openRawContent}
+        style={styles.flex}
+      >
         <Text style={styles.unknownText}>Unsupported · {rawType}</Text>
         {error !== null && <Text style={styles.errorText}>{error}</Text>}
-      </View>
+      </Pressable>
       <CopyButton getText={() => protocolCopyText(block)} />
       <Pressable
         accessibilityLabel={`Fix unsupported block ${rawType} in new thread`}

@@ -3,6 +3,7 @@ import type { Ionicons } from "@expo/vector-icons";
 import { useContext, useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { useInsideBubbleSurface } from "../../../rendering/Bubble";
+import { useEvent } from "../../../react/useEvent";
 import { colors } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { AppText as Text } from "../../../ui/Typography";
@@ -23,6 +24,9 @@ export function Card({
   headerMeta,
   icon,
   initiallyExpanded = true,
+  onOpen,
+  openEnabled = true,
+  openLabel,
   status,
   title,
 }: {
@@ -32,6 +36,9 @@ export function Card({
   headerMeta?: ReactNode;
   icon: keyof typeof Ionicons.glyphMap;
   initiallyExpanded?: boolean;
+  onOpen?: () => void;
+  openEnabled?: boolean;
+  openLabel?: string;
   status?: string;
   title: string;
 }) {
@@ -42,6 +49,19 @@ export function Card({
   const activeToolCall = useContext(ActiveToolCallContext);
   const isRunning = status === "inProgress" || status === "running" || activeToolCall;
   const visiblyExpanded = forceExpanded || expanded;
+  const hasOpenAction = onOpen !== undefined && openEnabled;
+  const toggleExpanded = useEvent(() => {
+    setExpanded(!visiblyExpanded);
+  });
+  const activateHeader = useEvent(hasOpenAction ? onOpen : toggleExpanded);
+  const headerIsButton = hasOpenAction || collapsible;
+  const disclosureIcon = collapsible ? (
+    <InlineIcon
+      color={colors.textDim}
+      name={visiblyExpanded ? "chevron-up" : "chevron-down"}
+      role="label"
+    />
+  ) : null;
   return (
     <View
       collapsable={false}
@@ -51,14 +71,16 @@ export function Card({
       <View collapsable={false} style={styles.cardHeader} testID="protocol-card-header">
         <Pressable
           accessibilityLabel={
-            collapsible ? `${visiblyExpanded ? "Collapse" : "Expand"} ${title}` : undefined
+            hasOpenAction
+              ? (openLabel ?? `Open ${title}`)
+              : collapsible
+                ? `${visiblyExpanded ? "Collapse" : "Expand"} ${title}`
+                : undefined
           }
-          accessibilityRole={collapsible ? "button" : undefined}
-          disabled={!collapsible}
-          hitSlop={collapsible ? 10 : undefined}
-          onPress={() => {
-            setExpanded(!visiblyExpanded);
-          }}
+          accessibilityRole={headerIsButton ? "button" : undefined}
+          disabled={!headerIsButton}
+          hitSlop={headerIsButton ? 10 : undefined}
+          onPress={activateHeader}
           style={styles.cardHeaderToggle}
         >
           <View style={styles.cardIconSlot} testID="protocol-card-icon">
@@ -87,14 +109,19 @@ export function Card({
               )}
             </View>
           )}
-          {collapsible && (
-            <InlineIcon
-              color={colors.textDim}
-              name={visiblyExpanded ? "chevron-up" : "chevron-down"}
-              role="label"
-            />
-          )}
+          {!hasOpenAction && disclosureIcon}
         </Pressable>
+        {collapsible && hasOpenAction && (
+          <Pressable
+            accessibilityLabel={`${visiblyExpanded ? "Collapse" : "Expand"} ${title}`}
+            accessibilityRole="button"
+            hitSlop={10}
+            onPress={toggleExpanded}
+            style={styles.cardDisclosure}
+          >
+            {disclosureIcon}
+          </Pressable>
+        )}
         {copyText !== undefined && !collapsible && <CopyButton getText={copyText} />}
       </View>
       {(!collapsible || visiblyExpanded) && <View style={styles.cardContent}>{children}</View>}
