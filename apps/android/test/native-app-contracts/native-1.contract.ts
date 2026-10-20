@@ -145,7 +145,8 @@ it("preserves native integration contracts — 1", () => {
   expect(connectionService).toContain("reconcileTurnCommand(command, params)");
   expect(connectionService).toContain('protocolEngine.rpc(\n        "thread/turns/list"');
   expect(connectionService).toContain("turnsContainClientMessage(response, command.commandId)");
-  expect(connectionService).toContain("OUTBOX_RECONCILE_DELAY_MS = 2_000L");
+  expect(connectionService).toContain("OUTBOX_RETRY_DELAY_MS = 2_000L");
+  expect(connectionService).toContain("OUTBOX_EVENT_WATCHDOG_MS = 30_000L");
   expect(nativeModule).toContain("fun engineEnqueueCommand(");
   expect(nativeModule).toContain("fun engineListCommands(promise: Promise)");
   expect(nativeModule).toContain("fun engineAcknowledgeCommandReceipt(");
