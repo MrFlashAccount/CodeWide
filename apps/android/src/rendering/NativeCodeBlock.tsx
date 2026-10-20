@@ -1,5 +1,5 @@
 import { ScrollView, StyleSheet, View } from "react-native";
-import { useContext } from "react";
+import { useContext, type ReactElement } from "react";
 import { HighlightSearchText, SearchHighlightQuery } from "./SearchMessageFocus";
 
 import { NativeCodeBlockHost } from "../presentation/nativeCodeBlockHost";
@@ -45,18 +45,7 @@ export function NativeCodeBlock({
   if (NativeCodeBlockHost === null) {
     const fallbackValue =
       variant === "terminal" ? stripTerminalControlSequences(preview.value) : preview.value;
-    return (
-      <ScrollView
-        contentContainerStyle={styles.fallbackContent}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={[styles.fallbackViewport, { height }]}
-      >
-        <Text selectable style={styles.fallbackText}>
-          <HighlightSearchText text={fallbackValue} />
-        </Text>
-      </ScrollView>
-    );
+    return <NativeCodeBlockFallback height={height} value={fallbackValue} />;
   }
   return (
     <View
@@ -83,6 +72,39 @@ export function NativeCodeBlock({
         </Text>
       )}
     </View>
+  );
+}
+
+function NativeCodeBlockFallback({
+  height,
+  value,
+}: {
+  readonly height: number;
+  readonly value: string;
+}): ReactElement {
+  return (
+    <ScrollView
+      nestedScrollEnabled
+      showsVerticalScrollIndicator
+      style={[styles.fallbackViewport, { height }]}
+    >
+      <NativeCodeBlockFallbackRow value={value} />
+    </ScrollView>
+  );
+}
+
+function NativeCodeBlockFallbackRow({ value }: { readonly value: string }): ReactElement {
+  return (
+    <ScrollView
+      contentContainerStyle={styles.fallbackContent}
+      horizontal
+      nestedScrollEnabled
+      showsHorizontalScrollIndicator
+    >
+      <Text selectable style={styles.fallbackText}>
+        <HighlightSearchText text={value} />
+      </Text>
+    </ScrollView>
   );
 }
 

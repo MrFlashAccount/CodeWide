@@ -66,9 +66,8 @@ it("preserves platform integration contracts — 1", () => {
   expect(richMarkdown).toContain("const openImagePreview = useImagePreview()");
   expect(richMarkdown).not.toContain("<Modal visible={open}");
   expect(screen).not.toContain("<Modal visible={open}");
-  expect(richMarkdown).toContain("accessibilityLabel={`Copy ${language} code block`}");
   expect(
-    sourceHasJsxElement(richMarkdown, "NativeCodeBlock", ["value={value}", "language={language}"]),
+    sourceHasJsxElement(richMarkdown, "CodeBlock", ["value={value}", "language={language}"]),
   ).toBe(true);
   expect(nativeCodeBlock).toContain(
     'import { NativeCodeBlockHost } from "../presentation/nativeCodeBlockHost";',

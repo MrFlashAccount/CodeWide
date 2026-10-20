@@ -9,7 +9,7 @@ import {
   type TextStyle,
 } from "expo-pretext";
 
-import { iconSize, layoutSize, spacing, typeScale } from "../theme";
+import { controlSize, iconSize, layoutSize, spacing, typeScale } from "../theme";
 import { productFonts } from "../ui/product-fonts";
 import { looksLikeAsciiDiagram } from "./ascii-diagram";
 import { isRemoteFileHref, remoteFileKind } from "./document-preview";
@@ -32,6 +32,7 @@ export const richMarkdownGeometry = {
   blockquoteInset: spacing.xs + spacing.optical,
   codeBorderWidth: 1,
   codeGap: spacing.xxs,
+  codeHeaderHeight: controlSize.compact,
   codePadding: spacing.xs,
   diagramFallbackPaddingVertical: spacing.xxs,
   diagramHeaderHeight: layoutSize.header,
@@ -426,7 +427,10 @@ function measureCode(
     return exactHeight(fallbackChrome + nativeCodeHeight(preview.value) + truncationHeight);
   }
   const preview = nativeCodePreview(value);
-  const headerHeight = typeScale.caption.lineHeight * fontScale;
+  const headerHeight = Math.max(
+    richMarkdownGeometry.codeHeaderHeight,
+    typeScale.caption.lineHeight * fontScale,
+  );
   const truncationHeight = preview.truncated
     ? richMarkdownGeometry.codeGap + typeScale.caption.lineHeight * fontScale
     : 0;

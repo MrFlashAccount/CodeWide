@@ -7,14 +7,12 @@ import {
   richMarkdownBlockIndexAtLine,
 } from "@codewide/rendering-core";
 import { Ionicons } from "@expo/vector-icons";
-import * as Clipboard from "expo-clipboard";
 import {
   createContext,
   type ComponentProps,
   type ReactNode,
   useContext,
   useId,
-  useRef,
   useState,
 } from "react";
 import {
@@ -52,8 +50,7 @@ import { markdownNodeIdentity } from "./markdownNodeIdentity";
 import { collectMarkdownImageOrder, type MarkdownImageNode } from "./markdown-image-order";
 import type { MarkdownDocumentBlock } from "./markdown-document-blocks";
 import { AsciiDiagram, MermaidDiagram } from "./MermaidDiagram";
-import { NativeCodeBlock } from "./NativeCodeBlock";
-import { CodeBlockHeader } from "./CodeBlockHeader";
+import { CodeBlock } from "./CodeBlock";
 import { NativeRevealSurface } from "./NativeRevealSurface";
 import { InlineMediaFrame, INLINE_MEDIA_PREVIEW_HEIGHT } from "./InlineMediaFrame";
 import type { MarkupImageDimensions } from "./markup-image-dimensions";
@@ -75,6 +72,7 @@ import {
   useRichMarkdownPremeasurement,
   useRichMarkdownTextBreakStrategy,
 } from "./richMarkdownLayoutPolicy";
+import { useCopyFeedback } from "./useCopyFeedback";
 
 const HorizontalScrollView = Platform.OS === "android" ? GestureScrollView : ScrollView;
 const RichMarkdownTextScaleContext = createContext(1);
@@ -706,19 +704,8 @@ function MarkupBlock({
 }
 
 function CopyableCodeBlock({ language, value }: { language: string; value: string }) {
-  const [copied, copy] = useCopyFeedback(value);
   const scale = useContext(RichMarkdownTextScaleContext);
-  return (
-    <Pressable
-      accessibilityLabel={`Copy ${language} code block`}
-      accessibilityRole="button"
-      onPress={copy}
-      style={({ pressed }) => [styles.codeContainer, pressed && styles.copyPressed]}
-    >
-      <CodeBlockHeader copied={copied} language={language} scale={scale} />
-      <NativeCodeBlock language={language} value={value} />
-    </Pressable>
-  );
+  return <CodeBlock language={language} scale={scale} value={value} />;
 }
 
 function CopyableInline({
@@ -799,30 +786,6 @@ function MarkdownLink({
       )}
     </Text>
   );
-}
-
-function useCopyFeedback(value: string): [boolean, () => void] {
-  const dialog = useAppDialog();
-  const [copied, setCopied] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const copy = () => {
-    Clipboard.setStringAsync(value).then(
-      () => {
-        setCopied(true);
-      },
-      (error: unknown) => {
-        dialog.alert("Copy failed", error instanceof Error ? error.message : "Could not copy");
-      },
-    );
-    if (timerRef.current !== null) {
-      clearTimeout(timerRef.current);
-    }
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null;
-      setCopied(false);
-    }, 900);
-  };
-  return [copied, copy];
 }
 
 // WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
@@ -1163,20 +1126,7 @@ const styles = StyleSheet.create({
     gap: richMarkdownGeometry.blockGap,
     paddingLeft: spacing.xs,
   },
-  codeContainer: {
-    alignSelf: "stretch",
-    backgroundColor: colors.code,
-    borderColor: colors.border,
-    borderRadius: radii.small,
-    borderWidth: richMarkdownGeometry.codeBorderWidth,
-    gap: richMarkdownGeometry.codeGap,
-    maxWidth: "100%",
-    minWidth: 0,
-    padding: richMarkdownGeometry.codePadding,
-    width: "100%",
-  },
   copyHintDone: { color: colors.green },
-  copyPressed: { opacity: 0.76 },
   deleted: {
     color: colors.textMuted,
     textDecorationLine: "line-through",
