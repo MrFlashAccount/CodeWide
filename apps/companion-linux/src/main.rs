@@ -23,6 +23,7 @@ use codewide_companion::{
     history::digest_turn,
     history_service::HistoryService,
     host_identity::HostDisplayName,
+    http_proxy::HttpProxyConfig,
     identity::{CompanionIdentity, rotate as rotate_identity},
     image_previews::ImagePreviewService,
     media::MediaProxyService,
@@ -1280,10 +1281,12 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let media = Arc::new(MediaProxyService::new());
     let tunnels = Arc::new(LocalhostTunnelService::new()?);
     tunnels.start_periodic_cleanup();
+    let dictation_proxy = HttpProxyConfig::from_dotenv(&codex_home.join(".env"))?;
     let dictation = Arc::new(
         DictationService::open(
             codex_home.join("auth.json"),
             state_directory.join("dictation"),
+            dictation_proxy,
         )
         .await?,
     );

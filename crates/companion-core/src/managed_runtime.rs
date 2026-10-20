@@ -34,6 +34,7 @@ use crate::{
     files::FileService,
     host_identity::HostDisplayName,
     host_update::SharedHostUpdateGuardian,
+    http_proxy::HttpProxyConfig,
     identity::{CompanionIdentity, TransportIdentity},
     image_previews::ImagePreviewService,
     media::MediaProxyService,
@@ -63,6 +64,7 @@ pub struct ManagedRuntimeConfig {
     pub host_display_name: HostDisplayName,
     pub listen_address: SocketAddr,
     pub host_update_guardian: Option<SharedHostUpdateGuardian>,
+    pub dictation_proxy: HttpProxyConfig,
 }
 
 impl ManagedRuntimeConfig {
@@ -81,6 +83,7 @@ impl ManagedRuntimeConfig {
             host_display_name,
             listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8767)),
             host_update_guardian: None,
+            dictation_proxy: HttpProxyConfig::default(),
         }
     }
 
@@ -93,6 +96,12 @@ impl ManagedRuntimeConfig {
     #[must_use]
     pub fn with_listen_address(mut self, address: SocketAddr) -> Self {
         self.listen_address = address;
+        self
+    }
+
+    #[must_use]
+    pub fn with_dictation_proxy(mut self, proxy: HttpProxyConfig) -> Self {
+        self.dictation_proxy = proxy;
         self
     }
 
@@ -220,6 +229,7 @@ impl ManagedRuntime {
             DictationService::open(
                 config.codex_home.join("auth.json"),
                 config.state_directory.join("dictation"),
+                config.dictation_proxy,
             )
             .await?,
         );
