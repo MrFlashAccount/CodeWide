@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { RouteUnavailable } from "../../../../src/components/navigation/RouteUnavailable";
 import { recoverUnavailableRoute } from "../../../../src/components/navigation/routeRecovery";
 import { ConversationRouteFullscreenOverlay } from "../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
+import { ActivityContentViewer } from "../../../../src/features/conversation/content/ActivityContentViewer";
 import { LargeContentViewerSession } from "../../../../src/features/conversation/content/FullContentViewer";
 import { contentRouteSessions } from "../../../../src/services/content/contentRouteSession";
 import { newThreadService } from "../../../../src/services/threads/newThreadService";
@@ -50,9 +51,27 @@ export default function V1DraftContentRoute(): React.JSX.Element {
   return (
     <ConversationRouteFullscreenOverlay
       onDismiss={close}
-      render={(closeOverlay) => (
-        <LargeContentViewerSession initialRequest={session.request} onClose={closeOverlay} />
-      )}
+      render={(closeOverlay) => {
+        if (session.request.kind === "reference") {
+          return (
+            <LargeContentViewerSession initialRequest={session.request} onClose={closeOverlay} />
+          );
+        }
+        const text =
+          session.request.kind === "command"
+            ? session.request.fallbackOutput
+            : session.request.text;
+        return (
+          <ActivityContentViewer
+            onClose={closeOverlay}
+            presentation={
+              session.request.kind === "command" ? "terminal" : session.request.presentation
+            }
+            text={text}
+            title={session.request.title}
+          />
+        );
+      }}
       scope={`draft-content:${session.id}`}
     />
   );

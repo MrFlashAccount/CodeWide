@@ -11,5 +11,6 @@ export interface TurnChangesTarget {
 export type PresentTurnChanges = (
   target: TurnChangesTarget,
   files: readonly TurnChangedFile[],
+  scope: "item" | "turn",
 ) => void;
 export const TurnChangesContext = createContext<PresentTurnChanges | null>(null);

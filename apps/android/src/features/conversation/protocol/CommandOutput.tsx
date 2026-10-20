@@ -18,15 +18,21 @@ import {
 } from "../../../rendering/command-output-resource";
 import { NativeCodeBlock } from "../../../rendering/NativeCodeBlock";
 import { usePrivateFileAccessScope } from "../../../rendering/use-private-image-uri";
+import { useEvent } from "../../../react/useEvent";
 import { formatEstimatedTurnCost } from "../../../turn-cost";
 import { compactNumber, formatDuration } from "../../../ui/number-format";
 import { TOKEN_SYMBOL } from "../../../ui/token-display";
 import { AppText as Text } from "../../../ui/Typography";
 import { WaveText } from "../../../ui/WaveText";
 import { LargeContentControls } from "../content/FullContentViewer";
+import { LargeContentViewerContext } from "../content/contentViewerContext";
 import { Card } from "../turns/Card";
 import { CopyButton } from "../turns/MessageActionRail";
-import { ActiveToolCallContext, TurnActivityMetricsContext } from "../turns/turnContexts";
+import {
+  ActiveToolCallContext,
+  TurnActivityMetricsContext,
+  TurnTargetContext,
+} from "../turns/turnContexts";
 import { styles } from "./CommandOutput.styles";
 import { BackgroundTaskOutputButton } from "./BackgroundTaskOutputButton";
 import { ProtocolBody, TOOL_RESULT_MAX_HEIGHT } from "./ToolContent";
@@ -40,17 +46,22 @@ export function CommandExecutionProtocolBlock({
 }) {
   const activeToolCall = useContext(ActiveToolCallContext);
   const command = commandActivityInput(block.raw, block.title);
+  const title = commandActivityTitle(command);
   const running = activeToolCall || block.status === "inProgress" || block.status === "running";
   const metrics = useContext(TurnActivityMetricsContext);
   const outputFootprint = commandOutputFootprint(block.raw, metrics);
+  const outputAction = useCommandOutputAction(block, title);
   return (
     <Card
       icon="terminal-outline"
-      title={commandActivityTitle(command)}
+      title={title}
       {...(block.status === null ? {} : { status: block.status })}
       collapsible
       headerMeta={<OutputFootprintMetric footprint={outputFootprint} />}
       initiallyExpanded={false}
+      onOpen={outputAction.open}
+      openEnabled={outputAction.enabled}
+      openLabel={`Open output for ${title}`}
     >
       <View style={styles.commandActivitySection}>
         <View style={styles.commandActivitySectionHeader}>
@@ -70,7 +81,7 @@ export function CommandExecutionProtocolBlock({
         running={running}
         {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       />
-      <BackgroundTaskOutputButton block={block} name={commandActivityTitle(command)} />
+      <BackgroundTaskOutputButton block={block} name={title} />
       {block.durationMs !== null && (
         <Text style={styles.turnMetaText}>{formatDuration(block.durationMs)}</Text>
       )}
@@ -80,6 +91,29 @@ export function CommandExecutionProtocolBlock({
       />
     </Card>
   );
+}
+
+function ignoreContentRequest(): void {}
+
+function useCommandOutputAction(
+  block: RenderBlock,
+  title: string,
+): { readonly enabled: boolean; readonly open: () => void } {
+  const openContent = useContext(LargeContentViewerContext);
+  const turnTarget = useContext(TurnTargetContext);
+  const dispatchOutput = openContent ?? ignoreContentRequest;
+  const itemId = typeof block.raw.id === "string" ? block.raw.id : block.key;
+  const turnId = turnTarget?.turnId ?? "";
+  const open = useEvent(() => {
+    dispatchOutput({
+      fallbackOutput: block.body ?? "",
+      itemId,
+      kind: "command",
+      title,
+      turnId,
+    });
+  });
+  return { enabled: openContent !== null && turnTarget !== null, open };
 }
 
 export interface LazyCommandOutputProps {

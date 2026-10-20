@@ -2,8 +2,7 @@ import type { ReactElement } from "react";
 import type { EdgeInsets } from "react-native-safe-area-context";
 import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
 import type { Dispatch, SetStateAction } from "react";
-import type { TurnChangedFile } from "../../rendering/turn-changes";
-import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
+import type { PresentTurnChanges } from "../../rendering/TurnChangesContext";
 
 /** Visual regions and layout state consumed by the conversation shell. */
 export type ConversationLayoutProps = {
@@ -14,7 +13,7 @@ export type ConversationLayoutProps = {
   headerContent: ReactElement;
   jumpContent: ReactElement;
   openCodeDocument: (request: DocumentPreviewRequest) => void;
-  presentTurnChanges: (target: TurnChangesTarget, knownFiles: readonly TurnChangedFile[]) => void;
+  presentTurnChanges: PresentTurnChanges;
   projectPickerContent: ReactElement;
   projectPickerVisible: boolean;
   renameContent: ReactElement;

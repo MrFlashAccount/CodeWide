@@ -30,7 +30,7 @@ export function useChangesFeature(capabilities: ChangePresentationCapabilities) 
     });
   });
   const presentTurnChanges = useEvent(
-    (target: TurnChangesTarget, knownFiles: readonly TurnChangedFile[]) => {
+    (target: TurnChangesTarget, knownFiles: readonly TurnChangedFile[], scope: "item" | "turn") => {
       navigation.openTurnChanges({
         attachCodeReview: capabilities.attachCodeReview,
         cwd: capabilities.cwd,
@@ -41,7 +41,7 @@ export function useChangesFeature(capabilities: ChangePresentationCapabilities) 
         thread: capabilities.remoteThread ?? null,
         voiceRuntime: capabilities.appVoiceInputRuntime,
         wrapLines: capabilities.changesPreferences.wrapLines,
-        ...(capabilities.onLoadTurnChanges === undefined
+        ...(scope === "item" || capabilities.onLoadTurnChanges === undefined
           ? {}
           : { loadTurnChanges: capabilities.onLoadTurnChanges }),
       });

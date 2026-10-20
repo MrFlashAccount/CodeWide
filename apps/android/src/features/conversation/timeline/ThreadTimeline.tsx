@@ -16,6 +16,7 @@ import { OptimisticTurn } from "../turns/OptimisticTurn";
 import { projectTurnPresentation } from "../turns/turnProjection";
 import { formatTurnMeta } from "../turns/turnPresentation";
 import { TurnTimelineItem } from "../turns/TurnTimelineItem";
+import { TurnTargetContext } from "../turns/turnContexts";
 import {
   VirtualizedTurnLeadItem,
   VirtualizedTurnTimelineItem,
@@ -222,6 +223,20 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
         </View>
       </SearchMessageFocus.Provider>
     );
+    const targetedRow =
+      item.kind === "turn" ? (
+        <TurnTargetContext.Provider
+          value={{
+            connectionId: item.connectionId,
+            threadId: item.threadId,
+            turnId: item.id,
+          }}
+        >
+          {row}
+        </TurnTargetContext.Provider>
+      ) : (
+        row
+      );
     const ownsNavigationCommit =
       item.kind === "turn" &&
       (timelineRow.kind === "item" ||
@@ -234,10 +249,10 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
         rowKey={item.key}
         threadId={item.threadId}
       >
-        {row}
+        {targetedRow}
       </ThreadNavigationRowCommitBoundary>
     ) : (
-      row
+      targetedRow
     );
   };
   // Inputs of `renderTimelineItem` that no row object carries; the list re-renders rows when it changes.

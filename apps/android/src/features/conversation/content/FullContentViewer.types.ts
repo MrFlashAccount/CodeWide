@@ -1,5 +1,4 @@
-import type { RenderContentReference } from "@codewide/renderers";
-import type { LargeContentViewerRequest } from "./contentViewerContext";
+import type { ContentPresentation } from "../../../services/content/contentRouteSession";
 
 export type FullContentViewerProps = {
   onClose: () => void;
@@ -11,8 +10,8 @@ export type FullContentViewerProps = {
     nextOffset: number;
     offset: number;
     pointer: string;
-    presentation: LargeContentViewerRequest["presentation"];
-    reference: RenderContentReference;
+    presentation: ContentPresentation;
+    reference: { readonly byteLength: number };
     text: string | null;
   };
 };

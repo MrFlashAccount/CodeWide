@@ -5,12 +5,35 @@ import { sameRouteSessionOwner, type V1RouteSessionOwner } from "../threads/thre
 
 const MAX_CONTENT_SESSIONS = 4;
 
-export type LargeContentRouteRequest = {
+export type ContentPresentation = "markdown" | "terminal" | "text";
+
+export type ReferenceContentRouteRequest = {
   readonly getTransferAccess: GetTransferAccess;
+  readonly kind: "reference";
   readonly pointer: string;
-  readonly presentation: "markdown" | "terminal" | "text";
+  readonly presentation: ContentPresentation;
   readonly reference: RenderContentReference;
 };
+
+type InlineContentRouteRequest = {
+  readonly kind: "inline";
+  readonly presentation: ContentPresentation;
+  readonly text: string;
+  readonly title: string;
+};
+
+export type CommandContentRouteRequest = {
+  readonly fallbackOutput: string;
+  readonly itemId: string;
+  readonly kind: "command";
+  readonly title: string;
+  readonly turnId: string;
+};
+
+export type LargeContentRouteRequest =
+  | ReferenceContentRouteRequest
+  | InlineContentRouteRequest
+  | CommandContentRouteRequest;
 
 /** One retained large-content request addressed by an opaque route identifier. */
 type ContentRouteSession = {

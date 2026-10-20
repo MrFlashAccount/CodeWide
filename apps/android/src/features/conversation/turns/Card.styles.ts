@@ -25,6 +25,13 @@ export const styles = StyleSheet.create({
     minWidth: 0,
     width: "100%",
   },
+  cardDisclosure: {
+    alignItems: "center",
+    alignSelf: "stretch",
+    justifyContent: "center",
+    minHeight: controlSize.compact,
+    minWidth: controlSize.compact,
+  },
   cardHeader: {
     alignItems: "center",
     flexDirection: "row",

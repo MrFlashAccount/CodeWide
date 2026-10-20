@@ -18,6 +18,15 @@ export const SubagentNavigationContext = createContext<((threadId: string) => vo
 
 export const TurnActivityMetricsContext = createContext<ActivityMetrics | null>(null);
 
+export type TurnTarget = {
+  readonly connectionId: string;
+  readonly threadId: string;
+  readonly turnId: string;
+};
+
+/** Qualifies an activity item with the exact resident turn that owns it. */
+export const TurnTargetContext = createContext<TurnTarget | null>(null);
+
 /** A background task a person can open: its id and the name to title it with. */
 export type OpenableBackgroundTask = { readonly name: string; readonly taskId: string };
 

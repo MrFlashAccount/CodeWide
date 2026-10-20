@@ -3,8 +3,7 @@ import type { RenderBlock } from "@codewide/renderers";
 import type { ReactElement } from "react";
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
-import type { TurnChangedFile } from "../../rendering/turn-changes";
-import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
+import type { PresentTurnChanges } from "../../rendering/TurnChangesContext";
 import type { AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
 import type { ThreadListServer } from "../connections/connectionPresentation";
 import type { ThreadListItem } from "../threadList/threadListTypes";
@@ -29,7 +28,7 @@ export type ConversationReadSurfaceProps = {
   overlay: ReturnType<typeof useOverlayScrollOwnership>;
   overlayState: ReturnType<typeof useOverlayScrollState>;
   pagination: ReturnType<typeof usePaginationTrim>;
-  presentTurnChanges: (target: TurnChangesTarget, files: readonly TurnChangedFile[]) => void;
+  presentTurnChanges: PresentTurnChanges;
   remoteThread: Thread;
   reviewContent: ReactElement;
   server: ThreadListServer | undefined;

@@ -6,12 +6,15 @@ import { changedFileDisplayPath } from "../../../rendering/changed-file-path";
 import { projectFileChange } from "../../../rendering/file-change-rendering";
 import { nativeCodeLanguageForPath } from "../../../rendering/native-code-block";
 import { NativeCodeBlock } from "../../../rendering/NativeCodeBlock";
+import { recordedItemChanges } from "../../../rendering/turn-changes";
+import { TurnChangesContext } from "../../../rendering/TurnChangesContext";
+import { useEvent } from "../../../react/useEvent";
 import { colors } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { AppText as Text } from "../../../ui/Typography";
 import { Card, usePersistentExpansion } from "../turns/Card";
 import { CopyButton } from "../turns/MessageActionRail";
-import { ThreadCwdContext } from "../turns/turnContexts";
+import { ThreadCwdContext, TurnTargetContext } from "../turns/turnContexts";
 import { styles } from "./FileChangeProtocolBlock.styles";
 import { protocolCopyText } from "./protocolCopyText";
 import { nextFileChangeItemKey } from "./protocolItemIdentity";
@@ -19,6 +22,16 @@ import { TOOL_RESULT_MAX_HEIGHT } from "./ToolContent";
 
 export function FileChangeProtocolBlock({ block }: { block: RenderBlock }) {
   const changeCount = Array.isArray(block.raw.changes) ? block.raw.changes.length : 0;
+  const presentChanges = useContext(TurnChangesContext);
+  const turnTarget = useContext(TurnTargetContext);
+  const itemId = typeof block.raw.id === "string" ? block.raw.id : block.key;
+  const files = recordedItemChanges(itemId, block.raw.changes);
+  const openChanges = useEvent(() => {
+    if (presentChanges !== null && turnTarget !== null && files.length > 0) {
+      presentChanges(turnTarget, files, "item");
+    }
+  });
+  const canOpen = presentChanges !== null && turnTarget !== null && files.length > 0;
   return (
     <Card
       icon="git-compare-outline"
@@ -27,6 +40,7 @@ export function FileChangeProtocolBlock({ block }: { block: RenderBlock }) {
       collapsible
       copyText={() => protocolCopyText(block)}
       initiallyExpanded={false}
+      {...(canOpen ? { onOpen: openChanges, openLabel: "Open these file changes" } : {})}
     >
       <FileChangeProtocolDetails block={block} />
     </Card>

@@ -18,6 +18,10 @@ import { CONTENT_VIEW_CHUNK_BYTES } from "./contentLimits";
 import { LargeContentViewerContext, type LargeContentViewerRequest } from "./contentViewerContext";
 import { styles } from "./FullContentViewer.styles";
 import { useConversationRouteNavigation } from "../conversationRouteNavigation";
+import type {
+  ContentPresentation,
+  ReferenceContentRouteRequest,
+} from "../../../services/content/contentRouteSession";
 
 export async function nextRenderFrame(): Promise<void> {
   return new Promise((resolve) => {
@@ -27,7 +31,7 @@ export async function nextRenderFrame(): Promise<void> {
   });
 }
 
-export type LargeContentViewerSelection = LargeContentViewerRequest & {
+export type LargeContentViewerSelection = ReferenceContentRouteRequest & {
   error: string | null;
   loading: boolean;
   nextOffset: number;
@@ -49,7 +53,7 @@ export function LargeContentViewerSession({
   initialRequest,
   onClose,
 }: {
-  initialRequest: LargeContentViewerRequest;
+  initialRequest: ReferenceContentRouteRequest;
   onClose: () => void;
 }) {
   const resourceNamespace = useId();
@@ -78,11 +82,12 @@ export function LargeContentViewerSession({
     offset: selection.offset,
     text: content.value?.text ?? null,
   };
-  const load = (request: LargeContentViewerRequest, offset: number) => {
+  const load = (request: ReferenceContentRouteRequest, offset: number) => {
     setSelection({ offset, request });
   };
   const request = {
     getTransferAccess: selected.getTransferAccess,
+    kind: "reference" as const,
     pointer: selected.pointer,
     presentation: selected.presentation,
     reference: selected.reference,
@@ -134,6 +139,7 @@ export function LargeContentControls({
               if (getTransferAccess !== undefined) {
                 open?.({
                   getTransferAccess,
+                  kind: "reference",
                   pointer,
                   presentation: largeContentPresentation(pointer, reference),
                   reference,
@@ -159,7 +165,7 @@ export function LargeContentControls({
 export function largeContentPresentation(
   pointer: string,
   reference: RenderContentReference,
-): LargeContentViewerRequest["presentation"] {
+): ContentPresentation {
   if (reference.contentType.startsWith("text/markdown")) {
     return "markdown";
   }

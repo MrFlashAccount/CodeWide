@@ -23,16 +23,20 @@ describe("turn changes footer", () => {
 
     expect(view.getByText("git-compare-outline")).toHaveStyle({ fontSize: 12 });
     fireEvent.press(view.getByLabelText("Changes in this turn"));
-    expect(present).toHaveBeenCalledWith(target, [
-      {
-        path: "file.ts",
-        patch: diff,
-        kind: "update",
-        itemId: "recorded-diff:0",
-        additions: 1,
-        deletions: 1,
-      },
-    ]);
+    expect(present).toHaveBeenCalledWith(
+      target,
+      [
+        {
+          path: "file.ts",
+          patch: diff,
+          kind: "update",
+          itemId: "recorded-diff:0",
+          additions: 1,
+          deletions: 1,
+        },
+      ],
+      "turn",
+    );
   });
 
   it("does not render when the turn has no concrete diff", () => {
@@ -74,9 +78,11 @@ it("defers diff parsing until press and uses the latest recorded turn", () => {
     expect(parse).not.toHaveBeenCalled();
     fireEvent.press(view.getByLabelText("Changes in this turn"));
     expect(parse).toHaveBeenCalledTimes(1);
-    expect(present).toHaveBeenCalledWith(next, [
-      expect.objectContaining({ path: "latest", patch: nextDiff, additions: 1, deletions: 1 }),
-    ]);
+    expect(present).toHaveBeenCalledWith(
+      next,
+      [expect.objectContaining({ path: "latest", patch: nextDiff, additions: 1, deletions: 1 })],
+      "turn",
+    );
   } finally {
     parse.mockRestore();
   }
