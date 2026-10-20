@@ -84,18 +84,23 @@ pub fn model_entries(models: &[RawModel]) -> Vec<ModelEntry> {
 /// The row's name with its model version. Claude names alias rows by family
 /// only (`Opus`) and leads their description with the versioned name
 /// (`Opus 5.5 · …`); the `default` row names the model it currently
-/// resolves to. A description that does not lead with the family keeps
-/// Claude's name.
+/// resolves to, either as `Use the default model (currently Opus 5.5)` or,
+/// in older releases, as a leading versioned name. A description that does
+/// not lead with the family keeps Claude's name.
 fn versioned_display_name(model: &RawModel) -> String {
     let named = match model.description.find(" · ") {
         Some(separator) if separator > 0 => model.description[..separator].trim(),
         _ => "",
     };
+    if model.value == DEFAULT_MODEL {
+        return match current_default_name(&model.description) {
+            Some(current) => format!("Default ({current})"),
+            None if !named.is_empty() && !named.contains('(') => format!("Default ({named})"),
+            None => model.display_name.clone(),
+        };
+    }
     if named.is_empty() {
         return model.display_name.clone();
-    }
-    if model.value == DEFAULT_MODEL {
-        return format!("Default ({named})");
     }
     if named
         .strip_prefix(model.display_name.as_str())
@@ -105,6 +110,14 @@ fn versioned_display_name(model: &RawModel) -> String {
     } else {
         model.display_name.clone()
     }
+}
+
+/// The model named by the `default` row's `(currently Opus 5.5)` clause.
+fn current_default_name(description: &str) -> Option<&str> {
+    const MARKER: &str = "(currently ";
+    let start = description.find(MARKER)? + MARKER.len();
+    let length = description[start..].find(')')?;
+    Some(description[start..start + length].trim()).filter(|name| !name.is_empty())
 }
 
 /// The catalog id of a model a session recorded: the row with that id, else
@@ -238,6 +251,28 @@ mod tests {
                 "Sonnet 4.6"
             ]
         );
+    }
+
+    #[test]
+    fn the_default_row_names_the_model_it_currently_resolves_to() {
+        let name = |description: &str| {
+            model_entries(&[row("default", "Default (recommended)", description)])
+                .remove(0)
+                .display_name
+        };
+        assert_eq!(
+            name("Use the default model (currently Opus 5.5) · $5/$25 per Mtok"),
+            "Default (Opus 5.5)"
+        );
+        assert_eq!(
+            name("Use the default model (currently Opus 5.5)"),
+            "Default (Opus 5.5)"
+        );
+        assert_eq!(
+            name("Something (else) · unrelated"),
+            "Default (recommended)"
+        );
+        assert_eq!(name(""), "Default (recommended)");
     }
 
     #[test]
