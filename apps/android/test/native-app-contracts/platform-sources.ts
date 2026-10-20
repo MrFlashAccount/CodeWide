@@ -17,6 +17,10 @@ export const richMarkdown = readFileSync(
   new URL("../../src/rendering/RichMarkdown.tsx", import.meta.url),
   "utf8",
 );
+export const codeBlock = readFileSync(
+  new URL("../../src/rendering/CodeBlock.tsx", import.meta.url),
+  "utf8",
+);
 export const bubble = readFileSync(
   new URL("../../src/rendering/Bubble.tsx", import.meta.url),
   "utf8",

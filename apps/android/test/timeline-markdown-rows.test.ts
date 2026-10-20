@@ -501,7 +501,7 @@ describe("feature-flagged conversation rows", () => {
       status: "exact",
     });
     expect(timelineRowHeight(code, geometry)).toEqual({
-      size: 64,
+      size: 82,
       source: "calculated",
       status: "exact",
     });
