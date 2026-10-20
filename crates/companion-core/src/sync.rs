@@ -1932,6 +1932,7 @@ impl SyncHub {
                     };
                     store
                         .subagent_descendants(params)
+                        .await
                         .map_err(|error| RpcFailure::new(-32020, error))?
                 }
             },

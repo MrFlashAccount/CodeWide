@@ -164,9 +164,10 @@ impl NativeThreadStore for CodexStorage {
             .map_err(|error| error.to_string())
     }
 
-    fn subagent_descendants(&self, params: &Value) -> Result<Value, String> {
+    async fn subagent_descendants(&self, params: &Value) -> Result<Value, String> {
         self.history
             .subagent_descendants(params)
+            .await
             .map_err(|error| error.to_string())
     }
 
