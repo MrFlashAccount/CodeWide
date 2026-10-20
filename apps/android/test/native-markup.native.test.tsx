@@ -218,13 +218,35 @@ it("shows only known file size and disables unavailable file actions", () => {
 
 it("keeps the copy action on one line while truncating a long language label", () => {
   const language = "a-very-long-language-description";
-  const result = render(<CodeBlockHeader language={language} copied={false} scale={1.4} />);
-  expect(result.getByText("Copy").props.numberOfLines).toBe(1);
+  const copy = jest.fn();
+  const openFullscreen = jest.fn();
+  const result = render(
+    <CodeBlockHeader
+      language={language}
+      copied={false}
+      onCopy={copy}
+      onOpenFullscreen={openFullscreen}
+      scale={1.4}
+    />,
+  );
   expect(result.getByText(language).props.ellipsizeMode).toBe("tail");
-  expect(result.getByText("Copy")).toHaveStyle({ flexShrink: 0 });
   expect(result.getByText(language)).toHaveStyle({ flex: 1, minWidth: 0 });
-  result.rerender(<CodeBlockHeader language={language} copied scale={1.4} />);
-  expect(result.getByText("Copied").props.accessibilityLiveRegion).toBe("polite");
+  fireEvent.press(result.getByLabelText(`Copy ${language} code block`));
+  fireEvent.press(result.getByLabelText("Open code block fullscreen"));
+  expect(copy).toHaveBeenCalledTimes(1);
+  expect(openFullscreen).toHaveBeenCalledTimes(1);
+  result.rerender(
+    <CodeBlockHeader
+      language={language}
+      copied
+      onCopy={copy}
+      onOpenFullscreen={openFullscreen}
+      scale={1.4}
+    />,
+  );
+  expect(result.getByLabelText(`Copied ${language} code block`).props.accessibilityLiveRegion).toBe(
+    "polite",
+  );
 });
 
 it("renders LaTeX through native SVG and preserves unsupported input", async () => {

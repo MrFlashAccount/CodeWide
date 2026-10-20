@@ -7,9 +7,9 @@ import {
   HtmlDocumentPreview,
   MAX_DOCUMENT_PREVIEW_BYTES,
 } from "../../rendering/DocumentPreviewHost";
+import { CodeBlock } from "../../rendering/CodeBlock";
 import { MarkdownLocalLinkProvider } from "../../rendering/MarkdownLinkHandler";
 import { nativeCodeLanguageForPath } from "../../rendering/native-code-block";
-import { NativeCodeBlock } from "../../rendering/NativeCodeBlock";
 import { RichContentWidthProvider } from "../../rendering/RichContentLayout";
 import { RichMarkdown } from "../../rendering/RichMarkdown";
 import { occurrenceKey, textFingerprint } from "../../rendering/listKey";
@@ -132,7 +132,7 @@ export function AttachmentDocumentPreview({
               style={styles.menuScroll}
             >
               {document.request.kind === "text" ? (
-                <NativeCodeBlock
+                <CodeBlock
                   fillAvailableWidth
                   language={nativeCodeLanguageForPath(document.request.path)}
                   maxHeight={codePreviewMaxHeight}

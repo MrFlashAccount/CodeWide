@@ -114,9 +114,7 @@ describe("tool output presentation", () => {
       ]),
     ).toBe(true);
     expect(controls).not.toContain("largeContentChunk");
-    expect(ownerFullContentViewer).toContain(
-      "async (_publish, signal) => readPrivateAssetText(",
-    );
+    expect(ownerFullContentViewer).toContain("async (_publish, signal) => readPrivateAssetText(");
     expect(ownerFullContentViewer).toContain("signal,");
   });
 
@@ -148,9 +146,9 @@ describe("tool output presentation", () => {
     expect(ownerFullContentViewerBody).toContain("embeddedInParentScroll={false}");
     expect(nativeCodeBlock).toContain("embeddedInParentScroll = true");
     expect(nativeCodeBlock).toContain("embeddedInParentScroll={embeddedInParentScroll}");
-    expect(nativeCodeView).toContain(
-      "horizontalScroll.setOnTouchListener(if (value) embeddedHorizontalGestureListener else null)",
-    );
+    expect(nativeCodeView).toContain("private class CodeNestedScrollView");
+    expect(nativeCodeView).toContain("canScrollVertically(direction)");
+    expect(nativeCodeView).toContain("verticalScroll.setEmbeddedInParentScroll(value)");
   });
 
   it("presents command output as a terminal both inline and in full content", () => {

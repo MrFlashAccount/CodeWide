@@ -24,6 +24,48 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicInteger
 
+private class CodeNestedScrollView(context: Context) : NestedScrollView(context) {
+  private var embeddedInParentScroll = true
+  private var touchStartX = 0f
+  private var touchStartY = 0f
+  private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+
+  fun setEmbeddedInParentScroll(value: Boolean) {
+    embeddedInParentScroll = value
+    if (!value) parent?.requestDisallowInterceptTouchEvent(false)
+  }
+
+  override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+    if (embeddedInParentScroll) {
+      when (event.actionMasked) {
+        MotionEvent.ACTION_DOWN -> {
+          touchStartX = event.x
+          touchStartY = event.y
+          // Keep the gesture until its axis is known. Otherwise an enclosing
+          // timeline or document preview can win before this viewport scrolls.
+          parent?.requestDisallowInterceptTouchEvent(true)
+        }
+        MotionEvent.ACTION_MOVE -> {
+          val deltaX = kotlin.math.abs(event.x - touchStartX)
+          val deltaY = kotlin.math.abs(event.y - touchStartY)
+          if (deltaX > touchSlop || deltaY > touchSlop) {
+            val keepGesture = if (deltaX >= deltaY) {
+              true
+            } else {
+              val direction = if (event.y < touchStartY) 1 else -1
+              canScrollVertically(direction)
+            }
+            parent?.requestDisallowInterceptTouchEvent(keepGesture)
+          }
+        }
+        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+          parent?.requestDisallowInterceptTouchEvent(false)
+      }
+    }
+    return super.dispatchTouchEvent(event)
+  }
+}
+
 class NativeCodeBlockView(context: Context) : FrameLayout(context) {
   private val generation = AtomicInteger(0)
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -64,7 +106,7 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
     addView(gutterView, LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
     addView(horizontalScroll, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
   }
-  private val verticalScroll = NestedScrollView(context).apply {
+  private val verticalScroll = CodeNestedScrollView(context).apply {
     isFillViewport = false
     isNestedScrollingEnabled = true
     isVerticalScrollBarEnabled = true
@@ -79,37 +121,11 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
   private var maxLines: Int = 0
   private var pendingTask: Future<*>? = null
   private var scheduledHighlight: Runnable? = null
-  private var touchStartX = 0f
-  private var touchStartY = 0f
-  private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
-  private val embeddedHorizontalGestureListener = View.OnTouchListener { view, event ->
-    when (event.actionMasked) {
-      MotionEvent.ACTION_DOWN -> {
-        touchStartX = event.x
-        touchStartY = event.y
-        // An embedded code block must reserve the gesture until its direction
-        // is known, otherwise the timeline steals horizontal panning.
-        view.parent?.requestDisallowInterceptTouchEvent(true)
-      }
-      MotionEvent.ACTION_MOVE -> {
-        val deltaX = kotlin.math.abs(event.x - touchStartX)
-        val deltaY = kotlin.math.abs(event.y - touchStartY)
-        if (deltaX > touchSlop || deltaY > touchSlop) {
-          view.parent?.requestDisallowInterceptTouchEvent(deltaX >= deltaY)
-        }
-      }
-      MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-        view.parent?.requestDisallowInterceptTouchEvent(false)
-    }
-    false
-  }
-
   init {
     clipChildren = true
     clipToPadding = true
     setBackgroundColor(Color.TRANSPARENT)
     addView(verticalScroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-    horizontalScroll.setOnTouchListener(embeddedHorizontalGestureListener)
   }
 
   fun setCode(value: String?) {
@@ -117,10 +133,7 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
   }
 
   fun setEmbeddedInParentScroll(value: Boolean) {
-    // A fullscreen viewer has no competing timeline. Let NestedScrollView own
-    // vertical interception from ACTION_DOWN instead of releasing it one move late.
-    horizontalScroll.setOnTouchListener(if (value) embeddedHorizontalGestureListener else null)
-    if (!value) horizontalScroll.parent?.requestDisallowInterceptTouchEvent(false)
+    verticalScroll.setEmbeddedInParentScroll(value)
   }
 
   fun setSearchQuery(value: String?) {
