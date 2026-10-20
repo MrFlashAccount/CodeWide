@@ -7,8 +7,10 @@ import SwiftUI
 final class CompanionDialogController: NSObject, ObservableObject, NSWindowDelegate {
     private let runtime: RuntimeConnection
     private var relayWindow: NSWindow?
+    private var httpProxyWindow: NSWindow?
     private var pairingWindow: NSWindow?
     private var relaySetup: RelaySetupModel?
+    private var httpProxySettings: HttpProxySettingsModel?
 
     init(runtime: RuntimeConnection) {
         self.runtime = runtime
@@ -56,6 +58,30 @@ final class CompanionDialogController: NSObject, ObservableObject, NSWindowDeleg
         }
     }
 
+    func showHttpProxySettings() {
+        if let httpProxyWindow, httpProxyWindow.isVisible {
+            present(httpProxyWindow)
+            return
+        }
+
+        let model = HttpProxySettingsModel(runtime: runtime)
+        httpProxySettings = model
+        httpProxyWindow = makeWindow(
+            title: "HTTP Proxy",
+            contentSize: NSSize(width: 500, height: 360),
+            content: HttpProxySettingsDialog(
+                model: model,
+                cancel: { [weak self] in
+                    self?.closeHttpProxyWindow()
+                }
+            )
+        )
+        httpProxyWindow?.delegate = self
+        if let httpProxyWindow {
+            present(httpProxyWindow)
+        }
+    }
+
     private func closeRelayWindow() {
         relaySetup?.cancel()
         relayWindow?.close()
@@ -64,10 +90,21 @@ final class CompanionDialogController: NSObject, ObservableObject, NSWindowDeleg
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, window === relayWindow else { return }
-        relaySetup?.cancel()
-        relaySetup = nil
-        relayWindow = nil
+        guard let window = notification.object as? NSWindow else { return }
+        if window === relayWindow {
+            relaySetup?.cancel()
+            relaySetup = nil
+            relayWindow = nil
+        } else if window === httpProxyWindow {
+            httpProxySettings = nil
+            httpProxyWindow = nil
+        }
+    }
+
+    private func closeHttpProxyWindow() {
+        httpProxyWindow?.close()
+        httpProxyWindow = nil
+        httpProxySettings = nil
     }
 
     private func closePairingWindow() {
@@ -112,6 +149,78 @@ final class CompanionDialogController: NSObject, ObservableObject, NSWindowDeleg
         if NSApplication.shared.currentEvent?.type != .keyDown {
             window.makeFirstResponder(nil)
         }
+    }
+}
+
+private struct HttpProxySettingsDialog: View {
+    @StateObject private var model: HttpProxySettingsModel
+    let cancel: @MainActor () -> Void
+
+    init(model: HttpProxySettingsModel, cancel: @escaping @MainActor () -> Void) {
+        _model = StateObject(wrappedValue: model)
+        self.cancel = cancel
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("HTTP Proxy")
+                .font(.title2.weight(.semibold))
+            Text("These settings belong to Companion and apply to voice transcription. Leave both proxy fields empty to use the process environment.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 12) {
+                GridRow {
+                    Text("HTTPS")
+                    SecureField("http://proxy.example:8080", text: $model.httpsProxy)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("HTTPS proxy URL")
+                }
+                GridRow {
+                    Text("HTTP")
+                    SecureField("http://proxy.example:8080", text: $model.httpProxy)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("HTTP proxy URL")
+                }
+                GridRow {
+                    Text("Bypass")
+                    TextField("localhost,.example.com", text: $model.noProxy)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Proxy bypass hosts")
+                }
+            }
+            .disabled(model.isLoading || model.isSaving)
+            if let error = model.error {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            Spacer()
+            GlassEffectContainer(spacing: 12) {
+                HStack {
+                    Spacer()
+                    Button("Cancel", action: cancel)
+                        .buttonStyle(.glass)
+                        .keyboardShortcut(.cancelAction)
+                    Button {
+                        Task {
+                            if await model.save() { cancel() }
+                        }
+                    } label: {
+                        if model.isSaving { ShimmerText("Save") }
+                        else { Text("Save") }
+                    }
+                    .buttonStyle(.glassProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!model.canSave)
+                }
+                .controlSize(.large)
+                .buttonBorderShape(.capsule)
+            }
+        }
+        .padding(22)
+        .frame(width: 500, minHeight: 360)
+        .tint(CodeWideBrand.accent)
+        .task { await model.load() }
     }
 }
 

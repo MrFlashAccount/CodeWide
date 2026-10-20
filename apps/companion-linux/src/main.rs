@@ -23,7 +23,7 @@ use codewide_companion::{
     history::digest_turn,
     history_service::HistoryService,
     host_identity::HostDisplayName,
-    http_proxy::HttpProxyConfig,
+    http_proxy::{HttpProxyConfig, HttpProxySettings, HttpProxySettingsStore},
     identity::{CompanionIdentity, rotate as rotate_identity},
     image_previews::ImagePreviewService,
     media::MediaProxyService,
@@ -197,6 +197,8 @@ enum Command {
     Vcs(VcsOptions),
     /// Agent provider configuration (`agent-providers.json`).
     Providers(ProvidersOptions),
+    /// Companion-owned HTTP proxy settings for dictation requests.
+    Proxy(ProxyOptions),
 }
 
 #[derive(Debug, Args)]
@@ -211,6 +213,34 @@ enum ProvidersCommand {
     /// Offline: reads the configuration and file metadata only. Exits with an
     /// error when the configuration is invalid or a provider is not ready.
     Status {
+        /// Companion state directory (default: the user service's).
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Args)]
+struct ProxyOptions {
+    #[command(subcommand)]
+    command: ProxyCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProxyCommand {
+    /// Saves explicit proxy settings. Restart Companion to apply them.
+    Configure {
+        #[arg(long)]
+        http_proxy: Option<String>,
+        #[arg(long)]
+        https_proxy: Option<String>,
+        #[arg(long)]
+        no_proxy: Option<String>,
+        /// Companion state directory (default: the user service's).
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+    },
+    /// Removes the application setting and restores process-environment lookup.
+    Clear {
         /// Companion state directory (default: the user service's).
         #[arg(long)]
         state_dir: Option<PathBuf>,
@@ -730,6 +760,46 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
+        Command::Proxy(options) => {
+            let (state_dir, settings) = match options.command {
+                ProxyCommand::Configure {
+                    http_proxy,
+                    https_proxy,
+                    no_proxy,
+                    state_dir,
+                } => {
+                    let settings = HttpProxySettings {
+                        http_proxy,
+                        https_proxy,
+                        no_proxy,
+                    };
+                    if !settings.is_configured() {
+                        return Err("proxy configure requires --http-proxy or --https-proxy".into());
+                    }
+                    (
+                        state_dir.unwrap_or_else(provider_status::default_state_directory),
+                        settings,
+                    )
+                }
+                ProxyCommand::Clear { state_dir } => (
+                    state_dir.unwrap_or_else(provider_status::default_state_directory),
+                    HttpProxySettings::default(),
+                ),
+            };
+            let store = HttpProxySettingsStore::new(&state_dir);
+            let settings = store.save(settings)?;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "configured": settings.is_configured(),
+                    "httpProxy": settings.http_proxy.is_some(),
+                    "httpsProxy": settings.https_proxy.is_some(),
+                    "noProxy": settings.no_proxy.is_some(),
+                    "settingsPath": store.path(),
+                    "restartRequired": true,
+                })
+            );
+        }
         Command::Vcs(options) => match options.command {
             VcsCommand::Changes {
                 workspace,
@@ -1281,7 +1351,8 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let media = Arc::new(MediaProxyService::new());
     let tunnels = Arc::new(LocalhostTunnelService::new()?);
     tunnels.start_periodic_cleanup();
-    let dictation_proxy = HttpProxyConfig::from_dotenv(&codex_home.join(".env"))?;
+    let dictation_proxy_settings = HttpProxySettingsStore::new(&state_directory).load()?;
+    let dictation_proxy = HttpProxyConfig::from_settings(&dictation_proxy_settings)?;
     let dictation = Arc::new(
         DictationService::open(
             codex_home.join("auth.json"),
