@@ -58,8 +58,14 @@ describe("native Android voice aura", () => {
     expect(voiceAura).not.toContain("useVoiceInputLevel");
     expect(voiceAura).toContain("setNativeVoiceAuraState(active, 0, reducedMotion)");
     expect(nativeModule).toContain(
-      "generation == audioCaptureGeneration) voiceAura.setLevel(level)",
+      "!invalidated && audioCaptureRunning && generation == audioCaptureGeneration",
     );
+    expect(nativeModule).toContain("if (!invalidated) voiceAura.resume()");
+    expect(nativeModule).toContain("voiceAura.suspend()");
+    expect(nativeModule).toContain("override fun onHostDestroy()");
+    expect(nativeModule).toContain("voiceAura.clear()");
+    expect(nativeVoiceAura).toContain("windowAuthority.claim(this)");
+    expect(nativeVoiceAura).toContain("previous?.onVoiceAuraWindowSuperseded()");
     expect(voiceAura).not.toContain("makeImageFromView");
     expect(voiceAura).not.toContain("<ImageShader");
     expect(voiceAura).not.toContain("SkImage");

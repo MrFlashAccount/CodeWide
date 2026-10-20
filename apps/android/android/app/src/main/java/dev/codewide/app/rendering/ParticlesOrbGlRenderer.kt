@@ -64,7 +64,7 @@ internal class ParticlesOrbGlRenderer(
   private var lastRenderedGeneration = Long.MIN_VALUE
   private var lastWidth = 0
   private var lastHeight = 0
-  private var previousReducedMotion = initialInput.reducedMotion
+  private var previousStatic = initialInput.isStatic
   private var renderedFrames = 0L
   private var lastDiagnosticMs = Long.MIN_VALUE
 
@@ -102,13 +102,13 @@ internal class ParticlesOrbGlRenderer(
     width: Int,
     height: Int,
   ): Boolean {
-    if (input.reducedMotion && input.generation == lastRenderedGeneration &&
+    if (input.isStatic && input.generation == lastRenderedGeneration &&
       width == lastWidth && height == lastHeight) {
       return false
     }
-    if (input.reducedMotion != previousReducedMotion) {
+    if (input.isStatic != previousStatic) {
       lastFrameNanos = 0L
-      previousReducedMotion = input.reducedMotion
+      previousStatic = input.isStatic
     }
     if (!hasAdvanced && input.orbState != simulationInitialState) {
       simulation = ParticlesOrbSimulation(input.orbState)
@@ -122,10 +122,10 @@ internal class ParticlesOrbGlRenderer(
     lastFrameNanos = frameTimeNanos
     val frame = simulation.advance(
       state = input.orbState,
-      inputLevel = if (input.reducedMotion) null else input.inputLevel,
-      playbackLevel = if (input.reducedMotion) null else input.playbackLevel,
+      inputLevel = if (input.isStatic) null else input.inputLevel,
+      playbackLevel = if (input.isStatic) null else input.playbackLevel,
       deltaSeconds = deltaSeconds,
-      isStatic = input.reducedMotion,
+      isStatic = input.isStatic,
     )
     hasAdvanced = true
 
@@ -135,7 +135,7 @@ internal class ParticlesOrbGlRenderer(
       visualRadius = visualRadius,
       padding = 3f * density,
       deltaSeconds = deltaSeconds,
-      snap = input.reducedMotion,
+      snap = input.isStatic,
     )
     if (frame.additiveGlow) {
       additiveLayer.bind(width, height)

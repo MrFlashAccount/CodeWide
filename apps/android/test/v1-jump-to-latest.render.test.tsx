@@ -186,6 +186,16 @@ it("defaults to a 115 dp estimate and lets LegendList measure timeline rows", ()
   expect(timeline.props.dataKey).toBe("server\u0000thread:estimated");
 });
 
+it("warms one viewport of rows and requests adjacent history before it becomes visible", () => {
+  const props = timelineViewportProps(() => undefined);
+  const view = render(<TimelineViewport {...props} />);
+  const timeline = view.getByTestId("conversation-timeline");
+
+  expect(timeline.props.drawDistance).toBe(800);
+  expect(timeline.props.onStartReachedThreshold).toBe(1.5);
+  expect(timeline.props.onEndReachedThreshold).toBe(1.5);
+});
+
 it("enables row hints behind the preference and refreshes list sizing without remounting", () => {
   const props = timelineViewportProps(() => undefined);
   props.displayedTimeline = [responseTurn("completed")];

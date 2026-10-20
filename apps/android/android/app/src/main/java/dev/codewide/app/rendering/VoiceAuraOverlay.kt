@@ -20,13 +20,36 @@ import android.view.WindowManager
 import com.facebook.react.bridge.ReactApplicationContext
 import java.lang.ref.WeakReference
 
+internal interface VoiceAuraWindowOwner {
+  fun onVoiceAuraWindowSuperseded()
+}
+
+/** Enforces the process-wide invariant that only one React runtime owns the aura window. */
+internal class VoiceAuraWindowAuthority {
+  private var owner: WeakReference<VoiceAuraWindowOwner>? = null
+
+  fun claim(next: VoiceAuraWindowOwner) {
+    val previous = owner?.get()
+    if (previous === next) return
+    owner = WeakReference(next)
+    previous?.onVoiceAuraWindowSuperseded()
+  }
+
+  fun release(current: VoiceAuraWindowOwner) {
+    if (owner?.get() === current) owner = null
+  }
+}
+
+private val processVoiceAuraWindowAuthority = VoiceAuraWindowAuthority()
+
 /**
  * Renders the voice aura in one non-interactive window attached to the current application.
  * The window stays above CodeWide dialogs and sheets without requiring system-overlay access.
  */
-class VoiceAuraOverlay(
+internal class VoiceAuraOverlay(
   private val context: ReactApplicationContext,
-) : Choreographer.FrameCallback {
+  private val windowAuthority: VoiceAuraWindowAuthority = processVoiceAuraWindowAuthority,
+) : Choreographer.FrameCallback, VoiceAuraWindowOwner {
   private var shader: RuntimeShader? = null
   private var shaderWidth = 0
   private var shaderHeight = 0
@@ -35,6 +58,7 @@ class VoiceAuraOverlay(
   private var windowManager: WindowManager? = null
   private var activity: WeakReference<Activity>? = null
   private var framePosted = false
+  private var suspended = false
   private var requestedActive = false
   private var reducedMotion = false
   private val envelope = VoiceAuraEnvelope()
@@ -79,8 +103,7 @@ class VoiceAuraOverlay(
   fun setLevel(rawLevel: Double) {
     envelope.accept(rawLevel)
     if (transition.isVisible) {
-      ensureOverlay()
-      postFrame()
+      if (ensureOverlay() != null) postFrame()
     }
   }
 
@@ -103,8 +126,7 @@ class VoiceAuraOverlay(
     intensity = transition.value
 
     if (transition.isVisible) {
-      ensureOverlay()
-      postFrame()
+      if (ensureOverlay() != null) postFrame()
       if (!active) {
         mainHandler.postDelayed(forceClose, CLOSE_FALLBACK_MILLIS)
       }
@@ -124,6 +146,30 @@ class VoiceAuraOverlay(
       framePosted = false
     }
     removeOverlay()
+  }
+
+  fun suspend() {
+    check(Looper.myLooper() == Looper.getMainLooper()) {
+      "Voice aura must be suspended on the UI thread"
+    }
+    suspended = true
+    if (framePosted) {
+      Choreographer.getInstance().removeFrameCallback(this)
+      framePosted = false
+    }
+    removeOverlay()
+  }
+
+  fun resume() {
+    check(Looper.myLooper() == Looper.getMainLooper()) {
+      "Voice aura must be resumed on the UI thread"
+    }
+    suspended = false
+    if (requestedActive && transition.isVisible && ensureOverlay() != null) postFrame()
+  }
+
+  override fun onVoiceAuraWindowSuperseded() {
+    clear()
   }
 
   override fun doFrame(frameTimeNanos: Long) {
@@ -258,6 +304,7 @@ class VoiceAuraOverlay(
   }
 
   private fun ensureOverlay(): VoiceAuraOverlayView? {
+    if (suspended) return null
     val currentActivity = context.currentActivity ?: return overlayView?.takeIf(View::isAttachedToWindow)
     val currentView = overlayView
     if (activity?.get() === currentActivity && currentView?.isAttachedToWindow == true) {
@@ -268,9 +315,11 @@ class VoiceAuraOverlay(
     val token = currentActivity.window.decorView.windowToken ?: return null
     val manager = currentActivity.windowManager
     val view = VoiceAuraOverlayView(currentActivity)
+    windowAuthority.claim(this)
     try {
       manager.addView(view, createLayoutParams(token))
     } catch (error: RuntimeException) {
+      windowAuthority.release(this)
       NativeAppLogger.warn(LOG_TAG, "Could not attach application voice aura overlay", error)
       return null
     }
@@ -302,6 +351,7 @@ class VoiceAuraOverlay(
     transitionFramePacer.reset()
     previousTransitionAnimating = false
     lastFrameNanos = 0L
+    windowAuthority.release(this)
   }
 
   private fun createLayoutParams(token: android.os.IBinder): WindowManager.LayoutParams =

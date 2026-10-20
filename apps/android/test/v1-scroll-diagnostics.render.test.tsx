@@ -38,6 +38,7 @@ const listProps = {
   data: [{ id: "message-1", text: "PRIVATE MESSAGE MUST NOT APPEAR IN REPORT" }],
   itemSizeEstimate: 480,
   keyExtractor: (item: { id: string }) => item.id,
+  overscanDistance: 250,
   renderItem: ({ item }: { item: { text: string } }) => <Text>{item.text}</Text>,
   renderRevision: "conversation-1",
   testID: "timeline",

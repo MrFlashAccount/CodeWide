@@ -24,7 +24,14 @@ internal data class ParticlesOrbRenderInput(
   val orbState: VoiceAssistantOrbState,
   val playbackLevel: Float?,
   val reducedMotion: Boolean,
-)
+) {
+  val isStatic: Boolean
+    get() = reducedMotion || orbState == VoiceAssistantOrbState.IDLE ||
+      orbState == VoiceAssistantOrbState.DISABLED
+
+  val requiresContinuousFrames: Boolean
+    get() = !isStatic
+}
 
 /** Owns the transparent GL surface while all animation and projection stay off the app UI thread. */
 internal class ParticlesOrbGlView(context: Context) : TextureView(context), TextureView.SurfaceTextureListener {
@@ -46,7 +53,7 @@ internal class ParticlesOrbGlView(context: Context) : TextureView(context), Text
   }
 
   fun setAudioLevels(inputLevel: Float?, playbackLevel: Float?) {
-    updateInput { current ->
+    updateInput(requestStaticFrame = false) { current ->
       current.copy(inputLevel = inputLevel, playbackLevel = playbackLevel)
     }
   }
@@ -104,12 +111,20 @@ internal class ParticlesOrbGlView(context: Context) : TextureView(context), Text
     syncRenderingVisibility()
   }
 
-  private fun updateInput(transform: (ParticlesOrbRenderInput) -> ParticlesOrbRenderInput) {
+  private fun updateInput(
+    requestStaticFrame: Boolean = true,
+    transform: (ParticlesOrbRenderInput) -> ParticlesOrbRenderInput,
+  ) {
+    var changed = false
     synchronized(inputLock) {
       val next = transform(input)
+      if (next == input) return@synchronized
       input = next.copy(generation = input.generation + 1L)
+      changed = true
     }
-    renderThread?.requestFrame()
+    if (changed && (requestStaticFrame || input.requiresContinuousFrames)) {
+      renderThread?.requestFrame()
+    }
   }
 
   private fun syncRenderingVisibility() {
@@ -164,7 +179,7 @@ private class ParticlesOrbRenderThread(
                 egl.swapBuffers()
               }
             }
-            if (!currentInput.reducedMotion) scheduleFrame()
+            if (currentInput.requiresContinuousFrames) scheduleFrame()
           } catch (error: RuntimeException) {
             NativeAppLogger.error(LOG_TAG, "Particles GL frame failed", error)
             stopRequested.set(true)
