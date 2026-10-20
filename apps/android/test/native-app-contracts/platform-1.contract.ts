@@ -36,7 +36,7 @@ it("preserves platform integration contracts — 2", () => {
   expect(screen).not.toContain("pendingRestoreOffsetRef");
   expect(screen).not.toContain("transitionConversationScope();");
   expect(timelineList).toContain("recycleItems={false}");
-  expect(timelineList).toContain("drawDistance={250}");
+  expect(timelineList).toContain("drawDistance={overscanDistance}");
   expect(screen).not.toContain("ExpansionRegistryContext");
   expect(screen).not.toContain("previous.turn === next.turn");
   expect(screen).not.toMatch(/\buseM[e]mo\(/u);

@@ -3,6 +3,7 @@ import { sourceHasJsxElement } from "../source-contract";
 import { sourceObjectDeclaration } from "../source-contract";
 import {
   screen,
+  codeBlock,
   imagePreviewHost,
   timelineList,
   richMarkdown,
@@ -116,7 +117,7 @@ it("preserves platform integration contracts — 1", () => {
   expect(mermaidNative).toContain("onRenderProcessGone={restartRenderer}");
   // Viewport resizing is verified through mounted renders in rich-markdown-resize.native.test.tsx.
   // Do not require the former measured-width feedback through a source-text assertion.
-  const codeContainerStyle = sourceObjectDeclaration(richMarkdown, "codeContainer");
+  const codeContainerStyle = sourceObjectDeclaration(codeBlock, "container");
   expect(codeContainerStyle).toContain('width: "100%"');
   expect(codeContainerStyle).toContain("minWidth: 0");
   expect(codeContainerStyle).toContain('maxWidth: "100%"');
