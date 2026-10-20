@@ -76,14 +76,23 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   override fun onHostResume() {
     microphone.setForeground(true)
     refreshMicrophonePermission()
+    mainHandler.post {
+      if (!invalidated) voiceAura.resume()
+    }
   }
 
   override fun onHostPause() {
     microphone.setForeground(false)
+    mainHandler.post {
+      voiceAura.suspend()
+    }
   }
   override fun onHostDestroy() {
     stopPcmCaptureInternal()
     microphone.setForeground(false)
+    mainHandler.post {
+      voiceAura.clear()
+    }
   }
 
   @ReactMethod
@@ -1120,6 +1129,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   @ReactMethod
   fun setVoiceAuraState(active: Boolean, level: Double, reducedMotion: Boolean) {
     context.runOnUiQueueThread {
+      if (invalidated) return@runOnUiQueueThread
       try {
         voiceAura.update(active, level, reducedMotion)
       } catch (error: Throwable) {
@@ -1152,6 +1162,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   @ReactMethod
   fun setVoiceAuraOrigin(reactTag: Double?) {
     context.runOnUiQueueThread {
+      if (invalidated) return@runOnUiQueueThread
       try {
         val tag = reactTag?.toInt()?.takeIf { it > 0 }
         val view = tag?.let {
@@ -1308,7 +1319,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     // Rows pushed with no React context would only be dropped; Companion stops sending them.
     if (contexts.isEmpty()) CodexConnectionService.instance?.hideListStreams()
     browserDevTools.close()
-    context.runOnUiQueueThread {
+    mainHandler.post {
       voiceAura.clear()
       voiceGeneration += 1
       speechRecognizer?.cancel()
@@ -1347,7 +1358,9 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
         val level = sqrt(energy / count.toDouble()).coerceIn(0.0, 1.0)
         // The visual envelope follows PCM frames, not transport batches or JS scheduling.
         context.runOnUiQueueThread {
-          if (audioCaptureRunning && generation == audioCaptureGeneration) voiceAura.setLevel(level)
+          if (!invalidated && audioCaptureRunning && generation == audioCaptureGeneration) {
+            voiceAura.setLevel(level)
+          }
         }
         if (activeEncoder == null) {
           emitRawPcm(samples, count, sampleRate, level)

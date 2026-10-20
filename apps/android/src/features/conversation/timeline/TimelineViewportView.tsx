@@ -34,6 +34,9 @@ import type { TimelineViewportProps } from "./TimelineViewportContract";
 
 type ResponseStartAnchor = { readonly index: number; readonly key: string } | null;
 
+const TIMELINE_HISTORY_PREFETCH_THRESHOLD_RATIO = 1.5;
+const MINIMUM_TIMELINE_RENDER_AHEAD_PX = 250;
+
 export function TimelineViewport(props: TimelineViewportProps): ReactElement {
   const rowPremeasurementEnabled = useSelector(timelineRowPremeasurementEnabled$);
   const {
@@ -279,7 +282,7 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
         nestedScrollEnabled
         onContentSizeChange={measurement.onContentSizeChange}
         onEndReached={props.loadNewerAtTimelineEnd}
-        onEndReachedThreshold={0.5}
+        onEndReachedThreshold={TIMELINE_HISTORY_PREFETCH_THRESHOLD_RATIO}
         onFirstVisibleItemChanged={onFirstVisibleItemChanged}
         onItemSizeChanged={onItemSizeChanged}
         onLayout={measurement.onLayout}
@@ -291,7 +294,8 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
         onScrollBeginDrag={onScrollBeginDrag}
         onScrollEndDrag={gestures.onScrollEndDrag}
         onStartReached={props.loadOlderAtTimelineStart}
-        onStartReachedThreshold={0.5}
+        onStartReachedThreshold={TIMELINE_HISTORY_PREFETCH_THRESHOLD_RATIO}
+        overscanDistance={Math.max(MINIMUM_TIMELINE_RENDER_AHEAD_PX, props.windowLayout.height)}
         ref={timelineRef}
         renderItem={props.renderTimelineItem}
         renderRevision={rowMeasurementRevision}

@@ -178,7 +178,12 @@ describe("Global Voice background lifecycle", () => {
     expect(particlesGlSource).toContain("override fun onWindowVisibilityChanged");
     expect(particlesGlSource).toContain("override fun onVisibilityAggregated");
     expect(particlesGlSource).toContain("renderThread?.setRenderingEnabled(shouldRender())");
-    expect(particlesGlSource).toContain("if (!currentInput.reducedMotion) scheduleFrame()");
+    expect(particlesGlSource).toContain(
+      "if (currentInput.requiresContinuousFrames) scheduleFrame()",
+    );
+    expect(particlesGlSource).toContain(
+      "orbState == VoiceAssistantOrbState.IDLE",
+    );
     const nebulaSource = readFileSync(
       new URL(
         "../android/app/src/main/java/dev/codewide/app/rendering/NebulaOrbView.kt",

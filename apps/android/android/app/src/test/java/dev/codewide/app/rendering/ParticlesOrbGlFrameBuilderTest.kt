@@ -2,9 +2,29 @@ package dev.codewide.app.rendering
 
 import kotlin.math.hypot
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ParticlesOrbGlFrameBuilderTest {
+  @Test
+  fun onlyActiveStatesRequestContinuousFrames() {
+    for (state in VoiceAssistantOrbState.entries) {
+      val input = renderInput(state)
+      if (state == VoiceAssistantOrbState.IDLE || state == VoiceAssistantOrbState.DISABLED) {
+        assertTrue(input.isStatic)
+        assertFalse(input.requiresContinuousFrames)
+      } else {
+        assertFalse(input.isStatic)
+        assertTrue(input.requiresContinuousFrames)
+      }
+    }
+
+    val reducedMotion = renderInput(VoiceAssistantOrbState.SPEAKING, reducedMotion = true)
+    assertTrue(reducedMotion.isStatic)
+    assertFalse(reducedMotion.requiresContinuousFrames)
+  }
+
   @Test
   fun everyStatePreservesCanvasGeometryAndQuantizedColorAtTheGlBoundary() {
     val points = ParticlesOrbModel.buildSphere()
@@ -43,5 +63,17 @@ class ParticlesOrbGlFrameBuilderTest {
   private companion object {
     const val DENSITY = 3f
     const val SIZE = 66f * DENSITY
+
+    fun renderInput(
+      state: VoiceAssistantOrbState,
+      reducedMotion: Boolean = false,
+    ): ParticlesOrbRenderInput = ParticlesOrbRenderInput(
+      backdropEnabled = false,
+      generation = 0L,
+      inputLevel = null,
+      orbState = state,
+      playbackLevel = null,
+      reducedMotion = reducedMotion,
+    )
   }
 }

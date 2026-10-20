@@ -66,6 +66,7 @@ export type ThreadTimelineListProps<ItemT> = Omit<
   itemSizeHint?: LegendListProps<ItemT>["getItemSizeHint"] | undefined;
   keyboardLiftBehavior?: "always" | "whenAtEnd" | "persistent" | "never";
   keyboardOffset?: number;
+  overscanDistance: number;
   renderRevision: string;
 };
 
@@ -80,6 +81,7 @@ function ThreadTimelineListInner<ItemT>(
     itemSizeHint,
     keyboardLiftBehavior = "whenAtEnd",
     keyboardOffset = 0,
+    overscanDistance,
     renderRevision,
     ...props
   }: ThreadTimelineListProps<ItemT>,
@@ -246,7 +248,7 @@ function ThreadTimelineListInner<ItemT>(
       {...diagnosticHandlers}
       alignItemsAtEnd
       dataKey={renderRevision}
-      drawDistance={250}
+      drawDistance={overscanDistance}
       estimatedItemSize={itemSizeEstimate}
       itemsAreEqual={itemsAreEqual ?? referenceEqual}
       recycleItems={false}
