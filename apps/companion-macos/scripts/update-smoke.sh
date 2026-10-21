@@ -79,6 +79,12 @@ hdiutil detach "$mount"
 mounted=false
 test "$(plutil -extract CFBundleShortVersionString raw "$root/CodeWide.app/Contents/Info.plist")" = "$target_version"
 codesign --verify --deep --strict "$root/CodeWide.app"
+# The built-in GitHub forge helper ships signed in the new bundle and reports
+# the new version.
+forge_helper="$root/CodeWide.app/Contents/Helpers/codewide-forge-github"
+test -x "$forge_helper"
+codesign --verify --strict "$forge_helper"
+test "$("$forge_helper" --version)" = "codewide-forge-github $target_version"
 
 start_and_wait() {
   expected_version=$1

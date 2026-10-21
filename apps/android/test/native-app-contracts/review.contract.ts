@@ -160,7 +160,7 @@ it("keeps code review readonly, offline and attached as one structured artifact"
   expect(migratedChangesFeature).toContain("initialLine: document.line");
   expect(migratedChangesFeature).toContain("initialColumn: document.column");
   expect(codeReviewWorkspace).toContain(
-    "revealReference={selectedReference === null ? revealReference : null}",
+    "revealReference={selectedReference === null ? (guide.focus ?? revealReference) : null}",
   );
   expect(codeReviewWorkspace).toContain('accessibilityLabel="Changes options"');
   expect(codeReviewWorkspace).toContain('name="ellipsis-vertical"');

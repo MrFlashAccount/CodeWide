@@ -12,6 +12,7 @@ import { RunningThreadTitle, ThreadTitle } from "../../ui/ThreadTitle";
 import { AppText as Text } from "../../ui/Typography";
 import { ServerIcon } from "../connections/ServerIcon";
 import { styles } from "./ThreadRow.styles";
+import { ThreadPullRequestBadge } from "./ThreadPullRequestBadge";
 import type { ThreadRowProps } from "./threadRowContract";
 import { threadLiveActivityLabel } from "./threadLiveActivityLabel";
 import { formatThreadRecency } from "./threadTime";
@@ -79,6 +80,7 @@ export function ThreadRowContent({
           ) : (
             <ThreadPreview preview={thread.preview} />
           )}
+          <ThreadPullRequestBadge connectionId={thread.serverId} threadId={thread.id} />
         </View>
       </View>
     </>

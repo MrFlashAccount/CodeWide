@@ -244,6 +244,48 @@ Validation is a release gate, not an implementation suggestion:
 
 Failure of the pinned realtime/tool proof, any journal persistence, duplicate supervisor creation/send, hidden-thread leakage, request-class crossover, capture preemption/stale release or continued audio after terminal state blocks approval. Publishing is outside this architecture slice.
 
+## Approved Pull requests extension
+
+Status: **approved contract, not yet implemented**. This extension is additive to the M0–M8 ownership model. The companion owns every forge call, credential and write; Android reads companion RPCs only. The plugin and companion contract is [Forge plugins](forge-plugins.md); the companion owners are [`forge/`](../crates/companion-core/src/forge/CONTEXT.md) and [`review/`](../crates/companion-core/src/review/CONTEXT.md); routes are in [V1 route architecture](android-v1-route-architecture.md#pull-requests-routes).
+
+### Owners
+
+- `features/pullRequests/**` (new) owns the always-visible catalog mode bar, onboarding and account states, and the PR list: `CatalogModeBar`, provider cards with `linkExisting`, `hostLogin` (one-time code and one open-link button), `pasteToken` and `instructions` methods, the optional checks-credential step, the companion-update card, the Accounts sheet (credential source and scopes, `unlink`, `forgetToken`, destructive-confirmed `logoutHost`, provider enable), category chips, repository filter, per-account problem rows, `pullRequestListModel` and `onboardingModel` (Legend), `workspaceAdapter` and its local `CONTEXT.md`.
+- `features/pullRequestDetail/**` (new) owns the PR screen: app bar, Overview and Changes tabs, one dock per tab, overview cards, the action row, the pure `actionSlotting` and `confirmationPolicy` modules, action dialogs over `AppDialog`, Changes with the review dock and Submit sheet, the Overview message dock, `pullRequestScreenModel` (tab, pending action, pending toggle, stale banner), `workspaceAdapter` and its local `CONTEXT.md`.
+- `features/review/**` (changed) gains draft comments with the Agent / PR / Both destination and per-axis badges, the guide walk over any `DiffSource`, and editor line-range reveal and draft decorations. It stays forge-agnostic.
+- `features/threadList/**` (changed) renders a PR badge (provider icon and number) on thread rows from `data/pullRequestLinkResources`.
+- `ui/ForgeIcon` (new) is a shared render primitive for the three icon consumers: bundled brand icons, the generic icon and a sanitized monochrome glyph. It holds no data.
+- `data/forgeContract.ts`, `data/reviewContract.ts` (new) are validated parsers for every `companion/forge*`, `companion/pullRequest*` and `companion/review*` result; ids are branded there.
+- `data/forgeResources.ts` (new) is the only owner of forge Promise identity and deduplication: accounts, list pages, the overview (`preloadOverview` returns the same cached Promise the screen reads with suspense), files and activity pages, and the `companion/forge/invalidated` subscription.
+- `data/reviewResources.ts` (new) owns drafts and guide resources keyed by `DiffSource`; `data/pullRequestLinkResources.ts` (new) batches `companion/pullRequestLinks/read` for visible thread rows; `data/forgeSnapshotCache.{native,web}.ts` (new) holds the offline list and recent-overview snapshot, which is never authoritative.
+- `routeComposition/pullRequestNavigation.ts` (new) owns navigation intents only and no Promise; `features/workspace/createWorkspaceFeatures.ts` constructs the two new feature contracts.
+
+### Binding imports
+
+- `features/review` must not import `features/pullRequests` or `features/pullRequestDetail`.
+- `features/threadList` must not import `features/pullRequests`; it reads badges from `data/pullRequestLinkResources` and renders `ui/ForgeIcon`.
+- `features/pullRequests` and `features/pullRequestDetail` reach each other only through `routeComposition` navigation intents.
+- `ui/ForgeIcon` must not import `data/**` or `features/**`.
+- `data/**` must not import `features/**` (existing rule).
+- No feature performs forge HTTP or talks to a plugin; every forge operation is a companion RPC.
+
+`dependency-cruiser.v1.config.mjs` gains `featurePublicModules` entries for `pullRequests` and `pullRequestDetail` and forbidden rules for `review → pullRequest*`, `threadList → pullRequests` and `pullRequests ↔ pullRequestDetail`. The first Android PR of the extension adds these rules before the feature code.
+
+### Contracts
+
+- The PR overview is atomic and revealed in a Transition after `preloadOverview`; files, hunks, drafts and guide are progressive behind the smallest local Suspense boundaries.
+- Pending actions, toggles and the stale banner live in `pullRequestScreenModel`, never as copied resource data. Pending values keep their text with the existing shimmer.
+- Android branches on capabilities and action descriptor kinds, never on plugin or forge names. Unknown provider `iconKey`s get a generic card from the provider's `label` and `detail`.
+- Effective confirmation is max(plugin level, kind floor) on Android too; the companion re-checks it.
+- `pasteToken`: the token is sent once as a direct `companion/forge/auth/submitToken` request. It never enters the durable command outbox, the pending-request database, draft storage, Legend persistence, telemetry or crash reports; the field uses secure entry with autocomplete and suggestions off and is cleared after submit, dismiss and error. Android reads nothing from the clipboard by itself.
+- Auth starts with exactly the provider's `defaultHost`; Android never derives a host, and Connect is disabled while `defaultHost` is `null`. Code expiry arrives as a `failed` flow with a reason; there is no separate expired flow state. A failed flow keeps its card showing `reason` until the user dismisses it (`companion/forge/auth/cancel`), starts again, or the companion drops it after 15 minutes.
+- `verificationUri` and token-creation links open only when they are `https` on the provider's declared host.
+- A `-32601` from `companion/forge/accounts/read` (an older companion forwards the method to App Server) shows the companion-update card.
+- Offline, Android shows the last snapshot with its age; mutations are never queued offline.
+- The V1 main-chat selection, composer restoration and subagent Transition contracts are unchanged.
+
+Validation: `pnpm validate:android:v1` with no hygiene baseline increase, `pnpm --filter @codewide/android compile:android`, and focused contract tests for `forgeContract`, `reviewContract`, `actionSlotting`, `confirmationPolicy` and the glyph sanitizer, using fixtures written from the wire contract. Actual-product captures at 360dp, 320dp and at least 720dp are required for the onboarding states, provider icons and the UI proposal's frames.
+
 ## Context and containers
 
 These views describe retained runtime boundaries; they do not add containers.

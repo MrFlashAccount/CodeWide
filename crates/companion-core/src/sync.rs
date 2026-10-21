@@ -55,6 +55,7 @@ use crate::{
     workspaces::WorkspaceService,
 };
 
+mod forge_rpc;
 pub mod interest;
 mod list_rows;
 mod outbox;
@@ -64,17 +65,16 @@ mod queue;
 mod replay;
 mod search_routing;
 
+pub use forge_rpc::ForgeHostConfig;
 use interest::{
     INTEREST_CLOSE_CODE, INTEREST_FIELD, SharedInterest, apply_interest_frame, lock_interest,
 };
 use list_rows::RowFeed;
 use outbox::{PumpContext, reconcile_direct_turn_start, run_outbox_pump};
+pub(crate) use outbox_state::emit_queue_changed;
 #[cfg(test)]
 use outbox_state::turn_with_client_message;
-use outbox_state::{
-    OwnedClaimResolution, emit_queue_changed, resolve_outbox_claim, retry_delay_ms,
-    rpc_error_message,
-};
+use outbox_state::{OwnedClaimResolution, resolve_outbox_claim, retry_delay_ms, rpc_error_message};
 use provider_rpc::{RpcResultObservers, forward_rpc_response};
 use queue::{queue_changed_thread_id, queue_command, queue_rpc};
 use replay::{ReplayDeliveryError, ReplayProjector, deliver_replay_page};
@@ -128,6 +128,11 @@ pub struct SyncHub {
 struct AgentObservers {
     orchestration: Option<Arc<OrchestrationService>>,
     fork: Arc<ForkService>,
+    /// The client tool host installed into every provider (active mutation
+    /// mode only); it also keeps the hosts alive for the providers' weak
+    /// references.
+    tools: Option<Arc<crate::agent::client_tools::CompositeToolHost>>,
+    forge: Arc<forge_rpc::ForgeSlot>,
 }
 
 impl AgentObservers {
@@ -136,6 +141,7 @@ impl AgentObservers {
             orchestration.observe_event(payload);
         }
         self.fork.observe_event(payload);
+        forge_rpc::observe_forge_event(&self.forge, payload);
     }
 }
 
@@ -517,19 +523,16 @@ impl SyncHub {
         // A passive shadow never executes requests, so it declares no tools
         // and answers no tool call.
         let orchestration = (mutation_mode == MutationMode::Active).then(|| {
-            let service = OrchestrationService::new(
+            OrchestrationService::new(
                 gateway.clone(),
                 store.clone(),
                 local_events.clone(),
                 permission_profiles.clone(),
-            );
-            for provider in registry.enabled() {
-                let host: Arc<dyn agent_core::provider::ClientToolHost> = service.clone();
-                provider.install_client_tools(Arc::downgrade(&host));
-            }
-            service
+            )
         });
         let agents = AgentObservers {
+            tools: forge_rpc::install_client_tools(orchestration.as_ref(), &registry),
+            forge: Arc::default(),
             orchestration,
             fork: ForkService::new(
                 gateway.clone(),
@@ -1441,6 +1444,12 @@ impl SyncHub {
             // Only threads whose provider declares `history.threadResources`
             // reach a resource store.
             resources.prewarm(thread_id);
+        }
+        if self
+            .try_handle_forge_rpc(socket, &id, &method, &params)
+            .await?
+        {
+            return Ok(());
         }
         if self
             .try_handle_local_service_rpc(socket, &id, &method, &params, authorization)
@@ -3253,7 +3262,7 @@ fn agent_stream_key(payload: &Value) -> Option<AgentStreamKey> {
 // Scheduling and diagnostic hints only: unknown methods are forwarded too,
 // but conservatively share the ordered lane when they target a thread.
 fn rpc_is_known_read(method: &str) -> bool {
-    matches!(
+    let known = matches!(
         method,
         "account/rateLimits/read"
             | "companion/agentProviders/read"
@@ -3296,7 +3305,8 @@ fn rpc_is_known_read(method: &str) -> bool {
             | "thread/searchOccurrences"
             | "thread/turns/list"
             | "threadSection/list"
-    )
+    );
+    known || crate::forge::ForgeService::is_known_read(method)
 }
 
 fn rpc_requires_ordered_lane(method: &str) -> bool {

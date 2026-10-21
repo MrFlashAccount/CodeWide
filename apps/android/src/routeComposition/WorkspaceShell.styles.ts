@@ -12,8 +12,12 @@ export const v1WorkspaceShellStyles = StyleSheet.create({
     overflow: "hidden",
     position: "relative",
   },
-  flex: { flex: 1 },
-  hidden: { display: "none" },
+  flex: {
+    flex: 1,
+  },
+  hidden: {
+    display: "none",
+  },
   listScenes: {
     flex: 1,
     overflow: "hidden",
@@ -55,6 +59,17 @@ export const v1MobileRouteScreenOptions = {
 export const v1ProjectListScreenOptions = {
   ...v1MobileRouteScreenOptions,
   contentStyle: { backgroundColor: colors.threadListSurface },
+} as const;
+
+/** Short crossfade of a peer catalog switch (N-05). */
+const CATALOG_SWITCH_DURATION_MS = 150;
+
+/** Crossfades the Threads and Pull requests catalogs, which are peers rather than a hierarchy. */
+export const v1CatalogSwitchScreenOptions = {
+  animation: "fade",
+  animationDuration: CATALOG_SWITCH_DURATION_MS,
+  contentStyle: { backgroundColor: colors.threadListSurface },
+  headerShown: false,
 } as const;
 
 /** Keeps the desktop sidebar visible beside the empty destination pane. */

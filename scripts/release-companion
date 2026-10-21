@@ -104,6 +104,7 @@ run_quiet() {
 validate_release_payload() {
   test -x target/release/codewide-companion
   test -x target/release/codewide-vcs-git
+  test -x target/release/codewide-forge-github
   test -x target/release/codewide-companion-update-guardian
   test -x apps/companion-linux/deploy/memory-watch.sh
   test -r apps/companion-linux/deploy/codewide-companion.service

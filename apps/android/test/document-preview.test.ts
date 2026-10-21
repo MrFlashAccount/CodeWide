@@ -167,7 +167,7 @@ describe("document preview", () => {
     expect(changes).toContain("<CodeReviewWorkspace");
     expect(changes).toContain("onClose={onClose}");
     expect(workspace).toContain(
-      "revealReference={selectedReference === null ? revealReference : null}",
+      "revealReference={selectedReference === null ? (guide.focus ?? revealReference) : null}",
     );
     expect(nativeEditor).toContain('send({ command: "reveal", payload: revealReference })');
     expect(editorRuntime).toContain("revealedReference = parsed.payload");

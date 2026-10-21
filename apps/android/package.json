@@ -35,6 +35,7 @@
     "test:markdown-virtualization": "node --test test/markdown-virtualization.browser.test.mjs",
     "test:timeline-row-height-accuracy": "node --test test/timeline-row-height-accuracy.browser.test.mjs",
     "test:diagram-preview": "node --test test/diagram-preview.browser.test.mjs",
+    "test:pull-requests-preview": "node --test test/pull-requests-preview.browser.test.mjs",
     "test:review-preview": "pnpm sync:code-review && node --test test/code-review-preview.browser.test.mjs test/footer-layout.browser.test.mjs",
     "typecheck:native": "tsc --noEmit",
     "typecheck:compatibility": "tsc --project tsconfig.compatibility.json --noEmit",

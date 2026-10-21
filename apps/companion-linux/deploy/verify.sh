@@ -30,6 +30,7 @@ systemctl --user is-enabled --quiet codewide-companion-update.path
 plugins=$("$HOME/.local/lib/codewide/current/bin/codewide-companion" vcs plugin list)
 printf '%s' "$plugins" | grep -F '"id":"git"' >/dev/null
 test -x "$HOME/.local/lib/codewide/current/libexec/codewide-vcs-git"
+test -x "$HOME/.local/lib/codewide/current/libexec/codewide-forge-github"
 private_devices=$(systemctl --user show codewide-companion.service -p PrivateDevices --value)
 if [ "$private_devices" != "no" ]; then
   printf 'companion PTYs unavailable: PrivateDevices=%s\n' "$private_devices" >&2

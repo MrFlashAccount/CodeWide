@@ -17,4 +17,4 @@ cd "$repo_root"
 sh "$repo_root/scripts/cargo-target-budget.sh"
 export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1
 export CARGO_TARGET_DIR="$repo_root/target"
-exec cargo build --release -p codewide-companion --bins "$@"
+exec cargo build --release -p codewide-companion -p forge-github --bins "$@"

@@ -760,9 +760,10 @@ open class CoreHost: CoreHostProtocol, @unchecked Sendable {
      * migrated, exclusively locked, or durably checkpointed.
      *
      * `app_build` and `source_revision` identify the installed bundle for
-     * remote updates.
+     * remote updates. `bundled_plugin_directory` is the app's
+     * `Contents/Helpers`, which holds the built-in forge plugins.
      */
-public convenience init(stateDirectory: String, codexHome: String, appVersion: String, appBuild: String, sourceRevision: String, hostVersion: String, computerName: String, listenAddress: String)throws  {
+public convenience init(stateDirectory: String, codexHome: String, appVersion: String, appBuild: String, sourceRevision: String, hostVersion: String, computerName: String, listenAddress: String, bundledPluginDirectory: String)throws  {
     let handle =
         try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
@@ -774,7 +775,8 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
         FfiConverterString.lower(sourceRevision),
         FfiConverterString.lower(hostVersion),
         FfiConverterString.lower(computerName),
-        FfiConverterString.lower(listenAddress),uniffiCallStatus
+        FfiConverterString.lower(listenAddress),
+        FfiConverterString.lower(bundledPluginDirectory),uniffiCallStatus
     )
 }
     self.init(unsafeFromHandle: handle)
@@ -2090,7 +2092,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_start_app_server() != 22333) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 40899) {
+    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 20583) {
         return InitializationResult.apiChecksumMismatch
     }
 

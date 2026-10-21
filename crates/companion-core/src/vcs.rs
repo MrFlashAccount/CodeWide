@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncReadExt, process::Command};
 
 mod arc_uncommitted;
+mod git_remotes;
 mod plugin;
+mod remotes;
 
 pub use companion_host::vcs::{
     CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, INSPECT_CAPABILITY, VcsDiff,
@@ -16,6 +18,7 @@ pub use companion_host::vcs::{
     VcsSummary, WORKSPACE_CREATE_CAPABILITY,
 };
 pub use plugin::{PluginRegistry, VcsPluginConfig};
+pub use remotes::{REMOTES_CAPABILITY, UpstreamRef, VcsRemote, VcsRemotes};
 
 const MAX_DIFF_BYTES: usize = 4 * 1024 * 1024;
 

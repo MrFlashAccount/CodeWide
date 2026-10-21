@@ -1,9 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Pressable, View } from "react-native";
 import type { CodeReviewWorkspaceProps } from "./codeReviewContract";
 import { useCodeReviewState } from "./codeReviewState";
 import { styles } from "./CodeReviewWorkspace.styles";
-import { shortPath } from "../resources/reviewLocation";
+import { CodeReviewGuide } from "./CodeReviewGuide";
+import { GuideToggle } from "./GuideToggle";
+import { useGuideFocus } from "./useGuideFocus";
+import { ReviewCommentStrip } from "./ReviewCommentStrip";
 
 import { changeScopeDisplay } from "../../../rendering/changeScopeDisplay";
 import { changedFileDisplayPath } from "../../../rendering/changed-file-path";
@@ -54,6 +57,12 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
     wrapLines,
   } = useCodeReviewState(props);
   const scopeDisplay = changeScopeDisplay(changeScope, vcs);
+  const guide = useGuideFocus({
+    available: props.guide !== undefined,
+    changes,
+    selectFile,
+    selectLine,
+  });
 
   return (
     <View
@@ -76,6 +85,7 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
         >
           <Ionicons color={colors.text} name="folder-open-outline" size={iconSize.action} />
         </Pressable>
+        <GuideToggle guide={guide} />
         <View style={styles.headerTitle}>
           <Text ellipsizeMode="middle" numberOfLines={1} style={styles.title}>
             {effectiveSelectedPath === null
@@ -160,6 +170,14 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
         </Pressable>
       </View>
 
+      {guide.open && props.guide !== undefined ? (
+        <CodeReviewGuide
+          binding={props.guide}
+          onComment={guide.comment}
+          onReveal={guide.reveal}
+          scope={changeScope}
+        />
+      ) : null}
       <View style={styles.workspace}>
         <View style={styles.editorPane}>
           <CodeReviewEditor
@@ -184,7 +202,7 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
             }}
             onLinePress={selectLine}
             onVoicePress={(draft, selection) => void pressVoice(draft, selection)}
-            revealReference={selectedReference === null ? revealReference : null}
+            revealReference={selectedReference === null ? (guide.focus ?? revealReference) : null}
             selectedPath={effectiveSelectedPath}
             selectedReference={selectedReference}
             sidebarOpen={sidebarOpen}
@@ -195,36 +213,12 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
             workspaceRevision={workspaceRevision}
             wrapLines={wrapLines}
           />
-          {comments.length > 0 && (
-            <ScrollView
-              contentContainerStyle={styles.commentStripContent}
-              horizontal
-              keyboardShouldPersistTaps="handled"
-              style={styles.commentStrip}
-            >
-              {comments.map((comment) => (
-                <View key={comment.id} style={styles.commentChip}>
-                  <Text numberOfLines={1} style={styles.commentChipLocation}>
-                    {shortPath(comment.path)}:{comment.line}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.commentChipBody}>
-                    {comment.body}
-                  </Text>
-                  <Pressable
-                    accessibilityLabel="Delete comment"
-                    hitSlop={8}
-                    onPress={() => {
-                      setComments((current) =>
-                        current.filter((candidate) => candidate.id !== comment.id),
-                      );
-                    }}
-                  >
-                    <Ionicons color={colors.textDim} name="close-circle" size={iconSize.inline} />
-                  </Pressable>
-                </View>
-              ))}
-            </ScrollView>
-          )}
+          <ReviewCommentStrip
+            comments={comments}
+            onDelete={(id) => {
+              setComments((current) => current.filter((candidate) => candidate.id !== id));
+            }}
+          />
         </View>
       </View>
     </View>

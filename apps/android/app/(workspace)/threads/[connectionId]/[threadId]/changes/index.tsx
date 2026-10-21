@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { RouteUnavailable } from "../../../../../../src/components/navigation/RouteUnavailable";
 import { ConversationRouteFullscreenOverlay } from "../../../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
 import { CurrentChangesRoute } from "../../../../../../src/features/changes/RouteChangesWorkspace";
+import { reviewGuideBinding } from "../../../../../../src/routeComposition/reviewGuideBinding";
 import { changesRouteSessions } from "../../../../../../src/services/changes/changesRouteSession";
 import {
   routeSessionIdParam,
@@ -52,7 +53,19 @@ export default function V1ChangesRoute(): React.JSX.Element {
   return (
     <ConversationRouteFullscreenOverlay
       onDismiss={close}
-      render={(closeOverlay) => <CurrentChangesRoute onClose={closeOverlay} request={request} />}
+      render={(closeOverlay) => (
+        <CurrentChangesRoute
+          guide={reviewGuideBinding({
+            connectionId: thread.value.connectionId.value,
+            cwd: request.cwd,
+            thread: request.thread,
+            threadId: thread.value.threadId.value,
+            turnId: null,
+          })}
+          onClose={closeOverlay}
+          request={request}
+        />
+      )}
       scope={`changes:${session.id}`}
     />
   );
