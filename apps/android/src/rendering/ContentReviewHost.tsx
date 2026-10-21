@@ -260,7 +260,7 @@ export function useContentReviewHighlights(
   return contentReviewTextHighlights(anchors, targetId, blockPath, offset);
 }
 
-export function useContentReviewComments(
+function useContentReviewComments(
   targetId: string,
   diagramId?: string,
 ): readonly ContentReviewComment[] {

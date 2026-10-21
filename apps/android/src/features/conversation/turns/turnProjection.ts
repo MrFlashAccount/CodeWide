@@ -139,7 +139,7 @@ export function preTurnBlockUsesDisclosure(block: RenderBlock): boolean {
   return block.body !== null || isToolActivityKind(block.kind);
 }
 
-export function activitySegmentUsesDisclosure(
+function activitySegmentUsesDisclosure(
   part: Extract<TurnSequencePart, { kind: "activity" }>,
 ): boolean {
   const thinkingOnly =

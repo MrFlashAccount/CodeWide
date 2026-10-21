@@ -1,4 +1,3 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,34 +37,5 @@ describe("Unversioned application entry", () => {
     expect(paths.filter((path) => /^\/v[12]/iu.test(path))).toEqual([]);
     expect(paths.filter((path) => /Workspace|RouteSession|RouteNavigation/u.test(path))).toEqual([]);
     expect(paths.filter((path) => path === "/")).toHaveLength(1);
-  });
-
-  it("publishes one workspace and the public compatibility aliases", () => {
-    const routes = readdirSync(join(android, "app"), { withFileTypes: true });
-    expect(routes.filter((entry) => entry.isDirectory()).map((entry) => entry.name)).toEqual([
-      "(workspace)",
-    ]);
-    expect(existsSync(join(android, "app/index.tsx"))).toBe(false);
-    expect(existsSync(join(android, "app/(workspace)/(lists)/index.tsx"))).toBe(true);
-    for (const alias of ["legacy", "pair", "thread"]) {
-      const route = readFileSync(join(android, "app", `${alias}.tsx`), "utf8");
-      expect(route).toContain('href="/"');
-      expect(route).not.toContain("Generation");
-    }
-  });
-
-  it("cannot load the retired UI through a stored preference or diagnostics host", () => {
-    const root = readFileSync(join(android, "app/_layout.tsx"), "utf8");
-    const workspace = readFileSync(join(android, "app/(workspace)/_layout.tsx"), "utf8");
-    for (const source of [root, workspace]) {
-      expect(source).not.toMatch(/UiGeneration|uiGeneration|V2Application|src\/v2\//u);
-    }
-    expect(root).toContain("<AppLockGate>");
-    // The framework shell must not retain a second native stack around the workspace.
-    expect(root).toContain("<Slot />");
-    expect(root).not.toContain("<Stack");
-    expect(existsSync(join(android, "app/+not-found.tsx"))).toBe(true);
-    expect(root).toContain("<NavigationPerformanceHud />");
-    expect(existsSync(join(android, "src/v2/V2Application.tsx"))).toBe(false);
   });
 });

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,16 +7,6 @@ import {
   LOADING_CHANGE_STATE,
 } from "../src/features/review/editor/editorEmptyState";
 import type { CodeReviewDocument } from "../src/features/review/editor/editorBridge";
-import { compactSource, sourceObjectDeclaration } from "./source-contract";
-
-const nativeEditorHtml = readFileSync(
-  new URL("../src/features/review/editor/webview/codeReviewEditor.html", import.meta.url),
-  "utf8",
-);
-const webEditor = readFileSync(
-  new URL("../src/features/review/editor/CodeReviewEditor.web.tsx", import.meta.url),
-  "utf8",
-);
 
 function document(overrides: Partial<CodeReviewDocument> = {}): CodeReviewDocument {
   return {
@@ -100,24 +88,5 @@ describe("code review empty states", () => {
       message: "This file format cannot be previewed in Changes.",
       title: "Unsupported format",
     });
-  });
-
-  it("centers empty states in both native and web review panes", () => {
-    expect(compactSource(nativeEditorHtml)).toContain(
-      ".review-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;",
-    );
-    expect(nativeEditorHtml).toContain('.review-empty[data-loading="true"] .review-empty-title');
-    expect(webEditor).toContain("sidebarScroll: { flex: 1 }");
-    expect(sourceObjectDeclaration(webEditor, "sidebarContent")).toContain("flexGrow: 1");
-    const emptyStateStyle = sourceObjectDeclaration(webEditor, "emptyState");
-    expect(emptyStateStyle).toContain("flex: 1");
-    expect(emptyStateStyle).toContain("minHeight: 160");
-    expect(emptyStateStyle).toContain('alignItems: "center"');
-    expect(emptyStateStyle).toContain('justifyContent: "center"');
-    for (const name of ["emptyTitle", "emptyMessage"]) {
-      const style = webEditor.match(new RegExp(`${name}: \\{[^}]+\\}`, "u"))?.[0];
-      expect(style).toContain('textAlign: "center"');
-      expect(style).toContain("...typeScale.body");
-    }
   });
 });

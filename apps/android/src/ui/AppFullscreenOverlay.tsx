@@ -21,9 +21,9 @@ export type AppFullscreenOverlayLifecycle = {
   willOpen?: (id: string) => void;
 };
 
-export type AppFullscreenOverlayRender = (controls: { close: () => void }) => ReactNode;
+type AppFullscreenOverlayRender = (controls: { close: () => void }) => ReactNode;
 
-export type AppFullscreenOverlayOptions = {
+type AppFullscreenOverlayOptions = {
   /**
    * Keep the overlay mounted through a transient responsive-layout boundary
    * replacement. Explicit scope dismissal (for example, changing threads)
@@ -32,7 +32,7 @@ export type AppFullscreenOverlayOptions = {
   dismissOnScopeUnmount?: boolean;
 };
 
-export type AppFullscreenOverlayHandle = {
+type AppFullscreenOverlayHandle = {
   close: () => void;
   id: string;
 };

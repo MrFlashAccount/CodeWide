@@ -4,11 +4,11 @@ import { Pressable, StyleSheet, View } from "react-native";
 import { colors, iconSize, layoutSize, radii, spacing, typeScale, typeWeight } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 
-export const THREAD_SWIPE_ACTION_WIDTH = layoutSize.row;
+const THREAD_SWIPE_ACTION_WIDTH = layoutSize.row;
 
-export const THREAD_SWIPE_UNDERLAY_OVERLAP = radii.selected;
+const THREAD_SWIPE_UNDERLAY_OVERLAP = radii.selected;
 
-export const THREAD_SWIPE_ACTIONS_WIDTH = THREAD_SWIPE_ACTION_WIDTH * 3;
+const THREAD_SWIPE_ACTIONS_WIDTH = THREAD_SWIPE_ACTION_WIDTH * 3;
 
 export function ThreadSwipeActions({ children }: { children: ReactNode }) {
   return (

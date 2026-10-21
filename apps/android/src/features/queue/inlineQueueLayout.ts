@@ -2,13 +2,13 @@ import { formatDeviceTime } from "../../data/device-time";
 import { controlSize, spacing } from "../../theme";
 import type { InlineQueueOverlayItem, QueueLayout } from "./inlineQueueContract";
 
-export const STACK_VISIBLE_ITEMS = 2;
+const STACK_VISIBLE_ITEMS = 2;
 
 export const STACK_HEIGHT = controlSize.regular;
 
 export const STACK_VIEWPORT_HEIGHT = controlSize.touch;
 
-export const STACK_OFFSET = spacing.xxs;
+const STACK_OFFSET = spacing.xxs;
 
 export const CARD_GAP = spacing.optical;
 

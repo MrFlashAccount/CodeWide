@@ -17,9 +17,9 @@ import { InlineIcon } from "../../ui/InlineIcon";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./QueueFeature.styles";
 
-export const QUEUE_DRAG_ROW_STEP = 76;
+const QUEUE_DRAG_ROW_STEP = 76;
 
-export function QueueDragHandle({
+function QueueDragHandle({
   disabled,
   onDrop,
 }: {

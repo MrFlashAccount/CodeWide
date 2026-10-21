@@ -4,7 +4,6 @@ import { StyleSheet, Text as NativeText, type StyleProp, type TextStyle } from "
 
 import { productFonts } from "../../ui/product-fonts";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../../ui/typography-policy";
-import { AppTextInput, type AppTextInputProps } from "../../ui/Typography";
 
 const EMPTY_TEXT_STYLE: TextStyle = {};
 const REGULAR_FONT_WEIGHT = 400;
@@ -24,7 +23,7 @@ export function ProductText(
   return <PresentationText {...props} style={[styles.base, tones[tone], weights[weight], style]} />;
 }
 
-export function PresentationText(textProps: ComponentProps<typeof NativeText>): React.JSX.Element {
+function PresentationText(textProps: ComponentProps<typeof NativeText>): React.JSX.Element {
   const {
     allowFontScaling = true,
     maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
@@ -33,23 +32,6 @@ export function PresentationText(textProps: ComponentProps<typeof NativeText>): 
   } = textProps;
   return (
     <NativeText
-      {...props}
-      allowFontScaling={allowFontScaling}
-      maxFontSizeMultiplier={maxFontSizeMultiplier}
-      style={[style, presentationFontStyle(style)]}
-    />
-  );
-}
-
-export function PresentationTextInput(inputProps: AppTextInputProps): React.JSX.Element {
-  const {
-    allowFontScaling = true,
-    maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
-    style,
-    ...props
-  } = inputProps;
-  return (
-    <AppTextInput
       {...props}
       allowFontScaling={allowFontScaling}
       maxFontSizeMultiplier={maxFontSizeMultiplier}

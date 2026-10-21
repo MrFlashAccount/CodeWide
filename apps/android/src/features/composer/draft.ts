@@ -13,7 +13,7 @@ export const EMPTY_COMPOSER_PREFERENCES: StoredComposerPreferences = {
   skillPaths: [],
 };
 
-export const EMPTY_COMPOSER_ATTACHMENTS: StoredDraftAttachment[] = [];
+const EMPTY_COMPOSER_ATTACHMENTS: StoredDraftAttachment[] = [];
 
 import { useSelector } from "@legendapp/state/react";
 import { composerUploads } from "../../data/composer-uploads";

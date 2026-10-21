@@ -15,7 +15,7 @@ export type ServerScopeBinding = {
 };
 
 /** Keeps a requested V1 list scope valid as saved connections change. */
-export function normalizeServerScope(
+function normalizeServerScope(
   requested: ServerScope,
   connections: readonly StoredConnection[],
 ): ServerScope {

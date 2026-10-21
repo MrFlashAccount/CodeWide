@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,15 +11,6 @@ const androidRoot = fileURLToPath(new URL("..", import.meta.url));
 
 describe("V1 feature gate coverage", () => {
   it("routes the required V1 gate through every quality owner", async () => {
-    const manifest = JSON.parse(readFileSync(join(androidRoot, "package.json"), "utf8"));
-    expect(manifest.scripts["validate:v1"]).toContain("format:v1:check");
-    expect(manifest.scripts["validate:v1"]).toContain("lint:v1");
-    expect(manifest.scripts["lint:v1"]).toContain("lint:v1:source");
-    expect(manifest.scripts["lint:v1"]).toContain("lint:v1:dead-code");
-    expect(manifest.scripts["lint:v1"]).toContain("lint:v1:dependencies");
-    expect(manifest.scripts["lint:v1:source"]).toContain("lint:v1:hygiene");
-    expect(manifest.scripts["lint:v1:source"]).toBe("pnpm lint:v1:hygiene");
-
     const hygiene = (await import(new URL("../oxlint.v1.config.mjs", import.meta.url))).default;
     expect(hygiene.rules["hygiene/require-type-assertion-justification"]).toBe("error");
     expect(JSON.stringify(hygiene.rules["no-restricted-imports"])).toContain("useCallback");

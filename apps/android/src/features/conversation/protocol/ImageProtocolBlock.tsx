@@ -130,7 +130,7 @@ export function ImageProtocolBlock(props: ImageProtocolBlockInput) {
   );
 }
 
-export function ImageProtocolContent(props: ImageProtocolContentInput) {
+function ImageProtocolContent(props: ImageProtocolContentInput) {
   const gallery = useContext(ArtifactImageReferences);
   const localPath =
     props.block.kind === "imageView"

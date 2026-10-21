@@ -116,7 +116,7 @@ function cloneTurnControlsModel(model: TurnControlsModel): TurnControlsModel {
     : { ...copy, defaultEffort: model.defaultEffort, efforts: [...model.efforts] };
 }
 
-export function cloneTurnControls(value: TurnControlsValue): TurnControlsValue {
+function cloneTurnControls(value: TurnControlsValue): TurnControlsValue {
   return {
     defaults:
       // WHY: Persisted rows from an older schema may omit defaults even though current writes always include it.

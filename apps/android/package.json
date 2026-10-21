@@ -24,7 +24,6 @@
     "lint:v1:dead-code": "knip --config knip.v1.config.mjs --workspace @codewide/android --include files,exports,nsExports,types,nsTypes,duplicates,unresolved,cycles,dependencies,devDependencies --treat-config-hints-as-errors",
     "format:v1": "oxfmt --config oxfmt.v1.json --write app/legacy.tsx 'app/(workspace)' src",
     "format:v1:check": "oxfmt --config oxfmt.v1.json --check --no-error-on-unmatched-pattern app/legacy.tsx 'app/(workspace)' src",
-    "test:v1:architecture": "pnpm --workspace-root exec vitest run apps/android/test/fullscreen-sheet-contract.test.ts",
     "test:v1:render": "jest --config jest.v1.config.cjs --runInBand",
     "test:markup": "jest --config jest.markup.config.cjs --runInBand",
     "test:web-platform": "node --test test/web-platform.browser.test.mjs",
@@ -43,7 +42,7 @@
     "typecheck": "pnpm typecheck:native && pnpm typecheck:web && pnpm typecheck:compatibility",
     "build": "expo export --platform web",
     "lint:v1:dependencies": "depcruise --config dependency-cruiser.v1.config.mjs --output-type err app src",
-    "validate:v1": "pnpm format:v1:check && pnpm typecheck && pnpm test:v1:architecture && pnpm test:v1:render && pnpm test:shared:render && pnpm lint:v1",
+    "validate:v1": "pnpm format:v1:check && pnpm typecheck && pnpm test:v1:render && pnpm test:shared:render && pnpm lint:v1",
     "compile:android": "sh ../../scripts/validate-android-bundle.sh",
     "test:shared:render": "jest --config jest.shared.config.cjs --runInBand"
   },

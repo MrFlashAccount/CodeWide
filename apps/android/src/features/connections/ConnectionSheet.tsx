@@ -63,7 +63,7 @@ export function ConnectionSheet({
   );
 }
 
-export function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
+function ConnectionSheetSession(props: ConnectionSheetSessionProps) {
   const { localError, localReady, onRetryStartup, saving } = props;
   const {
     displayName,

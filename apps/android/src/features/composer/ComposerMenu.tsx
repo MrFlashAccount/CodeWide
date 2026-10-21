@@ -95,7 +95,7 @@ export function ResourceComposerMenu({
   );
 }
 
-export function ComposerMenu({
+function ComposerMenu({
   controls,
   error,
   getTransferAccess,
@@ -206,7 +206,7 @@ export function ComposerMenu({
   );
 }
 
-export function pageTitle(page: ComposerMenuPage): string {
+function pageTitle(page: ComposerMenuPage): string {
   if (page === "model") {
     return "Model & Thinking";
   }

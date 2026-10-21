@@ -13,20 +13,6 @@ export function leadingEmoji(value: string): string | null {
   return match?.[1] ?? null;
 }
 
-export function emojiSafeTitle(value: string): React.ReactNode {
-  const emoji = leadingEmoji(value);
-  if (emoji === null) {
-    return value;
-  }
-  const title = value.slice(emoji.length).trimStart();
-  return (
-    <>
-      <Text style={styles.emojiText}>{emoji}</Text>
-      {title === "" ? null : ` ${title}`}
-    </>
-  );
-}
-
 export function ThreadTitle({ running, value }: { running: boolean; value: string }) {
   const emoji = leadingEmoji(value);
   const title = emoji === null ? value : value.slice(emoji.length).trimStart();

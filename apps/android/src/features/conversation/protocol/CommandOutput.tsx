@@ -118,13 +118,13 @@ function useCommandOutputAction(
   return { enabled: openContent !== null && turnTarget !== null, open };
 }
 
-export interface LazyCommandOutputProps {
+interface LazyCommandOutputProps {
   readonly block: RenderBlock;
   readonly getTransferAccess?: GetTransferAccess;
   readonly running: boolean;
 }
 
-export function LazyCommandOutput(props: LazyCommandOutputProps) {
+function LazyCommandOutput(props: LazyCommandOutputProps) {
   const scope = usePrivateFileAccessScope();
   const [byteLimit, setByteLimit] = useState(COMMAND_OUTPUT_PAGE_BYTES);
   const references = commandOutputReferences(props.block.raw);

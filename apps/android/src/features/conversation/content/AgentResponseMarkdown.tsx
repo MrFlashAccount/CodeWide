@@ -147,7 +147,7 @@ export function AgentResponseMarkdown({
   );
 }
 
-export function markdownSegmentsWeight(segments: string[]): number {
+function markdownSegmentsWeight(segments: string[]): number {
   return segments.reduce((bytes, segment) => bytes + segment.length * 2, 0);
 }
 

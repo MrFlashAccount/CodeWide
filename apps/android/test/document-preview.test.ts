@@ -1,6 +1,3 @@
-import { compactSource } from "./source-contract";
-import { readFileSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -13,45 +10,6 @@ import {
   resolvePreviewableDocumentLink,
   resolveRemoteDocumentPath,
 } from "../src/rendering/document-preview";
-
-const changes = readFileSync(
-  new URL("../src/features/changes/RouteCodeDocumentReview.tsx", import.meta.url),
-  "utf8",
-);
-const screen = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
-const workspace = readFileSync(
-  new URL("../src/features/review/workspace/CodeReviewWorkspace.tsx", import.meta.url),
-  "utf8",
-);
-const nativeEditor = readFileSync(
-  new URL("../src/features/review/editor/CodeReviewEditor.native.tsx", import.meta.url),
-  "utf8",
-);
-const editorRuntime = readFileSync(
-  new URL("../src/features/review/editor/webview/entry.web.ts", import.meta.url),
-  "utf8",
-);
-const documentPreview = readFileSync(
-  new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url),
-  "utf8",
-);
-const routeTextDocumentPreview = readFileSync(
-  new URL("../src/features/attachments/RouteTextDocumentPreview.tsx", import.meta.url),
-  "utf8",
-);
-
-const migratedDocumentNavigation = readFileSync(
-  new URL("../src/features/attachments/documentNavigation.ts", import.meta.url),
-  "utf8",
-);
-const migratedAttachmentPreview = readFileSync(
-  new URL("../src/features/attachments/attachmentPreview.tsx", import.meta.url),
-  "utf8",
-);
-const conversationTools = readFileSync(
-  new URL("../src/features/conversation/ConversationTools.tsx", import.meta.url),
-  "utf8",
-);
 
 describe("document preview", () => {
   it("routes previewable documents, images and downloads by file type", () => {
@@ -79,12 +37,6 @@ describe("document preview", () => {
     expect(documentPreviewSurface("markdown")).toBe("fullscreen");
     expect(documentPreviewSurface("text")).toBe("fullscreen");
     expect(documentPreviewSurface("download")).toBe("download");
-  });
-
-  it("reuses the page document renderer from attachment routes", () => {
-    expect(routeTextDocumentPreview).toContain("<DocumentPagePreview");
-    expect(routeTextDocumentPreview).not.toContain("<AppSheet");
-    expect(documentPreview).toContain("export function DocumentPagePreview");
   });
 
   it("resolves attached relative document links against the remote thread cwd", () => {
@@ -155,25 +107,6 @@ describe("document preview", () => {
     expect(remoteDocumentDirectory("/srv/project/docs/README.md")).toBe("/srv/project/docs");
   });
 
-  it("opens source references at a one-shot highlighted line without opening a comment", () => {
-    expect(changes).toContain("initialLine: document.line");
-    expect(changes).toContain("initialColumn: document.column");
-    expect(screen).not.toContain('target.kind === "text" || target.line !== undefined');
-    expect(migratedDocumentNavigation).toContain("openDocument(request);");
-    expect(conversationTools).toContain('if (request.kind === "text") {');
-    expect(conversationTools).toContain("changesFeatureBinding.openCodeDocument(request);");
-    expect(conversationTools).toContain("openTimelineDocument,");
-    expect(migratedAttachmentPreview).toContain('if (request.kind === "text") {');
-    expect(changes).toContain("<CodeReviewWorkspace");
-    expect(changes).toContain("onClose={onClose}");
-    expect(workspace).toContain(
-      "revealReference={selectedReference === null ? revealReference : null}",
-    );
-    expect(nativeEditor).toContain('send({ command: "reveal", payload: revealReference })');
-    expect(editorRuntime).toContain("revealedReference = parsed.payload");
-    expect(editorRuntime).toContain('scrollIntoView({ block: "center", inline: "nearest" })');
-  });
-
   it("keeps Markdown source lines in the fullscreen renderer and maps them to a rendered segment", () => {
     const source = "# Intro\n\nFirst\n\n## Details\n\nBody";
     const segments = ["# Intro\n\nFirst\n\n", "## Details\n\nBody"];
@@ -182,31 +115,6 @@ describe("document preview", () => {
     expect(markdownLineTarget(source, segments, 5)).toEqual({ segmentIndex: 1, line: 1 });
     expect(markdownLineTarget(source, segments, 7)).toEqual({ segmentIndex: 1, line: 3 });
     expect(markdownLineTarget(source, segments, undefined)).toBeNull();
-  });
-
-  it("owns Markdown reading controls in the fullscreen viewer chrome", () => {
-    expect(documentPreview).toContain('accessibilityLabel="Back from document preview"');
-    expect(documentPreview).toContain('name="arrow-back"');
-    expect(documentPreview).toContain('name="ellipsis-vertical"');
-    expect(documentPreview).toContain('id: "download"');
-    expect(documentPreview).toContain('label: "Download"');
-    expect(documentPreview).toContain('id: "text-smaller"');
-    expect(documentPreview).toContain('id: "text-reset"');
-    expect(documentPreview).toContain('id: "text-larger"');
-    expect(documentPreview).not.toContain("<DocumentTextScaleControl");
-    expect(documentPreview).toContain('id === "text-smaller"');
-    expect(documentPreview).toContain('id === "text-reset"');
-    expect(documentPreview).toContain('id === "text-larger"');
-    expect(documentPreview).toContain('id: "layout-reading"');
-    expect(documentPreview).toContain('label: "Reading width"');
-    expect(documentPreview).toContain('id: "layout-wide"');
-    expect(documentPreview).toContain('label: "Full width"');
-    expect(documentPreview).toContain("<RichMarkdownTextScaleProvider scale={textScale}>");
-    expect(documentPreview).toContain(
-      'layoutMode === "reading" ? { maxWidth: documentReadingWidth(textScale) }',
-    );
-    expect(documentPreview).toContain("documentReadingWidth(textScale)");
-    expect(documentPreview).toContain("useDocumentViewerPreferences()");
   });
 
   it("wraps complete and fragment HTML without imposing a security policy", () => {

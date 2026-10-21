@@ -3,7 +3,6 @@ import { connectionSettingsSections } from "../connections/ConnectionFeature";
 import { useSelector } from "@legendapp/state/react";
 import { useLiveQuery } from "@tanstack/react-db";
 import Constants from "expo-constants";
-import { useState } from "react";
 import { Platform } from "react-native";
 import type { AccountPoolSnapshot, AccountResetCreditConsumption } from "../../data/account-pool";
 import type { AccountRateLimitsRow } from "../../data/account-rate-limits";
@@ -208,9 +207,4 @@ export function ConnectionSettings({
       }}
     />
   );
-}
-
-/** Keeps settings visibility with its public feature while the workspace retains its lifetime. */
-export function useSettingsVisibility() {
-  return useState(false);
 }

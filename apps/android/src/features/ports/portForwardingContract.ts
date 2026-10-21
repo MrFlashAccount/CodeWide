@@ -1,13 +1,13 @@
 import type { LegendListProps } from "@legendapp/list/react-native";
 
 /** Runtime lifecycle of one port-forwarding profile. */
-export type PortForwardingStatus = "stopped" | "connecting" | "live" | "unavailable" | "error";
+type PortForwardingStatus = "stopped" | "connecting" | "live" | "unavailable" | "error";
 
 /** Lifecycle of remote port discovery for the active server. */
-export type PortForwardingDiscoveryStatus = "idle" | "loading" | "ready" | "error";
+type PortForwardingDiscoveryStatus = "idle" | "loading" | "ready" | "error";
 
 /** User policy controlling whether a candidate port is forwarded. */
-export type PortForwardingPreference = "automatic" | "included" | "excluded";
+type PortForwardingPreference = "automatic" | "included" | "excluded";
 
 /** Persisted configuration and runtime state of one forwarded port. */
 export type PortForwardingProfile = {

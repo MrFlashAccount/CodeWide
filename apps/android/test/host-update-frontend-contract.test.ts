@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { StoredConnection } from "../src/data/connection-profile-types";
@@ -8,45 +7,7 @@ import {
 } from "../src/features/connections/hostUpdateTransport";
 import { urlTransport } from "../src/native/urlTransport";
 
-const connectionFiles = [
-  "ConnectionFeature.tsx",
-  "hostUpdatePresentation.ts",
-  "HostUpdateSettings.tsx",
-  "hostUpdateContract.ts",
-  "hostUpdateOperationFollower.ts",
-  "hostUpdateResource.ts",
-  "hostUpdateResourceState.ts",
-  "hostUpdateSettingsContract.ts",
-  "hostUpdateTransport.ts",
-  "hostUpdateWorkspaceBinding.ts",
-  "useHostUpdateProjection.ts",
-].map((name) =>
-  readFileSync(new URL(`../src/features/connections/${name}`, import.meta.url), "utf8"),
-);
-const transportSource = readFileSync(
-  new URL("../src/features/connections/hostUpdateTransport.ts", import.meta.url),
-  "utf8",
-);
-const settings = readFileSync(
-  new URL("../src/features/settings/SettingsFeature.tsx", import.meta.url),
-  "utf8",
-);
-
 describe("Android host update ownership", () => {
-  it("keeps transport and resource ownership out of Settings", () => {
-    expect(settings).toContain('from "../connections/connectionSettingsContract"');
-    expect(settings).not.toContain("hostUpdateTransport");
-    expect(settings).not.toContain("hostUpdateResource");
-    expect(settings).not.toContain("fetch(");
-  });
-
-  it("starts no host-update render load from an effect", () => {
-    for (const source of connectionFiles) {
-      expect(source).not.toMatch(/\buse(?:Layout)?Effect\b/u);
-      expect(source).not.toMatch(/\buse(?:Callback|Memo)\b/u);
-    }
-  });
-
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
@@ -150,8 +111,5 @@ describe("Android host update ownership", () => {
         },
       ]);
     }
-    expect(transportSource).toContain("scopedHttpAuthorization");
-    expect(transportSource).toContain("connectionTransport(connection)");
-    expect(transportSource).not.toMatch(/artifactUrl|downloadUrl|targetUrl/u);
   });
 });

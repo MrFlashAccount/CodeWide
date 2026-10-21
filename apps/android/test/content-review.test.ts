@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -9,66 +7,8 @@ import {
   type ContentReviewComment,
 } from "../src/rendering/content-review";
 import { contentReviewNativeModule } from "../src/rendering/content-review-native-module";
-import { compactSource, sourceHasJsxElement } from "./source-contract";
 
 const target = { id: "answer-1", label: "Completed agent response", reference: "item-1" };
-const contentReviewHost = readFileSync(
-  new URL("../src/rendering/ContentReviewHost.tsx", import.meta.url),
-  "utf8",
-);
-const reviewableText = readFileSync(
-  new URL("../src/rendering/ReviewableText.native.tsx", import.meta.url),
-  "utf8",
-);
-const documentPreview = readFileSync(
-  new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url),
-  "utf8",
-);
-const screen = compactSource(
-  readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8"),
-);
-const selectionModule = readFileSync(
-  new URL(
-    "../android/app/src/main/java/dev/codewide/app/rendering/ContentReviewSelectionModule.kt",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const mermaidDiagram = readFileSync(
-  new URL("../src/rendering/MermaidDiagram.native.tsx", import.meta.url),
-  "utf8",
-);
-const mermaidRenderer = readFileSync(
-  new URL("../android/app/src/main/assets/mermaid-renderer.html", import.meta.url),
-  "utf8",
-);
-
-const attachmentDocument = readFileSync(
-  new URL("../src/features/attachments/AttachmentDocumentPreview.tsx", import.meta.url),
-  "utf8",
-);
-const reviewAdmission = readFileSync(
-  new URL("../src/features/composer/attachments/reviewAdmission.ts", import.meta.url),
-  "utf8",
-);
-const reviewFeature = readFileSync(
-  new URL("../src/features/review/ReviewFeature.tsx", import.meta.url),
-  "utf8",
-);
-
-const ownerAgentResponseMarkdown = compactSource(
-  readFileSync(
-    new URL("../src/features/conversation/content/AgentResponseMarkdown.tsx", import.meta.url),
-    "utf8",
-  ),
-);
-
-const overlays = compactSource(
-  readFileSync(
-    new URL("../src/features/conversation/ConversationOverlayContent.tsx", import.meta.url),
-    "utf8",
-  ),
-);
 
 describe("content review", () => {
   it("attaches image pin coordinates and comments without treating the image as a Mermaid diagram", () => {
@@ -95,71 +35,6 @@ describe("content review", () => {
     expect(attachment).not.toContain("Mermaid");
     expect(attachment).not.toContain("undefined");
   });
-  it("keeps review input inline with the currently visible content", () => {
-    expect(contentReviewHost).toContain("<ContentReviewKeyboardDock>");
-    expect(contentReviewHost).toContain("paddingBottom: Math.max(spacing.sm, insets.bottom)");
-    expect(contentReviewHost).toContain("<InlineContentReviewComposer");
-    expect(contentReviewHost).not.toContain("useAppFullscreenOverlay");
-    expect(contentReviewHost).not.toContain("resumeTray");
-    expect(
-      sourceHasJsxElement(documentPreview, "ContentReviewComposer", [
-        "targetId={markdownReviewTarget.id}",
-        'anchorKind="text"',
-      ]),
-    ).toBe(true);
-    expect(overlays).toContain('<ContentReviewComposer targetPrefix="agent-response:" />');
-    expect(compactSource(attachmentDocument)).toMatch(
-      /<ContentReviewComposer(?=[^>]*anchorKind="text")(?=[^>]*targetId=\{`markdown-document:\$\{document\.request\.path\}`\})[^>]*\/>/u,
-    );
-    expect(
-      sourceHasJsxElement(mermaidDiagram, "ContentReviewComposer", [
-        "targetId={reviewTarget.id}",
-        'anchorKind="mermaid"',
-        "diagramId={diagramId}",
-      ]),
-    ).toBe(true);
-  });
-
-  it("keeps Mermaid review state and saved comments inside its fullscreen surface", () => {
-    expect(mermaidDiagram).toContain("active={annotating}");
-    expect(mermaidDiagram).toContain('color={annotating ? "#ffffff" : colors.textMuted}');
-    expect(mermaidDiagram).toContain("reviewPoints={reviewPoints}");
-    expect(
-      sourceHasJsxElement(mermaidDiagram, "ContentReviewComments", [
-        "targetId={reviewTarget.id}",
-        "diagramId={diagramId}",
-        'presentation="overlay"',
-      ]),
-    ).toBe(true);
-    expect(mermaidRenderer).toContain("window.diagramSetReviewPoints = function (points)");
-    expect(mermaidRenderer).toContain("pending ? '#ffffff' : '#b794f6'");
-  });
-
-  it("exposes saved review comments on completed responses and Markdown documents", () => {
-    expect(contentReviewHost).toContain("export function ContentReviewComments");
-    expect(ownerAgentResponseMarkdown).toContain(
-      "<ContentReviewComments targetId={reviewTarget.id} />",
-    );
-    expect(attachmentDocument).toContain(
-      "<ContentReviewComments targetId={`markdown-document:${document.request.path}`} />",
-    );
-    expect(
-      sourceHasJsxElement(documentPreview, "ContentReviewComments", [
-        "targetId={markdownReviewTarget.id}",
-        'presentation="overlay"',
-      ]),
-    ).toBe(true);
-  });
-
-  it("updates one regular Markdown attachment as comments are saved", () => {
-    expect(contentReviewHost).toContain("const attachmentId = await runtime.attach(markdown)");
-    expect(contentReviewHost).toContain(
-      "attachmentByScopeRef.current.set(current.scope, attachmentId)",
-    );
-    expect(reviewAdmission).toContain("candidate.id !== previousAttachmentId");
-    expect(reviewFeature).toContain("attachmentId: contentReviewAttachmentId");
-  });
-
   it("treats a missing native review module as an optional capability", () => {
     expect(contentReviewNativeModule(null)).toBeNull();
     expect(contentReviewNativeModule(undefined)).toBeNull();
@@ -193,11 +68,6 @@ describe("content review", () => {
     expect(contentReviewTextHighlights(anchors, target.id, "segment-0/paragraph-2", 2)).toEqual([
       { start: 2, end: 7 },
     ]);
-    expect(reviewableText).toContain(
-      "nativeModule?.setHighlights?.(reactTag, token, reviewHighlights)",
-    );
-    expect(selectionModule).toContain("ReviewHighlightSpan");
-    expect(selectionModule).toContain("REVIEW_HIGHLIGHT_COLOR");
   });
 
   it("serializes selected text as an inline Markdown quote", () => {

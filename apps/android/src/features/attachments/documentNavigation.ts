@@ -5,11 +5,6 @@ import {
   type DocumentPreviewRequest,
 } from "../../rendering/DocumentPreviewHost";
 
-export type ThreadResourceDocumentRoute = {
-  request: DocumentPreviewRequest;
-  revision: number;
-};
-
 import type { GetTransferAccess } from "../../data/private-transfer";
 import { isAttachmentVideo } from "../../rendering/AttachmentVideoPreview";
 import { resolvePreviewableDocumentLink } from "../../rendering/document-preview";

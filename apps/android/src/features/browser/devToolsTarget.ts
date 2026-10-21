@@ -85,7 +85,7 @@ export function proxiedWebSocketUrl(
   return `ws://${endpoint.host}:${String(endpoint.port)}${path}${separator}codewide_token=${encodeURIComponent(endpoint.token)}`;
 }
 
-export function isDevToolsTarget(value: unknown): value is DevToolsTarget {
+function isDevToolsTarget(value: unknown): value is DevToolsTarget {
   return (
     value !== null &&
     typeof value === "object" &&
@@ -105,7 +105,7 @@ export function isDevToolsTarget(value: unknown): value is DevToolsTarget {
   );
 }
 
-export async function targetContainsMarker(
+async function targetContainsMarker(
   endpoint: NativeBrowserDevToolsBridge,
   target: DevToolsTarget,
   marker: string,
@@ -210,7 +210,7 @@ export function markInspectablePage(target: WebView | null): InspectablePageMark
   };
 }
 
-export function isBundledDevToolsUrl(url: string): boolean {
+function isBundledDevToolsUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     return parsed.hostname === "127.0.0.1" && parsed.pathname.startsWith("/browser-devtools/");
@@ -219,7 +219,7 @@ export function isBundledDevToolsUrl(url: string): boolean {
   }
 }
 
-export function samePageUrl(left: string, right: string): boolean {
+function samePageUrl(left: string, right: string): boolean {
   try {
     const leftUrl = new URL(left);
     const rightUrl = new URL(right);
@@ -232,11 +232,11 @@ export function samePageUrl(left: string, right: string): boolean {
   }
 }
 
-export function normalizePath(path: string): string {
+function normalizePath(path: string): string {
   return path.length > 1 ? path.replace(/\/$/u, "") : path;
 }
 
-export async function delay(milliseconds: number): Promise<void> {
+async function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
   });

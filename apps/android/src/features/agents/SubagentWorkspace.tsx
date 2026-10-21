@@ -16,7 +16,7 @@ export const MASTER_MIN_WIDTH = 280;
 
 export const MASTER_MAX_WIDTH = 360;
 
-export const SUBAGENT_ROW_HEIGHT =
+const SUBAGENT_ROW_HEIGHT =
   threadListLayout.rowContentHeight + threadListLayout.rowVerticalMargin * 2;
 
 /** Composes the selectable subagent list and active subagent detail. */

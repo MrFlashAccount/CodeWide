@@ -74,7 +74,7 @@ export class ThreadListScopeProjection {
   }
 }
 
-export function firstLine(value: string): string | null {
+function firstLine(value: string): string | null {
   const line = value.trim().split("\n")[0]?.trim();
   return line === undefined || line === "" ? null : line.slice(0, 80);
 }
