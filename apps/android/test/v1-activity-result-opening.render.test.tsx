@@ -5,6 +5,7 @@ import { LargeContentViewerContext } from "../src/features/conversation/content/
 import { CommandExecutionProtocolBlock } from "../src/features/conversation/protocol/CommandOutput";
 import { FileChangeProtocolBlock } from "../src/features/conversation/protocol/FileChangeProtocolBlock";
 import { ToolCallProtocolBlock } from "../src/features/conversation/protocol/ToolContent";
+import { TurnDiffProtocolBlock } from "../src/features/conversation/protocol/TurnDiffProtocolBlock";
 import {
   SHEET_TOOL_CARDS,
   ToolCardPlacementContext,
@@ -145,6 +146,42 @@ it("draws a tool step in a bubble as its row only, never its output", () => {
   expect(view.queryByText("Output")).toBeNull();
   fireEvent.press(view.getByLabelText("Open pnpm test"));
   expect(openActivity).toHaveBeenCalledTimes(1);
+});
+
+it("opens a turn's recorded diff in the Changes workspace from the activity sheet", () => {
+  const present = jest.fn();
+  const diff =
+    "diff --git a/example.txt b/example.txt\n--- a/example.txt\n+++ b/example.txt\n@@ -1 +1 @@\n-before\n+after";
+  const block: RenderBlock = {
+    body: diff,
+    collapsible: true,
+    content: null,
+    durationMs: null,
+    key: "server/thread/turn/live-diff",
+    kind: "turnDiff",
+    raw: { diff, id: "codewide:turnDiff" },
+    status: null,
+    title: "Turn diff",
+    tone: "neutral",
+  };
+  const view = render(
+    <TurnTargetContext.Provider value={target}>
+      <TurnChangesContext.Provider value={present}>
+        <ToolCardPlacementContext.Provider value={SHEET_TOOL_CARDS}>
+          <TurnDiffProtocolBlock block={block} />
+        </ToolCardPlacementContext.Provider>
+      </TurnChangesContext.Provider>
+    </TurnTargetContext.Provider>,
+  );
+
+  fireEvent.press(view.getByLabelText("Open the changes of this turn"));
+  expect(present).toHaveBeenCalledWith(
+    target,
+    [expect.objectContaining({ path: "example.txt" })],
+    "turn",
+  );
+  // The diff opens in the workspace, not in place.
+  expect(view.queryByText(/\+after/)).toBeNull();
 });
 
 it("opens only the patches owned by the selected file-change call", () => {
