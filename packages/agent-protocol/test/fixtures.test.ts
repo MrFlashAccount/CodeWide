@@ -255,7 +255,7 @@ describe("background task output", () => {
   });
   const page = (status: string): unknown => ({
     id: 1,
-    result: { taskId: "b1", status, text: "", nextOffset: null, sizeBytes: 0 },
+    result: { taskId: "b1", command: null, status, text: "", nextOffset: null, sizeBytes: 0 },
   });
 
   it("keeps backgroundTaskId optional on a command item", () => {
@@ -276,7 +276,27 @@ describe("background task output", () => {
         { id: 1, result: { taskId: "b1", status: "running", text: "" } },
         "thread.backgroundTask.read",
       ),
-    ).toEqual(["$.result.nextOffset: missing", "$.result.sizeBytes: missing"]);
+    ).toEqual([
+      "$.result.command: missing",
+      "$.result.nextOffset: missing",
+      "$.result.sizeBytes: missing",
+    ]);
+    expect(
+      checkMessage(
+        {
+          id: 1,
+          result: {
+            taskId: "b1",
+            command: 7,
+            status: "running",
+            text: "",
+            nextOffset: null,
+            sizeBytes: 0,
+          },
+        },
+        "thread.backgroundTask.read",
+      ),
+    ).toEqual(["$.result.command: expected string"]);
   });
 
   it("is an additive capability that older declarations omit", () => {

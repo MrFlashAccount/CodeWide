@@ -15,6 +15,7 @@ function taskFile(
   return vi.fn(async (_taskId: string, offset: number): Promise<BackgroundTaskOutputPage> => {
     const end = Math.min(text.length, offset + pageBytes);
     return {
+      command: null,
       nextOffset: end < text.length ? end : null,
       sizeBytes: text.length,
       status: statusAt(offset),
@@ -73,19 +74,22 @@ describe("following a background task's output", () => {
   it("follows a running task until it finishes", async () => {
     let written = "building";
     let finished = false;
-    const read = vi.fn(async (_taskId: string, offset: number): Promise<BackgroundTaskOutputPage> => {
-      const page: BackgroundTaskOutputPage = {
-        nextOffset: null,
-        sizeBytes: written.length,
-        status: finished ? "completed" : "running",
-        taskId: "task",
-        text: written.slice(offset),
-      };
-      // The task writes more after each read, and finishes after a while.
-      written += ".";
-      finished = written.length > 12;
-      return page;
-    });
+    const read = vi.fn(
+      async (_taskId: string, offset: number): Promise<BackgroundTaskOutputPage> => {
+        const page: BackgroundTaskOutputPage = {
+          command: null,
+          nextOffset: null,
+          sizeBytes: written.length,
+          status: finished ? "completed" : "running",
+          taskId: "task",
+          text: written.slice(offset),
+        };
+        // The task writes more after each read, and finishes after a while.
+        written += ".";
+        finished = written.length > 12;
+        return page;
+      },
+    );
     const first = await read("task", 0);
 
     const output = await followBackgroundTaskOutput({

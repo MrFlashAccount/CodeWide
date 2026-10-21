@@ -6,6 +6,7 @@ const DOT_SIZE = 8;
 
 export const styles = StyleSheet.create({
   command: {
+    alignItems: "flex-start",
     backgroundColor: colors.code,
     borderBottomColor: colors.borderSoft,
     borderBottomWidth: StyleSheet.hairlineWidth,

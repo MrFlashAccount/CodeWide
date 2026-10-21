@@ -45,16 +45,16 @@ const EXIT_LINE = /\[exited with code (-?\d+)\]\s*$/u;
 /** A text's resident weight: two bytes per UTF-16 unit. */
 const BYTES_PER_UNIT = 2;
 
-/** The screen's title; the command itself is pinned above its output. */
-const TITLE = "Background command";
 /** A long command shows this many lines above the output. */
 const COMMAND_LINES = 3;
+/** The prompt glyph before the command, on screen and in the whole copy. */
+const PROMPT = "❯";
 
 /**
  * A background task's output on its own screen, framed like the full command
- * output: a header, the task's command pinned above its output in the
- * terminal, and a footer with its status. The screen reads the output by itself and follows
- * a running task until it closes.
+ * output: a header titled with the task's name, the command that launched it
+ * pinned above its output as a prompt line, and a footer with its status. The
+ * screen reads the output by itself and follows a running task until it closes.
  */
 export function BackgroundTaskOutputScreen({
   onClose,
@@ -77,14 +77,17 @@ export function BackgroundTaskOutputScreen({
   // The first page shows until the reader publishes; it always does at once.
   const output = resource.value ?? firstOutput(request.first);
   const plain = stripTerminalControlSequences(output.text);
+  const command = request.first.command;
+  // The whole copy reads like the terminal: the prompt line, then the output.
+  const whole = command === null ? plain : `${PROMPT} ${command}\n${plain}`;
   return (
     <View style={viewerStyles.fullContentViewer} testID="background-task-output-screen">
-      <TaskOutputHeader onClose={onClose} plain={plain} />
+      <TaskOutputHeader name={request.name} onClose={onClose} whole={whole} />
       {resource.error === null ? null : (
         <Text style={styles.error}>Could not read the output: {resource.error}</Text>
       )}
       <View style={viewerStyles.fullContentViewport}>
-        <TaskCommandLine command={request.name} />
+        {command === null ? null : <TaskCommandLine command={command} />}
         <TaskOutputTerminal output={output} />
       </View>
       <TaskOutputFooter output={output} plain={plain} />
@@ -92,16 +95,18 @@ export function BackgroundTaskOutputScreen({
   );
 }
 
-/** Close, the title and copying the whole output. */
+/** Close, the task's name and copying the command with its output. */
 function TaskOutputHeader({
+  name,
   onClose,
-  plain,
+  whole,
 }: {
+  readonly name: string;
   readonly onClose: () => void;
-  readonly plain: string;
+  readonly whole: string;
 }): ReactElement {
   return (
-    <View style={viewerStyles.fullContentHeader}>
+    <View style={viewerStyles.fullContentHeader} testID="background-task-output-header">
       <Pressable
         accessibilityLabel="Close task output"
         accessibilityRole="button"
@@ -114,21 +119,21 @@ function TaskOutputHeader({
         <Ionicons color={colors.textMuted} name="terminal-outline" size={iconSize.inline} />
       </View>
       <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
-        {TITLE}
+        {name}
       </Text>
-      {plain === "" ? null : <CopyButton text={plain} />}
+      {whole === "" ? null : <CopyButton text={whole} />}
     </View>
   );
 }
 
 /**
- * The command (or Claude's description of it) as a prompt line on the
- * terminal's surface, pinned while the output scrolls under it.
+ * The launching command as a prompt line on the terminal's surface, pinned
+ * while the output scrolls under it, with its own copy action.
  */
 function TaskCommandLine({ command }: { readonly command: string }): ReactElement {
   return (
     <View style={styles.command} testID="background-task-command">
-      <Text style={styles.commandPrompt}>$</Text>
+      <Text style={styles.commandPrompt}>{PROMPT}</Text>
       <Text
         ellipsizeMode="tail"
         numberOfLines={COMMAND_LINES}
@@ -137,6 +142,7 @@ function TaskCommandLine({ command }: { readonly command: string }): ReactElemen
       >
         {command}
       </Text>
+      <CopyButton compact text={command} />
     </View>
   );
 }

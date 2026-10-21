@@ -9,15 +9,19 @@ import { BackgroundTaskContext } from "../turns/turnContexts";
 import { styles } from "./CommandOutput.styles";
 
 /**
+ * The output screen's title from a command block, which knows no task name;
+ * the command itself shows on the screen's prompt line.
+ */
+const BACKGROUND_COMMAND_NAME = "Background command";
+
+/**
  * Opens the output of a command Claude runs in the background. The command
  * item carries the task id; the output loads on press, running or finished.
  */
 export function BackgroundTaskOutputButton({
   block,
-  name,
 }: {
   readonly block: RenderBlock;
-  readonly name: string;
 }): ReactElement | null {
   const openTask = useContext(BackgroundTaskContext);
   const [state, setState] = useState<OpenState>(IDLE);
@@ -27,7 +31,7 @@ export function BackgroundTaskOutputButton({
       return;
     }
     setState(LOADING);
-    openTask({ name, taskId }).then(
+    openTask({ name: BACKGROUND_COMMAND_NAME, taskId }).then(
       () => {
         setState(IDLE);
       },

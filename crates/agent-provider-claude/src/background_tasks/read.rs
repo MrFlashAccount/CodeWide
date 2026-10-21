@@ -59,6 +59,7 @@ pub fn answer(read: &TaskRead<'_>) -> Result<BackgroundTaskReadResult, RpcError>
     })?;
     Ok(BackgroundTaskReadResult {
         task_id: task_id.to_owned(),
+        command: read.facts.command.clone(),
         status: read.facts.status(read.live),
         text: page.text,
         next_offset: page.next_offset,

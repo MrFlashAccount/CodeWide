@@ -1,5 +1,6 @@
 import type { RenderBlock } from "@codewide/renderers";
-import { act, fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render, within } from "@testing-library/react-native";
+import * as Clipboard from "expo-clipboard";
 import type { BackgroundTaskOutputPage } from "../src/data/backgroundTaskOutput";
 import { BackgroundTaskOutputButton } from "../src/features/conversation/protocol/BackgroundTaskOutputButton";
 import {
@@ -51,8 +52,17 @@ const report: TaskNotificationReport = {
   toolUses: null,
 };
 
+const COMMAND = "gh pr checks 83 --watch";
+
 function page(text: string, nextOffset: number | null): BackgroundTaskOutputPage {
-  return { nextOffset, sizeBytes: 12, status: "running", taskId: "bd3cb8oli", text };
+  return {
+    command: COMMAND,
+    nextOffset,
+    sizeBytes: 12,
+    status: "running",
+    taskId: "bd3cb8oli",
+    text,
+  };
 }
 
 /** The thread route's navigation, recording the task output screens it opens. */
@@ -143,9 +153,15 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
   );
   await act(async () => undefined);
 
-  // The title stays short; the command is pinned above its output.
-  expect(view.getByRole("header")).toHaveTextContent("Background command");
-  expect(view.getByTestId("background-task-command")).toHaveTextContent("$Wait for CI");
+  // The task's name titles the screen; its command is a prompt line above the output.
+  expect(view.getByRole("header")).toHaveTextContent("Wait for CI");
+  const command = view.getByTestId("background-task-command");
+  expect(within(command).getByText("❯")).toBeOnTheScreen();
+  expect(within(command).getByText(COMMAND)).toBeOnTheScreen();
+  // The command copies on its own, apart from the whole output.
+  const copy = jest.spyOn(Clipboard, "setStringAsync");
+  fireEvent.press(within(command).getByLabelText("Copy"));
+  expect(copy).toHaveBeenLastCalledWith(COMMAND);
 
   // The next page follows without a button; each part is written once, with
   // the carriage returns a terminal needs.
@@ -155,6 +171,9 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
     normalizeWhitespace: false,
   });
   expect(grid.props.accessibilityHint).toBe("read-only");
+  // The header copies everything like a terminal: the prompt line, then the output.
+  fireEvent.press(within(view.getByTestId("background-task-output-header")).getByLabelText("Copy"));
+  expect(copy).toHaveBeenLastCalledWith(`❯ ${COMMAND}\nfirst page\nsecond\n[exited with code 0]`);
   // The footer reads the result; nothing asks to load more.
   expect(view.getByText("Finished")).toBeOnTheScreen();
   expect(view.getByText("· exit 0 · 12 B")).toBeOnTheScreen();
@@ -162,6 +181,26 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
 
   fireEvent.press(view.getByLabelText("Close task output"));
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+it("shows no prompt line when the Companion does not know the command", async () => {
+  const read = jest.fn(async () => ({ ...page("", null), command: null }));
+  const view = render(
+    <BackgroundTaskOutputScreen
+      onClose={jest.fn()}
+      opening="opening-2"
+      request={{
+        first: { ...page("first page\n", 11), command: null },
+        name: "Wait for CI",
+        read,
+        taskId: "bd3cb8oli",
+      }}
+    />,
+  );
+  await act(async () => undefined);
+
+  expect(view.getByRole("header")).toHaveTextContent("Wait for CI");
+  expect(view.queryByTestId("background-task-command")).toBeNull();
 });
 
 it("opens a background Bash call's output from its command block", async () => {
@@ -174,7 +213,7 @@ it("opens a background Bash call's output from its command block", async () => {
   const view = render(
     <ConversationRouteNavigationContext.Provider value={navigation}>
       <BackgroundTaskOutputHost read={read}>
-        <BackgroundTaskOutputButton block={block} name="pnpm build" />
+        <BackgroundTaskOutputButton block={block} />
       </BackgroundTaskOutputHost>
     </ConversationRouteNavigationContext.Provider>,
   );
@@ -183,7 +222,7 @@ it("opens a background Bash call's output from its command block", async () => {
     fireEvent.press(view.getByTestId("background-task-output-open"));
   });
   expect(read).toHaveBeenCalledWith("bd3cb8oli", 0);
-  expect(opened[0]).toMatchObject({ name: "pnpm build", taskId: "bd3cb8oli" });
+  expect(opened[0]).toMatchObject({ name: "Background command", taskId: "bd3cb8oli" });
 });
 
 it("offers nothing to open where the thread cannot read task output", () => {
@@ -195,7 +234,7 @@ it("offers nothing to open where the thread cannot read task output", () => {
   const view = render(
     <ConversationRouteNavigationContext.Provider value={navigation}>
       <BackgroundTaskOutputHost read={undefined}>
-        <BackgroundTaskOutputButton block={block} name="pnpm build" />
+        <BackgroundTaskOutputButton block={block} />
       </BackgroundTaskOutputHost>
     </ConversationRouteNavigationContext.Provider>,
   );
