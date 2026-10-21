@@ -46,6 +46,11 @@ import {
   decodeTimelineRowPremeasurementPreference,
   encodeTimelineRowPremeasurementPreference,
 } from "../src/data/timelineRowPremeasurementPreferences";
+import {
+  decodeVoiceHandoffPreference,
+  DEFAULT_VOICE_HANDOFF_BEHAVIOR,
+  encodeVoiceHandoffPreference,
+} from "../src/data/voiceHandoffPreferences";
 
 const nativeDatabase = readFileSync(
   new URL("../src/data/user-preferences-database.native.ts", import.meta.url),
@@ -53,6 +58,14 @@ const nativeDatabase = readFileSync(
 );
 
 describe("user preferences", () => {
+  it("round-trips the cross-chat microphone policy and defaults corrupt records to send", () => {
+    expect(decodeVoiceHandoffPreference(encodeVoiceHandoffPreference("stop"))).toBe("stop");
+    expect(decodeVoiceHandoffPreference(null)).toBe(DEFAULT_VOICE_HANDOFF_BEHAVIOR);
+    expect(decodeVoiceHandoffPreference('{"behavior":"unknown"}')).toBe(
+      DEFAULT_VOICE_HANDOFF_BEHAVIOR,
+    );
+    expect(decodeVoiceHandoffPreference("not json")).toBe(DEFAULT_VOICE_HANDOFF_BEHAVIOR);
+  });
   it("round-trips document viewer preferences", () => {
     expect(
       decodeDocumentViewerPreferences(

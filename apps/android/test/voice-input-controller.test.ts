@@ -377,9 +377,9 @@ describe("VoiceInputController", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("keeps recording and delivery owned by the original input after another input binds", async () => {
+  it("keeps recording owned by the original input when cross-chat handoff is disabled", async () => {
     const { database, rows } = resources();
-    const controller = new VoiceInputController(database);
+    const controller = new VoiceInputController(database, undefined, () => "disable");
     const updateOwner = vi.fn();
     const sendOwner = vi.fn();
     const updateOther = vi.fn();
@@ -420,6 +420,131 @@ describe("VoiceInputController", () => {
     expect(sendOther).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { behavior: "stop" as const, sends: false },
+    { behavior: "send" as const, sends: true },
+  ])(
+    "$behavior hands capture to the new input before the old transcription finishes",
+    async ({ behavior, sends }) => {
+      const { database, rows } = resources();
+      let leaseSequence = 0;
+      const leases = createV1MicrophoneLeaseRegistry(
+        () => `handoff-lease-${String(++leaseSequence)}`,
+      );
+      const controller = new VoiceInputController(database, leases, () => behavior);
+      const firstFinished = Promise.withResolvers<void>();
+      const firstDraft = vi.fn();
+      const firstSend = vi.fn();
+      let firstListener: ((event: VoiceTranscriptionEvent) => void) | null = null;
+      const firstSession: VoiceTranscriptionSession = {
+        appendAudio: vi.fn(),
+        cancel: vi.fn(async () => undefined),
+        finish: vi.fn(async () => {
+          await firstFinished.promise;
+          firstListener?.({ text: "first transcript", type: "done" });
+        }),
+      };
+      controller.bind({
+        scope: "first",
+        source: () => "",
+        selection: () => ({ end: 0, start: 0 }),
+        thread: null,
+        updateDraft: firstDraft,
+        send: firstSend,
+        startRemote: async (listener) => {
+          firstListener = listener;
+          return firstSession;
+        },
+      });
+      await controller.toggle("first");
+      emitAudio();
+
+      const secondSend = vi.fn();
+      controller.bind({
+        scope: "second",
+        source: () => "",
+        selection: () => ({ end: 0, start: 0 }),
+        thread: null,
+        updateDraft: vi.fn(),
+        send: secondSend,
+        startRemote: async (listener) => remoteSession(listener, ["second transcript"]),
+      });
+      await controller.toggle("second");
+
+      expect(rows.get("first")?.phase).toBe("finishing");
+      expect(rows.get("second")?.phase).toBe("recording");
+      expect(firstSession.finish).toHaveBeenCalledOnce();
+      firstFinished.resolve();
+      await vi.waitFor(() => expect(rows.get("first")?.phase).toBe("idle"));
+      if (sends) {
+        expect(firstSend).toHaveBeenCalledExactlyOnceWith("first transcript");
+        expect(firstDraft).not.toHaveBeenCalled();
+      } else {
+        expect(firstDraft).toHaveBeenCalledWith("first transcript");
+        expect(firstSend).not.toHaveBeenCalled();
+      }
+
+      emitAudio();
+      await controller.finish("second", true);
+      expect(secondSend).toHaveBeenCalledExactlyOnceWith("second transcript");
+    },
+  );
+
+  it("records in another input while the first transcription is still finishing", async () => {
+    const { database, rows } = resources();
+    const controller = new VoiceInputController(database);
+    const firstFinished = Promise.withResolvers<void>();
+    const sendFirst = vi.fn();
+    const sendSecond = vi.fn();
+    let firstListener: ((event: VoiceTranscriptionEvent) => void) | null = null;
+    const firstSession: VoiceTranscriptionSession = {
+      appendAudio: vi.fn(),
+      cancel: vi.fn(async () => undefined),
+      finish: vi.fn(async () => {
+        await firstFinished.promise;
+        firstListener?.({ text: "first transcript", type: "done" });
+      }),
+    };
+    controller.bind({
+      scope: "first",
+      source: () => "",
+      selection: () => ({ start: 0, end: 0 }),
+      thread: null,
+      updateDraft: vi.fn(),
+      send: sendFirst,
+      startRemote: async (listener) => {
+        firstListener = listener;
+        return firstSession;
+      },
+    });
+    await controller.toggle("first");
+    emitAudio();
+    const finishingFirst = controller.finish("first", true);
+    await vi.waitFor(() => expect(firstSession.finish).toHaveBeenCalledOnce());
+    expect(rows.get("first")?.phase).toBe("finishing");
+
+    controller.bind({
+      scope: "second",
+      source: () => "",
+      selection: () => ({ start: 0, end: 0 }),
+      thread: null,
+      updateDraft: vi.fn(),
+      send: sendSecond,
+      startRemote: async (listener) => remoteSession(listener, ["second transcript"]),
+    });
+    await controller.toggle("second");
+    expect(rows.get("second")?.phase).toBe("recording");
+    emitAudio();
+    await controller.finish("second", true);
+    expect(sendSecond).toHaveBeenCalledExactlyOnceWith("second transcript");
+    expect(rows.get("first")?.phase).toBe("finishing");
+
+    firstFinished.resolve();
+    await finishingFirst;
+    expect(sendFirst).toHaveBeenCalledExactlyOnceWith("first transcript");
+    expect(rows.get("first")?.phase).toBe("idle");
+  });
+
   it("cancels a pending native start without resurrecting recording after its input closes", async () => {
     const { database, rows } = resources();
     const controller = new VoiceInputController(database);
@@ -449,7 +574,7 @@ describe("VoiceInputController", () => {
     expect(startRemote).not.toHaveBeenCalled();
   });
 
-  it("does not let another input steal, cancel or retry a failed recording", async () => {
+  it("keeps retry ownership scoped while another input records", async () => {
     const { database, rows } = resources();
     const controller = new VoiceInputController(database);
     const sendOwner = vi.fn();
@@ -466,20 +591,24 @@ describe("VoiceInputController", () => {
     emitAudio();
     await controller.finish("thread", true);
     expect(rows.get("thread")?.retryAvailable).toBe(true);
-    const startOther = vi.fn();
+    const sendOther = vi.fn();
+    const startOther = vi.fn(async (listener: (event: VoiceTranscriptionEvent) => void) =>
+      remoteSession(listener, ["other transcript"]),
+    );
     controller.bind({
       scope: "other",
       source: () => "",
       selection: () => ({ start: 0, end: 0 }),
       thread: null,
       updateDraft: vi.fn(),
-      send: vi.fn(),
+      send: sendOther,
       startRemote: startOther,
     });
     await controller.toggle("other");
-    await controller.discard("other");
-    await controller.retry("other");
-    expect(startOther).not.toHaveBeenCalled();
+    emitAudio();
+    await controller.finish("other", true);
+    expect(startOther).toHaveBeenCalledOnce();
+    expect(sendOther).toHaveBeenCalledExactlyOnceWith("other transcript");
     expect(rows.get("thread")?.retryAvailable).toBe(true);
     await controller.retry("thread");
     expect(sendOwner).toHaveBeenCalledExactlyOnceWith("retried transcript");

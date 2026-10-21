@@ -10,6 +10,7 @@ type Props = Pick<
   | "microphoneButtonRef"
   | "editingQueuedMessage"
   | "voicePhase"
+  | "voiceDisabled"
   | "voiceRetryAvailable"
   | "retryVoice"
   | "toggleVoice"
@@ -23,9 +24,11 @@ export function ComposerMicrophone({
   microphoneButtonRef,
   retryVoice,
   toggleVoice,
+  voiceDisabled,
   voicePhase,
   voiceRetryAvailable,
 }: Props) {
+  const handoffDisabled = voiceDisabled && voicePhase === "idle" && !voiceRetryAvailable;
   return (
     <Pressable
       accessibilityLabel={
@@ -38,7 +41,11 @@ export function ComposerMicrophone({
             : "Stop voice input and insert transcript"
       }
       accessibilityRole="button"
-      disabled={editingQueuedMessage || (voicePhase === "finishing" && !voiceRetryAvailable)}
+      disabled={
+        editingQueuedMessage ||
+        handoffDisabled ||
+        (voicePhase === "finishing" && !voiceRetryAvailable)
+      }
       hitSlop={6}
       onPress={() =>
         void (voiceRetryAvailable
@@ -56,6 +63,7 @@ export function ComposerMicrophone({
       style={[
         styles.composerIcon,
         (editingQueuedMessage ||
+          handoffDisabled ||
           (voicePhase === "idle" && !microphoneAccess.granted && !voiceRetryAvailable) ||
           (voicePhase === "finishing" && !voiceRetryAvailable)) &&
           styles.disabled,

@@ -28,6 +28,7 @@ import { APP_MAX_FONT_SIZE_MULTIPLIER } from "./typography-policy";
 import { useAppVoiceInputRuntime, useVoiceInputResource } from "./VoiceInputRuntime";
 import { shouldEnableVoiceInput } from "./voice-input-policy";
 import { useMicrophoneAccess } from "./use-microphone-access";
+import { useVoiceInputDisabled } from "./useVoiceInputDisabled";
 
 export { AppText, productFontStyle } from "./AppText";
 
@@ -96,6 +97,7 @@ export const AppTextInput = forwardRef<NativeTextInput, AppTextInputProps>(funct
     };
   }, [scope]);
   const voice = useVoiceInputResource(runtime, scope);
+  const voiceDisabled = useVoiceInputDisabled(runtime?.controller, scope);
   const voicePhase = voice?.phase ?? "idle";
   const retryAvailable = voice?.retryAvailable ?? false;
   const pendingSelection = voice?.pendingSelection ?? null;
@@ -219,6 +221,7 @@ export const AppTextInput = forwardRef<NativeTextInput, AppTextInputProps>(funct
       {input}
       <InputVoiceButton
         compact={compact}
+        disabled={voiceDisabled}
         error={voice?.error ?? null}
         onPress={pressVoice}
         phase={voicePhase}
@@ -230,6 +233,7 @@ export const AppTextInput = forwardRef<NativeTextInput, AppTextInputProps>(funct
 
 type InputVoiceButtonProps = {
   compact: boolean;
+  disabled: boolean;
   error: string | null;
   onPress: () => Promise<void>;
   phase: "idle" | "starting" | "recording" | "finishing";
@@ -240,6 +244,7 @@ function InputVoiceButton(props: InputVoiceButtonProps) {
   const microphoneButtonRef = useRef<View | null>(null);
   const access = useMicrophoneAccess();
   const finishing = props.phase === "finishing" && !props.retryAvailable;
+  const handoffDisabled = props.disabled && props.phase === "idle" && !props.retryAvailable;
   const needsPermission = props.phase === "idle" && !props.retryAvailable && !access.granted;
   return (
     <Pressable
@@ -253,7 +258,7 @@ function InputVoiceButton(props: InputVoiceButtonProps) {
             : "Stop voice input"
       }
       accessibilityRole="button"
-      disabled={finishing}
+      disabled={finishing || handoffDisabled}
       hitSlop={props.compact ? controlHitSlop.compact : controlHitSlop.regular}
       onPress={() => {
         if (props.phase === "idle" && !props.retryAvailable && !access.allowCapture()) {
@@ -273,7 +278,7 @@ function InputVoiceButton(props: InputVoiceButtonProps) {
         voiceStyles.button,
         props.compact && voiceStyles.compactButton,
         pressed && voiceStyles.buttonPressed,
-        (needsPermission || finishing) && voiceStyles.buttonDisabled,
+        (needsPermission || finishing || handoffDisabled) && voiceStyles.buttonDisabled,
       ]}
     >
       {props.phase === "starting" || finishing ? (

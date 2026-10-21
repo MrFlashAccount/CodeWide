@@ -7,11 +7,13 @@ import type { StartVoiceTranscription, VoiceInputController } from "../data/voic
 export type AppVoiceInputController = Pick<
   VoiceInputController,
   | "bind"
+  | "activeCaptureScope"
   | "clearPendingSelection"
   | "finish"
   | "level"
   | "retry"
   | "subscribeLevel"
+  | "subscribeActiveCapture"
   | "toggle"
   | "unbind"
 >;

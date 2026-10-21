@@ -67,6 +67,10 @@ class SearchVoiceController implements AppVoiceInputController {
     this.outcome = outcome;
   }
 
+  activeCaptureScope(): string | null {
+    return null;
+  }
+
   bind(binding: Parameters<AppVoiceInputController["bind"]>[0]): void {
     this.binding = {
       ...binding,
@@ -114,6 +118,10 @@ class SearchVoiceController implements AppVoiceInputController {
   }
 
   subscribeLevel(_scope: string, _listener: () => void): () => void {
+    return () => {};
+  }
+
+  subscribeActiveCapture(_listener: () => void): () => void {
     return () => {};
   }
 

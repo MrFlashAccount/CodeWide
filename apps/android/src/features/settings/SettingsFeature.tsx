@@ -20,6 +20,7 @@ import { hasCustomVoiceAssistantPersonality } from "../../data/voiceAssistantPer
 import { useEvent } from "../../react/useEvent";
 import { PerformanceDiagnostics } from "../diagnostics/PerformanceDiagnostics";
 import { SecuritySettings } from "./SecuritySettings";
+import { ChatSettings } from "./ChatSettings";
 import { SettingsSection, SettingsSheet } from "./SettingsSheet";
 import { SettingsVersion } from "./SettingsVersion";
 import { TimelineRowMeasurementSettings } from "./TimelineRowMeasurementSettings";
@@ -142,6 +143,7 @@ export function ConnectionSettings({
           </SettingsSection>
         </>
       }
+      chats={<ChatSettings />}
       onAddServer={onAddServer}
       onClose={onClose}
       security={Platform.OS === "web" ? null : <SecuritySettings />}

@@ -58,6 +58,31 @@ describe("V1MicrophoneLeaseRegistry", () => {
     });
   });
 
+  it("replaces one dictation owner without briefly resuming Global Voice", async () => {
+    let sequence = 0;
+    const registry = createV1MicrophoneLeaseRegistry(() => `lease-${String(++sequence)}`);
+    const resumeAfterDictation = vi.fn(async () => undefined);
+    registry.acquireGlobalSupervisor("activation", {
+      pauseForDictation: vi.fn(async () => undefined),
+      resumeAfterDictation,
+    });
+    const first = await registry.acquireDictation("first");
+    if (first.status !== "acquired") throw new Error("Expected first dictation lease");
+
+    const second = registry.replaceDictation(first.lease, "second");
+    if (second.status !== "acquired") throw new Error("Expected replacement dictation lease");
+
+    expect(registry.state()).toEqual({
+      assistant: { activationId: "activation", kind: "globalSupervisor" },
+      dictation: { kind: "dictation", scope: "second" },
+      phase: "dictationOwned",
+    });
+    expect(await first.lease.release()).toBe(false);
+    expect(resumeAfterDictation).not.toHaveBeenCalled();
+    expect(await second.lease.release()).toBe(true);
+    expect(resumeAfterDictation).toHaveBeenCalledOnce();
+  });
+
   it("deduplicates a repeated tap during handoff and never grants two captures", async () => {
     const registry = createV1MicrophoneLeaseRegistry(() => "token");
     const paused = Promise.withResolvers<void>();
