@@ -7,9 +7,12 @@
 //! The running set comes from [`RunningSessions`]; a session one of the
 //! companion's own live processes runs is not held elsewhere. The CLI also
 //! lists the companion's own processes, so a session just released (a model
-//! change closes the idle process, an idle release ends it) stays out of
-//! every read that started before, or within [`RELEASE_GRACE`] after, the
-//! release: such a read may still show the exiting process. A read younger
+//! change or a stopped command closes the process, an idle release ends it)
+//! stays the companion's own while the CLI still lists it: the closed
+//! process may take seconds to exit (up to its exit grace before it is
+//! killed, with its commands) and the CLI may list it a while longer. The
+//! first read started after the release that no longer lists the session
+//! ends that, and so does [`RELEASE_TIMEOUT`]. A read younger
 //! than [`MAX_AGE`] is reused (monotonic time). While any session is held the
 //! set is re-read every poll interval, so a release reaches clients without a
 //! new read. A failed read keeps the last known set.
@@ -27,8 +30,10 @@ use super::running_sessions::RunningSessions;
 
 /// How long a read is reused.
 pub const MAX_AGE: Duration = Duration::from_secs(2);
-/// How long the CLI may still list a process the companion has just closed.
-pub const RELEASE_GRACE: Duration = Duration::from_secs(3);
+/// How long a session the companion released stays its own while the CLI
+/// still lists it: the closed process's exit grace before it is killed
+/// (`cli::process`, 5 s), its commands' exit and the CLI's lag.
+pub const RELEASE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Whether one of the companion's own live processes runs a session.
 pub type OwnsLive = Arc<dyn Fn(&str) -> bool + Send + Sync>;
@@ -64,6 +69,8 @@ struct Inner {
 struct State {
     /// Listed sessions, without the companion's recent releases.
     running: HashSet<String>,
+    /// The sessions the last read reported held elsewhere.
+    reported_held: HashSet<String>,
     /// When the companion last released each session.
     released_at: HashMap<String, Instant>,
     read_at: Option<Instant>,
@@ -116,13 +123,21 @@ impl OpenElsewhere {
 
     /// The companion's own process of `session_id` ended. That process may
     /// still be in the last read and in reads that start before it exits;
-    /// neither proves that another process holds the session.
+    /// neither proves that another process holds the session. A read that
+    /// took the closing process for another one, while the companion already
+    /// counted it as gone, is corrected and the change reported.
     pub fn released(&self, session_id: &str) {
-        let mut state = self.inner.lock();
-        state
-            .released_at
-            .insert(session_id.to_owned(), Instant::now());
-        state.running.remove(session_id);
+        let was_reported_held = {
+            let mut state = self.inner.lock();
+            state
+                .released_at
+                .insert(session_id.to_owned(), Instant::now());
+            state.running.remove(session_id);
+            state.reported_held.remove(session_id)
+        };
+        if was_reported_held {
+            (self.inner.deps.changed)(&HashSet::from([session_id.to_owned()]));
+        }
     }
 
     /// Stops polling; later reads schedule none.
@@ -184,6 +199,7 @@ impl Inner {
             state.reads += 1;
         }
         let after = self.held_sessions();
+        self.lock().reported_held.clone_from(&after);
         let changed: HashSet<String> = before.symmetric_difference(&after).cloned().collect();
         self.schedule_poll(!after.is_empty());
         if !changed.is_empty() {
@@ -233,18 +249,22 @@ async fn poll_after(owner: Weak<Inner>, interval: Duration, generation: u64) {
     inner.read().await;
 }
 
-/// `listed` without the sessions the companion released too recently for a
-/// read started at `started_at`; releases older than that are forgotten.
+/// `listed` without the sessions the companion released and the CLI still
+/// lists. A release ends once a read started after it no longer lists its
+/// session (the closed process is gone) or [`RELEASE_TIMEOUT`] after it.
 fn without_own_releases(
     released_at: &mut HashMap<String, Instant>,
     mut listed: HashSet<String>,
     started_at: Instant,
 ) -> HashSet<String> {
-    // Without a representable cut-off (less than the grace since the
-    // clock's origin) nothing has settled yet.
-    if let Some(settled_before) = started_at.checked_sub(RELEASE_GRACE) {
-        released_at.retain(|_, released| *released >= settled_before);
-    }
+    // Without a representable cut-off (less than the timeout since the
+    // clock's origin) no release has timed out yet.
+    let timed_out_before = started_at.checked_sub(RELEASE_TIMEOUT);
+    released_at.retain(|session_id, released| {
+        let started_before_release = *released > started_at;
+        let timed_out = timed_out_before.is_some_and(|cut_off| *released < cut_off);
+        !timed_out && (started_before_release || listed.contains(session_id))
+    });
     listed.retain(|session_id| !released_at.contains_key(session_id));
     listed
 }
