@@ -163,6 +163,11 @@ struct CompanionPanel: View {
         }
         .disabled(!updates.canCheckForUpdates || updates.isCheckingForUpdates)
         Menu("Advanced") {
+            Button("HTTP Proxy…") {
+                dialogs.showHttpProxySettings()
+            }
+            .disabled(actionInProgress || runtime.health == nil)
+            Divider()
             Button(runtime.relay?.configured == true ? "Change Relay…" : "Add Relay…") {
                 dialogs.showRelaySetup()
             }
