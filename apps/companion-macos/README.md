@@ -78,7 +78,9 @@ through `companion-core`. Menu management uses only authenticated typed XPC.
 The Advanced menu's HTTP Proxy dialog stores a private Companion-owned
 dictation proxy setting and restarts the LaunchAgent after saving. Empty proxy
 fields preserve reqwest's standard process-environment discovery; the runtime
-never reads proxy values from a Codex `.env` file.
+never reads proxy values from a Codex `.env` file. A damaged or unreadable
+settings file is ignored with a warning, so the runtime still starts and the
+dialog opens with empty fields; saving replaces the file.
 The Rust data plane owns two random loopback TLS listeners used exclusively by
 the outbound Relay adapter: bootstrap is token-and-signature protected and the
 normal device path requires registered-device mTLS. There is no fixed local

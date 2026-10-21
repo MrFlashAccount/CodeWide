@@ -1351,7 +1351,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let media = Arc::new(MediaProxyService::new());
     let tunnels = Arc::new(LocalhostTunnelService::new()?);
     tunnels.start_periodic_cleanup();
-    let dictation_proxy_settings = HttpProxySettingsStore::new(&state_directory).load()?;
+    let dictation_proxy_settings = HttpProxySettingsStore::new(&state_directory).load();
     let dictation_proxy = HttpProxyConfig::from_settings(&dictation_proxy_settings)?;
     let dictation = Arc::new(
         DictationService::open(

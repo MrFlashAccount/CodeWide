@@ -68,19 +68,30 @@ impl HttpProxySettingsStore {
         }
     }
 
-    /// Loads and validates the saved settings. A missing file means that the
-    /// HTTP client should retain its standard process-environment behavior.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the file is unreadable, malformed, uses an
-    /// unsupported version, or contains an invalid proxy configuration.
-    pub fn load(&self) -> Result<HttpProxySettings, HttpProxyConfigError> {
+    /// Loads the saved settings. The file is Companion-internal state, so a
+    /// missing, unreadable, malformed, unsupported or invalid file falls back
+    /// to empty settings, which retain the standard process-environment proxy
+    /// behavior. The next save replaces a damaged file.
+    #[must_use]
+    pub fn load(&self) -> HttpProxySettings {
+        match self.read() {
+            Ok(Some(settings)) => settings,
+            Ok(None) => HttpProxySettings::default(),
+            Err(error) => {
+                tracing::warn!(
+                    status = "http-proxy-settings-ignored",
+                    reason = %error,
+                    "falling back to process-environment proxy discovery"
+                );
+                HttpProxySettings::default()
+            }
+        }
+    }
+
+    fn read(&self) -> Result<Option<HttpProxySettings>, HttpProxyConfigError> {
         let bytes = match fs::read(&self.path) {
             Ok(bytes) => bytes,
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                return Ok(HttpProxySettings::default());
-            }
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(HttpProxyConfigError::Unreadable),
         };
         let stored: StoredHttpProxySettings =
@@ -90,7 +101,7 @@ impl HttpProxySettingsStore {
         }
         let settings = stored.settings.normalized();
         HttpProxyConfig::from_settings(&settings)?;
-        Ok(settings)
+        Ok(Some(settings))
     }
 
     /// Validates and atomically saves the effective application setting.
@@ -255,7 +266,7 @@ mod tests {
         let root = tempfile::tempdir()?;
         let store = HttpProxySettingsStore::new(root.path());
 
-        let settings = store.load()?;
+        let settings = store.load();
         let config = HttpProxyConfig::from_settings(&settings)?;
 
         assert_eq!(settings, HttpProxySettings::default());
@@ -282,7 +293,7 @@ mod tests {
             Some("http://proxy.example:8080")
         );
         assert_eq!(saved.no_proxy.as_deref(), Some("localhost,.example.test"));
-        assert_eq!(store.load()?, saved);
+        assert_eq!(store.load(), saved);
         assert_eq!(
             fs::metadata(store.path())?.permissions().mode() & 0o777,
             0o600
@@ -338,24 +349,38 @@ mod tests {
     }
 
     #[test]
-    fn rejects_stored_settings_with_unknown_fields_or_versions() -> TestResult {
+    fn damaged_settings_fall_back_to_environment_and_are_replaced_by_save() -> TestResult {
         let root = tempfile::tempdir()?;
         let store = HttpProxySettingsStore::new(root.path());
 
-        fs::write(
-            store.path(),
+        for damaged in [
+            "",
+            "{not json",
+            r#"{"httpsProxy":"http://proxy.example:8080"}"#,
             r#"{"version":1,"httpsProxy":"http://proxy.example:8080","socksProxy":"x"}"#,
-        )?;
-        assert!(matches!(store.load(), Err(HttpProxyConfigError::Invalid)));
-
-        fs::write(
-            store.path(),
             r#"{"version":2,"httpsProxy":"http://proxy.example:8080"}"#,
-        )?;
-        assert!(matches!(
-            store.load(),
-            Err(HttpProxyConfigError::UnsupportedVersion)
-        ));
+            r#"{"version":1,"httpsProxy":"http://[::1"}"#,
+            r#"{"version":1,"noProxy":"localhost"}"#,
+        ] {
+            fs::write(store.path(), damaged)?;
+            assert_eq!(store.load(), HttpProxySettings::default(), "{damaged}");
+        }
+
+        let replacement = store.save(HttpProxySettings {
+            https_proxy: Some("http://proxy.example:8080".into()),
+            ..HttpProxySettings::default()
+        })?;
+        assert_eq!(store.load(), replacement);
+        Ok(())
+    }
+
+    #[test]
+    fn unreadable_settings_fall_back_to_environment() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let store = HttpProxySettingsStore::new(root.path());
+        fs::create_dir(store.path())?;
+
+        assert_eq!(store.load(), HttpProxySettings::default());
         Ok(())
     }
 
@@ -374,7 +399,7 @@ mod tests {
         });
 
         assert!(matches!(rejected, Err(HttpProxyConfigError::Invalid)));
-        assert_eq!(store.load()?, previous);
+        assert_eq!(store.load(), previous);
         Ok(())
     }
 

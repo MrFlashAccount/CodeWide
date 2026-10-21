@@ -192,12 +192,8 @@ impl CoreHost {
         let updates =
             codewide_host_update::macos::MacosSparkleUpdater::new(&updater_root, installed);
         let http_proxy_settings = HttpProxySettingsStore::new(Path::new(&state_directory));
-        let dictation_proxy = HttpProxyConfig::from_settings(
-            &http_proxy_settings
-                .load()
-                .map_err(CompanionFfiError::runtime)?,
-        )
-        .map_err(CompanionFfiError::runtime)?;
+        let dictation_proxy = HttpProxyConfig::from_settings(&http_proxy_settings.load())
+            .map_err(CompanionFfiError::runtime)?;
         let config = ManagedRuntimeConfig::desktop(
             state_directory.into(),
             codex_home.clone(),
@@ -244,15 +240,9 @@ impl CoreHost {
     /// Returns Companion's application-owned HTTP proxy settings.
     ///
     /// # Errors
-    /// Returns an adapter error when the settings cannot be read or encoded.
+    /// Returns an adapter error when the settings cannot be encoded.
     pub fn http_proxy_settings_json(&self) -> Result<String, CompanionFfiError> {
-        serde_json::to_string(
-            &self
-                .http_proxy_settings
-                .load()
-                .map_err(CompanionFfiError::runtime)?,
-        )
-        .map_err(CompanionFfiError::runtime)
+        serde_json::to_string(&self.http_proxy_settings.load()).map_err(CompanionFfiError::runtime)
     }
 
     /// Validates and stores Companion's application-owned HTTP proxy settings.

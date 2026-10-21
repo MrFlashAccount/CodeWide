@@ -56,7 +56,7 @@ async fn configure_and_clear_round_trip_private_settings() -> Result<(), Box<dyn
     assert_eq!(report["noProxy"], json!(true));
     assert_eq!(report["restartRequired"], json!(true));
     assert_eq!(
-        store.load()?,
+        store.load(),
         HttpProxySettings {
             http_proxy: None,
             https_proxy: Some(PROXY_URL.into()),

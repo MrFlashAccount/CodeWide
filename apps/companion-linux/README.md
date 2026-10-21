@@ -81,7 +81,9 @@ systemctl --user restart codewide-companion.service
 `--http-proxy` and `--no-proxy` are also accepted. Run
 `codewide-companion proxy clear` to remove the application override and return
 to process-environment discovery. The private settings file lives in the
-Companion state directory and stores no Codex configuration.
+Companion state directory and stores no Codex configuration. It is internal
+state: if it is damaged or unreadable, Companion logs a warning and falls back
+to process-environment discovery; the next `configure` replaces it.
 
 ## Distribution
 
