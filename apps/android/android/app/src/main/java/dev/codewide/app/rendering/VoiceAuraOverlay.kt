@@ -12,7 +12,6 @@ import android.graphics.RuntimeShader
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import dev.codewide.app.diagnostics.NativeAppLogger
 import android.view.Choreographer
 import android.view.Gravity
 import android.view.View
@@ -54,9 +53,7 @@ internal class VoiceAuraOverlay(
   private var shaderWidth = 0
   private var shaderHeight = 0
   private var shaderDensity = Float.NaN
-  private var overlayView: VoiceAuraOverlayView? = null
-  private var windowManager: WindowManager? = null
-  private var activity: WeakReference<Activity>? = null
+  private val window = VoiceAuraWindowSlot<VoiceAuraOverlayView>(::VoiceAuraOverlayView, this::createLayoutParams)
   private var framePosted = false
   private var suspended = false
   private var requestedActive = false
@@ -299,49 +296,23 @@ internal class VoiceAuraOverlay(
   private fun resolveContentTarget(): View? {
     val requested = contentTarget?.get()?.takeIf(View::isAttachedToWindow)
     if (requested != null) return requested
-    val currentActivity = context.currentActivity ?: activity?.get() ?: return null
+    val currentActivity = context.currentActivity ?: window.activity ?: return null
     return currentActivity.findViewById(android.R.id.content) ?: currentActivity.window.decorView
   }
 
   private fun ensureOverlay(): VoiceAuraOverlayView? {
     if (suspended) return null
-    val currentActivity = context.currentActivity ?: return overlayView?.takeIf(View::isAttachedToWindow)
-    val currentView = overlayView
-    if (activity?.get() === currentActivity && currentView?.isAttachedToWindow == true) {
-      return currentView
-    }
+    val currentActivity = context.currentActivity
+    if (currentActivity == null || window.activity === currentActivity) return window.ensure(currentActivity)
     removeOverlay()
-
-    val token = currentActivity.window.decorView.windowToken ?: return null
-    val manager = currentActivity.windowManager
-    val view = VoiceAuraOverlayView(currentActivity)
     windowAuthority.claim(this)
-    try {
-      manager.addView(view, createLayoutParams(token))
-    } catch (error: RuntimeException) {
-      windowAuthority.release(this)
-      NativeAppLogger.warn(LOG_TAG, "Could not attach application voice aura overlay", error)
-      return null
-    }
-    activity = WeakReference(currentActivity)
-    windowManager = manager
-    overlayView = view
+    val view = window.ensure(currentActivity)
+    if (view == null) windowAuthority.release(this)
     return view
   }
 
   private fun removeOverlay() {
-    val view = overlayView
-    val manager = windowManager
-    overlayView = null
-    windowManager = null
-    activity = null
-    if (view?.isAttachedToWindow == true && manager != null) {
-      try {
-        manager.removeViewImmediate(view)
-      } catch (error: RuntimeException) {
-        NativeAppLogger.warn(LOG_TAG, "Could not remove application voice aura overlay", error)
-      }
-    }
+    window.remove()
     shader = null
     shaderWidth = 0
     shaderHeight = 0
@@ -385,7 +356,6 @@ internal class VoiceAuraOverlay(
   }
 
   private companion object {
-    private const val LOG_TAG = "CodeWideVoiceAura"
     private const val TRANSITION_FRAME_INTERVAL_NANOS = 16_666_667L
     // edgeGlow becomes exactly zero after three shader widths; these are the maximum width
     // terms for drift=1, with one extra dp retained for rasterization at the clip boundary.
@@ -590,7 +560,10 @@ private class VoiceAuraContentEffect {
   }
 }
 
-private class VoiceAuraOverlayView(context: android.content.Context) : View(context) {
+private class VoiceAuraOverlayView(
+  private val activity: Activity,
+  private val owner: VoiceAuraWindowSlot<VoiceAuraOverlayView>,
+) : View(activity) {
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val drawRegion = Path()
   private var auraShader: RuntimeShader? = null
@@ -642,6 +615,11 @@ private class VoiceAuraOverlayView(context: android.content.Context) : View(cont
     canvas.clipPath(drawRegion)
     canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
     canvas.restoreToCount(checkpoint)
+  }
+
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    owner.onViewAttached(this, activity.windowManager)
   }
 
   override fun isOpaque(): Boolean = false
