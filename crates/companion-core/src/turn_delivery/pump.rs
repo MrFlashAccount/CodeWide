@@ -12,10 +12,9 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use tracing::{debug, info, warn};
 
-use super::outbox_state::{
-    OwnedClaimResolution, claim_outbox_dispatch, defer_outbox, emit_queue_changed,
-    fail_queued_outbox, resolve_outbox_claim, retry_delay_ms, rpc_error_message, set_outbox_state,
-    turns_contain_client_message, wait_outbox,
+use super::{
+    ClaimResolution, TurnDelivery, retry_delay_ms, rpc_error_message, turn_id,
+    turn_with_client_message,
 };
 use crate::{
     agent::{
@@ -32,7 +31,7 @@ use crate::{
     },
     files::FileService,
     remote_inputs::{RemoteInputError, prepare_remote_file_inputs},
-    store::{IndexStore, OutboxCommand, OutboxPresentation, OutboxState},
+    store::{OutboxClaimOutcome, OutboxCommand, OutboxPresentation, OutboxState},
     thread_view::{ThreadActivity, ThreadViewService},
     workspaces::{WorkspacePhase, WorkspaceService},
 };
@@ -43,15 +42,14 @@ const OUTBOX_RECONCILE_PAGE_SIZE: u64 = 100;
 
 /// Everything the pump reads or writes.
 #[derive(Clone)]
-pub(super) struct PumpContext {
-    pub(super) gateway: Arc<ClientWireGateway>,
-    pub(super) store: Arc<IndexStore>,
-    pub(super) thread_view: ThreadViewService,
-    pub(super) local_events: tokio::sync::mpsc::Sender<Value>,
-    pub(super) files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
-    pub(super) workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
+pub(crate) struct PumpContext {
+    pub(crate) gateway: Arc<ClientWireGateway>,
+    pub(crate) turn_delivery: TurnDelivery,
+    pub(crate) thread_view: ThreadViewService,
+    pub(crate) files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
+    pub(crate) workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
     /// Pending cross-provider fork handoffs, prepended to a first turn.
-    pub(super) fork: Arc<crate::agent::fork::ForkService>,
+    pub(crate) fork: Arc<crate::agent::fork::ForkService>,
 }
 
 /// Classification of a failed delivery attempt.
@@ -83,24 +81,16 @@ fn any_live(gateway: &ClientWireGateway) -> bool {
 }
 
 /// Runs until the process exits.
-pub(super) async fn run_outbox_pump(context: PumpContext, wakeup: Arc<tokio::sync::Notify>) {
-    let store = context.store.clone();
-    let prune_store = store.clone();
-    match tokio::task::spawn_blocking(move || prune_store.outbox_prune_delivered_receipts()).await {
-        Ok(Ok(removed)) if removed > 0 => {
+pub(crate) async fn run_outbox_pump(context: PumpContext, wakeup: Arc<tokio::sync::Notify>) {
+    match context.turn_delivery.prune_delivered_receipts().await {
+        Ok(removed) if removed > 0 => {
             info!(removed, "pruned delivered outbox receipts");
         }
-        Ok(Ok(_)) => {}
-        Ok(Err(error)) => warn!(%error, "delivered outbox receipt pruning failed"),
-        Err(error) => warn!(%error, "delivered outbox receipt pruning worker failed"),
+        Ok(_) => {}
+        Err(error) => warn!(err = ?error, "delivered outbox receipt pruning failed"),
     }
-    let recovery_store = store.clone();
-    match tokio::task::spawn_blocking(move || {
-        recovery_store.outbox_recover_legacy_account_pool_failures()
-    })
-    .await
-    {
-        Ok(Ok(thread_ids)) => {
+    match context.turn_delivery.recover_legacy_failures().await {
+        Ok(thread_ids) => {
             if !thread_ids.is_empty() {
                 info!(
                     recovered_threads = thread_ids.len(),
@@ -108,11 +98,10 @@ pub(super) async fn run_outbox_pump(context: PumpContext, wakeup: Arc<tokio::syn
                 );
             }
             for thread_id in thread_ids {
-                emit_queue_changed(&store, &context.local_events, &thread_id).await;
+                context.turn_delivery.emit_changed(&thread_id).await;
             }
         }
-        Ok(Err(error)) => warn!(%error, "legacy account-pool queue recovery failed"),
-        Err(error) => warn!(%error, "legacy account-pool recovery worker failed"),
+        Err(error) => warn!(err = ?error, "legacy account-pool queue recovery failed"),
     }
     let status_changed = Arc::new(tokio::sync::Notify::new());
     for provider in context.gateway.registry().enabled() {
@@ -126,17 +115,13 @@ pub(super) async fn run_outbox_pump(context: PumpContext, wakeup: Arc<tokio::syn
     }
     loop {
         if any_live(&context.gateway) {
-            let store_for_read = store.clone();
-            let heads =
-                tokio::task::spawn_blocking(move || store_for_read.outbox_ready_heads()).await;
-            match heads {
-                Ok(Ok(heads)) => {
+            match context.turn_delivery.ready_heads().await {
+                Ok(heads) => {
                     for command in heads {
                         reconcile_outbox_command(&context, command).await;
                     }
                 }
-                Ok(Err(error)) => warn!(%error, "durable outbox read failed"),
-                Err(error) => warn!(%error, "durable outbox worker failed"),
+                Err(error) => warn!(err = ?error, "durable outbox read failed"),
             }
         }
         tokio::select! {
@@ -153,47 +138,15 @@ async fn workspace_ready(context: &PumpContext, command: &OutboxCommand) -> bool
     let Some(request_id) = command.workspace_request_id.as_deref() else {
         return true;
     };
-    let store = &context.store;
-    let local_events = &context.local_events;
     let poll_ms = u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500);
     let workspace_service = match context.workspaces.read() {
         Ok(slot) => slot.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
     };
     let Some(workspace_service) = workspace_service else {
-        wait_outbox(
-            store,
-            local_events,
-            &command.remote_thread_id,
-            &command.command_id,
-            OutboxState::Queued,
-            None,
-            poll_ms,
-        )
-        .await;
-        return false;
-    };
-    match workspace_service.operation_status(request_id).await {
-        Ok(Some(operation)) if operation.phase == WorkspacePhase::Ready => true,
-        Ok(Some(operation)) if operation.phase == WorkspacePhase::Failed => {
-            set_outbox_state(
-                store,
-                local_events,
-                &command.remote_thread_id,
-                &command.command_id,
-                OutboxState::Failed,
-                operation
-                    .error
-                    .as_deref()
-                    .or(Some("workspace preparation failed")),
-            )
-            .await;
-            false
-        }
-        Ok(Some(_)) => {
-            wait_outbox(
-                store,
-                local_events,
+        context
+            .turn_delivery
+            .wait(
                 &command.remote_thread_id,
                 &command.command_id,
                 OutboxState::Queued,
@@ -201,31 +154,61 @@ async fn workspace_ready(context: &PumpContext, command: &OutboxCommand) -> bool
                 poll_ms,
             )
             .await;
+        return false;
+    };
+    match workspace_service.operation_status(request_id).await {
+        Ok(Some(operation)) if operation.phase == WorkspacePhase::Ready => true,
+        Ok(Some(operation)) if operation.phase == WorkspacePhase::Failed => {
+            context
+                .turn_delivery
+                .set_state(
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Failed,
+                    operation
+                        .error
+                        .as_deref()
+                        .or(Some("workspace preparation failed")),
+                )
+                .await;
+            false
+        }
+        Ok(Some(_)) => {
+            context
+                .turn_delivery
+                .wait(
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Queued,
+                    None,
+                    poll_ms,
+                )
+                .await;
             false
         }
         Ok(None) => {
-            set_outbox_state(
-                store,
-                local_events,
-                &command.remote_thread_id,
-                &command.command_id,
-                OutboxState::Failed,
-                Some("workspace operation was not found"),
-            )
-            .await;
+            context
+                .turn_delivery
+                .set_state(
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Failed,
+                    Some("workspace operation was not found"),
+                )
+                .await;
             false
         }
         Err(error) => {
-            defer_outbox(
-                store,
-                local_events,
-                &command.remote_thread_id,
-                &command.command_id,
-                OutboxState::Queued,
-                &error.to_string(),
-                retry_delay_ms(command.attempts),
-            )
-            .await;
+            context
+                .turn_delivery
+                .defer(
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Queued,
+                    &error.to_string(),
+                    retry_delay_ms(command.attempts),
+                )
+                .await;
             false
         }
     }
@@ -243,15 +226,15 @@ async fn command_target(context: &PumpContext, command: &OutboxCommand) -> Optio
         Err(RpcFailure { code, message, .. })
             if code == ERROR_PROVIDER_DISABLED || code == ERROR_INVALID_REQUEST =>
         {
-            set_outbox_state(
-                &context.store,
-                &context.local_events,
-                &command.remote_thread_id,
-                &command.command_id,
-                OutboxState::Failed,
-                Some(&message),
-            )
-            .await;
+            context
+                .turn_delivery
+                .set_state(
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Failed,
+                    Some(&message),
+                )
+                .await;
             None
         }
         Err(failure) => {
@@ -262,48 +245,46 @@ async fn command_target(context: &PumpContext, command: &OutboxCommand) -> Optio
 }
 
 async fn admit(context: &PumpContext, target: &Target, command: &OutboxCommand) -> bool {
-    let store = &context.store;
-    let local_events = &context.local_events;
     match target.provider.admit_turn().await {
         Ok(()) => true,
         Err(AdmissionError::Deferred(reason)) => {
-            wait_outbox(
-                store,
-                local_events,
-                &command.remote_thread_id,
-                &command.command_id,
-                OutboxState::Queued,
-                None,
-                OUTBOX_ACCOUNT_SWITCH_WAIT_MS,
-            )
-            .await;
+            context
+                .turn_delivery
+                .wait(
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Queued,
+                    None,
+                    OUTBOX_ACCOUNT_SWITCH_WAIT_MS,
+                )
+                .await;
             debug!(command_id = %command.command_id, %reason, "outbox is waiting for turn admission");
             false
         }
         Err(AdmissionError::Retryable(error)) => {
             warn!(command_id = %command.command_id, %error, "outbox turn admission will retry");
-            defer_outbox(
-                store,
-                local_events,
-                &command.remote_thread_id,
-                &command.command_id,
-                OutboxState::Queued,
-                &error,
-                retry_delay_ms(command.attempts),
-            )
-            .await;
+            context
+                .turn_delivery
+                .defer(
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Queued,
+                    &error,
+                    retry_delay_ms(command.attempts),
+                )
+                .await;
             false
         }
         Err(AdmissionError::Fatal(error)) => {
-            set_outbox_state(
-                store,
-                local_events,
-                &command.remote_thread_id,
-                &command.command_id,
-                OutboxState::Failed,
-                Some(&error),
-            )
-            .await;
+            context
+                .turn_delivery
+                .set_state(
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Failed,
+                    Some(&error),
+                )
+                .await;
             false
         }
     }
@@ -323,15 +304,15 @@ async fn reconcile_outbox_command(context: &PumpContext, command: OutboxCommand)
         .check_model_scope(&target, &command.method, &command.params)
         .await
     {
-        set_outbox_state(
-            &context.store,
-            &context.local_events,
-            &command.remote_thread_id,
-            &command.command_id,
-            OutboxState::Failed,
-            Some(&failure.message),
-        )
-        .await;
+        context
+            .turn_delivery
+            .set_state(
+                &command.remote_thread_id,
+                &command.command_id,
+                OutboxState::Failed,
+                Some(&failure.message),
+            )
+            .await;
         return;
     }
     if target.provider.status() != ProviderStatus::Live {
@@ -340,38 +321,31 @@ async fn reconcile_outbox_command(context: &PumpContext, command: OutboxCommand)
     if !admit(context, &target, &command).await {
         return;
     }
-    let store = &context.store;
-    let local_events = &context.local_events;
     let poll_ms = u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500);
     if command.state == OutboxState::Uncertain {
-        match history_contains_client_message(&target, &command).await {
-            Ok(true) => {
-                set_outbox_state(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Delivered,
-                    None,
-                )
-                .await;
+        match history_client_message_turn_id(&target, &command).await {
+            Ok(Some(turn_id)) => {
+                context
+                    .turn_delivery
+                    .reconcile_delivered(&command.remote_thread_id, &command.command_id, &turn_id)
+                    .await;
             }
-            Ok(false) | Err(_) => {
+            Ok(None) | Err(_) => {
                 // A lost response is genuinely ambiguous because
                 // clientUserMessageId is projection metadata, not an
                 // idempotency key. Never resend blindly. Ordinary starts use
                 // the canonical summary; steers use full history because
                 // intermediate user messages are absent from the summary.
-                wait_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Uncertain,
-                    command.last_error.as_deref(),
-                    poll_ms,
-                )
-                .await;
+                context
+                    .turn_delivery
+                    .wait(
+                        &command.remote_thread_id,
+                        &command.command_id,
+                        OutboxState::Uncertain,
+                        command.last_error.as_deref(),
+                        poll_ms,
+                    )
+                    .await;
             }
         }
         return;
@@ -386,31 +360,31 @@ async fn reconcile_outbox_command(context: &PumpContext, command: OutboxCommand)
                 // Explicit queue means "the next turn", never an implicit
                 // steer into the current one. A system-error lifecycle without
                 // explicit direct-input authority must also wait.
-                wait_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Queued,
-                    None,
-                    poll_ms,
-                )
-                .await;
+                context
+                    .turn_delivery
+                    .wait(
+                        &command.remote_thread_id,
+                        &command.command_id,
+                        OutboxState::Queued,
+                        None,
+                        poll_ms,
+                    )
+                    .await;
                 return;
             }
             Ok(ThreadActivity::Idle) => {}
             Err(error) => {
                 debug!(command_id = %command.command_id, %error, "queued turn is waiting for authoritative lifecycle");
-                wait_outbox(
-                    store,
-                    local_events,
-                    &command.remote_thread_id,
-                    &command.command_id,
-                    OutboxState::Queued,
-                    None,
-                    poll_ms,
-                )
-                .await;
+                context
+                    .turn_delivery
+                    .wait(
+                        &command.remote_thread_id,
+                        &command.command_id,
+                        OutboxState::Queued,
+                        None,
+                        poll_ms,
+                    )
+                    .await;
                 return;
             }
         }
@@ -419,10 +393,10 @@ async fn reconcile_outbox_command(context: &PumpContext, command: OutboxCommand)
 }
 
 /// Full-history pages for a resolved steer claim, summary otherwise.
-async fn history_contains_client_message(
+async fn history_client_message_turn_id(
     target: &Target,
     command: &OutboxCommand,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
     let Some(native) = target.native() else {
         let page = target
             .provider
@@ -437,7 +411,7 @@ async fn history_contains_client_message(
             .map_err(|error| error.to_string())?;
         let turns = results::turns_page(&page.turns, ItemsView::Full, None);
         let turns = turns["data"].as_array().cloned().unwrap_or_default();
-        return Ok(turns_contain_client_message(&turns, &command.command_id));
+        return matching_turn_id(&turns, &command.command_id);
     };
     if command.has_resolved_steer_claim() {
         let response = native
@@ -462,7 +436,7 @@ async fn history_contains_client_message(
             .and_then(|result| result.get("data"))
             .and_then(Value::as_array)
             .ok_or_else(|| "upstream full history returned no turns page".to_string())?;
-        return Ok(turns_contain_client_message(turns, &command.command_id));
+        return matching_turn_id(turns, &command.command_id);
     }
     let params = json!({
         "threadId": command.remote_thread_id,
@@ -481,13 +455,21 @@ async fn history_contains_client_message(
         .get("data")
         .and_then(Value::as_array)
         .ok_or_else(|| "local summary history returned no turns page".to_string())?;
-    Ok(turns_contain_client_message(turns, &command.command_id))
+    matching_turn_id(turns, &command.command_id)
+}
+
+fn matching_turn_id(turns: &[Value], command_id: &str) -> Result<Option<String>, String> {
+    turn_with_client_message(turns, command_id)
+        .map(|turn| {
+            turn_id(turn)
+                .map(str::to_owned)
+                .ok_or_else(|| "matching history turn has no id".to_owned())
+        })
+        .transpose()
 }
 
 #[allow(clippy::too_many_lines)]
 async fn deliver_outbox_start(context: &PumpContext, target: &Target, command: OutboxCommand) {
-    let store = &context.store;
-    let local_events = &context.local_events;
     let file_service = match context.files.read() {
         Ok(slot) => slot.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
@@ -507,21 +489,28 @@ async fn deliver_outbox_start(context: &PumpContext, target: &Target, command: O
             return;
         }
         Err(error) => {
-            fail_queued_outbox(
-                store,
-                local_events,
-                &command.remote_thread_id,
-                &command.command_id,
-                &error.to_string(),
-            )
-            .await;
+            context
+                .turn_delivery
+                .fail_queued(
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    &error.to_string(),
+                )
+                .await;
             return;
         }
     };
-    let Some((claimed, claim_token)) =
-        claim_outbox_dispatch(store, local_events, &command.command_id).await
-    else {
-        return;
+    let (claimed, claim_token) = match context
+        .turn_delivery
+        .claim_dispatch(&command.command_id)
+        .await
+    {
+        Ok(OutboxClaimOutcome::Acquired { command, token }) => (command, token),
+        Ok(OutboxClaimOutcome::Duplicate(_) | OutboxClaimOutcome::Unavailable(_)) => return,
+        Err(error) => {
+            warn!(err = ?error, "durable outbox dispatch claim failed");
+            return;
+        }
     };
     if claimed.params != command.params {
         let refreshed_file_service = match context.files.read() {
@@ -537,15 +526,15 @@ async fn deliver_outbox_start(context: &PumpContext, target: &Target, command: O
         {
             Ok(params) => params,
             Err(error) => {
-                resolve_outbox_claim(
-                    store,
-                    local_events,
-                    &claimed.remote_thread_id,
-                    &claimed.command_id,
-                    claim_token,
-                    OwnedClaimResolution::Rejected(error.to_string()),
-                )
-                .await;
+                context
+                    .turn_delivery
+                    .resolve_claim(
+                        &claimed.remote_thread_id,
+                        &claimed.command_id,
+                        claim_token,
+                        ClaimResolution::Rejected(error.to_string()),
+                    )
+                    .await;
                 return;
             }
         };
@@ -561,36 +550,42 @@ async fn deliver_outbox_start(context: &PumpContext, target: &Target, command: O
         }
         None => neutral_resolution(target, &claimed, &prepared_params).await,
     };
-    if matches!(resolution, OwnedClaimResolution::Delivered) {
+    if matches!(resolution, ClaimResolution::Delivered(_)) {
         context.gateway.confirm(target, true).await;
     }
-    resolve_outbox_claim(
-        store,
-        local_events,
-        &claimed.remote_thread_id,
-        &claimed.command_id,
-        claim_token,
-        resolution,
-    )
-    .await;
+    context
+        .turn_delivery
+        .resolve_claim(
+            &claimed.remote_thread_id,
+            &claimed.command_id,
+            claim_token,
+            resolution,
+        )
+        .await;
 }
 
 fn native_resolution(
     delivered: Result<Value, DispatchError>,
     claimed: &OutboxCommand,
-) -> OwnedClaimResolution {
+) -> ClaimResolution {
     match delivered.map_err(OutboxDeliveryError::from) {
         Ok(response) if response.get("error").is_some() => {
-            OwnedClaimResolution::Rejected(rpc_error_message(&response))
+            ClaimResolution::Rejected(rpc_error_message(&response))
         }
-        Ok(_) => OwnedClaimResolution::Delivered,
+        Ok(response) => ClaimResolution::Delivered(
+            response
+                .pointer("/result/turn/id")
+                .or_else(|| response.pointer("/result/turnId"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        ),
         Err(OutboxDeliveryError::Deferred(reason)) => {
             debug!(command_id = %claimed.command_id, %reason, "turn/start waited for upstream delivery");
-            OwnedClaimResolution::NotSent(OUTBOX_ACCOUNT_SWITCH_WAIT_MS)
+            ClaimResolution::NotSent(OUTBOX_ACCOUNT_SWITCH_WAIT_MS)
         }
         Err(OutboxDeliveryError::Uncertain(error)) => {
             warn!(command_id = %claimed.command_id, %error, "turn/start delivery is uncertain");
-            OwnedClaimResolution::Indeterminate {
+            ClaimResolution::Indeterminate {
                 error,
                 retry_after_ms: retry_delay_ms(claimed.attempts),
             }
@@ -602,10 +597,10 @@ async fn neutral_resolution(
     target: &Target,
     claimed: &OutboxCommand,
     params: &Value,
-) -> OwnedClaimResolution {
+) -> ClaimResolution {
     let input = match decode::user_contents(params.get("input").unwrap_or(&Value::Null)) {
         Ok(input) => input,
-        Err(message) => return OwnedClaimResolution::Rejected(message),
+        Err(message) => return ClaimResolution::Rejected(message),
     };
     let client_message_id =
         decode::client_message_id(params).or_else(|| ClientMessageId::parse(&claimed.command_id));
@@ -624,11 +619,11 @@ async fn neutral_resolution(
         match updated {
             Ok(_) => {}
             Err(ProviderError::Rejected(error)) => {
-                return OwnedClaimResolution::Rejected(error.message);
+                return ClaimResolution::Rejected(error.message);
             }
             Err(error) => {
                 warn!(command_id = %claimed.command_id, err = %error, "turn settings update failed; the turn waits");
-                return OwnedClaimResolution::NotSent(retry_delay_ms(claimed.attempts));
+                return ClaimResolution::NotSent(retry_delay_ms(claimed.attempts));
             }
         }
     }
@@ -642,18 +637,18 @@ async fn neutral_resolution(
         })
         .await;
     match started {
-        Ok(TurnStartResult::Started { .. }) => OwnedClaimResolution::Delivered,
+        Ok(TurnStartResult::Started { turn_id }) => {
+            ClaimResolution::Delivered(Some(turn_id.into_string()))
+        }
         Ok(TurnStartResult::Busy { active_turn_id }) => {
             debug!(command_id = %claimed.command_id, active_turn_id = %active_turn_id, "provider is busy; command waits for the turn to complete");
-            OwnedClaimResolution::Busy
+            ClaimResolution::Busy
         }
-        Err(ProviderError::Rejected(error)) => OwnedClaimResolution::Rejected(error.message),
-        Err(error) if error.not_sent() => {
-            OwnedClaimResolution::NotSent(OUTBOX_ACCOUNT_SWITCH_WAIT_MS)
-        }
+        Err(ProviderError::Rejected(error)) => ClaimResolution::Rejected(error.message),
+        Err(error) if error.not_sent() => ClaimResolution::NotSent(OUTBOX_ACCOUNT_SWITCH_WAIT_MS),
         Err(error) => {
             warn!(command_id = %claimed.command_id, err = %error, "turn.start delivery is uncertain");
-            OwnedClaimResolution::Indeterminate {
+            ClaimResolution::Indeterminate {
                 error: error.to_string(),
                 retry_after_ms: retry_delay_ms(claimed.attempts),
             }
@@ -665,7 +660,7 @@ async fn neutral_resolution(
 /// repeating `turn/start` would append the same prompt again. Reconcile
 /// before every direct start so a retry after a lost RPC response is
 /// acknowledged with the already-created turn instead of being forwarded.
-pub(super) async fn reconcile_direct_turn_start(
+pub(crate) async fn reconcile_direct_turn_start(
     target: &Target,
     params: &Value,
 ) -> Result<Option<Value>, String> {
@@ -722,5 +717,5 @@ pub(super) async fn reconcile_direct_turn_start(
                 .unwrap_or_default()
         }
     };
-    Ok(super::outbox_state::turn_with_client_message(&turns, client_id).cloned())
+    Ok(turn_with_client_message(&turns, client_id).cloned())
 }

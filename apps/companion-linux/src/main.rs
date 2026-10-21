@@ -107,6 +107,9 @@ enum Command {
         /// Execute authenticated RPC and durable commands; otherwise only observe/replay events.
         #[arg(long, default_value_t = false)]
         enable_mutations: bool,
+        /// Host rollout gate for admitting new durable delegated tasks.
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        delegate_task_enabled: bool,
     },
     Identity {
         #[arg(long)]
@@ -437,6 +440,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             identity_dir,
             insecure_http,
             enable_mutations,
+            delegate_task_enabled,
         } => {
             Box::pin(serve(ServeOptions {
                 listen,
@@ -450,6 +454,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 identity_dir,
                 insecure_http,
                 enable_mutations,
+                delegate_task_enabled,
             }))
             .await?;
         }
@@ -1117,6 +1122,7 @@ struct ServeOptions {
     identity_dir: Option<PathBuf>,
     insecure_http: bool,
     enable_mutations: bool,
+    delegate_task_enabled: bool,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1323,6 +1329,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     );
     let providers = registry.clone();
     let mut sync = SyncHub::with_registry(registry, store.clone(), options.enable_mutations)
+        .with_delegate_task_enabled(options.delegate_task_enabled)
         .with_content_projector(projector)
         .with_dictation(dictation)
         .with_files(files.clone())
@@ -1407,6 +1414,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         public = %options.listen,
         control = %options.control_endpoint.display(),
         mutations = options.enable_mutations,
+        delegate_task_enabled = options.delegate_task_enabled,
         carrier_tls = false,
         inner_tls = true,
         "Companion is listening"
@@ -1667,6 +1675,33 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serve_cli_exposes_the_host_delegate_task_rollout_gate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let cli = Cli::try_parse_from([
+            "codewide-companion",
+            "serve",
+            "--state",
+            "state.redb",
+            "--token-file",
+            "token",
+            "--app-server-socket",
+            "app.sock",
+            "--device-registry",
+            "devices.json",
+            "--delegate-task-enabled=false",
+        ])?;
+        let Command::Serve {
+            delegate_task_enabled,
+            ..
+        } = cli.command
+        else {
+            return Err("expected serve command".into());
+        };
+        assert!(!delegate_task_enabled);
+        Ok(())
+    }
 
     #[test]
     fn legacy_attachments_are_preserved_without_copying_upload_fragments()

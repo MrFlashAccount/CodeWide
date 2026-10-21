@@ -48,6 +48,7 @@
             "host.config": false,
             "codex.native": false,
             "orchestration.tools": true,
+            "orchestration.externalDelivery": false,
             "threads.crossProviderFork": true,
             "threads.backgroundTaskOutput": true,
             "turns.startWhileActive": "busy"

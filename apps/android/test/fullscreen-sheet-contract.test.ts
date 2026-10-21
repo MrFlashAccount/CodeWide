@@ -48,8 +48,20 @@ const subagentSheet = readFileSync(
   new URL("../src/features/agents/SubagentSheet.tsx", import.meta.url),
   "utf8",
 );
+const subagentDetail = readFileSync(
+  new URL("../src/features/agents/SubagentDetail.tsx", import.meta.url),
+  "utf8",
+);
 const subagentWorkspace = readFileSync(
   new URL("../src/features/agents/SubagentWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const subagentMasterHeader = readFileSync(
+  new URL("../src/features/agents/SubagentMasterHeader.tsx", import.meta.url),
+  "utf8",
+);
+const subagentMasterPane = readFileSync(
+  new URL("../src/features/agents/SubagentMasterPane.tsx", import.meta.url),
   "utf8",
 );
 
@@ -88,7 +100,10 @@ const ownerAgentsFeature = compactSource(
 );
 const agentsRoute = compactSource(
   readFileSync(
-    new URL("../app/(workspace)/threads/[connectionId]/[threadId]/agents/index.tsx", import.meta.url),
+    new URL(
+      "../app/(workspace)/threads/[connectionId]/[threadId]/agents/index.tsx",
+      import.meta.url,
+    ),
     "utf8",
   ),
 );
@@ -400,19 +415,19 @@ describe("fullscreen workspace presentation", () => {
   });
 
   it("uses back navigation for the subagent list and reads its chat through the shared model", () => {
-    const headerStart = subagentWorkspace.indexOf("<View style={styles.masterHeader}>");
-    const headerEnd = subagentWorkspace.indexOf(
+    const headerStart = subagentMasterHeader.indexOf("<View style={styles.masterHeader}>");
+    const headerEnd = subagentMasterHeader.indexOf(
       "</View>",
-      subagentWorkspace.indexOf("</View>", headerStart) + 1,
+      subagentMasterHeader.indexOf("</View>", headerStart) + 1,
     );
-    const header = subagentWorkspace.slice(headerStart, headerEnd);
+    const header = subagentMasterHeader.slice(headerStart, headerEnd);
     expect(header).toContain('accessibilityLabel="Back to conversation"');
     expect(header).toContain('name="arrow-back"');
     expect(header).not.toContain('name="close"');
     expect(subagentSheet).toContain("subagentsForThread(summaries, parentThreadId)");
     expect(subagentSheet).not.toContain("useLiveQuery");
-    expect(subagentSheet).toContain("useThreadChatWindow(threadDetails");
-    expect(subagentSheet).not.toContain("useAsyncResource");
+    expect(subagentDetail).toContain("useThreadChatWindow(threadDetails");
+    expect(subagentDetail).not.toContain("useAsyncResource");
     expect(screen).not.toContain("readSubagentThread");
     expect(ownerAgentsFeature).toContain(
       "void props.agentsInputs.onRefreshSubagents?.(props.draftThreadId).catch",
@@ -428,12 +443,14 @@ describe("fullscreen workspace presentation", () => {
     expect(agentsRoute).toContain("summaries={request.summaries}");
     expect(screen).not.toContain('testID="subagent-task-card"');
     expect(subagentSheet).not.toContain("onLoadResources");
-    expect(subagentSheet).toContain("setSelectedId(threadId)");
+    expect(subagentSheet).toContain(
+      'setSelection({ selectedThreadId: threadId, status: "detail" })',
+    );
     expect(subagentSheet).toContain("onOpenSubagent={openById}");
     expect(subagentSheet).toContain("startSubagentTransition(() =>");
-    expect(subagentSheet).toContain("<Suspense");
-    expect(subagentSheet.indexOf("function SubagentConversationDetail")).toBeGreaterThan(
-      subagentSheet.indexOf("<Suspense fallback={"),
+    expect(subagentDetail).toContain("<Suspense");
+    expect(subagentDetail.indexOf("function SubagentConversationDetail")).toBeGreaterThan(
+      subagentDetail.indexOf("<Suspense fallback={"),
     );
     expect(fullscreenOverlay).toContain(
       "<Suspense fallback={<FullscreenOverlaySuspenseFallback />}>",
@@ -441,13 +458,13 @@ describe("fullscreen workspace presentation", () => {
   });
 
   it("keeps the model-owned cached subagent text visible and updates recycled selection", () => {
-    expect(subagentSheet).toContain("applyThreadSummaryMetadata(materializedThread, summary)");
-    expect(subagentSheet).toContain("did not materialize from its ready window");
-    expect(subagentSheet).toContain("if (thread === null)");
-    expect(subagentSheet).not.toContain("projectSubagentConversation");
-    expect(subagentSheet).toContain("summary.remoteThreadId === selectedId");
-    expect(subagentSheet).not.toContain("remoteThreadResource");
-    expect(subagentWorkspace).toContain("extraData={selected?.remoteThreadId ?? null}");
+    expect(subagentDetail).toContain("applyThreadSummaryMetadata(materializedThread, summary)");
+    expect(subagentDetail).toContain("did not materialize from its ready window");
+    expect(subagentDetail).toContain("if (thread === null)");
+    expect(subagentDetail).not.toContain("projectSubagentConversation");
+    expect(subagentSheet).toContain("row.summary.remoteThreadId === selectedThreadId");
+    expect(subagentDetail).not.toContain("remoteThreadResource");
+    expect(subagentMasterPane).toContain("extraData={selected?.remoteThreadId ?? null}");
   });
 
   it("contains suspension and render failures at each independently recoverable surface", () => {
@@ -467,8 +484,8 @@ describe("fullscreen workspace presentation", () => {
     expect(conversation).toContain("onDismiss={props.scope.closeActiveConversation}");
     expect(turnOwner).toContain('scope="bubble"');
     expect(ownerThreadTimeline).toContain('label="Conversation item"');
-    expect(subagentSheet).toContain('label="Subagent conversation"');
-    expect(subagentSheet).toContain("<SubagentConversationDetail");
+    expect(subagentDetail).toContain('label="Subagent conversation"');
+    expect(subagentDetail).toContain("<SubagentConversationDetail");
     expect(fullscreenOverlay).toContain("fullscreen-overlay-suspense-fallback");
     expect(fullscreenOverlay).toContain('label="Fullscreen overlay content"');
     expect(fullscreenOverlay).toMatch(/onDismiss=\{\(\) => \{\s*close\(entry\.id\);\s*\}\}/u);

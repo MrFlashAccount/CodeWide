@@ -11,6 +11,10 @@ const subagentSheet = readFileSync(
   new URL("../src/features/agents/SubagentSheet.tsx", import.meta.url),
   "utf8",
 );
+const subagentDetailOwner = readFileSync(
+  new URL("../src/features/agents/SubagentDetail.tsx", import.meta.url),
+  "utf8",
+);
 const resources = readFileSync(
   new URL("../src/data/workspace-resource-keys.ts", import.meta.url),
   "utf8",
@@ -142,9 +146,9 @@ describe("conversation transition parity", () => {
     const mainDetail = ownerConversationDetail;
     const mainBoundary = destinationView.slice(destinationView.indexOf('label="Conversation"'));
     const subagentSelection = subagentSheet;
-    const subagentDetail = subagentSheet.slice(
-      subagentSheet.indexOf("function SubagentConversationDetail"),
-      subagentSheet.indexOf("return renderThread"),
+    const subagentDetail = subagentDetailOwner.slice(
+      subagentDetailOwner.indexOf("function SubagentConversationDetail"),
+      subagentDetailOwner.indexOf("return renderThread"),
     );
 
     // Main-chat navigation now reveals cached data or a skeleton immediately;
@@ -167,8 +171,8 @@ describe("conversation transition parity", () => {
     expect(agentsRoute).toContain("summaries={request.summaries}");
     expect(agentsRoute).not.toContain("useThreadSummaryView");
     expect(mainBoundary).toContain("<ConversationDestination");
-    expect(subagentSheet.indexOf("<Suspense")).toBeLessThan(
-      subagentSheet.indexOf("<SubagentConversationDetail"),
+    expect(subagentDetailOwner.indexOf("<Suspense")).toBeLessThan(
+      subagentDetailOwner.indexOf("<SubagentConversationDetail"),
     );
     expect(mainDetail).toContain("useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
     expect(publication).toContain("searchState === null ? history.messageListState");

@@ -337,7 +337,11 @@ fn claimed_head_blocks_dispatch_and_stale_queue_updates() -> Result<(), Box<dyn 
     let failed = store.outbox_set_state("claimed", OutboxState::Failed, Some("stale failure"))?;
     assert_eq!(failed.state, OutboxState::Uncertain);
 
-    store.outbox_resolve_claim("claimed", token, OutboxClaimResolution::Delivered)?;
+    store.outbox_resolve_claim(
+        "claimed",
+        token,
+        OutboxClaimResolution::Delivered { turn_id: None },
+    )?;
     let (waited, changed) = store.outbox_wait("claimed", OutboxState::Uncertain, None, 60_000)?;
     assert!(!changed);
     assert_eq!(waited.state, OutboxState::Delivered);

@@ -33,6 +33,7 @@ export function ConversationHeader({
   forkPicker,
   historyActivityModel,
   historyActivityResourceId,
+  identitySubtitle = null,
   newChat,
   onArchive,
   onBack,
@@ -80,12 +81,24 @@ export function ConversationHeader({
             threadId={draftThreadId}
           />
         </View>
-        <ConversationHistorySubtitle
-          cwd={cwd}
-          model={historyActivityModel}
-          resourceId={historyActivityResourceId}
-          server={server}
-        />
+        {identitySubtitle === null ? (
+          <ConversationHistorySubtitle
+            cwd={cwd}
+            model={historyActivityModel}
+            resourceId={historyActivityResourceId}
+            server={server}
+          />
+        ) : (
+          <Text
+            accessibilityLabel={identitySubtitle}
+            ellipsizeMode="middle"
+            numberOfLines={1}
+            style={styles.conversationIdentitySubtitle}
+            testID="conversation-identity-subtitle"
+          >
+            {identitySubtitle}
+          </Text>
+        )}
       </View>
       {!newChat && (
         <Pressable
