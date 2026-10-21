@@ -4,6 +4,7 @@ import { RouteUnavailable } from "../../../../src/components/navigation/RouteUna
 import { recoverUnavailableRoute } from "../../../../src/components/navigation/routeRecovery";
 import { ConversationRouteFullscreenOverlay } from "../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
 import { ActivityContentViewer } from "../../../../src/features/conversation/content/ActivityContentViewer";
+import { CommandItemOutputViewer } from "../../../../src/features/conversation/content/CommandContentViewer";
 import { LargeContentViewerSession } from "../../../../src/features/conversation/content/FullContentViewer";
 import { contentRouteSessions } from "../../../../src/services/content/contentRouteSession";
 import { newThreadService } from "../../../../src/services/threads/newThreadService";
@@ -57,17 +58,22 @@ export default function V1DraftContentRoute(): React.JSX.Element {
             <LargeContentViewerSession initialRequest={session.request} onClose={closeOverlay} />
           );
         }
-        const text =
-          session.request.kind === "command"
-            ? session.request.fallbackOutput
-            : session.request.text;
+        if (session.request.kind === "command") {
+          // A draft holds no live thread item; the command reads the output it was opened with.
+          return (
+            <CommandItemOutputViewer
+              current={null}
+              onClose={closeOverlay}
+              request={session.request}
+              resourceKey={`draft:${session.id}:${session.request.itemId}`}
+            />
+          );
+        }
         return (
           <ActivityContentViewer
             onClose={closeOverlay}
-            presentation={
-              session.request.kind === "command" ? "terminal" : session.request.presentation
-            }
-            text={text}
+            presentation={session.request.presentation}
+            text={session.request.text}
             title={session.request.title}
           />
         );

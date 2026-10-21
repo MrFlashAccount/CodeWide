@@ -170,7 +170,7 @@ impl TurnBuilder {
         self.last_assistant_error.as_deref()
     }
 
-    /// Whether a command (Bash) item is still running; used by the interrupt fallback.
+    /// Whether a command item (a shell call) is still running; used by the interrupt fallback.
     #[must_use]
     pub fn has_running_command(&self) -> bool {
         self.slots
@@ -691,6 +691,7 @@ impl TurnBuilder {
                 &input,
                 &ToolOutcome {
                     app_thread_id: &self.context.app_thread_id,
+                    cwd: &self.context.cwd,
                     duration_ms,
                     result,
                     status,

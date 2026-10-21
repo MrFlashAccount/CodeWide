@@ -13,31 +13,7 @@ import type { TaskOutputRouteRequest } from "../src/services/backgroundTasks/tas
 import { TaskNotificationLine } from "../src/features/conversation/turns/TaskNotificationLine";
 import type { TaskNotificationReport } from "../src/rendering/taskNotifications";
 
-// The Ghostty view is native: this double keeps what the screen writes into it.
-jest.mock("expo-libghostty", () => {
-  const React = jest.requireActual<typeof import("react")>("react");
-  const { Text } = jest.requireActual<typeof import("react-native")>("react-native");
-  return {
-    TerminalView: function TerminalView(props: {
-      readonly readOnly?: boolean;
-      readonly ref?: React.Ref<unknown>;
-    }) {
-      const [written, setWritten] = React.useState("");
-      React.useImperativeHandle(props.ref, () => ({
-        finish: async () => undefined,
-        write: async () => undefined,
-        writeText: async (text: string) => {
-          setWritten((current) => current + text);
-        },
-      }));
-      return (
-        <Text testID="terminal-grid" accessibilityHint={props.readOnly === true ? "read-only" : ""}>
-          {written}
-        </Text>
-      );
-    },
-  };
-});
+jest.mock("expo-libghostty", () => jest.requireActual("./mocks/ExpoLibghostty"));
 
 const report: TaskNotificationReport = {
   agentThreadId: null,
@@ -155,7 +131,7 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
 
   // The task's name titles the screen; its command is a prompt line above the output.
   expect(view.getByRole("header")).toHaveTextContent("Wait for CI");
-  const command = view.getByTestId("background-task-command");
+  const command = view.getByTestId("command-output-command");
   expect(within(command).getByText("❯")).toBeOnTheScreen();
   expect(within(command).getByText(COMMAND)).toBeOnTheScreen();
   // The command copies on its own, apart from the whole output.
@@ -172,14 +148,14 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
   });
   expect(grid.props.accessibilityHint).toBe("read-only");
   // The header copies everything like a terminal: the prompt line, then the output.
-  fireEvent.press(within(view.getByTestId("background-task-output-header")).getByLabelText("Copy"));
+  fireEvent.press(within(view.getByTestId("command-output-header")).getByLabelText("Copy"));
   expect(copy).toHaveBeenLastCalledWith(`❯ ${COMMAND}\nfirst page\nsecond\n[exited with code 0]`);
   // The footer reads the result; nothing asks to load more.
   expect(view.getByText("Finished")).toBeOnTheScreen();
   expect(view.getByText("· exit 0 · 12 B")).toBeOnTheScreen();
   expect(view.queryByText(/load more|read new output/iu)).toBeNull();
 
-  fireEvent.press(view.getByLabelText("Close task output"));
+  fireEvent.press(view.getByLabelText("Close command output"));
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
@@ -200,7 +176,7 @@ it("shows no prompt line when the Companion does not know the command", async ()
   await act(async () => undefined);
 
   expect(view.getByRole("header")).toHaveTextContent("Wait for CI");
-  expect(view.queryByTestId("background-task-command")).toBeNull();
+  expect(view.queryByTestId("command-output-command")).toBeNull();
 });
 
 it("opens a background Bash call's output from its command block", async () => {
