@@ -58,7 +58,8 @@ case " $* " in
     mkdir -p target/release
     printf companion >target/release/codewide-companion
     printf plugin >target/release/codewide-vcs-git
-    chmod 755 target/release/codewide-companion target/release/codewide-vcs-git
+    printf forge >target/release/codewide-forge-github
+    chmod 755 target/release/codewide-companion target/release/codewide-vcs-git target/release/codewide-forge-github
     ;;
 esac
 exit 0
@@ -85,6 +86,7 @@ exit 97
     expect(readFileSync(commandLog, "utf8")).toContain("cargo test --workspace --all-features");
     expect(readdirSync(join(fixture, "target/release"))).toEqual([
       "codewide-companion",
+      "codewide-forge-github",
       "codewide-vcs-git",
     ]);
     expect(readOptionalFile(mutationLog)).toBe("");

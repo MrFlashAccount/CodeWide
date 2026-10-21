@@ -20,6 +20,10 @@ const THREAD_PINS: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_p
 const THREADS_BY_PARENT: TableDefinition<&[u8], u8> = TableDefinition::new("threads_by_parent");
 
 mod agent_tables;
+pub(crate) mod forge_tables;
+pub(crate) mod kv;
+pub(crate) mod review_tables;
+mod thread_cwds;
 pub use agent_tables::BindingWrite;
 pub use companion_host::{
     index::StoreError,

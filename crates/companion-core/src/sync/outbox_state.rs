@@ -211,7 +211,7 @@ pub(super) async fn wait_outbox(
     }
 }
 
-pub(super) async fn emit_queue_changed(
+pub(crate) async fn emit_queue_changed(
     store: &Arc<IndexStore>,
     local_events: &tokio::sync::mpsc::Sender<Value>,
     thread_id: &str,

@@ -327,3 +327,88 @@ async fn assert_large_diff_pages(scope: VcsScope) {
     assert_eq!(second.revision, first.revision, "scope {scope:?}");
     assert_eq!(second.snapshot_id, first.snapshot_id, "scope {scope:?}");
 }
+
+#[tokio::test]
+async fn git_reports_branch_upstream_and_credential_free_remotes() {
+    let upstream = tempfile::tempdir().expect("upstream");
+    let directory = tempfile::tempdir().expect("repository");
+    let state = tempfile::tempdir().expect("state");
+    git(
+        upstream.path(),
+        &["init", "--quiet", "--bare", "--initial-branch=main"],
+    )
+    .await;
+    git(
+        directory.path(),
+        &["init", "--quiet", "--initial-branch=main"],
+    )
+    .await;
+    git(
+        directory.path(),
+        &["config", "user.email", "test@example.com"],
+    )
+    .await;
+    git(directory.path(), &["config", "user.name", "Test"]).await;
+    tokio::fs::write(directory.path().join("file.txt"), "base\n")
+        .await
+        .expect("file writes");
+    git(directory.path(), &["add", "file.txt"]).await;
+    git(directory.path(), &["commit", "--quiet", "-m", "base"]).await;
+    let upstream_url = upstream.path().to_str().expect("utf8");
+    git(directory.path(), &["remote", "add", "fork", upstream_url]).await;
+    git(
+        directory.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://user:ghp_sentinel@github.com/octo/repo.git",
+        ],
+    )
+    .await;
+    git(directory.path(), &["checkout", "--quiet", "-b", "feature"]).await;
+    git(
+        directory.path(),
+        &["push", "--quiet", "-u", "fork", "feature"],
+    )
+    .await;
+
+    let service = VcsService::new(state.path().join("vcs-plugins.json"));
+    service
+        .registry()
+        .install(VcsPluginConfig {
+            id: "git".into(),
+            executable: git_plugin(),
+            args: Vec::new(),
+            enabled: true,
+            priority: -1000,
+        })
+        .expect("Git plugin registers");
+    let remotes = service
+        .remotes(directory.path())
+        .await
+        .expect("remotes")
+        .expect("Git declares vcs.remotes@1");
+    assert_eq!(remotes.branch.as_deref(), Some("feature"));
+    let upstream = remotes.upstream.as_ref().expect("upstream");
+    assert_eq!(
+        (upstream.remote.as_str(), upstream.branch.as_str()),
+        ("fork", "feature")
+    );
+    let urls = remotes.ordered_urls();
+    assert_eq!(
+        urls[0], upstream_url,
+        "the upstream's remote is probed first"
+    );
+    assert!(urls.contains(&"https://github.com/octo/repo.git".to_owned()));
+    assert!(urls.iter().all(|url| !url.contains("ghp_sentinel")));
+
+    git(directory.path(), &["checkout", "--quiet", "--detach"]).await;
+    let detached = service
+        .remotes(directory.path())
+        .await
+        .expect("remotes")
+        .expect("declared");
+    assert_eq!(detached.branch, None);
+    assert_eq!(detached.upstream, None);
+}

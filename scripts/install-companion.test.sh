@@ -49,6 +49,7 @@ test "$(readlink "$install_root/current")" = "generations/$bundle_digest"
 test -d "$install_root/generations/$bundle_digest"
 test "$("$install_root/current/bin/codewide-companion" --version)" = "codewide-companion $version"
 test -x "$install_root/current/libexec/codewide-vcs-git"
+test -x "$install_root/current/libexec/codewide-forge-github"
 test -x "$install_root/current/libexec/codewide-companion-memory-watch"
 grep -F '"artifactDigest":"'"$bundle_digest"'"' \
   "$install_root/current/metadata.json" >/dev/null

@@ -65,6 +65,9 @@ pub struct ManagedRuntimeConfig {
     pub listen_address: SocketAddr,
     pub host_update_guardian: Option<SharedHostUpdateGuardian>,
     pub dictation_proxy: HttpProxyConfig,
+    /// The host's bundled forge plugin directory (`Contents/Helpers` in the
+    /// macOS app); `None` leaves the built-in providers unavailable.
+    pub bundled_plugin_directory: Option<PathBuf>,
 }
 
 impl ManagedRuntimeConfig {
@@ -84,7 +87,15 @@ impl ManagedRuntimeConfig {
             listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8767)),
             host_update_guardian: None,
             dictation_proxy: HttpProxyConfig::default(),
+            bundled_plugin_directory: None,
         }
+    }
+
+    /// Sets the directory that holds the bundled forge plugin binaries.
+    #[must_use]
+    pub fn with_bundled_plugin_directory(mut self, directory: PathBuf) -> Self {
+        self.bundled_plugin_directory = Some(directory);
+        self
     }
 
     #[must_use]
@@ -272,7 +283,13 @@ impl ManagedRuntime {
         .with_dictation(dictation)
         .with_files(files.clone())
         .with_projects(projects.clone())
-        .with_workspaces(workspaces.clone());
+        .with_workspaces(workspaces.clone())
+        .with_forge(crate::sync::ForgeHostConfig::standard(
+            &config.state_directory,
+            config.bundled_plugin_directory.clone(),
+            vcs.clone(),
+            projects.clone(),
+        ));
         if let Some(account_pool) = &account_pool {
             sync = sync.with_account_pool(account_pool);
         }

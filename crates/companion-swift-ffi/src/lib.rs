@@ -155,7 +155,8 @@ impl CoreHost {
     /// migrated, exclusively locked, or durably checkpointed.
     ///
     /// `app_build` and `source_revision` identify the installed bundle for
-    /// remote updates.
+    /// remote updates. `bundled_plugin_directory` is the app's
+    /// `Contents/Helpers`, which holds the built-in forge plugins.
     #[uniffi::constructor]
     // UniFFI constructors receive owned strings from the Swift boundary.
     #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
@@ -168,6 +169,7 @@ impl CoreHost {
         host_version: String,
         computer_name: String,
         listen_address: String,
+        bundled_plugin_directory: String,
     ) -> Result<Arc<Self>, CompanionFfiError> {
         logging::install(Path::new(&state_directory));
         let installed = codewide_host_update::macos::InstalledRelease {
@@ -200,7 +202,8 @@ impl CoreHost {
         .with_dictation_proxy(dictation_proxy)
         .with_secret_storage_policy(SecretStoragePolicy::PrivateFileOnly)
         .with_listen_address(listen_address.parse().map_err(CompanionFfiError::runtime)?)
-        .with_host_update_guardian(updates.clone());
+        .with_host_update_guardian(updates.clone())
+        .with_bundled_plugin_directory(PathBuf::from(bundled_plugin_directory));
         let companion = executor
             .block_on(ManagedRuntime::start(config))
             .map_err(CompanionFfiError::runtime)?;
@@ -743,6 +746,7 @@ mod tests {
                 version.into(),
                 "Restart test".into(),
                 "127.0.0.1:0".into(),
+                root.path().join("Helpers").display().to_string(),
             )
         };
         let core = open("98.0.0")?;
