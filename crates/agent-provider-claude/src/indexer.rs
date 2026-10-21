@@ -733,6 +733,7 @@ mod tests {
         }
         read.subagents.push(agent_core::model::NativeSubagent {
             agent_id: "a0001".into(),
+            model: None,
             parent_agent_id: None,
             parent_tool_use_id: None,
             turns: vec![turn],

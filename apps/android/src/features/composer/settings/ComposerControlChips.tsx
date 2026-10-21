@@ -160,7 +160,11 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
   return (
     <>
       {readOnly ? (
-        <View style={styles.composerContextChip} testID="readonly-model-chip">
+        <View
+          accessibilityState={{ disabled: true }}
+          style={[styles.composerContextChip, styles.disabled]}
+          testID="readonly-model-chip"
+        >
           {modelTrigger}
         </View>
       ) : (
@@ -193,7 +197,11 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
         />
       )}
       {readOnly ? (
-        <View style={styles.composerContextChip} testID="readonly-permissions-chip">
+        <View
+          accessibilityState={{ disabled: true }}
+          style={[styles.composerContextChip, styles.disabled]}
+          testID="readonly-permissions-chip"
+        >
           {permissionsTrigger}
         </View>
       ) : (

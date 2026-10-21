@@ -1,19 +1,20 @@
 import { StyleSheet } from "react-native";
 import { colors, typeScale, typeWeight } from "../theme";
 
+/** One long name (a branch) gives way here instead of crowding the chip strip. */
+const CONTEXT_LABEL_MAX_WIDTH = 200;
+
 export const styles = StyleSheet.create({
   composerContextCount: {
+    alignItems: "center",
     alignSelf: "center",
+    flexDirection: "row",
     flexGrow: 0,
     flexShrink: 0,
-    justifyContent: "center",
   },
-  composerContextCountHidden: { opacity: 0 },
-  composerContextRefreshOverlay: {
-    alignItems: "flex-start",
-    inset: 0,
-    justifyContent: "center",
-    position: "absolute",
+  composerContextCountLabel: {
+    flexShrink: 1,
+    maxWidth: CONTEXT_LABEL_MAX_WIDTH,
   },
   composerContextText: {
     color: colors.textMuted,
@@ -21,10 +22,6 @@ export const styles = StyleSheet.create({
     flexShrink: 0,
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
-  },
-  composerContextValue: {
-    alignSelf: "center",
-    justifyContent: "center",
   },
   composerContextWave: {
     flexGrow: 0,

@@ -123,7 +123,11 @@ class AnimatedNumberView(context: Context) : View(context) {
     // view's metrics at draw time; process-global RN screen metrics can be stale.
     refreshTextMetrics()
     canvas.save()
-    canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
+    // Clip only the rolling digits' vertical travel. React measures this text on a pixel-
+    // rounded layout, so the glyphs may run a fraction of a pixel past the view's width;
+    // a horizontal clip would shave the last glyph.
+    val horizontalSlack = paint.textSize
+    canvas.clipRect(-horizontalSlack, 0f, width + horizontalSlack, height.toFloat())
     val baseline = (height - paint.fontMetrics.descent - paint.fontMetrics.ascent) / 2f
     if (progress >= 1f || previousText == targetText) {
       canvas.drawText(targetText, horizontalStart(targetText), baseline, paint)

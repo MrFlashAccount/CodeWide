@@ -38,6 +38,7 @@ use serde_json::Value;
 
 use crate::{
     indexer::NativeSessions,
+    runtime::recorded_model::last_recorded_model,
     transcript::{
         agents::SubagentRuns,
         chain::active_branch,
@@ -341,7 +342,8 @@ fn session_runs(messages: &[&JsonRecord], transcripts: &[SubagentTranscript]) ->
     runs
 }
 
-/// Each sub-agent transcript as neutral turns; a sub-agent its spawning item
+/// Each sub-agent transcript as neutral turns with the model it last answered
+/// with; a sub-agent its spawning item
 /// (in the main conversation or another sub-agent) reports `running` keeps
 /// its last turn in progress. A spawning item is running until a report
 /// anywhere in the session settles it, and again while a resume of its agent
@@ -371,6 +373,9 @@ fn native_subagents(
         .zip(settled)
         .map(|(transcript, settled)| NativeSubagent {
             agent_id: transcript.agent_id.clone(),
+            // Stored sidecar rows name no `parent_tool_use_id`, so every
+            // assistant row of the transcript is the sub-agent's own answer.
+            model: last_recorded_model(&transcript.rows).map(ToOwned::to_owned),
             parent_agent_id: transcript.sidecar.parent_agent_id.clone(),
             parent_tool_use_id: transcript.sidecar.tool_use_id.clone(),
             turns: if running.contains(&transcript.agent_id) {
@@ -388,6 +393,8 @@ pub(crate) fn fixture_paths(root: &std::path::Path) -> (PathBuf, PathBuf) {
     (root.join("projects"), root.join("journal"))
 }
 
+#[cfg(test)]
+mod subagent_model_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

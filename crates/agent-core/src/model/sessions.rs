@@ -99,6 +99,10 @@ pub struct NativeSessionCodewide {
 #[serde(rename_all = "camelCase")]
 pub struct NativeSubagent {
     pub agent_id: String,
+    /// The model of the sub-agent's newest answer in its own transcript;
+    /// absent when the transcript records none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     /// The parent sub-agent, or `None` for one the main conversation spawned.
     pub parent_agent_id: Option<String>,
     /// The tool call that spawned the sub-agent, when the store records it.

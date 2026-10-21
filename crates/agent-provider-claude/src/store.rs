@@ -51,8 +51,8 @@ const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// session (they stayed running forever), and the background task a
 /// `command` item started (`backgroundTaskId`). 9: a finished sub-agent a
 /// `SendMessage` call resumed is running again until that run reports (it
-/// stayed finished).
-pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 9;
+/// stayed finished). 10: each sub-agent's own model ([`IndexedSubagent::model`]).
+pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 10;
 
 /// The Claude tables' schema in the host index.
 pub const CLAUDE_INDEX_SCHEMA: ClaudeIndexSchema = ClaudeIndexSchema;
@@ -448,10 +448,12 @@ impl ClaudeStore {
             return Ok(None);
         };
         let sessions = self.thread_sessions(&parent)?;
-        if crate::catalog::is_deleted(&sessions.iter().collect::<Vec<_>>()) {
+        let chain = sessions.iter().collect::<Vec<_>>();
+        if crate::catalog::is_deleted(&chain) {
             return Ok(None);
         }
-        for stored in sessions {
+        let parent_settings = crate::catalog::thread_settings(&chain);
+        for stored in &sessions {
             let Some(subagent) = stored
                 .subagents
                 .iter()
@@ -467,13 +469,14 @@ impl ClaudeStore {
                 .map(|row| serde_json::from_slice::<Vec<AgentTurn>>(row.value()))
                 .transpose()?
                 .unwrap_or_default();
-            let cwd = thread_cwd(&stored);
+            let cwd = thread_cwd(stored);
             return Ok(Some(ChildThread {
                 thread_id: thread.clone(),
                 parent,
                 cwd,
                 subagent: subagent.clone(),
                 turns,
+                parent_settings,
             }));
         }
         Ok(None)
@@ -649,6 +652,7 @@ mod tests {
         }
         read.subagents.push(agent_core::model::NativeSubagent {
             agent_id: "a0001".into(),
+            model: None,
             parent_agent_id: None,
             parent_tool_use_id: Some("toolu_spawn".into()),
             turns: vec![sub_turn],

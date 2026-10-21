@@ -495,6 +495,11 @@ export interface NativeSessionCodewide {
 /** The turns of one sub-agent of a native session. */
 export interface NativeSubagent {
   readonly agentId: string;
+  /**
+   * The model of the sub-agent's newest answer in its own transcript; absent
+   * when the transcript records none. Added within v1.
+   */
+  readonly model?: string;
   /** The parent sub-agent, or `null` for a sub-agent the main conversation spawned. */
   readonly parentAgentId: string | null;
   /** The tool call that spawned the sub-agent, when the store records it. */

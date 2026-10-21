@@ -2,7 +2,9 @@ import type { RenderBlock } from "@codewide/renderers";
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { ThreadDetailDatabase } from "../../data/thread-detail-database-contract";
 import type { ThreadSummaryDatabase } from "../../data/thread-summary-database";
+import type { LoadTurnControls } from "../../data/turn-controls-types";
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../../data/use-thread-history-controller";
+import type { WorkspaceResourceDatabase } from "../../data/workspace-resource-database";
 import { ContentReviewComposer } from "../../rendering/ContentReviewHost";
 import type { TurnChangedFile } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
@@ -38,22 +40,26 @@ export type SubagentConversationProps = {
   details: ThreadDetailDatabase | null;
   fixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
   getTransferAccess: GetTransferAccess | undefined;
+  loadControls: LoadTurnControls | undefined;
   loadTurnChanges: ((target: TurnChangesTarget) => Promise<readonly TurnChangedFile[]>) | undefined;
   refresh: ((rootThreadId: string) => Promise<void>) | undefined;
   server: ThreadListServer | undefined;
   summaries: ThreadSummaryDatabase | null;
   view: SubagentThreadView;
+  workspaceResources: WorkspaceResourceDatabase | null;
 };
 
 export function SubagentConversation({
   details,
   fixUnsupportedBlock,
   getTransferAccess,
+  loadControls,
   loadTurnChanges,
   refresh,
   server,
   summaries,
   view,
+  workspaceResources,
 }: SubagentConversationProps) {
   const { compact, connectionId, onBack, onOpenSubagent, thread } = view;
   const routeNavigation = useConversationRouteNavigation();
@@ -146,7 +152,13 @@ export function SubagentConversation({
       appVoiceInputRuntime={appVoiceInputRuntime}
       compact={compact}
       footerContent={
-        <ReadOnlyComposerContext thread={thread}>
+        <ReadOnlyComposerContext
+          connectionId={connectionId}
+          loadControls={loadControls}
+          notice="Subagent chats are read-only"
+          thread={thread}
+          workspaceResources={workspaceResources}
+        >
           <ComposerTerminalContextChip
             connectionId={connectionId}
             onOpen={openTerminal}

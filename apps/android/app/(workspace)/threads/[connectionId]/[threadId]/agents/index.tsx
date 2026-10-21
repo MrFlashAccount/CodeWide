@@ -128,6 +128,9 @@ function ValidAgentsRoute({
               getTransferAccess={async (forceRefresh) =>
                 features.attachments.transferAccess(connectionId, forceRefresh)
               }
+              loadControls={async (cwd, options) =>
+                features.composer.loadTurnControls(connectionId, cwd, options)
+              }
               loadTurnChanges={loadTurnChanges}
               refresh={async (rootThreadId) =>
                 features.agents.refreshSubagents(connectionId, rootThreadId)
@@ -135,6 +138,7 @@ function ValidAgentsRoute({
               server={resources.list.servers.find((server) => server.id === connectionId)}
               summaries={resources.runtime.threadSummaries}
               view={view}
+              workspaceResources={resources.runtime.resources}
             />
           )}
           summaries={request.summaries}

@@ -1,6 +1,6 @@
 /** V1 ResourceContextChip owner, extracted without changing interaction or resource lifetime. */
 import { View } from "react-native";
-import { AnimatedNumber, integerNumberFormat } from "./AnimatedNumber";
+import { integerNumberFormat } from "./AnimatedNumber";
 import { formatNumber } from "./number-format";
 import { styles } from "./ResourceContextChip.styles";
 import { AppText as Text } from "./Typography";
@@ -29,36 +29,42 @@ export function ComposerContextLabel({
   );
 }
 
+/**
+ * A context chip's name and live count. Only the name truncates, in the middle, so both
+ * ends of a long name (a branch) and the whole count stay readable. While a refresh is
+ * pending the same text shimmers in place.
+ */
 export function ComposerContextCount({
   label,
-  refreshing = false,
+  loading = false,
   testID,
   value,
 }: {
   label: string;
-  refreshing?: boolean;
+  loading?: boolean;
   testID?: string;
   value: number;
 }) {
   return (
-    <View style={styles.composerContextCount} testID={testID}>
-      <AnimatedNumber
-        containerStyle={[
-          styles.composerContextValue,
-          refreshing && styles.composerContextCountHidden,
-        ]}
-        format={integerNumberFormat}
-        prefix={`${label} · `}
-        style={styles.composerContextText}
-        value={value}
-      />
-      {refreshing && (
-        <WaveText
-          containerStyle={styles.composerContextRefreshOverlay}
-          style={styles.composerContextText}
-          text={`${label} · ${formatNumber(value, integerNumberFormat)}`}
-        />
-      )}
+    <View
+      accessibilityLabel={`${label} · ${formatNumber(value, integerNumberFormat)}`}
+      accessibilityRole="text"
+      accessibilityState={{ busy: loading }}
+      accessible
+      style={styles.composerContextCount}
+      testID={testID}
+    >
+      <Text
+        ellipsizeMode="middle"
+        numberOfLines={1}
+        shimmering={loading}
+        style={[styles.composerContextText, styles.composerContextCountLabel]}
+      >
+        {label}
+      </Text>
+      <Text numberOfLines={1} shimmering={loading} style={styles.composerContextText}>
+        {` · ${formatNumber(value, integerNumberFormat)}`}
+      </Text>
     </View>
   );
 }

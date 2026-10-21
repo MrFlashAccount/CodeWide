@@ -52,6 +52,10 @@ pub struct IndexedSubagent {
     pub updated_at: Option<i64>,
     /// The sub-agent still works: its spawning item says so or its last turn runs.
     pub running: bool,
+    /// The model its own transcript last answered with; `None` when it
+    /// records none.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 struct Spawn<'a> {
@@ -116,6 +120,7 @@ pub fn index(read: &NativeSessionReadResult) -> Vec<IndexedSubagent> {
                     .as_ref()
                     .is_some_and(|spawn| spawn.status == SubagentStatus::Running)
                     || last.is_some_and(|turn| turn.status == TurnStatus::InProgress),
+                model: subagent.model.clone(),
             }
         })
         .collect()
@@ -124,7 +129,9 @@ pub fn index(read: &NativeSessionReadResult) -> Vec<IndexedSubagent> {
 /// Whether two indexed sub-agent sets of one session list differently: an
 /// agent appeared or left, or its running state, nickname, role or parent
 /// changed. Activity timestamps alone do not count, so a working agent's
-/// growing transcript does not re-announce it.
+/// growing transcript does not re-announce it. Nor does its model: the
+/// thread-index row carries no model, so a client re-reading the tree would
+/// see nothing new; `thread.read` of the child reads it from the index.
 #[must_use]
 pub fn listed_differently(previous: &[IndexedSubagent], next: &[IndexedSubagent]) -> bool {
     fn listed(
@@ -141,13 +148,17 @@ pub fn listed_differently(previous: &[IndexedSubagent], next: &[IndexedSubagent]
     !previous.iter().map(listed).eq(next.iter().map(listed))
 }
 
-/// One indexed child thread: where it lives and its turns.
+/// One indexed child thread: where it lives, its turns and the settings of
+/// the parent thread it runs under.
 pub struct ChildThread {
     pub thread_id: AppThreadId,
     pub parent: AppThreadId,
     pub cwd: String,
     pub subagent: IndexedSubagent,
     pub turns: Vec<AgentTurn>,
+    /// The parent thread's settings, as its own thread reports them
+    /// (`catalog::thread_settings`).
+    pub parent_settings: ThreadSettings,
 }
 
 impl ChildThread {
@@ -172,17 +183,33 @@ impl ChildThread {
             } else {
                 ThreadStatus::Idle
             },
-            settings: ThreadSettings {
-                model: "default".into(),
-                effort: None,
-                permission_profile: ":read-only".into(),
-                service_tier: None,
-            },
+            settings: self.settings(),
             spawn: Some(ThreadSpawn {
                 parent_thread_id: self.spawning_thread(),
                 agent_nickname: self.subagent.description.clone(),
                 agent_role: self.subagent.agent_type.clone(),
             }),
+        }
+    }
+
+    /// The settings the sub-agent runs with. Its access is the parent's: a
+    /// sub-agent runs in its parent's `claude` process under that session's
+    /// permission mode, and its transcript records no mode of its own. Its
+    /// model is the one its transcript last answered with (an agent
+    /// definition may pin another model than the parent's), else the
+    /// parent's. Effort and service tier are not reported: the transcript
+    /// records neither and the adapter supports no service tier, so the
+    /// parent's values would be a guess.
+    fn settings(&self) -> ThreadSettings {
+        ThreadSettings {
+            model: self
+                .subagent
+                .model
+                .clone()
+                .unwrap_or_else(|| self.parent_settings.model.clone()),
+            effort: None,
+            permission_profile: self.parent_settings.permission_profile.clone(),
+            service_tier: None,
         }
     }
 
@@ -282,6 +309,7 @@ mod tests {
             started_at: Some(10),
             updated_at: Some(updated_at),
             running,
+            model: None,
         };
         let working = [subagent("a1", true, 20)];
         assert!(listed_differently(&[], &working));
@@ -292,6 +320,81 @@ mod tests {
             &[subagent("a1", true, 20), subagent("a2", true, 20)]
         ));
         assert!(listed_differently(&working, &[]));
+    }
+
+    #[test]
+    fn sub_agents_do_not_list_differently_when_only_their_model_changes() {
+        let subagent = |model: Option<&str>| IndexedSubagent {
+            agent_id: "a1".into(),
+            parent_agent_id: None,
+            parent_tool_use_id: None,
+            description: Some("Audit".into()),
+            agent_type: Some("Explore".into()),
+            started_at: Some(10),
+            updated_at: Some(20),
+            running: true,
+            model: model.map(Into::into),
+        };
+        assert!(!listed_differently(
+            &[subagent(None)],
+            &[subagent(Some("claude-haiku-4-5"))]
+        ));
+    }
+
+    fn child(model: Option<&str>, parent_settings: ThreadSettings) -> ChildThread {
+        let parent = AppThreadId::from_static("5f0c2a1e-3b4d-4e6f-8a9b-0c1d2e3f4a5b");
+        ChildThread {
+            thread_id: child_thread_id(&parent, "a1").unwrap_or_else(|| parent.clone()),
+            parent,
+            cwd: "/repo".into(),
+            subagent: IndexedSubagent {
+                agent_id: "a1".into(),
+                parent_agent_id: None,
+                parent_tool_use_id: None,
+                description: Some("Audit".into()),
+                agent_type: Some("Explore".into()),
+                started_at: Some(10),
+                updated_at: Some(20),
+                running: false,
+                model: model.map(Into::into),
+            },
+            turns: Vec::new(),
+            parent_settings,
+        }
+    }
+
+    fn full_access_parent() -> ThreadSettings {
+        ThreadSettings {
+            model: "claude-opus-4-7".into(),
+            effort: Some("high".into()),
+            permission_profile: ":full-access".into(),
+            service_tier: None,
+        }
+    }
+
+    #[test]
+    fn a_child_runs_with_its_parents_access_and_its_transcripts_model() {
+        let provider = ProviderId::from_static("claude");
+        let settings = child(Some("claude-haiku-4-5"), full_access_parent())
+            .thread(&provider)
+            .settings;
+        assert_eq!(
+            settings,
+            ThreadSettings {
+                model: "claude-haiku-4-5".into(),
+                effort: None,
+                permission_profile: ":full-access".into(),
+                service_tier: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_child_whose_transcript_records_no_model_reports_its_parents() {
+        let provider = ProviderId::from_static("claude");
+        let settings = child(None, full_access_parent()).thread(&provider).settings;
+        assert_eq!(settings.model, "claude-opus-4-7");
+        assert_eq!(settings.permission_profile, ":full-access");
     }
 
     #[test]
@@ -306,6 +409,7 @@ mod tests {
             started_at: Some(10),
             updated_at: Some(20),
             running,
+            model: None,
         };
         for running in [true, false] {
             let row = thread_metadata(&parent, "/repo", 1, &subagent(running));

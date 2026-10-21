@@ -373,6 +373,7 @@ const nativeSession = obj({
 
 const nativeSubagent = obj({
   agentId: str,
+  model: optional(str),
   parentAgentId: nullable(str),
   parentToolUseId: nullable(str),
   turns: arr(turn),

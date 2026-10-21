@@ -3,7 +3,10 @@
 //!
 //! It is the `message.model` of the newest main-loop assistant message in
 //! the session's stored messages. Sub-agent messages (`parent_tool_use_id`
-//! set) and synthetic placeholders such as `<synthetic>` are skipped.
+//! set) and synthetic placeholders such as `<synthetic>` are skipped. A
+//! sub-agent's own transcript (`subagents/agent-<id>.jsonl`) is read with the
+//! same rule: its stored rows name no `parent_tool_use_id`, so its newest
+//! answer is the sub-agent's model (`native::native_subagents`).
 //! [`RecordedModels`] keeps it per session until the session file changes,
 //! so every projection after the first read reports the same model.
 
