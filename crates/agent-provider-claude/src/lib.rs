@@ -359,9 +359,15 @@ impl ClaudeProvider {
         }
     }
 
+    /// A child's transcript records the full model id; like a session's
+    /// recorded model it is reported as the catalog row that names it.
     fn child_read(&self, child: &ChildThread) -> ThreadReadResult {
+        let mut thread = child.thread(&self.id);
+        if let Some(running) = &self.running {
+            thread.settings.model = running.account.id_for(&thread.settings.model);
+        }
         ThreadReadResult {
-            thread: child.thread(&self.id),
+            thread,
             active_turn_id: child.active_turn().map(|turn| turn.turn_id.clone()),
         }
     }

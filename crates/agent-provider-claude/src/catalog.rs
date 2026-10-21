@@ -79,8 +79,13 @@ pub fn threads(sessions: &[StoredSession]) -> Vec<IndexedThread<'_>> {
 /// The thread's `CodeWide` metadata: every session of a chain carries the
 /// same object; the latest one wins.
 fn codewide<'a>(thread: &IndexedThread<'a>) -> Option<&'a NativeSessionCodewide> {
-    thread
-        .sessions
+    latest_codewide(&thread.sessions)
+}
+
+/// The `CodeWide` metadata of the latest of `sessions` (oldest first) that
+/// carries it.
+fn latest_codewide<'a>(sessions: &[&'a StoredSession]) -> Option<&'a NativeSessionCodewide> {
+    sessions
         .iter()
         .rev()
         .find_map(|stored| stored.session.codewide.as_ref())
@@ -89,11 +94,19 @@ fn codewide<'a>(thread: &IndexedThread<'a>) -> Option<&'a NativeSessionCodewide>
 /// Whether the thread was deleted in `CodeWide` (a tombstone).
 #[must_use]
 pub fn is_deleted(sessions: &[&StoredSession]) -> bool {
-    sessions
-        .iter()
-        .rev()
-        .find_map(|stored| stored.session.codewide.as_ref())
+    latest_codewide(sessions)
         .is_some_and(|codewide| matches!(codewide.presence, NativeThreadPresence::Deleted { .. }))
+}
+
+/// The settings a thread of `sessions` (oldest first) reports, as its list
+/// row does: its `CodeWide` settings, else those of a thread `CodeWide` never
+/// configured.
+pub(crate) fn thread_settings(sessions: &[&StoredSession]) -> ThreadSettings {
+    settings_of(latest_codewide(sessions))
+}
+
+fn settings_of(codewide: Option<&NativeSessionCodewide>) -> ThreadSettings {
+    codewide.map_or_else(discovered_settings, |codewide| codewide.settings.clone())
 }
 
 /// The list row of an indexed thread, or `None` when the thread is not
@@ -141,8 +154,8 @@ pub fn row(
         ])
         .max()
         .unwrap_or(created_at);
-    let (archived, origin, recency_at, settings) = codewide.map_or_else(
-        || (false, ThreadOrigin::External, None, discovered_settings()),
+    let (archived, origin, recency_at) = codewide.map_or_else(
+        || (false, ThreadOrigin::External, None),
         |codewide| {
             (
                 matches!(
@@ -154,7 +167,6 @@ pub fn row(
                     NativeThreadOrigin::External => ThreadOrigin::External,
                 },
                 codewide.recency_at,
-                codewide.settings.clone(),
             )
         },
     );
@@ -187,7 +199,7 @@ pub fn row(
             archived,
             origin,
             status,
-            settings,
+            settings: settings_of(codewide),
             spawn: None,
         },
     })
@@ -502,6 +514,20 @@ mod tests {
             .iter()
             .map(|thread| thread.app_thread_id.as_str())
             .collect()
+    }
+
+    #[test]
+    fn a_chain_reports_its_latest_codewide_settings_else_discovered_ones() {
+        let terminal = stored("terminal", "terminal", 20, &["from the terminal"]);
+        assert_eq!(thread_settings(&[&terminal]), discovered_settings());
+        let mut configured = stored("chain-b", "chain", 30, &["follow up"]);
+        configured.session.codewide = Some(codewide(
+            NativeThreadPresence::Listed { archived: false },
+            NativeTitleOverride::None,
+        ));
+        let settings = thread_settings(&[&terminal, &configured]);
+        assert_eq!(settings.model, "claude-sonnet");
+        assert_eq!(settings.permission_profile, ":workspace");
     }
 
     #[test]

@@ -153,6 +153,7 @@
           "subagents": [
             {
               "agentId": "a05d989c3914f829e",
+              "model": "claude-haiku-4-5",
               "parentAgentId": null,
               "parentToolUseId": "toolu_02",
               "turns": [
