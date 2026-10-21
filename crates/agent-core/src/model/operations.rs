@@ -510,11 +510,13 @@ pub enum BackgroundTaskStatus {
 /// One page of a background task's output. `text` is UTF-8 starting at the
 /// requested offset and ending on a character boundary; `next_offset` is the
 /// byte after it, `None` when the page reaches the end of the file as it was
-/// when read (`size_bytes`).
+/// when read (`size_bytes`). `command` is the command that launched the
+/// task, `None` when the thread no longer holds its launching item.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackgroundTaskReadResult {
     pub task_id: String,
+    pub command: Option<String>,
     pub status: BackgroundTaskStatus,
     pub text: String,
     pub next_offset: Option<u64>,

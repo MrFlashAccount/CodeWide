@@ -304,6 +304,7 @@ impl AgentProvider for FakeProvider {
         ));
         Ok(BackgroundTaskReadResult {
             task_id: params.task_id,
+            command: Some("npm test".into()),
             status: BackgroundTaskStatus::Running,
             text: "page".into(),
             next_offset: Some(params.offset + 4),

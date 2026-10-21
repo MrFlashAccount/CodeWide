@@ -13,6 +13,8 @@ const STATUSES = [
 
 /** One page of a background task's output, as the Companion read it now. */
 export type BackgroundTaskOutputPage = {
+  /** The command that launched the task, `null` when the Companion does not know it. */
+  readonly command: string | null;
   /** The byte offset of the next page, or `null` at the end of the output so far. */
   readonly nextOffset: number | null;
   readonly sizeBytes: number;
@@ -39,6 +41,14 @@ export async function readBackgroundTaskOutput(
 }
 
 function parsePage(raw: Record<string, unknown> | null): BackgroundTaskOutputPage | null {
+  const command = parseCommand(raw?.command);
+  return command === undefined ? null : parsePageFields(raw, command);
+}
+
+function parsePageFields(
+  raw: Record<string, unknown> | null,
+  command: string | null,
+): BackgroundTaskOutputPage | null {
   const status = STATUSES.find((candidate) => candidate === raw?.status);
   if (
     raw === null ||
@@ -51,12 +61,24 @@ function parsePage(raw: Record<string, unknown> | null): BackgroundTaskOutputPag
     return null;
   }
   return {
+    command,
     nextOffset: raw.nextOffset,
     sizeBytes: raw.sizeBytes,
     status,
     taskId: raw.taskId,
     text: raw.text,
   };
+}
+
+/**
+ * The launching command, `null` when unknown (an older Companion omits it),
+ * `undefined` when the field is malformed.
+ */
+function parseCommand(value: unknown): string | null | undefined {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  return typeof value === "string" ? value : undefined;
 }
 
 function isByteCount(value: unknown): value is number {

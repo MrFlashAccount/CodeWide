@@ -556,6 +556,7 @@ const operationChecks: Readonly<
   "thread.backgroundTask.read": {
     params: obj({ appThreadId: str, limit: int, offset: int, taskId: str }),
     result: obj({
+      command: nullable(str),
       nextOffset: nullable(int),
       sizeBytes: int,
       status: literal("running", "completed", "failed", "killed", "stopped", "lost", "unknown"),

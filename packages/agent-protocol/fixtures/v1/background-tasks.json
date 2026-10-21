@@ -42,6 +42,7 @@
         "id": "codewide-stdio:40",
         "result": {
           "taskId": "bd3cb8oli",
+          "command": "npm test",
           "status": "running",
           "text": "PASS src/a.test.ts\n",
           "nextOffset": null,
@@ -68,6 +69,7 @@
         "id": "codewide-stdio:41",
         "result": {
           "taskId": "bd3cb8oli",
+          "command": "npm test",
           "status": "completed",
           "text": "PASS src",
           "nextOffset": 8,

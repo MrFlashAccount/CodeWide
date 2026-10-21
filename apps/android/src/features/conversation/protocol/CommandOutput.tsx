@@ -81,7 +81,7 @@ export function CommandExecutionProtocolBlock({
         running={running}
         {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       />
-      <BackgroundTaskOutputButton block={block} name={title} />
+      <BackgroundTaskOutputButton block={block} />
       {block.durationMs !== null && (
         <Text style={styles.turnMetaText}>{formatDuration(block.durationMs)}</Text>
       )}

@@ -128,6 +128,7 @@ async fn a_launched_task_pages_its_output_while_it_runs_and_reports_its_status()
         first,
         BackgroundTaskReadResult {
             task_id: TASK.into(),
+            command: Some("npm test".into()),
             status: BackgroundTaskStatus::Running,
             text: "PASS ".into(),
             next_offset: Some(5),

@@ -36,6 +36,8 @@ pub struct TaskFacts {
     /// The output path the launching call's result names. A hint for where
     /// Claude's temporary directory is; it is checked like any other place.
     pub claimed_output: Option<PathBuf>,
+    /// The command the launching call ran.
+    pub command: Option<String>,
     /// The launching call was seen: older items cannot add anything.
     launched: bool,
 }
@@ -71,11 +73,13 @@ impl TaskFacts {
             }
             AgentItem::Command {
                 background_task_id: Some(task_id),
+                command,
                 output,
                 ..
             } if task_id == task.as_str() => {
                 self.known = true;
                 self.launched = true;
+                self.command = Some(command.clone());
                 self.claimed_output = output
                     .as_deref()
                     .and_then(|output| claimed_output_path(output, task));
@@ -215,6 +219,7 @@ mod tests {
                 "/var/tmp/claude-1/-w/s/tasks/bd3cb8oli.output"
             ))
         );
+        assert_eq!(launched.command.as_deref(), Some("npm test"));
         assert_eq!(
             launched.status(Some(LiveTaskState::Running)),
             BackgroundTaskStatus::Running
@@ -257,6 +262,7 @@ mod tests {
         )])])?;
         assert!(reported.known);
         assert_eq!(reported.claimed_output, None);
+        assert_eq!(reported.command, None);
         assert_eq!(reported.status(None), BackgroundTaskStatus::Lost);
 
         let mut scan = TaskFacts::default();

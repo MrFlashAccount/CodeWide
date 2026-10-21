@@ -267,7 +267,8 @@ export interface OperationMap {
    * makes progress even when one character exceeds `limit`. `nextOffset` is
    * the exact byte after `text`, `null` when the page reaches the end of the
    * file as it was read (`sizeBytes`); a running task's reader continues from
-   * `sizeBytes`. Errors: `-32602` for a malformed task id; `-32074
+   * `sizeBytes`. `command` is the command that launched the task, `null`
+   * when the thread no longer holds its launching item. Errors: `-32602` for a malformed task id; `-32074
    * "background task not found: <taskId>"` for a task the thread never
    * started or reported; `-32074 "background task output is unavailable:
    * <taskId>"` when its output file is gone.
@@ -280,6 +281,7 @@ export interface OperationMap {
       readonly taskId: string;
     };
     readonly result: {
+      readonly command: string | null;
       readonly nextOffset: number | null;
       readonly sizeBytes: number;
       readonly status: BackgroundTaskStatus;

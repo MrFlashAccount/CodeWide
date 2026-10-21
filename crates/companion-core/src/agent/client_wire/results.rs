@@ -76,11 +76,13 @@ const fn background_task_status(status: BackgroundTaskStatus) -> &'static str {
 }
 
 /// The `companion/thread/backgroundTask/read` result: one page of a
-/// background task's output (`nextOffset` null at the end of the file).
+/// background task's output (`nextOffset` null at the end of the file) and
+/// the command that launched it (`command` null when unknown).
 #[must_use]
 pub fn background_task_page(read: &BackgroundTaskReadResult) -> Value {
     json!({
         "taskId": read.task_id,
+        "command": read.command,
         "status": background_task_status(read.status),
         "text": read.text,
         "nextOffset": read.next_offset,
@@ -355,6 +357,7 @@ mod tests {
             page,
             json!({
                 "taskId": "bd3cb8oli",
+                "command": "npm test",
                 "status": "running",
                 "text": "page",
                 "nextOffset": 10,
