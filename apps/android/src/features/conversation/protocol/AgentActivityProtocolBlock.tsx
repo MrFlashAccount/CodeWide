@@ -75,7 +75,7 @@ export function AgentActivityProtocolBlock({ block }: { block: RenderBlock }) {
   );
 }
 
-export function subagentActivityLabel(value: string): string {
+function subagentActivityLabel(value: string): string {
   const spaced = value
     .replaceAll(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replaceAll("_", " ")

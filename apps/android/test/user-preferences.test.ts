@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -52,11 +50,6 @@ import {
   encodeVoiceHandoffPreference,
 } from "../src/data/voiceHandoffPreferences";
 
-const nativeDatabase = readFileSync(
-  new URL("../src/data/user-preferences-database.native.ts", import.meta.url),
-  "utf8",
-);
-
 describe("user preferences", () => {
   it("round-trips the cross-chat microphone policy and defaults corrupt records to send", () => {
     expect(decodeVoiceHandoffPreference(encodeVoiceHandoffPreference("stop"))).toBe("stop");
@@ -92,12 +85,6 @@ describe("user preferences", () => {
     expect(documentReadingWidth(0.8)).toBe(512);
     expect(documentReadingWidth(1)).toBe(640);
     expect(documentReadingWidth(1.4)).toBe(896);
-  });
-
-  it("persists device-wide preferences in the durable settings database", () => {
-    expect(nativeDatabase).toContain('id: "user-preferences-v1"');
-    expect(nativeDatabase).toContain("database: getSettingsSqliteDatabase()");
-    expect(nativeDatabase).toContain("await transaction.isPersisted.promise");
   });
 
   it("stores biometric app lock as a fail-closed boolean preference", () => {

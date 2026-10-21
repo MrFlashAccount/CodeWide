@@ -31,7 +31,7 @@ export async function nextRenderFrame(): Promise<void> {
   });
 }
 
-export type LargeContentViewerSelection = ReferenceContentRouteRequest & {
+type LargeContentViewerSelection = ReferenceContentRouteRequest & {
   error: string | null;
   loading: boolean;
   nextOffset: number;
@@ -162,7 +162,7 @@ export function LargeContentControls({
   );
 }
 
-export function largeContentPresentation(
+function largeContentPresentation(
   pointer: string,
   reference: RenderContentReference,
 ): ContentPresentation {
@@ -179,12 +179,7 @@ export function largeContentPresentation(
   return "text";
 }
 
-export function FullContentViewer({
-  onClose,
-  onNext,
-  onPrevious,
-  selection,
-}: FullContentViewerProps) {
+function FullContentViewer({ onClose, onNext, onPrevious, selection }: FullContentViewerProps) {
   const [viewportHeight, setViewportHeight] = useState(0);
   const title =
     selection.pointer === "/" ? "Full output" : contentPointerLabel(selection.pointer, 0);
@@ -208,7 +203,7 @@ export function FullContentViewer({
   });
 }
 
-export function contentPointerLabel(pointer: string, index: number): string {
+function contentPointerLabel(pointer: string, index: number): string {
   const segment = pointer.split("/").filter(Boolean).at(-1);
   return segment === undefined
     ? `content ${String(index + 1)}`

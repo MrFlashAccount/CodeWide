@@ -14,7 +14,7 @@ import { styles } from "./LiveAgentResponse.styles";
 
 export type LiveContentMode = "markdown" | "code";
 
-export function StableLiveTextSegment({
+function StableLiveTextSegment({
   streaming = false,
   animateStreaming = streaming,
   mode,

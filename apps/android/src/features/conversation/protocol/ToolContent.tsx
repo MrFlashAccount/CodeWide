@@ -63,7 +63,7 @@ export function ToolCallProtocolBlock({ block, getTransferAccess }: ToolCallProt
   );
 }
 
-export function ToolCallProtocolDetails(props: ToolCallProtocolDetailsInput) {
+function ToolCallProtocolDetails(props: ToolCallProtocolDetailsInput) {
   const argumentsText = boundedJsonStringify(props.block.raw.arguments ?? null);
   const progress = Array.isArray(props.block.raw.progress)
     ? props.block.raw.progress.filter((entry): entry is string => typeof entry === "string")
@@ -86,7 +86,7 @@ export function ToolCallProtocolDetails(props: ToolCallProtocolDetailsInput) {
   );
 }
 
-export function ToolCallResultContent(props: ToolCallResultContentInput) {
+function ToolCallResultContent(props: ToolCallResultContentInput) {
   if (props.block.kind === "dynamicToolCall") {
     const items = Array.isArray(props.block.raw.contentItems) ? props.block.raw.contentItems : [];
     return items.length === 0 ? (
@@ -143,7 +143,7 @@ export function ToolCallResultContent(props: ToolCallResultContentInput) {
   );
 }
 
-export function ToolRichContent({ getTransferAccess, items, section }: ToolRichContentInput) {
+function ToolRichContent({ getTransferAccess, items, section }: ToolRichContentInput) {
   return renderToolRichItems(items, section, getTransferAccess, {
     containsTerminalControlSequences,
     LazyJsonProtocolBody,
@@ -154,7 +154,7 @@ export function ToolRichContent({ getTransferAccess, items, section }: ToolRichC
   });
 }
 
-export function toolTextNeedsCodeViewport(value: string): boolean {
+function toolTextNeedsCodeViewport(value: string): boolean {
   const lines = value.split("\n");
   if (lines.some((line) => line.length > 96 || line.includes("\t"))) {
     return true;
@@ -167,11 +167,11 @@ export function toolTextNeedsCodeViewport(value: string): boolean {
   return false;
 }
 
-export function containsTerminalControlSequences(value: string): boolean {
+function containsTerminalControlSequences(value: string): boolean {
   return value.includes("\u001B[") || value.includes("\u009B") || value.includes("\u001B]");
 }
 
-export function ToolResourceLink({ label, uri }: ToolResourceLinkInput) {
+function ToolResourceLink({ label, uri }: ToolResourceLinkInput) {
   const canOpen = isSafeHttpUrl(uri);
   return (
     <Pressable

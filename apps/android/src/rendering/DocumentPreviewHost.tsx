@@ -101,11 +101,11 @@ function startDocumentDownload(
 }
 
 type CompletedTransfer = Awaited<RunningTransfer["promise"]>;
-export type DocumentPreviewResult =
+type DocumentPreviewResult =
   | { phase: "loading" }
   | { phase: "ready"; segments: string[]; source: string; truncated: boolean }
   | { message: string; phase: "error" };
-export const MAX_DOCUMENT_PREVIEW_BYTES = 2 * 1024 * 1024;
+const MAX_DOCUMENT_PREVIEW_BYTES = 2 * 1024 * 1024;
 
 type DocumentPreviewController = {
   download: (request: DocumentPreviewRequest) => Promise<void>;

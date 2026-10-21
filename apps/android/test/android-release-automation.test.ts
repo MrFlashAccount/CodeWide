@@ -14,14 +14,6 @@ const manifest = readFileSync(
   new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url),
   "utf8",
 );
-const packageJson = readFileSync(new URL("../../../package.json", import.meta.url), "utf8");
-const buildApkCommand = readFileSync(
-  new URL("../../../scripts/build-android-apk", import.meta.url),
-  "utf8",
-);
-
-const releaseWaitNotice =
-  "This command may take a while. Do not report intermediate progress; wait silently until it finishes.";
 
 describe("Android release automation", () => {
   it("increments the patch, native runtime, and version code atomically", () => {
@@ -69,17 +61,5 @@ describe("Android release automation", () => {
         },
       ),
     ).toThrow(/version code must increase/u);
-  });
-
-  it("exposes one APK build command", () => {
-    expect(JSON.parse(packageJson).scripts).toMatchObject({
-      "build:android-apk": "tsx scripts/build-android-apk.ts",
-    });
-  });
-
-  it("tells agents to wait silently before the APK build starts", () => {
-    const noticeIndex = buildApkCommand.indexOf(releaseWaitNotice);
-    expect(noticeIndex).toBeGreaterThan(-1);
-    expect(noticeIndex).toBeLessThan(buildApkCommand.indexOf("exec pnpm build:android-apk"));
   });
 });

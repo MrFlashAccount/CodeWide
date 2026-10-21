@@ -19,7 +19,7 @@ export function ComposerPortContextChip({
   return <ComposerPortContextChipLoaded connectionId={connectionId} onOpen={onOpen} />;
 }
 
-export function ComposerPortContextChipLoaded({
+function ComposerPortContextChipLoaded({
   connectionId,
   onOpen,
 }: {

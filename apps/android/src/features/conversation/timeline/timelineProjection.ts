@@ -13,17 +13,17 @@ import {
 } from "../../../rendering/timeline-identity";
 import type { TimelineItem } from "./timelineTypes";
 
-export const timelineRowCache = new WeakMap<
+const timelineRowCache = new WeakMap<
   Thread["turns"][number],
   Extract<TimelineItem, { kind: "turn" }>
 >();
 
-export const optimisticTimelineRowCache = new WeakMap<
+const optimisticTimelineRowCache = new WeakMap<
   ProjectedThreadChatDelivery,
   Extract<TimelineItem, { kind: "optimistic" }>
 >();
 
-export function projectOptimisticTimelineItem(
+function projectOptimisticTimelineItem(
   delivery: ProjectedThreadChatDelivery,
   composerScope: string,
 ): Extract<TimelineItem, { kind: "optimistic" }> {
@@ -110,7 +110,7 @@ export function projectTimelineDateLabels(
   return labels;
 }
 
-export function timelineItemTimestampMs(item: TimelineItem): number | null {
+function timelineItemTimestampMs(item: TimelineItem): number | null {
   if (item.kind === "optimistic") {
     return Number.isFinite(item.createdAt) ? item.createdAt : null;
   }

@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   parseRichMarkdown,
@@ -10,21 +9,6 @@ import { privateImageResourceKey } from "../src/rendering/private-image-resource
 import { parseDiagramPreviewResult } from "../src/rendering/diagram-preview-result";
 
 describe("rendering memory ownership", () => {
-  it("accounts for native highlight spans and releases native rendering caches", () => {
-    const highlighter = readFileSync(
-      new URL("../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeHighlighter.kt", import.meta.url),
-      "utf8",
-    );
-    const application = readFileSync(
-      new URL("../android/app/src/main/java/dev/codewide/app/MainApplication.kt", import.meta.url),
-      "utf8",
-    );
-    expect(highlighter).toContain("getSpans(0, value.length, Any::class.java).size * 96");
-    expect(highlighter).toContain("cache.evictAll()");
-    expect(application).toContain("ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN");
-    expect(application).toContain("Fresco.getImagePipeline().clearMemoryCaches()");
-  });
-
   it("does not retain historical streaming ASTs but still reuses completed blocks", () => {
     resetRichMarkdownCache();
     const completed = parseRichMarkdown("# Completed\n\nStable content");

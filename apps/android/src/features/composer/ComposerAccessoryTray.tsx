@@ -6,7 +6,7 @@ import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ComposerAccessoryTray.styles";
 import type { ComposerAccessoryAction } from "./composerTypes";
 
-export const COMPOSER_ACCESSORY_ACTIONS: ReadonlyArray<{
+const COMPOSER_ACCESSORY_ACTIONS: ReadonlyArray<{
   icon: keyof typeof Ionicons.glyphMap;
   id: ComposerAccessoryAction;
   label: string;

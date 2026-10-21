@@ -38,7 +38,7 @@ export function ComposerSubagentContextChip({
   );
 }
 
-export function ComposerSubagentContextChipLoaded({
+function ComposerSubagentContextChipLoaded({
   connectionId,
   database,
   onOpen,

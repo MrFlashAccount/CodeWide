@@ -24,7 +24,7 @@ function emit(): void {
   }
 }
 
-export function normalizeGlobalError(value: unknown): Error {
+function normalizeGlobalError(value: unknown): Error {
   if (value instanceof Error) {
     return value;
   }

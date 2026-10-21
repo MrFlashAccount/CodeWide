@@ -439,7 +439,7 @@ async function startWorkspaceRuntime(): Promise<void> {
 }
 
 const workspaceRuntime = new WorkspaceRuntime();
-export const v1MicrophoneLeases = createV1MicrophoneLeaseRegistry(randomUUID);
+const v1MicrophoneLeases = createV1MicrophoneLeaseRegistry(randomUUID);
 const { currentConnections, forgetHttpAuthorization, rpcAfterAttach, scopedHttpAuthorization } =
   createWorkspaceSession({
     mintNativeSession,

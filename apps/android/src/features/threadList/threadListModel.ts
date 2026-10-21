@@ -77,8 +77,7 @@ export const THREAD_LIST_ROW_CONTENT_HEIGHT = threadListLayout.rowContentHeight;
 
 export const THREAD_LIST_ROW_VERTICAL_MARGIN = threadListLayout.rowVerticalMargin;
 
-export const THREAD_LIST_ROW_HEIGHT =
-  THREAD_LIST_ROW_CONTENT_HEIGHT + THREAD_LIST_ROW_VERTICAL_MARGIN * 2;
+const THREAD_LIST_ROW_HEIGHT = THREAD_LIST_ROW_CONTENT_HEIGHT + THREAD_LIST_ROW_VERTICAL_MARGIN * 2;
 
 export const THREAD_LIST_SECTION_HEIGHT = threadListLayout.sectionHeight;
 

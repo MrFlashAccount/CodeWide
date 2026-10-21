@@ -42,7 +42,7 @@ export type PrivateAssetTextResult = {
 
 type TransferRequest = { init?: CompanionTransportInit; uri: string };
 
-export const MAX_PRIVATE_ASSET_TEXT_PAGE_BYTES = Number("2097152");
+const MAX_PRIVATE_ASSET_TEXT_PAGE_BYTES = Number("2097152");
 const UNSUPPORTED_MEDIA_STATUS = 415;
 
 /** The authenticated text endpoint rejected bytes that cannot be shown as text. */
@@ -59,7 +59,7 @@ export class UnsupportedPrivateTextFormatError extends Error {
  * A rejected session is refreshed once for every operation, including upload
  * resume probes and ranged downloads.
  */
-export async function fetchAuthenticatedTransfer(
+async function fetchAuthenticatedTransfer(
   getAccess: GetTransferAccess,
   createRequest: (access: TransferAccess) => TransferRequest,
 ): Promise<Response> {

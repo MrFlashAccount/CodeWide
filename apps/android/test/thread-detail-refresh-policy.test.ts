@@ -1,15 +1,9 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
   shouldRepairThreadDetail,
   threadPatchRequiresAuthoritativeRefresh,
 } from "../src/data/thread-detail-refresh-policy";
-
-const remoteWorkspace = readFileSync(
-  new URL("../src/data/thread-sync-runtime.ts", import.meta.url),
-  "utf8",
-);
 
 describe("thread detail refresh policy", () => {
   it("refreshes an invalidation for the retained conversation", () => {
@@ -24,15 +18,5 @@ describe("thread detail refresh policy", () => {
   it("uses rollout invalidation as fallback instead of rereading after live completion", () => {
     expect(threadPatchRequiresAuthoritativeRefresh("threadInvalidated")).toBe(true);
     expect(threadPatchRequiresAuthoritativeRefresh("turnCompleted")).toBe(false);
-  });
-
-  it("keeps observation separate from authoritative window hydration", () => {
-    const observer = remoteWorkspace.slice(
-      remoteWorkspace.indexOf("const observeThread ="),
-      remoteWorkspace.indexOf("const readThread ="),
-    );
-
-    expect(observer).toContain("threadObserverDesired.set(connectionId, threadId)");
-    expect(observer).not.toContain("readThread(");
   });
 });

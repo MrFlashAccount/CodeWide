@@ -21,7 +21,6 @@ import {
   type ProjectedThreadChatTimelineEntry,
 } from "./thread-chat-timeline";
 
-export { applyThreadSummaryMetadata } from "./thread-metadata-projection";
 export type {
   ProjectedThreadChatDelivery,
   ProjectedThreadChatTimelineEntry,

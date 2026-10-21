@@ -4,7 +4,7 @@ import { unknownRecord } from "./unknownRecord";
 
 import { operationalDiagnosticsEnabled, recordDiagnosticTiming } from "./operational-metrics";
 
-export type ProjectedThreadChange = {
+type ProjectedThreadChange = {
   after: Thread;
   before: Thread;
 };

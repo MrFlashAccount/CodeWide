@@ -49,7 +49,7 @@ export function FileChangeProtocolBlock({ block }: { block: RenderBlock }) {
   );
 }
 
-export function FileChangeProtocolDetails({ block }: { block: RenderBlock }) {
+function FileChangeProtocolDetails({ block }: { block: RenderBlock }) {
   const changes = Array.isArray(block.raw.changes)
     ? block.raw.changes.filter(
         (change): change is Record<string, unknown> =>
@@ -73,7 +73,7 @@ export function FileChangeProtocolDetails({ block }: { block: RenderBlock }) {
   );
 }
 
-export function DiffFile({ diff, kind, path }: { diff: string; kind: unknown; path: string }) {
+function DiffFile({ diff, kind, path }: { diff: string; kind: unknown; path: string }) {
   const cwd = useContext(ThreadCwdContext);
   const [expanded, setExpanded] = usePersistentExpansion(`diff:${path}`, false);
   const projection = projectFileChange(diff, kind);

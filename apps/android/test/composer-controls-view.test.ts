@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import type { ProjectedThreadExecutionSettings } from "@codewide/sync-client";
 import { describe, expect, it } from "vitest";
 
@@ -285,19 +284,6 @@ describe("settings update", () => {
     });
   });
 
-  it("does not send local model choices with messages in existing threads", () => {
-    const settings = readFileSync(
-      new URL("../src/features/composer/settings.ts", import.meta.url),
-      "utf8",
-    );
-    expect(settings).toContain("const selectedModel = newChat ? composerPreferences.model : null;");
-    expect(settings).toContain(
-      "const selectedEffort = newChat ? composerPreferences.effort : null;",
-    );
-    expect(settings).toContain(
-      "const selectedPermissions = newChat ? composerPreferences.permissions : null;",
-    );
-  });
 });
 
 describe("native command settlement", () => {

@@ -15,7 +15,7 @@ export type ConnectionStateRow = {
   state: RemoteConnectionState;
 };
 
-export type ConnectionStateProfile = Pick<ConnectionStateRow, "id" | "connectionId" | "enabled">;
+type ConnectionStateProfile = Pick<ConnectionStateRow, "id" | "connectionId" | "enabled">;
 
 export type ConnectionStateModel = {
   close: () => void;

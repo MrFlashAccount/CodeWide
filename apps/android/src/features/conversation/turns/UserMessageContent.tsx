@@ -22,9 +22,9 @@ import { usePersistentExpansion } from "./Card";
 import { styles } from "./UserMessageContent.styles";
 import type { TransferAccess } from "../../../data/private-transfer";
 
-export const USER_MESSAGE_COLLAPSED_LINES = 25;
+const USER_MESSAGE_COLLAPSED_LINES = 25;
 
-export const USER_MESSAGE_COLLAPSED_CHARS = 1800;
+const USER_MESSAGE_COLLAPSED_CHARS = 1800;
 
 export interface UserMessageContentProps {
   content: unknown[];
@@ -120,13 +120,13 @@ function userMessagePartIdentity(part: Record<string, unknown>, type: string): s
   return type;
 }
 
-export interface CollapsibleUserMessageProps {
+interface CollapsibleUserMessageProps {
   partIndex: number;
   pending?: boolean;
   text: string;
 }
 
-export function CollapsibleUserMessage(props: CollapsibleUserMessageProps) {
+function CollapsibleUserMessage(props: CollapsibleUserMessageProps) {
   const { partIndex, pending = false, text } = props;
   const highlighted = useContext(SearchHighlightQuery) !== "";
   const canCollapse =

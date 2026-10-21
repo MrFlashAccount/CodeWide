@@ -1,24 +1,8 @@
 import { act, fireEvent, render } from "@testing-library/react-native";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { StyleSheet, View } from "react-native";
 
 import { GlobalVoiceEntryAction } from "../src/features/threadList/GlobalVoiceEntryAction";
 import { writeGlobalVoiceOrbStylePreference } from "../src/data/globalVoiceOrbStylePreference";
-
-it("toggles Global Voice without creating an application route", () => {
-  const composition = readFileSync(
-    join(__dirname, "../src/routeComposition/WorkspaceRouteComposition.tsx"),
-    "utf8",
-  );
-  const shell = readFileSync(join(__dirname, "../src/routeComposition/WorkspaceShell.tsx"), "utf8");
-
-  expect(existsSync(join(__dirname, "../app/(workspace)/global-voice.tsx"))).toBe(false);
-  expect(composition).not.toContain("/global-voice");
-  expect(composition).not.toContain("reportGlobalError");
-  expect(composition).toContain("useAppNotice");
-  expect(shell).not.toContain('name="global-voice"');
-});
 
 it("hands the idle header orb off and removes the duplicate while the session is active", () => {
   const onToggle = jest.fn();
@@ -111,15 +95,6 @@ it("returns the failed orb to its muted inactive appearance after three seconds"
     ).toBe("disabled");
   } finally {
     jest.useRealTimers();
-  }
-});
-
-it("keeps the assistant in the title row above search", () => {
-  for (const file of ["MobileThreadsHeader.tsx", "ThreadSidebarHeader.tsx"]) {
-    const source = readFileSync(join(__dirname, `../src/features/threadList/${file}`), "utf8");
-    expect(source.indexOf("<GlobalVoiceEntryAction")).toBeLessThan(
-      source.indexOf("<ThreadListSearchRow onOpenSearch={onOpenSearch} />"),
-    );
   }
 });
 

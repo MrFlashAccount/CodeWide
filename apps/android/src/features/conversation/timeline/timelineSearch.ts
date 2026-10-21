@@ -4,7 +4,7 @@ import { boundedJsonStringify } from "../../../rendering/bounded-json";
 import { timelineSearchTextCache } from "./timelineProjection";
 import type { TimelineItem } from "./timelineTypes";
 
-export function timelineSearchText(item: TimelineItem): string {
+function timelineSearchText(item: TimelineItem): string {
   const cached = timelineSearchTextCache.get(item);
   if (cached !== undefined) {
     return cached;

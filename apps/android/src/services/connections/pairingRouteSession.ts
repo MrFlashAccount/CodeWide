@@ -3,7 +3,7 @@ import { PAIRING_ROUTE_SESSION_TTL_MS, RouteSessionRegistry } from "../routeSess
 const MAX_PAIRING_SESSIONS = 2;
 
 /** Secret-bearing pairing input retained outside route parameters. */
-export type PairingRouteSession = {
+type PairingRouteSession = {
   readonly id: string;
   readonly initialCode: string;
   readonly openedAt: number;
@@ -11,7 +11,7 @@ export type PairingRouteSession = {
 };
 
 /** Keeps a secret-bearing pairing link behind a short-lived opaque route id. */
-export class PairingRouteSessionService {
+class PairingRouteSessionService {
   readonly #sessions = new RouteSessionRegistry<PairingRouteSession>({
     limit: MAX_PAIRING_SESSIONS,
     touchOnGet: false,

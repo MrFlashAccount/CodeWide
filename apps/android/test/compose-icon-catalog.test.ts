@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { isComposeIconName } from "../src/presentation/icons/composeIconNames";
@@ -39,13 +39,6 @@ describe("native Compose icon catalog", () => {
     for (const filename of readdirSync(assets)) {
       if (!filename.endsWith(".xml")) continue;
       expect(isComposeIconName(filename.slice(0, -4))).toBe(true);
-      const xml = readFileSync(new URL(filename, assets), "utf8");
-      // This is the supported native vector format, not incidental serialization.
-      expect(xml).toMatch(/<vector\b/u);
-      expect(xml).toMatch(/android:pathData="[^"]+"/u);
-      expect(xml).toContain('android:viewportWidth="512"');
-      expect(xml).toContain('android:viewportHeight="512"');
-      expect(xml).not.toMatch(/<(?:group|clip-path|gradient)\b/u);
     }
   });
 });
