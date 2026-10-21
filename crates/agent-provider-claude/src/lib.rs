@@ -57,6 +57,7 @@ use agent_core::{
         capability_unsupported_message, thread_not_found_message,
         turns::{MAX_TURNS_PAGE, page_turns},
     },
+    naming::{CatalogNames, ModelNaming},
     provider::{
         AgentProvider, ClientToolHost, NativeThreadResources, ProviderAuth, ProviderError,
         ProviderEvent, ProviderFence, ProviderHealth, ProviderStatus, StoredMessageSearch,
@@ -153,6 +154,7 @@ pub struct ClaudeProvider {
     health: Arc<watch::Sender<ProviderHealth>>,
     rate_limits: Arc<watch::Sender<Option<ProviderRateLimits>>>,
     pricing: Arc<CatalogPricing>,
+    names: Arc<CatalogNames>,
     /// The `claude` version, once read.
     version: Arc<std::sync::OnceLock<String>>,
 }
@@ -187,6 +189,7 @@ impl ClaudeProvider {
         )));
         let rate_limits = Arc::new(watch::Sender::new(None));
         let pricing = Arc::new(CatalogPricing::default());
+        let names = Arc::new(CatalogNames::default());
         let tools = Arc::new(CompanionTools::new(id.clone()));
         let version = Arc::new(std::sync::OnceLock::new());
         let mut provider = Self {
@@ -198,6 +201,7 @@ impl ClaudeProvider {
             health,
             rate_limits,
             pricing,
+            names,
             version,
         };
         match provider.start_service(config) {
@@ -240,6 +244,7 @@ impl ClaudeProvider {
             },
             self.health.clone(),
             self.pricing.clone(),
+            self.names.clone(),
             limits.clone(),
         ));
         let catalog = account.clone();
@@ -359,15 +364,6 @@ impl ClaudeProvider {
         }
     }
 
-    /// Names the thread's model as the catalog does, so a client shows that
-    /// name instead of the model id (a spawned agent may run with a full
-    /// id, which the catalog lists only as an alias's target).
-    fn label_model(&self, thread: &mut AgentThread) {
-        if let Some(running) = &self.running {
-            thread.model_label = running.account.label_for(&thread.settings.model);
-        }
-    }
-
     /// A child's transcript records the full model id; like a session's
     /// recorded model it is reported as the catalog row that names it.
     fn child_read(&self, child: &ChildThread) -> ThreadReadResult {
@@ -375,7 +371,6 @@ impl ClaudeProvider {
         if let Some(running) = &self.running {
             thread.settings.model = running.account.id_for(&thread.settings.model);
         }
-        self.label_model(&mut thread);
         ThreadReadResult {
             thread,
             active_turn_id: child.active_turn().map(|turn| turn.turn_id.clone()),
@@ -603,6 +598,10 @@ impl AgentProvider for ClaudeProvider {
         Some(self.pricing.clone())
     }
 
+    fn model_names(&self) -> Option<Arc<dyn ModelNaming>> {
+        Some(self.names.clone())
+    }
+
     fn user_text_cleaner(&self) -> Option<Arc<dyn agent_core::user_text::UserTextCleaner>> {
         Some(Arc::new(user_text::ClaudeUserText))
     }
@@ -630,7 +629,6 @@ impl AgentProvider for ClaudeProvider {
         }
         let (mut read, _) = self.service().await?.read(thread, false).await?;
         self.overlay_previews([&mut read.thread]);
-        self.label_model(&mut read.thread);
         Ok(read)
     }
 
@@ -644,7 +642,6 @@ impl AgentProvider for ClaudeProvider {
         }
         let (mut read, fence) = self.service().await?.read(thread, true).await?;
         self.overlay_previews([&mut read.thread]);
-        self.label_model(&mut read.thread);
         Ok((read, optional_fence(fence)?))
     }
 

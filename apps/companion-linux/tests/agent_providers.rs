@@ -271,7 +271,6 @@ fn agent_thread(id: AppThreadId, key: i64) -> AgentThread {
             service_tier: None,
         },
         spawn: None,
-        model_label: None,
     }
 }
 

@@ -13,6 +13,8 @@ export type ProjectedTurnMetadata = {
   activity?: { count: number; kinds: string[]; outputFootprint?: OutputFootprintProjection };
   execution?: {
     model: string;
+    /** The server's name of `model`, shown as is; null when it sent none. */
+    modelLabel?: string | null;
     effort: string | null;
     permissions: string | null;
     modelSource: "settings" | "reroute";
@@ -37,6 +39,8 @@ export type UsageTokenCounts = {
 
 type UsageCostTokens = {
   model: string;
+  /** The provider's name of `model` (`Opus 5.5`), shown as is; absent when the Companion sends none. */
+  modelLabel?: string;
   currency: "USD";
   uncachedInputTokens: number;
   cachedInputTokens: number;
@@ -246,7 +250,7 @@ export function applyThreadProjectionPatch(thread: Thread, patch: ThreadProjecti
     upsertTurn(thread, params.turn);
     updateTurnUsage(thread, asObject(params.turn)?.id, params.usage);
   }
-  else if (params.kind === "modelRerouted") updateReroutedModel(thread, params.turnId, params.toModel);
+  else if (params.kind === "modelRerouted") updateReroutedModel(thread, params.turnId, params.toModel, params.toModelLabel);
   else if (params.kind === "itemUpsert") {
     upsertItem(thread, params.turnId, itemWithLifecycleMetadata(thread, params.turnId, params.item, params.itemPhase));
   }
@@ -463,6 +467,7 @@ function updateThreadSettings(thread: Thread, value: unknown): void {
   const activePermissionProfile = asObject(settings.activePermissionProfile);
   seedThreadExecutionSettings(thread, {
     model: settings.model,
+    modelLabel: typeof settings.modelLabel === "string" ? settings.modelLabel : null,
     effort: typeof settings.effort === "string" ? settings.effort : null,
     serviceTier: typeof settings.serviceTier === "string" ? settings.serviceTier : null,
     permissions: typeof activePermissionProfile?.id === "string" ? activePermissionProfile.id : null,
@@ -487,18 +492,25 @@ function snapshotTurnExecution(thread: Thread, rawTurnId: unknown): void {
   if (settings === null) return;
   metadataForTurn(thread, rawTurnId).execution = {
     model: settings.model,
+    modelLabel: settings.modelLabel ?? null,
     effort: settings.effort,
     permissions: settings.permissions,
     modelSource: "settings",
   };
 }
 
-function updateReroutedModel(thread: Thread, rawTurnId: unknown, toModel: unknown): void {
+function updateReroutedModel(
+  thread: Thread,
+  rawTurnId: unknown,
+  toModel: unknown,
+  toModelLabel: unknown,
+): void {
   if (typeof rawTurnId !== "string" || typeof toModel !== "string") return;
   const metadata = metadataForTurn(thread, rawTurnId);
   const fallback = (thread as ProjectedThread).codewide?.executionSettings;
   metadata.execution = {
     model: toModel,
+    modelLabel: typeof toModelLabel === "string" ? toModelLabel : null,
     effort: metadata.execution?.effort ?? fallback?.effort ?? null,
     permissions: metadata.execution?.permissions ?? fallback?.permissions ?? null,
     modelSource: "reroute",

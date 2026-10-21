@@ -370,6 +370,12 @@ pub trait AgentProvider: Send + Sync {
         None
     }
 
+    /// The provider-owned display names of its models; `None` leaves every
+    /// model the provider reports unnamed.
+    fn model_names(&self) -> Option<Arc<dyn crate::naming::ModelNaming>> {
+        None
+    }
+
     /// Search over the provider's own stored history, for a provider that
     /// declares `history.messageSearch` without the `codex.native` surface.
     fn message_search(&self) -> Option<Arc<dyn StoredMessageSearch>> {

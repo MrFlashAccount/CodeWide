@@ -49,6 +49,16 @@ describe("usage cost presentation", () => {
     expect(view.queryByText(/API-equivalent/)).toBeNull();
   });
 
+  it("heads the breakdown with the provider's name of the model", () => {
+    const view = render(
+      <CostBreakdownContent
+        estimate={{ ...reported, model: "claude-opus-5-5", modelLabel: "Opus 5.5" }}
+      />,
+    );
+    expect(view.getByText("Opus 5.5")).toBeOnTheScreen();
+    expect(view.queryByText("claude-opus-5-5")).toBeNull();
+  });
+
   it("says the cost is unavailable when a finished turn's usage has no price", () => {
     const view = render(
       <TurnFooter
@@ -61,7 +71,9 @@ describe("usage cost presentation", () => {
     );
     expect(view.getByLabelText("Cost not available for claude-sonnet-4-6")).toBeTruthy();
     expect(view.getByText("cost n/a")).toBeTruthy();
-    view.rerender(<TurnFooter completedAt={null} durationMs={1_000} status="completed" usage={null} />);
+    view.rerender(
+      <TurnFooter completedAt={null} durationMs={1_000} status="completed" usage={null} />,
+    );
     expect(view.queryByText("cost n/a")).toBeNull();
   });
 });

@@ -424,6 +424,14 @@ describe("thread event projection", () => {
     expect(projectedThreadExecutionSettings(value)).toMatchObject({ model: "gpt-6-astra", effort: "high", serviceTier: "priority" });
   });
 
+  it("takes the server's name of a model from a live settings change and snapshots it per turn", () => {
+    const value = Object.assign(thread(), { model: "gpt-5.6-sol", reasoningEffort: "medium" });
+    applyThreadEvent(value, event("thread/settings/updated", {
+      threadSettings: { model: "claude-opus-5-5", modelLabel: "Opus 5.5", effort: "high" },
+    }));
+    expect(projectedThreadExecutionSettings(value)?.modelLabel).toBe("Opus 5.5");
+  });
+
   it("does not inherit old execution authority across authoritative snapshot replacement", () => {
     const cached = seedThreadExecutionSettings(thread(), { model: "gpt-5.6-sol", effort: "high", permissions: null });
     expect(projectedThreadExecutionSettings(preserveProjectedTurnMetadata(thread(), cached))).toBeNull();
@@ -454,6 +462,7 @@ describe("thread event projection", () => {
 
     expect(projectedTurnMetadata(value.turns[0]!)?.execution).toEqual({
       model: "gpt-5.6-sol",
+      modelLabel: null,
       effort: "high",
       permissions: ":workspace",
       modelSource: "settings",

@@ -9,7 +9,7 @@ use crate::agent::{
         history as provider_history, items,
     },
     model::{
-        AgentThread, ItemsView, SortDirection, ThreadStatus, ThreadTurnsParams,
+        ItemsView, SortDirection, ThreadSettings, ThreadStatus, ThreadTurnsParams,
         thread_not_found_message,
     },
     provider::{
@@ -239,7 +239,7 @@ impl ThreadViewService {
             }
         };
         let active_turn_id = active_turn.get("id").and_then(Value::as_str);
-        let history = thread_store
+        let mut history = thread_store
             .sync_history(HistorySyncRequest {
                 thread_id,
                 after_turn_id,
@@ -253,12 +253,13 @@ impl ThreadViewService {
             .enrich_active_turn(thread_id, &mut active_turn)
             .await
             .map_err(ThreadViewError::History)?;
+        Self::label_turns(&target, &mut history, &mut active_turn);
         let through_cursor = fence.wait().await?;
         Ok(json!({
             "readModelVersion": READ_MODEL_VERSION,
             "throughCursor": through_cursor,
             "thread": thread,
-            "executionSettings": execution_settings,
+            "executionSettings": execution_settings.map(|settings| Self::named(&target, settings)),
             "history": history,
             "activeTurn": active_turn,
         }))
@@ -385,6 +386,33 @@ fn is_active_writer_conflict(message: &str, thread_id: &str) -> bool {
 }
 
 impl ThreadViewService {
+    /// The thread's provider's name of `model`, shown by the client as is.
+    fn model_label(target: &Target, model: &str) -> Option<String> {
+        target.provider.model_names()?.label(model)
+    }
+
+    /// The settings with the provider's name of their model.
+    fn named(
+        target: &Target,
+        mut settings: ThreadExecutionSettingsSnapshot,
+    ) -> ThreadExecutionSettingsSnapshot {
+        settings.model_label = Self::model_label(target, &settings.model);
+        settings
+    }
+
+    /// Names the model of every cost the snapshot's turns carry.
+    fn label_turns(target: &Target, history: &mut Value, active_turn: &mut Value) {
+        let Some(names) = target.provider.model_names() else {
+            return;
+        };
+        if let Some(turns) = history.get_mut("turns").and_then(Value::as_array_mut) {
+            crate::model_labels::label_turns(turns, names.as_ref());
+        }
+        if !active_turn.is_null() {
+            crate::model_labels::label_turns(std::slice::from_mut(active_turn), names.as_ref());
+        }
+    }
+
     /// The same snapshot for a provider without the native surface: thread
     /// shell and active turn from neutral reads (fenced on the provider's
     /// event stream), history from its finished turns.
@@ -399,7 +427,7 @@ impl ThreadViewService {
             .provider
             .thread_read_fenced(&target.thread_id)
             .await?;
-        let (active_turn, fence) = if read.active_turn_id.is_some() {
+        let (mut active_turn, fence) = if read.active_turn_id.is_some() {
             let (page, fence) = target
                 .provider
                 .thread_turns_fenced(ThreadTurnsParams {
@@ -422,33 +450,39 @@ impl ThreadViewService {
             provider_history::latest(target, limit.clamp(1, 100))
                 .await
                 .map_err(|failure| ThreadViewError::Route(failure.message))?;
-        let history = provider_history::sync_history(
+        let mut history = provider_history::sync_history(
             &turns,
             head_turn_id.as_deref(),
             older_cursor.as_deref(),
             after_turn_id,
             source_witness,
         );
+        Self::label_turns(target, &mut history, &mut active_turn);
         let thread = items::thread(&read.thread, &target.wire, &[]);
         let through_cursor = fence.wait().await?;
         Ok(json!({
             "readModelVersion": READ_MODEL_VERSION,
             "throughCursor": through_cursor,
             "thread": thread,
-            "executionSettings": neutral_execution_settings(&read.thread),
+            "executionSettings": neutral_execution_settings(
+                &read.thread.settings,
+                Self::model_label(target, &read.thread.settings.model),
+            ),
             "history": history,
             "activeTurn": active_turn,
         }))
     }
 }
 
-fn neutral_execution_settings(thread: &AgentThread) -> ThreadExecutionSettingsSnapshot {
-    let settings = &thread.settings;
+fn neutral_execution_settings(
+    settings: &ThreadSettings,
+    model_label: Option<String>,
+) -> ThreadExecutionSettingsSnapshot {
     let (approval_policy, sandbox_policy) =
         crate::agent::client_wire::settings::legacy_policy_names(&settings.permission_profile);
     ThreadExecutionSettingsSnapshot {
         model: settings.model.clone(),
-        model_label: thread.model_label.clone(),
+        model_label,
         effort: settings.effort.clone(),
         service_tier: settings.service_tier.clone(),
         permissions: Some(settings.permission_profile.clone()),
@@ -661,18 +695,18 @@ mod tests {
 
     #[test]
     fn neutral_settings_carry_the_provider_name_of_the_model() {
-        let mut thread = crate::agent::testing::thread("claude", "thread-1", 1);
-        thread.settings.model = "claude-opus-5-5".into();
-        thread.model_label = Some("Opus 5.5".into());
-        let settings = serde_json::to_value(neutral_execution_settings(&thread));
+        let settings = crate::agent::testing::thread("claude", "thread-1", 1).settings;
+        let named = serde_json::to_value(neutral_execution_settings(
+            &settings,
+            Some("Opus 5.5".into()),
+        ));
         assert_eq!(
-            settings
+            named
                 .ok()
                 .and_then(|value| value.get("modelLabel").cloned()),
             Some(json!("Opus 5.5"))
         );
-        thread.model_label = None;
-        let unnamed = serde_json::to_value(neutral_execution_settings(&thread));
+        let unnamed = serde_json::to_value(neutral_execution_settings(&settings, None));
         assert!(unnamed.is_ok_and(|value| value.get("modelLabel").is_none()));
     }
 

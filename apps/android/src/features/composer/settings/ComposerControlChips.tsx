@@ -116,7 +116,7 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
   // The server names the model it runs; a locally chosen model is named by the catalog.
   const serverModelLabel =
     serverExecution !== null && view.model.value === serverExecution.model
-      ? serverExecution.modelLabel
+      ? (serverExecution.modelLabel ?? null)
       : null;
   const modelLabel =
     serverModelLabel ??
@@ -196,6 +196,7 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
           }}
           selectedEffort={view.effort.value}
           selectedModel={view.model.value}
+          selectedModelLabel={serverModelLabel}
           selectedPersonality={props.selectedPersonality}
           selectedServiceTier={view.serviceTier.value}
           triggerChildren={modelTrigger}

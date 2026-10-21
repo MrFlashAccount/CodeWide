@@ -7,6 +7,7 @@
 //! See `CONTEXT.md` and `docs/agent-providers.md`.
 
 pub mod model;
+pub mod naming;
 pub mod provider;
 pub mod request_ids;
 pub mod usage;

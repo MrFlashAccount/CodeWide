@@ -372,10 +372,12 @@ impl OrchestrationService {
                 "agent {child} was created but its first turn did not start: {message}"
             ));
         }
+        let model_label = target.model_names().and_then(|names| names.label(&model));
         Ok(SpawnResult {
             agent_thread_id: child.into_string(),
             provider: wire.descriptor.id.into_string(),
             model,
+            model_label,
             status: AgentStatus::Running,
         })
     }
@@ -591,6 +593,12 @@ impl OrchestrationService {
             })?;
         let mut agents = Vec::with_capacity(links.len());
         for link in links {
+            let model_label = self
+                .gateway
+                .registry()
+                .get(&link.provider)
+                .and_then(|provider| provider.model_names())
+                .and_then(|names| names.label(&link.model));
             let status = match (
                 AppThreadId::parse(&link.child_thread_id),
                 self.gateway.registry().get(&link.provider),
@@ -606,6 +614,7 @@ impl OrchestrationService {
                 agent_thread_id: link.child_thread_id,
                 provider: link.provider.into_string(),
                 model: link.model,
+                model_label,
                 name: link.name,
                 status,
             });

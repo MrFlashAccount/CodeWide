@@ -17,6 +17,7 @@ import { MessageActionRail } from "./MessageActionRail";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
 import { TurnMetricsProvider } from "./TurnMetricsProvider";
 import { TurnFooter } from "./TurnFooter";
+import { turnModelName } from "./turnModelName";
 import { styles } from "./TurnTimelineItem.styles";
 
 export function TurnTimelineItem({
@@ -89,9 +90,9 @@ export function TurnTimelineItem({
                           completedAt={presentation.rawTurn.completedAt}
                           diff={projectedTurnMetadata(presentation.rawTurn)?.diff ?? ""}
                           durationMs={presentation.rawTurn.durationMs}
-                          model={
-                            projectedTurnMetadata(presentation.rawTurn)?.execution?.model ?? null
-                          }
+                          model={turnModelName(
+                            projectedTurnMetadata(presentation.rawTurn)?.execution,
+                          )}
                           status={presentation.rawTurn.status}
                           usage={usage}
                         />

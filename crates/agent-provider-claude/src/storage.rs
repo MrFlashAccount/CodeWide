@@ -585,7 +585,6 @@ mod tests {
                 service_tier: None,
             },
             spawn: None,
-            model_label: None,
         };
         let mut threads = vec![
             host_row("terminal", "hello"),

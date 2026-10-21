@@ -16,6 +16,7 @@ import { TaskNotificationLine } from "./TaskNotificationLine";
 import type { projectTurnPresentation } from "./turnProjection";
 import { TurnMetricsProvider } from "./TurnMetricsProvider";
 import { TurnFooter } from "./TurnFooter";
+import { turnModelName } from "./turnModelName";
 import { styles } from "./TurnTimelineItem.styles";
 import type { TurnTimelineItemProps } from "./TurnTimelineItem.types";
 import { renderUserTurnBody } from "./UserTurnBody";
@@ -327,7 +328,7 @@ function renderVirtualizedTurnFooter({
       completedAt={presentation.rawTurn.completedAt}
       diff={metadata?.diff ?? ""}
       durationMs={presentation.rawTurn.durationMs}
-      model={metadata?.execution?.model ?? null}
+      model={turnModelName(metadata?.execution)}
       status={presentation.rawTurn.status}
       usage={usage}
     />

@@ -69,11 +69,6 @@ pub struct AgentThread {
     /// takes no direct input. Optional on the wire (added within v1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawn: Option<ThreadSpawn>,
-    /// The provider catalog's name of `settings.model` (`Opus 5.5`), when the
-    /// provider knows it; a client shows it as is. Optional on the wire
-    /// (added within v1).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_label: Option<String>,
 }
 
 /// The provider native thread a turn or item belongs to: with in-thread

@@ -57,6 +57,18 @@ function modelDraftFromProps(props: ModelThinkingMenuProps): ModelDraft {
   };
 }
 
+/** The chosen model's name: its catalog row's, else the server's for the thread's model. */
+function chosenModelLabel(
+  model: ModelControl | undefined,
+  draft: ModelDraft,
+  props: ModelThinkingMenuProps,
+): string | null {
+  if (model !== undefined) {
+    return model.label;
+  }
+  return draft.model === props.selectedModel ? (props.selectedModelLabel ?? null) : null;
+}
+
 function modelDraftChanged(initial: ModelDraft, draft: ModelDraft): boolean {
   return (
     initial.model !== draft.model ||
@@ -227,6 +239,7 @@ function ModelMenuContent({
       <ModelAgentNote scope={props.agentScope} />
       <MenuNotices error={props.error} loading={props.loading && props.models.length === 0} />
       <ModelControls
+        label={chosenModelLabel(model, draft, props)}
         model={model}
         modelsExpanded={modelsExpanded}
         onSelectServiceTier={onSelectServiceTier}
@@ -293,6 +306,7 @@ function MenuNotices({ error, loading }: { error: string | null; loading: boolea
 }
 
 function ModelControls({
+  label,
   model,
   modelsExpanded,
   onSelectServiceTier,
@@ -300,6 +314,8 @@ function ModelControls({
   selectedServiceTier,
   showServiceTierControls,
 }: {
+  /** The chosen model's name: its catalog row's, else the server's. */
+  label: string | null;
   model: ModelControl | undefined;
   modelsExpanded: boolean;
   onSelectServiceTier: (serviceTier: string) => void;
@@ -311,7 +327,7 @@ function ModelControls({
     <View style={styles.modelControls}>
       <ModelDisclosure
         expanded={modelsExpanded}
-        label={model?.label ?? null}
+        label={label}
         onPress={onToggleModels}
         provider={model?.provider ?? null}
       />

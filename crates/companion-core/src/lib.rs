@@ -18,6 +18,7 @@ pub mod image_previews;
 pub mod log_filter;
 pub mod managed_runtime;
 pub mod media;
+pub mod model_labels;
 pub mod pairing_qr;
 pub mod port_inventory;
 pub mod ports;

@@ -544,7 +544,6 @@ mod tests {
                 service_tier: None,
             },
             spawn,
-            model_label: None,
         }
     }
 

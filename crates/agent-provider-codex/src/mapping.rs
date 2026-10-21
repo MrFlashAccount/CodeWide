@@ -78,7 +78,6 @@ pub fn thread(provider: &ProviderId, thread: &Value, archived: bool) -> Option<A
             service_tier: None,
         },
         spawn: None,
-        model_label: None,
     })
 }
 

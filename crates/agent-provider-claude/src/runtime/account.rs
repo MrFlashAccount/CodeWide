@@ -13,6 +13,7 @@ use std::{
 
 use agent_core::{
     model::{ModelCatalog, ProviderAccount},
+    naming::CatalogNames,
     provider::{ProviderAuth, ProviderHealth},
     usage::CatalogPricing,
 };
@@ -41,6 +42,7 @@ pub struct Account {
     health: Arc<watch::Sender<ProviderHealth>>,
     catalog: Mutex<ModelCatalogCache>,
     pricing: Arc<CatalogPricing>,
+    names: Arc<CatalogNames>,
     limits: Arc<PublishedLimits>,
     /// Held while a probe runs; the time of the last one.
     probing: tokio::sync::Mutex<Option<Instant>>,
@@ -52,6 +54,7 @@ impl Account {
         target: ProbeTarget,
         health: Arc<watch::Sender<ProviderHealth>>,
         pricing: Arc<CatalogPricing>,
+        names: Arc<CatalogNames>,
         limits: Arc<PublishedLimits>,
     ) -> Self {
         Self {
@@ -59,6 +62,7 @@ impl Account {
             health,
             catalog: Mutex::new(ModelCatalogCache::default()),
             pricing,
+            names,
             limits,
             probing: tokio::sync::Mutex::new(None),
         }
@@ -81,12 +85,6 @@ impl Account {
     #[must_use]
     pub fn id_for(&self, recorded: &str) -> String {
         self.cache().id_for(recorded).to_owned()
-    }
-
-    /// The catalog's name of a model a thread runs with.
-    #[must_use]
-    pub fn label_for(&self, model: &str) -> Option<String> {
-        self.cache().label_for(model)
     }
 
     fn cache(&self) -> std::sync::MutexGuard<'_, ModelCatalogCache> {
@@ -116,6 +114,9 @@ impl Account {
                     cache.update(result.models);
                     if !cache.prices().is_empty() {
                         self.pricing.replace(cache.prices().clone());
+                    }
+                    if !cache.names().is_empty() {
+                        self.names.replace(cache.names().to_vec());
                     }
                 }
                 if let Some(usage) = &result.usage {

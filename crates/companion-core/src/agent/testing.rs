@@ -33,6 +33,7 @@ pub(crate) struct FakeProvider {
     pub(crate) calls: Mutex<Vec<String>>,
     pub(crate) list_params: Mutex<Vec<ThreadListParams>>,
     pub(crate) pricing: Option<Arc<dyn agent_core::usage::ModelPricing>>,
+    pub(crate) names: Option<Arc<dyn agent_core::naming::ModelNaming>>,
     status: watch::Sender<ProviderStatus>,
     health: watch::Sender<ProviderHealth>,
     /// `Some` when the fake reports provider-level subscription limits.
@@ -56,6 +57,7 @@ impl FakeProvider {
             calls: Mutex::new(Vec::new()),
             list_params: Mutex::new(Vec::new()),
             pricing: None,
+            names: None,
             status,
             health,
             rate_limits: None,
@@ -123,7 +125,6 @@ pub(crate) fn thread(provider: &'static str, id: &str, key: i64) -> AgentThread 
             service_tier: None,
         },
         spawn: None,
-        model_label: None,
     }
 }
 
@@ -143,6 +144,10 @@ fn sort_key(thread: &AgentThread, key: ThreadSortKey) -> i64 {
 impl AgentProvider for FakeProvider {
     fn usage_pricing(&self) -> Option<Arc<dyn agent_core::usage::ModelPricing>> {
         self.pricing.clone()
+    }
+
+    fn model_names(&self) -> Option<Arc<dyn agent_core::naming::ModelNaming>> {
+        self.names.clone()
     }
 
     fn descriptor(&self) -> ProviderDescriptor {

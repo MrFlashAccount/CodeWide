@@ -113,12 +113,17 @@ function spawnedAgent(call: CallInput): string {
   return provider === null ? named : `${provider} ${named}`;
 }
 
+/** The spawned agent's model as the Companion names it, else its id. */
+function spawnedModel(call: CallInput): string | null {
+  return text(call.result?.modelLabel ?? call.result?.model ?? call.args.model);
+}
+
 function spawnCall(call: CallInput): OrchestrationToolCall {
   const agent = spawnedAgent(call);
   return {
     detail: clipped(call.error ?? text(call.args.prompt)),
     failed: call.error !== null,
-    meta: text(call.result?.model ?? call.args.model),
+    meta: spawnedModel(call),
     provider: text(call.result?.provider ?? call.args.provider),
     running: call.running,
     targetThreadId: text(call.result?.agentThreadId),
