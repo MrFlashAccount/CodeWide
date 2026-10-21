@@ -208,17 +208,21 @@ export function AppFullscreenOverlayHost() {
             markShown(entry.id);
           }}
         >
-          <View style={styles.layer}>
-            <RecoverableRenderBoundary
-              label="Fullscreen overlay content"
-              onDismiss={() => {
-                close(entry.id);
-              }}
-              resetKey={entry.id}
-              scope="dialog"
-            >
-              <Suspense fallback={<FullscreenOverlaySuspenseFallback />}>{entry.content}</Suspense>
-            </RecoverableRenderBoundary>
+          <View style={styles.stack}>
+            <View style={styles.layer}>
+              <RecoverableRenderBoundary
+                label="Fullscreen overlay content"
+                onDismiss={() => {
+                  close(entry.id);
+                }}
+                resetKey={entry.id}
+                scope="dialog"
+              >
+                <Suspense fallback={<FullscreenOverlaySuspenseFallback />}>
+                  {entry.content}
+                </Suspense>
+              </RecoverableRenderBoundary>
+            </View>
           </View>
         </AppFullscreenModal>
       ))}
@@ -307,7 +311,17 @@ export function useAppFullscreenOverlay(
 }
 
 const styles = StyleSheet.create({
+  // WHY absolute: the hosted React Native root takes its height from its content.
+  // An absolutely positioned layer contributes none, so the window, not the
+  // content, bounds the surface and its scroll views keep scrolling.
   layer: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
+  stack: {
     flex: 1,
     minHeight: 0,
     minWidth: 0,
