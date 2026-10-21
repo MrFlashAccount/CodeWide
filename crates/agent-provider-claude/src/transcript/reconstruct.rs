@@ -20,7 +20,8 @@
 use std::collections::{HashMap, HashSet};
 
 use agent_core::model::{
-    AgentItem, AgentTurn, AppThreadId, ClientMessageId, TurnId, TurnOrigin, UserContent,
+    AgentItem, AgentTurn, AppThreadId, ClientMessageId, MessagePhase, TurnId, TurnOrigin,
+    TurnStatus, UserContent,
 };
 
 use super::{
@@ -492,8 +493,34 @@ pub fn reconstruct_subagent_turns(
                 replay_segment(segment, &[], context)
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+    let turns = if running {
+        turns
+    } else {
+        with_cut_off_last_turn_interrupted(turns)
+    };
     with_subagent_runs(turns, &entries)
+}
+
+/// A sub-agent that no longer runs answers its spawner with a final message
+/// before it ends. A last turn without one was cut off (its process ended
+/// mid-step), so it did not complete.
+fn with_cut_off_last_turn_interrupted(mut turns: Vec<AgentTurn>) -> Vec<AgentTurn> {
+    if let Some(last) = turns.last_mut()
+        && last.status == TurnStatus::Completed
+        && !last.items.iter().any(|item| {
+            matches!(
+                item,
+                AgentItem::AgentMessage {
+                    phase: MessagePhase::Final,
+                    ..
+                }
+            )
+        })
+    {
+        last.status = TurnStatus::Interrupted;
+    }
+    turns
 }
 
 /// Agent ids whose spawning item, in any of `turns`, still reports `running`.
