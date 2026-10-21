@@ -24,6 +24,8 @@ type InlineContentRouteRequest = {
 
 export type CommandContentRouteRequest = {
   readonly fallbackOutput: string;
+  /** Reads output the Companion externalized as private content; null without a connection. */
+  readonly getTransferAccess: GetTransferAccess | null;
   readonly itemId: string;
   readonly kind: "command";
   readonly title: string;

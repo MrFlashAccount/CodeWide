@@ -5,11 +5,15 @@ import { renderFullContentViewerBody } from "./FullContentViewerBody";
 
 /** Adapts retained or live inline activity text to the shared full-screen output body. */
 export function ActivityContentViewer({
+  error = null,
+  loading = false,
   onClose,
   presentation,
   text,
   title,
 }: {
+  readonly error?: string | null;
+  readonly loading?: boolean;
   readonly onClose: () => void;
   readonly presentation: ContentPresentation;
   readonly text: string;
@@ -26,8 +30,8 @@ export function ActivityContentViewer({
     onPrevious: noAction,
     rangeEnd: byteLength,
     selection: {
-      error: null,
-      loading: false,
+      error,
+      loading,
       nextOffset: byteLength,
       offset: 0,
       pointer: "/",

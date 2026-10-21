@@ -25,7 +25,9 @@ export function FileChangeProtocolBlock({ block }: { block: RenderBlock }) {
   const presentChanges = useContext(TurnChangesContext);
   const turnTarget = useContext(TurnTargetContext);
   const itemId = typeof block.raw.id === "string" ? block.raw.id : block.key;
-  const files = recordedItemChanges(itemId, block.raw.changes);
+  // Only an applied edit is a recorded patch the review editor can anchor to
+  // the file; a pending, failed or declined call carries just its proposal.
+  const files = block.status === "completed" ? recordedItemChanges(itemId, block.raw.changes) : [];
   const openChanges = useEvent(() => {
     if (presentChanges !== null && turnTarget !== null && files.length > 0) {
       presentChanges(turnTarget, files, "item");
