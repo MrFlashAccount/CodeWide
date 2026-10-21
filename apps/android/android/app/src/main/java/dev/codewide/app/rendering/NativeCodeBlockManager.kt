@@ -26,6 +26,9 @@ class NativeCodeBlockManager : SimpleViewManager<NativeCodeBlockView>() {
   @ReactProp(name = "variant")
   fun setVariant(view: NativeCodeBlockView, value: String?) = view.setVariant(value)
 
+  @ReactProp(name = "wrapLines", defaultBoolean = false)
+  fun setWrapLines(view: NativeCodeBlockView, value: Boolean) = view.setWrapLines(value)
+
   @ReactProp(name = "maxLines", defaultInt = 0)
   fun setMaxLines(view: NativeCodeBlockView, value: Int) = view.setMaximumLines(value)
 

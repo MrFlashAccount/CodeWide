@@ -119,6 +119,7 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
   private var language: String = "text"
   private var variant: String = "code"
   private var maxLines: Int = 0
+  private var wrapLines = false
   private var pendingTask: Future<*>? = null
   private var scheduledHighlight: Runnable? = null
   init {
@@ -154,6 +155,15 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
 
   fun setMaximumLines(value: Int) {
     maxLines = value.coerceAtLeast(0)
+  }
+
+  /** Wraps long lines at the viewport width instead of scrolling them sideways. */
+  fun setWrapLines(value: Boolean) {
+    if (wrapLines == value) return
+    wrapLines = value
+    textView.setHorizontallyScrolling(!value)
+    horizontalScroll.isHorizontalScrollBarEnabled = !value
+    updateCodeViewportWidth(width)
   }
 
   fun commitProps() {
@@ -230,7 +240,11 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
 
   private fun updateCodeViewportWidth(viewportWidth: Int) {
     val gutterWidth = if (gutterView.visibility == View.VISIBLE) gutterView.measuredWidth else 0
-    textView.minWidth = (viewportWidth - gutterWidth).coerceAtLeast(0)
+    val codeWidth = (viewportWidth - gutterWidth).coerceAtLeast(0)
+    textView.minWidth = codeWidth
+    // The horizontal scroller measures its child unbounded; a wrapping row is
+    // bounded by the viewport so its lines break there.
+    textView.maxWidth = if (wrapLines && codeWidth > 0) codeWidth else Int.MAX_VALUE
   }
 
   private fun dp(value: Float): Float = value * resources.displayMetrics.density

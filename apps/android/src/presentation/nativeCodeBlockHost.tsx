@@ -14,6 +14,8 @@ export interface NativeCodeBlockHostProps {
   searchQuery?: string;
   style: StyleProp<ViewStyle>;
   variant: "code" | "diff" | "terminal";
+  /** Wraps long lines at the view's width instead of scrolling them sideways. */
+  wrapLines?: boolean;
 }
 
 /** Android code renderer; unsupported platforms use their caller-owned fallback. */
