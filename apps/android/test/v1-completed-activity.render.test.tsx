@@ -165,7 +165,10 @@ it("keeps real tool activity and its server-provided figures alongside hidden re
   });
   const view = render(history(item, true));
   expect(view.getByRole("button", { name: "Collapse activity ran commands · 58" })).toBeVisible();
-  expect(view.getByRole("button", { name: "Collapse printf done" })).toBeVisible();
+  // The tool step never draws in the bubble: its group opens the activity sheet.
+  expect(view.queryByText("printf done")).toBeNull();
+  fireEvent.press(view.getByRole("button", { name: /^Open activity/ }));
+  expect(view.getByText("printf done")).toBeVisible();
   expect(view.queryByTestId("thinking-status")).toBeNull();
   expect(projectTurnPresentation(item, null, false, false).agentBubbleFill).toBe(true);
 });
@@ -194,6 +197,7 @@ it.each([
   const item = completedTurn([reasoning], "full", { ...metadata, activityMetrics: metrics([], 0) });
   const view = render(history(item, true));
   expect(view.getAllByTestId("turn-activity-list").length).toBeGreaterThan(0);
+  fireEvent.press(view.getByRole("button", { name: /^Open activity/ }));
   expect(view.getByText("plan" in metadata ? "Plan" : "Turn diff")).toBeVisible();
   expect(projectTurnPresentation(item, null, false, false).agentBubbleFill).toBe(true);
 });

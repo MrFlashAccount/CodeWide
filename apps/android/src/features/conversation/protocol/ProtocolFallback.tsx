@@ -37,9 +37,9 @@ export function renderProtocolFallback(
         ) : (
           <ProtocolBody
             body={block.body}
-            code={block.kind === "fileChange" || block.kind === "turnDiff"}
+            code={block.kind === "fileChange"}
             collapsible={block.collapsible}
-            {...(block.kind === "turnDiff" || block.kind === "fileChange"
+            {...(block.kind === "fileChange"
               ? { codeVariant: "diff" as const, language: "diff" }
               : {})}
           />

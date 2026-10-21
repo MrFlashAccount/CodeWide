@@ -10,6 +10,8 @@ import { styles } from "./ActivityDetailSheet.styles";
 import {
   ActiveToolCallContext,
   ExpansionItemKeyContext,
+  SHEET_TOOL_CARDS,
+  ToolCardPlacementContext,
   TurnActivityContentContext,
 } from "./turnContexts";
 import type { TransferAccess } from "../../../data/private-transfer";
@@ -170,11 +172,13 @@ function ActivityDetailContent({
 }: ActivityDetailRowContentProps): ReactElement {
   return (
     <View style={styles.row}>
-      <ProtocolBlock
-        block={block}
-        {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
-      />
+      <ToolCardPlacementContext.Provider value={SHEET_TOOL_CARDS}>
+        <ProtocolBlock
+          block={block}
+          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+          {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
+        />
+      </ToolCardPlacementContext.Provider>
     </View>
   );
 }
