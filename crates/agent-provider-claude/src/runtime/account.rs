@@ -83,6 +83,12 @@ impl Account {
         self.cache().id_for(recorded).to_owned()
     }
 
+    /// The catalog's name of a model a thread runs with.
+    #[must_use]
+    pub fn label_for(&self, model: &str) -> Option<String> {
+        self.cache().label_for(model)
+    }
+
     fn cache(&self) -> std::sync::MutexGuard<'_, ModelCatalogCache> {
         self.catalog.lock().unwrap_or_else(PoisonError::into_inner)
     }

@@ -173,6 +173,18 @@ impl ModelCatalogCache {
         catalog_model_id(&self.raw, recorded)
     }
 
+    /// The catalog's name of a model a thread runs with: its own row's, else
+    /// the name of the alias row that resolves to it; `None` for a model the
+    /// last list does not name.
+    #[must_use]
+    pub fn label_for(&self, model: &str) -> Option<String> {
+        let id = self.id_for(model);
+        self.entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.display_name.clone())
+    }
+
     /// The catalog rows of the last list; empty before one.
     #[must_use]
     pub fn models(&self) -> &[ModelEntry] {
@@ -341,6 +353,34 @@ mod tests {
             catalog_model_id(&[alias("default", "Default", "claude-x")], "claude-x"),
             "claude-x"
         );
+    }
+
+    #[test]
+    fn a_thread_model_is_named_by_its_row_or_the_alias_resolving_to_it() {
+        let mut cache = ModelCatalogCache::default();
+        assert_eq!(cache.label_for("claude-opus-5-5"), None);
+        cache.update(vec![
+            RawModel {
+                description: "Opus 5.5 · Most capable".into(),
+                ..alias("default", "Default (recommended)", "claude-opus-5-5")
+            },
+            RawModel {
+                description: "Opus 5.5 · Most capable".into(),
+                ..alias("opus", "Opus", "claude-opus-5-5")
+            },
+            row("claude-opus-4-7", "Opus 4.7", ""),
+        ]);
+        // A spawned agent's full id: named like the alias row that resolves to it.
+        assert_eq!(
+            cache.label_for("claude-opus-5-5").as_deref(),
+            Some("Opus 5.5")
+        );
+        assert_eq!(cache.label_for("opus").as_deref(), Some("Opus 5.5"));
+        assert_eq!(
+            cache.label_for("claude-opus-4-7").as_deref(),
+            Some("Opus 4.7")
+        );
+        assert_eq!(cache.label_for("claude-unknown-1"), None);
     }
 
     #[test]

@@ -133,6 +133,18 @@ describe("thread event projection", () => {
     expect(reasoning.content).toEqual(["detail"]);
   });
 
+  it("names the server's model only while the thread still runs that model", () => {
+    const thread = { id: "thread-1", turns: [] } as unknown as Parameters<typeof seedThreadExecutionSettings>[0];
+    const base = { effort: null, permissions: ":workspace", approvalPolicy: "never", sandboxPolicy: "workspaceWrite" };
+    seedThreadExecutionSettings(thread, { ...base, model: "claude-opus-5-5", modelLabel: "Opus 5.5" });
+    expect(projectedThreadExecutionSettings(thread)?.modelLabel).toBe("Opus 5.5");
+    // An update without a label keeps it for the same model and drops it for another.
+    seedThreadExecutionSettings(thread, { ...base, model: "claude-opus-5-5" });
+    expect(projectedThreadExecutionSettings(thread)?.modelLabel).toBe("Opus 5.5");
+    seedThreadExecutionSettings(thread, { ...base, model: "sonnet" });
+    expect(projectedThreadExecutionSettings(thread)?.modelLabel).toBeNull();
+  });
+
   it("ignores events for another thread", () => {
     const value = thread();
     expect(applyThreadEvent(value, { method: "thread/name/updated", params: { threadId: "other", name: "Wrong" } })).toBe(false);

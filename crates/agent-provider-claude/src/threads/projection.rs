@@ -163,6 +163,7 @@ pub fn project_thread(view: &ThreadView<'_>) -> AgentThread {
         status: view.status,
         settings,
         spawn: None,
+        model_label: None,
     }
 }
 

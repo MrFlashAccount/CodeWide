@@ -156,6 +156,7 @@ const thread = obj({
   archived: bool,
   createdAt: int,
   cwd: str,
+  modelLabel: optional(str),
   name: nullable(str),
   origin: literal("interactive", "external", "supervisor"),
   preview: str,

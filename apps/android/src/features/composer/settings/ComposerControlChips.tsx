@@ -113,7 +113,13 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
         overlay,
         server: serverExecution,
       });
+  // The server names the model it runs; a locally chosen model is named by the catalog.
+  const serverModelLabel =
+    serverExecution !== null && view.model.value === serverExecution.model
+      ? serverExecution.modelLabel
+      : null;
   const modelLabel =
+    serverModelLabel ??
     view.modelEntry?.label ??
     view.model.value ??
     (pending ? "Loading model…" : "Model not confirmed");

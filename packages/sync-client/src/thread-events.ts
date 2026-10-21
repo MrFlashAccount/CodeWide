@@ -87,6 +87,8 @@ type ProjectedTurn = Turn & { codewide?: ProjectedTurnMetadata };
 type ProjectedThreadMetadata = {
   executionSettings?: {
     model: string;
+    /** The server's name of `model` (`Opus 5.5`), shown as is; null when it sent none. */
+    modelLabel?: string | null;
     effort: string | null;
     serviceTier: string | null | undefined;
     permissions: string | null;
@@ -373,8 +375,11 @@ export function projectedThreadExecutionSettings(thread: Thread): ProjectedThrea
   const directServiceTier = asObject(thread)?.serviceTier;
   const hasDirectServiceTier = "serviceTier" in thread;
   if (typeof model !== "string" || model.length === 0) return null;
+  // The label names the snapshot's model; a newer direct model has none yet.
+  const modelLabel = settings?.model === model && typeof settings.modelLabel === "string" ? settings.modelLabel : null;
   return {
     model,
+    modelLabel,
     effort: typeof effort === "string" ? effort : null,
     serviceTier:
       hasDirectServiceTier
@@ -393,6 +398,7 @@ export function seedThreadExecutionSettings(
   thread: Thread,
   settings: {
     model: string;
+    modelLabel?: string | null;
     effort: string | null;
     serviceTier?: string | null;
     permissions: string | null;
@@ -410,6 +416,8 @@ export function seedThreadExecutionSettings(
   const previous = projected.codewide.executionSettings;
   projected.codewide.executionSettings = structuredClone({
     ...settings,
+    // A settings update without a label keeps the known one only for the same model.
+    modelLabel: settings.modelLabel ?? (previous?.model === settings.model ? (previous.modelLabel ?? null) : null),
     serviceTier: settings.serviceTier,
     approvalPolicy: settings.approvalPolicy ?? previous?.approvalPolicy ?? null,
     sandboxPolicy: settings.sandboxPolicy ?? previous?.sandboxPolicy ?? null,

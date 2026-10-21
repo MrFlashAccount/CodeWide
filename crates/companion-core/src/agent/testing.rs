@@ -123,6 +123,7 @@ pub(crate) fn thread(provider: &'static str, id: &str, key: i64) -> AgentThread 
             service_tier: None,
         },
         spawn: None,
+        model_label: None,
     }
 }
 

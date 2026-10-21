@@ -189,6 +189,7 @@ impl ChildThread {
                 agent_nickname: self.subagent.description.clone(),
                 agent_role: self.subagent.agent_type.clone(),
             }),
+            model_label: None,
         }
     }
 

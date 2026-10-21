@@ -126,7 +126,8 @@
               "effort": null,
               "permissionProfile": ":read-only",
               "serviceTier": null
-            }
+            },
+            "modelLabel": "Sonnet 4.5"
           }
         }
       }

@@ -9,7 +9,7 @@ use crate::agent::{
         history as provider_history, items,
     },
     model::{
-        ItemsView, SortDirection, ThreadSettings, ThreadStatus, ThreadTurnsParams,
+        AgentThread, ItemsView, SortDirection, ThreadStatus, ThreadTurnsParams,
         thread_not_found_message,
     },
     provider::{
@@ -53,6 +53,9 @@ pub enum ThreadActivity {
 #[serde(rename_all = "camelCase")]
 struct ThreadExecutionSettingsSnapshot {
     model: String,
+    /// The provider catalog's name of `model`, for the client to show as is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_label: Option<String>,
     effort: Option<String>,
     service_tier: Option<String>,
     permissions: Option<String>,
@@ -432,18 +435,20 @@ impl ThreadViewService {
             "readModelVersion": READ_MODEL_VERSION,
             "throughCursor": through_cursor,
             "thread": thread,
-            "executionSettings": neutral_execution_settings(&read.thread.settings),
+            "executionSettings": neutral_execution_settings(&read.thread),
             "history": history,
             "activeTurn": active_turn,
         }))
     }
 }
 
-fn neutral_execution_settings(settings: &ThreadSettings) -> ThreadExecutionSettingsSnapshot {
+fn neutral_execution_settings(thread: &AgentThread) -> ThreadExecutionSettingsSnapshot {
+    let settings = &thread.settings;
     let (approval_policy, sandbox_policy) =
         crate::agent::client_wire::settings::legacy_policy_names(&settings.permission_profile);
     ThreadExecutionSettingsSnapshot {
         model: settings.model.clone(),
+        model_label: thread.model_label.clone(),
         effort: settings.effort.clone(),
         service_tier: settings.service_tier.clone(),
         permissions: Some(settings.permission_profile.clone()),
@@ -477,6 +482,7 @@ fn thread_execution_settings(
         .ok_or(ThreadViewError::InvalidExecutionSettings)?;
     Ok(ThreadExecutionSettingsSnapshot {
         model,
+        model_label: None,
         effort: nullable_string(result, "reasoningEffort")?,
         service_tier: nullable_string(result, "serviceTier")?,
         permissions,
@@ -642,6 +648,7 @@ mod tests {
             settings,
             ThreadExecutionSettingsSnapshot {
                 model: "gpt-5.6-sol".to_owned(),
+                model_label: None,
                 effort: Some("high".to_owned()),
                 service_tier: Some("priority".to_owned()),
                 permissions: Some(":workspace".to_owned()),
@@ -650,6 +657,23 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    #[test]
+    fn neutral_settings_carry_the_provider_name_of_the_model() {
+        let mut thread = crate::agent::testing::thread("claude", "thread-1", 1);
+        thread.settings.model = "claude-opus-5-5".into();
+        thread.model_label = Some("Opus 5.5".into());
+        let settings = serde_json::to_value(neutral_execution_settings(&thread));
+        assert_eq!(
+            settings
+                .ok()
+                .and_then(|value| value.get("modelLabel").cloned()),
+            Some(json!("Opus 5.5"))
+        );
+        thread.model_label = None;
+        let unnamed = serde_json::to_value(neutral_execution_settings(&thread));
+        assert!(unnamed.is_ok_and(|value| value.get("modelLabel").is_none()));
     }
 
     #[test]

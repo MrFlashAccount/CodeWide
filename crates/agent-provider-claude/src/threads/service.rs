@@ -327,19 +327,14 @@ impl ServiceInner {
         live_prompt: Option<String>,
         sessions: &[CatalogSession],
     ) -> AgentThread {
-        let mut thread = project_thread(&ThreadView {
+        project_thread(&ThreadView {
             app_thread_id: &state.app_thread_id,
             live_prompt,
             recorded_model: None,
             sessions,
             state: Some(state),
             status: self.entry_status(state, status),
-        });
-        // A thread created with a full model id (a spawned agent names the
-        // model it was given) is reported as the catalog row that names it,
-        // like a session's recorded model, so a client finds its label.
-        thread.settings.model = (self.model_id_for)(&thread.settings.model);
-        thread
+        })
     }
 
     /// The thread from the published state, the prompt the stream showed

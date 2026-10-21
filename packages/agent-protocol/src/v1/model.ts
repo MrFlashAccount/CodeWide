@@ -65,6 +65,8 @@ export interface AgentThread {
   readonly archived: boolean;
   readonly createdAt: number;
   readonly cwd: string;
+  /** The provider catalog's name of `settings.model` (`Opus 5.5`), shown as is; absent when unknown. */
+  readonly modelLabel?: string;
   readonly name: string | null;
   readonly origin: ThreadOrigin;
   /** Usually the first user message; empty when the thread has none. */

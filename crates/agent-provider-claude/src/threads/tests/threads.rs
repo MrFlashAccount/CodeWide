@@ -613,7 +613,7 @@ async fn reports_and_continues_with_the_catalog_model_the_session_last_answered_
 }
 
 #[tokio::test]
-async fn reports_a_thread_created_with_a_full_model_id_as_its_catalog_row() -> TestResult {
+async fn keeps_the_exact_model_a_thread_was_created_with() -> TestResult {
     let harness = harness(Options {
         model_id_for: Arc::new(|recorded| {
             if recorded == "claude-opus-5-5" {
@@ -624,7 +624,8 @@ async fn reports_a_thread_created_with_a_full_model_id_as_its_catalog_row() -> T
         }),
         ..Options::default()
     })?;
-    // A spawned agent names the full model id it was given.
+    // A spawned agent names the full model id it was given; the thread stays
+    // pinned to it (its name comes from the catalog, not from an alias swap).
     harness
         .service
         .create(ThreadCreateParams {
@@ -638,7 +639,7 @@ async fn reports_a_thread_created_with_a_full_model_id_as_its_catalog_row() -> T
         })
         .await?;
     let (read, _) = harness.service.read(&id(THREAD)?, false).await?;
-    assert_eq!(read.thread.settings.model, "opus");
+    assert_eq!(read.thread.settings.model, "claude-opus-5-5");
     harness.close().await;
     Ok(())
 }

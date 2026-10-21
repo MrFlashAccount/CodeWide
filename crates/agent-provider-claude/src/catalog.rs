@@ -201,6 +201,7 @@ pub fn row(
             status,
             settings: settings_of(codewide),
             spawn: None,
+            model_label: None,
         },
     })
 }

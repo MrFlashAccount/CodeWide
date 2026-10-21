@@ -359,6 +359,15 @@ impl ClaudeProvider {
         }
     }
 
+    /// Names the thread's model as the catalog does, so a client shows that
+    /// name instead of the model id (a spawned agent may run with a full
+    /// id, which the catalog lists only as an alias's target).
+    fn label_model(&self, thread: &mut AgentThread) {
+        if let Some(running) = &self.running {
+            thread.model_label = running.account.label_for(&thread.settings.model);
+        }
+    }
+
     /// A child's transcript records the full model id; like a session's
     /// recorded model it is reported as the catalog row that names it.
     fn child_read(&self, child: &ChildThread) -> ThreadReadResult {
@@ -366,6 +375,7 @@ impl ClaudeProvider {
         if let Some(running) = &self.running {
             thread.settings.model = running.account.id_for(&thread.settings.model);
         }
+        self.label_model(&mut thread);
         ThreadReadResult {
             thread,
             active_turn_id: child.active_turn().map(|turn| turn.turn_id.clone()),
@@ -620,6 +630,7 @@ impl AgentProvider for ClaudeProvider {
         }
         let (mut read, _) = self.service().await?.read(thread, false).await?;
         self.overlay_previews([&mut read.thread]);
+        self.label_model(&mut read.thread);
         Ok(read)
     }
 
@@ -633,6 +644,7 @@ impl AgentProvider for ClaudeProvider {
         }
         let (mut read, fence) = self.service().await?.read(thread, true).await?;
         self.overlay_previews([&mut read.thread]);
+        self.label_model(&mut read.thread);
         Ok((read, optional_fence(fence)?))
     }
 
