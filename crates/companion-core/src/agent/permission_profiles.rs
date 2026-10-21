@@ -8,12 +8,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use serde_json::Value;
-use tracing::warn;
-
 use crate::agent::{
-    client_wire::observe, model::PermissionProfileCatalog, provider::AgentProvider,
+    client_wire::observe,
+    model::{PermissionProfileCatalog, ProviderId},
+    provider::AgentProvider,
 };
+use serde_json::Value;
 
 /// Full access under each provider's name for it: Claude has both,
 /// Codex only `:danger-full-access`. Both lift every check.
@@ -30,49 +30,50 @@ const MAX_OBSERVED_THREADS: usize = 4_096;
 /// it actually runs under.
 #[derive(Default)]
 pub struct ProfileObservations {
-    profiles: Mutex<HashMap<String, String>>,
+    profiles: Mutex<HashMap<(ProviderId, String), String>>,
 }
 
 impl ProfileObservations {
-    fn record(&self, thread_id: &str, profile: &str) {
+    fn record(&self, provider: &ProviderId, thread_id: &str, profile: &str) {
         let mut profiles = self
             .profiles
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if profiles.len() >= MAX_OBSERVED_THREADS && !profiles.contains_key(thread_id) {
+        let key = (provider.clone(), thread_id.to_owned());
+        if profiles.len() >= MAX_OBSERVED_THREADS && !profiles.contains_key(&key) {
             profiles.clear();
         }
-        profiles.insert(thread_id.to_owned(), profile.to_owned());
+        profiles.insert(key, profile.to_owned());
     }
 
     /// Observes a provider notification.
-    pub fn observe_event(&self, payload: &Value) {
+    pub fn observe_event(&self, provider: &ProviderId, payload: &Value) {
         if let Some((thread_id, profile)) = observe::settings_profile(payload) {
-            self.record(thread_id, profile);
+            self.record(provider, thread_id, profile);
         }
     }
 
     /// Observes an RPC result.
-    pub fn observe_rpc_result(&self, method: &str, result: &Value) {
+    pub fn observe_rpc_result(&self, provider: &ProviderId, method: &str, result: &Value) {
         if let Some((thread_id, profile)) = observe::result_profile(method, result) {
-            self.record(thread_id, profile);
+            self.record(provider, thread_id, profile);
         }
     }
 
     /// Returns the most recently observed effective profile of `thread_id`.
     #[must_use]
-    pub fn get(&self, thread_id: &str) -> Option<String> {
+    pub fn get(&self, provider: &ProviderId, thread_id: &str) -> Option<String> {
         self.profiles
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(thread_id)
+            .get(&(provider.clone(), thread_id.to_owned()))
             .cloned()
     }
 }
 
-/// Expresses `profile` in `target`'s own permission-profile catalog. A
-/// provider whose catalog is unavailable receives the selected id unchanged
-/// and remains the authority that accepts or rejects it.
+/// Expresses `profile` in `target`'s own permission-profile catalog. Missing,
+/// empty, unknown and unsupported catalogs fail closed because the host cannot
+/// prove that a target id is no stronger than the authenticated parent ceiling.
 ///
 /// # Errors
 /// Returns a message when the target catalog has no equivalent profile.
@@ -82,22 +83,19 @@ pub async fn for_provider(
 ) -> Result<String, String> {
     match target.catalog_permission_profiles().await {
         Ok(catalog) => for_catalog(&profile, &catalog),
-        Err(err) => {
-            warn!(
-                err = %err,
-                provider = %target.descriptor().id,
-                "agent provider's permission profiles are unavailable"
-            );
-            Ok(profile)
-        }
+        Err(error) => Err(format!(
+            "the target provider's permission profiles are unavailable: {error}"
+        )),
     }
 }
 
 /// The profile in the target catalog: the same id when the target has it,
-/// else the target's id for the same full-access level. An empty catalog
-/// (the provider lists none) keeps the id.
+/// else the target's id for the same full-access level.
 fn for_catalog(profile: &str, catalog: &PermissionProfileCatalog) -> Result<String, String> {
-    if catalog.profiles.is_empty() || catalog.profiles.iter().any(|row| row.id == profile) {
+    if catalog.profiles.is_empty() {
+        return Err("the target provider offers no permission profiles".into());
+    }
+    if catalog.profiles.iter().any(|row| row.id == profile) {
         return Ok(profile.to_owned());
     }
     if FULL_ACCESS.contains(&profile)
@@ -126,7 +124,7 @@ fn for_catalog(profile: &str, catalog: &PermissionProfileCatalog) -> Result<Stri
 mod tests {
     use serde_json::json;
 
-    use crate::agent::model::{PermissionProfileCatalog, PermissionProfileEntry};
+    use crate::agent::model::{PermissionProfileCatalog, PermissionProfileEntry, ProviderId};
 
     use super::{ProfileObservations, for_catalog};
 
@@ -161,7 +159,7 @@ mod tests {
             for_catalog(":full-access", &claude),
             Ok(":full-access".into())
         );
-        assert_eq!(for_catalog("team", &catalog(&[])), Ok("team".into()));
+        assert!(for_catalog("team", &catalog(&[])).is_err());
         assert!(for_catalog("team", &codex).is_err());
         assert!(for_catalog(":workspace", &catalog(&[":read-only"])).is_err());
     }
@@ -169,34 +167,49 @@ mod tests {
     #[test]
     fn a_thread_on_its_configured_sandbox_has_the_matching_built_in_profile() {
         let observed = ProfileObservations::default();
+        let codex = ProviderId::from_static("codex");
         observed.observe_rpc_result(
+            &codex,
             "thread/resume",
             &json!({"thread": {"id": "t"}, "activePermissionProfile": null,
                 "sandbox": {"type": "dangerFullAccess"}}),
         );
-        assert_eq!(observed.get("t").as_deref(), Some(":danger-full-access"));
-        observed.observe_event(&json!({"method": "thread/settings/updated", "params": {
+        assert_eq!(
+            observed.get(&codex, "t").as_deref(),
+            Some(":danger-full-access")
+        );
+        observed.observe_event(&codex, &json!({"method": "thread/settings/updated", "params": {
             "threadId": "t", "threadSettings": {"activePermissionProfile": null,
                 "sandboxPolicy": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false}}}}));
-        assert_eq!(observed.get("t").as_deref(), Some(":workspace"));
+        assert_eq!(observed.get(&codex, "t").as_deref(), Some(":workspace"));
         observed.observe_rpc_result(
+            &codex,
             "thread/start",
             &json!({"thread": {"id": "u"}, "activePermissionProfile": null,
                 "sandbox": {"type": "externalSandbox", "networkAccess": "restricted"}}),
         );
-        assert_eq!(observed.get("u"), None, "an external sandbox stays unknown");
+        assert_eq!(
+            observed.get(&codex, "u"),
+            None,
+            "an external sandbox stays unknown"
+        );
     }
 
     #[test]
     fn observes_profiles_from_notifications_and_results() {
         let observed = ProfileObservations::default();
+        let codex = ProviderId::from_static("codex");
         observed.observe_rpc_result(
+            &codex,
             "thread/start",
             &json!({"thread": {"id": "t"}, "activePermissionProfile": {"id": ":workspace"}}),
         );
-        assert_eq!(observed.get("t").as_deref(), Some(":workspace"));
-        observed.observe_event(&json!({"method": "thread/settings/updated", "params": {
-            "threadId": "t", "threadSettings": {"activePermissionProfile": {"id": ":read-only"}}}}));
-        assert_eq!(observed.get("t").as_deref(), Some(":read-only"));
+        assert_eq!(observed.get(&codex, "t").as_deref(), Some(":workspace"));
+        observed.observe_event(
+            &codex,
+            &json!({"method": "thread/settings/updated", "params": {
+            "threadId": "t", "threadSettings": {"activePermissionProfile": {"id": ":read-only"}}}}),
+        );
+        assert_eq!(observed.get(&codex, "t").as_deref(), Some(":read-only"));
     }
 }

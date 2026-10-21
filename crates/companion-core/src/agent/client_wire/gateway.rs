@@ -460,6 +460,25 @@ impl ClientWireGateway {
             .capabilities()
             .supports(Capability::ThreadsHostMintedIds)
             .then(mint_app_thread_id);
+        self.create_thread_with_id(provider, wire, app_thread_id, cwd, settings)
+            .await
+    }
+
+    /// Creates a thread with a previously journaled host id, or lets the
+    /// provider mint one when `app_thread_id` is absent. Reusing a host id is
+    /// the restart-safe orchestration path for providers that declare
+    /// `threads.hostMintedIds`.
+    ///
+    /// # Errors
+    /// Returns the provider or binding failure.
+    pub async fn create_thread_with_id(
+        &self,
+        provider: &Arc<dyn AgentProvider>,
+        wire: &WireProvider,
+        app_thread_id: Option<AppThreadId>,
+        cwd: String,
+        settings: ThreadSettings,
+    ) -> Result<crate::agent::model::AgentThread, RpcFailure> {
         if let Some(id) = &app_thread_id {
             self.bind_created(&wire.descriptor.id, id.as_str()).await?;
         }

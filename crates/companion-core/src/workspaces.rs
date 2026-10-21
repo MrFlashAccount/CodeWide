@@ -97,7 +97,7 @@ impl WorkspaceService {
                 let workspace = required_absolute_path(params, "workspace")?;
                 let request_id = required_request_id(params)?;
                 let operation = self
-                    .start_or_observe(workspace, request_id.to_owned())
+                    .create_or_observe(workspace, request_id.to_owned())
                     .await?;
                 if operation.phase == WorkspacePhase::Failed {
                     return Err(WorkspaceError::OperationFailed(
@@ -158,7 +158,13 @@ impl WorkspaceService {
         Ok(Some(operation))
     }
 
-    async fn start_or_observe(
+    /// Starts an idempotent workspace creation by host-issued claim id, or
+    /// observes the durable result of the same claim. Internal callers use
+    /// this instead of reconstructing the public RPC.
+    ///
+    /// # Errors
+    /// Returns validation, durable checkpoint or VCS-provider failures.
+    pub(crate) async fn create_or_observe(
         &self,
         workspace: PathBuf,
         request_id: String,
@@ -452,7 +458,7 @@ mod tests {
             .await?;
 
         let operation = service
-            .start_or_observe(PathBuf::from("/source"), "request-1".into())
+            .create_or_observe(PathBuf::from("/source"), "request-1".into())
             .await?;
         assert_eq!(operation.phase, WorkspacePhase::Ready);
         assert!(service.operations.lock().await.is_empty());

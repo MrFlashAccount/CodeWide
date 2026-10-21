@@ -2,41 +2,74 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::store::{IndexStore, OutboxPresentation, OutboxState};
+use crate::{
+    store::{OutboxCommand, OutboxPresentation, OutboxState},
+    turn_delivery::TurnDelivery,
+};
 
-pub(super) fn queue_rpc(
-    store: &IndexStore,
+pub(super) struct QueueRpcResult {
+    pub value: Value,
+    pub changed_thread_id: Option<String>,
+}
+
+pub(super) async fn queue_rpc(
+    delivery: &TurnDelivery,
     method: &str,
     params: &Value,
-) -> Result<Value, crate::store::StoreError> {
+) -> Result<QueueRpcResult, crate::store::StoreError> {
     let object = params.as_object().ok_or_else(|| {
         crate::store::StoreError::CorruptedIndex("queue params must be an object".into())
     })?;
     match method {
-        "companion/queue/put" => queue_put(store, object),
+        "companion/queue/put" => {
+            let command = queue_put(delivery, object).await?;
+            Ok(changed(serde_json::to_value(&command)?, &command))
+        }
         "companion/queue/list" => {
             let thread_id = object.get("threadId").and_then(Value::as_str);
             // Delivered queue rows are durable handoff receipts. The client
             // projects them as accepted chat deliveries (not queued prompts)
             // until the canonical user item with the same command id arrives.
-            Ok(json!({"data": store.outbox_list(thread_id)? }))
+            Ok(unchanged(json!({"data": delivery.list(thread_id).await? })))
         }
         "companion/queue/edit" => {
             let command_id = required_string(object.get("commandId"), "commandId")?;
             let input = object.get("input").cloned().ok_or_else(|| {
                 crate::store::StoreError::CorruptedIndex("queue input is required".into())
             })?;
-            serde_json::to_value(store.outbox_edit_prompt(command_id, &input)?).map_err(Into::into)
+            let command = delivery.edit_prompt(command_id, input).await?;
+            Ok(changed(serde_json::to_value(&command)?, &command))
         }
         "companion/queue/cancel" => {
             let command_id = required_string(object.get("commandId"), "commandId")?;
-            Ok(json!({"cancelled": store.outbox_cancel(command_id)?}))
+            let thread_id = delivery
+                .command(command_id)
+                .await?
+                .map(|command| command.remote_thread_id);
+            let cancelled = delivery.cancel(command_id).await?;
+            Ok(QueueRpcResult {
+                value: json!({"cancelled": cancelled}),
+                changed_thread_id: cancelled.then_some(thread_id).flatten(),
+            })
         }
         "companion/queue/retry" => {
             let command_id = required_string(object.get("commandId"), "commandId")?;
-            serde_json::to_value(store.outbox_retry_failed(command_id)?).map_err(Into::into)
+            let command = delivery.retry(command_id).await?;
+            Ok(changed(serde_json::to_value(&command)?, &command))
         }
-        "companion/queue/move" => queue_move(store, object),
+        "companion/queue/move" => {
+            let command_id = required_string(object.get("commandId"), "commandId")?;
+            let thread_id = delivery
+                .command(command_id)
+                .await?
+                .map(|command| command.remote_thread_id);
+            let value = queue_move(delivery, object).await?;
+            let moved = value.get("moved").and_then(Value::as_bool) == Some(true);
+            Ok(QueueRpcResult {
+                value,
+                changed_thread_id: moved.then_some(thread_id).flatten(),
+            })
+        }
         _ => Err(crate::store::StoreError::CorruptedIndex(
             "unknown companion queue method".into(),
         )),
@@ -51,33 +84,10 @@ pub(super) fn queue_command(params: &Value) -> Option<&Map<String, Value>> {
         .or(Some(object))
 }
 
-pub(super) fn queue_changed_thread_id(
-    store: &IndexStore,
-    method: &str,
-    params: &Value,
-) -> Option<String> {
-    if method == "companion/queue/list" {
-        return None;
-    }
-    if method == "companion/queue/put" {
-        return queue_command(params)?
-            .get("remoteThreadId")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-    }
-    let command_id = params.get("commandId").and_then(Value::as_str)?;
-    store
-        .outbox_list(None)
-        .ok()?
-        .into_iter()
-        .find(|command| command.command_id == command_id)
-        .map(|command| command.remote_thread_id)
-}
-
-fn queue_put(
-    store: &IndexStore,
+async fn queue_put(
+    delivery: &TurnDelivery,
     object: &Map<String, Value>,
-) -> Result<Value, crate::store::StoreError> {
+) -> Result<OutboxCommand, crate::store::StoreError> {
     let command = object
         .get("command")
         .and_then(Value::as_object)
@@ -101,19 +111,20 @@ fn queue_put(
             ));
         }
     };
-    serde_json::to_value(store.outbox_put_turn_start_with_workspace(
-        command_id,
-        thread_id,
-        rpc_params,
-        created_at,
-        presentation,
-        workspace_request_id,
-    )?)
-    .map_err(Into::into)
+    delivery
+        .put(
+            command_id,
+            thread_id,
+            rpc_params,
+            created_at,
+            presentation,
+            workspace_request_id,
+        )
+        .await
 }
 
-fn queue_move(
-    store: &IndexStore,
+async fn queue_move(
+    delivery: &TurnDelivery,
     object: &Map<String, Value>,
 ) -> Result<Value, crate::store::StoreError> {
     let command_id = required_string(object.get("commandId"), "commandId")?;
@@ -122,19 +133,19 @@ fn queue_move(
             Value::Null => None,
             value => Some(required_string(Some(value), "beforeCommandId")?),
         };
-        store.outbox_place(command_id, before)?
+        delivery.place(command_id, before).await?
     } else {
-        queue_move_relative(store, command_id, object)?
+        queue_move_relative(delivery, command_id, object).await?
     };
     Ok(json!({"moved": moved}))
 }
 
-fn queue_move_relative(
-    store: &IndexStore,
+async fn queue_move_relative(
+    delivery: &TurnDelivery,
     command_id: &str,
     object: &Map<String, Value>,
 ) -> Result<bool, crate::store::StoreError> {
-    let commands = store.outbox_list(None)?;
+    let commands = delivery.list(None).await?;
     let selected = commands
         .iter()
         .find(|command| command.command_id == command_id)
@@ -177,7 +188,7 @@ fn queue_move_relative(
             .get(target.saturating_add(1))
             .map(|command| command.command_id.as_str())
     };
-    store.outbox_place(command_id, before)
+    delivery.place(command_id, before).await
 }
 
 fn required_string<'a>(
@@ -187,4 +198,18 @@ fn required_string<'a>(
     value.and_then(Value::as_str).ok_or_else(|| {
         crate::store::StoreError::CorruptedIndex(format!("{label} must be a string"))
     })
+}
+
+fn changed(value: Value, command: &OutboxCommand) -> QueueRpcResult {
+    QueueRpcResult {
+        value,
+        changed_thread_id: Some(command.remote_thread_id.clone()),
+    }
+}
+
+const fn unchanged(value: Value) -> QueueRpcResult {
+    QueueRpcResult {
+        value,
+        changed_thread_id: None,
+    }
 }

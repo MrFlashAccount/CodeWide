@@ -60,6 +60,8 @@ pub struct ManagedRuntimeConfig {
     pub codex_home: PathBuf,
     pub app_server_socket: PathBuf,
     pub enable_mutations: bool,
+    /// Host-owned rollout gate for admitting new durable delegated tasks.
+    pub delegate_task_enabled: bool,
     pub secret_storage_policy: SecretStoragePolicy,
     pub host_display_name: HostDisplayName,
     pub listen_address: SocketAddr,
@@ -79,6 +81,7 @@ impl ManagedRuntimeConfig {
             app_server_socket: codex_home.join("app-server-control/app-server-control.sock"),
             codex_home,
             enable_mutations: true,
+            delegate_task_enabled: true,
             secret_storage_policy: SecretStoragePolicy::PlatformPreferred,
             host_display_name,
             listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8767)),
@@ -102,6 +105,14 @@ impl ManagedRuntimeConfig {
     #[must_use]
     pub fn with_dictation_proxy(mut self, proxy: HttpProxyConfig) -> Self {
         self.dictation_proxy = proxy;
+        self
+    }
+
+    /// Sets the host-owned rollout gate for new `codewide_delegate_task`
+    /// admission without disabling recovery or compatibility tools.
+    #[must_use]
+    pub const fn with_delegate_task_enabled(mut self, enabled: bool) -> Self {
+        self.delegate_task_enabled = enabled;
         self
     }
 
@@ -268,6 +279,7 @@ impl ManagedRuntime {
             store.clone(),
             config.enable_mutations,
         )
+        .with_delegate_task_enabled(config.delegate_task_enabled)
         .with_content_projector(Arc::new(ContentProjector::new(content.clone())))
         .with_dictation(dictation)
         .with_files(files.clone())
@@ -663,6 +675,19 @@ mod tests {
     };
     use tokio::net::TcpListener;
     use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn desktop_host_can_close_only_new_delegate_task_admission() -> RuntimeResult<()> {
+        let config = ManagedRuntimeConfig::desktop(
+            PathBuf::from("state"),
+            PathBuf::from("codex"),
+            HostDisplayName::new("Test computer")?,
+        )
+        .with_delegate_task_enabled(false);
+        assert!(!config.delegate_task_enabled);
+        assert!(config.enable_mutations);
+        Ok(())
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn fresh_desktop_runtime_starts_without_a_running_app_server() -> RuntimeResult<()> {

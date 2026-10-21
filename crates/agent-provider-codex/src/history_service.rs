@@ -454,20 +454,48 @@ impl HistoryService {
         rollout_monitor::spawn(self.catalog.rollout_roots())
     }
 
-    /// Reads the canonical subagent tree from the shared thread metadata index.
+    /// Reads the canonical subagent tree from the shared thread metadata index,
+    /// with each child's `running` taken from its rollout's latest turn.
+    ///
+    /// The App Server reports an unloaded child as `notLoaded`, which says
+    /// nothing about its turn. A client that missed the child's terminal event
+    /// can only retire its stale running state from an authoritative snapshot,
+    /// so this read answers from the rollout rather than leaving it unknown.
     ///
     /// # Errors
     ///
     /// Returns an error when the root id is missing or the index cannot be read.
-    pub fn subagent_descendants(&self, params: &Value) -> Result<Value, HistoryServiceError> {
+    pub async fn subagent_descendants(&self, params: &Value) -> Result<Value, HistoryServiceError> {
         let root_thread_id = params
             .get("threadId")
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty())
-            .ok_or(HistoryServiceError::MissingThreadId)?;
-        Ok(json!({
-            "threads": self.store.threads().thread_descendants(root_thread_id)?
-        }))
+            .ok_or(HistoryServiceError::MissingThreadId)?
+            .to_owned();
+        let catalog = self.catalog.clone();
+        let store = self.store.clone();
+        let summaries = self.summaries.clone();
+        let previews = self.previews.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut threads = store.threads().thread_descendants(&root_thread_id)?;
+            for thread in threads.iter_mut().filter(|thread| thread.running.is_none()) {
+                thread.running =
+                    match latest_thread_state(&catalog, &store, &summaries, &previews, &thread.id) {
+                        Ok(state) => Some(state.active),
+                        // A child observed live before its rollout exists.
+                        Err(HistoryServiceError::Catalog(CatalogError::NotFound(_))) => None,
+                        Err(error) => {
+                            // An unreadable child stays unknown; the rest of the
+                            // tree is still authoritative.
+                            tracing::warn!(thread_id = thread.id, %error, "sub-agent turn state is unavailable");
+                            None
+                        }
+                    };
+            }
+            Ok(json!({ "threads": threads }))
+        })
+        .await
+        .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
     }
 
     /// Builds a small semantic invalidation for changes written by a different

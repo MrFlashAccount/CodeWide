@@ -315,3 +315,48 @@ async fn the_copied_parent_header_does_not_overwrite_the_parent_thread_row() -> 
     );
     Ok(())
 }
+
+/// A client that missed a child's terminal event retires its stale running
+/// state only from the tree snapshot, so the snapshot answers from the rollout.
+#[tokio::test]
+async fn the_subagent_tree_reports_each_child_turn_state_from_its_rollout() -> TestResult {
+    const RUNNING: &str = "019fe7af-1000-7000-8000-000000000011";
+    let directory = tempfile::tempdir()?;
+    let finished_path = rollout_path(directory.path(), CHILD)?;
+    append(&finished_path, &[child_header(&json!({}))])?;
+    append(&finished_path, &completed_turns(&["c0"]))?;
+    // A background command of the finished turn that settles after it.
+    append(
+        &finished_path,
+        &[event(&json!({"type": "item_completed", "turn_id": "c0",
+            "item": {"type": "CommandExecution", "id": "exec-late", "status": "failed"}}))],
+    )?;
+    let running_path = rollout_path(directory.path(), RUNNING)?;
+    let mut running_header = child_header(&json!({}));
+    running_header["payload"]["id"] = json!(RUNNING);
+    append(&running_path, &[running_header])?;
+    append(&running_path, &completed_turns(&["r0"]))?;
+    append(
+        &running_path,
+        &[event(&json!({"type": "task_started", "turn_id": "r1"}))],
+    )?;
+    let service = service(directory.path())?;
+    crate::rollout::index_rollout_fully(&service.store, &finished_path)?;
+    crate::rollout::index_rollout_fully(&service.store, &running_path)?;
+
+    let tree = service
+        .subagent_descendants(&json!({"threadId": PARENT}))
+        .await?;
+    let mut states = tree["threads"]
+        .as_array()
+        .ok_or("the tree lists threads")?
+        .iter()
+        .map(|thread| (thread["id"].clone(), thread["running"].clone()))
+        .collect::<Vec<_>>();
+    states.sort_by_key(|(id, _)| id.to_string());
+    assert_eq!(
+        states,
+        [(json!(CHILD), json!(false)), (json!(RUNNING), json!(true))]
+    );
+    Ok(())
+}

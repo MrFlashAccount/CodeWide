@@ -96,11 +96,12 @@ pub trait NativeThreadStore: Send + Sync {
         active_turn: &mut Value,
     ) -> Result<(), String>;
 
-    /// The stored subagent tree under `params.threadId`.
+    /// The stored subagent tree under `params.threadId`, each child carrying
+    /// whether its latest turn is running.
     ///
     /// # Errors
     /// Returns an error when the root id is missing or the index cannot be read.
-    fn subagent_descendants(&self, params: &Value) -> Result<Value, String>;
+    async fn subagent_descendants(&self, params: &Value) -> Result<Value, String>;
 
     /// The pin snapshot, with stored archive state for `stored_threads`.
     async fn pin_snapshot(&self, stored_threads: HashSet<String>) -> Result<Value, String>;

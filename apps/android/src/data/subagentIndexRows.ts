@@ -125,9 +125,9 @@ function isRelayedSessionSource(value: unknown): value is Thread["source"] {
 }
 
 /**
- * A provider that indexes its sub-agents itself (Claude) says whether one
- * runs; other children (Codex) report their status through live thread events,
- * so their index row stays `notLoaded` until one arrives.
+ * The Companion says whether a sub-agent runs (Claude from its own index,
+ * Codex from the child's rollout). A row without it (an older Companion, or a
+ * child whose rollout is unreadable) stays `notLoaded` until a live event arrives.
  */
 function indexedSubagentStatus(running: boolean | undefined): Thread["status"] {
   if (running === undefined) {

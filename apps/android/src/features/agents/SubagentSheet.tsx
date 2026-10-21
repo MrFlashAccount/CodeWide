@@ -1,32 +1,36 @@
-import { Suspense, useState, useTransition, type ReactNode } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { type LayoutChangeEvent, useWindowDimensions } from "react-native";
 
 import { subagentsForThread } from "../../data/subagent-projection";
-import { applyThreadSummaryMetadata } from "../../data/thread-chat-projection";
-import {
-  materializeThreadDetails,
-  type ThreadDetailDatabase,
-} from "../../data/thread-detail-database";
+import type { ThreadDetailDatabase } from "../../data/thread-detail-database";
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
-import { useThreadChatWindow } from "../../data/use-thread-chat-window";
 import { useEvent } from "../../react/useEvent";
-import { RecoverableRenderBoundary } from "../../ui/RecoverableRenderBoundary";
-import { SubagentPendingDetail } from "./SubagentPendingDetail";
+import { SubagentDetail } from "./SubagentDetail";
 import {
   MASTER_DETAIL_BREAKPOINT,
   MASTER_MAX_WIDTH,
   MASTER_MIN_WIDTH,
   SubagentWorkspace,
 } from "./SubagentWorkspace";
+import {
+  projectSubagentLineage,
+  subagentParentBreadcrumb,
+  type SubagentLineageRow,
+} from "./lineageProjection";
 import type { SubagentThreadView } from "./subagentConversationContract";
 
 const MASTER_WIDTH_RATIO = 0.32;
+
+type SubagentSelection =
+  | { readonly selectedThreadId: string | null; readonly status: "list" }
+  | { readonly selectedThreadId: string; readonly status: "detail" };
 
 /** Preserves the original V1 master/detail selection and captured-catalog contract. */
 export function SubagentSheet({
   connectionId,
   initialThreadId = null,
   onClose,
+  parentLabel,
   parentThreadId,
   renderThread,
   summaries,
@@ -35,39 +39,44 @@ export function SubagentSheet({
   readonly connectionId: string;
   readonly initialThreadId?: string | null;
   readonly onClose: () => void;
+  readonly parentLabel: string | null;
   readonly parentThreadId: string;
   readonly renderThread: (view: SubagentThreadView) => ReactNode;
   readonly summaries: readonly StoredThreadSummary[];
   readonly threadDetails: ThreadDetailDatabase;
 }): React.JSX.Element {
-  const [selectedId, setSelectedId] = useState<string | null>(initialThreadId);
+  const [selection, setSelection] = useState<SubagentSelection>(() =>
+    initialSelection(initialThreadId),
+  );
   const [measuredWidth, setMeasuredWidth] = useState(0);
   const [, startSubagentTransition] = useTransition();
   const window = useWindowDimensions();
-  const width = measuredWidth > 0 ? measuredWidth : window.width;
+  const width = resolvedWidth(measuredWidth, window.width);
   const compact = width < MASTER_DETAIL_BREAKPOINT;
-  const masterWidth = compact
-    ? width
-    : Math.min(
-        MASTER_MAX_WIDTH,
-        Math.max(MASTER_MIN_WIDTH, Math.floor(width * MASTER_WIDTH_RATIO)),
-      );
+  const masterWidth = resolvedMasterWidth(width, compact);
   const subagents = subagentsForThread(summaries, parentThreadId);
-  const selected = subagents.find((summary) => summary.remoteThreadId === selectedId) ?? null;
+  const lineageRows = projectSubagentLineage(subagents, parentThreadId, parentLabel);
+  const selectedRow = findSelectedRow(lineageRows, selection.selectedThreadId);
+  const selected = selectedRow?.summary ?? null;
+  const parentBreadcrumb = selectedBreadcrumb(selectedRow);
+  const detailOpen = selection.status === "detail" && selected !== null;
 
-  const resetSelection = (): void => {
+  const backToList = useEvent((): void => {
     startSubagentTransition(() => {
-      setSelectedId(null);
+      setSelection({ selectedThreadId: selected?.remoteThreadId ?? null, status: "list" });
     });
-  };
-  const close = (): void => {
-    resetSelection();
+  });
+  const close = useEvent((): void => {
+    setSelection({ selectedThreadId: null, status: "list" });
     onClose();
-  };
+  });
   const openById = useEvent((threadId: string): void => {
     startSubagentTransition(() => {
-      setSelectedId(threadId);
+      setSelection({ selectedThreadId: threadId, status: "detail" });
     });
+  });
+  const selectSubagent = useEvent((summary: StoredThreadSummary): void => {
+    openById(summary.remoteThreadId);
   });
   const updateMeasuredWidth = useEvent((event: LayoutChangeEvent): void => {
     const next = Math.floor(event.nativeEvent.layout.width);
@@ -75,12 +84,13 @@ export function SubagentSheet({
   });
   const detail =
     selected === null ? null : (
-      <SubagentDetailBoundary
+      <SubagentDetail
         compact={compact}
         connectionId={connectionId}
-        onBack={resetSelection}
+        onBack={backToList}
         onClose={close}
         onOpenSubagent={openById}
+        parentBreadcrumb={parentBreadcrumb}
         renderThread={renderThread}
         summary={selected}
         threadDetails={threadDetails}
@@ -90,115 +100,47 @@ export function SubagentSheet({
   return (
     <SubagentWorkspace
       compact={compact}
+      detailOpen={detailOpen}
       masterWidth={masterWidth}
       onClose={close}
       onLayout={updateMeasuredWidth}
-      onSelect={(summary) => {
-        openById(summary.remoteThreadId);
-      }}
+      onSelect={selectSubagent}
+      restoreFocusThreadId={selection.status === "list" ? selection.selectedThreadId : null}
       selected={selected}
-      subagents={subagents}
+      subagents={lineageRows}
     >
       {detail}
     </SubagentWorkspace>
   );
 }
 
-function SubagentDetailBoundary({
-  compact,
-  connectionId,
-  onBack,
-  onClose,
-  onOpenSubagent,
-  renderThread,
-  summary,
-  threadDetails,
-}: {
-  readonly compact: boolean;
-  readonly connectionId: string;
-  readonly onBack: () => void;
-  readonly onClose: () => void;
-  readonly onOpenSubagent: (threadId: string) => void;
-  readonly renderThread: (view: SubagentThreadView) => ReactNode;
-  readonly summary: StoredThreadSummary;
-  readonly threadDetails: ThreadDetailDatabase;
-}): React.JSX.Element {
-  const fallback = (
-    <SubagentPendingDetail
-      compact={compact}
-      error={null}
-      loading
-      onBack={onBack}
-      onClose={onClose}
-      summary={summary}
-    />
-  );
-  return (
-    <RecoverableRenderBoundary
-      context={`Connection: ${connectionId}\nThread: ${summary.remoteThreadId}`}
-      label="Subagent conversation"
-      onDismiss={onBack}
-      resetKey={`${connectionId}:${summary.remoteThreadId}`}
-      scope="surface"
-    >
-      <Suspense fallback={fallback}>
-        <SubagentConversationDetail
-          compact={compact}
-          connectionId={connectionId}
-          onBack={onBack}
-          onOpenSubagent={onOpenSubagent}
-          renderThread={renderThread}
-          summary={summary}
-          threadDetails={threadDetails}
-        />
-      </Suspense>
-    </RecoverableRenderBoundary>
+function initialSelection(initialThreadId: string | null): SubagentSelection {
+  return initialThreadId === null
+    ? { selectedThreadId: null, status: "list" }
+    : { selectedThreadId: initialThreadId, status: "detail" };
+}
+
+function resolvedWidth(measuredWidth: number, windowWidth: number): number {
+  return measuredWidth > 0 ? measuredWidth : windowWidth;
+}
+
+function resolvedMasterWidth(width: number, compact: boolean): number {
+  if (compact) {
+    return width;
+  }
+  return Math.min(
+    MASTER_MAX_WIDTH,
+    Math.max(MASTER_MIN_WIDTH, Math.floor(width * MASTER_WIDTH_RATIO)),
   );
 }
 
-function SubagentConversationDetail({
-  compact,
-  connectionId,
-  onBack,
-  onOpenSubagent,
-  renderThread,
-  summary,
-  threadDetails,
-}: {
-  readonly compact: boolean;
-  readonly connectionId: string;
-  readonly onBack: () => void;
-  readonly onOpenSubagent: (threadId: string) => void;
-  readonly renderThread: (view: SubagentThreadView) => ReactNode;
-  readonly summary: StoredThreadSummary;
-  readonly threadDetails: ThreadDetailDatabase;
-}): ReactNode {
-  const threadId = summary.remoteThreadId;
-  const detailWindow = useThreadChatWindow(threadDetails, {
-    anchorTurnId: null,
-    connectionId,
-    threadId,
-  });
-  const detailRows =
-    detailWindow === null
-      ? []
-      : [...detailWindow.turnRows, ...detailWindow.detailRows, ...detailWindow.liveRows];
-  const materializedThread =
-    materializeThreadDetails(detailRows, threadDetails.sessionId).find(
-      (snapshot) => snapshot.connectionId === connectionId && snapshot.thread.id === threadId,
-    )?.thread ?? null;
-  // The provider adapter serves the subagent thread as its own content: it is
-  // rendered as it arrives.
-  const thread = applyThreadSummaryMetadata(materializedThread, summary);
-  if (thread === null) {
-    throw new Error(`Subagent conversation ${threadId} did not materialize from its ready window`);
-  }
-  return renderThread({
-    compact,
-    connectionId,
-    ...(compact ? { onBack } : {}),
-    onOpenSubagent,
-    summary,
-    thread,
-  });
+function findSelectedRow(
+  rows: readonly SubagentLineageRow[],
+  selectedThreadId: string | null,
+): SubagentLineageRow | null {
+  return rows.find((row) => row.summary.remoteThreadId === selectedThreadId) ?? null;
+}
+
+function selectedBreadcrumb(row: SubagentLineageRow | null): string | null {
+  return row === null ? null : subagentParentBreadcrumb(row.lineage);
 }
