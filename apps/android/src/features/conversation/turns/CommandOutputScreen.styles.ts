@@ -41,6 +41,10 @@ export const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     ...typeScale.label,
   },
+  loading: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
   status: {
     color: colors.textMuted,
     flexShrink: 0,

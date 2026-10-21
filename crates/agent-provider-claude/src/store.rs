@@ -54,8 +54,10 @@ const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// stayed finished). 10: each sub-agent's own model ([`IndexedSubagent::model`]).
 /// 11: every background agent a report naming several tasks stopped (only
 /// the first one stopped; the others stayed running forever), and a
-/// sub-agent cut off before its answer is interrupted, not completed.
-pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 11;
+/// sub-agent cut off before its answer is interrupted, not completed. 12:
+/// `Monitor` calls and `TaskStop` calls that stopped a shell task are
+/// `command` items (they were generic tool calls).
+pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 12;
 
 /// The Claude tables' schema in the host index.
 pub const CLAUDE_INDEX_SCHEMA: ClaudeIndexSchema = ClaudeIndexSchema;

@@ -5,7 +5,8 @@
 //!
 //! - `json` — structural access to records under both field spellings.
 //! - `frames` — one message → `ClaudeFrame` (never fails).
-//! - `tools`, `diffs`, `agents`, `client_tools` — tool calls → neutral items.
+//! - `tools`, `shell_tools`, `diffs`, `agents`, `client_tools` — tool calls
+//!   → neutral items.
 //! - `task_reports`, `task_notifications` — background task reports (stored
 //!   `<task-notification>` messages, live `task_notification` frames) →
 //!   neutral `taskNotification` items.
@@ -27,11 +28,14 @@ pub mod json;
 pub mod reconstruct;
 pub mod result;
 pub mod segments;
+pub mod shell_tools;
 pub mod task_notifications;
 pub mod task_reports;
 pub mod tools;
 pub mod turn_index;
 
+#[cfg(test)]
+mod shell_tool_tests;
 #[cfg(test)]
 mod task_report_tests;
 #[cfg(test)]

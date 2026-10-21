@@ -1,5 +1,5 @@
 import type { RenderBlock } from "@codewide/renderers";
-import { fireEvent, render } from "@testing-library/react-native";
+import { fireEvent, render, within } from "@testing-library/react-native";
 import { CommandItemOutputViewer } from "../src/features/conversation/content/CommandContentViewer";
 import { LargeContentViewerContext } from "../src/features/conversation/content/contentViewerContext";
 import { CommandExecutionProtocolBlock } from "../src/features/conversation/protocol/CommandOutput";
@@ -17,6 +17,7 @@ jest.mock("../src/rendering/command-output-resource", () => ({
   ...jest.requireActual("../src/rendering/command-output-resource"),
   readCommandOutput: (...args: unknown[]) => mockReadCommandOutput(...args),
 }));
+jest.mock("expo-libghostty", () => jest.requireActual("./mocks/ExpoLibghostty"));
 
 const target = { connectionId: "server", threadId: "thread", turnId: "turn" };
 const outputReference = {
@@ -61,7 +62,7 @@ it("opens the exact command output without using its disclosure action", () => {
       kind: "command",
       references: [],
       threadId: "thread",
-      title: "pnpm test",
+      command: "pnpm test",
       turnId: "turn",
     },
   ]);
@@ -227,14 +228,24 @@ it("shows command output that the Companion moved into private content", async (
         kind: "command",
         references: [reference],
         threadId: "thread",
-        title: "pnpm test",
+        command: "pnpm test",
         turnId: "turn",
       }}
       resourceKey="server:thread:item-command"
     />,
   );
 
-  expect(await view.findByText("1–13 / 13 bytes")).toBeOnTheScreen();
+  // A shell command always opens in the terminal: a short title, the complete
+  // command as its prompt line, the output in Ghostty and the result below.
+  expect(await view.findByTestId("terminal-grid")).toHaveTextContent("first\r\nsecond\r\n", {
+    normalizeWhitespace: false,
+  });
+  expect(view.getByRole("header")).toHaveTextContent("Command");
+  const prompt = view.getByTestId("command-output-command");
+  expect(within(prompt).getByText("❯")).toBeOnTheScreen();
+  expect(within(prompt).getByText("pnpm test")).toBeOnTheScreen();
+  expect(view.getByText("Finished")).toBeOnTheScreen();
+  expect(view.getByText("· exit 0 · 13 B")).toBeOnTheScreen();
   expect(mockReadCommandOutput).toHaveBeenCalledWith(
     expect.objectContaining({ byteLimit: 13, getTransferAccess, references: [reference] }),
     expect.anything(),
@@ -255,14 +266,19 @@ it("reads the output it was opened with when the thread holds the item no longer
         kind: "command",
         references: [outputReference],
         threadId: "thread:agent:a1",
-        title: "pnpm test",
+        command: "pnpm test",
         turnId: "turn",
       }}
       resourceKey="server:thread:agent:a1:item-command"
     />,
   );
 
-  expect(await view.findByText("1–13 / 13 bytes")).toBeOnTheScreen();
+  expect(await view.findByTestId("terminal-grid")).toHaveTextContent("first\r\nsecond\r\n", {
+    normalizeWhitespace: false,
+  });
+  expect(
+    within(view.getByTestId("command-output-command")).getByText("pnpm test"),
+  ).toBeOnTheScreen();
   expect(mockReadCommandOutput).toHaveBeenLastCalledWith(
     expect.objectContaining({ getTransferAccess, references: [outputReference] }),
     expect.anything(),
