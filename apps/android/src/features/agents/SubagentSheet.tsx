@@ -2,11 +2,8 @@ import { Suspense, useState, useTransition, type ReactNode } from "react";
 import { type LayoutChangeEvent, useWindowDimensions } from "react-native";
 
 import { subagentsForThread } from "../../data/subagent-projection";
-import { applyThreadSummaryMetadata } from "../../data/thread-chat-projection";
-import {
-  materializeThreadDetails,
-  type ThreadDetailDatabase,
-} from "../../data/thread-detail-database";
+import { projectThreadChatWindow } from "../../data/thread-chat-projection";
+import type { ThreadDetailDatabase } from "../../data/thread-detail-database";
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { useThreadChatWindow } from "../../data/use-thread-chat-window";
 import { useEvent } from "../../react/useEvent";
@@ -179,17 +176,13 @@ function SubagentConversationDetail({
     connectionId,
     threadId,
   });
-  const detailRows =
+  // Main and subagent conversations must share one sealed/live merge contract.
+  // A second materialization path makes mutable active-head behavior diverge.
+  const thread =
     detailWindow === null
-      ? []
-      : [...detailWindow.turnRows, ...detailWindow.detailRows, ...detailWindow.liveRows];
-  const materializedThread =
-    materializeThreadDetails(detailRows, threadDetails.sessionId).find(
-      (snapshot) => snapshot.connectionId === connectionId && snapshot.thread.id === threadId,
-    )?.thread ?? null;
-  // The provider adapter serves the subagent thread as its own content: it is
-  // rendered as it arrives.
-  const thread = applyThreadSummaryMetadata(materializedThread, summary);
+      ? null
+      : projectThreadChatWindow(threadDetails, detailWindow, connectionId, threadId, false, summary)
+          .remoteThread;
   if (thread === null) {
     throw new Error(`Subagent conversation ${threadId} did not materialize from its ready window`);
   }

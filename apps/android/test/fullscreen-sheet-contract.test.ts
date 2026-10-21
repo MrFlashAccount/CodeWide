@@ -88,7 +88,10 @@ const ownerAgentsFeature = compactSource(
 );
 const agentsRoute = compactSource(
   readFileSync(
-    new URL("../app/(workspace)/threads/[connectionId]/[threadId]/agents/index.tsx", import.meta.url),
+    new URL(
+      "../app/(workspace)/threads/[connectionId]/[threadId]/agents/index.tsx",
+      import.meta.url,
+    ),
     "utf8",
   ),
 );
@@ -213,7 +216,7 @@ const destinationView = compactSource(
 );
 
 describe("fullscreen workspace presentation", () => {
-  it("owns system safe areas in the single shared fullscreen shell", () => {
+  it("owns system safe areas in every app fullscreen window", () => {
     for (const source of [nativeFullscreenModal, androidFullscreenModal, webFullscreenModal]) {
       expect(source).toContain('testID="fullscreen-modal-safe-area"');
       expect(source).toContain("edges={FULLSCREEN_SAFE_AREA_EDGES}");
@@ -276,9 +279,9 @@ describe("fullscreen workspace presentation", () => {
     );
     expect(fullscreenOverlay).toContain("onShow={() => {");
     expect(fullscreenOverlay).toContain("entry.lifecycle?.didClose?.(entry.id)");
-    expect(fullscreenOverlay).toContain("const active = entries.at(-1) ?? null;");
-    expect(fullscreenOverlay).toContain("active === null");
+    expect(fullscreenOverlay).toContain("if (entries.length === 0)");
     expect(fullscreenOverlay).toContain("return null;");
+    expect(fullscreenOverlay).toContain("markShown(entry.id);");
     expect(nativeFullscreenModal).toContain("!isOpen");
     expect(nativeFullscreenModal).toContain("return null;");
     expect(fullscreenOverlay).toMatch(
@@ -286,13 +289,16 @@ describe("fullscreen workspace presentation", () => {
     );
   });
 
-  it("keeps parent fullscreen workspaces mounted when a child is presented", () => {
-    expect(fullscreenOverlay).toContain("entries.map((entry) => {");
-    expect(fullscreenOverlay).toContain("const isActive = entry.id === active.id;");
+  it("gives every logical fullscreen entry a native window and keeps parents mounted", () => {
+    expect(fullscreenOverlay).toContain("entries.map((entry) => (");
+    expect(fullscreenOverlay).toContain("<AppFullscreenModal");
     expect(fullscreenOverlay).toContain("key={entry.id}");
-    expect(fullscreenOverlay).toContain("!isActive && styles.hiddenLayer");
-    expect(fullscreenOverlay).toContain('hiddenLayer: { display: "none" }');
-    expect(fullscreenOverlay).not.toContain("{active.content}");
+    expect(fullscreenOverlay).toContain("close(entry.id);");
+    expect(fullscreenOverlay).toContain("markShown(entry.id);");
+    expect(fullscreenOverlay).not.toContain("nativeModalAlreadyOpen");
+    expect(fullscreenOverlay).not.toContain("markAllShown");
+    expect(fullscreenOverlay).not.toContain("hiddenLayer");
+    expect(fullscreenOverlay).not.toContain("const active = entries.at(-1)");
   });
 
   it("mounts exactly one fullscreen overlay host for the application", () => {
@@ -441,7 +447,12 @@ describe("fullscreen workspace presentation", () => {
   });
 
   it("keeps the model-owned cached subagent text visible and updates recycled selection", () => {
-    expect(subagentSheet).toContain("applyThreadSummaryMetadata(materializedThread, summary)");
+    expect(subagentSheet).toContain("projectThreadChatWindow(");
+    expect(subagentSheet).toContain("detailWindow,");
+    expect(subagentSheet).toContain("summary,");
+    expect(subagentSheet).toContain(".remoteThread;");
+    expect(subagentSheet).not.toContain("materializeThreadDetails");
+    expect(subagentSheet).not.toContain("applyThreadSummaryMetadata");
     expect(subagentSheet).toContain("did not materialize from its ready window");
     expect(subagentSheet).toContain("if (thread === null)");
     expect(subagentSheet).not.toContain("projectSubagentConversation");

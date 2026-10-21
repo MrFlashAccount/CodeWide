@@ -98,8 +98,17 @@ controller and Terminal store outlive route children.
 `RouteFullscreenOverlay` keeps fullscreen content owned by its Expo Router destination while
 projecting the rendered workspace into the application-level `AppFullscreenOverlayHost`. The host
 sits above the responsive split shell, so Changes, documents, large content, browser, drawing,
-subagents and Terminal cover both panes. Overlay close and system Back dismiss the owning route;
-route teardown closes the overlay without navigating a second time.
+subagents and Terminal cover both panes. It is the single presentation owner, but every logical
+overlay entry receives its own native modal window; earlier entries remain mounted beneath newer
+ones. Android's window stack therefore orders a fullscreen child above the sheet or dialog that
+opened it without losing the parent workspace state. React `zIndex` and `elevation` never cross
+native-window boundaries. Overlay close and system Back dismiss the top owning route; route
+teardown closes the overlay without navigating a second time.
+
+Every conversation surface, including the read-only subagent workspace, consumes the retained
+thread window through `projectThreadChatWindow`. That projector is the single owner of merging
+immutable sealed history with the mutable active head; nested routes do not rematerialize database
+rows through a separate path.
 
 ## Global Voice non-route boundary
 
