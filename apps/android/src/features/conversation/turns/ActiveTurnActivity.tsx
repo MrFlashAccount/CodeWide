@@ -54,7 +54,11 @@ export function ActiveTurnActivity(props: ActiveTurnActivityProps): ReactElement
       <TurnActivity expanded={false} label={label} loading onToggle={openSheet} opensSheet>
         {null}
       </TurnActivity>
-      <CurrentActions blocks={currentActions(props.part.blocks)} turnKey={props.turn.key} />
+      <CurrentActions
+        blocks={currentActions(props.part.blocks)}
+        getTransferAccess={props.getTransferAccess}
+        turnKey={props.turn.key}
+      />
       <ActivityDetailSheet
         blocks={sheetVisible ? groupBlocks(props) : props.part.blocks}
         onClose={closeSheet}
@@ -72,27 +76,48 @@ export function ActiveTurnActivity(props: ActiveTurnActivityProps): ReactElement
   );
 }
 
+type GetTransferAccess = (() => Promise<TransferAccess>) | undefined;
+
 function CurrentActions({
   blocks,
+  getTransferAccess,
   turnKey,
 }: {
   blocks: readonly RenderBlock[];
+  getTransferAccess: GetTransferAccess;
   turnKey: string;
 }): ReactElement {
   return (
     <View style={styles.turnActivityList} testID="active-turn-current-actions">
       {blocks.map((block) => (
-        <CurrentAction block={block} key={block.key} turnKey={turnKey} />
+        <CurrentAction
+          block={block}
+          getTransferAccess={getTransferAccess}
+          key={block.key}
+          turnKey={turnKey}
+        />
       ))}
     </View>
   );
 }
 
-function CurrentAction({ block, turnKey }: { block: RenderBlock; turnKey: string }): ReactElement {
+/** A running action reads its externalized output like any other command card. */
+function CurrentAction({
+  block,
+  getTransferAccess,
+  turnKey,
+}: {
+  block: RenderBlock;
+  getTransferAccess: GetTransferAccess;
+  turnKey: string;
+}): ReactElement {
   return (
     <ActiveToolCallContext.Provider value>
       <ExpansionItemKeyContext.Provider value={`${turnKey}:${block.key}`}>
-        <ProtocolBlock block={block} />
+        <ProtocolBlock
+          block={block}
+          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+        />
       </ExpansionItemKeyContext.Provider>
     </ActiveToolCallContext.Provider>
   );

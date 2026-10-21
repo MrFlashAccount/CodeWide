@@ -19,6 +19,12 @@ jest.mock("../src/rendering/command-output-resource", () => ({
 }));
 
 const target = { connectionId: "server", threadId: "thread", turnId: "turn" };
+const outputReference = {
+  byteLength: 13,
+  contentType: "text/plain; charset=utf-8",
+  encoding: "utf-8",
+  id: "a".repeat(64),
+};
 
 it("opens the exact command output without using its disclosure action", () => {
   const opened: LargeContentRouteRequest[] = [];
@@ -53,11 +59,57 @@ it("opens the exact command output without using its disclosure action", () => {
       getTransferAccess: null,
       itemId: "item-command",
       kind: "command",
+      references: [],
+      threadId: "thread",
       title: "pnpm test",
       turnId: "turn",
     },
   ]);
   expect(view.getByLabelText("Expand pnpm test")).toBeOnTheScreen();
+});
+
+it("opens a subagent's command output from the subagent's own thread", () => {
+  const opened: LargeContentRouteRequest[] = [];
+  const block: RenderBlock = {
+    body: "",
+    collapsible: true,
+    content: null,
+    durationMs: null,
+    key: "command:item-command",
+    kind: "commandExecution",
+    raw: {
+      aggregatedOutput: "",
+      codewideContent: { fields: { "/aggregatedOutput": outputReference }, version: 1 },
+      command: "pnpm test",
+      id: "item-command",
+    },
+    status: "completed",
+    title: "pnpm test",
+    tone: "info",
+  };
+  // The subagent conversation renders under its parent thread's route.
+  const subagent = { ...target, threadId: "thread:agent:a1" };
+  const view = render(
+    <TurnTargetContext.Provider value={subagent}>
+      <LargeContentViewerContext.Provider
+        value={(request) => {
+          opened.push(request);
+        }}
+      >
+        <CommandExecutionProtocolBlock block={block} />
+      </LargeContentViewerContext.Provider>
+    </TurnTargetContext.Provider>,
+  );
+
+  fireEvent.press(view.getByLabelText("Open output for pnpm test"));
+  expect(opened).toEqual([
+    expect.objectContaining({
+      itemId: "item-command",
+      references: [outputReference],
+      threadId: "thread:agent:a1",
+      turnId: "turn",
+    }),
+  ]);
 });
 
 it("opens only the patches owned by the selected file-change call", () => {
@@ -173,6 +225,8 @@ it("shows command output that the Companion moved into private content", async (
         getTransferAccess,
         itemId: "item-command",
         kind: "command",
+        references: [reference],
+        threadId: "thread",
         title: "pnpm test",
         turnId: "turn",
       }}
@@ -183,6 +237,34 @@ it("shows command output that the Companion moved into private content", async (
   expect(await view.findByText("1–13 / 13 bytes")).toBeOnTheScreen();
   expect(mockReadCommandOutput).toHaveBeenCalledWith(
     expect.objectContaining({ byteLimit: 13, getTransferAccess, references: [reference] }),
+    expect.anything(),
+  );
+});
+
+it("reads the output it was opened with when the thread holds the item no longer", async () => {
+  mockReadCommandOutput.mockResolvedValue({ hasMore: false, text: "first\nsecond\n" });
+  const getTransferAccess = jest.fn();
+  const view = render(
+    <CommandItemOutputViewer
+      current={null}
+      onClose={jest.fn()}
+      request={{
+        fallbackOutput: "",
+        getTransferAccess,
+        itemId: "item-command",
+        kind: "command",
+        references: [outputReference],
+        threadId: "thread:agent:a1",
+        title: "pnpm test",
+        turnId: "turn",
+      }}
+      resourceKey="server:thread:agent:a1:item-command"
+    />,
+  );
+
+  expect(await view.findByText("1–13 / 13 bytes")).toBeOnTheScreen();
+  expect(mockReadCommandOutput).toHaveBeenLastCalledWith(
+    expect.objectContaining({ getTransferAccess, references: [outputReference] }),
     expect.anything(),
   );
 });
