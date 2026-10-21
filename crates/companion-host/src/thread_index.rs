@@ -25,8 +25,9 @@ pub struct IndexedThreadMetadata {
     pub agent_role: Option<String>,
     pub archived: bool,
     /// Whether a sub-agent thread is running now, when its provider knows it
-    /// from its own index (Claude); absent otherwise (Codex reports a child's
-    /// status through its own live thread events). Older rows have none.
+    /// from its own index (Claude). Stored Codex rows have none: the Codex
+    /// adapter derives it from the child's rollout when it serves the tree.
+    /// Older rows have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub running: Option<bool>,
 }

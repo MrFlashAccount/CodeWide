@@ -380,7 +380,8 @@ fn thread_metadata_from_record(
         archived: path
             .components()
             .any(|component| component.as_os_str() == "archived_sessions"),
-        // Codex reports a child's status through its own live thread events.
+        // A header cannot know the turn state; the subagent tree read derives
+        // it from the rollout's latest turn.
         running: None,
     })
 }
