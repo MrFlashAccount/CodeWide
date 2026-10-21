@@ -104,15 +104,19 @@ function useCommandOutputAction(
   const turnTarget = useContext(TurnTargetContext);
   const dispatchOutput = openContent ?? ignoreContentRequest;
   const itemId = typeof block.raw.id === "string" ? block.raw.id : block.key;
-  const turnId = turnTarget?.turnId ?? "";
   const open = useEvent(() => {
+    if (turnTarget === null) {
+      return;
+    }
     dispatchOutput({
       fallbackOutput: block.body ?? "",
       getTransferAccess,
       itemId,
       kind: "command",
+      references: commandOutputReferences(block.raw),
+      threadId: turnTarget.threadId,
       title,
-      turnId,
+      turnId: turnTarget.turnId,
     });
   });
   return { enabled: openContent !== null && turnTarget !== null, open };

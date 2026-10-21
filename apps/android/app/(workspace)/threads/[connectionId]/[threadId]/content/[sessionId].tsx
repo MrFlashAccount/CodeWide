@@ -75,7 +75,7 @@ export default function V1ContentRoute(): React.JSX.Element {
               database={resources.runtime.threadDetails}
               onClose={closeOverlay}
               request={session.request}
-              threadId={thread.value.threadId.value}
+              threadId={session.request.threadId}
             />
           );
         }

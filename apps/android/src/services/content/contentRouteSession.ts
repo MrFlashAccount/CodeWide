@@ -1,3 +1,4 @@
+import type { CommandOutputReference } from "@codewide/sync-client";
 import type { RenderContentReference } from "@codewide/renderers";
 import type { GetTransferAccess } from "../../data/private-transfer";
 import { RouteSessionRegistry, ROUTE_SESSION_TTL_MS } from "../routeSessionPolicy";
@@ -28,6 +29,13 @@ export type CommandContentRouteRequest = {
   readonly getTransferAccess: GetTransferAccess | null;
   readonly itemId: string;
   readonly kind: "command";
+  /** The opened item's output segments, read when its thread holds the item no longer. */
+  readonly references: readonly CommandOutputReference[];
+  /**
+   * The thread that owns the item: a subagent's own thread when opened from its
+   * conversation, not the thread whose route presents the viewer.
+   */
+  readonly threadId: string;
   readonly title: string;
   readonly turnId: string;
 };
