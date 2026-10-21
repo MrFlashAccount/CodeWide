@@ -57,6 +57,7 @@ use agent_core::{
         capability_unsupported_message, thread_not_found_message,
         turns::{MAX_TURNS_PAGE, page_turns},
     },
+    naming::{CatalogNames, ModelNaming},
     provider::{
         AgentProvider, ClientToolHost, NativeThreadResources, ProviderAuth, ProviderError,
         ProviderEvent, ProviderFence, ProviderHealth, ProviderStatus, StoredMessageSearch,
@@ -153,6 +154,7 @@ pub struct ClaudeProvider {
     health: Arc<watch::Sender<ProviderHealth>>,
     rate_limits: Arc<watch::Sender<Option<ProviderRateLimits>>>,
     pricing: Arc<CatalogPricing>,
+    names: Arc<CatalogNames>,
     /// The `claude` version, once read.
     version: Arc<std::sync::OnceLock<String>>,
 }
@@ -187,6 +189,7 @@ impl ClaudeProvider {
         )));
         let rate_limits = Arc::new(watch::Sender::new(None));
         let pricing = Arc::new(CatalogPricing::default());
+        let names = Arc::new(CatalogNames::default());
         let tools = Arc::new(CompanionTools::new(id.clone()));
         let version = Arc::new(std::sync::OnceLock::new());
         let mut provider = Self {
@@ -198,6 +201,7 @@ impl ClaudeProvider {
             health,
             rate_limits,
             pricing,
+            names,
             version,
         };
         match provider.start_service(config) {
@@ -240,6 +244,7 @@ impl ClaudeProvider {
             },
             self.health.clone(),
             self.pricing.clone(),
+            self.names.clone(),
             limits.clone(),
         ));
         let catalog = account.clone();
@@ -591,6 +596,10 @@ impl AgentProvider for ClaudeProvider {
 
     fn usage_pricing(&self) -> Option<Arc<dyn ModelPricing>> {
         Some(self.pricing.clone())
+    }
+
+    fn model_names(&self) -> Option<Arc<dyn ModelNaming>> {
+        Some(self.names.clone())
     }
 
     fn user_text_cleaner(&self) -> Option<Arc<dyn agent_core::user_text::UserTextCleaner>> {

@@ -654,3 +654,57 @@ fn real_session_reports() -> TestResult {
     assert_eq!(ends(&branch, &[]), ends(&plain, &[]));
     Ok(())
 }
+
+/// Claude reports background agents a previous session left unfinished in
+/// one notification that names every task; each of them stops.
+#[test]
+fn one_notification_naming_several_agents_stops_each_of_them() {
+    let mut store = Store { seconds: 0 };
+    let launch = |store: &mut Store, n: u8, agent_id: &str| {
+        let tool_use_id = format!("toolu_agent_{n}");
+        vec![
+            store.tool(
+                &format!("a{n}"),
+                &tool_use_id,
+                "Agent",
+                &json!({"description": format!("Implement part {n}"), "prompt": "Implement it.",
+                    "run_in_background": true}),
+            ),
+            store.tool_result(
+                &format!("r{n}"),
+                &tool_use_id,
+                &format!("Async agent launched successfully.\nagentId: {agent_id}"),
+            ),
+        ]
+    };
+    let mut messages = vec![store.prompt("u1", "Implement both parts in the background.")];
+    messages.extend(launch(&mut store, 1, "a0000000000000001"));
+    messages.extend(launch(&mut store, 2, "a0000000000000002"));
+    messages.push(store.text("a3", "Started."));
+    messages.push(store.wake(
+        "n1",
+        "<task-notification>\n<task-id>a0000000000000001</task-id>\n<task-id>a0000000000000002</task-id>\n<status>stopped</status>\n<summary>2 background agents didn't finish before the previous session ended</summary>\n</task-notification>",
+        "task-notification",
+        false,
+    ));
+    messages.push(store.text("a4", "They stopped."));
+
+    let turns = reconstruct_turns(&messages, &[], &context());
+
+    let statuses: Vec<_> = turns
+        .iter()
+        .flat_map(|turn| &turn.items)
+        .filter_map(|item| match item {
+            AgentItem::Subagent { status, .. } => Some(*status),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(statuses, [SubagentStatus::Stopped, SubagentStatus::Stopped]);
+    assert_eq!(
+        reports(&turns).concat(),
+        [
+            (TaskNotificationDelivery::Wake, "a0000000000000001"),
+            (TaskNotificationDelivery::Wake, "a0000000000000002"),
+        ]
+    );
+}

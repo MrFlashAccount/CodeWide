@@ -79,11 +79,15 @@ impl ReplayProjector {
         let registry = &self.registry;
         let thread_id = super::payload_thread_id(&payload).and_then(AppThreadId::parse);
         let provider_id = match thread_id {
-            Some(id) if payload.get("codewideReplayPricing").is_some() => self
-                .bindings
-                .provider_of(&id)
-                .await
-                .map_err(|error| error.to_string())?,
+            Some(id)
+                if payload.get("codewideReplayPricing").is_some()
+                    || crate::model_labels::names_a_model(&payload) =>
+            {
+                self.bindings
+                    .provider_of(&id)
+                    .await
+                    .map_err(|error| error.to_string())?
+            }
             _ => None,
         };
         let provider = match provider_id.as_ref() {
@@ -96,6 +100,11 @@ impl ReplayProjector {
         let pricing = provider.and_then(|provider| provider.usage_pricing());
         let unpriced = UsagePricing::default();
         let payload = price_replay_payload(payload, pricing.as_deref().unwrap_or(&unpriced));
+        // Named after pricing, which rebuilds the delivered costs.
+        let payload = match provider.and_then(|provider| provider.model_names()) {
+            Some(names) => crate::model_labels::label_payload(payload, names.as_ref()),
+            None => payload,
+        };
         let thread_store = registry
             .owner(Capability::CodexNative)
             .and_then(|owner| owner.native_surface())
@@ -154,6 +163,17 @@ mod tests {
         provider.into_arc()
     }
 
+    /// A provider that names the shared model its own way.
+    fn named_provider(id: &'static str) -> Arc<FakeProvider> {
+        let mut provider = FakeProvider::new(id, CapabilitySet::none(StartWhileActiveMode::Busy));
+        provider.pricing = Some(table(1.0));
+        provider.names = Some(Arc::new(agent_core::naming::CatalogNames::new([(
+            "shared-model".to_owned(),
+            format!("Shared ({id})"),
+        )])));
+        provider.into_arc()
+    }
+
     fn gateway(
         store: Arc<IndexStore>,
         multi: bool,
@@ -201,6 +221,45 @@ mod tests {
         let event =
             crate::thread_patch::attach_thread_patch_with_usage(event, Some(projected.clone()));
         Ok((prepare_replay_payload(event, replay_pricing), projected))
+    }
+
+    #[tokio::test]
+    async fn a_delivered_cost_and_settings_change_carry_the_bound_providers_model_name()
+    -> TestResult {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("replay.redb"))?);
+        let context = Arc::new(ClientWireGateway::new(
+            Arc::new(ProviderRegistry::new(
+                vec![named_provider("primary"), named_provider("secondary")],
+                &ProviderId::from_static("primary"),
+                Vec::new(),
+            )?),
+            Arc::new(BindingStore::new(store.clone())),
+        ));
+        context
+            .bindings()
+            .bind(
+                &AppThreadId::from_static("thread"),
+                &ProviderId::from_static("secondary"),
+                BindingOrigin::Created,
+            )
+            .await?;
+        let replay = ReplayProjector::new(context.registry().clone(), context.bindings().clone());
+        let (stored, _) = journal(store, &context, "secondary")?;
+        let delivered = replay.project(stored).await?;
+        assert_eq!(
+            delivered["codewideThreadPatch"]["operation"]["usage"]["turn"]["cost"]["modelLabel"],
+            "Shared (secondary)"
+        );
+        let settings = replay
+            .project(json!({"method": "thread/settings/updated", "params": {
+                "threadId": "thread", "threadSettings": {"model": "shared-model"}}}))
+            .await?;
+        assert_eq!(
+            settings["params"]["threadSettings"]["modelLabel"],
+            "Shared (secondary)"
+        );
+        Ok(())
     }
 
     #[tokio::test]

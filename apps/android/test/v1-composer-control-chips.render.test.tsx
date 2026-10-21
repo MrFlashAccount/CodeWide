@@ -186,6 +186,7 @@ function thread(
   settings: {
     effort: string | null;
     model: string;
+    modelLabel?: string;
     permissions: string | null;
     serviceTier?: string | null;
   },
@@ -467,6 +468,24 @@ describe("Codex thread", () => {
       <Harness onUpdateSettings={onUpdateSettings} remoteThread={reverted} resources={resources} />,
     );
     expect(modelLabel(view)).toHaveTextContent("sol · Medium");
+  });
+
+  it("shows the server's name of a model the catalog lists only as an alias target", async () => {
+    const resources = resourcesWith(multiProvider);
+    const remoteThread = thread(
+      {
+        effort: null,
+        model: "claude-opus-5-5",
+        modelLabel: "Opus 5.5",
+        permissions: ":workspace",
+      },
+      claudeAgent,
+    );
+    const view = render(<Harness remoteThread={remoteThread} resources={resources} />);
+    // The Claude scope of the catalog has no row for the full id.
+    await catalogLoaded(view, 2);
+    expect(modelLabel(view)).toHaveTextContent("Opus 5.5");
+    expect(modelLabel(view)).not.toHaveTextContent("claude-opus-5-5");
   });
 
   it("accepts the server reporting Fast as priority", async () => {

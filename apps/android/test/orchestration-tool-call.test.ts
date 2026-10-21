@@ -25,6 +25,15 @@ describe("orchestration tool calls", () => {
     expect(orchestrationToolCall(call("read_file", { path: "a" }, "x"), "completed")).toBeNull();
   });
 
+  it("shows the provider's name of the spawned agent's model", () => {
+    const spawn = call(
+      "codewide_spawn_agent",
+      { prompt: "Review the diff", provider: "claude" },
+      { agentThreadId: child, provider: "claude", model: "claude-opus-5-5", modelLabel: "Opus 5.5", status: "running" },
+    );
+    expect(orchestrationToolCall(spawn, "completed")?.meta).toBe("Opus 5.5");
+  });
+
   it("names the spawned agent, its provider and model and links its thread", () => {
     const spawn = call(
       "codewide_spawn_agent",

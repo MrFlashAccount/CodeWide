@@ -705,7 +705,7 @@ function thread(turns: Turn[]): import("@codewide/codex-protocol/v0.155.1/v2").T
 
 function executionSettings(serviceTier: "default" | "priority") {
   return {
-    approvalPolicy: "on-request", effort: "high", model: "gpt-5.6-sol",
+    approvalPolicy: "on-request", effort: "high", model: "gpt-5.6-sol", modelLabel: null,
     permissions: ":workspace", sandboxPolicy: "workspaceWrite", serviceTier,
   } as const;
 }

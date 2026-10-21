@@ -63,7 +63,8 @@ export function CommandItemOutputViewer({
 }): React.JSX.Element {
   // The Companion moves command output into private content and leaves an
   // empty inline string, so the referenced segments are the output itself.
-  const references = current === null ? [] : commandOutputReferences(current);
+  // An item its thread no longer holds is read from the segments it was opened with.
+  const references = current === null ? request.references : commandOutputReferences(current);
   const resource = useReferencedCommandOutput(references, request.getTransferAccess, resourceKey);
   const inline = current?.aggregatedOutput ?? "";
   const output = resource.value?.text ?? (inline === "" ? request.fallbackOutput : inline);

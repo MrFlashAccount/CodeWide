@@ -136,6 +136,46 @@ pub fn catalog_model_id<'a>(models: &'a [RawModel], recorded: &'a str) -> &'a st
         .map_or(recorded, |alias| alias.value.as_str())
 }
 
+/// The catalog's names of every model a thread may name: each row's id, the
+/// model an alias row resolves to (named like that alias, `Opus 5.5`), and
+/// the model only `default` resolves to (named as its current model). A
+/// model with its own row keeps that row's name.
+#[must_use]
+pub fn catalog_names(models: &[RawModel]) -> Vec<(String, String)> {
+    let mut names: Vec<(String, String)> = models
+        .iter()
+        .map(|model| (model.value.clone(), versioned_display_name(model)))
+        .collect();
+    let mut name_target = |model: &str, name: String| {
+        if !names.iter().any(|(named, _)| named == model) {
+            names.push((model.to_owned(), name));
+        }
+    };
+    for model in models.iter().filter(|model| model.value != DEFAULT_MODEL) {
+        if let Some(resolved) = model.resolved_model.as_deref() {
+            name_target(resolved, versioned_display_name(model));
+        }
+    }
+    for model in models.iter().filter(|model| model.value == DEFAULT_MODEL) {
+        if let (Some(resolved), Some(current)) =
+            (model.resolved_model.as_deref(), default_target_name(model))
+        {
+            name_target(resolved, current.to_owned());
+        }
+    }
+    names
+}
+
+/// The versioned name of the model the `default` row resolves to: its
+/// `(currently Opus 5.5)` clause, else the name its description leads with.
+fn default_target_name(model: &RawModel) -> Option<&str> {
+    current_default_name(&model.description).or_else(|| {
+        let separator = model.description.find(" · ")?;
+        let named = model.description[..separator].trim();
+        (!named.is_empty() && !named.contains('(')).then_some(named)
+    })
+}
+
 /// Keeps the last non-empty model list, its catalog rows and the prices of
 /// its models. Prices of the known canonical models are available before the
 /// first list.
@@ -144,6 +184,7 @@ pub struct ModelCatalogCache {
     raw: Vec<RawModel>,
     entries: Vec<ModelEntry>,
     prices: BTreeMap<String, ModelPriceEntry>,
+    names: Vec<(String, String)>,
 }
 
 impl Default for ModelCatalogCache {
@@ -152,6 +193,7 @@ impl Default for ModelCatalogCache {
             raw: Vec::new(),
             entries: Vec::new(),
             prices: catalog_prices(&[]),
+            names: Vec::new(),
         }
     }
 }
@@ -164,6 +206,7 @@ impl ModelCatalogCache {
         }
         self.entries = model_entries(&models);
         self.prices = catalog_prices(&models);
+        self.names = catalog_names(&models);
         self.raw = models;
     }
 
@@ -171,6 +214,12 @@ impl ModelCatalogCache {
     #[must_use]
     pub fn id_for<'a>(&'a self, recorded: &'a str) -> &'a str {
         catalog_model_id(&self.raw, recorded)
+    }
+
+    /// [`catalog_names`] of the last list; empty before one.
+    #[must_use]
+    pub fn names(&self) -> &[(String, String)] {
+        &self.names
     }
 
     /// The catalog rows of the last list; empty before one.
@@ -341,6 +390,41 @@ mod tests {
             catalog_model_id(&[alias("default", "Default", "claude-x")], "claude-x"),
             "claude-x"
         );
+    }
+
+    #[test]
+    fn every_model_a_thread_may_name_is_named_like_its_catalog_row() {
+        let names = catalog_names(&[
+            RawModel {
+                description: "Use the default model (currently Opus 5.5)".into(),
+                ..alias("default", "Default (recommended)", "claude-opus-5-5")
+            },
+            RawModel {
+                description: "Opus 5.5 · Most capable".into(),
+                ..alias("opus", "Opus", "claude-opus-5-5")
+            },
+            alias("fable", "Fable 5.1", "claude-fable-5-1"),
+            row("claude-opus-4-7", "Opus 4.7", ""),
+            RawModel {
+                description: "Use the default model (currently Haiku 5.5)".into(),
+                ..alias("default", "Default", "claude-haiku-5-5")
+            },
+        ]);
+        let name_of = |model: &str| {
+            names
+                .iter()
+                .find(|(id, _)| id == model)
+                .map(|(_, name)| name.as_str())
+        };
+        // A spawned agent's full id is named like the alias resolving to it.
+        assert_eq!(name_of("claude-opus-5-5"), Some("Opus 5.5"));
+        assert_eq!(name_of("opus"), Some("Opus 5.5"));
+        assert_eq!(name_of("default"), Some("Default (Opus 5.5)"));
+        assert_eq!(name_of("claude-fable-5-1"), Some("Fable 5.1"));
+        assert_eq!(name_of("claude-opus-4-7"), Some("Opus 4.7"));
+        // A model only `default` resolves to is named as its current model.
+        assert_eq!(name_of("claude-haiku-5-5"), Some("Haiku 5.5"));
+        assert_eq!(name_of("claude-unknown-1"), None);
     }
 
     #[test]

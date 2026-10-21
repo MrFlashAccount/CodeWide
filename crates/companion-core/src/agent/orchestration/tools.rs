@@ -276,6 +276,9 @@ pub struct SpawnResult {
     pub agent_thread_id: String,
     pub provider: String,
     pub model: String,
+    /// The provider's name of `model` (`Opus 5.5`), when it names it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_label: Option<String>,
     pub status: AgentStatus,
 }
 
@@ -305,6 +308,9 @@ pub struct ListedAgent {
     pub agent_thread_id: String,
     pub provider: String,
     pub model: String,
+    /// The provider's name of `model` (`Opus 5.5`), when it names it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_label: Option<String>,
     pub name: Option<String>,
     /// `null` when the agent's provider cannot report it right now.
     pub status: Option<AgentStatus>,
@@ -406,9 +412,20 @@ mod tests {
                 agent_thread_id: "c".into(),
                 provider: "claude".into(),
                 model: "m".into(),
+                model_label: None,
                 status: AgentStatus::Running
             })?,
             json!({"agentThreadId": "c", "provider": "claude", "model": "m", "status": "running"})
+        );
+        assert_eq!(
+            serde_json::to_value(SpawnResult {
+                agent_thread_id: "c".into(),
+                provider: "claude".into(),
+                model: "claude-opus-5-5".into(),
+                model_label: Some("Opus 5.5".into()),
+                status: AgentStatus::Running
+            })?["modelLabel"],
+            json!("Opus 5.5")
         );
         Ok(())
     }

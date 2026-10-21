@@ -24,6 +24,8 @@ type ThreadExecutionSettingsSnapshot = {
   readonly approvalPolicy: string;
   readonly effort: string | null;
   readonly model: string;
+  /** The Companion's name of `model`; null from a Companion that sends none. */
+  readonly modelLabel: string | null;
   readonly permissions: string | null;
   readonly sandboxPolicy: string;
   readonly serviceTier: string | null;
@@ -237,6 +239,7 @@ function parseThreadExecutionSettings(value: unknown): ThreadExecutionSettingsSn
     approvalPolicy: requireThreadExecutionSettingsString(settings, "approvalPolicy"),
     effort: readThreadExecutionSettingsNullableString(settings, "effort"),
     model: requireThreadExecutionSettingsString(settings, "model"),
+    modelLabel: readThreadExecutionSettingsLabel(settings),
     permissions: readThreadExecutionSettingsNullableString(settings, "permissions"),
     sandboxPolicy: requireThreadExecutionSettingsString(settings, "sandboxPolicy"),
     serviceTier: readThreadExecutionSettingsNullableString(settings, "serviceTier"),
@@ -259,6 +262,18 @@ function requireThreadExecutionSettingsString(
     throw new Error("Companion thread sync returned an invalid response");
   }
   return value;
+}
+
+/** An older Companion omits the label; it reads as unknown. */
+function readThreadExecutionSettingsLabel(settings: Record<string, unknown>): string | null {
+  const value = settings.modelLabel;
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "string" && value !== "") {
+    return value;
+  }
+  throw new Error("Companion thread sync returned an invalid response");
 }
 
 function readThreadExecutionSettingsNullableString(

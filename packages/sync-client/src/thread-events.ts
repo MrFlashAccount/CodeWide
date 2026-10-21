@@ -13,6 +13,8 @@ export type ProjectedTurnMetadata = {
   activity?: { count: number; kinds: string[]; outputFootprint?: OutputFootprintProjection };
   execution?: {
     model: string;
+    /** The server's name of `model`, shown as is; null when it sent none. */
+    modelLabel?: string | null;
     effort: string | null;
     permissions: string | null;
     modelSource: "settings" | "reroute";
@@ -37,6 +39,8 @@ export type UsageTokenCounts = {
 
 type UsageCostTokens = {
   model: string;
+  /** The provider's name of `model` (`Opus 5.5`), shown as is; absent when the Companion sends none. */
+  modelLabel?: string;
   currency: "USD";
   uncachedInputTokens: number;
   cachedInputTokens: number;
@@ -87,6 +91,8 @@ type ProjectedTurn = Turn & { codewide?: ProjectedTurnMetadata };
 type ProjectedThreadMetadata = {
   executionSettings?: {
     model: string;
+    /** The server's name of `model` (`Opus 5.5`), shown as is; null when it sent none. */
+    modelLabel?: string | null;
     effort: string | null;
     serviceTier: string | null | undefined;
     permissions: string | null;
@@ -244,7 +250,7 @@ export function applyThreadProjectionPatch(thread: Thread, patch: ThreadProjecti
     upsertTurn(thread, params.turn);
     updateTurnUsage(thread, asObject(params.turn)?.id, params.usage);
   }
-  else if (params.kind === "modelRerouted") updateReroutedModel(thread, params.turnId, params.toModel);
+  else if (params.kind === "modelRerouted") updateReroutedModel(thread, params.turnId, params.toModel, params.toModelLabel);
   else if (params.kind === "itemUpsert") {
     upsertItem(thread, params.turnId, itemWithLifecycleMetadata(thread, params.turnId, params.item, params.itemPhase));
   }
@@ -373,8 +379,11 @@ export function projectedThreadExecutionSettings(thread: Thread): ProjectedThrea
   const directServiceTier = asObject(thread)?.serviceTier;
   const hasDirectServiceTier = "serviceTier" in thread;
   if (typeof model !== "string" || model.length === 0) return null;
+  // The label names the snapshot's model; a newer direct model has none yet.
+  const modelLabel = settings?.model === model && typeof settings.modelLabel === "string" ? settings.modelLabel : null;
   return {
     model,
+    modelLabel,
     effort: typeof effort === "string" ? effort : null,
     serviceTier:
       hasDirectServiceTier
@@ -393,6 +402,7 @@ export function seedThreadExecutionSettings(
   thread: Thread,
   settings: {
     model: string;
+    modelLabel?: string | null;
     effort: string | null;
     serviceTier?: string | null;
     permissions: string | null;
@@ -410,6 +420,8 @@ export function seedThreadExecutionSettings(
   const previous = projected.codewide.executionSettings;
   projected.codewide.executionSettings = structuredClone({
     ...settings,
+    // A settings update without a label keeps the known one only for the same model.
+    modelLabel: settings.modelLabel ?? (previous?.model === settings.model ? (previous.modelLabel ?? null) : null),
     serviceTier: settings.serviceTier,
     approvalPolicy: settings.approvalPolicy ?? previous?.approvalPolicy ?? null,
     sandboxPolicy: settings.sandboxPolicy ?? previous?.sandboxPolicy ?? null,
@@ -455,6 +467,7 @@ function updateThreadSettings(thread: Thread, value: unknown): void {
   const activePermissionProfile = asObject(settings.activePermissionProfile);
   seedThreadExecutionSettings(thread, {
     model: settings.model,
+    modelLabel: typeof settings.modelLabel === "string" ? settings.modelLabel : null,
     effort: typeof settings.effort === "string" ? settings.effort : null,
     serviceTier: typeof settings.serviceTier === "string" ? settings.serviceTier : null,
     permissions: typeof activePermissionProfile?.id === "string" ? activePermissionProfile.id : null,
@@ -479,18 +492,25 @@ function snapshotTurnExecution(thread: Thread, rawTurnId: unknown): void {
   if (settings === null) return;
   metadataForTurn(thread, rawTurnId).execution = {
     model: settings.model,
+    modelLabel: settings.modelLabel ?? null,
     effort: settings.effort,
     permissions: settings.permissions,
     modelSource: "settings",
   };
 }
 
-function updateReroutedModel(thread: Thread, rawTurnId: unknown, toModel: unknown): void {
+function updateReroutedModel(
+  thread: Thread,
+  rawTurnId: unknown,
+  toModel: unknown,
+  toModelLabel: unknown,
+): void {
   if (typeof rawTurnId !== "string" || typeof toModel !== "string") return;
   const metadata = metadataForTurn(thread, rawTurnId);
   const fallback = (thread as ProjectedThread).codewide?.executionSettings;
   metadata.execution = {
     model: toModel,
+    modelLabel: typeof toModelLabel === "string" ? toModelLabel : null,
     effort: metadata.execution?.effort ?? fallback?.effort ?? null,
     permissions: metadata.execution?.permissions ?? fallback?.permissions ?? null,
     modelSource: "reroute",

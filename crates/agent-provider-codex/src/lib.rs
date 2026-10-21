@@ -52,6 +52,7 @@ use agent_core::{
         ThreadUpdateResult, TurnId, TurnInterruptParams, TurnStartParams, TurnStartResult,
         TurnSteerParams, TurnSteerResult, thread_not_found_message,
     },
+    naming::{CatalogNames, ModelNaming},
     provider::{
         AdmissionError, AgentProvider, ClientToolHost, DispatchError, NativeMessageSearch,
         NativeSurface, NativeThreadResources, NativeThreadStore, ProviderError, ProviderEvent,
@@ -116,6 +117,8 @@ pub struct CodexProvider {
     storage: Option<Arc<storage::CodexStorage>>,
     client_tools: Arc<CodexClientTools>,
     compactions: Arc<ActiveCompactions>,
+    /// The display names of the last model list read.
+    names: Arc<CatalogNames>,
     id: ProviderId,
 }
 
@@ -129,6 +132,7 @@ impl CodexProvider {
             storage: None,
             client_tools: Arc::new(CodexClientTools::default()),
             compactions: Arc::new(ActiveCompactions::default()),
+            names: Arc::new(CatalogNames::default()),
             id: codex_provider_id(),
         }
     }
@@ -409,12 +413,21 @@ impl AgentProvider for CodexProvider {
 
     async fn catalog_models(&self) -> Result<ModelCatalog, ProviderError> {
         let result = self.rpc("model/list", json!({"limit": 100})).await?;
+        let models: Vec<_> = result
+            .get("data")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(mapping::model).collect())
+            .unwrap_or_default();
+        if !models.is_empty() {
+            self.names.replace(models.iter().flat_map(|model| {
+                [
+                    (model.id.clone(), model.display_name.clone()),
+                    (model.model.clone(), model.display_name.clone()),
+                ]
+            }));
+        }
         Ok(ModelCatalog {
-            models: result
-                .get("data")
-                .and_then(Value::as_array)
-                .map(|rows| rows.iter().filter_map(mapping::model).collect())
-                .unwrap_or_default(),
+            models,
             prices: pricing::openai_prices().collect(),
         })
     }
@@ -673,6 +686,10 @@ impl AgentProvider for CodexProvider {
 
     fn usage_pricing(&self) -> Option<Arc<dyn ModelPricing>> {
         Some(Arc::new(pricing::OpenAiPricing))
+    }
+
+    fn model_names(&self) -> Option<Arc<dyn ModelNaming>> {
+        Some(self.names.clone())
     }
 
     fn user_text_cleaner(&self) -> Option<Arc<dyn agent_core::user_text::UserTextCleaner>> {

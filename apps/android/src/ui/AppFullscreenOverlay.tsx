@@ -13,6 +13,7 @@ import { useConstant } from "../react/useConstant";
 import { useEvent } from "../react/useEvent";
 import { colors } from "../theme";
 import { AppFullscreenModal } from "./AppFullscreenModal";
+import { MessageActionMenuProvider } from "./MessageActionMenu";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
 
 export type AppFullscreenOverlayLifecycle = {
@@ -210,18 +211,22 @@ export function AppFullscreenOverlayHost() {
         >
           <View style={styles.stack}>
             <View style={styles.layer}>
-              <RecoverableRenderBoundary
-                label="Fullscreen overlay content"
-                onDismiss={() => {
-                  close(entry.id);
-                }}
-                resetKey={entry.id}
-                scope="dialog"
-              >
-                <Suspense fallback={<FullscreenOverlaySuspenseFallback />}>
-                  {entry.content}
-                </Suspense>
-              </RecoverableRenderBoundary>
+              {/* Each entry is its own native window: a menu hosted by a window
+                  beneath it would open under this one. */}
+              <MessageActionMenuProvider>
+                <RecoverableRenderBoundary
+                  label="Fullscreen overlay content"
+                  onDismiss={() => {
+                    close(entry.id);
+                  }}
+                  resetKey={entry.id}
+                  scope="dialog"
+                >
+                  <Suspense fallback={<FullscreenOverlaySuspenseFallback />}>
+                    {entry.content}
+                  </Suspense>
+                </RecoverableRenderBoundary>
+              </MessageActionMenuProvider>
             </View>
           </View>
         </AppFullscreenModal>

@@ -91,21 +91,19 @@ export function renderFullContentViewerBody({
               truncate={false}
               value={selection.text}
               variant={selection.presentation === "terminal" ? "terminal" : "code"}
+              wrapLines
             />
           ) : (
-            <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
-              <ScrollView
-                contentContainerStyle={styles.fullContentRawHorizontal}
-                horizontal
-                nestedScrollEnabled
-                showsHorizontalScrollIndicator
-              >
-                <Text selectable style={styles.fullContentRawText}>
-                  {selection.presentation === "terminal"
-                    ? stripTerminalControlSequences(selection.text)
-                    : selection.text}
-                </Text>
-              </ScrollView>
+            <ScrollView
+              contentContainerStyle={styles.fullContentRawHorizontal}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+            >
+              <Text selectable style={styles.fullContentRawText}>
+                {selection.presentation === "terminal"
+                  ? stripTerminalControlSequences(selection.text)
+                  : selection.text}
+              </Text>
             </ScrollView>
           )
         ) : null}

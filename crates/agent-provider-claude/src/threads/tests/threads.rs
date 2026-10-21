@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use agent_core::{
     model::{
-        AgentItem, AgentThread, ItemsView, SortDirection, ThreadChange, ThreadListParams,
-        ThreadOrigin, ThreadStatus, ThreadTurnsParams, ThreadUpdateParams, TurnStartParams,
-        TurnStatus,
+        AgentItem, AgentThread, ItemsView, SortDirection, ThreadChange, ThreadCreateParams,
+        ThreadListParams, ThreadOrigin, ThreadSettings, ThreadStatus, ThreadTurnsParams,
+        ThreadUpdateParams, TurnStartParams, TurnStatus,
     },
     provider::ProviderError,
 };
@@ -608,6 +608,38 @@ async fn reports_and_continues_with_the_catalog_model_the_session_last_answered_
     assert_eq!(read.thread.settings.model, "opus");
     start(&harness.service, TERMINAL, "continue").await?;
     assert_eq!(harness.runtime.query(0)?.options.model, "opus");
+    harness.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn keeps_the_exact_model_a_thread_was_created_with() -> TestResult {
+    let harness = harness(Options {
+        model_id_for: Arc::new(|recorded| {
+            if recorded == "claude-opus-5-5" {
+                "opus".to_owned()
+            } else {
+                recorded.to_owned()
+            }
+        }),
+        ..Options::default()
+    })?;
+    // A spawned agent names the full model id it was given; the thread stays
+    // pinned to it (its name comes from the catalog, not from an alias swap).
+    harness
+        .service
+        .create(ThreadCreateParams {
+            app_thread_id: Some(id(THREAD)?),
+            cwd: "/workspace".into(),
+            settings: ThreadSettings {
+                model: "claude-opus-5-5".into(),
+                ..super::settings(":workspace")
+            },
+            client_tools: None,
+        })
+        .await?;
+    let (read, _) = harness.service.read(&id(THREAD)?, false).await?;
+    assert_eq!(read.thread.settings.model, "claude-opus-5-5");
     harness.close().await;
     Ok(())
 }

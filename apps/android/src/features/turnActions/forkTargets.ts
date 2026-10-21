@@ -33,6 +33,8 @@ export type ForkModel = TurnControlsModel & { readonly provider: AgentProviderId
 export type ForkThreadSettings = {
   readonly effort: string | null;
   readonly model: string | null;
+  /** The server's name of `model`, shown when the catalog lists it under another id. */
+  readonly modelLabel: string | null;
   readonly serviceTier: string | null;
 };
 
@@ -133,7 +135,7 @@ function currentForkSelection(
   settings: ForkThreadSettings,
   catalog: readonly TurnControlsModel[],
 ): ForkSelection {
-  const model = threadCatalogModel(agent?.provider ?? null, settings.model, catalog);
+  const model = threadCatalogModel(agent?.provider ?? null, settings, catalog);
   return {
     effort: settings.effort,
     handoff: false,
@@ -147,20 +149,21 @@ function currentForkSelection(
 
 /**
  * The thread's model as the composer resolves it: the thread provider's or an
- * unannotated catalog row, else the bare id on the thread's provider.
+ * unannotated catalog row, else the server's name of it on the thread's provider.
  */
 function threadCatalogModel(
   ownProvider: AgentProviderId | null,
-  model: string | null,
+  settings: ForkThreadSettings,
   catalog: readonly TurnControlsModel[],
 ): Pick<ForkSelection, "label" | "provider" | "row"> {
+  const model = settings.model;
   const entry = catalog.find(
     (candidate) =>
       candidate.id === model &&
       (ownProvider === null || candidate.provider === null || candidate.provider === ownProvider),
   );
   if (entry === undefined) {
-    return { label: model, provider: ownProvider, row: null };
+    return { label: settings.modelLabel ?? model, provider: ownProvider, row: null };
   }
   // With the thread's own fork every annotated row of its provider is offered.
   return isForkModel(entry)

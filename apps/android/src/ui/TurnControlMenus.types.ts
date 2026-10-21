@@ -52,6 +52,8 @@ export type ModelThinkingMenuProps = TriggerProps & {
   onApplySettings: (choice: ModelSettingsChoice) => void;
   selectedEffort: string | null;
   selectedModel: string | null;
+  /** The server's name of `selectedModel`, for a model the catalog lists under another id. */
+  selectedModelLabel?: string | null;
   selectedPersonality: Personality | null;
   selectedServiceTier: string | null;
   showPersonalityControls?: boolean;

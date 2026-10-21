@@ -1,5 +1,8 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
-import { projectedThreadExecutionSettings } from "@codewide/sync-client";
+import {
+  projectedThreadExecutionSettings,
+  type ProjectedThreadExecutionSettings,
+} from "@codewide/sync-client";
 import { agentProviders } from "../../data/workspace-runtime";
 import { threadRefusesDirectInput } from "../../data/threadDirectInput";
 import { ConversationComposition } from "./ConversationComposition";
@@ -217,9 +220,21 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
 /** The settings the server reports for the thread, the composer chips' settled values. */
 function serverThreadSettings(thread: Thread | null): ForkThreadSettings {
   const settings = thread === null ? null : projectedThreadExecutionSettings(thread);
+  return settings === null ? NO_SERVER_SETTINGS : forkSettings(settings);
+}
+
+const NO_SERVER_SETTINGS: ForkThreadSettings = {
+  effort: null,
+  model: null,
+  modelLabel: null,
+  serviceTier: null,
+};
+
+function forkSettings(settings: ProjectedThreadExecutionSettings): ForkThreadSettings {
   return {
-    effort: settings?.effort ?? null,
-    model: settings?.model ?? null,
-    serviceTier: settings?.serviceTier ?? null,
+    effort: settings.effort,
+    model: settings.model,
+    modelLabel: settings.modelLabel ?? null,
+    serviceTier: settings.serviceTier ?? null,
   };
 }

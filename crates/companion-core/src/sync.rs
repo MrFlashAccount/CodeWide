@@ -1624,6 +1624,27 @@ impl SyncHub {
         self.user_text_cleaner(provider.as_ref())
     }
 
+    /// The model names of the provider of the thread `params` names; `None`
+    /// for an unknown thread or a provider that names no models.
+    async fn thread_model_names(
+        &self,
+        params: &Value,
+    ) -> Option<Arc<dyn agent_core::naming::ModelNaming>> {
+        let thread = params
+            .get("threadId")
+            .and_then(Value::as_str)
+            .and_then(crate::agent::model::AppThreadId::parse)?;
+        let provider = match self.gateway.bindings().provider_of(&thread).await {
+            Ok(Some(provider)) => self.gateway.registry().get(&provider),
+            // A host with one provider needs no binding to know the thread's.
+            _ if !self.gateway.registry().is_multi_provider() => {
+                Some(self.gateway.registry().primary())
+            }
+            _ => None,
+        }?;
+        provider.model_names()
+    }
+
     async fn handle_thread_pin_import_rpc(
         &self,
         socket: &SessionSocket,
@@ -2222,6 +2243,10 @@ impl SyncHub {
             result,
             self.thread_user_text_cleaner(params).await.as_ref(),
         );
+        let result = match self.thread_model_names(params).await {
+            Some(names) => crate::model_labels::label_rpc_result(result, names.as_ref()),
+            None => result,
+        };
         let result = match self.projector() {
             Some(projector) => projector.project_rpc_result(method, result),
             None => result,

@@ -12,7 +12,7 @@ export function CostBreakdownContent({
 }): React.JSX.Element {
   return (
     <View style={styles.content} testID="turn-cost-breakdown">
-      <CostBreakdownHeading model={estimate.model} />
+      <CostBreakdownHeading model={estimate.modelLabel ?? estimate.model} />
       {estimate.basis === "apiEquivalent" ? (
         <>
           <TokenCostRows estimate={estimate} />
