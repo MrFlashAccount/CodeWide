@@ -483,7 +483,33 @@ const providerAccount: Check = obj({
   label: nullable(str),
 });
 
+const providerRateLimitResets: Check = obj({
+  availableCount: int,
+  cooldownUntil: nullable(int),
+  eligible: bool,
+  grants: arr(
+    obj({
+      clears: arr(str),
+      expiresAt: nullable(int),
+      id: str,
+      kind: literal("session", "weekly", "full", "other"),
+      label: str,
+      paused: bool,
+      resetsLeft: int,
+      resetsTotal: int,
+      startsAt: nullable(int),
+      unavailableReason: nullable(str),
+      usableNow: bool,
+      useRequiresLimit: bool,
+    }),
+  ),
+  ineligibleReason: nullable(str),
+  nextGrantId: nullable(str),
+  weeklyResetsAt: nullable(int),
+});
+
 const providerRateLimits: Check = obj({
+  resets: optional(providerRateLimitResets),
   updatedAt: int,
   windows: arr(
     obj({

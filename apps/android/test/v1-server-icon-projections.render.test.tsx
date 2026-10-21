@@ -27,6 +27,7 @@ it("renders the same server icon in settings and thread-list projections", () =>
     onApplyRelayUpdate: jest.fn(async () => undefined),
     onCheckHostUpdate: jest.fn(async () => undefined),
     onCheckRelayUpdate: jest.fn(async () => undefined),
+    onConsumeProviderRateLimitReset: jest.fn(async () => undefined),
     onDelete: jest.fn(async () => undefined),
     onReconnect: jest.fn(async () => undefined),
     onToggle: jest.fn(async () => undefined),

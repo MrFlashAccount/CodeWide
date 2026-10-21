@@ -147,6 +147,79 @@ pub struct ProviderRateLimitWindow {
     pub window_duration_mins: Option<u32>,
 }
 
+/// What one banked provider reset refills.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RateLimitResetKind {
+    Session,
+    Weekly,
+    Full,
+    Other,
+}
+
+/// One provider-owned banked reset grant.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRateLimitResetGrant {
+    pub id: String,
+    pub label: String,
+    pub kind: RateLimitResetKind,
+    pub resets_left: u32,
+    pub resets_total: u32,
+    /// Unix seconds.
+    pub starts_at: Option<i64>,
+    /// Unix seconds.
+    pub expires_at: Option<i64>,
+    pub paused: bool,
+    pub usable_now: bool,
+    pub use_requires_limit: bool,
+    /// Provider window ids this grant can clear.
+    pub clears: Vec<String>,
+    pub unavailable_reason: Option<String>,
+}
+
+/// The provider's banked reset program and its validated grants.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRateLimitResets {
+    pub eligible: bool,
+    pub ineligible_reason: Option<String>,
+    /// Sum of `resets_left`, saturated to `u32`.
+    pub available_count: u32,
+    pub grants: Vec<ProviderRateLimitResetGrant>,
+    pub next_grant_id: Option<String>,
+    /// Unix seconds.
+    pub weekly_resets_at: Option<i64>,
+    /// Unix seconds.
+    pub cooldown_until: Option<i64>,
+}
+
+/// Result of consuming one provider-owned banked reset grant.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderRateLimitResetOutcome {
+    Reset,
+    AlreadyUsed,
+    NotLimited,
+    Cooldown,
+    Ineligible,
+    Unavailable,
+    RateLimited,
+    AuthError,
+    Error,
+}
+
+/// Client-wire answer of `companion/providerRateLimits/reset/consume`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRateLimitResetConsumption {
+    pub outcome: ProviderRateLimitResetOutcome,
+    pub reason: Option<String>,
+    pub resets_left: Option<u32>,
+    pub cleared: Vec<String>,
+    pub weekly_resets_at: Option<String>,
+}
+
 /// A provider's full subscription limit snapshot (`ProviderRateLimits`).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -154,6 +227,9 @@ pub struct ProviderRateLimits {
     /// Unix seconds of the latest change.
     pub updated_at: i64,
     pub windows: Vec<ProviderRateLimitWindow>,
+    /// Additive: absent when the provider did not report a reset program.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets: Option<ProviderRateLimitResets>,
 }
 
 /// Params of `rateLimits.updated`.

@@ -310,6 +310,7 @@ describe("background task output", () => {
       } as CapabilitySet, // WHY: built from the exhaustive name list above.
     };
     expect(supportsCapability(extension, "threads.backgroundTaskOutput")).toBe(false);
+    expect(supportsCapability(extension, "accounts.rateLimitResets")).toBe(false);
     expect(
       supportsCapability(
         {
@@ -317,6 +318,15 @@ describe("background task output", () => {
           capabilities: { ...extension.capabilities, "threads.backgroundTaskOutput": true },
         },
         "threads.backgroundTaskOutput",
+      ),
+    ).toBe(true);
+    expect(
+      supportsCapability(
+        {
+          ...extension,
+          capabilities: { ...extension.capabilities, "accounts.rateLimitResets": true },
+        },
+        "accounts.rateLimitResets",
       ),
     ).toBe(true);
   });

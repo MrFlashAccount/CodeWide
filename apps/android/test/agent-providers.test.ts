@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   hostDeclaresCapability,
   parseAgentProvidersResult,
+  parseProviderResetConsumption,
 } from "../src/data/agentProviders";
 import { createAgentProvidersResource } from "../src/data/agentProvidersResource";
 import { createVoiceAssistantModelCatalog } from "../src/data/voiceAssistantModelCatalog";
@@ -42,10 +43,41 @@ const providers = {
 };
 
 function withClaude(entry: Record<string, unknown>) {
-  return { ...providers, providers: [providers.providers[0], { ...providers.providers[1], ...entry }] };
+  return {
+    ...providers,
+    providers: [providers.providers[0], { ...providers.providers[1], ...entry }],
+  };
 }
 
 describe("agent provider list", () => {
+  it("validates provider reset consumption results", () => {
+    expect(
+      parseProviderResetConsumption({
+        cleared: ["five_hour", "seven_day"],
+        outcome: "reset",
+        reason: null,
+        resetsLeft: 1,
+        weeklyResetsAt: "2026-10-23T12:00:00Z",
+      }),
+    ).toEqual({
+      cleared: ["five_hour", "seven_day"],
+      outcome: "reset",
+      reason: null,
+      resetsLeft: 1,
+      weeklyResetsAt: "2026-10-23T12:00:00Z",
+    });
+    expect(parseProviderResetConsumption({ outcome: "surprise" })).toBeNull();
+    expect(
+      parseProviderResetConsumption({
+        cleared: [],
+        outcome: "reset",
+        reason: null,
+        resetsLeft: -1,
+        weeklyResetsAt: null,
+      }),
+    ).toBeNull();
+  });
+
   it("validates the wire shape", () => {
     const parsed = parseAgentProvidersResult(providers);
     expect(parsed?.hostCapabilities).toEqual(["accounts.pool", "realtimeVoice", "review"]);
@@ -61,7 +93,10 @@ describe("agent provider list", () => {
       status: "live",
     });
     expect(parseAgentProvidersResult(withClaude({ status: "sleeping" }))).toBeNull();
-    expect(parseAgentProvidersResult(withClaude({ capabilities: null, status: "disabled" }))?.providers[1]?.capabilities).toBeNull();
+    expect(
+      parseAgentProvidersResult(withClaude({ capabilities: null, status: "disabled" }))
+        ?.providers[1]?.capabilities,
+    ).toBeNull();
     expect(parseAgentProvidersResult({ providers: "x", hostCapabilities: {} })).toBeNull();
   });
 
@@ -114,7 +149,9 @@ describe("agent provider list", () => {
     expect(resource.state$.server?.peek()?.status).toBe("ready");
     expect(resource.applyChanged("server", withClaude({ status: "reconnecting" }))).toBe(true);
     const state = resource.state$.server?.peek();
-    expect(state?.status === "ready" ? state.value.providers[1]?.status : null).toBe("reconnecting");
+    expect(state?.status === "ready" ? state.value.providers[1]?.status : null).toBe(
+      "reconnecting",
+    );
     expect(resource.applyChanged("server", { providers: 1 })).toBe(false);
     answer = async () => {
       throw new RpcResponseError(-32_601, "Method not found");
@@ -141,7 +178,14 @@ describe("provider-level limits and the non-pool account", () => {
     usedPercent: 30,
     windowDurationMins: 300,
   };
-  const weekly = { ...window, id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 80, windowDurationMins: 10_080 };
+  const weekly = {
+    ...window,
+    id: "seven_day",
+    kind: "weekly",
+    label: "Weekly",
+    usedPercent: 80,
+    windowDurationMins: 10_080,
+  };
   const state = (entry: Record<string, unknown>) => {
     const parsed = parseAgentProvidersResult(withClaude(entry));
     if (parsed === null) throw new Error("fixture must parse");
@@ -156,17 +200,61 @@ describe("provider-level limits and the non-pool account", () => {
   it("distinguishes not reported, unknown and known limits", () => {
     expect(claude({}).limits).toEqual({ kind: "notReported" });
     expect(claude({ rateLimits: null }).limits).toEqual({ kind: "pending" });
-    expect(claude({ rateLimits: { updatedAt: 1_800_000_000, windows: [window, weekly] } }).limits).toEqual({
+    expect(
+      claude({ rateLimits: { updatedAt: 1_800_000_000, windows: [window, weekly] } }).limits,
+    ).toEqual({
       kind: "known",
+      resets: null,
       updatedAt: 1_800_000_000,
       windows: [window, weekly],
     });
     // An invalid window is skipped and an unusable snapshot reads as unknown, never as a bad list.
     expect(
-      claude({ rateLimits: { updatedAt: 1_800_000_000, windows: [{ ...window, kind: "daily" }, weekly] } }).limits,
-    ).toEqual({ kind: "known", updatedAt: 1_800_000_000, windows: [weekly] });
+      claude({
+        rateLimits: { updatedAt: 1_800_000_000, windows: [{ ...window, kind: "daily" }, weekly] },
+      }).limits,
+    ).toEqual({ kind: "known", resets: null, updatedAt: 1_800_000_000, windows: [weekly] });
     expect(claude({ rateLimits: { windows: "x" } }).limits).toEqual({ kind: "pending" });
     expect(claude({ accountLabel: "dev@example.com" }).accountLabel).toBe("dev@example.com");
+  });
+
+  it("reads additive provider reset grants without weakening the limit snapshot", () => {
+    const resets = {
+      availableCount: 2,
+      cooldownUntil: null,
+      eligible: true,
+      grants: [
+        {
+          clears: ["five_hour", "seven_day"],
+          expiresAt: 1_900_000_000,
+          id: "grant_one",
+          kind: "weekly",
+          label: "Weekly reset",
+          paused: false,
+          resetsLeft: 2,
+          resetsTotal: 3,
+          startsAt: 1_800_000_000,
+          unavailableReason: null,
+          usableNow: true,
+          useRequiresLimit: true,
+        },
+      ],
+      ineligibleReason: null,
+      nextGrantId: "grant_one",
+      weeklyResetsAt: 1_850_000_000,
+    };
+    expect(
+      claude({ rateLimits: { updatedAt: 1_800_000_000, windows: [window], resets } }).limits,
+    ).toEqual({ kind: "known", resets, updatedAt: 1_800_000_000, windows: [window] });
+    expect(
+      claude({
+        rateLimits: {
+          updatedAt: 1_800_000_000,
+          windows: [window],
+          resets: { ...resets, grants: "bad" },
+        },
+      }).limits,
+    ).toEqual({ kind: "known", resets: null, updatedAt: 1_800_000_000, windows: [window] });
   });
 
   it("lists only enabled providers without an account pool as accounts", () => {
@@ -181,17 +269,23 @@ describe("provider-level limits and the non-pool account", () => {
   it("describes the sign-in without offering account actions", () => {
     const signedIn = claude({ accountLabel: "dev@example.com" });
     expect(providerAccountTitle(signedIn)).toBe("dev@example.com");
-    expect(providerAccountDescription(signedIn, "Studio")).toBe("Max · Signed in via Claude Code on Studio");
+    expect(providerAccountDescription(signedIn, "Studio")).toBe(
+      "Max · Signed in via Claude Code on Studio",
+    );
     const signedOut = claude({ auth: "unauthenticated", planLabel: null });
     expect(providerAccountTitle(signedOut)).toBe("Claude account");
-    expect(providerAccountDescription(signedOut, "Studio")).toBe("Not signed in — run `claude` on the server");
+    expect(providerAccountDescription(signedOut, "Studio")).toBe(
+      "Not signed in — run `claude` on the server",
+    );
     expect(providerAccountDescription(claude({ status: "reconnecting" }), "Studio")).toBe(
       "Claude is reconnecting on Studio",
     );
   });
 
   it("summarizes remaining capacity from the weekly window first", () => {
-    const limits = claude({ rateLimits: { updatedAt: 1_800_000_000, windows: [window, weekly] } }).limits;
+    const limits = claude({
+      rateLimits: { updatedAt: 1_800_000_000, windows: [window, weekly] },
+    }).limits;
     expect(providerLimitsSummary(limits)).toBe("Weekly 20% left");
     expect(providerLimitsSummary({ kind: "pending" })).toBe("Usage unknown");
     expect(providerLimitRemaining({ ...window, status: "rejected", usedPercent: null })).toBe(0);

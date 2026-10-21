@@ -106,6 +106,7 @@ pub fn host_capability(method: &str) -> Capability {
         }
         "account/rateLimits/read" => Capability::AccountsRateLimits,
         method if method.starts_with("companion/accountPool/") => Capability::AccountsPool,
+        "companion/providerRateLimits/reset/consume" => Capability::AccountsRateLimitResets,
         method if method.starts_with("companion/search") => Capability::HistoryMessageSearch,
         _ => Capability::CodexNative,
     }
@@ -415,6 +416,15 @@ mod tests {
             route("fs/readDirectory", &json!({})),
             MethodRoute::Host {
                 owner: Capability::HostFs
+            }
+        );
+        assert_eq!(
+            route(
+                "companion/providerRateLimits/reset/consume",
+                &json!({"providerId": "claude", "grantId": "weekly"})
+            ),
+            MethodRoute::Host {
+                owner: Capability::AccountsRateLimitResets
             }
         );
         assert_eq!(
