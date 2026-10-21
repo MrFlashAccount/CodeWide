@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native";
-import { colors, controlSize, radii, spacing } from "../../../theme";
+import { colors, controlSize, disabledOpacity, radii, spacing } from "../../../theme";
 
 export const styles = StyleSheet.create({
   composerContextChip: {
@@ -17,4 +17,5 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     paddingVertical: spacing.xxs,
   },
+  disabled: { opacity: disabledOpacity },
 });

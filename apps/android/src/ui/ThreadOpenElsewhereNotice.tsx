@@ -6,11 +6,8 @@ import { useEvent } from "../react/useEvent";
 import { colors, iconSize, radii, spacing, touchTarget, typeScale } from "../theme";
 import { AppText } from "./AppText";
 import { useAppDialog } from "./AppDialog";
+import { composerSlotStyles } from "./composerSlot.styles";
 import { ContentMenu } from "./ContentMenu";
-import {
-  conversationChromeEdgeInset,
-  conversationComposerDockMinHeight,
-} from "./conversation-chrome-layout";
 
 const PRESSED_OPACITY = 0.68;
 const DETAILS_MAX_WIDTH = 320;
@@ -51,14 +48,14 @@ export function ThreadOpenElsewhereNotice({
     );
   });
   return (
-    <View style={styles.row} testID="thread-open-elsewhere-notice">
+    <View style={composerSlotStyles.row} testID="thread-open-elsewhere-notice">
       <Pressable
         accessibilityHint="Shows why sending is off"
         accessibilityLabel="Open in another app"
         accessibilityLiveRegion="polite"
         accessibilityRole="button"
         onPress={openDetails}
-        style={({ pressed }) => [styles.pill, pressed && styles.pressed]}
+        style={({ pressed }) => [composerSlotStyles.pill, pressed && styles.pressed]}
       >
         {/* The pill stretches; the menu anchors to its fixed-size lock and opens above it. */}
         <OpenElsewhereDetails
@@ -66,7 +63,7 @@ export function ThreadOpenElsewhereNotice({
           onPressAnchor={openDetails}
           open={detailsOpen}
         />
-        <AppText numberOfLines={1} shimmering={checking} style={styles.label}>
+        <AppText numberOfLines={1} shimmering={checking} style={composerSlotStyles.label}>
           Open in another app
         </AppText>
       </Pressable>
@@ -174,24 +171,6 @@ const styles = StyleSheet.create({
     ...typeScale.title,
     color: colors.text,
   },
-  label: {
-    ...typeScale.composerInput,
-    color: colors.text,
-    flexShrink: 1,
-  },
-  pill: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainerHigh,
-    borderColor: colors.border,
-    borderRadius: radii.composer,
-    borderWidth: 1,
-    flex: 1,
-    flexDirection: "row",
-    gap: spacing.xs,
-    height: touchTarget,
-    minWidth: 0,
-    paddingHorizontal: spacing.md,
-  },
   pressed: { opacity: PRESSED_OPACITY },
   primary: { backgroundColor: colors.accent },
   primaryPressed: { backgroundColor: colors.accentPressed },
@@ -201,16 +180,6 @@ const styles = StyleSheet.create({
     height: touchTarget,
     justifyContent: "center",
     width: touchTarget,
-  },
-  // The composer's row: same insets and height, so taking its place moves nothing.
-  row: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.xs,
-    minHeight: conversationComposerDockMinHeight,
-    paddingBottom: spacing.compact,
-    paddingHorizontal: conversationChromeEdgeInset,
-    paddingTop: spacing.xxs,
   },
   tonal: {
     backgroundColor: colors.surfaceContainerHigh,

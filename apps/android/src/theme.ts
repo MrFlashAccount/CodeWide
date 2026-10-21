@@ -116,6 +116,9 @@ export const typeScale = {
 
 export const touchTarget = 48;
 
+/** Opacity of a control that is shown but cannot be operated. */
+export const disabledOpacity = 0.42;
+
 /** Glyph size is independent of the surrounding touch target. */
 export const iconSize = {
   action: 20,
