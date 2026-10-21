@@ -25,6 +25,7 @@ export function NativeCodeBlock({
   truncate = true,
   value,
   variant = "code",
+  wrapLines = false,
 }: {
   embeddedInParentScroll?: boolean;
   fillAvailableWidth?: boolean;
@@ -34,6 +35,8 @@ export function NativeCodeBlock({
   truncate?: boolean;
   value: string;
   variant?: NativeCodeVariant;
+  /** Wraps long lines instead of scrolling them sideways; wrapped rows fill `maxHeight`. */
+  wrapLines?: boolean;
 }) {
   const availableWidth = useRichContentWidth();
   const searchQuery = useContext(SearchHighlightQuery);
@@ -41,11 +44,16 @@ export function NativeCodeBlock({
     ? nativeCodePreview(value)
     : { originalLines: value === "" ? 1 : value.split("\n").length, truncated: false, value };
   const normalizedLanguage = normalizeNativeCodeLanguage(language, variant);
-  const height = nativeCodeHeight(preview.value, maxHeight, maxVisibleLines);
+  // Wrapped rows outnumber the source's lines, so a wrapping block takes the
+  // whole height it is given and scrolls inside it.
+  const height =
+    wrapLines && maxHeight !== undefined
+      ? maxHeight
+      : nativeCodeHeight(preview.value, maxHeight, maxVisibleLines);
   if (NativeCodeBlockHost === null) {
     const fallbackValue =
       variant === "terminal" ? stripTerminalControlSequences(preview.value) : preview.value;
-    return <NativeCodeBlockFallback height={height} value={fallbackValue} />;
+    return <NativeCodeBlockFallback height={height} value={fallbackValue} wrapLines={wrapLines} />;
   }
   return (
     <View
@@ -64,6 +72,7 @@ export function NativeCodeBlock({
         searchQuery={searchQuery}
         style={[styles.nativeView, { height }]}
         variant={variant}
+        wrapLines={wrapLines}
       />
       {preview.truncated && (
         <Text style={styles.truncated}>
@@ -78,9 +87,11 @@ export function NativeCodeBlock({
 function NativeCodeBlockFallback({
   height,
   value,
+  wrapLines,
 }: {
   readonly height: number;
   readonly value: string;
+  readonly wrapLines: boolean;
 }): ReactElement {
   return (
     <ScrollView
@@ -88,7 +99,13 @@ function NativeCodeBlockFallback({
       showsVerticalScrollIndicator
       style={[styles.fallbackViewport, { height }]}
     >
-      <NativeCodeBlockFallbackRow value={value} />
+      {wrapLines ? (
+        <Text selectable style={[styles.fallbackText, styles.fallbackContent]}>
+          <HighlightSearchText text={value} />
+        </Text>
+      ) : (
+        <NativeCodeBlockFallbackRow value={value} />
+      )}
     </ScrollView>
   );
 }
