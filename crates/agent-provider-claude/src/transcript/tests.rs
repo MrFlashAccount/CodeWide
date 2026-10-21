@@ -711,8 +711,19 @@ fn rebuilds_a_sub_agent_transcript_with_its_delegated_prompt_first()
     assert_eq!(turns.len(), 1);
     assert_eq!(types(&turns[0]), ["userMessage", "command"]);
     assert_eq!(user_texts(&turns), ["Watch the deploy until it ends."]);
+    // It no longer runs and never answered: its process ended mid-step.
+    assert_eq!(turns[0].status, TurnStatus::Interrupted);
     let running = reconstruct_subagent_turns(&transcript, &context(), true);
     assert_eq!(running[0].status, TurnStatus::InProgress);
+    let answered = reconstruct_subagent_turns(
+        &fixture_subagent("interactive_terminal_subagents", "a1b2c3d4e5f600001")?,
+        &context(),
+        false,
+    );
+    assert_eq!(
+        answered.last().map(|turn| turn.status),
+        Some(TurnStatus::Completed)
+    );
     Ok(())
 }
 

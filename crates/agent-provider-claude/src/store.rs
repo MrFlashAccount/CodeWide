@@ -53,7 +53,8 @@ const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// `SendMessage` call resumed is running again until that run reports (it
 /// stayed finished). 10: each sub-agent's own model ([`IndexedSubagent::model`]).
 /// 11: every background agent a report naming several tasks stopped (only
-/// the first one stopped; the others stayed running forever).
+/// the first one stopped; the others stayed running forever), and a
+/// sub-agent cut off before its answer is interrupted, not completed.
 pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 11;
 
 /// The Claude tables' schema in the host index.
