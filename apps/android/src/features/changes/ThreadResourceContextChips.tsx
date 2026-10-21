@@ -165,6 +165,7 @@ export function ThreadResourceContextChips({
           ) : (
             <ComposerContextCount
               label={scopeTitle}
+              loading={changesPending}
               testID="composer-changes-label"
               value={changeCount}
             />
@@ -196,6 +197,7 @@ export function ThreadResourceContextChips({
           ) : (
             <ComposerContextCount
               label="Attachments"
+              loading={attachmentsPending}
               testID="composer-attachments-label"
               value={attachmentCount}
             />

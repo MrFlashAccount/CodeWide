@@ -64,6 +64,7 @@ export function ComposerPortContextChipView({
       ) : (
         <ComposerContextCount
           label="Ports"
+          loading={snapshot.profilesStatus === "loading"}
           testID="composer-ports-label"
           value={snapshot.profiles.length}
         />
