@@ -1,9 +1,12 @@
 /** V1 timelineSearch owner, extracted without changing interaction or resource lifetime. */
-import { projectedTurnMetadata } from "@codewide/sync-client";
-import { boundedJsonStringify } from "../../../rendering/bounded-json";
 import { timelineSearchTextCache } from "./timelineProjection";
 import type { TimelineItem } from "./timelineTypes";
 
+/**
+ * The text thread search matches: what the person and the agent wrote (its
+ * final and intermediate messages). Tool calls, their output and the turn's
+ * metadata are never searched.
+ */
 function timelineSearchText(item: TimelineItem): string {
   const cached = timelineSearchTextCache.get(item);
   if (cached !== undefined) {
@@ -11,27 +14,21 @@ function timelineSearchText(item: TimelineItem): string {
   }
   const value =
     item.kind === "turn"
-      ? [
-          ...item.turn.items.map((rawItem) => {
-            if (rawItem.type === "userMessage") {
-              return rawItem.content
-                .map((content) =>
-                  "text" in content ? content.text : boundedJsonStringify(content, 8192),
-                )
-                .join("\n");
-            }
-            if (rawItem.type === "agentMessage") {
-              return rawItem.text;
-            }
-            return boundedJsonStringify(rawItem, 16_384);
-          }),
-          boundedJsonStringify(projectedTurnMetadata(item.turn) ?? {}, 8192),
-        ].join("\n")
+      ? item.turn.items.map(messageSearchText).join("\n")
       : item.kind === "optimistic"
         ? item.text
-        : item.status;
+        : "";
   timelineSearchTextCache.set(item, value);
   return value;
+}
+
+type TurnItem = Extract<TimelineItem, { kind: "turn" }>["turn"]["items"][number];
+
+function messageSearchText(rawItem: TurnItem): string {
+  if (rawItem.type === "userMessage") {
+    return rawItem.content.map((content) => ("text" in content ? content.text : "")).join("\n");
+  }
+  return rawItem.type === "agentMessage" ? rawItem.text : "";
 }
 
 import { useRef } from "react";

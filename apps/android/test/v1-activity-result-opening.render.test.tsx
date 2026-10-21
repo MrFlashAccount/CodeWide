@@ -5,7 +5,11 @@ import { LargeContentViewerContext } from "../src/features/conversation/content/
 import { CommandExecutionProtocolBlock } from "../src/features/conversation/protocol/CommandOutput";
 import { FileChangeProtocolBlock } from "../src/features/conversation/protocol/FileChangeProtocolBlock";
 import { ToolCallProtocolBlock } from "../src/features/conversation/protocol/ToolContent";
-import { TurnTargetContext } from "../src/features/conversation/turns/turnContexts";
+import {
+  SHEET_TOOL_CARDS,
+  ToolCardPlacementContext,
+  TurnTargetContext,
+} from "../src/features/conversation/turns/turnContexts";
 import { TurnChangesContext } from "../src/rendering/TurnChangesContext";
 import type { LargeContentRouteRequest } from "../src/services/content/contentRouteSession";
 
@@ -47,7 +51,9 @@ it("opens the exact command output without using its disclosure action", () => {
           opened.push(request);
         }}
       >
-        <CommandExecutionProtocolBlock block={block} />
+        <ToolCardPlacementContext.Provider value={SHEET_TOOL_CARDS}>
+          <CommandExecutionProtocolBlock block={block} />
+        </ToolCardPlacementContext.Provider>
       </LargeContentViewerContext.Provider>
     </TurnTargetContext.Provider>,
   );
@@ -110,6 +116,35 @@ it("opens a subagent's command output from the subagent's own thread", () => {
       turnId: "turn",
     }),
   ]);
+});
+
+it("draws a tool step in a bubble as its row only, never its output", () => {
+  const block: RenderBlock = {
+    body: "first line\n",
+    collapsible: true,
+    content: null,
+    durationMs: null,
+    key: "command:item-command",
+    kind: "commandExecution",
+    raw: { command: "pnpm test", id: "item-command" },
+    status: "completed",
+    title: "pnpm test",
+    tone: "info",
+  };
+  const openActivity = jest.fn();
+  // Without an output viewer the row opens the activity sheet.
+  const view = render(
+    <ToolCardPlacementContext.Provider value={{ kind: "bubble", openActivity }}>
+      <CommandExecutionProtocolBlock block={block} />
+    </ToolCardPlacementContext.Provider>,
+  );
+
+  expect(view.getByText("pnpm test")).toBeOnTheScreen();
+  expect(view.queryByLabelText(/^(Expand|Collapse) pnpm test/)).toBeNull();
+  expect(view.queryByText("first line")).toBeNull();
+  expect(view.queryByText("Output")).toBeNull();
+  fireEvent.press(view.getByLabelText("Open pnpm test"));
+  expect(openActivity).toHaveBeenCalledTimes(1);
 });
 
 it("opens only the patches owned by the selected file-change call", () => {

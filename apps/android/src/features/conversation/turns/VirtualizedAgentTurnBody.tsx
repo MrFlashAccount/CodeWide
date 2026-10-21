@@ -319,7 +319,6 @@ function renderActivityPart(
     return (
       <CollapsedTurnActivity
         compact={props.compact}
-        forceExpanded={props.forceExpanded}
         indexes={part.indexes}
         item={props.turn}
         key={part.key}
@@ -336,7 +335,6 @@ function renderActivityPart(
     <TurnActivitySegment
       animateNew={props.animateLiveUpdates}
       compact={props.compact}
-      forceExpanded={props.forceExpanded}
       key={part.key}
       part={part}
       turnKey={props.turn.key}

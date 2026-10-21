@@ -14,22 +14,13 @@ import { persistentExpansionStates, writePersistentExpansionState } from "./disc
 import {
   ActiveToolCallContext,
   ExpansionItemKeyContext,
-  ForceExpandCardsContext,
+  ToolCardPlacementContext,
 } from "./turnContexts";
 
-export function Card({
-  children,
-  collapsible = false,
-  copyText,
-  headerMeta,
-  icon,
-  initiallyExpanded = true,
-  onOpen,
-  openEnabled = true,
-  openLabel,
-  status,
-  title,
-}: {
+/** How far past the header a press still counts. */
+const HEADER_HIT_SLOP = 10;
+
+type CardProps = {
   children: ReactNode;
   collapsible?: boolean;
   copyText?: () => string;
@@ -41,24 +32,112 @@ export function Card({
   openLabel?: string;
   status?: string;
   title: string;
-}) {
+};
+
+/**
+ * A tool step. In a bubble it is the step's row and never draws its body; in
+ * the activity sheet it discloses the body.
+ */
+export function Card(props: CardProps) {
+  const placement = useContext(ToolCardPlacementContext);
+  return placement.kind === "bubble" ? (
+    <CardRow {...props} openActivity={placement.openActivity} />
+  ) : (
+    <DisclosureCard {...props} />
+  );
+}
+
+/**
+ * The step as a bubble shows it: the same header as in the sheet. A press
+ * opens the step's full-screen viewer, else the activity sheet.
+ */
+function CardRow({
+  headerMeta,
+  icon,
+  onOpen,
+  openActivity,
+  openEnabled = true,
+  openLabel,
+  status,
+  title,
+}: CardProps & { openActivity: (() => void) | null }) {
+  const insideBubbleSurface = useInsideBubbleSurface();
+  const activeToolCall = useContext(ActiveToolCallContext);
+  const opensViewer = onOpen !== undefined && openEnabled;
+  const open = opensViewer ? onOpen : openActivity;
+  const activate = useEvent(() => {
+    open?.();
+  });
+  return (
+    <View
+      collapsable={false}
+      style={[styles.card, insideBubbleSurface && styles.bubbleNestedSurface]}
+      testID="protocol-card"
+    >
+      <Pressable
+        {...rowPressProps(open !== null, opensViewer ? openLabel : undefined, title)}
+        onPress={activate}
+        style={[styles.cardHeader, styles.cardHeaderToggle]}
+        testID="protocol-card-header"
+      >
+        <CardHeaderContent
+          headerMeta={headerMeta}
+          icon={icon}
+          running={isRunningStatus(status) || activeToolCall}
+          status={status}
+          title={title}
+        />
+      </Pressable>
+    </View>
+  );
+}
+
+/** A row opens something only when it has a target; a viewer may name its own action. */
+function rowPressProps(
+  interactive: boolean,
+  viewerLabel: string | undefined,
+  title: string,
+): {
+  readonly accessibilityLabel: string | undefined;
+  readonly accessibilityRole: "button" | undefined;
+  readonly disabled: boolean;
+  readonly hitSlop: number | undefined;
+} {
+  return {
+    accessibilityLabel: interactive ? (viewerLabel ?? `Open ${title}`) : undefined,
+    accessibilityRole: interactive ? "button" : undefined,
+    disabled: !interactive,
+    hitSlop: interactive ? HEADER_HIT_SLOP : undefined,
+  };
+}
+
+function DisclosureCard({
+  children,
+  collapsible = false,
+  copyText,
+  headerMeta,
+  icon,
+  initiallyExpanded = true,
+  onOpen,
+  openEnabled = true,
+  openLabel,
+  status,
+  title,
+}: CardProps) {
   const insideBubbleSurface = useInsideBubbleSurface();
   const itemKey = useContext(ExpansionItemKeyContext);
   const [expanded, setExpanded] = usePersistentExpansion(`${itemKey}:card`, initiallyExpanded);
-  const forceExpanded = useContext(ForceExpandCardsContext);
   const activeToolCall = useContext(ActiveToolCallContext);
-  const isRunning = status === "inProgress" || status === "running" || activeToolCall;
-  const visiblyExpanded = forceExpanded || expanded;
   const hasOpenAction = onOpen !== undefined && openEnabled;
   const toggleExpanded = useEvent(() => {
-    setExpanded(!visiblyExpanded);
+    setExpanded(!expanded);
   });
   const activateHeader = useEvent(hasOpenAction ? onOpen : toggleExpanded);
   const headerIsButton = hasOpenAction || collapsible;
   const disclosureIcon = collapsible ? (
     <InlineIcon
       color={colors.textDim}
-      name={visiblyExpanded ? "chevron-up" : "chevron-down"}
+      name={expanded ? "chevron-up" : "chevron-down"}
       role="label"
     />
   ) : null;
@@ -74,48 +153,29 @@ export function Card({
             hasOpenAction
               ? (openLabel ?? `Open ${title}`)
               : collapsible
-                ? `${visiblyExpanded ? "Collapse" : "Expand"} ${title}`
+                ? `${expanded ? "Collapse" : "Expand"} ${title}`
                 : undefined
           }
           accessibilityRole={headerIsButton ? "button" : undefined}
           disabled={!headerIsButton}
-          hitSlop={headerIsButton ? 10 : undefined}
+          hitSlop={headerIsButton ? HEADER_HIT_SLOP : undefined}
           onPress={activateHeader}
           style={styles.cardHeaderToggle}
         >
-          <View style={styles.cardIconSlot} testID="protocol-card-icon">
-            <InlineIcon color={colors.textMuted} name={icon} role="label" />
-          </View>
-          {isRunning ? (
-            <WaveText
-              containerStyle={styles.cardTitleWave}
-              key="running-title"
-              style={styles.cardTitle}
-              text={title}
-            />
-          ) : (
-            <Text key="settled-title" numberOfLines={1} style={styles.cardTitle}>
-              {title}
-            </Text>
-          )}
-          <View style={styles.flex} />
-          {headerMeta}
-          {typeof status === "string" && status !== "" && !isRunning && (
-            <View accessibilityLabel={`Status ${status}`} accessible style={styles.cardStatusIcon}>
-              {status === "failed" || status === "error" ? (
-                <InlineIcon color={colors.red} name="alert-circle" role="label" />
-              ) : (
-                <View style={styles.cardStatusDot} />
-              )}
-            </View>
-          )}
+          <CardHeaderContent
+            headerMeta={headerMeta}
+            icon={icon}
+            running={isRunningStatus(status) || activeToolCall}
+            status={status}
+            title={title}
+          />
           {!hasOpenAction && disclosureIcon}
         </Pressable>
         {collapsible && hasOpenAction && (
           <Pressable
-            accessibilityLabel={`${visiblyExpanded ? "Collapse" : "Expand"} ${title}`}
+            accessibilityLabel={`${expanded ? "Collapse" : "Expand"} ${title}`}
             accessibilityRole="button"
-            hitSlop={10}
+            hitSlop={HEADER_HIT_SLOP}
             onPress={toggleExpanded}
             style={styles.cardDisclosure}
           >
@@ -124,9 +184,59 @@ export function Card({
         )}
         {copyText !== undefined && !collapsible && <CopyButton getText={copyText} />}
       </View>
-      {(!collapsible || visiblyExpanded) && <View style={styles.cardContent}>{children}</View>}
+      {(!collapsible || expanded) && <View style={styles.cardContent}>{children}</View>}
     </View>
   );
+}
+
+/** The icon, the title (shimmering while the step runs), its meta and status. */
+function CardHeaderContent({
+  headerMeta,
+  icon,
+  running,
+  status,
+  title,
+}: {
+  headerMeta: ReactNode;
+  icon: keyof typeof Ionicons.glyphMap;
+  running: boolean;
+  status: string | undefined;
+  title: string;
+}) {
+  return (
+    <>
+      <View style={styles.cardIconSlot} testID="protocol-card-icon">
+        <InlineIcon color={colors.textMuted} name={icon} role="label" />
+      </View>
+      {running ? (
+        <WaveText
+          containerStyle={styles.cardTitleWave}
+          key="running-title"
+          style={styles.cardTitle}
+          text={title}
+        />
+      ) : (
+        <Text key="settled-title" numberOfLines={1} style={styles.cardTitle}>
+          {title}
+        </Text>
+      )}
+      <View style={styles.flex} />
+      {headerMeta}
+      {typeof status === "string" && status !== "" && !running && (
+        <View accessibilityLabel={`Status ${status}`} accessible style={styles.cardStatusIcon}>
+          {status === "failed" || status === "error" ? (
+            <InlineIcon color={colors.red} name="alert-circle" role="label" />
+          ) : (
+            <View style={styles.cardStatusDot} />
+          )}
+        </View>
+      )}
+    </>
+  );
+}
+
+function isRunningStatus(status: string | undefined): boolean {
+  return status === "inProgress" || status === "running";
 }
 
 export function usePersistentExpansion(

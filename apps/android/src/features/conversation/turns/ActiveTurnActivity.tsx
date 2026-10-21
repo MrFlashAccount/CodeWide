@@ -13,6 +13,7 @@ import { TurnActivity } from "./TurnActivity";
 import {
   ActiveToolCallContext,
   ExpansionItemKeyContext,
+  ToolCardPlacementContext,
   TurnActivityMetricsContext,
 } from "./turnContexts";
 import { projectThreadItem, turnActivityLabel } from "./turnProjection";
@@ -54,11 +55,13 @@ export function ActiveTurnActivity(props: ActiveTurnActivityProps): ReactElement
       <TurnActivity expanded={false} label={label} loading onToggle={openSheet} opensSheet>
         {null}
       </TurnActivity>
-      <CurrentActions
-        blocks={currentActions(props.part.blocks)}
-        getTransferAccess={props.getTransferAccess}
-        turnKey={props.turn.key}
-      />
+      <ToolCardPlacementContext.Provider value={{ kind: "bubble", openActivity: openSheet }}>
+        <CurrentActions
+          blocks={currentActions(props.part.blocks)}
+          getTransferAccess={props.getTransferAccess}
+          turnKey={props.turn.key}
+        />
+      </ToolCardPlacementContext.Provider>
       <ActivityDetailSheet
         blocks={sheetVisible ? groupBlocks(props) : props.part.blocks}
         onClose={closeSheet}
@@ -101,7 +104,7 @@ function CurrentActions({
   );
 }
 
-/** A running action reads its externalized output like any other command card. */
+/** A running action as its step's row: its output opens in its viewer or the sheet, never here. */
 function CurrentAction({
   block,
   getTransferAccess,
