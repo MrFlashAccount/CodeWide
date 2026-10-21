@@ -50,6 +50,23 @@ fn element<'a>(body: &'a str, name: &str) -> Option<&'a str> {
     Some(&body[start..end])
 }
 
+/// The text of every `<name>` element, in order.
+fn elements<'a>(body: &'a str, name: &str) -> Vec<&'a str> {
+    let open = format!("<{name}>");
+    let close = format!("</{name}>");
+    let mut found = Vec::new();
+    let mut at = 0;
+    while let Some(offset) = body[at..].find(&open) {
+        let start = at + offset + open.len();
+        let Some(length) = body[start..].find(&close) else {
+            break;
+        };
+        found.push(&body[start..start + length]);
+        at = start + length + close.len();
+    }
+    found
+}
+
 /// The count after the first `<name>` or `name:` in a usage block
 /// (`<duration_ms>12</duration_ms>` or `duration_ms: 12`).
 fn usage_count(usage: Option<&str>, name: &str) -> Option<i64> {
@@ -114,6 +131,13 @@ impl<'a> StoredNotification<'a> {
     fn element(&self, name: &str) -> Option<&'a str> {
         element(self.head, name).or_else(|| element(self.tail, name))
     }
+
+    /// Every element `name` outside the result, in order.
+    fn elements(&self, name: &str) -> Vec<&'a str> {
+        let mut found = elements(self.head, name);
+        found.extend(elements(self.tail, name));
+        found
+    }
 }
 
 /// Where a result starting at `start` ends and where its notification's
@@ -129,19 +153,35 @@ fn result_and_end(body: &str, start: usize) -> Option<(usize, usize)> {
     })
 }
 
-fn stored_report(notification: &StoredNotification<'_>) -> Option<TaskReport> {
-    let task_id = non_empty(notification.element("task-id"))?;
+/// One report per task the notification names. Claude reports several tasks
+/// in one notification (background agents a previous session left
+/// unfinished); they share its status, summary and note, and only a single
+/// task keeps the tool call that started it.
+fn stored_reports(notification: &StoredNotification<'_>) -> Vec<TaskReport> {
+    let task_ids: Vec<String> = notification
+        .elements("task-id")
+        .into_iter()
+        .filter_map(|task_id| non_empty(Some(task_id)))
+        .collect();
+    let tool_use_id = if task_ids.len() == 1 {
+        non_empty(notification.element("tool-use-id"))
+    } else {
+        None
+    };
     let usage = notification.element("usage");
-    Some(TaskReport {
-        task_id,
-        tool_use_id: non_empty(notification.element("tool-use-id")),
-        status: non_empty(notification.element("status")),
-        summary: non_empty(notification.element("summary")),
-        note: non_empty(notification.element("note")),
-        result: notification.result.map(ToOwned::to_owned),
-        duration_ms: usage_count(usage, "duration_ms"),
-        tool_uses: usage_count(usage, "tool_uses"),
-    })
+    task_ids
+        .into_iter()
+        .map(|task_id| TaskReport {
+            task_id,
+            tool_use_id: tool_use_id.clone(),
+            status: non_empty(notification.element("status")),
+            summary: non_empty(notification.element("summary")),
+            note: non_empty(notification.element("note")),
+            result: notification.result.map(ToOwned::to_owned),
+            duration_ms: usage_count(usage, "duration_ms"),
+            tool_uses: usage_count(usage, "tool_uses"),
+        })
+        .collect()
 }
 
 /// Every `<task-notification>` of a stored message, in order; one quoted
@@ -153,7 +193,7 @@ pub fn stored_task_reports(text: &str) -> Vec<TaskReport> {
     while let Some(open) = rest.find(OPEN_TAG) {
         let body = &rest[open + OPEN_TAG.len()..];
         let (notification, spanned) = StoredNotification::split(body);
-        reports.extend(stored_report(&notification));
+        reports.extend(stored_reports(&notification));
         rest = &body[spanned..];
     }
     reports
@@ -255,6 +295,30 @@ mod tests {
                 ("btest0001", Some("completed"), Some("ok"), None, None),
             ]
         );
+    }
+
+    #[test]
+    fn a_notification_naming_several_tasks_reports_each_of_them() {
+        let reports = stored_task_reports(
+            "<task-notification>\n<task-id>ac3e135eebe4b6f28</task-id>\n<task-id>aa0372f460af9cb14</task-id>\n<task-id>af34c2685a375acbd</task-id>\n<tool-use-id>toolu_x</tool-use-id>\n<status>stopped</status>\n<summary>3 background agents didn't finish before the previous session ended</summary>\n</task-notification>",
+        );
+        assert_eq!(
+            reports
+                .iter()
+                .map(|report| (
+                    report.task_id.as_str(),
+                    report.status.as_deref(),
+                    report.tool_use_id.as_deref()
+                ))
+                .collect::<Vec<_>>(),
+            [
+                ("ac3e135eebe4b6f28", Some("stopped"), None),
+                ("aa0372f460af9cb14", Some("stopped"), None),
+                ("af34c2685a375acbd", Some("stopped"), None),
+            ]
+        );
+        assert!(reports.iter().all(|report| report.summary.as_deref()
+            == Some("3 background agents didn't finish before the previous session ended")));
     }
 
     #[test]
