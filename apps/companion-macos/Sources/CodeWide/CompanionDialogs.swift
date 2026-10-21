@@ -218,7 +218,8 @@ private struct HttpProxySettingsDialog: View {
             }
         }
         .padding(22)
-        .frame(width: 500, minHeight: 360)
+        .frame(width: 500)
+        .frame(minHeight: 360)
         .tint(CodeWideBrand.accent)
         .task { await model.load() }
     }

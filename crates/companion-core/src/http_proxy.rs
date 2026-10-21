@@ -337,6 +337,93 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn rejects_stored_settings_with_unknown_fields_or_versions() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let store = HttpProxySettingsStore::new(root.path());
+
+        fs::write(
+            store.path(),
+            r#"{"version":1,"httpsProxy":"http://proxy.example:8080","socksProxy":"x"}"#,
+        )?;
+        assert!(matches!(store.load(), Err(HttpProxyConfigError::Invalid)));
+
+        fs::write(
+            store.path(),
+            r#"{"version":2,"httpsProxy":"http://proxy.example:8080"}"#,
+        )?;
+        assert!(matches!(
+            store.load(),
+            Err(HttpProxyConfigError::UnsupportedVersion)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_save_keeps_the_previous_settings() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let store = HttpProxySettingsStore::new(root.path());
+        let previous = store.save(HttpProxySettings {
+            https_proxy: Some("http://proxy.example:8080".into()),
+            ..HttpProxySettings::default()
+        })?;
+
+        let rejected = store.save(HttpProxySettings {
+            https_proxy: Some("http://[::1".into()),
+            ..HttpProxySettings::default()
+        });
+
+        assert!(matches!(rejected, Err(HttpProxyConfigError::Invalid)));
+        assert_eq!(store.load()?, previous);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bypass_list_sends_matching_hosts_directly() -> TestResult {
+        let proxy = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = TcpListener::bind("127.0.0.1:0").await?;
+        let origin_port = origin.local_addr()?.port();
+        let settings = HttpProxySettings {
+            http_proxy: Some(format!("http://{}", proxy.local_addr()?)),
+            no_proxy: Some("127.0.0.1".into()),
+            ..HttpProxySettings::default()
+        };
+        let client = HttpProxyConfig::from_settings(&settings)?
+            .apply(reqwest::Client::builder())?
+            .build()?;
+        let origin_request = tokio::spawn(async move {
+            let (mut socket, _) = origin.accept().await?;
+            let mut request = vec![0_u8; 4096];
+            let bytes = socket.read(&mut request).await?;
+            socket
+                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                .await?;
+            Ok::<_, Box<dyn Error + Send + Sync>>(String::from_utf8(request[..bytes].to_vec())?)
+        });
+
+        let response = timeout(
+            Duration::from_secs(2),
+            client
+                .get(format!("http://127.0.0.1:{origin_port}/probe"))
+                .send(),
+        )
+        .await??;
+
+        assert_eq!(response.status(), reqwest::StatusCode::NO_CONTENT);
+        assert!(
+            origin_request
+                .await??
+                .starts_with("GET /probe HTTP/1.1\r\n")
+        );
+        assert!(
+            timeout(Duration::from_millis(100), proxy.accept())
+                .await
+                .is_err(),
+            "bypassed request reached the proxy"
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn routes_https_requests_through_the_configured_proxy() -> TestResult {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
