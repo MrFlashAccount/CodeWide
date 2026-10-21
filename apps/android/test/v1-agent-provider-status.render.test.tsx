@@ -1,4 +1,4 @@
-import { fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
 import { observable } from "@legendapp/state";
 import { Pressable, Text } from "react-native";
 
@@ -10,6 +10,11 @@ import { WorkspaceAccountUsageMenu } from "../src/features/accounts/WorkspaceAcc
 import { AgentProviderMarks } from "../src/features/connections/AgentProviderMarks";
 import { ConversationHeader } from "../src/features/conversation/header/ConversationHeader";
 import { ContentMenu } from "../src/ui/ContentMenu";
+import { getAppDialogRequest, invokeAppDialogAction, resetAppDialog } from "./mocks/AppDialog";
+
+afterEach(() => {
+  resetAppDialog();
+});
 
 const claudeThread = {
   codewideAgent: {
@@ -58,7 +63,15 @@ it("keeps the context ring of a Claude thread without Codex account rows", () =>
       server={undefined}
       sessionCompactionCount={null}
       setThreadSearchVisible={jest.fn()}
-      thread={{ id: "claude-thread", pinned: false, preview: "", serverId: "server", timestamp: 1, title: "Claude chat", unread: 0 }}
+      thread={{
+        id: "claude-thread",
+        pinned: false,
+        preview: "",
+        serverId: "server",
+        timestamp: 1,
+        title: "Claude chat",
+        unread: 0,
+      }}
       threadChatModel={null}
       threadSearchVisible={false}
     />,
@@ -74,7 +87,11 @@ it("keeps the context ring of a Claude thread without Codex account rows", () =>
 it("does not read the account pool when the menu has no account database", () => {
   const onRefresh = jest.fn(async () => undefined);
   const view = render(
-    <WorkspaceAccountUsageMenu database={null} onRefresh={onRefresh} servers={[{ id: "server", name: "Server" }]}>
+    <WorkspaceAccountUsageMenu
+      database={null}
+      onRefresh={onRefresh}
+      servers={[{ id: "server", name: "Server" }]}
+    >
       <Pressable accessibilityLabel="Menu">
         <Text>Menu</Text>
       </Pressable>
@@ -88,8 +105,24 @@ it("marks the server's agents with their sign-in status, not as accounts", () =>
   const value = parseAgentProvidersResult({
     hostCapabilities: {},
     providers: [
-      { auth: "unknown", capabilities: {}, id: "codex", name: "Codex", planLabel: null, primary: true, status: "live" },
-      { auth: "unauthenticated", capabilities: {}, id: "claude", name: "Claude", planLabel: null, primary: false, status: "live" },
+      {
+        auth: "unknown",
+        capabilities: {},
+        id: "codex",
+        name: "Codex",
+        planLabel: null,
+        primary: true,
+        status: "live",
+      },
+      {
+        auth: "unauthenticated",
+        capabilities: {},
+        id: "claude",
+        name: "Claude",
+        planLabel: null,
+        primary: false,
+        status: "live",
+      },
     ],
   });
   if (value === null) throw new Error("fixture must parse");
@@ -97,7 +130,9 @@ it("marks the server's agents with their sign-in status, not as accounts", () =>
     server: { status: "ready", value },
   });
   const view = render(<AgentProviderMarks agentProviders={{ state$ }} connectionId="server" />);
-  expect(view.getByLabelText("Claude · not signed in — run `claude` on the server to sign in")).toBeOnTheScreen();
+  expect(
+    view.getByLabelText("Claude · not signed in — run `claude` on the server to sign in"),
+  ).toBeOnTheScreen();
   expect(view.getByLabelText("Codex · connected")).toBeOnTheScreen();
   expect(view.getByTestId("agent-provider-claude")).toBeOnTheScreen();
   expect(view.getByTestId("agent-provider-codex")).toBeOnTheScreen();
@@ -106,10 +141,50 @@ it("marks the server's agents with their sign-in status, not as accounts", () =>
 });
 
 const claudeLimits = {
+  resets: {
+    availableCount: 2,
+    cooldownUntil: null,
+    eligible: true,
+    grants: [
+      {
+        clears: ["five_hour", "seven_day"],
+        expiresAt: 1_900_000_000,
+        id: "grant_one",
+        kind: "weekly",
+        label: "Weekly reset",
+        paused: false,
+        resetsLeft: 2,
+        resetsTotal: 3,
+        startsAt: 1_700_000_000,
+        unavailableReason: null,
+        usableNow: true,
+        useRequiresLimit: true,
+      },
+    ],
+    ineligibleReason: null,
+    nextGrantId: "grant_one",
+    weeklyResetsAt: 1_850_000_000,
+  },
   updatedAt: 1_800_000_000,
   windows: [
-    { id: "five_hour", kind: "session", label: "Session", resetsAt: 1_800_010_000, status: "allowed", usedPercent: 25, windowDurationMins: 300 },
-    { id: "seven_day", kind: "weekly", label: "Weekly", resetsAt: 1_800_300_000, status: "allowed", usedPercent: 60, windowDurationMins: 10_080 },
+    {
+      id: "five_hour",
+      kind: "session",
+      label: "Session",
+      resetsAt: 1_800_010_000,
+      status: "allowed",
+      usedPercent: 25,
+      windowDurationMins: 300,
+    },
+    {
+      id: "seven_day",
+      kind: "weekly",
+      label: "Weekly",
+      resetsAt: 1_800_300_000,
+      status: "allowed",
+      usedPercent: 60,
+      windowDurationMins: 10_080,
+    },
   ],
 };
 
@@ -117,17 +192,42 @@ function providerState(claude: Record<string, unknown>) {
   const value = parseAgentProvidersResult({
     hostCapabilities: {},
     providers: [
-      { auth: "unknown", capabilities: { "accounts.pool": true }, id: "codex", name: "Codex", planLabel: null, primary: true, status: "live" },
-      { auth: "authenticated", capabilities: { "accounts.pool": false }, id: "claude", name: "Claude", planLabel: "max", primary: false, status: "live", ...claude },
+      {
+        auth: "unknown",
+        capabilities: { "accounts.pool": true },
+        id: "codex",
+        name: "Codex",
+        planLabel: null,
+        primary: true,
+        status: "live",
+      },
+      {
+        auth: "authenticated",
+        capabilities: { "accounts.pool": false, "accounts.rateLimitResets": true },
+        id: "claude",
+        name: "Claude",
+        planLabel: "max",
+        primary: false,
+        status: "live",
+        ...claude,
+      },
     ],
   });
   if (value === null) throw new Error("fixture must parse");
   return observable<Record<string, AgentProvidersState>>({ server: { status: "ready", value } });
 }
 
-it("lists the Claude sign-in as a read-only account with its limits", () => {
+it("lists the Claude sign-in with its limits and consumes a selected reset", async () => {
   const state$ = providerState({ accountLabel: "dev@example.com", rateLimits: claudeLimits });
-  const view = render(<ProviderAccounts agentProviders={{ state$ }} connectionId="server" serverName="Studio" />);
+  const onConsumeReset = jest.fn(async () => undefined);
+  const view = render(
+    <ProviderAccounts
+      agentProviders={{ state$ }}
+      connectionId="server"
+      onConsumeReset={onConsumeReset}
+      serverName="Studio"
+    />,
+  );
   expect(view.getByText("Claude")).toBeOnTheScreen();
   expect(view.queryByText("Codex")).toBeNull();
   expect(view.getByText("dev@example.com")).toBeOnTheScreen();
@@ -137,13 +237,37 @@ it("lists the Claude sign-in as a read-only account with its limits", () => {
   expect(view.queryByLabelText(/Actions for/u)).toBeNull();
   expect(view.queryByText(/Add .* account/u)).toBeNull();
   fireEvent.press(view.getByTestId("provider-account-claude"));
-  expect(view.getByTestId("account-reset-window-remaining-five_hour")).toHaveTextContent("75% left");
-  expect(view.getByTestId("account-reset-window-remaining-seven_day")).toHaveTextContent("40% left");
+  expect(view.getByTestId("account-reset-window-remaining-five_hour")).toHaveTextContent(
+    "75% left",
+  );
+  expect(view.getByTestId("account-reset-window-remaining-seven_day")).toHaveTextContent(
+    "40% left",
+  );
+  expect(view.getByText("Banked resets · 2")).toBeOnTheScreen();
+  expect(view.getByTestId("provider-reset-grant-grant_one")).toBeOnTheScreen();
+  expect(view.getByText("Weekly reset")).toBeOnTheScreen();
+  fireEvent.press(view.getByLabelText("Use Weekly reset for Claude"));
+  expect(getAppDialogRequest()).toMatchObject({
+    message:
+      "Apply this reset to Claude on Studio? It will be consumed immediately and cannot be undone.",
+    title: "Use Weekly reset?",
+  });
+  await act(async () => {
+    invokeAppDialogAction("Use");
+  });
+  expect(onConsumeReset).toHaveBeenCalledWith("server", "claude", "grant_one");
 });
 
 it("tells how to sign in when Claude is signed out on the server", () => {
   const state$ = providerState({ auth: "unauthenticated", planLabel: null, rateLimits: null });
-  const view = render(<ProviderAccounts agentProviders={{ state$ }} connectionId="server" serverName="Studio" />);
+  const view = render(
+    <ProviderAccounts
+      agentProviders={{ state$ }}
+      connectionId="server"
+      onConsumeReset={jest.fn(async () => undefined)}
+      serverName="Studio"
+    />,
+  );
   expect(view.getByText("Claude account")).toBeOnTheScreen();
   expect(view.getByText("Not signed in — run `claude` on the server")).toBeOnTheScreen();
   expect(view.queryByTestId("provider-limit-rings-claude")).toBeNull();
@@ -153,7 +277,11 @@ it("shows a Claude thread's subscription limits in its header usage menu", () =>
   const known = render(
     <WorkspaceAccountUsageMenu
       database={null}
-      providerLimits={{ agentProviders: { state$: providerState({ rateLimits: claudeLimits }) }, connectionId: "server", provider: "claude" }}
+      providerLimits={{
+        agentProviders: { state$: providerState({ rateLimits: claudeLimits }) },
+        connectionId: "server",
+        provider: "claude",
+      }}
       currentUsage={null}
       servers={[{ id: "server", name: "Server" }]}
       // WHY: the menu reads only the agent descriptor; usage comes from `currentUsage`.
@@ -166,13 +294,19 @@ it("shows a Claude thread's subscription limits in its header usage menu", () =>
   );
   const body = openMenuBody(known);
   expect(body.getByText("Claude usage")).toBeOnTheScreen();
-  expect(body.getByTestId("account-reset-window-remaining-seven_day")).toHaveTextContent("40% left");
+  expect(body.getByTestId("account-reset-window-remaining-seven_day")).toHaveTextContent(
+    "40% left",
+  );
   expect(body.queryByTestId("usage-accounts-section")).toBeNull();
 
   const pending = render(
     <WorkspaceAccountUsageMenu
       database={null}
-      providerLimits={{ agentProviders: { state$: providerState({ rateLimits: null }) }, connectionId: "server", provider: "claude" }}
+      providerLimits={{
+        agentProviders: { state$: providerState({ rateLimits: null }) },
+        connectionId: "server",
+        provider: "claude",
+      }}
       currentUsage={null}
       servers={[{ id: "server", name: "Server" }]}
       // WHY: the menu reads only the agent descriptor; usage comes from `currentUsage`.

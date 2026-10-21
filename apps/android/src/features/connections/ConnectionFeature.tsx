@@ -30,6 +30,7 @@ export function connectionSettingsSections({
   onCheckHostUpdate,
   onCheckRelayUpdate,
   onConsumeAccountResetCredit,
+  onConsumeProviderRateLimitReset,
   onDelete,
   onReconnect,
   onRefreshAccountPool,
@@ -84,6 +85,7 @@ export function connectionSettingsSections({
             {...(onStartAccountLogin === undefined ? {} : { onStartAccountLogin })}
             {...(onCancelAccountLogin === undefined ? {} : { onCancelAccountLogin })}
             {...(onConsumeAccountResetCredit === undefined ? {} : { onConsumeAccountResetCredit })}
+            onConsumeProviderRateLimitReset={onConsumeProviderRateLimitReset}
             {...(onActivateAccountProfile === undefined ? {} : { onActivateAccountProfile })}
             {...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile })}
             {...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile })}

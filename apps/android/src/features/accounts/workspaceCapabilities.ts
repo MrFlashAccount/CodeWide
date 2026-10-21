@@ -13,6 +13,11 @@ export type AccountsWorkspaceCapabilities = {
     profileId: string,
     creditId: string | null,
   ) => Promise<AccountResetCreditConsumption>;
+  consumeProviderRateLimitReset: (
+    connectionId: string,
+    providerId: string,
+    grantId: string,
+  ) => Promise<void>;
   refreshAccountPool: (connectionId: string) => Promise<AccountPoolSnapshot>;
   refreshAccountRateLimits: (
     connectionId: string,

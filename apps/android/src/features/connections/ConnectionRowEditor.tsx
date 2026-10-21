@@ -31,6 +31,7 @@ export function ConnectionRowEditor({
   onActivateAccountProfile,
   onCancelAccountLogin,
   onConsumeAccountResetCredit,
+  onConsumeProviderRateLimitReset,
   onDelete,
   onReconnect,
   onRefreshAccountPool,
@@ -249,6 +250,7 @@ export function ConnectionRowEditor({
             <ProviderAccounts
               agentProviders={agentProviders}
               connectionId={connection.id}
+              onConsumeReset={onConsumeProviderRateLimitReset}
               serverName={connection.displayName}
             />
           )}

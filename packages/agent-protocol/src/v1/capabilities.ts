@@ -50,11 +50,15 @@ export type BooleanCapability = (typeof BOOLEAN_CAPABILITIES)[number];
  * such a fork.
  * `threads.backgroundTaskOutput`: the provider reads the output of a
  * background task a thread started (`thread.backgroundTask.read`).
+ * `accounts.rateLimitResets`: the provider reports its banked subscription
+ * reset inventory in `ProviderRateLimits.resets` and consumes a selected grant
+ * through `companion/providerRateLimits/reset/consume`.
  */
 export const ADDITIVE_BOOLEAN_CAPABILITIES = [
   "orchestration.tools",
   "threads.crossProviderFork",
   "threads.backgroundTaskOutput",
+  "accounts.rateLimitResets",
 ] as const;
 
 export type AdditiveBooleanCapability = (typeof ADDITIVE_BOOLEAN_CAPABILITIES)[number];

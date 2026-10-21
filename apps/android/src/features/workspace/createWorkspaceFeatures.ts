@@ -2,6 +2,7 @@ import { appLockVoiceLifecycle } from "../../data/appLockVoiceLifecycle";
 import { readBackgroundTaskOutput } from "../../data/backgroundTaskOutput";
 import {
   commandDelivery,
+  agentProviders,
   currentConnections,
   deleteLocalConnectionData,
   forgetHttpAuthorization,
@@ -111,6 +112,7 @@ function createWorkspaceFeatures() {
     getAccountRateLimits: () => workspaceRuntime.snapshot.accountRateLimits,
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
     refreshAccountRateLimits: refreshAccountRateLimits,
+    refreshAgentProviders: agentProviders.refresh,
     rpcAfterAttach: rpcAfterAttach,
   });
   const requests = createRequestsWorkspaceAdapter({
