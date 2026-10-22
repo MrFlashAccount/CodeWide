@@ -4,6 +4,7 @@ import { fireEvent, render } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 
 import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
+import { ActiveTurnActivity } from "../src/features/conversation/turns/ActiveTurnActivity";
 import { CollapsedTurnActivity } from "../src/features/conversation/turns/CompletedTurnHistory";
 import { TurnActivitySegment } from "../src/features/conversation/turns/TurnActivity";
 import { persistentExpansionStates } from "../src/features/conversation/turns/disclosureState";
@@ -75,7 +76,6 @@ it("opens a finished tool group of a running turn in the sheet instead of expand
     <TurnActivitySegment
       animateNew={false}
       compact
-      forceExpanded={false}
       part={{ blocks: [commandBlock], followedByAgent: true, key: "activity", kind: "activity" }}
       turnKey="server/thread/turn"
       turnStatus="inProgress"
@@ -88,28 +88,45 @@ it("opens a finished tool group of a running turn in the sheet instead of expand
   expect(view.queryByTestId("turn-activity-list")).toBeNull();
 });
 
-it("keeps disclosing the same group inline once its turn has finished", () => {
+it("opens the same group in the sheet once its turn has finished", () => {
   const view = render(
     <TurnActivitySegment
       animateNew={false}
       compact
-      forceExpanded={false}
       part={{ blocks: [commandBlock], followedByAgent: true, key: "activity", kind: "activity" }}
       turnKey="server/thread/turn"
       turnStatus="completed"
     />,
   );
 
-  fireEvent.press(view.getByRole("button", { name: /^Expand activity/ }));
-  expect(view.getByTestId("turn-activity-list")).toBeOnTheScreen();
+  fireEvent.press(view.getByRole("button", { name: /^Open activity/ }));
+  expect(view.queryByTestId("turn-activity-list")).toBeNull();
+  expect(view.getByRole("header", { name: "Activity" })).toBeOnTheScreen();
 });
 
 it("opens the collapsed earlier activity of a running turn in the sheet", () => {
-  const view = render(
-    <CollapsedTurnActivity compact forceExpanded={false} indexes={[0]} item={runningTurn()} />,
-  );
+  const view = render(<CollapsedTurnActivity compact indexes={[0]} item={runningTurn()} />);
 
   fireEvent.press(view.getByRole("button", { name: /^Open activity/ }));
   expect(view.queryByTestId("turn-activity-list")).toBeNull();
+  expect(view.getByRole("header", { name: "Activity" })).toBeOnTheScreen();
+});
+
+it("shows a running turn's current action as its step row and opens its output in the sheet", () => {
+  const running: RenderBlock = { ...commandBlock, status: "inProgress" };
+  const view = render(
+    <ActiveTurnActivity
+      compact
+      earlierIndexes={[]}
+      part={{ blocks: [running], followedByAgent: false, key: "activity", kind: "activity" }}
+      turn={runningTurn()}
+    />,
+  );
+
+  // The step reads like a finished one; its output never draws in the bubble.
+  expect(view.getByTestId("active-turn-current-actions")).toBeOnTheScreen();
+  expect(view.queryByLabelText(/^(Expand|Collapse) printf done/)).toBeNull();
+  expect(view.queryByText("done")).toBeNull();
+  fireEvent.press(view.getByLabelText("Open printf done"));
   expect(view.getByRole("header", { name: "Activity" })).toBeOnTheScreen();
 });

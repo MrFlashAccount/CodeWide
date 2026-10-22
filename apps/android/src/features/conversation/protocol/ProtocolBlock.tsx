@@ -1,4 +1,5 @@
 import { renderProtocolFallback } from "./ProtocolFallback";
+import { TurnDiffProtocolBlock } from "./TurnDiffProtocolBlock";
 /** V1 ProtocolBlock owner, extracted without changing interaction or resource lifetime. */
 import type { RenderBlock } from "@codewide/renderers";
 import { useContext } from "react";
@@ -84,6 +85,9 @@ export function ProtocolBlock({
         {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       />
     );
+  }
+  if (block.kind === "turnDiff") {
+    return <TurnDiffProtocolBlock block={block} />;
   }
   if (block.kind === "fileChange") {
     return (

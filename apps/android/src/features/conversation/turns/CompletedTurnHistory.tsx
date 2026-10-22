@@ -5,29 +5,25 @@ import type { CompletedTurnHistoryProps } from "./CompletedTurnHistory.types";
 import { projectedActivityMetrics, type ActivityFootprint } from "@codewide/sync-client";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import { useRef } from "react";
-import { Pressable } from "react-native";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import { selectTurnRenderWindow } from "../../../rendering/thread-render-window";
 import { chronologicalTurnSequence } from "../../../rendering/turn-sequence";
 import { AppText as Text } from "../../../ui/Typography";
-import { ProtocolBlock } from "../protocol/ProtocolBlock";
 import { useEvent } from "../../../react/useEvent";
 import { ActivityDetailSheet } from "./ActivityDetailSheet";
 import { usePersistentExpansion } from "./Card";
 import { hasCompletedTurnHistory } from "./completedHistoryVisibility";
 import { styles } from "./CompletedTurnHistory.styles";
 import { TurnActivity, TurnActivitySegment } from "./TurnActivity";
-import { ExpansionItemKeyContext } from "./turnContexts";
 import { projectThreadItem, turnActivityLabel, turnMetadataBlocks } from "./turnProjection";
 
+/**
+ * A running turn's earlier actions: one row that opens the activity sheet, so
+ * the live conversation does not grow while the agent works and no tool output
+ * draws in the bubble.
+ */
 export function CollapsedTurnActivity(props: CollapsedTurnActivityProps) {
-  // A running turn keeps its earlier actions in the activity sheet so the
-  // live conversation does not grow while the agent works.
-  return props.item.turn.status === "inProgress" && !props.forceExpanded ? (
-    <SheetCollapsedTurnActivity {...props} />
-  ) : (
-    <InlineCollapsedTurnActivity {...props} />
-  );
+  return <SheetCollapsedTurnActivity {...props} />;
 }
 
 function SheetCollapsedTurnActivity(props: CollapsedTurnActivityProps) {
@@ -79,74 +75,6 @@ function SheetCollapsedTurnActivity(props: CollapsedTurnActivityProps) {
   );
 }
 
-function InlineCollapsedTurnActivity(props: CollapsedTurnActivityProps) {
-  const rawTurn = props.item.turn;
-  const [expanded, setExpanded] = usePersistentExpansion(
-    `${props.item.key}:prior-activity:${String(props.indexes[0] ?? "empty")}`,
-    false,
-  );
-  const [visibleBlockCount, setVisibleBlockCount] = useRecyclingState(16);
-  const isExpanded = props.forceExpanded || expanded;
-  const activityKinds = props.indexes.flatMap((index) => {
-    const rawItem = rawTurn.items[index];
-    return rawItem === undefined ? [] : [rawItem.type];
-  });
-  const blocks = !isExpanded
-    ? []
-    : props.indexes.slice(0, visibleBlockCount).flatMap((index) => {
-        const rawItem = rawTurn.items[index];
-        return rawItem === undefined ? [] : [projectThreadItem(props.item, rawItem, index)];
-      });
-  const summary = collapsedActivitySummary(rawTurn, props.indexes);
-  const outputFootprint = summary?.outputFootprint ?? null;
-
-  return (
-    <TurnActivity
-      expanded={isExpanded}
-      forceExpandCards={props.forceExpanded}
-      label={collapsedActivityLabel(summary, activityKinds, props.compact)}
-      onToggle={() => {
-        setExpanded(!isExpanded);
-      }}
-      outputFootprint={outputFootprint}
-    >
-      {blocks.map((block) =>
-        block.kind === "agentMessage" ? (
-          <RichMarkdown key={block.key} source={block.body ?? ""} />
-        ) : (
-          <ExpansionItemKeyContext.Provider
-            key={block.key}
-            value={`${props.item.key}:${block.key}`}
-          >
-            <ProtocolBlock
-              block={block}
-              {...(props.getTransferAccess === undefined
-                ? {}
-                : { getTransferAccess: props.getTransferAccess })}
-              {...(props.onFixUnsupportedBlock === undefined
-                ? {}
-                : { onFixUnsupportedBlock: props.onFixUnsupportedBlock })}
-            />
-          </ExpansionItemKeyContext.Provider>
-        ),
-      )}
-      {visibleBlockCount < props.indexes.length && (
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            setVisibleBlockCount((current) => Math.min(props.indexes.length, current + 16));
-          }}
-          style={styles.activityMoreButton}
-        >
-          <Text style={styles.activityMoreText}>
-            Show {Math.min(16, props.indexes.length - visibleBlockCount)} more
-          </Text>
-        </Pressable>
-      )}
-    </TurnActivity>
-  );
-}
-
 export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
   const rawTurn = props.item.turn;
   const [expanded, setExpanded] = usePersistentExpansion(
@@ -157,6 +85,8 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
   const [error, setError] = useRecyclingState<string | null>(null);
   // Keyed by turn: a recycled row may show another turn.
   const requestedTurnsRef = useRef(new Set<string>());
+  // Thread search reveals the agent's own text, never tool output: it opens the
+  // history, whose tool groups stay rows that open the activity sheet.
   const isExpanded = props.forceExpanded || expanded;
   const activitySummary = turnActivitySummary(props.item);
   const sequence = chronologicalTurnSequence(isExpanded ? expandedHistoryBlocks(props.item) : []);
@@ -189,7 +119,6 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
     <TurnActivity
       compactHeader
       expanded={isExpanded}
-      forceExpandCards={props.forceExpanded}
       label={
         loading
           ? "Loading activity…"
@@ -219,7 +148,6 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
           <TurnActivitySegment
             animateNew={false}
             compact={props.compact}
-            forceExpanded={props.forceExpanded}
             key={part.key}
             part={part}
             turnKey={`${props.item.key}:completed-history`}

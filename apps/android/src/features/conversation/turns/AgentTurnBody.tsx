@@ -91,7 +91,6 @@ export function renderAgentTurnBody(
             part.kind === "collapsedActivity" ? (
               <CollapsedTurnActivity
                 compact={compact}
-                forceExpanded={forceExpanded}
                 indexes={part.indexes}
                 item={turn}
                 key={part.key}
@@ -120,7 +119,6 @@ export function renderAgentTurnBody(
               <TurnActivitySegment
                 animateNew={animateLiveUpdates}
                 compact={compact}
-                forceExpanded={forceExpanded}
                 key={part.key}
                 part={part}
                 turnKey={turn.key}

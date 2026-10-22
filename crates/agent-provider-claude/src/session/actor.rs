@@ -428,14 +428,17 @@ impl Session {
         );
     }
 
+    /// Reports the release before the process stops counting as live, so a
+    /// running-sessions read in between does not take the exiting process
+    /// for another one.
     async fn released(&self) {
-        self.deps.live_sessions.fetch_sub(1, Ordering::Relaxed);
-        self.publish_status();
         self.output(SessionOutput::Released {
             app_thread_id: self.app_thread_id.clone(),
             session_id: self.state.current_session_id().to_owned(),
         })
         .await;
+        self.deps.live_sessions.fetch_sub(1, Ordering::Relaxed);
+        self.publish_status();
     }
 
     async fn on_query_ended(&mut self, error: Option<String>) {

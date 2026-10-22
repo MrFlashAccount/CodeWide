@@ -157,24 +157,56 @@ async fn the_session_of_an_own_live_process_is_not_held() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_own_just_released_process_is_not_taken_for_another() {
+async fn an_own_released_process_stays_its_own_while_the_cli_lists_it() {
     let harness = Harness::new();
     tokio::time::sleep(Duration::from_mins(1)).await;
     harness.run_live(OWN);
     // The CLI lists the companion's own process while it runs.
     harness.source.set(&[OWN]);
     assert!(!harness.owner.check(OWN).await);
-    // A model change closes the process; the CLI may list it a while longer.
+    // A stopped command closes the process; it may take seconds to exit and
+    // the CLI lists it until then.
     harness.end_live(OWN);
     assert!(!harness.owner.is_held(OWN));
-    tokio::time::sleep(MAX_AGE).await;
-    assert!(!harness.owner.check(OWN).await, "a read within the grace");
+    for _ in 0..5 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(!harness.owner.check(OWN).await, "still the companion's own");
+    }
     assert!(harness.changes().is_empty());
 
-    // Still listed after the grace: another process holds it now.
-    tokio::time::sleep(RELEASE_GRACE).await;
+    // Once a read no longer lists it, a later listing is another process.
+    harness.source.set(&[]);
+    tokio::time::sleep(MAX_AGE).await;
+    assert!(!harness.owner.check(OWN).await);
+    harness.source.set(&[OWN]);
+    tokio::time::sleep(MAX_AGE).await;
     assert!(harness.owner.check(OWN).await);
     assert_eq!(harness.changes(), [sessions(&[OWN])]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_released_session_still_listed_after_the_timeout_is_held_elsewhere() {
+    let harness = Harness::new();
+    tokio::time::sleep(Duration::from_mins(1)).await;
+    harness.run_live(OWN);
+    harness.source.set(&[OWN]);
+    assert!(!harness.owner.check(OWN).await);
+    harness.end_live(OWN);
+    tokio::time::sleep(RELEASE_TIMEOUT + MAX_AGE).await;
+    assert!(harness.owner.check(OWN).await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_release_after_a_read_that_took_the_closing_process_for_another_is_reported() {
+    let harness = Harness::new();
+    tokio::time::sleep(Duration::from_mins(1)).await;
+    // The companion no longer counts its process as live, but the release
+    // has not been recorded yet when this read lands.
+    harness.source.set(&[OWN]);
+    assert!(harness.owner.check(OWN).await);
+    harness.owner.released(OWN);
+    assert!(!harness.owner.is_held(OWN));
+    assert_eq!(harness.changes(), [sessions(&[OWN]), sessions(&[OWN])]);
 }
 
 #[tokio::test(start_paused = true)]
