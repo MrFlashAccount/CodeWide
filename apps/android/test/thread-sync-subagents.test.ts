@@ -207,7 +207,7 @@ describe("thread sync subagent snapshot", () => {
   ])(
     "keeps a transitive descendant in both scopes after $label refresh",
     async ({ expectedMembership, roots }) => {
-      const database = createThreadSummaryDatabase();
+      const database = createThreadSummaryDatabase(testListStream().options);
       await database.prepare();
       const rootRows = [snapshot("middle", "root", 3), snapshot("grandchild", "middle", 2)];
       const middleRows = [snapshot("grandchild", "middle", 2)];

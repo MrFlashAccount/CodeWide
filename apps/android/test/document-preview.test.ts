@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,6 +12,36 @@ import {
   resolvePreviewableDocumentLink,
   resolveRemoteDocumentPath,
 } from "../src/rendering/document-preview";
+
+const changes = readFileSync(
+  new URL("../src/features/changes/RouteCodeDocumentReview.tsx", import.meta.url),
+  "utf8",
+);
+const screen = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
+const workspace = readFileSync(
+  new URL("../src/features/review/workspace/CodeReviewWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const nativeEditor = readFileSync(
+  new URL("../src/features/review/editor/CodeReviewEditor.native.tsx", import.meta.url),
+  "utf8",
+);
+const editorRuntime = readFileSync(
+  new URL("../src/features/review/editor/webview/entry.web.ts", import.meta.url),
+  "utf8",
+);
+const migratedDocumentNavigation = readFileSync(
+  new URL("../src/features/attachments/documentNavigation.ts", import.meta.url),
+  "utf8",
+);
+const attachmentRouteActions = readFileSync(
+  new URL("../src/features/attachments/threadAttachmentRouteActions.ts", import.meta.url),
+  "utf8",
+);
+const conversationTools = readFileSync(
+  new URL("../src/features/conversation/ConversationTools.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("document preview", () => {
   it("routes previewable documents, images and downloads by file type", () => {
@@ -115,7 +147,7 @@ describe("document preview", () => {
     expect(conversationTools).toContain('if (request.kind === "text") {');
     expect(conversationTools).toContain("changesFeatureBinding.openCodeDocument(request);");
     expect(conversationTools).toContain("openTimelineDocument,");
-    expect(migratedAttachmentPreview).toContain('if (request.kind === "text") {');
+    expect(attachmentRouteActions).toContain('if (request.kind === "text") {');
     expect(changes).toContain("<CodeReviewWorkspace");
     expect(changes).toContain("onClose={onClose}");
     expect(workspace).toContain(
