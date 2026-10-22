@@ -315,6 +315,9 @@ impl ManagedRuntime {
             media: Some(media.clone()),
             tunnels: Some(tunnels),
             telemetry: Some(telemetry),
+            diagnostics: Some(Arc::new(crate::diagnostics::DiagnosticStore::open(
+                config.state_directory.join("diagnostic-reports"),
+            )?)),
             thread_metadata: Some(Arc::new(RolloutThreadMetadata::new(catalog))),
             app_server_socket_path: Some(config.app_server_socket),
             excluded_ports: HashSet::from([
@@ -328,7 +331,6 @@ impl ManagedRuntime {
             inner_tls_target: Some(inner_target),
             inner_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(256))),
             relay: Some(relay.clone()),
-            ..CompanionServices::default()
         };
         let bootstrap_tls = bootstrap_config(&identity)?;
         let inner_tls = device_bound_config(&identity, registry.trusted_client_spki())?;
