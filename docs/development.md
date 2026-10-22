@@ -104,6 +104,38 @@ APK, restores the checked-in versions, and prints the result as JSON. Without
 `--version` it uses the next patch version; without `--version-code` it
 increments the checked-in version code. It never publishes the APK.
 
+For a standalone test build that can be installed beside production and the
+Metro-backed debug app, build the Preview variant:
+
+```sh
+./scripts/build-android-apk --preview [--version-code N]
+```
+
+Preview uses the package `dev.codexremote.app.preview`, the label
+`CodeWide Preview`, and a fixed visible version `0.0.0.0`. Android orders its
+upgrades only by `versionCode`; by default the command derives a monotonic code
+from seconds since 2026-01-01, while `--version-code` allows an explicit higher
+value. Preview is a bundled, optimized, offline-capable build with updates
+disabled. It intentionally uses its own stable development key because it is a
+separate non-production application. The one-shot command creates that key
+once under the user's CodeWide data directory and reuses it so later APKs
+upgrade the installed Preview. Production signing material is not read or
+passed to its Gradle build.
+
+The local release-candidate environment has exactly two operator-facing
+one-shots. Run them in this order for a complete local test release:
+
+```sh
+./scripts/release-candidate-companion
+./scripts/release-candidate-android
+```
+
+The first command validates, builds, atomically replaces and verifies the
+running Companion. The second runs the complete Preview APK gate and then
+publishes the APK, checksum, manifest and static page from one validated staging
+directory to the existing zrok-backed local site. Do not reconstruct either
+sequence from its lower-level commands.
+
 The low-level Gradle/signing variables below remain available for debugging or
 nonstandard builds:
 

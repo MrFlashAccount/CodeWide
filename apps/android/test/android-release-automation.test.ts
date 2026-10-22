@@ -3,8 +3,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  ANDROID_PREVIEW_VERSION_NAME,
   nextPatchVersion,
+  previewVersionCodeAt,
   readAndroidReleaseVersion,
+  updateAndroidPreviewVersion,
   updateAndroidReleaseVersion,
 } from "../../../scripts/android-release-lib";
 
@@ -61,5 +64,25 @@ describe("Android release automation", () => {
         },
       ),
     ).toThrow(/version code must increase/u);
+  });
+
+  it("keeps preview versionName fixed while versionCode orders installations", () => {
+    const epoch = Date.UTC(2026, 0, 1);
+    expect(previewVersionCodeAt(epoch)).toBe(1);
+    expect(previewVersionCodeAt(epoch + 12_345)).toBe(13);
+
+    const updated = updateAndroidPreviewVersion({ appConfig, gradle, manifest }, 42);
+    expect(updated.next).toEqual({
+      versionName: ANDROID_PREVIEW_VERSION_NAME,
+      versionCode: 42,
+      runtimeVersion: `${ANDROID_PREVIEW_VERSION_NAME}-native-42`,
+    });
+    expect(readAndroidReleaseVersion(updated)).toEqual(updated.next);
+    expect(() => updateAndroidPreviewVersion({ appConfig, gradle, manifest }, 0)).toThrow(
+      /integer from 1/u,
+    );
+    expect(() =>
+      updateAndroidPreviewVersion({ appConfig, gradle, manifest }, 2_100_000_001),
+    ).toThrow(/integer from 1/u);
   });
 });

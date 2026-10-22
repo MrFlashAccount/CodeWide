@@ -1,0 +1,102 @@
+#!/bin/sh
+set -eu
+
+printf '%s\n' 'This complete Android candidate release may take 10-20 minutes. AI agents: wait silently for the final result.'
+
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+SITE_ROOT=${CODEWIDE_RELEASE_CANDIDATE_SITE_ROOT:-"$REPO_ROOT/dist/test-release"}
+PUBLIC_URL=${CODEWIDE_RELEASE_CANDIDATE_URL:-"https://codewide-rc-download-p4186.zrok-safe-share.garin.dev/"}
+APK_SOURCE="$REPO_ROOT/apps/android/android/app/build/outputs/apk/preview/app-preview.apk"
+METADATA_SOURCE="$REPO_ROOT/apps/android/android/app/build/outputs/apk/preview/output-metadata.json"
+APK_NAME=CodeWide-Preview.apk
+TMP_ROOT=${TMPDIR:-/tmp}
+STAGING_DIR=
+
+cleanup() {
+  [ -n "$STAGING_DIR" ] || return 0
+  case "$STAGING_DIR" in
+    "$TMP_ROOT"/codewide-android-candidate.*) rm -rf -- "$STAGING_DIR" ;;
+    *) printf '%s\n' "Refusing to remove unexpected staging directory: $STAGING_DIR" >&2 ;;
+  esac
+}
+
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+
+cd "$REPO_ROOT"
+unset CODEWIDE_UPDATE_URL
+./scripts/build-android-apk --preview "$@"
+
+test -r "$APK_SOURCE"
+test -r "$METADATA_SOURCE"
+STAGING_DIR=$(mktemp -d "$TMP_ROOT/codewide-android-candidate.XXXXXX")
+install -m 0644 "$APK_SOURCE" "$STAGING_DIR/$APK_NAME"
+install -m 0644 scripts/release-candidate-site.html "$STAGING_DIR/index.html"
+SOURCE_DIRTY=false
+if [ -n "$(git status --porcelain)" ]; then
+  SOURCE_DIRTY=true
+fi
+
+METADATA_SOURCE="$METADATA_SOURCE" \
+APK_TARGET="$STAGING_DIR/$APK_NAME" \
+MANIFEST_TARGET="$STAGING_DIR/manifest.json" \
+CHECKSUM_TARGET="$STAGING_DIR/$APK_NAME.sha256" \
+SOURCE_BRANCH=$(git branch --show-current) \
+SOURCE_REVISION=$(git rev-parse HEAD) \
+SOURCE_DIRTY="$SOURCE_DIRTY" \
+node <<'NODE'
+const { createHash } = require("node:crypto");
+const { readFileSync, writeFileSync } = require("node:fs");
+
+const metadata = JSON.parse(readFileSync(process.env.METADATA_SOURCE, "utf8"));
+const artifact = metadata.elements?.find((element) => element.outputFile === "app-preview.apk");
+if (
+  metadata.applicationId !== "dev.codexremote.app.preview"
+  || metadata.variantName !== "preview"
+  || artifact?.versionName !== "0.0.0.0"
+  || !Number.isSafeInteger(artifact.versionCode)
+) {
+  throw new Error("Preview APK metadata is invalid");
+}
+const apk = readFileSync(process.env.APK_TARGET);
+const sha256 = createHash("sha256").update(apk).digest("hex");
+const manifest = {
+  name: "CodeWide Release Candidate",
+  branch: process.env.SOURCE_BRANCH,
+  revision: process.env.SOURCE_REVISION,
+  sourceDirty: process.env.SOURCE_DIRTY === "true",
+  generatedAt: new Date().toISOString(),
+  artifacts: [
+    {
+      kind: "android-preview-apk",
+      file: "CodeWide-Preview.apk",
+      checksumFile: "CodeWide-Preview.apk.sha256",
+      applicationId: metadata.applicationId,
+      versionName: artifact.versionName,
+      versionCode: artifact.versionCode,
+      architecture: "arm64-v8a",
+      size: apk.byteLength,
+      sha256,
+    },
+  ],
+};
+writeFileSync(process.env.MANIFEST_TARGET, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 });
+writeFileSync(process.env.CHECKSUM_TARGET, `${sha256}  CodeWide-Preview.apk\n`, { mode: 0o644 });
+NODE
+
+mkdir -p "$SITE_ROOT"
+for file in "$APK_NAME" "$APK_NAME.sha256" manifest.json index.html; do
+  mv -f -- "$STAGING_DIR/$file" "$SITE_ROOT/$file"
+done
+
+MANIFEST_TARGET="$SITE_ROOT/manifest.json" PUBLIC_URL="$PUBLIC_URL" node <<'NODE'
+const { readFileSync } = require("node:fs");
+const manifest = JSON.parse(readFileSync(process.env.MANIFEST_TARGET, "utf8"));
+const artifact = manifest.artifacts[0];
+process.stdout.write(`${JSON.stringify({
+  release: "android-release-candidate",
+  status: "published",
+  publicUrl: process.env.PUBLIC_URL,
+  ...artifact,
+}, null, 2)}\n`);
+NODE

@@ -28,6 +28,115 @@ afterEach(() => {
 });
 
 describe("release dry runs", () => {
+  it("limits release and Preview APKs to physical-device ABIs", () => {
+    const fixture = createFixture("android-gradle");
+    copyFixtureFile(fixture, "scripts/android-gradle.sh");
+    chmodSync(join(fixture, "scripts/android-gradle.sh"), 0o755);
+    const commands = createCommandDirectory(fixture);
+    const commandLog = join(fixture, "commands.log");
+    writeExecutable(join(commands, "pnpm"), "#!/bin/sh\nexit 0\n");
+    writeExecutable(
+      joinWithDirectory(fixture, "apps/android/android/gradlew"),
+      `#!/bin/sh
+printf '%s\\n' "$*" >>"$COMMAND_LOG"
+`,
+    );
+    const javaHome = join(fixture, "java");
+    const androidHome = join(fixture, "android-sdk");
+    writeExecutable(joinWithDirectory(javaHome, "bin/java"), "#!/bin/sh\nexit 0\n");
+    mkdirSync(androidHome, { recursive: true });
+    const environment = {
+      ANDROID_HOME: androidHome,
+      COMMAND_LOG: commandLog,
+      HOME: join(fixture, "home"),
+      JAVA_HOME: javaHome,
+      PATH: `${commands}:${process.env.PATH ?? ""}`,
+    };
+
+    runCommand("sh", ["scripts/android-gradle.sh", "--", ":app:assembleRelease"], fixture, environment);
+    runCommand("sh", ["scripts/android-gradle.sh", "--", ":app:assemblePreview"], fixture, environment);
+    runCommand("sh", ["scripts/android-gradle.sh", "--", ":app:assembleDebug"], fixture, environment);
+
+    const log = readFileSync(commandLog, "utf8").split("\n");
+    expect(log).toHaveLength(4);
+    expect(log[0]).toMatch(/ -PreactNativeArchitectures=arm64-v8a :app:assembleRelease$/u);
+    expect(log[1]).toMatch(/ -PreactNativeArchitectures=arm64-v8a :app:assemblePreview$/u);
+    expect(log[2]).toMatch(/\/apps\/android\/android :app:assembleDebug$/u);
+  });
+
+  it("keeps release-candidate deployment behind exactly two operator one-shots", () => {
+    const fixture = createFixture("candidate-one-shots");
+    for (const path of [
+      "scripts/release-candidate-android",
+      "scripts/release-candidate-companion",
+      "scripts/release-candidate-site.html",
+    ])
+      copyFixtureFile(fixture, path);
+    chmodSync(join(fixture, "scripts/release-candidate-android"), 0o755);
+    chmodSync(join(fixture, "scripts/release-candidate-companion"), 0o755);
+
+    const commandLog = join(fixture, "commands.log");
+    writeExecutable(
+      joinWithDirectory(fixture, "scripts/release-companion"),
+      `#!/bin/sh
+printf 'companion %s\\n' "$*" >>"$COMMAND_LOG"
+printf '%s\\n' '{"release":"companion","status":"published"}'
+`,
+    );
+    writeExecutable(
+      joinWithDirectory(fixture, "scripts/build-android-apk"),
+      `#!/bin/sh
+printf 'android %s\\n' "$*" >>"$COMMAND_LOG"
+mkdir -p apps/android/android/app/build/outputs/apk/preview
+printf candidate >apps/android/android/app/build/outputs/apk/preview/app-preview.apk
+printf '%s\\n' '{"applicationId":"dev.codexremote.app.preview","variantName":"preview","elements":[{"outputFile":"app-preview.apk","versionName":"0.0.0.0","versionCode":42}]}' >apps/android/android/app/build/outputs/apk/preview/output-metadata.json
+`,
+    );
+    const commands = createCommandDirectory(fixture);
+    writeExecutable(join(commands, "git"), `#!/bin/sh
+if [ "$1 $2" = "branch --show-current" ]; then printf '%s\\n' integration/release-candidate; else printf '%s\\n' 0123456789abcdef; fi
+`);
+    const siteRoot = join(fixture, "site");
+    const environment = {
+      CODEWIDE_RELEASE_CANDIDATE_SITE_ROOT: siteRoot,
+      COMMAND_LOG: commandLog,
+      PATH: `${commands}:${process.env.PATH ?? ""}`,
+      TMPDIR: join(fixture, "tmp"),
+    };
+
+    expect(
+      runCommand("sh", ["scripts/release-candidate-companion"], fixture, environment).stdout,
+    ).toContain('"status":"published"');
+    expect(
+      runCommand(
+        "sh",
+        ["scripts/release-candidate-android", "--version-code", "42"],
+        fixture,
+        environment,
+      ).stdout,
+    ).toContain('"release": "android-release-candidate"');
+
+    expect(readFileSync(commandLog, "utf8").split("\n")).toEqual([
+      "companion ",
+      "android --preview --version-code 42",
+      "",
+    ]);
+    expect(readFileSync(join(siteRoot, "CodeWide-Preview.apk"), "utf8")).toBe("candidate");
+    expect(JSON.parse(readFileSync(join(siteRoot, "manifest.json"), "utf8"))).toMatchObject({
+      branch: "integration/release-candidate",
+      revision: "0123456789abcdef",
+      sourceDirty: true,
+      artifacts: [
+        {
+          kind: "android-preview-apk",
+          applicationId: "dev.codexremote.app.preview",
+          versionName: "0.0.0.0",
+          versionCode: 42,
+        },
+      ],
+    });
+  });
+
   it("builds and validates Companion without installing or restarting it", () => {
     const fixture = createFixture("companion");
     copyFixtureFile(fixture, "scripts/release-companion");
@@ -38,7 +147,8 @@ describe("release dry runs", () => {
       "apps/companion-linux/deploy/codewide-companion.service",
       "apps/companion-linux/deploy/codewide-companion-memory-watch.service",
       "apps/companion-linux/deploy/codewide-companion-memory-watch.timer",
-    ]) copyFixtureFile(fixture, path);
+    ])
+      copyFixtureFile(fixture, path);
     chmodSync(join(fixture, "scripts/release-companion"), 0o755);
     chmodSync(join(fixture, "scripts/build-companion.sh"), 0o755);
     chmodSync(join(fixture, "scripts/cargo-target-budget.sh"), 0o755);
@@ -46,12 +156,17 @@ describe("release dry runs", () => {
 
     const commands = createCommandDirectory(fixture);
     const commandLog = join(fixture, "commands.log");
-    writeExecutable(join(commands, "git"), `#!/bin/sh
+    writeExecutable(
+      join(commands, "git"),
+      `#!/bin/sh
 printf 'git %s\\n' "$*" >>"$COMMAND_LOG"
 if [ "$1 $2" = "rev-parse HEAD" ]; then printf '%s\\n' 0123456789abcdef; fi
 exit 0
-`);
-    writeExecutable(join(commands, "cargo"), `#!/bin/sh
+`,
+    );
+    writeExecutable(
+      join(commands, "cargo"),
+      `#!/bin/sh
 printf 'cargo %s\\n' "$*" >>"$COMMAND_LOG"
 case " $* " in
   *" build "*)
@@ -63,12 +178,16 @@ case " $* " in
     ;;
 esac
 exit 0
-`);
+`,
+    );
     for (const command of ["install", "systemctl"]) {
-      writeExecutable(join(commands, command), `#!/bin/sh
+      writeExecutable(
+        join(commands, command),
+        `#!/bin/sh
 printf '${command} %s\\n' "$*" >>"$MUTATION_LOG"
 exit 97
-`);
+`,
+      );
     }
 
     const mutationLog = join(fixture, "mutations.log");
@@ -99,13 +218,28 @@ exit 97
     const commandLog = join(fixture, "commands.log");
     const toolchain = createFakeAndroidToolchain(fixture);
     const tsx = join(repositoryRoot, "node_modules/.bin/tsx");
-    writeExecutable(join(commands, "pnpm"), `#!/bin/sh
+    writeExecutable(
+      join(commands, "pnpm"),
+      `#!/bin/sh
 printf 'pnpm %s\\n' "$*" >>"$COMMAND_LOG"
 if [ "$1" = "android:gradle" ]; then
   printf 'CODEWIDE_UPDATE_URL=%s\\n' "$CODEWIDE_UPDATE_URL" >>"$COMMAND_LOG"
-  mkdir -p apps/android/android/app/build/outputs/apk/release
-  printf apk >apps/android/android/app/build/outputs/apk/release/app-release.apk
-  node -e 'const fs=require("fs");const app=JSON.parse(fs.readFileSync("apps/android/app.json","utf8")).expo;fs.writeFileSync("apps/android/android/app/build/outputs/apk/release/output-metadata.json",JSON.stringify({elements:[{outputFile:"app-release.apk",versionName:app.version,versionCode:app.android.versionCode}]}));'
+  case " $* " in
+    *" :app:assemblePreview "*)
+      OUTPUT_DIRECTORY=apps/android/android/app/build/outputs/apk/preview
+      OUTPUT_FILE=app-preview.apk
+      APPLICATION_ID=dev.codexremote.app.preview
+      ;;
+    *)
+      OUTPUT_DIRECTORY=apps/android/android/app/build/outputs/apk/release
+      OUTPUT_FILE=app-release.apk
+      APPLICATION_ID=dev.codexremote.app
+      ;;
+  esac
+  export OUTPUT_DIRECTORY OUTPUT_FILE APPLICATION_ID
+  mkdir -p "$OUTPUT_DIRECTORY"
+  printf apk >"$OUTPUT_DIRECTORY/$OUTPUT_FILE"
+  node -e 'const fs=require("fs");const app=JSON.parse(fs.readFileSync("apps/android/app.json","utf8")).expo;fs.writeFileSync(process.env.OUTPUT_DIRECTORY+"/output-metadata.json",JSON.stringify({applicationId:process.env.APPLICATION_ID,elements:[{outputFile:process.env.OUTPUT_FILE,versionName:app.version,versionCode:app.android.versionCode}]}));'
   exit 0
 fi
 if [ "$1" = "security:scan-artifacts" ]; then
@@ -113,10 +247,12 @@ if [ "$1" = "security:scan-artifacts" ]; then
   exit 0
 fi
 exit 0
-`);
+`,
+    );
 
     const environment = {
       ANDROID_HOME: toolchain.androidHome,
+      CODEWIDE_PREVIEW_STORE_FILE: toolchain.previewKeyStore,
       CODEWIDE_RELEASE_PASSWORD_FILE: toolchain.passwordFile,
       CODEWIDE_RELEASE_STORE_FILE: toolchain.keyStore,
       CODEWIDE_UPDATE_URL: "",
@@ -138,6 +274,8 @@ exit 0
     expect(result).toMatchObject({
       ok: true,
       kind: "apk",
+      channel: "release",
+      applicationId: "dev.codexremote.app",
       next: { versionName: "9.8.7", versionCode: 9008007, runtimeVersion: "9.8.7-native-9008007" },
       updatesEnabled: false,
       updateUrl: null,
@@ -158,24 +296,49 @@ exit 0
     });
     expect(readAndroidSources(fixture)).toEqual(originalSources);
 
+    const preview = runCommand(
+      tsx,
+      ["scripts/build-android-apk.ts", "--preview", "--version-code", "42"],
+      fixture,
+      environment,
+    );
+    expect(parseBuildResult(preview.stdout)).toMatchObject({
+      ok: true,
+      kind: "apk",
+      channel: "preview",
+      applicationId: "dev.codexremote.app.preview",
+      next: { versionName: "0.0.0.0", versionCode: 42, runtimeVersion: "0.0.0.0-native-42" },
+      updatesEnabled: false,
+      updateUrl: null,
+      apkPath: "apps/android/android/app/build/outputs/apk/preview/app-preview.apk",
+      sha256: createHash("sha256").update("apk").digest("hex"),
+      artifact: "built-signed-scanned",
+    });
+    expect(readAndroidSources(fixture)).toEqual(originalSources);
+
     const log = readFileSync(commandLog, "utf8").split("\n");
     const gate = log.indexOf("pnpm validate:android:v1");
     const build = log.indexOf("pnpm android:gradle -- :app:assembleRelease");
+    const previewBuild = log.indexOf("pnpm android:gradle -- :app:assemblePreview");
     expect(gate).toBeGreaterThan(-1);
     expect(build).toBeGreaterThan(gate);
+    expect(previewBuild).toBeGreaterThan(build);
     expect(log).toContain("CODEWIDE_UPDATE_URL=");
     expect(log).toContain("CODEWIDE_UPDATE_URL=https://updates.invalid/api/updates");
-    expect(log.filter((line) => line.startsWith("pnpm security:scan-artifacts"))).toHaveLength(2);
+    expect(log.filter((line) => line.startsWith("pnpm security:scan-artifacts"))).toHaveLength(3);
   });
 
   it("restores the checkout version when the APK build fails", () => {
     const fixture = createAndroidFixture();
     const commands = createCommandDirectory(fixture);
     const toolchain = createFakeAndroidToolchain(fixture);
-    writeExecutable(join(commands, "pnpm"), `#!/bin/sh
+    writeExecutable(
+      join(commands, "pnpm"),
+      `#!/bin/sh
 if [ "$1" = "android:gradle" ]; then exit 1; fi
 exit 0
-`);
+`,
+    );
     const originalSources = readAndroidSources(fixture);
 
     const result = spawnSync(
@@ -221,7 +384,8 @@ function createAndroidFixture(): string {
     "apps/android/app.json",
     "apps/android/android/app/build.gradle",
     "apps/android/android/app/src/main/AndroidManifest.xml",
-  ]) copyFixtureFile(root, path);
+  ])
+    copyFixtureFile(root, path);
   return root;
 }
 
@@ -241,14 +405,21 @@ function writeExecutable(path: string, contents: string): void {
   writeFileSync(path, contents, { mode: 0o755 });
 }
 
-function runCommand(command: string, args: string[], cwd: string, extraEnvironment: NodeJS.ProcessEnv): CommandResult {
+function runCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  extraEnvironment: NodeJS.ProcessEnv,
+): CommandResult {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf8",
     env: { ...process.env, ...extraEnvironment },
   });
   if (result.status !== 0) {
-    throw new Error(`Command failed with ${result.status ?? result.signal}:\n${result.stdout}\n${result.stderr}`);
+    throw new Error(
+      `Command failed with ${result.status ?? result.signal}:\n${result.stdout}\n${result.stderr}`,
+    );
   }
   return { stdout: result.stdout, stderr: result.stderr };
 }
@@ -258,6 +429,7 @@ function createFakeAndroidToolchain(fixture: string): {
   javaHome: string;
   keyStore: string;
   passwordFile: string;
+  previewKeyStore: string;
 } {
   const javaHome = join(fixture, "java");
   const androidHome = join(fixture, "android-sdk");
@@ -268,11 +440,13 @@ function createFakeAndroidToolchain(fixture: string): {
   const signingRoot = join(fixture, "signing");
   mkdirSync(signingRoot, { recursive: true });
   const keyStore = join(signingRoot, "release.keystore");
+  const previewKeyStore = join(signingRoot, "preview.keystore");
   const passwordFile = join(signingRoot, "release.password");
   writeFileSync(keyStore, "fake", { mode: 0o600 });
+  writeFileSync(previewKeyStore, "fake", { mode: 0o600 });
   writeFileSync(passwordFile, "test-password\n", { mode: 0o600 });
 
-  return { androidHome, javaHome, keyStore, passwordFile };
+  return { androidHome, javaHome, keyStore, passwordFile, previewKeyStore };
 }
 
 function joinWithDirectory(root: string, relativePath: string): string {

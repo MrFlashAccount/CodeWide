@@ -71,6 +71,8 @@
 
 Use only the repository-owned one-shot release commands:
 
+- Replace the locally running Companion from the release-candidate checkout: `./scripts/release-candidate-companion`
+- Build and publish the standalone Android Preview to the local zrok-backed download page: `./scripts/release-candidate-android [--version-code N]`
 - Build and publish an Android APK: only from CI, through `Release Affected Products` or the `Android APK Release` workflow (`.github/workflows/android-release.yml`), which uploads the signed APK to a GitHub Release
 - Build, sign, and validate the release APK locally without publishing it: `./scripts/build-android-apk [--version X.Y.Z] [--version-code N]`
 - Build, validate, and publish Companion: `./scripts/release-companion`
@@ -84,6 +86,8 @@ Use only the repository-owned one-shot release commands:
 
 Rules:
 
+- In the local integration/release-candidate context, Sergey's instruction to "make a release" means run exactly `./scripts/release-candidate-companion` and then `./scripts/release-candidate-android`. Agents must not manually run their lower-level build, validation, Gradle, install, restart, artifact-copy, manifest, page, or zrok steps. Diagnose and fix a failed one-shot, then rerun that same one-shot.
+- The release-candidate rule does not authorize a production publish. Production release commands still require Sergey to name or explicitly authorize the production release.
 - Publishing is an external action. Run a non-dry release only after the user explicitly asks to publish or release it.
 - Do not manually export signing variables, locate keys, bump Android versions, copy artifacts, or reconstruct the release sequence when the one-shot command is available.
 - There is no local Android publishing path and no OTA publishing. Do not call Gradle `assembleRelease` directly as the normal build path; it is a low-level implementation detail reserved for diagnosing the APK build itself.
