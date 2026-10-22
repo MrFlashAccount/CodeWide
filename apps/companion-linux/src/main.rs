@@ -48,6 +48,7 @@ use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
 use tracing::{info, warn};
 
+mod forge_cli;
 mod local_control;
 mod provider_status;
 mod terminal_update;
@@ -110,6 +111,10 @@ enum Command {
         /// Host rollout gate for admitting new durable delegated tasks.
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         delegate_task_enabled: bool,
+        /// The bundled forge plugin directory (default: the `libexec/` of the
+        /// current installed generation).
+        #[arg(long)]
+        bundled_plugin_dir: Option<PathBuf>,
     },
     Identity {
         #[arg(long)]
@@ -198,6 +203,8 @@ enum Command {
     Telemetry(Box<TelemetryOptions>),
     Diagnostics(DiagnosticOptions),
     Vcs(VcsOptions),
+    /// Forge providers and external forge plugins.
+    Forge(forge_cli::ForgeOptions),
     /// Agent provider configuration (`agent-providers.json`).
     Providers(ProvidersOptions),
     /// Companion-owned HTTP proxy settings for dictation requests.
@@ -471,8 +478,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             insecure_http,
             enable_mutations,
             delegate_task_enabled,
+            bundled_plugin_dir,
         } => {
             Box::pin(serve(ServeOptions {
+                bundled_plugin_dir: bundled_plugin_dir.unwrap_or_else(|| {
+                    codewide_companion::host_update::default_root().join("current/libexec")
+                }),
                 listen,
                 control_endpoint: control_endpoint.unwrap_or_else(default_control_endpoint),
                 state_path: state,
@@ -805,6 +816,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 })
             );
         }
+        Command::Forge(options) => forge_cli::run(options).await?,
         Command::Vcs(options) => match options.command {
             VcsCommand::Changes {
                 workspace,
@@ -1193,6 +1205,7 @@ struct ServeOptions {
     insecure_http: bool,
     enable_mutations: bool,
     delegate_task_enabled: bool,
+    bundled_plugin_dir: PathBuf,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1405,7 +1418,13 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         .with_dictation(dictation)
         .with_files(files.clone())
         .with_projects(projects.clone())
-        .with_workspaces(workspaces.clone());
+        .with_workspaces(workspaces.clone())
+        .with_forge(codewide_companion::sync::ForgeHostConfig::standard(
+            &state_directory,
+            Some(options.bundled_plugin_dir.clone()),
+            vcs.clone(),
+            projects.clone(),
+        ));
     if let Some(account_pool) = &account_pool {
         sync = sync.with_account_pool(account_pool);
     }

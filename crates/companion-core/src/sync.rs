@@ -55,6 +55,7 @@ use crate::{
 };
 
 mod agent_composition;
+mod forge_rpc;
 pub mod interest;
 mod list_rows;
 mod provider_rpc;
@@ -67,6 +68,7 @@ use crate::turn_delivery::turn_with_client_message;
 use crate::turn_delivery::{ClaimResolution, retry_delay_ms, rpc_error_message};
 use crate::turn_delivery::{PumpContext, reconcile_direct_turn_start, run_outbox_pump};
 use agent_composition::{AgentComposition, AgentObservers};
+pub use forge_rpc::ForgeHostConfig;
 use interest::{
     INTEREST_CLOSE_CODE, INTEREST_FIELD, SharedInterest, apply_interest_frame, lock_interest,
 };
@@ -1427,6 +1429,12 @@ impl SyncHub {
             // Only threads whose provider declares `history.threadResources`
             // reach a resource store.
             resources.prewarm(thread_id);
+        }
+        if self
+            .try_handle_forge_rpc(socket, &id, &method, &params)
+            .await?
+        {
+            return Ok(());
         }
         if self
             .try_handle_local_service_rpc(socket, &id, &method, &params, authorization)
@@ -3252,7 +3260,7 @@ fn agent_stream_key(payload: &Value) -> Option<AgentStreamKey> {
 // Scheduling and diagnostic hints only: unknown methods are forwarded too,
 // but conservatively share the ordered lane when they target a thread.
 fn rpc_is_known_read(method: &str) -> bool {
-    matches!(
+    let known = matches!(
         method,
         "account/rateLimits/read"
             | "companion/agentProviders/read"
@@ -3295,7 +3303,8 @@ fn rpc_is_known_read(method: &str) -> bool {
             | "thread/searchOccurrences"
             | "thread/turns/list"
             | "threadSection/list"
-    )
+    );
+    known || crate::forge::ForgeService::is_known_read(method)
 }
 
 fn rpc_requires_ordered_lane(method: &str) -> bool {

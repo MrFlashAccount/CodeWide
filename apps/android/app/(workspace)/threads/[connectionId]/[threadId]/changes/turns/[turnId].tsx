@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { RouteUnavailable } from "../../../../../../../src/components/navigation/RouteUnavailable";
 import { ConversationRouteFullscreenOverlay } from "../../../../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
 import { TurnChangesRoute } from "../../../../../../../src/features/changes/RouteChangesWorkspace";
+import { reviewGuideBinding } from "../../../../../../../src/routeComposition/reviewGuideBinding";
 import { changesRouteSessions } from "../../../../../../../src/services/changes/changesRouteSession";
 import {
   routeSessionIdParam,
@@ -18,9 +19,11 @@ type TurnChangesRequest = Extract<
 >;
 
 type ResolvedTurnChangesSession = {
+  readonly connectionId: string;
   readonly id: string;
   readonly owner: ReturnType<typeof threadRouteSessionOwner>;
   readonly request: TurnChangesRequest;
+  readonly threadId: string;
 };
 
 function resolveTurnChangesSession(raw: {
@@ -47,7 +50,13 @@ function resolveTurnChangesSession(raw: {
   ) {
     return null;
   }
-  return { id: session.id, owner, request: session.request };
+  return {
+    connectionId: thread.value.connectionId.value,
+    id: session.id,
+    owner,
+    request: session.request,
+    threadId: thread.value.threadId.value,
+  };
 }
 
 /** Presents the immutable change scope for one validated turn route. */
@@ -84,7 +93,17 @@ export default function V1TurnChangesRoute(): React.JSX.Element {
     <ConversationRouteFullscreenOverlay
       onDismiss={close}
       render={(closeOverlay) => (
-        <TurnChangesRoute onClose={closeOverlay} request={session.request} />
+        <TurnChangesRoute
+          guide={reviewGuideBinding({
+            connectionId: session.connectionId,
+            cwd: session.request.cwd,
+            thread: session.request.thread,
+            threadId: session.threadId,
+            turnId: session.request.target.turnId,
+          })}
+          onClose={closeOverlay}
+          request={session.request}
+        />
       )}
       scope={`turn-changes:${session.id}`}
     />

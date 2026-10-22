@@ -12,6 +12,7 @@ import type { CodeReviewComment } from "../comments/reviewComment";
 import type { CodeReviewViewMode } from "../editor/editorBridge";
 import type { AppVoiceInputRuntime } from "../../../ui/VoiceInputRuntime";
 import type { CodeReviewFileResource } from "../resources/reviewFiles";
+import type { CodeReviewGuideBinding } from "./CodeReviewGuide";
 
 /** Review resources, selection state, and commands required by the review workspace. */
 export type CodeReviewWorkspaceProps = {
@@ -20,6 +21,8 @@ export type CodeReviewWorkspaceProps = {
   changeScopes?: readonly ThreadChangeScope[];
   cwd: string;
   getTransferAccess: GetTransferAccess;
+  /** Guide over this session or VCS review; absent when the companion has no review service. */
+  guide?: CodeReviewGuideBinding;
   initialColumn?: number;
   initialLine?: number;
   initialMode?: CodeReviewViewMode;

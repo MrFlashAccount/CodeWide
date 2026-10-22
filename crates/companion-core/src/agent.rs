@@ -10,6 +10,7 @@
 //! `agent/CONTEXT.md` and `docs/agent-providers.md`.
 
 pub mod bindings;
+pub mod client_tools;
 pub mod client_wire;
 pub mod fork;
 pub mod orchestration;

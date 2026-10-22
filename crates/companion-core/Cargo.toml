@@ -16,6 +16,7 @@ agent-core = { path = "../agent-core" }
 agent-provider-claude = { path = "../agent-provider-claude" }
 agent-provider-codex = { path = "../agent-provider-codex" }
 agent-transport = { path = "../agent-transport" }
+forge-protocol = { path = "../forge-protocol" }
 companion-host = { path = "../companion-host" }
 codewide-relay = { path = "../../apps/relay", default-features = false }
 async-trait = "0.1.89"

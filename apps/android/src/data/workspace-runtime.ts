@@ -99,6 +99,7 @@ import {
 import { createVoiceAssistantModelCatalog } from "./voiceAssistantModelCatalog";
 import { hostDeclaresCapability } from "./agentProviders";
 import { createAgentProvidersResource } from "./agentProvidersResource";
+import { forgeSnapshotCache } from "./forgeSnapshotCache";
 import {
   createWorkspaceResourceDatabase,
   type WorkspaceResourceDatabase,
@@ -489,6 +490,7 @@ export async function deleteLocalConnectionData(connectionId: string): Promise<v
   await snapshot.resources?.deleteConnection(connectionId);
   await deleteConnectionQuestionDrafts(connectionId);
   await purgeCachedConnectionAttachments(connectionId);
+  await forgeSnapshotCache.deleteConnection(connectionId);
 }
 
 function requireConnectionDataReady(snapshot: WorkspaceRuntimeSnapshot): void {

@@ -189,6 +189,7 @@ impl OrchestrationService {
             agent_thread_id,
             provider: snapshot.provider,
             model: snapshot.model,
+            model_label: None,
             status: super::tools::AgentStatus::Running,
         })
     }

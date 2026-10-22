@@ -1,0 +1,26 @@
+[package]
+name = "forge-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Wire contract between the CodeWide companion and forge plugins"
+
+[features]
+default = []
+# The conformance harness that runs every declared capability of a plugin
+# executable against recorded fixtures.
+conformance = ["tokio/process", "tokio/time"]
+
+[dependencies]
+async-trait = "0.1.89"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.143"
+thiserror = "2.0.16"
+tokio = { version = "1.47.1", features = ["io-util"] }
+
+[dev-dependencies]
+tokio = { version = "1.47.1", features = ["io-util", "macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

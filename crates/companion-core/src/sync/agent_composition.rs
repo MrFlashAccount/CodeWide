@@ -9,20 +9,27 @@ use serde_json::Value;
 
 use crate::{
     agent::{
-        client_wire::gateway::ClientWireGateway, fork::ForkService, model::ProviderId,
-        orchestration::OrchestrationService, permission_profiles::ProfileObservations,
-        registry::ProviderRegistry,
+        client_tools::CompositeToolHost, client_wire::gateway::ClientWireGateway,
+        fork::ForkService, model::ProviderId, orchestration::OrchestrationService,
+        permission_profiles::ProfileObservations, registry::ProviderRegistry,
     },
     store::IndexStore,
     turn_delivery::TurnDelivery,
     workspaces::WorkspaceService,
 };
 
+use super::forge_rpc;
+
 /// Agent-layer services that observe each provider's client-wire stream.
 #[derive(Clone)]
 pub(super) struct AgentObservers {
     pub(super) orchestration: Option<Arc<OrchestrationService>>,
     pub(super) fork: Arc<ForkService>,
+    /// The client tool host installed into every provider (active mutation
+    /// mode only); it also keeps the hosts alive for the providers' weak
+    /// references.
+    pub(super) tools: Option<Arc<CompositeToolHost>>,
+    pub(super) forge: Arc<forge_rpc::ForgeSlot>,
 }
 
 impl AgentObservers {
@@ -31,6 +38,7 @@ impl AgentObservers {
             orchestration.observe_event(provider, payload);
         }
         self.fork.observe_event(payload);
+        forge_rpc::observe_forge_event(&self.forge, payload);
     }
 }
 
@@ -56,13 +64,12 @@ impl AgentComposition<'_> {
                 self.turn_delivery,
                 self.workspaces,
             );
-            for provider in self.registry.enabled() {
-                let host: Arc<dyn agent_core::provider::ClientToolHost> = service.clone();
-                provider.install_client_tools(Arc::downgrade(&host));
-            }
             service
         });
+        let tools = forge_rpc::install_client_tools(orchestration.as_ref(), self.registry);
         AgentObservers {
+            tools,
+            forge: Arc::default(),
             orchestration,
             fork: ForkService::new(
                 self.gateway.clone(),

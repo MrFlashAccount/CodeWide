@@ -446,6 +446,11 @@ fn build_control_router(state: AppState) -> Router {
         )
         .route("/v1/relay", get(relay_status).patch(relay_enabled))
         .route("/v1/relay/pair", post(relay_pair))
+        .route("/v1/forge/providers", get(forge_providers_list))
+        .route(
+            "/v1/forge/providers/{plugin_id}",
+            axum::routing::patch(forge_provider_enabled),
+        )
         .merge(host_update_routes(UpdateInitiator::LocalAdministrator));
     router
         .merge(diagnostic_control_routes())
@@ -459,6 +464,7 @@ include!("server/transport.rs");
 include!("server/auth.rs");
 include!("server/host_update.rs");
 include!("server/relay.rs");
+include!("server/forge.rs");
 
 async fn health(State(state): State<AppState>) -> Json<Health> {
     Json(Health {

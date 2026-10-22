@@ -2683,7 +2683,11 @@ async fn run_out_of_order_app_server(
     let listener = UnixListener::bind(socket_path)?;
     let (stream, _) = listener.accept().await?;
     let mut socket = accept_initialized(stream).await?;
+    // Concurrent reads reach the App Server in either order; the slow read is
+    // answered only after the fast one, so a hub that serialized them would
+    // stall instead of returning the fast response first.
     let mut slow_id = None;
+    let mut fast_answered = false;
     while let Some(frame) = socket.next().await {
         let Message::Text(raw) = frame? else {
             continue;
@@ -2691,14 +2695,16 @@ async fn run_out_of_order_app_server(
         let request: Value = serde_json::from_str(&raw)?;
         let id = request.get("id").cloned().unwrap_or(Value::Null);
         match request.get("method").and_then(Value::as_str) {
+            Some("thread/list") if fast_answered => {
+                send_value(&mut socket, &json!({"id": id, "result": {"data": []}})).await?;
+            }
             Some("thread/list") => slow_id = Some(id),
             Some("config/read") => {
                 send_value(&mut socket, &json!({"id": id, "result": {"fast": true}})).await?;
-                tokio::time::sleep(Duration::from_millis(25)).await;
-                let id = slow_id
-                    .take()
-                    .ok_or("slow request was not forwarded first")?;
-                send_value(&mut socket, &json!({"id": id, "result": {"data": []}})).await?;
+                fast_answered = true;
+                if let Some(id) = slow_id.take() {
+                    send_value(&mut socket, &json!({"id": id, "result": {"data": []}})).await?;
+                }
             }
             _ => send_value(&mut socket, &json!({"id": id, "result": {}})).await?,
         }
@@ -3428,6 +3434,130 @@ async fn companion_pins_are_confirmed_durably_and_shared_by_connected_devices()
     let pins = receive_type(&mut first, "rpc").await?;
     assert_eq!(pins["response"]["result"]["threadIds"], json!(["legacy"]));
     assert!(observed_rx.try_recv().is_err());
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn forge_and_review_methods_are_claimed_and_never_reach_app_server()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_rx) = mpsc::channel(16);
+    let fake = tokio::spawn(run_passthrough_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
+    );
+    let projects =
+        codewide_companion::projects::ProjectService::open(directory.path().join("projects.json"))
+            .await?;
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history).with_forge(
+        codewide_companion::sync::ForgeHostConfig {
+            forge: codewide_companion::forge::ForgeConfig::under(directory.path(), None),
+            vcs: Arc::new(codewide_companion::vcs::VcsService::new(
+                directory.path().join("vcs-plugins.json"),
+            )),
+            projects,
+            home: directory.path().to_path_buf(),
+        },
+    );
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+    let pull_request = "fpr1.WyJnaXRodWIiLCJnaXRodWIuY29tIiwibyIsIjEiXQ";
+    for (method, params) in [
+        (
+            "companion/forge/provider/setEnabled",
+            json!({"pluginId": "github", "enabled": false}),
+        ),
+        ("companion/forge/accounts/read", json!({})),
+        (
+            "companion/pullRequests/list",
+            json!({"category": "authored", "repository": null, "cursor": null}),
+        ),
+        (
+            "companion/pullRequest/read",
+            json!({"pullRequest": pull_request}),
+        ),
+        (
+            "companion/forge/auth/submitToken",
+            json!({"pluginId": "github", "host": "github.com", "token": "ghp_sentinel_transport", "idempotencyKey": "k"}),
+        ),
+        (
+            "companion/review/drafts/read",
+            json!({"source": {"kind": "session", "threadId": "t", "resource": "session"}}),
+        ),
+        ("companion/pullRequest/future", json!({})),
+        ("companion/forge/future", json!({})),
+        ("companion/review/future", json!({})),
+    ] {
+        send_json(
+            &mut client,
+            &json!({"type": "rpc", "request": {"id": method, "method": method, "params": params}}),
+        )
+        .await?;
+        let response = receive_type(&mut client, "rpc").await?;
+        assert_eq!(response["response"]["id"], method);
+        assert!(
+            !response.to_string().contains("ghp_sentinel_transport"),
+            "{response}"
+        );
+        if method == "companion/pullRequest/read" || method == "companion/forge/auth/submitToken" {
+            assert_eq!(response["response"]["error"]["code"], -32_080, "{response}");
+        }
+    }
+    assert!(
+        timeout(Duration::from_millis(300), observed_rx.recv())
+            .await
+            .is_err(),
+        "no forge or review method reaches App Server"
+    );
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn forge_methods_without_the_forge_service_answer_locally()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_rx) = mpsc::channel(4);
+    let fake = tokio::spawn(run_passthrough_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+    for method in [
+        "companion/forge/accounts/read",
+        "companion/pullRequestLinks/read",
+        "companion/review/guide/read",
+    ] {
+        send_json(
+            &mut client,
+            &json!({"type": "rpc", "request": {"id": method, "method": method, "params": {}}}),
+        )
+        .await?;
+        let response = receive_type(&mut client, "rpc").await?;
+        assert_eq!(response["response"]["error"]["code"], -32_080);
+    }
+    assert!(
+        timeout(Duration::from_millis(300), observed_rx.recv())
+            .await
+            .is_err()
+    );
+    client.close(None).await?;
     server_task.abort();
     fake.abort();
     Ok(())

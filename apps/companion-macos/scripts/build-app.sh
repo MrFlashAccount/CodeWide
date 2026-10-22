@@ -98,6 +98,7 @@ frameworks_dir="$contents/Frameworks"
 agents_dir="$contents/Library/LaunchAgents"
 helpers_dir="$contents/Helpers"
 e2e_unregister_helper="$helpers_dir/CodeWideE2EUnregister"
+forge_github_helper="$helpers_dir/codewide-forge-github"
 rm -rf -- "$app_dir"
 mkdir -p "$macos_dir" "$resources_dir" "$frameworks_dir" "$agents_dir" \
   "$helpers_dir"
@@ -176,6 +177,16 @@ SWIFT
   lipo -create "$e2e_helper_arm64" "$e2e_helper_x86_64" -output "$e2e_unregister_helper"
 fi
 
+# The companion resolves `bundled:github` to this helper at every spawn.
+forge_helper_root=$(dirname -- "$ffi_archive")
+forge_helper_arm64="$forge_helper_root/codewide-forge-github-arm64"
+forge_helper_x86_64="$forge_helper_root/codewide-forge-github-x86_64"
+if [ ! -x "$forge_helper_arm64" ] || [ ! -x "$forge_helper_x86_64" ]; then
+  echo "The GitHub forge helper slices are missing next to $ffi_archive; run build-rust-ffi.sh." >&2
+  exit 1
+fi
+lipo -create "$forge_helper_arm64" "$forge_helper_x86_64" -output "$forge_github_helper"
+
 sparkle_framework=
 for candidate in $(find "$mac_root/.build" -type d -name Sparkle.framework -print); do
   if [ -f "$candidate/Versions/B/Sparkle" ]; then
@@ -204,8 +215,12 @@ plutil -replace SUPublicEDKey -string "$public_key" "$contents/Info.plist"
 plutil -replace Label -string "$runtime_identifier" "$runtime_plist"
 plutil -replace MachServices -json "{\"$runtime_mach_service\":true}" "$runtime_plist"
 
-chmod 755 "$macos_dir/CodeWide" "$macos_dir/CodeWideRuntime"
+chmod 755 "$macos_dir/CodeWide" "$macos_dir/CodeWideRuntime" "$forge_github_helper"
 codesign --force --sign - --identifier "$runtime_identifier" "$macos_dir/CodeWideRuntime"
+# Signed with the app identity before the app itself is signed.
+codesign --force --sign - --identifier "$app_identifier.forge-github" "$forge_github_helper"
+codesign --verify --strict --verbose=2 "$forge_github_helper"
+test "$(lipo -archs "$forge_github_helper")" = "x86_64 arm64"
 if [ "$e2e_namespace" = 1 ]; then
   chmod 755 "$e2e_unregister_helper"
   codesign --force --sign - --identifier dev.codewide.e2e-unregister \
@@ -220,4 +235,13 @@ codesign --verify --deep --strict --verbose=2 "$app_dir"
 
 test ! -e "$macos_dir/codewide-companion"
 test ! -e "$contents/Helpers/codewide-companion"
+expected_helpers=codewide-forge-github
+if [ "$e2e_namespace" = 1 ]; then
+  expected_helpers="CodeWideE2EUnregister codewide-forge-github"
+fi
+actual_helpers=$(ls "$helpers_dir" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+if [ "$actual_helpers" != "$(printf '%s\n' $expected_helpers | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')" ]; then
+  echo "Contents/Helpers holds unexpected executables: $actual_helpers" >&2
+  exit 1
+fi
 printf '%s\n' "$app_dir"

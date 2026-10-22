@@ -129,6 +129,15 @@ impl ProjectService {
         }
     }
 
+    /// The paths of every known project (explicit and observed).
+    pub async fn project_roots(&self) -> Vec<String> {
+        self.list()
+            .await
+            .into_iter()
+            .map(|project| project.path)
+            .collect()
+    }
+
     async fn list(&self) -> Vec<Project> {
         let mut projects = self.state.lock().await.projects.clone();
         let observed = self.observed.lock().await;

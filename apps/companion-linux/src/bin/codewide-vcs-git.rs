@@ -5,8 +5,8 @@ use std::{
 
 use codewide_companion::vcs::{
     CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, GitProvider, INSPECT_CAPABILITY,
-    VcsError, VcsFile, VcsScope, VcsSnapshot, WORKSPACE_CREATE_CAPABILITY, WorkspaceCreateResult,
-    WorkspaceSupport,
+    REMOTES_CAPABILITY, VcsError, VcsFile, VcsScope, VcsSnapshot, WORKSPACE_CREATE_CAPABILITY,
+    WorkspaceCreateResult, WorkspaceSupport,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -66,6 +66,7 @@ async fn dispatch(request: Request) -> Response {
         "vcs.diffPage" => diff_page_request(&request.params).await,
         "workspace.inspect" => workspace_inspect_request(&request.params).await,
         "workspace.create" => workspace_create_request(&request.params).await,
+        "vcs.remotes" => remotes_request(&request.params).await,
         _ => Err(ProviderError::MethodNotFound(request.method)),
     };
     match result {
@@ -119,9 +120,16 @@ fn initialize(params: &Value) -> Result<Value, ProviderError> {
             CHANGES_CAPABILITY,
             DIFF_CAPABILITY,
             DIFF_PAGE_CAPABILITY,
-            WORKSPACE_CREATE_CAPABILITY
+            WORKSPACE_CREATE_CAPABILITY,
+            REMOTES_CAPABILITY
         ]
     }))
+}
+
+async fn remotes_request(params: &Value) -> Result<Value, ProviderError> {
+    let workspace = required_absolute_path(params, "workspace")?;
+    let remotes = GitProvider.remotes(&workspace).await?;
+    serde_json::to_value(remotes).map_err(|error| ProviderError::Protocol(error.to_string()))
 }
 
 async fn vcs_inspect_request(params: &Value) -> Result<Value, ProviderError> {
@@ -424,7 +432,8 @@ mod tests {
                 CHANGES_CAPABILITY,
                 DIFF_CAPABILITY,
                 DIFF_PAGE_CAPABILITY,
-                WORKSPACE_CREATE_CAPABILITY
+                WORKSPACE_CREATE_CAPABILITY,
+                REMOTES_CAPABILITY
             ])
         );
     }

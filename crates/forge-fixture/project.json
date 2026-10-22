@@ -1,0 +1,29 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "forge-fixture",
+  "projectType": "library",
+  "sourceRoot": "crates/forge-fixture/src",
+  "tags": ["language:rust", "type:test-support"],
+  "metadata": {
+    "description": "Scriptable forge plugin for companion forge tests and conformance"
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "rustWorkspace"]
+  },
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p forge-fixture --all-targets --all-features -- -D warnings",
+        "cwd": "."
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo test -p forge-fixture --all-features",
+        "cwd": "."
+      }
+    }
+  }
+}

@@ -91,6 +91,20 @@ fn default_distribution_installs_and_registers_git_plugin() {
 }
 
 #[test]
+fn default_distribution_installs_the_built_in_github_plugin() {
+    assert!(INSTALL_SCRIPT.contains("target/release/codewide-forge-github"));
+    assert!(INSTALL_SCRIPT.contains("\"$staging/libexec/codewide-forge-github\""));
+    assert!(
+        !INSTALL_SCRIPT.contains("forge plugin install"),
+        "GitHub is built in and needs no registration"
+    );
+    assert!(VERIFY_SCRIPT.contains("current/libexec/codewide-forge-github"));
+    // An older generation restored by a rollback must still parse the unit,
+    // so the unit passes no forge flag; the binary derives the directory.
+    assert!(!COMPANION_UNIT.contains("--bundled-plugin-dir"));
+}
+
+#[test]
 fn managed_install_uses_immutable_generations_and_a_stable_guardian() {
     assert!(COMPANION_UNIT.contains("current/bin/codewide-companion serve"));
     assert!(INSTALL_SCRIPT.contains("generations/$artifact_digest"));

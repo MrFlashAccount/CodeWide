@@ -1,4 +1,4 @@
-import { Stack, useRouter } from "expo-router";
+import { Stack, usePathname, useRouter } from "expo-router";
 import { useEffect } from "react";
 import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
 
@@ -9,6 +9,9 @@ import {
 } from "../features/threadList/ThreadListFeature";
 import { effectiveThreadListFilter } from "../features/threadList/threadListFilters";
 import { NoServerWelcome } from "../features/threadList/NoServerWelcome";
+import { openForgeAccounts } from "../features/pullRequests/pullRequestListModel";
+import { PullRequestsHeader } from "../features/pullRequests/PullRequestsHeader";
+import { CatalogModeBarHost } from "./CatalogModeBarHost";
 import { useEvent } from "../react/useEvent";
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
 import { projectListRouteSessions } from "../services/projects/projectListRouteSession";
@@ -17,6 +20,7 @@ import { useWorkspaceRouteModel } from "./WorkspaceRouteModel";
 import { isNoServerWorkspace } from "./noServerWorkspace";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import {
+  v1CatalogSwitchScreenOptions,
   v1ProjectListScreenOptions,
   v1RouteScreenOptions,
   v1WorkspaceShellStyles as styles,
@@ -68,20 +72,35 @@ function CatalogContent(): React.JSX.Element {
   }
   return (
     <ThreadListSearchPullProvider>
-      <WorkspaceListHeader />
+      <CatalogHeader />
       <View style={styles.listScenes} testID="workspace-list-scenes">
         <ListContentNavigator />
       </View>
+      <CatalogModeBarHost />
     </ThreadListSearchPullProvider>
+  );
+}
+
+/** The thread-list header on `/` and project lists; the Pull requests header on `/pulls`. */
+function CatalogHeader(): React.JSX.Element | null {
+  const pathname = usePathname();
+  const { openSettings } = useWorkspaceListRouteResources();
+  return pathname === "/pulls" ? (
+    <PullRequestsHeader onOpenAccounts={openForgeAccounts} onOpenSettings={openSettings} />
+  ) : (
+    <WorkspaceListHeader />
   );
 }
 
 function ListContentNavigator(): React.JSX.Element {
   const reducedMotion = useReducedMotionPreference();
+  // Threads ⇄ Pull requests is a peer switch: a 150 ms crossfade, instant with reduced motion.
+  const catalogSwitch = reducedMotion ? v1RouteScreenOptions : v1CatalogSwitchScreenOptions;
   return (
     <Stack screenOptions={reducedMotion ? v1RouteScreenOptions : v1ProjectListScreenOptions}>
-      <Stack.Screen name="index" />
+      <Stack.Screen name="index" options={catalogSwitch} />
       <Stack.Screen name="project/[sessionId]" />
+      <Stack.Screen name="pulls" options={catalogSwitch} />
     </Stack>
   );
 }

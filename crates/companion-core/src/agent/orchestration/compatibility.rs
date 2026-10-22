@@ -304,6 +304,7 @@ impl OrchestrationService {
                 task_id: link.task_id,
                 provider: link.provider.into_string(),
                 model: link.model,
+                model_label: None,
                 name: link.name,
                 status,
             });

@@ -6,6 +6,7 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 binary=${CODEWIDE_COMPANION_BINARY:-"$repo_root/target/release/codewide-companion"}
 git_plugin_binary=${CODEWIDE_COMPANION_GIT_PLUGIN_BINARY:-"$repo_root/target/release/codewide-vcs-git"}
+forge_github_plugin_binary=${CODEWIDE_COMPANION_FORGE_GITHUB_PLUGIN_BINARY:-"$repo_root/target/release/codewide-forge-github"}
 update_guardian_binary=${CODEWIDE_COMPANION_UPDATE_GUARDIAN_BINARY:-"$repo_root/target/release/codewide-companion-update-guardian"}
 unit_source=${CODEWIDE_COMPANION_UNIT_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion.service"}
 update_unit_source=${CODEWIDE_COMPANION_UPDATE_UNIT_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-update.service"}
@@ -28,6 +29,7 @@ activate=${CODEWIDE_COMPANION_ACTIVATE:-1}
 case "$activate" in 0|1) ;; *) printf '%s\n' 'CODEWIDE_COMPANION_ACTIVATE must be 0 or 1.' >&2; exit 2 ;; esac
 test -x "$binary"
 test -x "$git_plugin_binary"
+test -x "$forge_github_plugin_binary"
 test -x "$update_guardian_binary"
 version=$($binary --version | awk 'NR == 1 { print $2 }')
 case "$version" in ''|*[!0-9.]*) printf '%s\n' 'Companion binary reports an invalid version.' >&2; exit 2 ;; esac
@@ -54,6 +56,9 @@ if [ ! -d "$generation" ]; then
   mkdir -p "$staging/bin" "$staging/libexec"
   install -m 0755 "$binary" "$staging/bin/codewide-companion"
   install -m 0755 "$git_plugin_binary" "$staging/libexec/codewide-vcs-git"
+  # The built-in GitHub forge plugin: resolved from this generation's libexec
+  # at every spawn; it needs no registration.
+  install -m 0755 "$forge_github_plugin_binary" "$staging/libexec/codewide-forge-github"
   install -m 0755 "$memory_watch_source" "$staging/libexec/codewide-companion-memory-watch"
   printf '{"schemaVersion":1,"version":"%s","build":"%s","sourceRevision":"%s","artifactDigest":"%s"}\n' \
     "$version" "$build" "$source_revision" "$artifact_digest" >"$staging/metadata.json"

@@ -22,7 +22,7 @@ use super::{
 };
 
 const REGISTRY_VERSION: u32 = 1;
-const PROTOCOL_VERSION: u32 = 1;
+pub(super) const PROTOCOL_VERSION: u32 = 1;
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const WORKSPACE_CREATE_TIMEOUT: Duration = Duration::from_mins(10);
@@ -651,7 +651,7 @@ fn validate_initialize(
     Ok(())
 }
 
-fn validate_initialize_metadata(
+pub(super) fn validate_initialize_metadata(
     plugin: &VcsPluginConfig,
     value: &Value,
     required_capability: &str,
@@ -688,14 +688,17 @@ fn validate_initialize_metadata(
     Ok(supports_capability)
 }
 
-struct PluginSession {
+pub(super) struct PluginSession {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
 }
 
 impl PluginSession {
-    fn spawn(plugin: &VcsPluginConfig, workspace: &Path) -> Result<Self, PluginCallError> {
+    pub(super) fn spawn(
+        plugin: &VcsPluginConfig,
+        workspace: &Path,
+    ) -> Result<Self, PluginCallError> {
         let mut child = Command::new(&plugin.executable)
             .args(&plugin.args)
             .current_dir(workspace)
@@ -720,7 +723,7 @@ impl PluginSession {
         })
     }
 
-    async fn request(
+    pub(super) async fn request(
         &mut self,
         id: u64,
         method: &str,
@@ -782,7 +785,7 @@ impl PluginSession {
             .map_err(|_| PluginCallError::Timeout)?
     }
 
-    async fn shutdown(&mut self) {
+    pub(super) async fn shutdown(&mut self) {
         let _ = self.stdin.shutdown().await;
         if timeout(Duration::from_millis(250), self.child.wait())
             .await

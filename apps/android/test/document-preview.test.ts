@@ -107,6 +107,24 @@ describe("document preview", () => {
     expect(remoteDocumentDirectory("/srv/project/docs/README.md")).toBe("/srv/project/docs");
   });
 
+  it("opens source references at a one-shot highlighted line without opening a comment", () => {
+    expect(changes).toContain("initialLine: document.line");
+    expect(changes).toContain("initialColumn: document.column");
+    expect(screen).not.toContain('target.kind === "text" || target.line !== undefined');
+    expect(migratedDocumentNavigation).toContain("openDocument(request);");
+    expect(conversationTools).toContain('if (request.kind === "text") {');
+    expect(conversationTools).toContain("changesFeatureBinding.openCodeDocument(request);");
+    expect(conversationTools).toContain("openTimelineDocument,");
+    expect(migratedAttachmentPreview).toContain('if (request.kind === "text") {');
+    expect(changes).toContain("<CodeReviewWorkspace");
+    expect(changes).toContain("onClose={onClose}");
+    expect(workspace).toContain(
+      "revealReference={selectedReference === null ? (guide.focus ?? revealReference) : null}",
+    );
+    expect(nativeEditor).toContain('send({ command: "reveal", payload: revealReference })');
+    expect(editorRuntime).toContain("revealedReference = parsed.payload");
+    expect(editorRuntime).toContain('scrollIntoView({ block: "center", inline: "nearest" })');
+  });
   it("keeps Markdown source lines in the fullscreen renderer and maps them to a rendered segment", () => {
     const source = "# Intro\n\nFirst\n\n## Details\n\nBody";
     const segments = ["# Intro\n\nFirst\n\n", "## Details\n\nBody"];
