@@ -986,6 +986,43 @@ async fn a_finished_agent_a_message_resumes_works_again_until_that_run_reports()
 }
 
 #[tokio::test]
+async fn a_later_finished_resume_supersedes_an_older_unreported_resume()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write_resumed_store(
+        root.path(),
+        &resumed(),
+        &[
+            assistant(
+                "a5",
+                "a4",
+                20,
+                &json!([{"type": "tool_use", "id": "toolu_send2", "name": "SendMessage",
+                    "input": {"to": "agent1", "message": "Revise it again"}}]),
+            ),
+            {
+                let mut result = send_result("r3", "a5", 21, &resumed());
+                result["message"]["content"][0]["tool_use_id"] = json!("toolu_send2");
+                result
+            },
+            assistant(
+                "a6",
+                "r3",
+                22,
+                &json!([{"type": "text", "text": "Sent again."}]),
+            ),
+            wake("w2", "a6", 30, "agent1", "toolu_send2"),
+        ],
+    )?;
+
+    assert_eq!(
+        agent_state(root.path()).await?,
+        (SubagentStatus::Completed, false)
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_message_that_resumes_no_agent_leaves_a_finished_agent_finished()
 -> Result<(), Box<dyn std::error::Error>> {
     for send in [

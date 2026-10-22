@@ -56,8 +56,10 @@ const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// the first one stopped; the others stayed running forever), and a
 /// sub-agent cut off before its answer is interrupted, not completed. 12:
 /// `Monitor` calls and `TaskStop` calls that stopped a shell task are
-/// `command` items (they were generic tool calls).
-pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 12;
+/// `command` items (they were generic tool calls). 13: the newest status fact
+/// wins for a resumed sub-agent (an older unreported resume no longer keeps
+/// a later finished run working forever).
+pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 13;
 
 /// The Claude tables' schema in the host index.
 pub const CLAUDE_INDEX_SCHEMA: ClaudeIndexSchema = ClaudeIndexSchema;

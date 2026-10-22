@@ -326,7 +326,7 @@ fn replay_running_segment(segment: &HistorySegment, context: &HistoryContext) ->
 /// Sub-agent items carry the status of their agent's latest run at the same
 /// conversation level: the final status a later task report reported (a
 /// background agent finishes after the turn that started it), or running
-/// again while a resume is unreported.
+/// again when a resume is its newest status fact.
 fn with_subagent_runs(turns: Vec<AgentTurn>, entries: &[HistoryEntry]) -> Vec<AgentTurn> {
     let mut runs = SubagentRuns::default();
     record_runs(&mut runs, entries);
@@ -337,9 +337,13 @@ fn record_runs(runs: &mut SubagentRuns, entries: &[HistoryEntry]) {
     let mut send_message_calls = HashSet::new();
     for entry in entries {
         match entry {
-            HistoryEntry::Wake { reports, .. } => {
+            HistoryEntry::Wake {
+                reports,
+                timestamp_ms,
+                ..
+            } => {
                 for report in reports {
-                    runs.record(report);
+                    runs.record(report, *timestamp_ms);
                 }
             }
             HistoryEntry::Frame {
@@ -356,13 +360,14 @@ fn record_runs(runs: &mut SubagentRuns, entries: &[HistoryEntry]) {
             }
             HistoryEntry::Frame {
                 frame: ClaudeFrame::User(user),
+                timestamp_ms,
                 ..
             } => {
                 for result in &user.tool_results {
                     if send_message_calls.contains(result.tool_use_id.as_str())
                         && let Some(agent_id) = resumed_agent_id(result, &user.tool_use_result)
                     {
-                        runs.record_resume(&result.tool_use_id, &agent_id);
+                        runs.record_resume(&result.tool_use_id, &agent_id, *timestamp_ms);
                     }
                 }
             }
@@ -380,9 +385,16 @@ fn record_runs(runs: &mut SubagentRuns, entries: &[HistoryEntry]) {
 /// that one is busy or done, to the main conversation.
 pub fn record_transcript_runs(runs: &mut SubagentRuns, rows: &[&JsonRecord]) {
     record_runs(runs, &history_entries(rows, subagent_parent(rows)));
-    for prompt in rows.iter().filter_map(|row| queued_task_notification(row)) {
+    for row in rows {
+        let Some(prompt) = queued_task_notification(row) else {
+            continue;
+        };
+        let Some(timestamp_ms) = str_of(row, "timestamp").and_then(super::entries::timestamp_ms)
+        else {
+            continue;
+        };
         for report in stored_task_reports(prompt) {
-            runs.record(&report);
+            runs.record(&report, timestamp_ms);
         }
     }
 }

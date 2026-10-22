@@ -11,7 +11,8 @@
 //!   `task_notification` system frame live, both read by `task_reports`)
 //!   carries the final status;
 //! - a `SendMessage` call that resumes a finished agent (`resumedAgentId` in
-//!   its result) makes it running again until a report names that call.
+//!   its result) makes it running again until a later report settles that
+//!   agent; older status facts never override newer ones.
 //!
 //! Child thread id: `<app thread id>:agent:<agent id>` (`crate::subagents`).
 //! Pure.
@@ -256,62 +257,84 @@ pub fn resumed_agent_id(result: &ToolResultBlock, tool_use_result: &Value) -> Op
         .or_else(|| resumed(tool_use_result))
 }
 
-/// The runs of a session's sub-agents: the latest final status reported by
-/// the call that started each run and by agent id, and the `SendMessage`
-/// calls that resumed a finished agent.
+/// The runs of a session's sub-agents: the latest status fact recorded by
+/// the call that started each run and by agent id.
 ///
 /// A run is started by the spawning `Agent` call or by a resuming
-/// `SendMessage` call, and the task report that ends it names that call
-/// (`<tool-use-id>`). So a resumed agent works until a report names its
-/// resuming call.
+/// `SendMessage` call, and a later task report ends it. Facts are ordered by
+/// their stored timestamps, so an older unreported call cannot keep an agent
+/// running after a newer run reported completion.
 #[derive(Default)]
 pub struct SubagentRuns {
-    by_agent: HashMap<String, SubagentStatus>,
-    by_tool_use: HashMap<String, SubagentStatus>,
-    /// `(resuming call, agent id)` of every resume.
-    resumes: Vec<(String, String)>,
+    by_agent: HashMap<String, TimedStatus>,
+    by_tool_use: HashMap<String, TimedStatus>,
+}
+
+#[derive(Clone, Copy)]
+struct TimedStatus {
+    timestamp_ms: i64,
+    status: SubagentStatus,
 }
 
 impl SubagentRuns {
-    pub fn record(&mut self, report: &TaskReport) {
+    pub fn record(&mut self, report: &TaskReport, timestamp_ms: i64) {
         let Some(status) = notified_status(report.status.as_deref()) else {
             return;
         };
-        self.by_agent.insert(report.task_id.clone(), status);
+        Self::record_status(&mut self.by_agent, &report.task_id, timestamp_ms, status);
         if let Some(tool_use_id) = &report.tool_use_id {
-            self.by_tool_use.insert(tool_use_id.clone(), status);
+            Self::record_status(&mut self.by_tool_use, tool_use_id, timestamp_ms, status);
         }
     }
 
     /// A `SendMessage` call resumed `agent_id`.
-    pub fn record_resume(&mut self, tool_use_id: &str, agent_id: &str) {
-        self.resumes
-            .push((tool_use_id.to_owned(), agent_id.to_owned()));
+    pub fn record_resume(&mut self, tool_use_id: &str, agent_id: &str, timestamp_ms: i64) {
+        Self::record_status(
+            &mut self.by_agent,
+            agent_id,
+            timestamp_ms,
+            SubagentStatus::Running,
+        );
+        Self::record_status(
+            &mut self.by_tool_use,
+            tool_use_id,
+            timestamp_ms,
+            SubagentStatus::Running,
+        );
     }
 
-    /// Whether a resume of `agent_id` has not been reported finished yet.
-    fn resumed(&self, agent_id: &str) -> bool {
-        self.resumes
-            .iter()
-            .any(|(call, agent)| agent == agent_id && !self.by_tool_use.contains_key(call))
+    fn record_status(
+        statuses: &mut HashMap<String, TimedStatus>,
+        key: &str,
+        timestamp_ms: i64,
+        status: SubagentStatus,
+    ) {
+        let replace = statuses
+            .get(key)
+            .is_none_or(|current| timestamp_ms >= current.timestamp_ms);
+        if replace {
+            statuses.insert(
+                key.to_owned(),
+                TimedStatus {
+                    timestamp_ms,
+                    status,
+                },
+            );
+        }
     }
 
-    /// The item with the status of its agent's latest run: running while a
-    /// resume is unreported; otherwise a running item takes the final status
-    /// a later notification reported.
+    /// The item with the latest status recorded for its agent or spawning call.
     #[must_use]
     pub fn apply(&self, item: SubagentItem) -> SubagentItem {
         let agent_id = item.agent_thread_id.as_ref().and_then(agent_id_of);
-        if agent_id.is_some_and(|agent_id| self.resumed(agent_id)) {
-            return with_status(item, SubagentStatus::Running);
-        }
-        if item.status != SubagentStatus::Running {
-            return item;
-        }
-        let by_agent = agent_id.and_then(|agent_id| self.by_agent.get(agent_id));
-        match self.by_tool_use.get(item.item_id.as_str()).or(by_agent) {
-            Some(status) => with_status(item, *status),
-            None => item,
+        let status = agent_id
+            .and_then(|agent_id| self.by_agent.get(agent_id))
+            .or_else(|| self.by_tool_use.get(item.item_id.as_str()))
+            .map(|status| status.status);
+        match status {
+            Some(SubagentStatus::Running) => with_status(item, SubagentStatus::Running),
+            Some(status) if item.status == SubagentStatus::Running => with_status(item, status),
+            _ => item,
         }
     }
 }

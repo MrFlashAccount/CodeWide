@@ -449,8 +449,8 @@ fn session_runs(messages: &[&JsonRecord], transcripts: &[SubagentTranscript]) ->
 /// with; a sub-agent its spawning item
 /// (in the main conversation or another sub-agent) reports `running` keeps
 /// its last turn in progress. A spawning item is running until a report
-/// anywhere in the session settles it, and again while a resume of its agent
-/// is unreported.
+/// anywhere in the session settles it, and again when a resume is the newest
+/// status fact for its agent.
 fn native_subagents(
     transcripts: &[SubagentTranscript],
     turns: &[AgentTurn],
