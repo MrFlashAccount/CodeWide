@@ -58,19 +58,18 @@ internal class NativeDiagnosticUploader(private val credentials: NativeSessionCr
       val sessions = credentials.list().filter { it.enabled && !it.revocationConfirmed }
       val first = sessions.firstOrNull() ?: return
       val unavailableTargets = mutableSetOf<String>()
-      journal.pending().use { paths ->
-        for (path in paths) {
-          if (closed) return
-          val file = path.toFile()
-          // A malformed retained file must not prevent delivery of other reports.
-          val target = runCatching { journal.target(file, first.id) }.getOrNull() ?: continue
-          if (target in unavailableTargets) continue
-          val saved = sessions.firstOrNull { it.id == target } ?: continue
-          try {
-            if (!upload(file, saved, journal)) unavailableTargets.add(target)
-          } catch (_: Exception) {
-            unavailableTargets.add(target)
-          }
+      for (file in journal.pending()) {
+        if (closed) return
+        // Rotation may have dropped a report since the snapshot; that is not a target failure.
+        if (!file.isFile) continue
+        // A malformed retained file must not prevent delivery of other reports.
+        val target = runCatching { journal.target(file, first.id) }.getOrNull() ?: continue
+        if (target in unavailableTargets) continue
+        val saved = sessions.firstOrNull { it.id == target } ?: continue
+        try {
+          if (!upload(file, saved, journal)) unavailableTargets.add(target)
+        } catch (_: Exception) {
+          unavailableTargets.add(target)
         }
       }
       retryNeeded = journal.hasPending()
