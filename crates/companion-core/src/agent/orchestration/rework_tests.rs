@@ -101,6 +101,34 @@ fn restart(harness: &Harness) -> Arc<OrchestrationService> {
     )
 }
 
+fn start_outbox_pump(harness: &Harness) {
+    let (events, event_stream) = tokio::sync::mpsc::channel(32);
+    let wakeup = Arc::new(tokio::sync::Notify::new());
+    let workspaces = Arc::new(std::sync::RwLock::new(None));
+    let fork = crate::agent::fork::ForkService::new(
+        harness.gateway.clone(),
+        harness.store.clone(),
+        events.clone(),
+        Arc::new(ProfileObservations::default()),
+    );
+    test_support::observe_pump_events(harness.service.clone(), event_stream);
+    tokio::spawn(crate::turn_delivery::run_outbox_pump(
+        crate::turn_delivery::PumpContext {
+            gateway: harness.gateway.clone(),
+            turn_delivery: crate::turn_delivery::TurnDelivery::new(
+                harness.store.clone(),
+                wakeup.clone(),
+                events,
+            ),
+            thread_view: crate::thread_view::ThreadViewService::new(harness.gateway.clone()),
+            files: Arc::new(std::sync::RwLock::new(None)),
+            workspaces,
+            fork,
+        },
+        wakeup,
+    ));
+}
+
 async fn call_task(
     service: &OrchestrationService,
     call_id: &str,
@@ -256,7 +284,10 @@ async fn admission_conflict_and_failed_transaction_leave_no_orphan_prompt() -> T
 #[tokio::test]
 async fn lost_start_response_reopens_with_the_history_turn_and_waits_for_its_result() -> TestResult
 {
-    let harness = harness(":workspace").await?;
+    // The test claims and resolves the initial outbox command itself to
+    // model a lost provider response. A live pump would race that deliberate
+    // claim and make the fixture nondeterministic.
+    let harness = harness_without_pump(":workspace").await?;
     let task_id = TaskId::new();
     let child = AppThreadId::from_static("lost-response-child");
     let (record, command_id) = admission(&task_id, &child, "lost-response");
@@ -371,6 +402,7 @@ async fn arrange_lost_start_response(
             usage: None,
         }],
     );
+    start_outbox_pump(harness);
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let command = harness.store.outbox_get(command_id)?.ok_or("command")?;
