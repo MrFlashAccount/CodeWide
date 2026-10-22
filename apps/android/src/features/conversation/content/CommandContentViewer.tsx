@@ -14,7 +14,8 @@ import {
 } from "../../../rendering/command-output-resource";
 import { usePrivateFileAccessScope } from "../../../rendering/use-private-image-uri";
 import type { CommandContentRouteRequest } from "../../../services/content/contentRouteSession";
-import { ActivityContentViewer } from "./ActivityContentViewer";
+import { formatByteSize } from "../../../ui/number-format";
+import { CommandOutputScreen, type CommandOutputStatus } from "../turns/CommandOutputScreen";
 
 /** Projects one exact command item from the live thread model into the output viewer. */
 export function CommandContentViewer({
@@ -66,19 +67,75 @@ export function CommandItemOutputViewer({
   // An item its thread no longer holds is read from the segments it was opened with.
   const references = current === null ? request.references : commandOutputReferences(current);
   const resource = useReferencedCommandOutput(references, request.getTransferAccess, resourceKey);
-  const inline = current?.aggregatedOutput ?? "";
-  const output = resource.value?.text ?? (inline === "" ? request.fallbackOutput : inline);
+  const output = commandOutputText(resource.value?.text ?? null, current, request.fallbackOutput);
+  const facts = commandFacts(current, request.command);
   return (
-    <ActivityContentViewer
+    <CommandOutputScreen
+      command={facts.command}
+      details={commandOutputDetails(facts.exitCode, output.text)}
       error={resource.error}
-      loading={resource.value === null && resource.status === "loading"}
+      loading={output.text === "" && resource.value === null && resource.status === "loading"}
       onClose={onClose}
-      presentation="terminal"
-      text={output}
-      title={request.title}
+      output={{ headOmitted: false, text: output.text, totalChars: output.text.length }}
+      outputSource={output.source}
+      status={facts.status}
+      title="Command"
     />
   );
 }
+
+/** What the live item says about the command; an item gone from its thread says nothing. */
+function commandFacts(
+  current: CommandItem | null,
+  openedCommand: string,
+): {
+  readonly command: string;
+  readonly exitCode: number | null;
+  readonly status: CommandOutputStatus;
+} {
+  if (current === null) {
+    return { command: openedCommand, exitCode: null, status: "unknown" };
+  }
+  return {
+    command: current.command,
+    exitCode: current.exitCode ?? null,
+    status: COMMAND_STATUS[current.status],
+  };
+}
+
+/**
+ * The text the terminal shows and where it comes from. A live item's inline
+ * output only grows, so the terminal appends it; a switch to another source
+ * replaces the text and restarts the terminal.
+ */
+function commandOutputText(
+  referenced: string | null,
+  current: CommandItem | null,
+  fallbackOutput: string,
+): { readonly source: "fallback" | "inline" | "referenced"; readonly text: string } {
+  if (referenced !== null) {
+    return { source: "referenced", text: referenced };
+  }
+  const inline = current?.aggregatedOutput ?? "";
+  return inline === ""
+    ? { source: "fallback", text: fallbackOutput }
+    : { source: "inline", text: inline };
+}
+
+function commandOutputDetails(exitCode: number | null, text: string): readonly string[] {
+  const byteLength = new TextEncoder().encode(text).byteLength;
+  return [
+    ...(exitCode === null ? [] : [`exit ${String(exitCode)}`]),
+    ...(byteLength > 0 ? [formatByteSize(byteLength)] : []),
+  ];
+}
+
+const COMMAND_STATUS: Record<CommandItem["status"], CommandOutputStatus> = {
+  completed: "finished",
+  declined: "declined",
+  failed: "failed",
+  inProgress: "running",
+};
 
 const UTF16_BYTES_PER_UNIT = 2;
 

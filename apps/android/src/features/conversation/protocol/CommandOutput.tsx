@@ -50,7 +50,7 @@ export function CommandExecutionProtocolBlock({
   const running = activeToolCall || block.status === "inProgress" || block.status === "running";
   const metrics = useContext(TurnActivityMetricsContext);
   const outputFootprint = commandOutputFootprint(block.raw, metrics);
-  const outputAction = useCommandOutputAction(block, title, getTransferAccess ?? null);
+  const outputAction = useCommandOutputAction(block, command, getTransferAccess ?? null);
   return (
     <Card
       icon="terminal-outline"
@@ -87,6 +87,7 @@ export function CommandExecutionProtocolBlock({
       )}
       <LargeContentControls
         block={block}
+        omitCommandOutput
         {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       />
     </Card>
@@ -97,7 +98,7 @@ function ignoreContentRequest(): void {}
 
 function useCommandOutputAction(
   block: RenderBlock,
-  title: string,
+  command: string,
   getTransferAccess: GetTransferAccess | null,
 ): { readonly enabled: boolean; readonly open: () => void } {
   const openContent = useContext(LargeContentViewerContext);
@@ -109,13 +110,13 @@ function useCommandOutputAction(
       return;
     }
     dispatchOutput({
+      command,
       fallbackOutput: block.body ?? "",
       getTransferAccess,
       itemId,
       kind: "command",
       references: commandOutputReferences(block.raw),
       threadId: turnTarget.threadId,
-      title,
       turnId: turnTarget.turnId,
     });
   });

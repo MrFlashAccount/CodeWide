@@ -297,13 +297,14 @@ fn derives_turn_boundaries_from_prompts_the_interrupt_marker_and_a_task_notifica
             ("userMessage", None),
             ("command", Some(ExecutionStatus::Failed)),
             ("command", Some(ExecutionStatus::Completed)),
-            ("toolCall", None),
+            // `Monitor` runs a shell command too.
+            ("command", Some(ExecutionStatus::Completed)),
         ]
     );
-    let AgentItem::ToolCall { status, .. } = non_reasoning(&turns[0])[3] else {
-        return Err("fourth item is not a tool call".into());
+    let AgentItem::Command { command, .. } = non_reasoning(&turns[0])[3] else {
+        return Err("fourth item is not a command".into());
     };
-    assert_eq!(*status, CallStatus::Completed);
+    assert!(command.starts_with("until [ -f "));
     // An interrupted turn has no final answer; the wake turn's answer is final.
     assert!(matches!(
         non_reasoning(&turns[1]).last(),

@@ -241,10 +241,26 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
   private fun updateCodeViewportWidth(viewportWidth: Int) {
     val gutterWidth = if (gutterView.visibility == View.VISIBLE) gutterView.measuredWidth else 0
     val codeWidth = (viewportWidth - gutterWidth).coerceAtLeast(0)
-    textView.minWidth = codeWidth
     // The horizontal scroller measures its child unbounded; a wrapping row is
     // bounded by the viewport so its lines break there.
-    textView.maxWidth = if (wrapLines && codeWidth > 0) codeWidth else Int.MAX_VALUE
+    val maxCodeWidth = if (wrapLines && codeWidth > 0) codeWidth else Int.MAX_VALUE
+    if (textView.minWidth == codeWidth && textView.maxWidth == maxCodeWidth) return
+    textView.minWidth = codeWidth
+    textView.maxWidth = maxCodeWidth
+    // React Native measures this view only when its Yoga size changes, and the
+    // bounds arrive in onSizeChanged after children were already measured; the
+    // TextView's requestLayout is not honored, so remeasure the subtree here.
+    removeCallbacks(remeasure)
+    post(remeasure)
+  }
+
+  private val remeasure = Runnable {
+    if (width <= 0 || height <= 0) return@Runnable
+    measure(
+      View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+      View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
+    )
+    layout(left, top, right, bottom)
   }
 
   private fun dp(value: Float): Float = value * resources.displayMetrics.density
