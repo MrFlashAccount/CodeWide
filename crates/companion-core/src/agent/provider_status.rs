@@ -344,6 +344,7 @@ mod tests {
                 used_percent: Some(used_percent),
                 window_duration_mins: Some(300),
             }],
+            resets: None,
         }
     }
 

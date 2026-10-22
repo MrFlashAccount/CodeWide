@@ -17,6 +17,7 @@ libc = "0.2.175"
 notify = "8.2.0"
 rand = "0.9.2"
 redb = { version = "4.1.0", features = ["cache_metrics"] }
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 sha2 = "0.10.9"
 time = { version = "0.3.47", features = ["formatting", "parsing"] }

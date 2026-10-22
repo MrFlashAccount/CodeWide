@@ -60,6 +60,7 @@ export function ConnectionSettings({
   onCheckRelayUpdate,
   onClose,
   onConsumeAccountResetCredit,
+  onConsumeProviderRateLimitReset,
   onDelete,
   onPreviewGlobalVoice,
   onReconnect,
@@ -95,6 +96,11 @@ export function ConnectionSettings({
     profileId: string,
     creditId: string | null,
   ) => Promise<AccountResetCreditConsumption>;
+  onConsumeProviderRateLimitReset: (
+    connectionId: string,
+    providerId: string,
+    grantId: string,
+  ) => Promise<void>;
   onDelete: (connectionId: string) => Promise<void>;
   onPreviewGlobalVoice: (voice: GlobalVoiceName) => Promise<void>;
   onReconnect: (connectionId: string) => Promise<void>;
@@ -164,6 +170,7 @@ export function ConnectionSettings({
         ...(onStartAccountLogin === undefined ? {} : { onStartAccountLogin }),
         ...(onCancelAccountLogin === undefined ? {} : { onCancelAccountLogin }),
         ...(onConsumeAccountResetCredit === undefined ? {} : { onConsumeAccountResetCredit }),
+        onConsumeProviderRateLimitReset,
         ...(onActivateAccountProfile === undefined ? {} : { onActivateAccountProfile }),
         ...(onUpdateAccountProfile === undefined ? {} : { onUpdateAccountProfile }),
         ...(onRemoveAccountProfile === undefined ? {} : { onRemoveAccountProfile }),

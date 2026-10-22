@@ -61,6 +61,7 @@ dependencies = [
  "notify",
  "rand 0.9.5",
  "redb",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",

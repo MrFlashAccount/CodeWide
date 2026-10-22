@@ -53,12 +53,16 @@ export type BooleanCapability = (typeof BOOLEAN_CAPABILITIES)[number];
  * `orchestration.externalDelivery`: the provider can durably accept and
  * deduplicate a non-user completion delivery. Absent keeps the host on the
  * task-addressed `wait_task` fallback.
+ * `accounts.rateLimitResets`: the provider reports its banked subscription
+ * reset inventory in `ProviderRateLimits.resets` and consumes a selected grant
+ * through `companion/providerRateLimits/reset/consume`.
  */
 export const ADDITIVE_BOOLEAN_CAPABILITIES = [
   "orchestration.tools",
   "threads.crossProviderFork",
   "threads.backgroundTaskOutput",
   "orchestration.externalDelivery",
+  "accounts.rateLimitResets",
 ] as const;
 
 export type AdditiveBooleanCapability = (typeof ADDITIVE_BOOLEAN_CAPABILITIES)[number];

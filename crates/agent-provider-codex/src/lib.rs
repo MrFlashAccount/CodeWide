@@ -108,6 +108,7 @@ pub const CAPABILITIES: CapabilitySet = CapabilitySet {
     threads_cross_provider_fork: true,
     threads_background_task_output: false,
     orchestration_external_delivery: false,
+    accounts_rate_limit_resets: false,
     turns_start_while_active: StartWhileActiveMode::NativeJoin,
 };
 

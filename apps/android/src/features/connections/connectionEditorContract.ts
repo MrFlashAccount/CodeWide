@@ -21,6 +21,11 @@ export type ConnectionEditorProps = {
     profileId: string,
     creditId: string | null,
   ) => Promise<AccountResetCreditConsumption>;
+  onConsumeProviderRateLimitReset: (
+    connectionId: string,
+    providerId: string,
+    grantId: string,
+  ) => Promise<void>;
   onDelete: (connectionId: string) => Promise<void>;
   onReconnect: (connectionId: string) => Promise<void>;
   onRefreshAccountPool?: (connectionId: string) => Promise<AccountPoolSnapshot>;

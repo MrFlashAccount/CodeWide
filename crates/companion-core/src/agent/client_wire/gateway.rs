@@ -217,6 +217,33 @@ impl ClientWireGateway {
             .map(|provider| (provider.clone(), self.wire(provider)))
     }
 
+    /// The owner of a provider-qualified host call. Unlike singleton host
+    /// capabilities, reset inventories can be declared by several providers.
+    ///
+    /// # Errors
+    /// Returns invalid params, disabled provider, or unsupported capability.
+    pub fn provider_owner(
+        &self,
+        capability: Capability,
+        params: &Value,
+    ) -> Result<(Arc<dyn AgentProvider>, WireProvider), RpcFailure> {
+        let id = params
+            .get("providerId")
+            .and_then(Value::as_str)
+            .and_then(ProviderId::parse)
+            .ok_or_else(|| RpcFailure::new(ERROR_INVALID_PARAMS, "providerId is invalid"))?;
+        let provider = self
+            .registry
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| RpcFailure::provider_disabled(&id))?;
+        if !provider.capabilities().supports(capability) {
+            return Err(RpcFailure::capability_unsupported(capability, &id));
+        }
+        let wire = self.wire(&provider);
+        Ok((provider, wire))
+    }
+
     /// Resolves a thread-scoped call and checks `requires`.
     ///
     /// # Errors

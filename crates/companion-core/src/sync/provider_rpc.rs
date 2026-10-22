@@ -462,7 +462,8 @@ pub(super) async fn handle_neutral_fork(
     .await
 }
 
-/// A host-level call owned by the first provider declaring `owner`.
+/// A host-level call. Provider reset consumption is qualified by `providerId`;
+/// singleton host capabilities use their first declaring provider.
 pub(super) async fn handle_host(
     hub: &SyncHub,
     socket: &SessionSocket,
@@ -471,7 +472,16 @@ pub(super) async fn handle_host(
     method: &str,
     owner: Capability,
 ) -> Result<(), ()> {
-    let Some((provider, wire)) = hub.gateway.owner(owner) else {
+    let params = request.get("params").cloned().unwrap_or(Value::Null);
+    let selected = if owner == Capability::AccountsRateLimitResets {
+        match hub.gateway.provider_owner(owner, &params) {
+            Ok(selected) => Some(selected),
+            Err(failure) => return send_rpc_failure(socket, id, &failure).await,
+        }
+    } else {
+        hub.gateway.owner(owner)
+    };
+    let Some((provider, wire)) = selected else {
         return send_rpc_error(socket, id, -32_601, "Method is not supported on this host").await;
     };
     if let Some(native) = provider.native_surface() {
@@ -479,7 +489,6 @@ pub(super) async fn handle_host(
             .await
             .map(|_| ());
     }
-    let params = request.get("params").cloned().unwrap_or(Value::Null);
     match provider
         .capability_invoke(CapabilityInvokeParams {
             capability: owner.name().to_owned(),

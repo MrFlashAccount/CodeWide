@@ -65,11 +65,79 @@ export interface ProviderRateLimitWindow {
   readonly windowDurationMins: number | null;
 }
 
+/** What one banked provider reset refills. */
+export type ProviderRateLimitResetKind = "full" | "other" | "session" | "weekly";
+
+/** One reset grant reported by a provider's subscription. */
+export interface ProviderRateLimitResetGrant {
+  /** Provider window ids this grant can clear. */
+  readonly clears: readonly string[];
+  /** Unix seconds; `null` when the grant does not expire or the provider did not say. */
+  readonly expiresAt: number | null;
+  /** Opaque provider-owned identifier. */
+  readonly id: string;
+  readonly kind: ProviderRateLimitResetKind;
+  readonly label: string;
+  readonly paused: boolean;
+  readonly resetsLeft: number;
+  readonly resetsTotal: number;
+  /** Unix seconds; `null` when the provider did not say. */
+  readonly startsAt: number | null;
+  /** Opaque provider reason; display is owned by the client. */
+  readonly unavailableReason: string | null;
+  readonly usableNow: boolean;
+  readonly useRequiresLimit: boolean;
+}
+
+/** The provider's banked reset program and its validated grants. */
+export interface ProviderRateLimitResets {
+  /** Sum of `resetsLeft` across the grants, saturated to an unsigned 32-bit integer. */
+  readonly availableCount: number;
+  /** Unix seconds. */
+  readonly cooldownUntil: number | null;
+  readonly eligible: boolean;
+  readonly grants: readonly ProviderRateLimitResetGrant[];
+  readonly ineligibleReason: string | null;
+  readonly nextGrantId: string | null;
+  /** Unix seconds. */
+  readonly weeklyResetsAt: number | null;
+}
+
+/** Client-wire operation owned by the selected reset-capable provider. */
+export const PROVIDER_RATE_LIMIT_RESET_CONSUME_METHOD =
+  "companion/providerRateLimits/reset/consume" as const;
+
+export interface ProviderRateLimitResetConsumeParams {
+  readonly grantId: string;
+  readonly providerId: string;
+}
+
+export type ProviderRateLimitResetConsumeResult =
+  | ProviderRateLimitResetConsumeResultBase<"alreadyUsed">
+  | ProviderRateLimitResetConsumeResultBase<"authError">
+  | ProviderRateLimitResetConsumeResultBase<"cooldown">
+  | ProviderRateLimitResetConsumeResultBase<"error">
+  | ProviderRateLimitResetConsumeResultBase<"ineligible">
+  | ProviderRateLimitResetConsumeResultBase<"notLimited">
+  | ProviderRateLimitResetConsumeResultBase<"rateLimited">
+  | ProviderRateLimitResetConsumeResultBase<"reset">
+  | ProviderRateLimitResetConsumeResultBase<"unavailable">;
+
+interface ProviderRateLimitResetConsumeResultBase<Outcome extends string> {
+  readonly cleared: readonly string[];
+  readonly outcome: Outcome;
+  readonly reason: string | null;
+  readonly resetsLeft: number | null;
+  readonly weeklyResetsAt: string | null;
+}
+
 /**
  * A provider's full subscription limit snapshot: every window it has reported,
  * merged by `id`, ordered session, weekly, then the other ids sorted.
  */
 export interface ProviderRateLimits {
+  /** Additive: absent when the provider did not report a reset program. */
+  readonly resets?: ProviderRateLimitResets;
   /** Unix seconds of the latest change. */
   readonly updatedAt: number;
   readonly windows: readonly ProviderRateLimitWindow[];

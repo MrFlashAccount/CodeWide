@@ -1,4 +1,4 @@
-import { fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
 import { observable } from "@legendapp/state";
 import { Pressable, Text } from "react-native";
 
@@ -10,6 +10,11 @@ import { WorkspaceAccountUsageMenu } from "../src/features/accounts/WorkspaceAcc
 import { AgentProviderMarks } from "../src/features/connections/AgentProviderMarks";
 import { ConversationHeader } from "../src/features/conversation/header/ConversationHeader";
 import { ContentMenu } from "../src/ui/ContentMenu";
+import { getAppDialogRequest, invokeAppDialogAction, resetAppDialog } from "./mocks/AppDialog";
+
+afterEach(() => {
+  resetAppDialog();
+});
 
 const claudeThread = {
   codewideAgent: {
@@ -140,6 +145,30 @@ it("marks the server's agents with their sign-in status, not as accounts", () =>
 });
 
 const claudeLimits = {
+  resets: {
+    availableCount: 2,
+    cooldownUntil: null,
+    eligible: true,
+    grants: [
+      {
+        clears: ["five_hour", "seven_day"],
+        expiresAt: 1_900_000_000,
+        id: "grant_one",
+        kind: "weekly",
+        label: "Weekly reset",
+        paused: false,
+        resetsLeft: 2,
+        resetsTotal: 3,
+        startsAt: 1_700_000_000,
+        unavailableReason: null,
+        usableNow: true,
+        useRequiresLimit: true,
+      },
+    ],
+    ineligibleReason: null,
+    nextGrantId: "grant_one",
+    weeklyResetsAt: 1_850_000_000,
+  },
   updatedAt: 1_800_000_000,
   windows: [
     {
@@ -178,7 +207,7 @@ function providerState(claude: Record<string, unknown>) {
       },
       {
         auth: "authenticated",
-        capabilities: { "accounts.pool": false },
+        capabilities: { "accounts.pool": false, "accounts.rateLimitResets": true },
         id: "claude",
         name: "Claude",
         planLabel: "max",
@@ -192,10 +221,16 @@ function providerState(claude: Record<string, unknown>) {
   return observable<Record<string, AgentProvidersState>>({ server: { status: "ready", value } });
 }
 
-it("lists the Claude sign-in as a read-only account with its limits", () => {
+it("lists the Claude sign-in with its limits and consumes a selected reset", async () => {
   const state$ = providerState({ accountLabel: "dev@example.com", rateLimits: claudeLimits });
+  const onConsumeReset = jest.fn(async () => undefined);
   const view = render(
-    <ProviderAccounts agentProviders={{ state$ }} connectionId="server" serverName="Studio" />,
+    <ProviderAccounts
+      agentProviders={{ state$ }}
+      connectionId="server"
+      onConsumeReset={onConsumeReset}
+      serverName="Studio"
+    />,
   );
   expect(view.getByText("Claude")).toBeOnTheScreen();
   expect(view.queryByText("Codex")).toBeNull();
@@ -212,12 +247,30 @@ it("lists the Claude sign-in as a read-only account with its limits", () => {
   expect(view.getByTestId("account-reset-window-remaining-seven_day")).toHaveTextContent(
     "40% left",
   );
+  expect(view.getByText("Banked resets · 2")).toBeOnTheScreen();
+  expect(view.getByTestId("provider-reset-grant-grant_one")).toBeOnTheScreen();
+  expect(view.getByText("Weekly reset")).toBeOnTheScreen();
+  fireEvent.press(view.getByLabelText("Use Weekly reset for Claude"));
+  expect(getAppDialogRequest()).toMatchObject({
+    message:
+      "Apply this reset to Claude on Studio? It will be consumed immediately and cannot be undone.",
+    title: "Use Weekly reset?",
+  });
+  await act(async () => {
+    invokeAppDialogAction("Use");
+  });
+  expect(onConsumeReset).toHaveBeenCalledWith("server", "claude", "grant_one");
 });
 
 it("tells how to sign in when Claude is signed out on the server", () => {
   const state$ = providerState({ auth: "unauthenticated", planLabel: null, rateLimits: null });
   const view = render(
-    <ProviderAccounts agentProviders={{ state$ }} connectionId="server" serverName="Studio" />,
+    <ProviderAccounts
+      agentProviders={{ state$ }}
+      connectionId="server"
+      onConsumeReset={jest.fn(async () => undefined)}
+      serverName="Studio"
+    />,
   );
   expect(view.getByText("Claude account")).toBeOnTheScreen();
   expect(view.getByText("Not signed in — run `claude` on the server")).toBeOnTheScreen();
