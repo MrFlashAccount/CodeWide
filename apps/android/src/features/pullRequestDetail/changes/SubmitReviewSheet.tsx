@@ -3,12 +3,11 @@ import { View, type Text as NativeText } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import { AppButton } from "../../../presentation/controls/AppButton";
-import { PresentationTextInput } from "../../../presentation/text/ProductText";
+import { AppText as Text, AppTextInput } from "../../../ui/Typography";
 import { useEvent } from "../../../react/useEvent";
 import { colors } from "../../../theme";
 import { AppSheet } from "../../../ui/AppSheet";
 import { TextShimmer } from "../../../ui/TextShimmer";
-import { AppText as Text } from "../../../ui/Typography";
 import type { DockCounts } from "./dockCounts";
 import { submitSheetStyles as styles } from "./SubmitReviewSheet.styles";
 import { SubmitSummaryLines } from "./SubmitSummaryLines";
@@ -70,7 +69,7 @@ export function SubmitReviewSheet(props: SubmitReviewSheetProps): React.JSX.Elem
           verdict={verdict}
           verdicts={props.verdicts}
         />
-        <PresentationTextInput
+        <AppTextInput
           accessibilityLabel="Summary comment"
           editable={!busy}
           multiline

@@ -3,11 +3,10 @@ import { Pressable, StyleSheet, View } from "react-native";
 
 import type { ActionDescriptor, ActionInput } from "../../../data/forgeActionCatalog";
 import { AppButton } from "../../../presentation/controls/AppButton";
-import { PresentationTextInput } from "../../../presentation/text/ProductText";
+import { AppText as Text, AppTextInput } from "../../../ui/Typography";
 import { AppSwitch } from "../../../ui/AppSwitch";
 import { colors, controlSize, radii, spacing, typeScale } from "../../../theme";
 import { AppSheet } from "../../../ui/AppSheet";
-import { AppText as Text } from "../../../ui/Typography";
 
 type InputValue = boolean | string;
 
@@ -93,7 +92,7 @@ function InputField({
     );
   }
   return (
-    <PresentationTextInput
+    <AppTextInput
       accessibilityLabel={input.label}
       onChangeText={onChange}
       placeholder={input.placeholder ?? undefined}

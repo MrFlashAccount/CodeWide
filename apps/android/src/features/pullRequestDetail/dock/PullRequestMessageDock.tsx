@@ -2,12 +2,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRef, useState } from "react";
 import { Pressable, StyleSheet, View, type Text as NativeText } from "react-native";
 
-import { PresentationTextInput } from "../../../presentation/text/ProductText";
+import { AppText as Text, AppTextInput } from "../../../ui/Typography";
 import { colors, controlSize, iconSize, radii, spacing, typeScale } from "../../../theme";
 import { useEvent } from "../../../react/useEvent";
 import { TextShimmer } from "../../../ui/TextShimmer";
 import { ActionMenu } from "../../../ui/ActionMenu";
-import { AppText as Text } from "../../../ui/Typography";
 import type { ScenarioTarget } from "../workspaceCapabilities";
 import type { MessageDockTarget } from "./messageDockTarget";
 
@@ -65,7 +64,7 @@ export function PullRequestMessageDock({
   });
   return (
     <View style={styles.dock} testID="pull-request-message-dock">
-      <PresentationTextInput
+      <AppTextInput
         accessibilityLabel="Message about this PR"
         editable={!disabled && !sending}
         multiline

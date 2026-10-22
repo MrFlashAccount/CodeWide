@@ -56,15 +56,14 @@ pub(super) struct AgentComposition<'a> {
 impl AgentComposition<'_> {
     pub(super) fn compose(self) -> AgentObservers {
         let orchestration = self.active.then(|| {
-            let service = OrchestrationService::with_turn_delivery(
+            OrchestrationService::with_turn_delivery(
                 self.gateway.clone(),
                 self.store,
                 self.local_events.clone(),
                 self.permission_profiles.clone(),
                 self.turn_delivery,
                 self.workspaces,
-            );
-            service
+            )
         });
         let tools = forge_rpc::install_client_tools(orchestration.as_ref(), self.registry);
         AgentObservers {

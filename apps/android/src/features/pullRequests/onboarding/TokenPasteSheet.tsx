@@ -3,7 +3,8 @@ import { Linking, View } from "react-native";
 
 import type { AuthMethod } from "../../../data/forgeContract";
 import { AppButton } from "../../../presentation/controls/AppButton";
-import { PresentationTextInput, ProductText } from "../../../presentation/text/ProductText";
+import { ProductText } from "../../../presentation/text/ProductText";
+import { AppTextInput } from "../../../ui/Typography";
 import { useEvent } from "../../../react/useEvent";
 import { colors } from "../../../theme";
 import { AppSheet } from "../../../ui/AppSheet";
@@ -82,7 +83,7 @@ export function TokenPasteSheet({
             {`Fine-grained token permissions: ${method.requiredPermissions.join(", ")}.`}
           </ProductText>
         )}
-        <PresentationTextInput
+        <AppTextInput
           accessibilityLabel="Token"
           autoCapitalize="none"
           autoComplete="off"

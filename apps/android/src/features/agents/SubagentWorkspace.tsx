@@ -10,8 +10,6 @@ export {
   MASTER_DETAIL_BREAKPOINT,
   MASTER_MAX_WIDTH,
   MASTER_MIN_WIDTH,
-  SUBAGENT_ROW_HEIGHT,
-  SUBAGENT_SECTION_HEIGHT,
 } from "./SubagentWorkspace.constants";
 
 /** Composes the selectable subagent list and active subagent detail. */

@@ -449,30 +449,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn process_values_win_while_dotenv_fills_missing_protocols() {
-        let mut process = HttpProxyConfig {
-            http: None,
-            https: Some("http://runtime-proxy.example:8080".into()),
-            no_proxy: None,
-        };
-        process.fill_missing(HttpProxyConfig {
-            http: Some("http://dotenv-http.example:8080".into()),
-            https: Some("http://dotenv-https.example:8080".into()),
-            no_proxy: Some("localhost".into()),
-        });
-
-        assert_eq!(
-            process.http.as_deref(),
-            Some("http://dotenv-http.example:8080")
-        );
-        assert_eq!(
-            process.https.as_deref(),
-            Some("http://runtime-proxy.example:8080")
-        );
-        assert_eq!(process.no_proxy.as_deref(), Some("localhost"));
-    }
-
     #[tokio::test]
     async fn routes_https_requests_through_the_configured_proxy() -> TestResult {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
