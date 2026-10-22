@@ -20,12 +20,12 @@
 use std::collections::{HashMap, HashSet};
 
 use agent_core::model::{
-    AgentItem, AgentTurn, AppThreadId, ClientMessageId, MessagePhase, TurnId, TurnOrigin,
-    TurnStatus, UserContent,
+    AgentItem, AgentTurn, AppThreadId, ClientMessageId, MessagePhase, SubagentStatus, TurnId,
+    TurnOrigin, TurnStatus, UserContent,
 };
 
 use super::{
-    agents::{SubagentItem, SubagentRuns, is_send_message_tool, resumed_agent_id},
+    agents::{SubagentItem, SubagentRuns, is_send_message_tool, resumed_agent_id, with_status},
     builder::{TurnBuilder, TurnBuilderContext, UserMessage},
     entries::{HistoryEntry, history_entries},
     frames::{AssistantBlock, ClaudeFrame},
@@ -411,6 +411,68 @@ pub fn settle_subagent_items(turns: Vec<AgentTurn>, runs: &SubagentRuns) -> Vec<
                     }
                     *item = updated;
                 }
+            }
+            turn
+        })
+        .collect()
+}
+
+/// Turns after the Claude process that owned their still-running sub-agents
+/// is known to be gone. An unresolved transcript is historical evidence, not
+/// a live execution lease.
+#[must_use]
+pub fn settle_orphaned_subagent_items(turns: Vec<AgentTurn>) -> Vec<AgentTurn> {
+    turns
+        .into_iter()
+        .map(|mut turn| {
+            for item in &mut turn.items {
+                let Some(subagent) = SubagentItem::from_item(item) else {
+                    continue;
+                };
+                if subagent.status != SubagentStatus::Running {
+                    continue;
+                }
+                let provenance = item.provenance().cloned();
+                let mut updated = with_status(subagent, SubagentStatus::Stopped).into_item();
+                if let Some(provenance) = provenance {
+                    updated.stamp(&provenance);
+                }
+                *item = updated;
+            }
+            turn
+        })
+        .collect()
+}
+
+/// Stops only still-running sub-agents whose transcript belongs to an earlier
+/// process generation. Items without a resolved child id remain untouched
+/// because the transcript store cannot assign them to a generation.
+#[must_use]
+pub fn settle_named_orphaned_subagent_items<S: std::hash::BuildHasher>(
+    turns: Vec<AgentTurn>,
+    orphaned: &HashSet<String, S>,
+) -> Vec<AgentTurn> {
+    turns
+        .into_iter()
+        .map(|mut turn| {
+            for item in &mut turn.items {
+                let Some(subagent) = SubagentItem::from_item(item) else {
+                    continue;
+                };
+                let is_orphaned = subagent
+                    .agent_thread_id
+                    .as_ref()
+                    .and_then(super::agents::agent_id_of)
+                    .is_some_and(|agent_id| orphaned.contains(agent_id));
+                if subagent.status != SubagentStatus::Running || !is_orphaned {
+                    continue;
+                }
+                let provenance = item.provenance().cloned();
+                let mut updated = with_status(subagent, SubagentStatus::Stopped).into_item();
+                if let Some(provenance) = provenance {
+                    updated.stamp(&provenance);
+                }
+                *item = updated;
             }
             turn
         })

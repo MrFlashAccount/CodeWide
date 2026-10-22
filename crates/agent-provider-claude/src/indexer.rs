@@ -258,8 +258,13 @@ impl ClaudeIndexer {
                         file_size,
                         last_modified_ms: session.last_modified_ms,
                     });
+                let has_running_subagents = self
+                    .store
+                    .session(&session.session_id)?
+                    .is_some_and(|stored| stored.subagents.iter().any(|agent| agent.running));
                 if let Some(observed) = observed
                     && self.store.is_current(&session.session_id, observed)?
+                    && !has_running_subagents
                 {
                     // The record is unchanged; its listed facts may not be.
                     if self.store.update_session(session)? {
@@ -853,6 +858,26 @@ mod tests {
             })
             .await?;
         assert!(store.session_ids()?.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn backfill_rechecks_unchanged_sessions_with_running_subagents()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let host = Arc::new(FakeHost::default());
+        host.put(read_with_agent(10, true));
+        let (indexer, store) = indexer(directory.path(), host.clone())?;
+
+        indexer.backfill().await?;
+        host.put(read_with_agent(10, false));
+        indexer.backfill().await?;
+
+        assert_eq!(host.reads(), ["session", "session"]);
+        let child = store
+            .child_thread(&AppThreadId::from_static("session:agent:a0001"))?
+            .ok_or("child thread")?;
+        assert!(child.active_turn().is_none());
         Ok(())
     }
 

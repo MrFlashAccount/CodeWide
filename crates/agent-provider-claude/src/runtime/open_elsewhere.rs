@@ -13,9 +13,10 @@
 //! killed, with its commands) and the CLI may list it a while longer. The
 //! first read started after the release that no longer lists the session
 //! ends that, and so does [`RELEASE_TIMEOUT`]. A read younger
-//! than [`MAX_AGE`] is reused (monotonic time). While any session is held the
-//! set is re-read every poll interval, so a release reaches clients without a
-//! new read. A failed read keeps the last known set.
+//! than [`MAX_AGE`] is reused (monotonic time). While any session runs the set
+//! is re-read every poll interval, so a release or replacement generation
+//! reaches the index without a transcript write. A failed read keeps the last
+//! known set.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -26,7 +27,7 @@ use std::{
 use tokio::{task::JoinHandle, time::Instant};
 use tracing::warn;
 
-use super::running_sessions::RunningSessions;
+use super::running_sessions::{RunningProcess, RunningSessionMap, RunningSessions};
 
 /// How long a read is reused.
 pub const MAX_AGE: Duration = Duration::from_secs(2);
@@ -37,8 +38,17 @@ pub const RELEASE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Whether one of the companion's own live processes runs a session.
 pub type OwnsLive = Arc<dyn Fn(&str) -> bool + Send + Sync>;
-/// Receives the sessions whose held state changed with a read.
-pub type HeldChanged = Arc<dyn Fn(&HashSet<String>) + Send + Sync>;
+/// Receives a set of session ids whose state changed.
+pub type SessionsChanged = Arc<dyn Fn(&HashSet<String>) + Send + Sync>;
+
+/// Authoritative process activity for one session after a successful CLI
+/// read. The outer `Option` returned by [`OpenElsewhere::activity`] means the
+/// read itself is unavailable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionActivity {
+    Stopped,
+    Running(RunningProcess),
+}
 
 /// What [`OpenElsewhere`] reads and whom it tells.
 #[derive(Clone)]
@@ -47,8 +57,11 @@ pub struct OpenElsewhereDeps {
     pub running: Arc<dyn RunningSessions>,
     /// Whether a session runs in one of the companion's own processes.
     pub owns_live: OwnsLive,
-    /// Told of every session whose held state a read changed.
-    pub changed: HeldChanged,
+    /// Told of every session whose visible held state a read changed.
+    pub changed: SessionsChanged,
+    /// Told whenever a session's process appeared, disappeared or changed
+    /// generation, including the companion's own processes.
+    pub activity_changed: SessionsChanged,
     /// How often the set is re-read while a session is held.
     pub poll: Duration,
 }
@@ -68,7 +81,7 @@ struct Inner {
 #[derive(Default)]
 struct State {
     /// Listed sessions, without the companion's recent releases.
-    running: HashSet<String>,
+    running: RunningSessionMap,
     /// The sessions the last read reported held elsewhere.
     reported_held: HashSet<String>,
     /// When the companion last released each session.
@@ -102,7 +115,7 @@ impl OpenElsewhere {
     /// [`Self::refresh`] or [`Self::check`] brings it up to date.
     #[must_use]
     pub fn is_held(&self, session_id: &str) -> bool {
-        let listed = self.inner.lock().running.contains(session_id);
+        let listed = self.inner.lock().running.contains_key(session_id);
         listed && !(self.inner.deps.owns_live)(session_id)
     }
 
@@ -132,20 +145,45 @@ impl OpenElsewhere {
         self.is_held(session_id)
     }
 
+    /// The process activity of `session_id`, from a fresh successful
+    /// running-session read. `None` means the authority is unavailable, so a
+    /// caller must not turn the absence of evidence into a terminal state.
+    pub async fn activity(&self, session_id: &str) -> Option<SessionActivity> {
+        self.inner.refresh().await;
+        let state = self.inner.lock();
+        state.refresh_confirmed.then(|| {
+            state.running.get(session_id).copied().map_or_else(
+                || {
+                    if (self.inner.deps.owns_live)(session_id) {
+                        SessionActivity::Running(RunningProcess::StartUnknown)
+                    } else {
+                        SessionActivity::Stopped
+                    }
+                },
+                SessionActivity::Running,
+            )
+        })
+    }
+
     /// The companion's own process of `session_id` ended. That process may
     /// still be in the last read and in reads that start before it exits;
     /// neither proves that another process holds the session. A read that
     /// took the closing process for another one, while the companion already
     /// counted it as gone, is corrected and the change reported.
     pub fn released(&self, session_id: &str) {
-        let was_reported_held = {
+        let (was_reported_held, any_running) = {
             let mut state = self.inner.lock();
             state
                 .released_at
                 .insert(session_id.to_owned(), Instant::now());
             state.running.remove(session_id);
-            state.reported_held.remove(session_id)
+            (
+                state.reported_held.remove(session_id),
+                !state.running.is_empty(),
+            )
         };
+        self.inner.schedule_poll(any_running);
+        (self.inner.deps.activity_changed)(&HashSet::from([session_id.to_owned()]));
         if was_reported_held {
             (self.inner.deps.changed)(&HashSet::from([session_id.to_owned()]));
         }
@@ -193,7 +231,8 @@ impl Inner {
     }
 
     async fn read_once(self: &Arc<Self>) {
-        let before = self.held_sessions();
+        let before_running = self.lock().running.clone();
+        let before_held = self.held_sessions();
         let started_at = Instant::now();
         let listed = self.deps.running.list().await;
         {
@@ -213,20 +252,31 @@ impl Inner {
             state.read_at = Some(Instant::now());
             state.reads += 1;
         }
-        let after = self.held_sessions();
-        self.lock().reported_held.clone_from(&after);
-        let changed: HashSet<String> = before.symmetric_difference(&after).cloned().collect();
-        self.schedule_poll(!after.is_empty());
-        if !changed.is_empty() {
-            (self.deps.changed)(&changed);
+        let after_running = self.lock().running.clone();
+        let after_held = self.held_sessions();
+        self.lock().reported_held.clone_from(&after_held);
+        let activity_changed = changed_sessions(&before_running, &after_running);
+        let held_changed: HashSet<String> = before_held
+            .symmetric_difference(&after_held)
+            .cloned()
+            .collect();
+        self.schedule_poll(!after_running.is_empty());
+        if !activity_changed.is_empty() {
+            (self.deps.activity_changed)(&activity_changed);
+        }
+        if !held_changed.is_empty() {
+            (self.deps.changed)(&held_changed);
         }
     }
 
     /// The listed sessions no live process of the companion runs.
     fn held_sessions(&self) -> HashSet<String> {
-        let mut held = self.lock().running.clone();
-        held.retain(|session_id| !(self.deps.owns_live)(session_id));
-        held
+        self.lock()
+            .running
+            .keys()
+            .filter(|session_id| !(self.deps.owns_live)(session_id))
+            .cloned()
+            .collect()
     }
 
     fn schedule_poll(self: &Arc<Self>, any_held: bool) {
@@ -269,19 +319,29 @@ async fn poll_after(owner: Weak<Inner>, interval: Duration, generation: u64) {
 /// session (the closed process is gone) or [`RELEASE_TIMEOUT`] after it.
 fn without_own_releases(
     released_at: &mut HashMap<String, Instant>,
-    mut listed: HashSet<String>,
+    mut listed: RunningSessionMap,
     started_at: Instant,
-) -> HashSet<String> {
+) -> RunningSessionMap {
     // Without a representable cut-off (less than the timeout since the
     // clock's origin) no release has timed out yet.
     let timed_out_before = started_at.checked_sub(RELEASE_TIMEOUT);
     released_at.retain(|session_id, released| {
         let started_before_release = *released > started_at;
         let timed_out = timed_out_before.is_some_and(|cut_off| *released < cut_off);
-        !timed_out && (started_before_release || listed.contains(session_id))
+        !timed_out && (started_before_release || listed.contains_key(session_id))
     });
-    listed.retain(|session_id| !released_at.contains_key(session_id));
+    listed.retain(|session_id, _| !released_at.contains_key(session_id));
     listed
+}
+
+/// Sessions whose presence or owning process generation changed.
+fn changed_sessions(before: &RunningSessionMap, after: &RunningSessionMap) -> HashSet<String> {
+    before
+        .keys()
+        .chain(after.keys())
+        .filter(|session_id| before.get(*session_id) != after.get(*session_id))
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]

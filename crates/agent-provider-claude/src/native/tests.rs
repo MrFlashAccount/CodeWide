@@ -1,6 +1,6 @@
 //! Native session reads over a throwaway Claude store and host journal.
 
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use agent_core::model::{
     AgentItem, NativeSessionListParams, NativeThreadPresence, SubagentStatus, TurnStatus,
@@ -112,14 +112,14 @@ fn write_store(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn write_owner(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn write_owner(root: &Path, origin: &str) -> Result<(), Box<dyn std::error::Error>> {
     let (_, journal) = fixture_paths(root);
     let directory = journal.join("threads/codewide-thread");
     std::fs::create_dir_all(&directory)?;
     std::fs::write(
         directory.join("state.json"),
         serde_json::to_vec(&json!({
-            "appThreadId": "codewide-thread", "createdAt": 1, "cwd": "/work", "origin": "discovered",
+            "appThreadId": "codewide-thread", "createdAt": 1, "cwd": "/work", "origin": origin,
             "pendingSettings": null, "presence": {"type": "listed", "archived": false}, "recencyAt": null,
             "sessionIds": [SESSION], "sessionStarted": true,
             "settings": {"model": "opus", "effort": null, "permissionProfile": ":workspace", "serviceTier": null},
@@ -138,7 +138,24 @@ fn write_owner(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
 fn sessions(root: &Path) -> LocalSessions {
     let (projects, journal) = fixture_paths(root);
-    LocalSessions::new(projects, journal)
+    LocalSessions::for_test(projects, journal, HashSet::from([SESSION.to_owned()]))
+}
+
+fn stopped_sessions(root: &Path) -> LocalSessions {
+    let (projects, journal) = fixture_paths(root);
+    LocalSessions::for_test(projects, journal, HashSet::new())
+}
+
+fn restarted_sessions(root: &Path, started_at_ms: i64) -> LocalSessions {
+    let (projects, journal) = fixture_paths(root);
+    LocalSessions::for_test_processes(
+        projects,
+        journal,
+        std::collections::HashMap::from([(
+            SESSION.to_owned(),
+            RunningProcess::StartedAt(started_at_ms),
+        )]),
+    )
 }
 
 #[tokio::test]
@@ -245,11 +262,120 @@ async fn reads_the_active_branch_and_the_running_background_agent()
 }
 
 #[tokio::test]
+async fn an_unfinished_agent_is_not_running_after_its_session_process_is_gone()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write_store(root.path())?;
+
+    let read = stopped_sessions(root.path()).read(SESSION).await?;
+
+    let spawn_status = read.turns[0].items.iter().find_map(|item| match item {
+        AgentItem::Subagent { status, .. } => Some(*status),
+        _ => None,
+    });
+    assert_eq!(spawn_status, Some(SubagentStatus::Stopped));
+    assert_eq!(read.subagents.len(), 1);
+    assert_ne!(
+        read.subagents[0].turns.last().map(|turn| turn.status),
+        Some(TurnStatus::InProgress)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_unfinished_agent_from_the_previous_process_generation_is_stopped()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write_store(root.path())?;
+    let restarted_at = OffsetDateTime::parse("2026-10-01T11:00:00Z", &Rfc3339)?;
+    let restarted_at_ms = i64::try_from(restarted_at.unix_timestamp_nanos().div_euclid(1_000_000))?;
+
+    let read = restarted_sessions(root.path(), restarted_at_ms)
+        .read(SESSION)
+        .await?;
+
+    let spawn_status = read.turns[0].items.iter().find_map(|item| match item {
+        AgentItem::Subagent { status, .. } => Some(*status),
+        _ => None,
+    });
+    assert_eq!(spawn_status, Some(SubagentStatus::Stopped));
+    assert_ne!(
+        read.subagents[0].turns.last().map(|turn| turn.status),
+        Some(TurnStatus::InProgress)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_unfinished_agent_written_by_the_current_process_generation_stays_running()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write_store(root.path())?;
+    let started_at = OffsetDateTime::parse("2026-10-01T09:00:00Z", &Rfc3339)?;
+    let started_at_ms = i64::try_from(started_at.unix_timestamp_nanos().div_euclid(1_000_000))?;
+
+    let read = restarted_sessions(root.path(), started_at_ms)
+        .read(SESSION)
+        .await?;
+
+    let spawn_status = read.turns[0].items.iter().find_map(|item| match item {
+        AgentItem::Subagent { status, .. } => Some(*status),
+        _ => None,
+    });
+    assert_eq!(spawn_status, Some(SubagentStatus::Running));
+    assert_eq!(
+        read.subagents[0].turns.last().map(|turn| turn.status),
+        Some(TurnStatus::InProgress)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn subagent_liveness_does_not_depend_on_who_created_the_session()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write_store(root.path())?;
+    let restarted_at = OffsetDateTime::parse("2026-10-01T11:00:00Z", &Rfc3339)?;
+    let restarted_at_ms = i64::try_from(restarted_at.unix_timestamp_nanos().div_euclid(1_000_000))?;
+
+    let external = restarted_sessions(root.path(), restarted_at_ms)
+        .read(SESSION)
+        .await?;
+    write_owner(root.path(), "created")?;
+    let codewide = restarted_sessions(root.path(), restarted_at_ms)
+        .read(SESSION)
+        .await?;
+
+    let state = |read: &NativeSessionReadResult| {
+        let spawn = read
+            .turns
+            .iter()
+            .flat_map(|turn| &turn.items)
+            .find_map(|item| match item {
+                AgentItem::Subagent { status, .. } => Some(*status),
+                _ => None,
+            });
+        let child = read
+            .subagents
+            .first()
+            .and_then(|agent| agent.turns.last())
+            .map(|turn| turn.status);
+        (spawn, child)
+    };
+    assert_eq!(state(&external), state(&codewide));
+    assert_eq!(
+        state(&external),
+        (Some(SubagentStatus::Stopped), Some(TurnStatus::Interrupted))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_codewide_threads_session_carries_its_metadata_and_turn_index()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     write_store(root.path())?;
-    write_owner(root.path())?;
+    write_owner(root.path(), "discovered")?;
     let read = sessions(root.path()).read(SESSION).await?;
     assert_eq!(read.session.app_thread_id.as_str(), "codewide-thread");
     assert_eq!(
@@ -308,6 +434,20 @@ async fn native_parity_with_the_hosts_reads() -> Result<(), Box<dyn std::error::
     let reader = LocalSessions::new(
         Path::new(&home).join(".claude/projects"),
         Path::new(&home).join(".local/state/codewide/companion/claude-journal"),
+        std::sync::Arc::new(crate::runtime::open_elsewhere::OpenElsewhere::new(
+            crate::runtime::open_elsewhere::OpenElsewhereDeps {
+                running: std::sync::Arc::new(
+                    crate::runtime::running_sessions::CliRunningSessions::new(
+                        "claude".into(),
+                        Vec::new(),
+                    ),
+                ),
+                owns_live: std::sync::Arc::new(|_| false),
+                changed: std::sync::Arc::new(|_| {}),
+                activity_changed: std::sync::Arc::new(|_| {}),
+                poll: std::time::Duration::from_secs(10),
+            },
+        )),
     );
     let database = redb::Database::open(index)?;
     let read = database.begin_read()?;
@@ -432,6 +572,20 @@ async fn time_the_largest_local_session_read() -> Result<(), Box<dyn std::error:
     let reader = LocalSessions::new(
         root,
         Path::new(&home).join(".local/state/codewide/companion/claude-journal"),
+        std::sync::Arc::new(crate::runtime::open_elsewhere::OpenElsewhere::new(
+            crate::runtime::open_elsewhere::OpenElsewhereDeps {
+                running: std::sync::Arc::new(
+                    crate::runtime::running_sessions::CliRunningSessions::new(
+                        "claude".into(),
+                        Vec::new(),
+                    ),
+                ),
+                owns_live: std::sync::Arc::new(|_| false),
+                changed: std::sync::Arc::new(|_| {}),
+                activity_changed: std::sync::Arc::new(|_| {}),
+                poll: std::time::Duration::from_secs(10),
+            },
+        )),
     );
     let started = std::time::Instant::now();
     let read = reader.read(&largest.session_id).await?;

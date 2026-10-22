@@ -4,7 +4,7 @@
 //! scripting. The CLI owns Claude's process registry; `CodeWide` never reads
 //! it itself.
 
-use std::{collections::HashSet, ffi::OsString, path::PathBuf, time::Duration};
+use std::{collections::HashMap, ffi::OsString, path::PathBuf, time::Duration};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -25,36 +25,69 @@ pub enum RunningSessionsError {
     NotAnArray,
 }
 
-/// The ids of the Claude sessions that run in some `claude` process now.
+/// The process generation that currently owns a Claude session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunningProcess {
+    /// The CLI reported when this process started, in Unix milliseconds.
+    StartedAt(i64),
+    /// An older or partial CLI entry identified the session but not its
+    /// process generation.
+    StartUnknown,
+}
+
+/// The Claude sessions that run now, by session id.
+pub type RunningSessionMap = HashMap<String, RunningProcess>;
+
 #[async_trait]
 pub trait RunningSessions: Send + Sync {
-    /// Lists the running sessions' ids.
+    /// Lists the running sessions and their process generations.
     ///
     /// # Errors
     ///
     /// Returns why the list could not be read.
-    async fn list(&self) -> Result<HashSet<String>, RunningSessionsError>;
+    async fn list(&self) -> Result<RunningSessionMap, RunningSessionsError>;
 }
 
-/// The `sessionId` of every entry of the CLI's array; entries without a
-/// string one are skipped.
+/// The `sessionId` and `startedAt` of every entry of the CLI's array. Entries
+/// without a string id are skipped; an absent or invalid start remains an
+/// explicitly unknown generation so the session is still treated as held.
 ///
 /// # Errors
 ///
 /// Returns invalid JSON or output that is not an array.
-pub fn parse_running_sessions(output: &str) -> Result<HashSet<String>, RunningSessionsError> {
+pub fn parse_running_sessions(output: &str) -> Result<RunningSessionMap, RunningSessionsError> {
     let Value::Array(entries) = serde_json::from_str(output)? else {
         return Err(RunningSessionsError::NotAnArray);
     };
-    Ok(entries
-        .into_iter()
-        .filter_map(
-            |mut entry| match entry.get_mut("sessionId").map(Value::take) {
-                Some(Value::String(session_id)) => Some(session_id),
-                _ => None,
-            },
-        )
-        .collect())
+    let mut sessions = RunningSessionMap::new();
+    for entry in entries {
+        let Some(session_id) = entry.get("sessionId").and_then(Value::as_str) else {
+            continue;
+        };
+        let process = entry
+            .get("startedAt")
+            .and_then(Value::as_i64)
+            .filter(|started_at| *started_at >= 0)
+            .map_or(RunningProcess::StartUnknown, RunningProcess::StartedAt);
+        sessions
+            .entry(session_id.to_owned())
+            .and_modify(|known| *known = newest_process(*known, process))
+            .or_insert(process);
+    }
+    Ok(sessions)
+}
+
+fn newest_process(left: RunningProcess, right: RunningProcess) -> RunningProcess {
+    match (left, right) {
+        (RunningProcess::StartedAt(left), RunningProcess::StartedAt(right)) => {
+            RunningProcess::StartedAt(left.max(right))
+        }
+        (known @ RunningProcess::StartedAt(_), RunningProcess::StartUnknown)
+        | (RunningProcess::StartUnknown, known @ RunningProcess::StartedAt(_)) => known,
+        (RunningProcess::StartUnknown, RunningProcess::StartUnknown) => {
+            RunningProcess::StartUnknown
+        }
+    }
 }
 
 /// [`RunningSessions`] through `claude agents --json`.
@@ -78,7 +111,7 @@ impl CliRunningSessions {
 
 #[async_trait]
 impl RunningSessions for CliRunningSessions {
-    async fn list(&self) -> Result<HashSet<String>, RunningSessionsError> {
+    async fn list(&self) -> Result<RunningSessionMap, RunningSessionsError> {
         let output = command_output(
             &self.executable,
             &["agents", "--json"],
@@ -108,9 +141,11 @@ mod tests {
                 "name": "Review",
                 "pid": 3_226_754,
                 "sessionId": "48d313bf-0ef1-44f9-a458-bd7bb443b8d1",
+                "startedAt": 42,
                 "state": "done",
                 "status": "idle",
             },
+            {"sessionId": "48d313bf-0ef1-44f9-a458-bd7bb443b8d1", "startedAt": 41},
             {"kind": "interactive", "pid": 2_203_797, "sessionId": "01a12320-fa11-7ba5-b9fc-a190b32c8824"},
             {"kind": "interactive", "pid": 1},
             {"kind": "interactive", "sessionId": 7},
@@ -120,9 +155,15 @@ mod tests {
         let sessions = parse_running_sessions(&output).unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(
             sessions,
-            HashSet::from([
-                "48d313bf-0ef1-44f9-a458-bd7bb443b8d1".to_owned(),
-                "01a12320-fa11-7ba5-b9fc-a190b32c8824".to_owned(),
+            HashMap::from([
+                (
+                    "48d313bf-0ef1-44f9-a458-bd7bb443b8d1".to_owned(),
+                    RunningProcess::StartedAt(42),
+                ),
+                (
+                    "01a12320-fa11-7ba5-b9fc-a190b32c8824".to_owned(),
+                    RunningProcess::StartUnknown,
+                ),
             ])
         );
     }
@@ -144,13 +185,16 @@ mod tests {
         let directory = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
         let claude = fake_claude(
             directory.path(),
-            "#!/bin/sh\n[ \"$1 $2\" = 'agents --json' ] || exit 2\n[ \"$CODEWIDE_TEST\" = set ] || exit 3\necho '[{\"sessionId\":\"s1\"}]'\n",
+            "#!/bin/sh\n[ \"$1 $2\" = 'agents --json' ] || exit 2\n[ \"$CODEWIDE_TEST\" = set ] || exit 3\necho '[{\"sessionId\":\"s1\",\"startedAt\":1234}]'\n",
         );
         let sessions =
             CliRunningSessions::new(claude, vec![("CODEWIDE_TEST".into(), "set".into())])
                 .list()
                 .await
                 .unwrap_or_else(|error| panic!("{error}"));
-        assert_eq!(sessions, HashSet::from(["s1".to_owned()]));
+        assert_eq!(
+            sessions,
+            HashMap::from([("s1".to_owned(), RunningProcess::StartedAt(1234))])
+        );
     }
 }

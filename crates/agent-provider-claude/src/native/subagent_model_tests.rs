@@ -1,7 +1,7 @@
 //! The model a native read reports for each sub-agent: the newest answer of
 //! its own transcript, never the main conversation's.
 
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use serde_json::{Value, json};
 
@@ -112,7 +112,9 @@ async fn each_sub_agent_reports_the_model_of_its_own_transcript()
     let root = tempfile::tempdir()?;
     write_store(root.path())?;
     let (projects, journal) = fixture_paths(root.path());
-    let read = LocalSessions::new(projects, journal).read(SESSION).await?;
+    let read = LocalSessions::for_test(projects, journal, HashSet::from([SESSION.to_owned()]))
+        .read(SESSION)
+        .await?;
     let models = read
         .subagents
         .iter()

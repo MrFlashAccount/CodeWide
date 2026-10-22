@@ -269,8 +269,8 @@ impl ClaudeProvider {
         };
         match provider.start_service(config) {
             Ok(()) => {
-                if let Some(storage) = &provider.storage {
-                    storage.start(status_rx);
+                if let (Some(storage), Some(running)) = (&provider.storage, &provider.running) {
+                    storage.start(status_rx, running.service.session_activity());
                 }
             }
             Err(reason) => {
@@ -559,6 +559,12 @@ async fn forward_events(
         let forwarded = match output {
             ServiceOutput::Event(event) => forward(*event),
             ServiceOutput::Fence(fence) => ProviderEvent::Fence(fence),
+            ServiceOutput::SessionActivityChanged(sessions) => {
+                if let Some(storage) = &storage {
+                    storage.observe_session_activity(&sessions);
+                }
+                continue;
+            }
         };
         if events.send(forwarded).await.is_err() {
             return;

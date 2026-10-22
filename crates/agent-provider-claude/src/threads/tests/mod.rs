@@ -14,7 +14,6 @@ mod task_reports;
 mod threads;
 
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, PoisonError,
@@ -40,7 +39,9 @@ use crate::{
         protocol::ControlRequest,
     },
     native::{files, write::project_dir_name},
-    runtime::running_sessions::{RunningSessions, RunningSessionsError},
+    runtime::running_sessions::{
+        RunningProcess, RunningSessionMap, RunningSessions, RunningSessionsError,
+    },
     session::{
         ports::{ClientTools, RateLimitSink, SessionConfig},
         query::{BoxFuture, Offer, Query, QueryRuntime},
@@ -300,11 +301,11 @@ impl QueryRuntime for FakeRuntime {
 
 /// What `claude agents --json` lists, set by the test.
 #[derive(Default)]
-pub(super) struct FakeRunning(Mutex<HashSet<String>>);
+pub(super) struct FakeRunning(Mutex<RunningSessionMap>);
 
 impl FakeRunning {
     pub fn add(&self, session_id: &str) {
-        lock(&self.0).insert(session_id.to_owned());
+        lock(&self.0).insert(session_id.to_owned(), RunningProcess::StartUnknown);
     }
 
     pub fn remove(&self, session_id: &str) {
@@ -314,7 +315,7 @@ impl FakeRunning {
 
 #[async_trait]
 impl RunningSessions for FakeRunning {
-    async fn list(&self) -> Result<HashSet<String>, RunningSessionsError> {
+    async fn list(&self) -> Result<RunningSessionMap, RunningSessionsError> {
         Ok(lock(&self.0).clone())
     }
 }
@@ -477,6 +478,7 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
                 ServiceOutput::Fence(fence) => {
                     let _ = fence.send(Ok(position));
                 }
+                ServiceOutput::SessionActivityChanged(_) => {}
             }
         }
     });

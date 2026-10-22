@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use async_trait::async_trait;
 
 use super::*;
-use crate::runtime::running_sessions::RunningSessionsError;
+use crate::runtime::running_sessions::{RunningProcess, RunningSessionMap, RunningSessionsError};
 
 const POLL: Duration = Duration::from_secs(10);
 const OTHER: &str = "terminal-session";
@@ -15,7 +15,7 @@ const OWN: &str = "own-session";
 /// What `claude agents --json` would list, scripted by the test.
 #[derive(Default)]
 struct Scripted {
-    listed: Mutex<HashSet<String>>,
+    listed: Mutex<RunningSessionMap>,
     fail: AtomicBool,
     reads: AtomicUsize,
     /// How long one list takes.
@@ -26,8 +26,15 @@ impl Scripted {
     fn set(&self, sessions: &[&str]) {
         *self.listed.lock().unwrap_or_else(PoisonError::into_inner) = sessions
             .iter()
-            .map(|session| (*session).to_owned())
+            .map(|session| ((*session).to_owned(), RunningProcess::StartUnknown))
             .collect();
+    }
+
+    fn set_started(&self, session_id: &str, started_at_ms: i64) {
+        *self.listed.lock().unwrap_or_else(PoisonError::into_inner) = HashMap::from([(
+            session_id.to_owned(),
+            RunningProcess::StartedAt(started_at_ms),
+        )]);
     }
 
     fn reads(&self) -> usize {
@@ -37,7 +44,7 @@ impl Scripted {
 
 #[async_trait]
 impl RunningSessions for Scripted {
-    async fn list(&self) -> Result<HashSet<String>, RunningSessionsError> {
+    async fn list(&self) -> Result<RunningSessionMap, RunningSessionsError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         let delay = *self.delay.lock().unwrap_or_else(PoisonError::into_inner);
         if !delay.is_zero() {
@@ -59,6 +66,7 @@ struct Harness {
     source: Arc<Scripted>,
     live: Arc<Mutex<HashSet<String>>>,
     changes: Arc<Mutex<Vec<Vec<String>>>>,
+    activity_changes: Arc<Mutex<Vec<Vec<String>>>>,
 }
 
 impl Harness {
@@ -66,8 +74,10 @@ impl Harness {
         let source = Arc::new(Scripted::default());
         let live = Arc::new(Mutex::new(HashSet::new()));
         let changes = Arc::new(Mutex::new(Vec::new()));
+        let activity_changes = Arc::new(Mutex::new(Vec::new()));
         let owns = live.clone();
         let recorder = changes.clone();
+        let activity_recorder = activity_changes.clone();
         let owner = OpenElsewhere::new(OpenElsewhereDeps {
             running: source.clone(),
             owns_live: Arc::new(move |session_id| {
@@ -83,6 +93,14 @@ impl Harness {
                     .unwrap_or_else(PoisonError::into_inner)
                     .push(sessions);
             }),
+            activity_changed: Arc::new(move |sessions| {
+                let mut sessions: Vec<String> = sessions.iter().cloned().collect();
+                sessions.sort();
+                activity_recorder
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(sessions);
+            }),
             poll: POLL,
         });
         Self {
@@ -90,11 +108,19 @@ impl Harness {
             source,
             live,
             changes,
+            activity_changes,
         }
     }
 
     fn changes(&self) -> Vec<Vec<String>> {
         self.changes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn activity_changes(&self) -> Vec<Vec<String>> {
+        self.activity_changes
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -141,7 +167,28 @@ async fn a_session_another_process_runs_is_held_and_its_release_is_polled() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_session_of_an_own_live_process_is_not_held() {
+async fn replacing_a_process_for_the_same_session_reports_an_activity_change() {
+    let harness = Harness::new();
+    harness.source.set_started(OTHER, 1_000);
+    assert!(harness.owner.check(OTHER).await);
+
+    tokio::time::sleep(MAX_AGE).await;
+    harness.source.set_started(OTHER, 2_000);
+    assert!(harness.owner.check(OTHER).await);
+
+    assert_eq!(
+        harness.owner.activity(OTHER).await,
+        Some(SessionActivity::Running(RunningProcess::StartedAt(2_000)))
+    );
+    assert_eq!(harness.changes(), [sessions(&[OTHER])]);
+    assert_eq!(
+        harness.activity_changes(),
+        [sessions(&[OTHER]), sessions(&[OTHER])]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_session_of_an_own_live_process_is_not_held_but_its_lease_is_polled() {
     let harness = Harness::new();
     harness.run_live(OWN);
     harness.source.set(&[OWN]);
@@ -149,11 +196,26 @@ async fn the_session_of_an_own_live_process_is_not_held() {
     assert!(harness.changes().is_empty());
     let reads = harness.source.reads();
     tokio::time::sleep(POLL * 2).await;
-    assert_eq!(
-        harness.source.reads(),
-        reads,
-        "nothing held, nothing polled"
+    assert!(
+        harness.source.reads() > reads,
+        "a live lease stays observed"
     );
+    assert_eq!(
+        harness.owner.activity(OWN).await,
+        Some(SessionActivity::Running(RunningProcess::StartUnknown))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_own_live_process_stays_active_before_the_cli_lists_it() {
+    let harness = Harness::new();
+    harness.run_live(OWN);
+
+    assert_eq!(
+        harness.owner.activity(OWN).await,
+        Some(SessionActivity::Running(RunningProcess::StartUnknown))
+    );
+    assert!(!harness.owner.is_held(OWN));
 }
 
 #[tokio::test(start_paused = true)]
@@ -258,6 +320,7 @@ async fn a_failed_read_keeps_the_last_known_set() {
     tokio::time::sleep(MAX_AGE).await;
     assert!(harness.owner.check(OTHER).await);
     assert!(!harness.owner.refresh_confirmed().await);
+    assert_eq!(harness.owner.activity(OTHER).await, None);
     assert_eq!(harness.changes(), [sessions(&[OTHER])]);
 }
 

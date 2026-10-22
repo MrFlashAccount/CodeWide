@@ -32,6 +32,7 @@ use crate::{
     catalog,
     indexer::{ClaudeIndexer, NativeSessions},
     resources::{ClaudeResources, IndexedProjections},
+    runtime::open_elsewhere::OpenElsewhere,
     search::{ClaudeSearch, ClaudeSearchError},
     store::ClaudeStore,
     watcher,
@@ -217,7 +218,7 @@ impl ClaudeStorage {
     /// Starts the watcher and the indexer over Claude's files
     /// ([`crate::native::LocalSessions`]). Without a known session store
     /// nothing is indexed. Must be called inside a Tokio runtime, once.
-    pub fn start(&self, status: watch::Receiver<ProviderStatus>) {
+    pub fn start(&self, status: watch::Receiver<ProviderStatus>, activity: Arc<OpenElsewhere>) {
         let Some(root) = &self.projects_root else {
             warn!("Claude's session store is unknown; Claude sessions are not indexed");
             return;
@@ -225,6 +226,7 @@ impl ClaudeStorage {
         let sessions = Arc::new(crate::native::LocalSessions::new(
             root.clone(),
             self.journal_directory.clone(),
+            activity,
         ));
         self.start_with(sessions, status);
     }
@@ -297,11 +299,54 @@ impl ClaudeStorage {
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .insert(thread.app_thread_id.clone(), thread.status);
-                if !self.lists_as(thread) {
+                // OpenElsewhere publishes not only lease acquisition/release,
+                // but also a replacement process generation for the same
+                // session. Its visible thread status then stays unchanged,
+                // while unfinished sub-agents must be reconstructed against
+                // the new process start.
+                if thread.status == ThreadStatus::OpenElsewhere || !self.lists_as(thread) {
                     self.request_relist();
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Re-indexes sessions whose Claude execution lease appeared,
+    /// disappeared or changed generation. This signal is independent of the
+    /// visible thread status: the companion's own process can restart while
+    /// its session id and status stay unchanged.
+    pub fn observe_session_activity(&self, session_ids: &HashSet<String>) {
+        let sender = self
+            .finished
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let mut threads = HashSet::new();
+        let mut relist = false;
+        for session_id in session_ids {
+            match self.store.session(session_id) {
+                Ok(Some(stored)) => {
+                    threads.insert(stored.session.app_thread_id);
+                }
+                Ok(None) => relist = true,
+                Err(err) => {
+                    warn!(err = %err, session_id, "Claude session activity could not be resolved");
+                    relist = true;
+                }
+            }
+        }
+        if relist {
+            self.request_relist();
+        }
+        for thread in threads {
+            self.freshness.mark_stale(&thread);
+            if sender
+                .as_ref()
+                .is_none_or(|sender| sender.try_send(thread).is_err())
+            {
+                self.request_relist();
+            }
         }
     }
 
@@ -494,6 +539,22 @@ mod tests {
     }
 
     #[test]
+    fn a_session_activity_change_invalidates_its_indexed_thread()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let storage = storage(directory.path())?;
+        storage
+            .store
+            .replace_session(&session_read("terminal", "thread", 10, &["one"]))?;
+        assert!(storage.turns(&params("thread")).is_some());
+
+        storage.observe_session_activity(&HashSet::from(["terminal".to_owned()]));
+
+        assert!(storage.turns(&params("thread")).is_none());
+        Ok(())
+    }
+
+    #[test]
     fn the_catalog_answers_only_while_it_matches_the_host() -> Result<(), Box<dyn std::error::Error>>
     {
         use agent_core::model::{SortDirection, ThreadSortKey};
@@ -544,7 +605,16 @@ mod tests {
         });
         assert!(storage.list(&params, &provider).is_some());
 
+        // A replacement Claude process keeps the same visible held status,
+        // but its generation change must still trigger the indexing pass
+        // that settles transcripts left by the previous process.
+        let mut held = reported.clone();
+        held.status = ThreadStatus::OpenElsewhere;
+        storage.observe_event(&AgentEvent::ThreadUpdated { thread: held });
+        assert!(storage.list(&params, &provider).is_none());
+
         // A rename the index has not seen falls back to the host.
+        storage.freshness.set_catalog_current(true);
         reported.name = Some("Renamed".into());
         storage.observe_event(&AgentEvent::ThreadUpdated { thread: reported });
         assert!(storage.list(&params, &provider).is_none());
