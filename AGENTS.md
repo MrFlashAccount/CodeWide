@@ -72,7 +72,7 @@
 Use only the repository-owned one-shot release commands:
 
 - Replace the locally running Companion from the release-candidate checkout: `./scripts/release-candidate-companion`
-- Build and publish the standalone Android Preview to the local zrok-backed download page: `./scripts/release-candidate-android [--version-code N]`
+- Build and publish the standalone Android Preview plus its signed OTA baseline to the local zrok-backed download/update origin: `./scripts/release-candidate-android [--version-code N]`
 - Build and publish an Android APK: only from CI, through `Release Affected Products` or the `Android APK Release` workflow (`.github/workflows/android-release.yml`), which uploads the signed APK to a GitHub Release
 - Build, sign, and validate the release APK locally without publishing it: `./scripts/build-android-apk [--version X.Y.Z] [--version-code N]`
 - Build, validate, and publish Companion: `./scripts/release-companion`
@@ -90,7 +90,7 @@ Rules:
 - The release-candidate rule does not authorize a production publish. Production release commands still require Sergey to name or explicitly authorize the production release.
 - Publishing is an external action. Run a non-dry release only after the user explicitly asks to publish or release it.
 - Do not manually export signing variables, locate keys, bump Android versions, copy artifacts, or reconstruct the release sequence when the one-shot command is available.
-- There is no local Android publishing path and no OTA publishing. Do not call Gradle `assembleRelease` directly as the normal build path; it is a low-level implementation detail reserved for diagnosing the APK build itself.
+- Production Android has no local publishing path and no OTA publishing. The only exception is the separate `dev.codexremote.app.preview` release-candidate application, whose one-shot owns its local APK and signed OTA baseline. Do not call Gradle `assembleRelease` directly as the normal build path; it is a low-level implementation detail reserved for diagnosing the APK build itself.
 - The APK build command owns `versionName`, `versionCode`, and `runtimeVersion` for the build and restores the checked-in values afterwards. Do not update them separately before invoking it.
 - Never bypass a failed release gate. Report the exact failed stage and fix the cause, then rerun the same one-shot command.
 - Treat the final JSON printed by the command as the release result. Include its version, runtime, hash, and public download URL when reporting completion.

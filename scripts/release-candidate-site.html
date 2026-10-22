@@ -45,7 +45,7 @@
         .then((manifest) => {
           const artifact = manifest.artifacts[0];
           document.querySelector("#version").textContent = artifact.versionName;
-          document.querySelector("#meta").textContent = `versionCode ${artifact.versionCode} · ${(artifact.size / 1048576).toFixed(1)} MiB · обновления Expo отключены`;
+          document.querySelector("#meta").textContent = `versionCode ${artifact.versionCode} · ${(artifact.size / 1048576).toFixed(1)} MiB · OTA включены для ${manifest.ota.runtimeVersion}`;
           document.querySelector("#package").textContent = artifact.applicationId;
           document.querySelector("#revision").textContent = `${manifest.revision}${manifest.sourceDirty ? " (dirty)" : ""}`;
         })

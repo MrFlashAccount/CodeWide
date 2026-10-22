@@ -11,7 +11,7 @@ import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import { NewThreadFloatingButton } from "../projects/NewThreadFloatingButton";
 import { SidebarProjectRow } from "../projects/SidebarProjectViews";
 import { SelectableThreadRow } from "./SelectableThreadRow";
-import { SidebarListFeedback } from "./SidebarListFeedback";
+import { SidebarListFeedback, ThreadListPageError } from "./SidebarListFeedback";
 import { sidebarRows } from "./sidebarRows";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { ThreadListExperimentSuspended } from "./ThreadListBoundary";
@@ -130,9 +130,11 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
                     />
                   }
                   ListFooterComponent={
-                    scroll.rows.length > 0 &&
-                    mode === "active" &&
-                    !scroll.rows.some((row) => row.kind === "thread") ? (
+                    paging.failure !== null ? (
+                      <ThreadListPageError message={paging.failure} onRetry={paging.retry} />
+                    ) : scroll.rows.length > 0 &&
+                      mode === "active" &&
+                      !scroll.rows.some((row) => row.kind === "thread") ? (
                       <SidebarListFeedback
                         archived={false}
                         key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}

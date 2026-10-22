@@ -53,9 +53,24 @@ printf '%s\\n' "$*" >>"$COMMAND_LOG"
       PATH: `${commands}:${process.env.PATH ?? ""}`,
     };
 
-    runCommand("sh", ["scripts/android-gradle.sh", "--", ":app:assembleRelease"], fixture, environment);
-    runCommand("sh", ["scripts/android-gradle.sh", "--", ":app:assemblePreview"], fixture, environment);
-    runCommand("sh", ["scripts/android-gradle.sh", "--", ":app:assembleDebug"], fixture, environment);
+    runCommand(
+      "sh",
+      ["scripts/android-gradle.sh", "--", ":app:assembleRelease"],
+      fixture,
+      environment,
+    );
+    runCommand(
+      "sh",
+      ["scripts/android-gradle.sh", "--", ":app:assemblePreview"],
+      fixture,
+      environment,
+    );
+    runCommand(
+      "sh",
+      ["scripts/android-gradle.sh", "--", ":app:assembleDebug"],
+      fixture,
+      environment,
+    );
 
     const log = readFileSync(commandLog, "utf8").split("\n");
     expect(log).toHaveLength(4);
@@ -69,6 +84,8 @@ printf '%s\\n' "$*" >>"$COMMAND_LOG"
     for (const path of [
       "scripts/release-candidate-android",
       "scripts/release-candidate-companion",
+      "scripts/release-candidate-server.py",
+      "scripts/release-candidate-server.test.py",
       "scripts/release-candidate-site.html",
     ])
       copyFixtureFile(fixture, path);
@@ -87,15 +104,42 @@ printf '%s\\n' '{"release":"companion","status":"published"}'
       joinWithDirectory(fixture, "scripts/build-android-apk"),
       `#!/bin/sh
 printf 'android %s\\n' "$*" >>"$COMMAND_LOG"
+printf 'android-url %s\\n' "$CODEWIDE_UPDATE_URL" >>"$COMMAND_LOG"
 mkdir -p apps/android/android/app/build/outputs/apk/preview
 printf candidate >apps/android/android/app/build/outputs/apk/preview/app-preview.apk
 printf '%s\\n' '{"applicationId":"dev.codexremote.app.preview","variantName":"preview","elements":[{"outputFile":"app-preview.apk","versionName":"0.0.0.0","versionCode":42}]}' >apps/android/android/app/build/outputs/apk/preview/output-metadata.json
 `,
     );
     const commands = createCommandDirectory(fixture);
-    writeExecutable(join(commands, "git"), `#!/bin/sh
+    writeExecutable(
+      join(commands, "pnpm"),
+      `#!/bin/sh
+printf 'pnpm %s\\n' "$*" >>"$COMMAND_LOG"
+case "$*" in
+  *publish-release-candidate-ota.ts*)
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --output-root) OUTPUT_ROOT=$2; shift 2 ;;
+        --runtime-version) RUNTIME_VERSION=$2; shift 2 ;;
+        --update-url) UPDATE_URL=$2; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    mkdir -p "$OUTPUT_ROOT/$RUNTIME_VERSION"
+    printf '{"createdAt":"2026-10-22T00:00:00.000Z","runtimeVersion":"%s","updateId":"candidate-update","updateUrl":"%s","directory":"candidate"}\\n' "$RUNTIME_VERSION" "$UPDATE_URL" >"$OUTPUT_ROOT/$RUNTIME_VERSION/current.json"
+    ;;
+  *verify-release-candidate.ts*)
+    printf '%s\\n' '{"release": "android-release-candidate", "status": "published"}'
+    ;;
+esac
+`,
+    );
+    writeExecutable(
+      join(commands, "git"),
+      `#!/bin/sh
 if [ "$1 $2" = "branch --show-current" ]; then printf '%s\\n' integration/release-candidate; else printf '%s\\n' 0123456789abcdef; fi
-`);
+`,
+    );
     const siteRoot = join(fixture, "site");
     const environment = {
       CODEWIDE_RELEASE_CANDIDATE_SITE_ROOT: siteRoot,
@@ -119,6 +163,11 @@ if [ "$1 $2" = "branch --show-current" ]; then printf '%s\\n' integration/releas
     expect(readFileSync(commandLog, "utf8").split("\n")).toEqual([
       "companion ",
       "android --preview --version-code 42",
+      "android-url https://codewide-rc-download-p4186.zrok-safe-share.garin.dev/api/updates",
+      expect.stringContaining(
+        "pnpm exec tsx scripts/publish-release-candidate-ota.ts --output-root",
+      ),
+      expect.stringContaining("pnpm exec tsx scripts/verify-release-candidate.ts --manifest"),
       "",
     ]);
     expect(readFileSync(join(siteRoot, "CodeWide-Preview.apk"), "utf8")).toBe("candidate");
@@ -316,6 +365,20 @@ exit 0
     });
     expect(readAndroidSources(fixture)).toEqual(originalSources);
 
+    const previewWithUpdates = runCommand(
+      tsx,
+      ["scripts/build-android-apk.ts", "--preview", "--version-code", "43"],
+      fixture,
+      { ...environment, CODEWIDE_UPDATE_URL: "https://candidate.invalid/api/updates" },
+    );
+    expect(parseBuildResult(previewWithUpdates.stdout)).toMatchObject({
+      channel: "preview",
+      next: { runtimeVersion: "0.0.0.0-native-43", versionCode: 43 },
+      updateUrl: "https://candidate.invalid/api/updates",
+      updatesEnabled: true,
+    });
+    expect(readAndroidSources(fixture)).toEqual(originalSources);
+
     const log = readFileSync(commandLog, "utf8").split("\n");
     const gate = log.indexOf("pnpm validate:android:v1");
     const build = log.indexOf("pnpm android:gradle -- :app:assembleRelease");
@@ -325,7 +388,7 @@ exit 0
     expect(previewBuild).toBeGreaterThan(build);
     expect(log).toContain("CODEWIDE_UPDATE_URL=");
     expect(log).toContain("CODEWIDE_UPDATE_URL=https://updates.invalid/api/updates");
-    expect(log.filter((line) => line.startsWith("pnpm security:scan-artifacts"))).toHaveLength(3);
+    expect(log.filter((line) => line.startsWith("pnpm security:scan-artifacts"))).toHaveLength(4);
   });
 
   it("restores the checkout version when the APK build fails", () => {

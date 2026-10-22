@@ -6,6 +6,7 @@ printf '%s\n' 'This complete Android candidate release may take 10-20 minutes. A
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SITE_ROOT=${CODEWIDE_RELEASE_CANDIDATE_SITE_ROOT:-"$REPO_ROOT/dist/test-release"}
 PUBLIC_URL=${CODEWIDE_RELEASE_CANDIDATE_URL:-"https://codewide-rc-download-p4186.zrok-safe-share.garin.dev/"}
+UPDATE_URL="${PUBLIC_URL%/}/api/updates"
 APK_SOURCE="$REPO_ROOT/apps/android/android/app/build/outputs/apk/preview/app-preview.apk"
 METADATA_SOURCE="$REPO_ROOT/apps/android/android/app/build/outputs/apk/preview/output-metadata.json"
 APK_NAME=CodeWide-Preview.apk
@@ -24,11 +25,26 @@ trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
 cd "$REPO_ROOT"
-unset CODEWIDE_UPDATE_URL
-./scripts/build-android-apk --preview "$@"
+python3 scripts/release-candidate-server.test.py
+CODEWIDE_UPDATE_URL="$UPDATE_URL" ./scripts/build-android-apk --preview "$@"
 
 test -r "$APK_SOURCE"
 test -r "$METADATA_SOURCE"
+VERSION_CODE=$(METADATA_SOURCE="$METADATA_SOURCE" node <<'NODE'
+const { readFileSync } = require("node:fs");
+const metadata = JSON.parse(readFileSync(process.env.METADATA_SOURCE, "utf8"));
+const artifact = metadata.elements?.find((element) => element.outputFile === "app-preview.apk");
+if (!Number.isSafeInteger(artifact?.versionCode)) throw new Error("Preview versionCode is missing");
+process.stdout.write(String(artifact.versionCode));
+NODE
+)
+RUNTIME_VERSION="0.0.0.0-native-$VERSION_CODE"
+pnpm exec tsx scripts/publish-release-candidate-ota.ts \
+  --output-root "$SITE_ROOT/ota" \
+  --runtime-version "$RUNTIME_VERSION" \
+  --update-url "$UPDATE_URL"
+OTA_POINTER="$SITE_ROOT/ota/$RUNTIME_VERSION/current.json"
+test -r "$OTA_POINTER"
 STAGING_DIR=$(mktemp -d "$TMP_ROOT/codewide-android-candidate.XXXXXX")
 install -m 0644 "$APK_SOURCE" "$STAGING_DIR/$APK_NAME"
 install -m 0644 scripts/release-candidate-site.html "$STAGING_DIR/index.html"
@@ -41,6 +57,7 @@ METADATA_SOURCE="$METADATA_SOURCE" \
 APK_TARGET="$STAGING_DIR/$APK_NAME" \
 MANIFEST_TARGET="$STAGING_DIR/manifest.json" \
 CHECKSUM_TARGET="$STAGING_DIR/$APK_NAME.sha256" \
+OTA_POINTER="$OTA_POINTER" \
 SOURCE_BRANCH=$(git branch --show-current) \
 SOURCE_REVISION=$(git rev-parse HEAD) \
 SOURCE_DIRTY="$SOURCE_DIRTY" \
@@ -49,6 +66,7 @@ const { createHash } = require("node:crypto");
 const { readFileSync, writeFileSync } = require("node:fs");
 
 const metadata = JSON.parse(readFileSync(process.env.METADATA_SOURCE, "utf8"));
+const ota = JSON.parse(readFileSync(process.env.OTA_POINTER, "utf8"));
 const artifact = metadata.elements?.find((element) => element.outputFile === "app-preview.apk");
 if (
   metadata.applicationId !== "dev.codexremote.app.preview"
@@ -66,6 +84,12 @@ const manifest = {
   revision: process.env.SOURCE_REVISION,
   sourceDirty: process.env.SOURCE_DIRTY === "true",
   generatedAt: new Date().toISOString(),
+  ota: {
+    createdAt: ota.createdAt,
+    runtimeVersion: ota.runtimeVersion,
+    updateId: ota.updateId,
+    updateUrl: ota.updateUrl,
+  },
   artifacts: [
     {
       kind: "android-preview-apk",
@@ -89,14 +113,6 @@ for file in "$APK_NAME" "$APK_NAME.sha256" manifest.json index.html; do
   mv -f -- "$STAGING_DIR/$file" "$SITE_ROOT/$file"
 done
 
-MANIFEST_TARGET="$SITE_ROOT/manifest.json" PUBLIC_URL="$PUBLIC_URL" node <<'NODE'
-const { readFileSync } = require("node:fs");
-const manifest = JSON.parse(readFileSync(process.env.MANIFEST_TARGET, "utf8"));
-const artifact = manifest.artifacts[0];
-process.stdout.write(`${JSON.stringify({
-  release: "android-release-candidate",
-  status: "published",
-  publicUrl: process.env.PUBLIC_URL,
-  ...artifact,
-}, null, 2)}\n`);
-NODE
+pnpm exec tsx scripts/verify-release-candidate.ts \
+  --manifest "$SITE_ROOT/manifest.json" \
+  --public-url "$PUBLIC_URL"

@@ -108,6 +108,7 @@ it("reads a root's subagents on every request and shares a concurrent read", asy
 });
 
 it("re-reads on every request without a freshness window, with one trailing run behind a running one, also after a failure", async () => {
+  jest.useFakeTimers();
   const replies: Array<{ resolve: (value: unknown) => void; reject: (error: Error) => void }> = [];
   const listCalls = jest.fn();
   // WHY: RpcClient has a caller-selected generic result. This fixture answers pin reads
@@ -146,25 +147,39 @@ it("re-reads on every request without a freshness window, with one trailing run 
     setListStreamVisible: async () => undefined,
   });
 
-  const first = runtime.refreshThreadCatalog("server");
-  await waitFor(() => {
-    expect(listCalls).toHaveBeenCalledTimes(1);
-  });
-  const trailing = Array.from({ length: 5 }, () => runtime.refreshThreadCatalog("server"));
-  replies[0]?.reject(new Error("thread/list failed"));
-  await expect(first).rejects.toThrow("thread/list failed");
-  await waitFor(() => {
+  try {
+    const first = runtime.refreshThreadCatalog("server");
+    const rejected = expect(first).rejects.toThrow("thread/list failed");
+    await waitFor(() => {
+      expect(listCalls).toHaveBeenCalledTimes(1);
+    });
+    const trailing = Array.from({ length: 5 }, () => runtime.refreshThreadCatalog("server"));
+    replies[0]?.reject(new Error("thread/list failed"));
+    await jest.advanceTimersByTimeAsync(250);
     expect(listCalls).toHaveBeenCalledTimes(2);
-  });
-  replies[1]?.resolve({ data: [], nextCursor: null });
-  await Promise.all(trailing);
-  expect(listCalls).toHaveBeenCalledTimes(2);
-
-  // A settled connection re-reads again at once: there is no freshness window.
-  const next = runtime.refreshThreadCatalog("server");
-  await waitFor(() => {
+    replies[1]?.reject(new Error("thread/list failed"));
+    await jest.advanceTimersByTimeAsync(500);
     expect(listCalls).toHaveBeenCalledTimes(3);
-  });
-  replies[2]?.resolve({ data: [], nextCursor: null });
-  await next;
+    replies[2]?.reject(new Error("thread/list failed"));
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(listCalls).toHaveBeenCalledTimes(4);
+    replies[3]?.reject(new Error("thread/list failed"));
+    await rejected;
+    await waitFor(() => {
+      expect(listCalls).toHaveBeenCalledTimes(5);
+    });
+    replies[4]?.resolve({ data: [], nextCursor: null });
+    await Promise.all(trailing);
+    expect(listCalls).toHaveBeenCalledTimes(5);
+
+    // A settled connection re-reads again at once: there is no freshness window.
+    const next = runtime.refreshThreadCatalog("server");
+    await waitFor(() => {
+      expect(listCalls).toHaveBeenCalledTimes(6);
+    });
+    replies[5]?.resolve({ data: [], nextCursor: null });
+    await next;
+  } finally {
+    jest.useRealTimers();
+  }
 });

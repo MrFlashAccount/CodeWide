@@ -108,10 +108,7 @@ async function buildReleaseApk(
 async function buildPreviewApk(
   args: Extract<BuildArguments, { readonly channel: "preview" }>,
 ): Promise<BuildResult> {
-  const explicitUpdateUrl = process.env.CODEWIDE_UPDATE_URL?.trim();
-  if (explicitUpdateUrl !== undefined && explicitUpdateUrl !== "") {
-    throw new Error("Android preview builds do not accept CODEWIDE_UPDATE_URL");
-  }
+  const updates = resolveUpdatesConfiguration();
   const source = await readReleaseSourceFiles();
   const versionCode = args.requestedVersionCode ?? previewVersionCodeAt(Date.now());
   const updated = updateAndroidPreviewVersion(source, versionCode);
@@ -122,7 +119,7 @@ async function buildPreviewApk(
     source,
     updated,
     previewVariant,
-    { status: "disabled" },
+    updates,
     {
       CODEWIDE_RELEASE_STORE_FILE: "",
       CODEWIDE_RELEASE_STORE_PASSWORD: "",

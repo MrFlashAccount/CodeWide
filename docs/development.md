@@ -70,8 +70,10 @@ The `dev.codexremote.app` package identity and related legacy storage, service,
 and deep-link aliases are retained intentionally. They let existing installs
 upgrade to CodeWide without losing local state or breaking saved links.
 
-Android releases are native APKs only: there is no OTA publishing. Any change
-reaches phones through a new APK published by CI.
+Production Android releases are native APKs only: there is no production OTA
+publishing. Any production change reaches phones through a new APK published by CI.
+The separate Preview package is the sole exception: its local release-candidate
+one-shot publishes a signed OTA baseline beside its APK on the candidate origin.
 
 ## Update and Metro endpoints
 
@@ -115,9 +117,12 @@ Preview uses the package `dev.codexremote.app.preview`, the label
 `CodeWide Preview`, and a fixed visible version `0.0.0.0`. Android orders its
 upgrades only by `versionCode`; by default the command derives a monotonic code
 from seconds since 2026-01-01, while `--version-code` allows an explicit higher
-value. Preview is a bundled, optimized, offline-capable build with updates
-disabled. It intentionally uses its own stable development key because it is a
-separate non-production application. The one-shot command creates that key
+value. Preview is a bundled, optimized, offline-capable build. Direct Preview
+builds have updates disabled unless `CODEWIDE_UPDATE_URL` is explicitly supplied;
+the release-candidate one-shot always supplies its zrok-backed `/api/updates`
+endpoint and publishes a signed baseline for the same native runtime. Preview
+intentionally uses its own stable development key because it is a separate
+non-production application. The one-shot command creates that key
 once under the user's CodeWide data directory and reuses it so later APKs
 upgrade the installed Preview. Production signing material is not read or
 passed to its Gradle build.
@@ -131,10 +136,12 @@ one-shots. Run them in this order for a complete local test release:
 ```
 
 The first command validates, builds, atomically replaces and verifies the
-running Companion. The second runs the complete Preview APK gate and then
-publishes the APK, checksum, manifest and static page from one validated staging
-directory to the existing zrok-backed local site. Do not reconstruct either
-sequence from its lower-level commands.
+running Companion. The second runs the complete Preview APK gate, publishes a
+signed Expo update for that exact native runtime, and then publishes the APK,
+checksum, manifest and static page to the same zrok-backed origin. It verifies
+the public update manifest, launch asset, settled no-update directive, APK
+manifest and APK hash before succeeding. Do not reconstruct either sequence
+from its lower-level commands.
 
 The low-level Gradle/signing variables below remain available for debugging or
 nonstandard builds:
