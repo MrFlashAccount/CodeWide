@@ -257,7 +257,16 @@ async fn a_failed_read_keeps_the_last_known_set() {
     harness.source.set(&[]);
     tokio::time::sleep(MAX_AGE).await;
     assert!(harness.owner.check(OTHER).await);
+    assert!(!harness.owner.refresh_confirmed().await);
     assert_eq!(harness.changes(), [sessions(&[OTHER])]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_successful_read_confirms_the_running_set() {
+    let harness = Harness::new();
+    harness.source.set(&[]);
+
+    assert!(harness.owner.refresh_confirmed().await);
 }
 
 #[tokio::test(start_paused = true)]

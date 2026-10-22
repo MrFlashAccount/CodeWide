@@ -190,7 +190,8 @@ pub const CAPABILITIES: CapabilitySet = CapabilitySet {
     turns_start_while_active: StartWhileActiveMode::Busy,
 };
 
-/// The loaded threads' events and the service's output, until taken.
+/// The loaded threads' events, initial status snapshot and service output,
+/// until taken.
 type PendingOutputs = (Arc<Mutex<Vec<AgentEvent>>>, ServiceOutputs);
 
 /// The thread service once its stored threads are loaded.
@@ -200,8 +201,8 @@ struct Running {
     reset_client: RateLimitResetClient,
     /// Set once the stored threads are loaded.
     ready: watch::Receiver<bool>,
-    /// The loaded threads' `turn.completed` events and then the service's
-    /// output, taken once by `take_events`.
+    /// The loaded threads' `turn.completed` events, initial status snapshot
+    /// and then the service's output, taken once by `take_events`.
     outputs: Mutex<Option<PendingOutputs>>,
 }
 
@@ -515,6 +516,7 @@ fn optional_fence(fence: Option<FenceReceiver>) -> Result<ProviderFence, Provide
 async fn forward_events(
     ready: watch::Receiver<bool>,
     loaded: Arc<Mutex<Vec<AgentEvent>>>,
+    service: ThreadService,
     mut outputs: ServiceOutputs,
     events: mpsc::Sender<ProviderEvent>,
     storage: Option<Arc<ClaudeStorage>>,
@@ -536,6 +538,22 @@ async fn forward_events(
         if events.send(forward(event)).await.is_err() {
             return;
         }
+    }
+    match service.status_snapshot().await {
+        Ok(threads) => {
+            let thread_count = threads.len();
+            for thread in threads {
+                if events
+                    .send(forward(AgentEvent::ThreadUpdated { thread }))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            info!(thread_count, "Claude startup status snapshot published");
+        }
+        Err(err) => warn!(err = %err, "Claude startup status snapshot failed"),
     }
     while let Some(output) = outputs.recv().await {
         let forwarded = match output {
@@ -670,12 +688,13 @@ impl AgentProvider for ClaudeProvider {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .take();
-            outputs.map(|outputs| (running.ready.clone(), outputs))
+            outputs.map(|outputs| (running.ready.clone(), running.service.clone(), outputs))
         });
-        if let Some((ready, (loaded, outputs))) = taken {
+        if let Some((ready, service, (loaded, outputs))) = taken {
             tokio::spawn(forward_events(
                 ready,
                 loaded,
+                service,
                 outputs,
                 sender,
                 self.storage.clone(),

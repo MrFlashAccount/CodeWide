@@ -74,6 +74,9 @@ struct State {
     /// When the companion last released each session.
     released_at: HashMap<String, Instant>,
     read_at: Option<Instant>,
+    /// Whether the latest attempted refresh authoritatively confirmed the
+    /// retained running set.
+    refresh_confirmed: bool,
     /// Finished reads, so a caller that waited for one does not read again.
     reads: u64,
     /// The pending poll and its generation; a newer schedule supersedes it.
@@ -106,6 +109,14 @@ impl OpenElsewhere {
     /// Re-reads the running set unless the last read is fresh.
     pub async fn refresh(&self) {
         self.inner.refresh().await;
+    }
+
+    /// Re-reads the running-session registry and says whether the resulting
+    /// snapshot is authoritative. A failed read keeps the previous set for
+    /// locking, but callers must not publish terminal statuses from it.
+    pub async fn refresh_confirmed(&self) -> bool {
+        self.inner.refresh().await;
+        self.inner.lock().refresh_confirmed
     }
 
     /// Starts a [`Self::refresh`] without waiting; a change reaches
@@ -192,8 +203,12 @@ impl Inner {
                     let state = &mut *state;
                     state.running =
                         without_own_releases(&mut state.released_at, listed, started_at);
+                    state.refresh_confirmed = true;
                 }
-                Err(err) => warn!(err = %err, "Claude running sessions read failed"),
+                Err(err) => {
+                    state.refresh_confirmed = false;
+                    warn!(err = %err, "Claude running sessions read failed");
+                }
             }
             state.read_at = Some(Instant::now());
             state.reads += 1;
