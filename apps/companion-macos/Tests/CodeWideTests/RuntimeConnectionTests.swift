@@ -361,6 +361,32 @@ struct RuntimeConnectionTests {
         #expect(service.legacyUpdateCheckpointRequests == 0)
     }
 
+    @Test func proxySettingsRoundTripThroughTheRuntimeBoundary() async throws {
+        let service = TestRuntimeService()
+        service.httpProxySettingsJSON =
+            #"{"httpsProxy":"http://proxy.example:8080","noProxy":"localhost"}"#
+        let runtime = makeRuntime(service: service)
+        await runtime.refresh()
+
+        let loaded = try await runtime.httpProxySettings()
+        #expect(loaded.httpsProxy == "http://proxy.example:8080")
+        #expect(loaded.noProxy == "localhost")
+
+        try await runtime.setHttpProxySettings(CompanionHttpProxySettings(
+            httpProxy: " ",
+            httpsProxy: " http://new-proxy.example:8080 ",
+            noProxy: nil
+        ))
+        let saved = try JSONDecoder().decode(
+            CompanionHttpProxySettings.self,
+            from: Data(service.httpProxySettingsJSON.utf8)
+        )
+        #expect(saved.httpProxy == nil)
+        #expect(saved.httpsProxy == "http://new-proxy.example:8080")
+        #expect(runtime.health == nil)
+        #expect(runtime.status == "Applying proxy settings")
+    }
+
     @Test func oldSnapshotCannotUndoRelayDisableOrDeviceRevocation() async throws {
         let service = TestRuntimeService()
         let runtime = makeRuntime(service: service)
@@ -420,6 +446,7 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
     var agentProviderConnectionsJSON = """
     {"providers":[{"id":"codex","name":"Codex","primary":true,"status":"live"},{"id":"claude","name":"Claude","primary":false,"status":"live"}],"hostCapabilities":{}}
     """
+    var httpProxySettingsJSON = "{}"
     var relayUpdateJSON = """
     {"currentVersion":"0.4.1","capability":{"applySupported":true,"unavailableReason":null},"availableTarget":null,"activeOperation":null}
     """
@@ -458,6 +485,20 @@ private final class TestRuntimeService: NSObject, RuntimeXPCProtocol, @unchecked
         managementRequests += 1
         if let agentProviderConnectionsFailure { reply(nil, agentProviderConnectionsFailure); return }
         reply(agentProviderConnectionsJSON, nil)
+    }
+
+    func httpProxySettings(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        reply(httpProxySettingsJSON, nil)
+    }
+
+    func setHttpProxySettings(
+        json: String,
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    ) {
+        httpProxySettingsJSON = json
+        reply(json, nil)
     }
 
     private func server(_ id: String) -> AppServerPayload {

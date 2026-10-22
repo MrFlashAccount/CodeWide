@@ -66,6 +66,25 @@ Do not infer production security from the default local listen address. The
 authenticated device protocol, relay route, administrator token, state paths,
 and mutation mode must be configured by the deployment owner.
 
+## Dictation proxy
+
+Companion owns its dictation proxy setting; it never reads a Codex `.env`
+file. With no saved setting, reqwest keeps its standard `HTTP_PROXY`,
+`HTTPS_PROXY`, and `NO_PROXY` process-environment behavior. A managed Linux
+host can persist an explicit override and then restart the service:
+
+```sh
+codewide-companion proxy configure --https-proxy http://127.0.0.1:3129
+systemctl --user restart codewide-companion.service
+```
+
+`--http-proxy` and `--no-proxy` are also accepted. Run
+`codewide-companion proxy clear` to remove the application override and return
+to process-environment discovery. The private settings file lives in the
+Companion state directory and stores no Codex configuration. It is internal
+state: if it is damaged or unreadable, Companion logs a warning and falls back
+to process-environment discovery; the next `configure` replaces it.
+
 ## Distribution
 
 The portable `x86_64-unknown-linux-musl` release bundle contains the headless

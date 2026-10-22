@@ -12,7 +12,7 @@ use companion_core::runtime_host::{
 };
 use companion_core::{
     host_identity::HostDisplayName,
-    http_proxy::HttpProxyConfig,
+    http_proxy::{HttpProxyConfig, HttpProxySettings, HttpProxySettingsStore},
     managed_runtime::{
         AppServerConnection, ManagedRuntime, ManagedRuntimeConfig, PairingPresentation,
         relay_connection_label,
@@ -143,6 +143,7 @@ pub struct CoreHost {
     companion: ManagedRuntime,
     executor: tokio::runtime::Runtime,
     codex_home: PathBuf,
+    http_proxy_settings: HttpProxySettingsStore,
 }
 
 #[uniffi::export]
@@ -190,9 +191,9 @@ impl CoreHost {
             .join("Updater");
         let updates =
             codewide_host_update::macos::MacosSparkleUpdater::new(&updater_root, installed);
-        let dictation_proxy =
-            HttpProxyConfig::from_process_environment_and_dotenv(&codex_home.join(".env"))
-                .map_err(CompanionFfiError::runtime)?;
+        let http_proxy_settings = HttpProxySettingsStore::new(Path::new(&state_directory));
+        let dictation_proxy = HttpProxyConfig::from_settings(&http_proxy_settings.load())
+            .map_err(CompanionFfiError::runtime)?;
         let config = ManagedRuntimeConfig::desktop(
             state_directory.into(),
             codex_home.clone(),
@@ -211,6 +212,7 @@ impl CoreHost {
             companion,
             executor,
             codex_home,
+            http_proxy_settings,
         }))
     }
 
@@ -233,6 +235,34 @@ impl CoreHost {
     pub fn agent_provider_connections_json(&self) -> Result<String, CompanionFfiError> {
         serde_json::to_string(&self.companion.agent_provider_connections())
             .map_err(CompanionFfiError::runtime)
+    }
+
+    /// Returns Companion's application-owned HTTP proxy settings.
+    ///
+    /// # Errors
+    /// Returns an adapter error when the settings cannot be encoded.
+    pub fn http_proxy_settings_json(&self) -> Result<String, CompanionFfiError> {
+        serde_json::to_string(&self.http_proxy_settings.load()).map_err(CompanionFfiError::runtime)
+    }
+
+    /// Validates and stores Companion's application-owned HTTP proxy settings.
+    /// The macOS runtime restarts after this call so new requests use them.
+    ///
+    /// # Errors
+    /// Returns an adapter error when the payload is invalid or cannot be saved.
+    // UniFFI exported methods receive owned strings from the Swift boundary.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn set_http_proxy_settings_json(
+        &self,
+        settings_json: String,
+    ) -> Result<String, CompanionFfiError> {
+        let settings: HttpProxySettings =
+            serde_json::from_str(&settings_json).map_err(CompanionFfiError::runtime)?;
+        let saved = self
+            .http_proxy_settings
+            .save(settings)
+            .map_err(CompanionFfiError::runtime)?;
+        serde_json::to_string(&saved).map_err(CompanionFfiError::runtime)
     }
 
     /// Finds local Codex homes with a reachable App Server endpoint.

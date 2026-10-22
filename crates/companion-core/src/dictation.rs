@@ -240,7 +240,7 @@ pub enum DictationError {
     Timeout,
     #[error("ChatGPT transcription transport failed")]
     Transport,
-    #[error("Codex proxy configuration is invalid")]
+    #[error("Companion HTTP proxy settings are invalid")]
     ProxyConfiguration,
     #[error("ChatGPT transcription returned an invalid response")]
     InvalidResponse,
@@ -294,9 +294,10 @@ impl DictationService {
     ) -> Result<Self, DictationError> {
         info!(
             status = "dictation-proxy-configured",
-            http_proxy = proxy.http_is_configured(),
-            https_proxy = proxy.https_is_configured(),
-            no_proxy = proxy.no_proxy_is_configured(),
+            explicit_http_proxy = proxy.http_is_configured(),
+            explicit_https_proxy = proxy.https_is_configured(),
+            explicit_no_proxy = proxy.no_proxy_is_configured(),
+            system_proxy_fallback = !proxy.http_is_configured() && !proxy.https_is_configured(),
         );
         Self::open_with_options(
             auth_file,
