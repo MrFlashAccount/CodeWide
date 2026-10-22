@@ -1,19 +1,20 @@
-//! Live status of spawned agents, driven by their threads' turn lifecycle
+//! Compatibility live watch of spawned agents, driven by turn lifecycle
 //! on the client wire. Waiters subscribe to a `watch` channel per agent, so
 //! `codewide_wait_agent` wakes on the event that settles the turn instead of
 //! polling. The tracker also holds each agent's queued messages, delivered
 //! one by one when a turn ends.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     sync::Mutex,
 };
 
 use serde_json::Value;
 use tokio::sync::watch;
 
-use super::tools::AgentStatus;
+use super::super::tools::AgentStatus;
 use crate::agent::client_wire::observe::{TurnEnd, TurnFact, turn_fact};
+use crate::agent::model::ProviderId;
 
 /// One agent's turn state.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,14 +61,34 @@ struct Tracked {
     state: watch::Sender<ChildState>,
     messages: TurnMessages,
     queue: VecDeque<String>,
+    ended_turns: VecDeque<String>,
 }
 
 impl Tracked {
     fn new(state: ChildState) -> Self {
+        let mut ended_turns = VecDeque::new();
+        if let ChildState::Settled {
+            turn_id: Some(turn_id),
+            ..
+        } = &state
+        {
+            ended_turns.push_back(turn_id.clone());
+        }
         Self {
             state: watch::Sender::new(state),
             messages: TurnMessages::default(),
             queue: VecDeque::new(),
+            ended_turns,
+        }
+    }
+
+    fn remember_ended(&mut self, turn_id: &str) {
+        const MAX_ENDED_TURNS: usize = 64;
+        if self.ended_turns.back().is_none_or(|known| known != turn_id) {
+            self.ended_turns.push_back(turn_id.to_owned());
+            if self.ended_turns.len() > MAX_ENDED_TURNS {
+                self.ended_turns.pop_front();
+            }
         }
     }
 }
@@ -81,16 +102,16 @@ pub struct Delivery {
 
 #[derive(Default)]
 pub struct ChildTracker {
-    /// Linked agents; events of other threads are ignored.
-    known: Mutex<HashSet<String>>,
+    /// Durable provider owner of linked agents; foreign events are ignored.
+    owners: Mutex<HashMap<String, ProviderId>>,
     tracked: Mutex<HashMap<String, Tracked>>,
 }
 
 impl ChildTracker {
     #[must_use]
-    pub fn with_known(children: impl IntoIterator<Item = String>) -> Self {
+    pub fn with_known(children: impl IntoIterator<Item = (String, ProviderId)>) -> Self {
         Self {
-            known: Mutex::new(children.into_iter().collect()),
+            owners: Mutex::new(children.into_iter().collect()),
             tracked: Mutex::new(HashMap::new()),
         }
     }
@@ -102,21 +123,56 @@ impl ChildTracker {
     }
 
     fn is_known(&self, child: &str) -> bool {
-        self.known
+        self.owners
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains(child)
+            .contains_key(child)
+            || self.tracked().contains_key(child)
+    }
+
+    pub fn authorize(&self, child: &str, provider: ProviderId) {
+        self.owners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(child.to_owned(), provider);
+    }
+
+    #[must_use]
+    pub fn provider_matches(&self, child: &str, provider: &ProviderId) -> bool {
+        self.owners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(child)
+            == Some(provider)
+    }
+
+    #[must_use]
+    pub fn accepts_turn(&self, child: &str, turn_id: &str) -> bool {
+        self.tracked()
+            .get(child)
+            .is_some_and(|entry| match entry.state.borrow().clone() {
+                ChildState::Running {
+                    turn_id: Some(known),
+                } => known == turn_id,
+                // Queue release marks the next turn pending before its receipt
+                // arrives. A terminal event can overtake that receipt.
+                ChildState::Running { turn_id: None } => true,
+                ChildState::Settled { .. } => false,
+            })
     }
 
     /// Starts tracking a linked agent with its current state.
     pub fn register(&self, child: &str, state: ChildState) {
-        self.known
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(child.to_owned());
         let mut tracked = self.tracked();
-        match tracked.get(child) {
+        match tracked.get_mut(child) {
             Some(entry) => {
+                if let ChildState::Settled {
+                    turn_id: Some(turn_id),
+                    ..
+                } = &state
+                {
+                    entry.remember_ended(turn_id);
+                }
                 entry.state.send_replace(state);
             }
             None => {
@@ -127,10 +183,6 @@ impl ChildTracker {
 
     /// Tracks a linked agent unless events already did.
     pub fn register_if_absent(&self, child: &str, state: ChildState) {
-        self.known
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(child.to_owned());
         self.tracked()
             .entry(child.to_owned())
             .or_insert_with(|| Tracked::new(state));
@@ -153,10 +205,13 @@ impl ChildTracker {
     /// Records the turn a start request reported, unless that turn already
     /// ended (its events can overtake the response).
     pub fn started(&self, child: &str, turn_id: &str) {
-        let tracked = self.tracked();
-        let Some(entry) = tracked.get(child) else {
+        let mut tracked = self.tracked();
+        let Some(entry) = tracked.get_mut(child) else {
             return;
         };
+        if entry.ended_turns.iter().any(|ended| ended == turn_id) {
+            return;
+        }
         entry.state.send_if_modified(|state| {
             if let ChildState::Settled {
                 turn_id: Some(ended),
@@ -173,28 +228,34 @@ impl ChildTracker {
         });
     }
 
-    /// Settles an agent whose turn could not start.
-    pub fn failed_to_start(&self, child: &str) {
-        if let Some(entry) = self.tracked().get(child) {
-            entry.state.send_replace(ChildState::Settled {
-                end: TurnEnd::Failed,
-                turn_id: None,
-                final_message: None,
-            });
-        }
+    /// Marks the next queued turn as pending only if the observed terminal
+    /// turn is still the latest state. This prevents an older completion's
+    /// asynchronous queue release from overwriting a newer terminal event.
+    pub fn queued_after(&self, child: &str, ended_turn_id: &str) {
+        let tracked = self.tracked();
+        let Some(entry) = tracked.get(child) else {
+            return;
+        };
+        entry.state.send_if_modified(|state| {
+            if !matches!(
+                state,
+                ChildState::Settled {
+                    turn_id: Some(turn_id),
+                    ..
+                } if turn_id == ended_turn_id
+            ) {
+                return false;
+            }
+            *state = ChildState::Running { turn_id: None };
+            true
+        });
     }
 
     /// Queues a message for delivery after the running turn.
+    #[cfg(test)]
     pub fn enqueue(&self, child: &str, message: String) {
         if let Some(entry) = self.tracked().get_mut(child) {
             entry.queue.push_back(message);
-        }
-    }
-
-    /// Puts back a message whose delivery found the agent busy.
-    pub fn requeue_front(&self, child: &str, message: String) {
-        if let Some(entry) = self.tracked().get_mut(child) {
-            entry.queue.push_front(message);
         }
     }
 
@@ -259,6 +320,7 @@ impl ChildTracker {
                 error,
                 ..
             } => {
+                entry.remember_ended(turn_id);
                 let messages = std::mem::take(&mut entry.messages);
                 let final_message = (messages.turn_id == turn_id)
                     .then(|| messages.final_answer.or(messages.last))
@@ -328,7 +390,8 @@ mod tests {
 
     #[test]
     fn unlinked_threads_are_ignored_and_known_ones_are_tracked_lazily() {
-        let tracker = ChildTracker::with_known(["c".to_owned()]);
+        let tracker =
+            ChildTracker::with_known([("c".to_owned(), ProviderId::from_static("provider"))]);
         tracker.observe(&json!({"method": "turn/started", "params": {"threadId": "other", "turn": {"id": "u"}}}));
         assert_eq!(tracker.state("other"), None);
         tracker.observe(&completed("u", "interrupted"));

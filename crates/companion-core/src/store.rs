@@ -20,6 +20,10 @@ const THREAD_PINS: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_p
 const THREADS_BY_PARENT: TableDefinition<&[u8], u8> = TableDefinition::new("threads_by_parent");
 
 mod agent_tables;
+pub(crate) mod orchestration_tables;
+pub(crate) mod turn_delivery_tables;
+#[cfg(test)]
+mod turn_delivery_tests;
 pub use agent_tables::BindingWrite;
 pub use companion_host::{
     index::StoreError,
@@ -30,7 +34,7 @@ use companion_host::{
     thread_index::HostThreadIndex,
 };
 const SCHEMA_VERSION: u32 = 7;
-const MAX_OUTBOX_COMMAND_BYTES: usize = 1024 * 1024;
+pub(super) const MAX_OUTBOX_COMMAND_BYTES: usize = 1024 * 1024;
 const MAX_OUTBOX_OWNER_BYTES: usize = 256 * 1024 * 1024;
 const MAX_RETAINED_DELIVERED_COMMANDS: usize = 128;
 
@@ -84,6 +88,8 @@ pub struct OutboxCommand {
     pub created_at: u64,
     pub updated_at: u64,
     pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered_turn_id: Option<String>,
     #[serde(default)]
     pub attempts: u32,
     #[serde(default)]
@@ -100,6 +106,14 @@ impl OutboxCommand {
         self.claim
             .as_ref()
             .is_some_and(|claim| claim.kind == OutboxClaimKind::Steer && claim.resolved)
+    }
+
+    /// Reports whether a dispatcher currently owns this command. The
+    /// persisted `uncertain` state is not externally uncertain until this
+    /// claim resolves without a delivery receipt.
+    #[must_use]
+    pub(crate) fn has_in_flight_claim(&self) -> bool {
+        self.claim.as_ref().is_some_and(|claim| !claim.resolved)
     }
 }
 
@@ -135,7 +149,9 @@ pub enum OutboxClaimOutcome {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutboxClaimResolution<'a> {
-    Delivered,
+    Delivered {
+        turn_id: Option<&'a str>,
+    },
     NotSent {
         retry_after_ms: u64,
     },
@@ -230,6 +246,8 @@ impl IndexStore {
             write.open_table(THREAD_PINS)?;
             write.open_table(THREADS_BY_PARENT)?;
             agent_tables::create(&write)?;
+            orchestration_tables::create(&write)?;
+            turn_delivery_tables::create(&write)?;
         }
         write.commit()?;
         Ok(Self { database })
@@ -694,67 +712,14 @@ impl IndexStore {
         params: Value,
         metadata: OutboxPutMetadata<'_>,
     ) -> Result<OutboxCommand, StoreError> {
-        let OutboxPutMetadata {
-            created_at,
-            presentation,
-            workspace_request_id,
-        } = metadata;
-        validate_outbox_id(command_id, "command id")?;
-        validate_outbox_id(remote_thread_id, "remote thread id")?;
-        if let Some(request_id) = workspace_request_id {
-            validate_outbox_id(request_id, "workspace request id")?;
-        }
-        validate_turn_start_params(command_id, remote_thread_id, &params)?;
-        let params_bytes = serde_json::to_vec(&params)?.len();
-        if params_bytes > MAX_OUTBOX_COMMAND_BYTES {
-            return Err(StoreError::CorruptedIndex(
-                "outbox command exceeds 1 MiB".into(),
-            ));
-        }
         let write = self.database.begin_write()?;
-        let command = {
-            let mut table = write.open_table(OUTBOX)?;
-            if let Some(encoded) = table.get(command_id)?.map(|value| value.value().to_vec()) {
-                let existing: OutboxCommand = serde_json::from_slice(&encoded)?;
-                if existing.remote_thread_id != remote_thread_id
-                    || existing.method != "turn/start"
-                    || existing.params != params
-                    || existing.presentation != presentation
-                    || existing.workspace_request_id.as_deref() != workspace_request_id
-                    || existing.owner_context.is_some()
-                    || existing.queue_input.is_some()
-                {
-                    return Err(StoreError::CorruptedIndex(
-                        "outbox command id already has a different payload".into(),
-                    ));
-                }
-                return Ok(existing);
-            }
-            let (_, max_order) = prune_delivered_outbox_receipts(&mut table)?;
-            let now = unix_time_ms();
-            let command = OutboxCommand {
-                command_id: command_id.to_owned(),
-                remote_thread_id: remote_thread_id.to_owned(),
-                method: "turn/start".into(),
-                params,
-                state: OutboxState::Queued,
-                presentation,
-                workspace_request_id: workspace_request_id.map(str::to_owned),
-                owner_context: None,
-                queue_input: None,
-                order: max_order.saturating_add(1),
-                created_at: created_at.unwrap_or(now),
-                updated_at: now,
-                last_error: None,
-                attempts: 0,
-                next_attempt_at: 0,
-                claim: None,
-            };
-            let encoded = serde_json::to_vec(&command)?;
-            ensure_outbox_owner_quota(outbox_owner_bytes(&table, None)?, encoded.len())?;
-            table.insert(command_id, encoded.as_slice())?;
-            command
-        };
+        let command = turn_delivery_tables::put_turn_start_in_write(
+            &write,
+            command_id,
+            remote_thread_id,
+            params,
+            metadata,
+        )?;
         write.commit()?;
         Ok(command)
     }
@@ -902,9 +867,10 @@ impl IndexStore {
             }
             let now = unix_time_ms();
             match resolution {
-                OutboxClaimResolution::Delivered => {
+                OutboxClaimResolution::Delivered { turn_id } => {
                     command.state = OutboxState::Delivered;
                     command.last_error = None;
+                    command.delivered_turn_id = turn_id.map(str::to_owned);
                     command.next_attempt_at = 0;
                 }
                 OutboxClaimResolution::NotSent { retry_after_ms } => {
@@ -1466,7 +1432,7 @@ impl HostThreadIndex for IndexStore {
     }
 }
 
-fn validate_outbox_id(value: &str, label: &str) -> Result<(), StoreError> {
+pub(super) fn validate_outbox_id(value: &str, label: &str) -> Result<(), StoreError> {
     if value.is_empty()
         || value.len() > 512
         || value
@@ -1483,7 +1449,7 @@ fn bounded_outbox_error(error: &str) -> String {
 }
 
 fn outbox_has_in_flight_claim(command: &OutboxCommand) -> bool {
-    command.claim.as_ref().is_some_and(|claim| !claim.resolved)
+    command.has_in_flight_claim()
 }
 
 fn outbox_rejects_stale_queue_update(command: &OutboxCommand) -> bool {
@@ -1665,15 +1631,9 @@ fn append_replay_transaction(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Barrier};
-
     use serde_json::{Value, json};
 
-    use super::{
-        DerivedIndexSchema, IndexStore, MAX_OUTBOX_OWNER_BYTES, OutboxClaimOutcome,
-        OutboxClaimResolution, OutboxClaimResolutionOutcome, OutboxPresentation, OutboxState,
-        StoreError, ensure_outbox_owner_quota, ensure_outbox_owner_replacement_quota,
-    };
+    use super::{DerivedIndexSchema, IndexStore, StoreError};
 
     /// A derived schema that rebuilds its table on every open.
     struct DisposableSchema;
@@ -1848,199 +1808,6 @@ mod tests {
         assert!(store.thread_pin_snapshot()?.thread_ids.is_empty());
         let other = IndexStore::open(directory.path().join("other.redb"))?;
         assert!(other.thread_pin_snapshot()?.thread_ids.is_empty());
-        Ok(())
-    }
-
-    fn put_queued(store: &IndexStore, command_id: &str) -> Result<(), super::StoreError> {
-        store.outbox_put_turn_start_with_presentation(
-            command_id,
-            "thread-a",
-            json!({
-                "threadId": "thread-a",
-                "clientUserMessageId": command_id,
-                "input": [{"type": "text", "text": command_id}],
-            }),
-            Some(1),
-            OutboxPresentation::Queue,
-        )?;
-        Ok(())
-    }
-
-    #[test]
-    fn owner_queue_byte_quota_has_an_explicit_non_destructive_boundary() {
-        assert!(ensure_outbox_owner_quota(MAX_OUTBOX_OWNER_BYTES - 1, 1).is_ok());
-        assert!(matches!(
-            ensure_outbox_owner_quota(MAX_OUTBOX_OWNER_BYTES, 1),
-            Err(StoreError::OutboxOwnerQuotaExceeded { limit_bytes })
-                if limit_bytes == MAX_OUTBOX_OWNER_BYTES
-        ));
-        assert!(ensure_outbox_owner_replacement_quota(MAX_OUTBOX_OWNER_BYTES, 1, 1).is_ok());
-        assert!(matches!(
-            ensure_outbox_owner_replacement_quota(MAX_OUTBOX_OWNER_BYTES, 1, 2),
-            Err(StoreError::OutboxOwnerQuotaExceeded { limit_bytes })
-                if limit_bytes == MAX_OUTBOX_OWNER_BYTES
-        ));
-    }
-
-    #[test]
-    fn dispatch_and_steer_claims_have_exactly_one_winner() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let directory = tempfile::tempdir()?;
-        let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
-        put_queued(&store, "command-a")?;
-        let barrier = Arc::new(Barrier::new(3));
-        let (dispatch, steer) = std::thread::scope(|scope| {
-            let dispatch_store = Arc::clone(&store);
-            let dispatch_barrier = Arc::clone(&barrier);
-            let dispatch = scope.spawn(move || {
-                dispatch_barrier.wait();
-                dispatch_store.outbox_claim_dispatch("command-a")
-            });
-            let steer_store = Arc::clone(&store);
-            let steer_barrier = Arc::clone(&barrier);
-            let steer = scope.spawn(move || {
-                steer_barrier.wait();
-                steer_store.outbox_claim_steer("command-a", "steer-a")
-            });
-            barrier.wait();
-            let dispatch = dispatch
-                .join()
-                .map_err(|_| std::io::Error::other("dispatch claim panicked"))?;
-            let steer = steer
-                .join()
-                .map_err(|_| std::io::Error::other("steer claim panicked"))?;
-            Ok::<_, Box<dyn std::error::Error>>((dispatch?, steer?))
-        })?;
-
-        let acquired = usize::from(matches!(dispatch, OutboxClaimOutcome::Acquired { .. }))
-            + usize::from(matches!(steer, OutboxClaimOutcome::Acquired { .. }));
-        assert_eq!(acquired, 1);
-        assert_eq!(store.outbox_list(None)?[0].state, OutboxState::Uncertain);
-        assert!(!store.outbox_cancel("command-a")?);
-        assert!(
-            store
-                .outbox_fail_queued("command-a", "stale failure")?
-                .is_none()
-        );
-        assert!(
-            store
-                .outbox_edit_prompt(
-                    "command-a",
-                    &json!([{"type": "text", "text": "replacement"}]),
-                )
-                .is_err()
-        );
-        assert!(store.outbox_place("command-a", None).is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn terminal_steer_resolution_is_idempotent_and_stale_safe()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let store = IndexStore::open(directory.path().join("index.redb"))?;
-        put_queued(&store, "command-a")?;
-        let OutboxClaimOutcome::Acquired { token, .. } =
-            store.outbox_claim_steer("command-a", "steer-a")?
-        else {
-            return Err("steer claim was not acquired".into());
-        };
-
-        assert!(matches!(
-            store.outbox_resolve_claim(
-                "command-a",
-                token,
-                OutboxClaimResolution::Rejected { error: "rejected" },
-            )?,
-            OutboxClaimResolutionOutcome::Applied(_)
-        ));
-        assert!(matches!(
-            store.outbox_resolve_claim("command-a", token, OutboxClaimResolution::Delivered,)?,
-            OutboxClaimResolutionOutcome::AlreadyResolved(_)
-        ));
-        store.outbox_retry_failed("command-a")?;
-        assert!(matches!(
-            store.outbox_claim_steer("command-a", "steer-a")?,
-            OutboxClaimOutcome::Duplicate(_)
-        ));
-        let OutboxClaimOutcome::Acquired {
-            token: retry_token, ..
-        } = store.outbox_claim_steer("command-a", "steer-b")?
-        else {
-            return Err("new steer operation was not acquired".into());
-        };
-        assert!(retry_token > token);
-        assert!(matches!(
-            store.outbox_resolve_claim("command-a", token, OutboxClaimResolution::Delivered,)?,
-            OutboxClaimResolutionOutcome::Stale(_)
-        ));
-        assert!(matches!(
-            store.outbox_resolve_claim(
-                "command-a",
-                retry_token,
-                OutboxClaimResolution::Delivered,
-            )?,
-            OutboxClaimResolutionOutcome::Applied(_)
-        ));
-        assert_eq!(store.outbox_list(None)?[0].state, OutboxState::Delivered);
-
-        put_queued(&store, "command-b")?;
-        let OutboxClaimOutcome::Acquired {
-            token: dispatch_token,
-            ..
-        } = store.outbox_claim_dispatch("command-b")?
-        else {
-            return Err("dispatch claim was not acquired".into());
-        };
-        store.outbox_resolve_claim(
-            "command-b",
-            dispatch_token,
-            OutboxClaimResolution::NotSent { retry_after_ms: 0 },
-        )?;
-        let OutboxClaimOutcome::Acquired {
-            token: next_dispatch_token,
-            ..
-        } = store.outbox_claim_dispatch("command-b")?
-        else {
-            return Err("not-sent dispatch was not reacquired".into());
-        };
-        assert!(next_dispatch_token > dispatch_token);
-        Ok(())
-    }
-
-    #[test]
-    fn indeterminate_steer_claim_survives_restart_without_reacquisition()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("index.redb");
-        {
-            let store = IndexStore::open(&path)?;
-            put_queued(&store, "command-a")?;
-            let OutboxClaimOutcome::Acquired { token, .. } =
-                store.outbox_claim_steer("command-a", "steer-a")?
-            else {
-                return Err("steer claim was not acquired".into());
-            };
-            store.outbox_resolve_claim(
-                "command-a",
-                token,
-                OutboxClaimResolution::Indeterminate {
-                    error: "connection lost",
-                    retry_after_ms: 500,
-                },
-            )?;
-        }
-
-        let reopened = IndexStore::open(&path)?;
-        assert!(matches!(
-            reopened.outbox_claim_steer("command-a", "steer-a")?,
-            OutboxClaimOutcome::Duplicate(_)
-        ));
-        assert!(matches!(
-            reopened.outbox_claim_dispatch("command-a")?,
-            OutboxClaimOutcome::Unavailable(Some(_))
-        ));
-        assert_eq!(reopened.outbox_list(None)?[0].state, OutboxState::Uncertain);
         Ok(())
     }
 }

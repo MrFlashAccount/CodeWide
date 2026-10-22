@@ -34,6 +34,7 @@ export function useConversationTools(props: UseConversationToolsProps) {
       void props.agentsInputs.onRefreshSubagents?.(props.draftThreadId).catch(() => undefined);
       routeNavigation.openAgents({
         initialThreadId,
+        parentLabel: props.surfaceInputs.thread?.title ?? null,
         parentThreadId: props.draftThreadId,
         summaries,
       });

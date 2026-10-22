@@ -16,7 +16,9 @@ type Props = Pick<
   | "setThreadSearchVisible"
   | "sessionCompactionCount"
   | "dismissComposerKeyboardForOverlay"
->;
+> & {
+  readonly identitySubtitle: string | null;
+};
 
 export function ReadSurfaceHeader(props: Props) {
   return (
@@ -30,6 +32,7 @@ export function ReadSurfaceHeader(props: Props) {
       forkPicker={undefined}
       historyActivityModel={null}
       historyActivityResourceId={null}
+      identitySubtitle={props.identitySubtitle}
       newChat={false}
       onArchive={undefined}
       onCompact={undefined}

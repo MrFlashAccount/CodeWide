@@ -50,11 +50,15 @@ export type BooleanCapability = (typeof BOOLEAN_CAPABILITIES)[number];
  * such a fork.
  * `threads.backgroundTaskOutput`: the provider reads the output of a
  * background task a thread started (`thread.backgroundTask.read`).
+ * `orchestration.externalDelivery`: the provider can durably accept and
+ * deduplicate a non-user completion delivery. Absent keeps the host on the
+ * task-addressed `wait_task` fallback.
  */
 export const ADDITIVE_BOOLEAN_CAPABILITIES = [
   "orchestration.tools",
   "threads.crossProviderFork",
   "threads.backgroundTaskOutput",
+  "orchestration.externalDelivery",
 ] as const;
 
 export type AdditiveBooleanCapability = (typeof ADDITIVE_BOOLEAN_CAPABILITIES)[number];

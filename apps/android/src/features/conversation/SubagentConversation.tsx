@@ -62,6 +62,7 @@ export function SubagentConversation({
   workspaceResources,
 }: SubagentConversationProps) {
   const { compact, connectionId, onBack, onOpenSubagent, thread } = view;
+  const threadListItem = subagentThreadListItem(view.summary, thread, connectionId);
   const routeNavigation = useConversationRouteNavigation();
   const scope = `${connectionId}\u0000${thread.id}`;
   const viewport = useTimelineViewportState(scope);
@@ -138,6 +139,7 @@ export function SubagentConversation({
       void refresh?.(thread.id).catch(() => undefined);
       routeNavigation.openAgents({
         initialThreadId,
+        parentLabel: threadListItem.title,
         parentThreadId: thread.id,
         summaries: children,
       });
@@ -178,6 +180,7 @@ export function SubagentConversation({
       }
       getStableTransferAccess={getStableTransferAccess}
       getTransferAccess={getTransferAccess}
+      headerSubtitle={view.parentBreadcrumb}
       onBack={onBack}
       onFixUnsupportedBlock={fixUnsupportedBlock}
       onOpenSubagentThread={onOpenSubagent}
@@ -190,7 +193,7 @@ export function SubagentConversation({
       remoteThread={thread}
       reviewContent={<ContentReviewComposer targetPrefix="agent-response:" />}
       server={server}
-      thread={subagentThreadListItem(view.summary, thread, connectionId)}
+      thread={threadListItem}
       viewport={viewport}
     />
   );

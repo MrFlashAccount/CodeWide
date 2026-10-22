@@ -2694,6 +2694,7 @@ async fn run_out_of_order_app_server(
             Some("thread/list") => slow_id = Some(id),
             Some("config/read") => {
                 send_value(&mut socket, &json!({"id": id, "result": {"fast": true}})).await?;
+                tokio::time::sleep(Duration::from_millis(25)).await;
                 let id = slow_id
                     .take()
                     .ok_or("slow request was not forwarded first")?;

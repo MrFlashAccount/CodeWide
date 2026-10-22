@@ -7,8 +7,12 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::task::{TaskId, WaitMode};
 use crate::agent::model::{AppThreadId, ClientToolSpec, ProviderId};
 
+pub const DELEGATE_TASK: &str = "codewide_delegate_task";
+pub const WAIT_TASK: &str = "codewide_wait_task";
+pub const CANCEL_TASK: &str = "codewide_cancel_task";
 pub const SPAWN_AGENT: &str = "codewide_spawn_agent";
 pub const WAIT_AGENT: &str = "codewide_wait_agent";
 pub const SEND_AGENT: &str = "codewide_send_agent";
@@ -22,6 +26,83 @@ pub const MAX_WAIT: Duration = Duration::from_mins(5);
 /// The declared tools, identical for every provider.
 #[must_use]
 pub fn specs() -> Vec<ClientToolSpec> {
+    let mut specs = task_specs();
+    specs.extend(compatibility_specs());
+    specs
+}
+
+fn task_specs() -> Vec<ClientToolSpec> {
+    let task_id = json!({
+        "type": "string",
+        "description": "Durable task id returned by codewide_delegate_task."
+    });
+    vec![
+        ClientToolSpec {
+            name: DELEGATE_TASK.into(),
+            description: "Delegate a task to a dedicated child thread. The host preserves the task across reconnects and restarts. Use deferred to continue immediately or blocking to wait while this turn remains alive.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "The complete task for the child agent."},
+                    "waitMode": {"type": "string", "enum": ["blocking", "deferred"]},
+                    "provider": {"type": "string", "description": "Target provider. Default: this thread's provider."},
+                    "model": {"type": "string", "description": "Target model. Default: this thread's model on the same provider, else the target provider default."},
+                    "name": {"type": "string", "description": "Short child display name."},
+                    "permissionProfile": {"type": "string", "description": "Requested target profile, never stronger than the parent ceiling."},
+                    "workspace": {
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "mode": {"const": "sharedReadOnly"},
+                                    "cwd": {"type": "string", "description": "Absolute shared working directory; default is the parent's cwd."}
+                                },
+                                "required": ["mode"],
+                                "additionalProperties": false
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "mode": {"const": "isolatedWrite"},
+                                    "sourceWorkspace": {"type": "string", "description": "Absolute source workspace; default is the parent's cwd."}
+                                },
+                                "required": ["mode"],
+                                "additionalProperties": false
+                            }
+                        ]
+                    }
+                },
+                "required": ["prompt", "waitMode", "workspace"],
+                "additionalProperties": false
+            }),
+        },
+        ClientToolSpec {
+            name: WAIT_TASK.into(),
+            description: "Wait for one durable delegated task. Returns only that task's initial turn result and acknowledges fallback delivery when terminal.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "taskId": task_id,
+                    "timeoutSeconds": {"type": "number", "minimum": 0, "maximum": 300, "description": "Default 60, at most 300."}
+                },
+                "required": ["taskId"],
+                "additionalProperties": false
+            }),
+        },
+        ClientToolSpec {
+            name: CANCEL_TASK.into(),
+            description: "Record cancellation for one durable delegated task. Safe to repeat; cancelling is not the same as cancelled.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"taskId": task_id},
+                "required": ["taskId"],
+                "additionalProperties": false
+            }),
+        },
+    ]
+}
+
+fn compatibility_specs() -> Vec<ClientToolSpec> {
     let agent_thread_id = json!({
         "type": "string",
         "description": "Thread id of an agent this thread started (from codewide_spawn_agent or codewide_list_agents)."
@@ -89,6 +170,39 @@ pub fn specs() -> Vec<ClientToolSpec> {
     ]
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "mode",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum WorkspaceRequest {
+    SharedReadOnly {
+        cwd: Option<String>,
+    },
+    IsolatedWrite {
+        source_workspace: Option<String>,
+    },
+    /// Internal compatibility arm; never decoded from `codewide_delegate_task`.
+    /// Admission maps it to shared read-only or isolated write and never to
+    /// the persisted legacy shared-write mode.
+    CompatibilitySpawn {
+        cwd: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegateRequest {
+    pub prompt: String,
+    pub wait_mode: WaitMode,
+    pub provider: Option<ProviderId>,
+    pub model: Option<String>,
+    pub name: Option<String>,
+    pub permission_profile: Option<String>,
+    pub workspace: WorkspaceRequest,
+}
+
 /// How `codewide_send_agent` delivers a message.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -124,6 +238,9 @@ pub struct SendRequest {
 /// One validated tool call.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolRequest {
+    Delegate(DelegateRequest),
+    WaitTask(TaskWaitRequest),
+    CancelTask(TaskId),
     Spawn(SpawnRequest),
     Wait(WaitRequest),
     Send(SendRequest),
@@ -131,8 +248,51 @@ pub enum ToolRequest {
     List,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskWaitRequest {
+    pub task_id: TaskId,
+    pub timeout: Duration,
+}
+
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DelegateArguments {
+    prompt: String,
+    wait_mode: WaitMode,
+    provider: Option<String>,
+    model: Option<String>,
+    name: Option<String>,
+    permission_profile: Option<String>,
+    workspace: WorkspaceArguments,
+}
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "mode",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum WorkspaceArguments {
+    SharedReadOnly { cwd: Option<String> },
+    IsolatedWrite { source_workspace: Option<String> },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TaskWaitArguments {
+    task_id: String,
+    timeout_seconds: Option<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TaskArguments {
+    task_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SpawnArguments {
     prompt: String,
     provider: Option<String>,
@@ -143,14 +303,14 @@ struct SpawnArguments {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct WaitArguments {
     agent_thread_id: String,
     timeout_seconds: Option<f64>,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SendArguments {
     agent_thread_id: String,
     message: String,
@@ -159,7 +319,7 @@ struct SendArguments {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ChildArguments {
     agent_thread_id: String,
 }
@@ -177,6 +337,31 @@ fn child(id: &str) -> Result<AppThreadId, String> {
     AppThreadId::parse(id).ok_or_else(|| "agentThreadId must be a non-empty thread id".to_owned())
 }
 
+fn task(id: &str) -> Result<TaskId, String> {
+    TaskId::parse(id).ok_or_else(|| "taskId must be a UUIDv4 task id".to_owned())
+}
+
+fn timeout(seconds: Option<f64>) -> Result<Duration, String> {
+    match seconds {
+        None => Ok(DEFAULT_WAIT),
+        Some(seconds) if seconds.is_finite() && seconds >= 0.0 => {
+            Ok(Duration::from_secs_f64(seconds.min(MAX_WAIT.as_secs_f64())))
+        }
+        Some(_) => Err("timeoutSeconds must be a number from 0 to 300".into()),
+    }
+}
+
+fn absolute_optional(value: Option<String>, label: &str) -> Result<Option<String>, String> {
+    let value = present(value);
+    if value
+        .as_deref()
+        .is_some_and(|path| !std::path::Path::new(path).is_absolute())
+    {
+        return Err(format!("{label} must be an absolute path"));
+    }
+    Ok(value)
+}
+
 /// Optional strings: empty means absent.
 fn present(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
@@ -188,6 +373,52 @@ fn present(value: Option<String>) -> Option<String> {
 /// Returns the message the model sees for an unknown tool or invalid arguments.
 pub fn parse(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
     match tool {
+        DELEGATE_TASK => {
+            let arguments: DelegateArguments = decode(tool, arguments)?;
+            if arguments.prompt.trim().is_empty() {
+                return Err("prompt must not be empty".into());
+            }
+            let provider = match present(arguments.provider) {
+                Some(provider) => Some(
+                    ProviderId::parse(&provider)
+                        .ok_or_else(|| format!("unknown agent provider: {provider}"))?,
+                ),
+                None => None,
+            };
+            let workspace = match arguments.workspace {
+                WorkspaceArguments::SharedReadOnly { cwd } => WorkspaceRequest::SharedReadOnly {
+                    cwd: absolute_optional(cwd, "workspace.cwd")?,
+                },
+                WorkspaceArguments::IsolatedWrite { source_workspace } => {
+                    WorkspaceRequest::IsolatedWrite {
+                        source_workspace: absolute_optional(
+                            source_workspace,
+                            "workspace.sourceWorkspace",
+                        )?,
+                    }
+                }
+            };
+            Ok(ToolRequest::Delegate(DelegateRequest {
+                prompt: arguments.prompt,
+                wait_mode: arguments.wait_mode,
+                provider,
+                model: present(arguments.model),
+                name: present(arguments.name),
+                permission_profile: present(arguments.permission_profile),
+                workspace,
+            }))
+        }
+        WAIT_TASK => {
+            let arguments: TaskWaitArguments = decode(tool, arguments)?;
+            Ok(ToolRequest::WaitTask(TaskWaitRequest {
+                task_id: task(&arguments.task_id)?,
+                timeout: timeout(arguments.timeout_seconds)?,
+            }))
+        }
+        CANCEL_TASK => {
+            let arguments: TaskArguments = decode(tool, arguments)?;
+            Ok(ToolRequest::CancelTask(task(&arguments.task_id)?))
+        }
         SPAWN_AGENT => {
             let arguments: SpawnArguments = decode(tool, arguments)?;
             if arguments.prompt.trim().is_empty() {
@@ -200,13 +431,7 @@ pub fn parse(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
                 ),
                 None => None,
             };
-            let cwd = present(arguments.cwd);
-            if cwd
-                .as_deref()
-                .is_some_and(|cwd| !std::path::Path::new(cwd).is_absolute())
-            {
-                return Err("cwd must be an absolute path".into());
-            }
+            let cwd = absolute_optional(arguments.cwd, "cwd")?;
             Ok(ToolRequest::Spawn(SpawnRequest {
                 prompt: arguments.prompt,
                 provider,
@@ -218,16 +443,9 @@ pub fn parse(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
         }
         WAIT_AGENT => {
             let arguments: WaitArguments = decode(tool, arguments)?;
-            let timeout = match arguments.timeout_seconds {
-                None => DEFAULT_WAIT,
-                Some(seconds) if seconds.is_finite() && seconds >= 0.0 => {
-                    Duration::from_secs_f64(seconds.min(MAX_WAIT.as_secs_f64()))
-                }
-                Some(_) => return Err("timeoutSeconds must be a number from 0 to 300".into()),
-            };
             Ok(ToolRequest::Wait(WaitRequest {
                 child: child(&arguments.agent_thread_id)?,
-                timeout,
+                timeout: timeout(arguments.timeout_seconds)?,
             }))
         }
         SEND_AGENT => {
@@ -306,6 +524,8 @@ pub struct CancelResult {
 #[serde(rename_all = "camelCase")]
 pub struct ListedAgent {
     pub agent_thread_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     pub provider: String,
     pub model: String,
     /// The provider's name of `model` (`Opus 5.5`), when it names it.
@@ -335,6 +555,9 @@ mod tests {
         assert_eq!(
             names,
             [
+                DELEGATE_TASK,
+                WAIT_TASK,
+                CANCEL_TASK,
                 SPAWN_AGENT,
                 WAIT_AGENT,
                 SEND_AGENT,

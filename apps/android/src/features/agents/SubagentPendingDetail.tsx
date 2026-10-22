@@ -14,6 +14,7 @@ export function SubagentPendingDetail({
   loading,
   onBack,
   onClose,
+  parentBreadcrumb,
   summary,
 }: {
   compact: boolean;
@@ -21,6 +22,7 @@ export function SubagentPendingDetail({
   loading: boolean;
   onBack: () => void;
   onClose: () => void;
+  parentBreadcrumb: string | null;
   summary: StoredThreadSummary;
 }) {
   return (
@@ -40,7 +42,7 @@ export function SubagentPendingDetail({
             {subagentDisplayName(summary)}
           </Text>
           <Text numberOfLines={1} style={styles.headerSubtitle}>
-            {subagentSubtitle(summary)}
+            {parentBreadcrumb ?? subagentSubtitle(summary)}
           </Text>
         </View>
         {!compact && (

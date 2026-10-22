@@ -1764,6 +1764,7 @@ it("captures the original V1 subagent workspace before opening its route", () =>
   act(() => {
     view.result.current.openAgents({
       initialThreadId: null,
+      parentLabel: "Agent A",
       parentThreadId: "agent-a",
       summaries,
     });
@@ -1785,6 +1786,7 @@ it("captures the original V1 subagent workspace before opening its route", () =>
   expect(agentRouteSessions.get(sessionId, threadRouteSessionOwner(parsed.value))?.request).toEqual(
     {
       initialThreadId: null,
+      parentLabel: "Agent A",
       parentThreadId: "agent-a",
       summaries,
     },

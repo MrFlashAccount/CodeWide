@@ -39,10 +39,11 @@ pub enum Capability {
     OrchestrationTools,
     ThreadsCrossProviderFork,
     ThreadsBackgroundTaskOutput,
+    OrchestrationExternalDelivery,
 }
 
 impl Capability {
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
         Self::TurnsSteer,
         Self::TurnsProviderInitiated,
         Self::ThreadsHostMintedIds,
@@ -72,6 +73,7 @@ impl Capability {
         Self::OrchestrationTools,
         Self::ThreadsCrossProviderFork,
         Self::ThreadsBackgroundTaskOutput,
+        Self::OrchestrationExternalDelivery,
     ];
 
     /// Protocol name of the capability.
@@ -107,6 +109,7 @@ impl Capability {
             Self::OrchestrationTools => "orchestration.tools",
             Self::ThreadsCrossProviderFork => "threads.crossProviderFork",
             Self::ThreadsBackgroundTaskOutput => "threads.backgroundTaskOutput",
+            Self::OrchestrationExternalDelivery => "orchestration.externalDelivery",
         }
     }
 }
@@ -190,6 +193,10 @@ pub struct CapabilitySet {
     /// unsupported.
     #[serde(rename = "threads.backgroundTaskOutput", default)]
     pub threads_background_task_output: bool,
+    /// The provider can persist and deduplicate a non-user orchestration
+    /// completion. Absent means the host must retain `awaitingResume`.
+    #[serde(rename = "orchestration.externalDelivery", default)]
+    pub orchestration_external_delivery: bool,
     #[serde(rename = "turns.startWhileActive")]
     pub turns_start_while_active: StartWhileActiveMode,
 }
@@ -228,6 +235,7 @@ impl CapabilitySet {
             orchestration_tools: false,
             threads_cross_provider_fork: false,
             threads_background_task_output: false,
+            orchestration_external_delivery: false,
             turns_start_while_active,
         }
     }
@@ -265,6 +273,7 @@ impl CapabilitySet {
             Capability::OrchestrationTools => self.orchestration_tools,
             Capability::ThreadsCrossProviderFork => self.threads_cross_provider_fork,
             Capability::ThreadsBackgroundTaskOutput => self.threads_background_task_output,
+            Capability::OrchestrationExternalDelivery => self.orchestration_external_delivery,
         }
     }
 }
@@ -305,6 +314,7 @@ mod tests {
             orchestration_tools: true,
             threads_cross_provider_fork: true,
             threads_background_task_output: true,
+            orchestration_external_delivery: true,
             turns_start_while_active: StartWhileActiveMode::Busy,
         })?;
         for capability in Capability::ALL {
@@ -322,11 +332,13 @@ mod tests {
             object.remove("orchestration.tools");
             object.remove("threads.crossProviderFork");
             object.remove("threads.backgroundTaskOutput");
+            object.remove("orchestration.externalDelivery");
         }
         let declared: CapabilitySet = serde_json::from_value(older)?;
         assert!(!declared.supports(Capability::OrchestrationTools));
         assert!(!declared.supports(Capability::ThreadsCrossProviderFork));
         assert!(!declared.supports(Capability::ThreadsBackgroundTaskOutput));
+        assert!(!declared.supports(Capability::OrchestrationExternalDelivery));
         Ok(())
     }
 }

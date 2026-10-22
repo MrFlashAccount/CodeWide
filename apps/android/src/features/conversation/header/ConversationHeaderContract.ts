@@ -27,6 +27,8 @@ export type ConversationHeaderProps = {
   forkPicker: ForkTargetPicker | undefined;
   historyActivityModel: ThreadHistoryModel | null;
   historyActivityResourceId: string | null;
+  /** Optional owner-captured context shown instead of the ordinary workspace subtitle. */
+  identitySubtitle?: string | null;
   newChat: boolean;
   onArchive: (() => Promise<void>) | undefined;
   onBack: (() => void) | undefined;

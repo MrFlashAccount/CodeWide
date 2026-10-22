@@ -224,7 +224,7 @@ pub(super) async fn forward_rpc_response(
     }
     if let (Some(orchestration), Some(result)) = (&observers.orchestration, response.get("result"))
     {
-        orchestration.observe_rpc_result(method, result);
+        orchestration.observe_rpc_result(&observers.wire.descriptor.id, method, result);
     }
     if let (Some(projects), Some(result)) = (observers.projects, response.get("result")) {
         projects.observe_rpc_result(method, result).await;
