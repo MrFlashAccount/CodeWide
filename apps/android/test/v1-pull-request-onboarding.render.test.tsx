@@ -344,25 +344,12 @@ it("caps the tray at the same width as an Android Material sheet", () => {
   });
 });
 
-it("dismisses from the full-screen backdrop after layout and opens again", () => {
-  let presentationFrame: FrameRequestCallback | null = null;
-  const frame = jest.spyOn(global, "requestAnimationFrame").mockImplementation((callback) => {
-    presentationFrame = callback;
-    return 1;
-  });
+it("dismisses from the full-screen backdrop and opens again", () => {
   const onOpenChange = jest.fn();
   const view = renderWelcome(SINGLE_PROVIDER, capabilities(SINGLE_PROVIDER), onOpenChange);
 
   fireEvent.press(view.getByRole("button", { name: "Connect a provider" }));
   expect(view.getByText("Choose where CodeWide should look for pull requests.")).toBeOnTheScreen();
-  fireEvent(view.getByTestId("tray-content-measure"), "layout", {
-    nativeEvent: { layout: { height: 420, width: 400, x: 0, y: 380 } },
-  });
-  expect(presentationFrame).not.toBeNull();
-  act(() => {
-    presentationFrame?.(0);
-  });
-  frame.mockRestore();
 
   fireEvent.press(view.getByTestId("tray-backdrop"));
   expect(view.queryByText("Choose where CodeWide should look for pull requests.")).toBeNull();

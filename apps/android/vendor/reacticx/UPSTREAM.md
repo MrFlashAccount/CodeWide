@@ -10,13 +10,13 @@ path removes animation without removing the interaction. Retained callbacks in
 the Tray root and navigation hook use CodeWide's `useEvent`, so gesture,
 context, native and scheduled callbacks keep a stable identity while reading
 the latest render values. An incoming `Tray.View` mounts synchronously when it
-becomes active; retained state owns only the outgoing view's exit animation, so
-the sheet cannot measure and present a handle-only intermediate layout after a
-navigation reset. Presentation starts one committed frame after the initial
-measurement, so the UI thread receives the sheet height and off-screen travel
-before it starts the entrance spring instead of snapping from provisional
-bottom geometry. Closing before the first layout now unmounts immediately,
-and a versioned close completion cannot unmount a later presentation. The
+becomes active; retained state owns only the outgoing view's exit animation.
+The complete sheet participates in its final layout immediately. Reanimated's
+native entering worklet receives that target geometry and performs the
+off-screen-to-target transform without a JS layout callback, passive-effect
+presentation step, or animation-frame delay. A native layout transition owns
+later content-size changes, while a separate transform layer owns drag,
+detents, and dismissal. A versioned close completion cannot unmount a later presentation. The
 full-screen backdrop hit target is independent from the animated scrim, so an
 outside press remains actionable throughout presentation. Presentation keeps
 the upstream spring, while dismissal uses a bounded 180 ms timing: the native
