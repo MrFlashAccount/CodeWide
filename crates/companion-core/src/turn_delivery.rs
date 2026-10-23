@@ -54,6 +54,23 @@ pub(crate) fn reserve_initial_turn(
     )
 }
 
+/// Transfers a parent completion into the outbox in the caller's metadata
+/// transaction. The caller commits both ownership changes or neither.
+pub(crate) fn enqueue_completion_in_write(
+    write: &redb::WriteTransaction,
+    command_id: &str,
+    parent_thread_id: &str,
+    message: &str,
+) -> Result<(), StoreError> {
+    let params = json!({
+        "threadId": parent_thread_id,
+        "clientUserMessageId": command_id,
+        "input": [{"type": "text", "text": message, "text_elements": []}],
+    });
+    turn_delivery_tables::put_queued_turn_in_write(write, command_id, parent_thread_id, params)?;
+    Ok(())
+}
+
 pub(crate) enum ClaimResolution {
     Delivered(Option<String>),
     NotSent(u64),

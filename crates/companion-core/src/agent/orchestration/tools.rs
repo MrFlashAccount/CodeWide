@@ -39,7 +39,7 @@ fn task_specs() -> Vec<ClientToolSpec> {
     vec![
         ClientToolSpec {
             name: DELEGATE_TASK.into(),
-            description: "Delegate a task to a dedicated child thread. The host preserves the task across reconnects and restarts. Use deferred to continue immediately or blocking to wait while this turn remains alive.".into(),
+            description: "Delegate a task to a dedicated child thread. The host preserves the task across reconnects and restarts. Use deferred to continue immediately; completion is injected into this parent as a queued turn when it is idle. Use blocking to wait while this turn remains alive.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -48,13 +48,23 @@ fn task_specs() -> Vec<ClientToolSpec> {
                     "provider": {"type": "string", "description": "Target provider. Default: this thread's provider."},
                     "model": {"type": "string", "description": "Target model. Default: this thread's model on the same provider, else the target provider default."},
                     "name": {"type": "string", "description": "Short child display name."},
-                    "permissionProfile": {"type": "string", "description": "Requested target profile, never stronger than the parent ceiling."},
+                    "permissionProfile": {"type": "string", "description": "Default: inherit the parent's profile exactly, translated to the target provider. An explicit profile may narrow access."},
                     "workspace": {
+                        "description": "Default: inherit the parent's cwd and permissions. Isolation is explicit opt-in.",
                         "oneOf": [
                             {
                                 "type": "object",
                                 "properties": {
-                                    "mode": {"const": "sharedReadOnly"},
+                                    "mode": {"const": "inherit"},
+                                    "cwd": {"type": "string", "description": "Absolute working directory; default is the parent's cwd. No VCS required."}
+                                },
+                                "required": ["mode"],
+                                "additionalProperties": false
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "mode": {"const": "sharedReadOnly", "description": "Legacy spelling of inherit: keeps the parent permissions. Request :read-only explicitly to restrict access."},
                                     "cwd": {"type": "string", "description": "Absolute shared working directory; default is the parent's cwd."}
                                 },
                                 "required": ["mode"],
@@ -64,7 +74,7 @@ fn task_specs() -> Vec<ClientToolSpec> {
                                 "type": "object",
                                 "properties": {
                                     "mode": {"const": "isolatedWrite"},
-                                    "sourceWorkspace": {"type": "string", "description": "Absolute source workspace; default is the parent's cwd."}
+                                    "sourceWorkspace": {"type": "string", "description": "Absolute source owned by a configured VCS provider supporting workspace.create@1; default is the parent's cwd."}
                                 },
                                 "required": ["mode"],
                                 "additionalProperties": false
@@ -72,7 +82,7 @@ fn task_specs() -> Vec<ClientToolSpec> {
                         ]
                     }
                 },
-                "required": ["prompt", "waitMode", "workspace"],
+                "required": ["prompt", "waitMode"],
                 "additionalProperties": false
             }),
         },
@@ -118,8 +128,8 @@ fn compatibility_specs() -> Vec<ClientToolSpec> {
                     "provider": {"type": "string", "description": "Agent provider id (for example \"codex\" or \"claude\"). Default: this thread's provider."},
                     "model": {"type": "string", "description": "Model id. Default: this thread's model on the same provider, else the provider's default model."},
                     "name": {"type": "string", "description": "Short display name of the agent."},
-                    "cwd": {"type": "string", "description": "Absolute working directory. Default: this thread's working directory."},
-                    "permissionProfile": {"type": "string", "description": "One of :read-only, :workspace, :full-access, :danger-full-access. Default and upper bound: this thread's profile."}
+                    "cwd": {"type": "string", "description": "Absolute working directory; default is the parent's cwd. Used directly with inherited permissions; no VCS or isolation required."},
+                    "permissionProfile": {"type": "string", "description": "Default: inherit the parent's permissions exactly. An explicit profile may narrow access; full-access aliases have the same ceiling."}
                 },
                 "required": ["prompt"],
                 "additionalProperties": false
@@ -177,6 +187,9 @@ fn compatibility_specs() -> Vec<ClientToolSpec> {
     rename_all_fields = "camelCase"
 )]
 pub enum WorkspaceRequest {
+    Inherit {
+        cwd: Option<String>,
+    },
     SharedReadOnly {
         cwd: Option<String>,
     },
@@ -184,8 +197,7 @@ pub enum WorkspaceRequest {
         source_workspace: Option<String>,
     },
     /// Internal compatibility arm; never decoded from `codewide_delegate_task`.
-    /// Admission maps it to shared read-only or isolated write and never to
-    /// the persisted legacy shared-write mode.
+    /// Admission uses the cwd directly with the parent permissions.
     CompatibilitySpawn {
         cwd: Option<String>,
     },
@@ -263,7 +275,7 @@ struct DelegateArguments {
     model: Option<String>,
     name: Option<String>,
     permission_profile: Option<String>,
-    workspace: WorkspaceArguments,
+    workspace: Option<WorkspaceArguments>,
 }
 
 #[derive(Deserialize)]
@@ -274,6 +286,7 @@ struct DelegateArguments {
     deny_unknown_fields
 )]
 enum WorkspaceArguments {
+    Inherit { cwd: Option<String> },
     SharedReadOnly { cwd: Option<String> },
     IsolatedWrite { source_workspace: Option<String> },
 }
@@ -386,10 +399,16 @@ pub fn parse(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
                 None => None,
             };
             let workspace = match arguments.workspace {
-                WorkspaceArguments::SharedReadOnly { cwd } => WorkspaceRequest::SharedReadOnly {
+                None => WorkspaceRequest::Inherit { cwd: None },
+                Some(WorkspaceArguments::Inherit { cwd }) => WorkspaceRequest::Inherit {
                     cwd: absolute_optional(cwd, "workspace.cwd")?,
                 },
-                WorkspaceArguments::IsolatedWrite { source_workspace } => {
+                Some(WorkspaceArguments::SharedReadOnly { cwd }) => {
+                    WorkspaceRequest::SharedReadOnly {
+                        cwd: absolute_optional(cwd, "workspace.cwd")?,
+                    }
+                }
+                Some(WorkspaceArguments::IsolatedWrite { source_workspace }) => {
                     WorkspaceRequest::IsolatedWrite {
                         source_workspace: absolute_optional(
                             source_workspace,

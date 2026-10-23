@@ -208,6 +208,26 @@ impl IndexStore {
     }
 }
 
+/// Stores an idle-only turn inside its caller's metadata transaction.
+pub(crate) fn put_queued_turn_in_write(
+    write: &redb::WriteTransaction,
+    command_id: &str,
+    thread_id: &str,
+    params: Value,
+) -> Result<OutboxCommand, StoreError> {
+    put_turn_start_in_write(
+        write,
+        command_id,
+        thread_id,
+        params,
+        OutboxPutMetadata {
+            created_at: None,
+            presentation: OutboxPresentation::Queue,
+            workspace_request_id: None,
+        },
+    )
+}
+
 pub(super) fn put_turn_start_in_write(
     write: &redb::WriteTransaction,
     command_id: &str,

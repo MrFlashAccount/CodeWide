@@ -108,7 +108,7 @@ fn host_login_method(gh_problem: Option<String>) -> AuthMethod {
         ..method(
             METHOD_HOST_LOGIN,
             AuthMethodKind::HostLogin,
-            "Log in through gh",
+            "Sign in with GitHub",
             "Runs gh auth login on the companion host. Enter the one-time code on GitHub; gh keeps the token. gh requests the scopes repo, read:org and gist.".into(),
         )
     }

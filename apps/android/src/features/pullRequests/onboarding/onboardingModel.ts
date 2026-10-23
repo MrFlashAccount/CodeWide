@@ -65,3 +65,10 @@ export function startProviderInteraction<Result>({
     },
   );
 }
+
+/** Settles a pending start once the authoritative accounts snapshot exposes its flow. */
+export function settleProviderInteraction(key: string): void {
+  if (providerInteraction(key).pending === "starting") {
+    onboardingModel[key]?.set(IDLE);
+  }
+}

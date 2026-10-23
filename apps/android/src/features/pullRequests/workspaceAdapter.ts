@@ -35,7 +35,6 @@ export function createPullRequestsWorkspaceAdapter({
   return {
     async cancelAuth(connectionId, flowId) {
       await call(connectionId, "companion/forge/auth/cancel", { flowId });
-      await refreshAccounts(connectionId);
     },
     checkAgain: refreshAccounts,
     async disconnect(connectionId, { account, confirmation, mode }) {
@@ -44,7 +43,6 @@ export function createPullRequestsWorkspaceAdapter({
         confirmation,
         mode,
       });
-      await refreshAccounts(connectionId);
     },
     async setProviderEnabled(connectionId, pluginId, enabled) {
       const provider: ForgeProvider = requireParsed(
@@ -53,7 +51,6 @@ export function createPullRequestsWorkspaceAdapter({
         ),
         "provider",
       );
-      await refreshAccounts(connectionId);
       return provider;
     },
     async startAuth(connectionId, request) {
@@ -69,7 +66,10 @@ export function createPullRequestsWorkspaceAdapter({
         ),
         "auth start",
       );
-      await refreshAccounts(connectionId);
+      // The start acknowledgement already carries the authoritative flow or
+      // connected account. Do not hold that UI-critical result behind a
+      // second accounts read: the Companion publishes an accounts invalidation
+      // for durable reconciliation, and the query also resynchronizes.
       return result;
     },
     async submitToken(connectionId, request) {
@@ -85,7 +85,6 @@ export function createPullRequestsWorkspaceAdapter({
         },
       );
       const account = requireParsed(parseSubmitToken(response), "token result");
-      await refreshAccounts(connectionId);
       return account;
     },
   };

@@ -125,11 +125,18 @@ impl OrchestrationService {
                 app_thread_id,
                 cwd.to_owned(),
                 settings.clone(),
+                bundle.task.permission.execution_policy.as_ref(),
             )
             .await
         {
             Ok(thread) => {
                 let child = thread.app_thread_id.clone();
+                self.profiles.record_created(
+                    &wire.descriptor.id,
+                    child.as_str(),
+                    &settings.permission_profile,
+                    bundle.task.permission.execution_policy.clone(),
+                );
                 self.task_journal
                     .bind_child(&bundle.task.task_id, child.clone())
                     .await

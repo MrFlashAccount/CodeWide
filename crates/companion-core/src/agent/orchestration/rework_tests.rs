@@ -7,10 +7,10 @@ use crate::{
         orchestration::{
             journal::AdmissionRecord,
             task::{
-                AttemptId, AttemptState, CompletionDelivery, DeliveryId, DeliveryRoute,
-                DeliveryState, HostProvenance, OrchestrationTask, PermissionEnvelope,
-                PublicTaskStatus, TaskAttempt, TaskId, TaskState, WaitMode, WorkspaceClaim,
-                WorkspaceClaimId, WorkspaceClaimState, WorkspaceMode,
+                AttemptId, AttemptState, CompletionDelivery, DeliveryId, DeliveryProgress,
+                DeliveryState, HostProvenance, OrchestrationTask, ParentDeliveryState,
+                PermissionEnvelope, PublicTaskStatus, TaskAttempt, TaskId, TaskState, WaitMode,
+                WorkspaceClaim, WorkspaceClaimId, WorkspaceClaimState, WorkspaceMode,
             },
         },
     },
@@ -19,7 +19,11 @@ use crate::{
 };
 use redb::ReadableDatabase;
 
-fn admission(task_id: &TaskId, child: &AppThreadId, call_key: &str) -> (AdmissionRecord, String) {
+pub(super) fn admission(
+    task_id: &TaskId,
+    child: &AppThreadId,
+    call_key: &str,
+) -> (AdmissionRecord, String) {
     let attempt_id = AttemptId::new();
     let delivery_id = DeliveryId::new();
     let workspace_claim_id = WorkspaceClaimId::new();
@@ -51,6 +55,7 @@ fn admission(task_id: &TaskId, child: &AppThreadId, call_key: &str) -> (Admissio
             model: "claude-default".into(),
             name: None,
             permission: PermissionEnvelope {
+                execution_policy: None,
                 parent_ceiling: ":workspace".into(),
                 requested_profile: None,
                 translated_profile: ":read-only".into(),
@@ -70,8 +75,9 @@ fn admission(task_id: &TaskId, child: &AppThreadId, call_key: &str) -> (Admissio
         delivery: CompletionDelivery {
             delivery_id,
             task_id: task_id.clone(),
-            route: DeliveryRoute::AwaitingResume,
-            state: DeliveryState::Pending,
+            progress: DeliveryProgress::AwaitingResume {
+                state: DeliveryState::Pending,
+            },
             dedupe_key: format!("task-completion:{}", task_id.as_str()),
         },
         workspace: WorkspaceClaim {
@@ -609,7 +615,12 @@ async fn a_foreign_provider_cannot_end_wait_delivery_queue_or_tracker_state() ->
     assert!(!wait.is_finished());
     let bundle = harness.service.task_journal.get(&task_id).await?;
     assert_eq!(bundle.task.state, TaskState::Running);
-    assert_eq!(bundle.delivery.state, DeliveryState::Pending);
+    assert_eq!(
+        bundle.delivery.progress,
+        DeliveryProgress::ParentTurn {
+            state: ParentDeliveryState::Pending
+        }
+    );
     assert!(
         harness
             .service

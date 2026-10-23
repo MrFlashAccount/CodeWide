@@ -13,9 +13,10 @@ use super::{
     Caller, OrchestrationService, ToolError,
     journal::{AdmissionRecord, TaskBundle},
     task::{
-        AttemptId, AttemptState, CompletionDelivery, DeliveryId, DeliveryRoute, DeliveryState,
-        HostProvenance, OrchestrationTask, PublicTaskStatus, RecoveryAction, TaskAttempt, TaskId,
-        TaskSnapshot, TaskState, WaitMode, WorkspaceClaim, WorkspaceClaimId, WorkspaceClaimState,
+        AttemptId, AttemptState, CompletionDelivery, DeliveryId, DeliveryProgress, DeliveryState,
+        HostProvenance, OrchestrationTask, ParentDeliveryState, PublicTaskStatus, RecoveryAction,
+        TaskAttempt, TaskId, TaskSnapshot, TaskState, WaitMode, WorkspaceClaim, WorkspaceClaimId,
+        WorkspaceClaimState,
     },
     tools::{DelegateRequest, SpawnRequest, WorkspaceRequest},
 };
@@ -93,8 +94,7 @@ impl OrchestrationService {
         let delivery = CompletionDelivery {
             delivery_id,
             task_id: task_id.clone(),
-            route: DeliveryRoute::AwaitingResume,
-            state: DeliveryState::Pending,
+            progress: completion_progress(&identity, request.wait_mode),
             dedupe_key: format!("task-completion:{}", task_id.as_str()),
         };
         let workspace = WorkspaceClaim {
@@ -180,6 +180,13 @@ impl OrchestrationService {
             .ok_or_else(|| ToolError::message("delegate returned an invalid task id"))?;
         let snapshot = self.wait_for_legacy_start(&task_id).await?;
         let agent_thread_id = snapshot.agent_thread_id.ok_or_else(|| {
+            if snapshot.status == PublicTaskStatus::Failed {
+                return ToolError::message(format!(
+                    "agent task {} failed before its child thread started: {}; use codewide_wait_task",
+                    snapshot.task_id,
+                    snapshot.final_message.as_deref().unwrap_or("child creation failed")
+                ));
+            }
             ToolError::message(format!(
                 "agent task {} was accepted but its child thread start is uncertain; use codewide_wait_task",
                 snapshot.task_id
@@ -352,12 +359,14 @@ impl OrchestrationService {
                     task_id = %task_id.as_str(),
                     "delegated task workspace creation failed"
                 );
-                self.fail_task_and_signal(task_id).await?;
+                self.task_journal.fail_workspace(task_id).await?;
+                self.signal_tasks();
                 return Ok(None);
             }
         };
         if operation.phase == WorkspacePhase::Failed {
-            self.fail_task_and_signal(task_id).await?;
+            self.task_journal.fail_workspace(task_id).await?;
+            self.signal_tasks();
             return Ok(None);
         }
         let Some(effective_cwd) = operation
@@ -365,7 +374,8 @@ impl OrchestrationService {
             .as_ref()
             .map(|workspace| workspace.cwd.to_string_lossy().into_owned())
         else {
-            self.fail_task_and_signal(task_id).await?;
+            self.task_journal.fail_workspace(task_id).await?;
+            self.signal_tasks();
             return Ok(None);
         };
         let ready = self
@@ -642,5 +652,17 @@ pub(super) fn addressable_uncertain_snapshot(bundle: &TaskBundle) -> TaskSnapsho
         recovery: Some(RecoveryAction::WaitTask),
         final_message: None,
         cost: None,
+    }
+}
+
+fn completion_progress(identity: &CallIdentity, wait_mode: WaitMode) -> DeliveryProgress {
+    if identity.tool == "codewide_delegate_task" && wait_mode == WaitMode::Deferred {
+        DeliveryProgress::ParentTurn {
+            state: ParentDeliveryState::Pending,
+        }
+    } else {
+        DeliveryProgress::AwaitingResume {
+            state: DeliveryState::Pending,
+        }
     }
 }

@@ -7,13 +7,34 @@
 use super::{
     Caller, OrchestrationService, ToolError,
     journal::TaskBundle,
-    task::{PublicTaskStatus, RecoveryAction, TaskId, TaskSnapshot, TaskState},
+    task::{
+        PublicTaskStatus, RecoveryAction, TaskId, TaskSnapshot, TaskState, WorkspaceClaimState,
+    },
     tools::TaskWaitRequest,
 };
 use crate::{
-    agent::model::{AgentItem, ItemsView, MessagePhase, SortDirection, ThreadTurnsParams, TurnId},
+    agent::model::{
+        AgentItem, ItemsView, MessagePhase, SortDirection, ThreadTurnsParams, TurnId, TurnStatus,
+    },
     store::OutboxState,
 };
+
+pub(super) enum TerminalPayload {
+    Ready {
+        message: Option<String>,
+        cost: Option<crate::agent::model::ProviderCost>,
+    },
+    Unavailable,
+}
+
+impl TerminalPayload {
+    fn into_parts(self) -> (Option<String>, Option<crate::agent::model::ProviderCost>) {
+        match self {
+            Self::Ready { message, cost } => (message, cost),
+            Self::Unavailable => (None, None),
+        }
+    }
+}
 
 impl OrchestrationService {
     pub(super) async fn wait_task(
@@ -160,7 +181,7 @@ impl OrchestrationService {
             bundle = reconciled;
         }
         let (final_message, cost) = if bundle.task.state.is_terminal() {
-            self.terminal_payload(&bundle).await?
+            self.terminal_payload(&bundle).await?.into_parts()
         } else {
             (None, None)
         };
@@ -193,18 +214,27 @@ impl OrchestrationService {
         })
     }
 
-    async fn terminal_payload(
+    pub(super) async fn terminal_payload(
         &self,
         bundle: &TaskBundle,
-    ) -> Result<(Option<String>, Option<crate::agent::model::ProviderCost>), ToolError> {
+    ) -> Result<TerminalPayload, ToolError> {
+        if let WorkspaceClaimState::Failed { error, .. } = &bundle.workspace.state {
+            return Ok(TerminalPayload::Ready {
+                message: Some(error.clone()),
+                cost: None,
+            });
+        }
         let (Some(child), Some(turn_id)) = (
             bundle.attempt.state.child_thread_id(),
             bundle.attempt.state.provider_turn_id(),
         ) else {
-            return Ok((None, None));
+            return Ok(TerminalPayload::Ready {
+                message: None,
+                cost: None,
+            });
         };
         let Some(provider) = self.gateway.registry().get(&bundle.task.provider) else {
-            return Ok((None, None));
+            return Ok(TerminalPayload::Unavailable);
         };
         let turns = match provider
             .thread_turns(ThreadTurnsParams {
@@ -223,7 +253,7 @@ impl OrchestrationService {
                     task_id = %bundle.task.task_id.as_str(),
                     "terminal delegated result payload is temporarily unreadable"
                 );
-                return Ok((None, None));
+                return Ok(TerminalPayload::Unavailable);
             }
         };
         let Some(turn) = turns
@@ -231,8 +261,11 @@ impl OrchestrationService {
             .into_iter()
             .find(|turn| &turn.turn_id == turn_id)
         else {
-            return Ok((None, None));
+            return Ok(TerminalPayload::Unavailable);
         };
+        if turn.status == TurnStatus::InProgress {
+            return Ok(TerminalPayload::Unavailable);
+        }
         let mut final_answer = None;
         let mut commentary = None;
         for item in &turn.items {
@@ -247,7 +280,7 @@ impl OrchestrationService {
             .or(commentary)
             .or_else(|| turn.error.map(|error| error.message));
         let cost = turn.usage.and_then(|usage| usage.cost);
-        Ok((message, cost))
+        Ok(TerminalPayload::Ready { message, cost })
     }
 
     pub(super) fn signal_tasks(&self) {

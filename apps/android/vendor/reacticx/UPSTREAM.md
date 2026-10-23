@@ -11,12 +11,10 @@ the Tray root and navigation hook use CodeWide's `useEvent`, so gesture,
 context, native and scheduled callbacks keep a stable identity while reading
 the latest render values. An incoming `Tray.View` mounts synchronously when it
 becomes active; retained state owns only the outgoing view's exit animation.
-The complete sheet participates in its final layout immediately. Reanimated's
-native entering worklet receives that target geometry and performs the
-off-screen-to-target transform without a JS layout callback, passive-effect
-presentation step, or animation-frame delay. A native layout transition owns
-later content-size changes, while a separate transform layer owns drag,
-detents, and dismissal. A versioned close completion cannot unmount a later presentation. The
+Presentation and view-to-view resizing keep the upstream measured-height
+animation: the hidden content is measured once, the sheet presents immediately
+from that measurement, and later content heights spring without an extra
+animation-frame delay. A versioned close completion cannot unmount a later presentation. The
 full-screen backdrop hit target is independent from the animated scrim, so an
 outside press remains actionable throughout presentation. Presentation keeps
 the upstream spring, while dismissal uses a bounded 180 ms timing: the native

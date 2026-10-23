@@ -10,6 +10,7 @@ import React, {
 } from "react";
 import {
   KeyboardAvoidingView,
+  LayoutChangeEvent,
   Modal,
   Platform,
   Pressable,
@@ -18,17 +19,11 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import {
-  Gesture,
-  GestureDetector,
-  GestureHandlerRootView,
-} from "react-native-gesture-handler";
+import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
   cancelAnimation,
-  type EntryExitAnimationFunction,
   Extrapolation,
   interpolate,
-  type LayoutAnimationFunction,
   scrollTo,
   useAnimatedRef,
   useAnimatedScrollHandler,
@@ -49,13 +44,7 @@ import {
   DEFAULT_RADIUS,
   PALETTES,
 } from "./const";
-import {
-  TrayContext,
-  TrayTintContext,
-  useTray,
-  useTrayContext,
-  useTrayTint,
-} from "./context";
+import { TrayContext, TrayTintContext, useTray, useTrayContext, useTrayTint } from "./context";
 import {
   nearestOffsetIndex,
   projectPosition,
@@ -122,10 +111,7 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
     return { offsets: toOffsets(heights), detentHeight: Math.max(...heights) };
   }, [detents, screenHeight, insets.top, insets.bottom]);
   const reduceMotion = useReducedMotion();
-  const motion = useMemo<ITrayMotion>(
-    () => ({ ...DEFAULT_MOTION, ...motionProp }),
-    [motionProp],
-  );
+  const motion = useMemo<ITrayMotion>(() => ({ ...DEFAULT_MOTION, ...motionProp }), [motionProp]);
 
   const navigation = useTrayNavigation(defaultView, onViewChange);
   const present = useSharedValue<number>(0);
@@ -133,14 +119,15 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
   const startOffset = useSharedValue<number>(0);
   const detentIndex = useSharedValue<number>(0);
   const travel = useSharedValue<number>(0);
-  const dismissY = useSharedValue<number>(0);
+  const sheetHeight = useSharedValue<number>(0);
   const scrollY = useSharedValue<number>(0);
   const owns = useSharedValue<boolean>(false);
   const origin = useSharedValue<number>(0);
   const hasScrollable = useSharedValue<boolean>(false);
   const isDragging = useSharedValue<boolean>(false);
 
-  const closing = useRef<boolean>(false);
+  const measured = useRef<number>(0);
+  const presented = useRef<boolean>(false);
   const transitionVersion = useRef<number>(0);
 
   const setOpen = useEvent((next: boolean) => {
@@ -149,9 +136,10 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
   });
 
   const reset = useEvent(() => {
-    closing.current = false;
+    presented.current = false;
+    measured.current = 0;
+    sheetHeight.value = 0;
     travel.value = 0;
-    dismissY.value = 0;
     offset.value = 0;
     startOffset.value = 0;
     detentIndex.value = 0;
@@ -176,12 +164,29 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
   const close = useEvent(() => requestClose());
 
   const openTray = useEvent((view?: string) => {
-    setMounted(true);
     navigation.reset(view ?? defaultView);
-    const index = Math.min(initialDetent, offsets.length - 1);
-    offset.value = offsets[index] ?? 0;
-    detentIndex.value = index;
     setOpen(true);
+  });
+
+  const onContentLayout = useEvent((event: LayoutChangeEvent) => {
+    if (!open) return;
+    const next = detentHeight ? detentHeight : Math.round(event.nativeEvent.layout.height);
+    if (next <= 0 || Math.abs(measured.current - next) < 1) return;
+
+    const first = measured.current === 0;
+    measured.current = next;
+    travel.value = next + insets.bottom + motion.travelPadding;
+
+    if (first || reduceMotion) sheetHeight.value = next;
+    else sheetHeight.value = withSpring(next, motion.heightSpring);
+
+    if (presented.current) return;
+    presented.current = true;
+
+    const start = offsets[Math.min(initialDetent, offsets.length - 1)] ?? 0;
+    offset.value = start;
+    detentIndex.value = Math.min(initialDetent, offsets.length - 1);
+    present.value = reduceMotion ? 1 : withSpring(1, motion.presentSpring);
   });
 
   const dismiss = useEvent((_velocity: number) => requestClose());
@@ -189,36 +194,28 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
   useEffect(() => {
     transitionVersion.current += 1;
     const version = transitionVersion.current;
+    cancelAnimation(present);
     if (open) {
       setMounted(true);
-      if (closing.current) {
-        closing.current = false;
-        cancelAnimation(present);
-        cancelAnimation(dismissY);
-        dismissY.value = reduceMotion ? 0 : withSpring(0, motion.presentSpring);
+      if (presented.current) {
         present.value = reduceMotion ? 1 : withSpring(1, motion.presentSpring);
       }
       return;
     }
-    cancelAnimation(present);
-    cancelAnimation(dismissY);
-    if (!mounted) {
+    if (!presented.current) {
       finishClose(version);
       return;
     }
-    closing.current = true;
     if (reduceMotion) {
       present.value = 0;
-      dismissY.value = travel.value;
       finishClose(version);
       return;
     }
-    present.value = withTiming(0, motion.dismissTiming);
-    dismissY.value = withTiming(travel.value, motion.dismissTiming, (finished) => {
+    present.value = withTiming(0, motion.dismissTiming, (finished) => {
       "worklet";
       if (finished) scheduleOnRN(finishClose, version);
     });
-  }, [open, mounted, reduceMotion, motion, present, dismissY, travel, finishClose]);
+  }, [open, reduceMotion, motion, present, finishClose]);
 
   const settleTo = useEvent((index: number) => {
     onDetentChange?.(index);
@@ -257,11 +254,7 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
           const next = startOffset.value + travelled;
 
           if (next < 0) {
-            offset.value = -rubberBand(
-              -next,
-              travel.value,
-              motion.overDragFactor,
-            );
+            offset.value = -rubberBand(-next, travel.value, motion.overDragFactor);
             isDragging.value = true;
             return;
           }
@@ -273,11 +266,7 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
           "worklet";
           if (!owns.value) return;
 
-          const projected = projectPosition(
-            offset.value,
-            event.velocityY,
-            motion.flickProjection,
-          );
+          const projected = projectPosition(offset.value, event.velocityY, motion.flickProjection);
           const last = offsets[offsets.length - 1];
 
           if (
@@ -328,7 +317,7 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
 
   const ctx = useMemo<ITrayContext>(
     () => ({
-      visible: open || mounted,
+      visible: mounted,
       view: navigation.view,
       direction: navigation.direction,
       canGoBack: navigation.canGoBack,
@@ -336,8 +325,8 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
       close,
       setView: navigation.setView,
       goBack: navigation.goBack,
+      height: sheetHeight,
       present,
-      dismissY,
       dragY: offset,
       offset,
       offsets,
@@ -347,6 +336,7 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
       isDragging,
       hasScrollable,
       pan,
+      onContentLayout,
       palette,
       radius,
       motion,
@@ -354,7 +344,6 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
     }),
     [
       mounted,
-      open,
       navigation.view,
       navigation.direction,
       navigation.canGoBack,
@@ -362,8 +351,8 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
       navigation.goBack,
       openTray,
       close,
+      sheetHeight,
       present,
-      dismissY,
       offset,
       offsets,
       detentHeight,
@@ -372,6 +361,7 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
       isDragging,
       hasScrollable,
       pan,
+      onContentLayout,
       palette,
       radius,
       motion,
@@ -388,107 +378,52 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
   );
 };
 
-const TrayTrigger: React.FC<ITrayTrigger> &
-  React.FunctionComponent<ITrayTrigger> = ({
+const TrayTrigger: React.FC<ITrayTrigger> & React.FunctionComponent<ITrayTrigger> = ({
   children,
   view,
   style,
 }: ITrayTrigger): React.JSX.Element => {
   const { open, palette } = useTrayContext("Tray.Trigger");
   return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={() => open(view)}
-      style={style}
-    >
-      <TrayTintContext.Provider value={palette.text}>
-        {children}
-      </TrayTintContext.Provider>
+    <Pressable accessibilityRole="button" onPress={() => open(view)} style={style}>
+      <TrayTintContext.Provider value={palette.text}>{children}</TrayTintContext.Provider>
     </Pressable>
   );
 };
 
-const TrayContent: React.FC<ITrayContent> &
-  React.FunctionComponent<ITrayContent> = ({
+const TrayContent: React.FC<ITrayContent> & React.FunctionComponent<ITrayContent> = ({
   children,
   style,
 }: ITrayContent): React.JSX.Element | null => {
   const {
     visible,
     close,
+    height,
     present,
-    dismissY,
     dragY,
     travel,
     pan,
-    detentHeight,
+    onContentLayout,
     palette,
     radius,
     motion,
-    reduceMotion,
   } = useTrayContext("Tray.Content");
   const insets = useSafeAreaInsets();
   const dismissOnBackdropPress = useContext(TrayDismissContext);
 
   const transformStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: dismissY.value + dragY.value }],
-  }));
-  const sheetEntering = useMemo<EntryExitAnimationFunction>(
-    () => (values) => {
-      "worklet";
-      travel.value = values.windowHeight + insets.bottom + motion.travelPadding;
-      dismissY.value = 0;
-      present.value = reduceMotion ? 1 : withSpring(1, motion.presentSpring);
-      return {
-        initialValues: {
-          originY: reduceMotion
-            ? values.targetOriginY
-            : values.targetOriginY + values.targetHeight + insets.bottom + motion.travelPadding,
-          transform: [{ scale: reduceMotion ? 1 : motion.startScale }],
-        },
-        animations: {
-          originY: reduceMotion
-            ? values.targetOriginY
-            : withSpring(values.targetOriginY, motion.presentSpring),
-          transform: [
-            {
-              scale: reduceMotion ? 1 : withSpring(1, motion.presentSpring),
-            },
-          ],
-        },
-      };
-    },
-    [
-      dismissY,
-      insets.bottom,
-      motion.presentSpring,
-      motion.startScale,
-      motion.travelPadding,
-      present,
-      reduceMotion,
-      travel,
+    transform: [
+      { translateY: (1 - present.value) * travel.value + dragY.value },
+      {
+        scale: interpolate(present.value, [0, 1], [motion.startScale, 1], Extrapolation.CLAMP),
+      },
     ],
-  );
-  const sheetLayout = useMemo<LayoutAnimationFunction>(
-    () => (values) => {
-      "worklet";
-      return {
-        initialValues: {
-          originX: values.currentOriginX,
-          originY: values.currentOriginY,
-          width: values.currentWidth,
-          height: values.currentHeight,
-        },
-        animations: {
-          originX: withSpring(values.targetOriginX, motion.heightSpring),
-          originY: withSpring(values.targetOriginY, motion.heightSpring),
-          width: withSpring(values.targetWidth, motion.heightSpring),
-          height: withSpring(values.targetHeight, motion.heightSpring),
-        },
-      };
-    },
-    [motion.heightSpring],
-  );
+  }));
+
+  const heightStyle = useAnimatedStyle(() => ({
+    height: height.value,
+    opacity: height.value === 0 ? 0 : 1,
+  }));
 
   const backdropStyle = useAnimatedStyle(() => ({
     opacity:
@@ -504,13 +439,7 @@ const TrayContent: React.FC<ITrayContent> &
   if (!visible) return null;
 
   return (
-    <Modal
-      transparent
-      statusBarTranslucent
-      visible
-      animationType="none"
-      onRequestClose={close}
-    >
+    <Modal transparent statusBarTranslucent visible animationType="none" onRequestClose={close}>
       <GestureHandlerRootView style={styles.fill} unstable_forceActive>
         <KeyboardAvoidingView
           behavior="padding"
@@ -529,52 +458,35 @@ const TrayContent: React.FC<ITrayContent> &
             >
               <Animated.View
                 pointerEvents="none"
-                style={[
-                  styles.backdropFill,
-                  { backgroundColor: palette.backdrop },
-                  backdropStyle,
-                ]}
+                style={[styles.backdropFill, { backgroundColor: palette.backdrop }, backdropStyle]}
               />
             </Pressable>
 
             <View
-              style={[
-                styles.wrap,
-                { paddingBottom: Math.max(insets.bottom, 12) },
-              ]}
+              style={[styles.wrap, { paddingBottom: Math.max(insets.bottom, 12) }]}
               pointerEvents="box-none"
             >
               <GestureDetector gesture={pan}>
                 <Animated.View
-                  entering={sheetEntering}
-                  layout={reduceMotion ? undefined : sheetLayout}
-                  style={styles.layout}
+                  style={[
+                    styles.sheet,
+                    {
+                      backgroundColor: palette.surface,
+                      borderColor: palette.border,
+                      borderRadius: radius,
+                    },
+                    transformStyle,
+                    style,
+                  ]}
                 >
-                  <Animated.View
-                    style={[
-                      styles.sheet,
-                      {
-                        backgroundColor: palette.surface,
-                        borderColor: palette.border,
-                        borderRadius: radius,
-                      },
-                      transformStyle,
-                      style,
-                    ]}
-                  >
+                  <Animated.View style={[styles.clip, heightStyle]}>
                     <View
-                      style={[
-                        styles.clip,
-                        detentHeight === 0 ? undefined : { height: detentHeight },
-                      ]}
+                      style={styles.measure}
+                      onLayout={onContentLayout}
+                      testID="tray-content-measure"
                     >
                       <View style={styles.handleArea}>
-                        <View
-                          style={[
-                            styles.handle,
-                            { backgroundColor: palette.handle },
-                          ]}
-                        />
+                        <View style={[styles.handle, { backgroundColor: palette.handle }]} />
                       </View>
                       {children}
                     </View>
@@ -624,12 +536,7 @@ const TrayView: React.FC<ITrayView> & React.FunctionComponent<ITrayView> = ({
   const layerStyle = useAnimatedStyle(() => {
     const shift = (1 - progress.value) * motion.viewSlide * slideFrom.value;
     const scale = {
-      scale: interpolate(
-        progress.value,
-        [0, 1],
-        [motion.viewStartScale, 1],
-        Extrapolation.CLAMP,
-      ),
+      scale: interpolate(progress.value, [0, 1], [motion.viewStartScale, 1], Extrapolation.CLAMP),
     };
 
     if (motion.viewAxis === "none") {
@@ -637,10 +544,7 @@ const TrayView: React.FC<ITrayView> & React.FunctionComponent<ITrayView> = ({
     }
     return {
       opacity: progress.value,
-      transform: [
-        motion.viewAxis === "y" ? { translateY: shift } : { translateX: shift },
-        scale,
-      ],
+      transform: [motion.viewAxis === "y" ? { translateY: shift } : { translateX: shift }, scale],
     };
   });
 
@@ -649,68 +553,45 @@ const TrayView: React.FC<ITrayView> & React.FunctionComponent<ITrayView> = ({
   return (
     <Animated.View
       pointerEvents={active ? "auto" : "none"}
-      style={[
-        active ? styles.activeLayer : styles.idleLayer,
-        layerStyle,
-        style,
-      ]}
+      style={[active ? styles.activeLayer : styles.idleLayer, layerStyle, style]}
     >
       {children}
     </Animated.View>
   );
 };
 
-const TrayHeader: React.FC<ITrayHeader> &
-  React.FunctionComponent<ITrayHeader> = ({
+const TrayHeader: React.FC<ITrayHeader> & React.FunctionComponent<ITrayHeader> = ({
   children,
   style,
-}: ITrayHeader): React.JSX.Element => (
-  <View style={[styles.header, style]}>{children}</View>
-);
+}: ITrayHeader): React.JSX.Element => <View style={[styles.header, style]}>{children}</View>;
 
 const TrayTitle: React.FC<ITrayTitle> & React.FunctionComponent<ITrayTitle> = ({
   children,
   style,
 }: ITrayTitle): React.JSX.Element => {
   const { palette } = useTrayContext("Tray.Title");
-  return (
-    <Text style={[styles.title, { color: palette.text }, style]}>
-      {children}
-    </Text>
-  );
+  return <Text style={[styles.title, { color: palette.text }, style]}>{children}</Text>;
 };
 
-const TraySubtitle: React.FC<ITraySubtitle> &
-  React.FunctionComponent<ITraySubtitle> = ({
+const TraySubtitle: React.FC<ITraySubtitle> & React.FunctionComponent<ITraySubtitle> = ({
   children,
   style,
 }: ITraySubtitle): React.JSX.Element => {
   const { palette } = useTrayContext("Tray.Subtitle");
-  return (
-    <Text style={[styles.subtitle, { color: palette.mutedText }, style]}>
-      {children}
-    </Text>
-  );
+  return <Text style={[styles.subtitle, { color: palette.mutedText }, style]}>{children}</Text>;
 };
 
 const TrayBody: React.FC<ITrayBody> & React.FunctionComponent<ITrayBody> = ({
   children,
   style,
-}: ITrayBody): React.JSX.Element => (
-  <View style={[styles.body, style]}>{children}</View>
-);
+}: ITrayBody): React.JSX.Element => <View style={[styles.body, style]}>{children}</View>;
 
-const TrayFooter: React.FC<ITrayFooter> &
-  React.FunctionComponent<ITrayFooter> = ({
+const TrayFooter: React.FC<ITrayFooter> & React.FunctionComponent<ITrayFooter> = ({
   children,
   style,
 }: ITrayFooter): React.JSX.Element => {
   const { palette } = useTrayContext("Tray.Footer");
-  return (
-    <View style={[styles.footer, { borderTopColor: palette.border }, style]}>
-      {children}
-    </View>
-  );
+  return <View style={[styles.footer, { borderTopColor: palette.border }, style]}>{children}</View>;
 };
 
 const TrayClose: React.FC<ITrayClose> & React.FunctionComponent<ITrayClose> = ({
@@ -719,8 +600,7 @@ const TrayClose: React.FC<ITrayClose> & React.FunctionComponent<ITrayClose> = ({
 }: ITrayClose): React.JSX.Element => {
   const { close, palette } = useTrayContext("Tray.Close");
   const state = { color: palette.mutedText, size: 20 };
-  const content =
-    typeof children === "function" ? children(state) : (children ?? null);
+  const content = typeof children === "function" ? children(state) : (children ?? null);
 
   return (
     <Pressable
@@ -731,9 +611,7 @@ const TrayClose: React.FC<ITrayClose> & React.FunctionComponent<ITrayClose> = ({
       style={style}
     >
       <TrayTintContext.Provider value={palette.mutedText}>
-        {content ?? (
-          <Text style={[styles.glyph, { color: palette.mutedText }]}>✕</Text>
-        )}
+        {content ?? <Text style={[styles.glyph, { color: palette.mutedText }]}>✕</Text>}
       </TrayTintContext.Provider>
     </Pressable>
   );
@@ -747,8 +625,7 @@ const TrayBack: React.FC<ITrayBack> & React.FunctionComponent<ITrayBack> = ({
   if (!canGoBack) return null;
 
   const state = { color: palette.mutedText, size: 20 };
-  const content =
-    typeof children === "function" ? children(state) : (children ?? null);
+  const content = typeof children === "function" ? children(state) : (children ?? null);
 
   return (
     <Pressable
@@ -759,16 +636,13 @@ const TrayBack: React.FC<ITrayBack> & React.FunctionComponent<ITrayBack> = ({
       style={style}
     >
       <TrayTintContext.Provider value={palette.mutedText}>
-        {content ?? (
-          <Text style={[styles.glyph, { color: palette.mutedText }]}>‹</Text>
-        )}
+        {content ?? <Text style={[styles.glyph, { color: palette.mutedText }]}>‹</Text>}
       </TrayTintContext.Provider>
     </Pressable>
   );
 };
 
-const TrayScrollView: React.FC<ITrayScrollView> &
-  React.FunctionComponent<ITrayScrollView> = ({
+const TrayScrollView: React.FC<ITrayScrollView> & React.FunctionComponent<ITrayScrollView> = ({
   children,
   maxHeight,
   contentContainerStyle,
@@ -800,10 +674,7 @@ const TrayScrollView: React.FC<ITrayScrollView> &
     },
   });
 
-  const nativeGesture = useMemo(
-    () => Gesture.Native().simultaneousWithExternalGesture(pan),
-    [pan],
-  );
+  const nativeGesture = useMemo(() => Gesture.Native().simultaneousWithExternalGesture(pan), [pan]);
 
   return (
     <GestureDetector gesture={nativeGesture}>
@@ -829,11 +700,7 @@ const TrayScrollView: React.FC<ITrayScrollView> &
 const TrayIcon: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { palette } = useTrayContext("Tray.Icon");
   const color = useTrayTint(palette.text);
-  return (
-    <TrayTintContext.Provider value={color}>
-      {children}
-    </TrayTintContext.Provider>
-  );
+  return <TrayTintContext.Provider value={color}>{children}</TrayTintContext.Provider>;
 };
 
 const styles = StyleSheet.create({
@@ -849,9 +716,6 @@ const styles = StyleSheet.create({
   },
   wrap: {
     paddingHorizontal: 10,
-  },
-  layout: {
-    width: "100%",
   },
   sheet: {
     borderWidth: StyleSheet.hairlineWidth,
@@ -869,6 +733,12 @@ const styles = StyleSheet.create({
   clip: {
     overflow: "hidden",
     justifyContent: "flex-end",
+  },
+  measure: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   handleArea: {
     alignItems: "center",

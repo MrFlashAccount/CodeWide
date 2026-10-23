@@ -235,6 +235,10 @@ for (const scenario of [
       }[scenario];
       if (scenario === "onboarding-failed") {
         await openGithubProvider(page);
+        await page
+          .getByTestId("forge-provider-card-github")
+          .getByRole("button", { name: "Sign in with GitHub" })
+          .dispatchEvent("click");
       }
       await page.getByText(expected, { exact: false }).first().waitFor();
       await capture(page, `${scenario}-360`);
@@ -310,7 +314,7 @@ for (const width of [360, 1024]) {
         .getByTestId("forge-provider-card-github")
         .getByRole("button", { name: "Paste a token" })
         .dispatchEvent("click");
-      await page.getByText("Generate", { exact: false }).first().waitFor();
+      await page.getByTestId("forge-tray-token-panel").waitFor();
       await settle(page);
       assert.deepEqual(errors, []);
       await capture(page, `token-sheet-${width}`);
@@ -347,7 +351,7 @@ test("a host login in progress keeps the card in its connecting state", async ()
     await openGithubProvider(page);
     await page
       .getByTestId("forge-provider-card-github")
-      .getByRole("button", { name: "Connect GitHub" })
+      .getByRole("button", { name: "Sign in with GitHub" })
       .dispatchEvent("click");
     await page.waitForTimeout(300);
     const writes = await page.evaluate(() => window.previewWrites);

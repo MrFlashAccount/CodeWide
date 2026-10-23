@@ -28,6 +28,12 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[path = "compatibility_tests.rs"]
 mod compatibility_tests;
+#[path = "inheritance_tests.rs"]
+mod inheritance_tests;
+#[path = "notification_journal_tests.rs"]
+mod notification_journal_tests;
+#[path = "notification_tests.rs"]
+mod notification_tests;
 #[path = "rework_tests.rs"]
 mod rework_tests;
 #[path = "spawn_authority_tests.rs"]
@@ -78,19 +84,31 @@ async fn harness_with_pump(
     parent_profile: &str,
     start_pump: bool,
 ) -> Result<Harness, Box<dyn std::error::Error>> {
+    harness_at(parent_profile, start_pump, "/repo").await
+}
+
+async fn harness_at(
+    parent_profile: &str,
+    start_pump: bool,
+    cwd: &str,
+) -> Result<Harness, Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let mut parent = thread("codex", PARENT, 5);
-    parent.cwd = "/repo".into();
+    parent.cwd = cwd.into();
     parent.settings.model = "gpt-parent".into();
     parent.settings.permission_profile = parent_profile.into();
     let codex = Arc::new(
-        ScriptedProvider::new("codex", capabilities(false))
-            .with_profiles(&CODEX_PROFILES)
-            .with_thread(parent),
+        ScriptedProvider::new("codex", {
+            let mut value = capabilities(false);
+            value.codex_native = true;
+            value
+        })
+        .with_profiles(&CODEX_PROFILES)
+        .with_thread(parent),
     );
     let mut claude_parent = thread("claude", CLAUDE_PARENT, 5);
-    claude_parent.cwd = "/repo".into();
+    claude_parent.cwd = cwd.into();
     claude_parent.settings.permission_profile = ":full-access".into();
     let claude = Arc::new(
         ScriptedProvider::new("claude", capabilities(true))
@@ -237,7 +255,7 @@ async fn spawn_creates_a_linked_thread_on_another_provider_and_starts_the_prompt
     let created = harness.claude.created();
     assert_eq!(created.len(), 1);
     assert_eq!(created[0].cwd, "/repo");
-    assert_eq!(created[0].settings.permission_profile, ":read-only");
+    assert_eq!(created[0].settings.permission_profile, ":workspace");
     assert!(created[0].app_thread_id.is_some(), "host-minted id");
     let started = harness.claude.started();
     assert_eq!(started.len(), 1);

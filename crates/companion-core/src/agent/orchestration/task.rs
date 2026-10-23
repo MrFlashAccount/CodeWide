@@ -88,7 +88,7 @@ pub enum WaitMode {
 pub enum WorkspaceMode {
     SharedReadOnly,
     IsolatedWrite,
-    /// Compatibility-only mode for `codewide_spawn_agent`.
+    /// Shared cwd with inherited permissions; legacy spelling kept on disk.
     LegacyShared,
 }
 
@@ -190,6 +190,8 @@ impl AttemptState {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionEnvelope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_policy: Option<crate::agent::provider::ExecutionPolicy>,
     pub parent_ceiling: String,
     pub requested_profile: Option<String>,
     pub translated_profile: String,
@@ -482,16 +484,63 @@ impl TaskAttempt {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum DeliveryRoute {
-    AwaitingResume,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub enum DeliveryState {
     Pending,
     AwaitingResume,
     Acknowledged,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ParentDeliveryState {
+    Pending,
+    AwaitingResume,
+    /// Completion ownership was atomically transferred to the turn outbox.
+    Enqueued,
+    Acknowledged,
+}
+
+/// The route determines which delivery states are valid. In particular, a
+/// fallback-only delivery cannot claim ownership has moved to the turn outbox.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "route", rename_all = "camelCase")]
+pub enum DeliveryProgress {
+    AwaitingResume { state: DeliveryState },
+    ParentTurn { state: ParentDeliveryState },
+}
+
+impl DeliveryProgress {
+    pub(super) const fn terminal(self) -> Self {
+        match self {
+            Self::AwaitingResume {
+                state: DeliveryState::Pending,
+            } => Self::AwaitingResume {
+                state: DeliveryState::AwaitingResume,
+            },
+            Self::ParentTurn {
+                state: ParentDeliveryState::Pending,
+            } => Self::ParentTurn {
+                state: ParentDeliveryState::AwaitingResume,
+            },
+            progress => progress,
+        }
+    }
+
+    pub(super) const fn acknowledge(self) -> Self {
+        match self {
+            Self::AwaitingResume {
+                state: DeliveryState::AwaitingResume,
+            } => Self::AwaitingResume {
+                state: DeliveryState::Acknowledged,
+            },
+            Self::ParentTurn {
+                state: ParentDeliveryState::AwaitingResume | ParentDeliveryState::Enqueued,
+            } => Self::ParentTurn {
+                state: ParentDeliveryState::Acknowledged,
+            },
+            progress => progress,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -499,8 +548,8 @@ pub enum DeliveryState {
 pub struct CompletionDelivery {
     pub delivery_id: DeliveryId,
     pub task_id: TaskId,
-    pub route: DeliveryRoute,
-    pub state: DeliveryState,
+    #[serde(flatten)]
+    pub progress: DeliveryProgress,
     pub dedupe_key: String,
 }
 
@@ -574,6 +623,27 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(TaskId::parse(first.as_str()), Some(first));
         assert!(TaskId::parse("task-1").is_none());
+    }
+
+    // Persisted v1 fallback deliveries must remain readable after adding the
+    // injected-turn route. Route/state are the declared compatibility format.
+    #[test]
+    fn persisted_fallback_deliveries_round_trip_and_cannot_claim_outbox_ownership()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for state in ["pending", "awaitingResume", "acknowledged"] {
+            let fixture = serde_json::json!({
+                "deliveryId": DeliveryId::new(), "taskId": TaskId::new(),
+                "route": "awaitingResume", "state": state, "dedupeKey": "completion-key"
+            });
+            let delivery: CompletionDelivery = serde_json::from_value(fixture.clone())?;
+            assert_eq!(serde_json::to_value(delivery)?, fixture);
+        }
+        let invalid = serde_json::json!({
+            "deliveryId": DeliveryId::new(), "taskId": TaskId::new(),
+            "route": "awaitingResume", "state": "enqueued", "dedupeKey": "completion-key"
+        });
+        assert!(serde_json::from_value::<CompletionDelivery>(invalid).is_err());
+        Ok(())
     }
 
     #[test]

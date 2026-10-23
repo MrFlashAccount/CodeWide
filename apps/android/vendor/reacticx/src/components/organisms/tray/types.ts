@@ -1,10 +1,6 @@
 import type { ReactNode } from "react";
-import type { StyleProp, TextStyle, ViewStyle } from "react-native";
-import type {
-  SharedValue,
-  WithSpringConfig,
-  WithTimingConfig,
-} from "react-native-reanimated";
+import type { LayoutChangeEvent, StyleProp, TextStyle, ViewStyle } from "react-native";
+import type { SharedValue, WithSpringConfig, WithTimingConfig } from "react-native-reanimated";
 import type { PanGesture } from "react-native-gesture-handler";
 
 type TTrayTheme = "light" | "dark";
@@ -84,8 +80,8 @@ interface ITrayContext {
   setView: (view: string) => void;
   goBack: () => void;
 
+  height: SharedValue<number>;
   present: SharedValue<number>;
-  dismissY: SharedValue<number>;
   dragY: SharedValue<number>;
   travel: SharedValue<number>;
   /** Live content scroll offset, used for the drag/scroll hand-off. */
@@ -102,6 +98,7 @@ interface ITrayContext {
   detentHeight: number;
 
   pan: PanGesture;
+  onContentLayout: (event: LayoutChangeEvent) => void;
   palette: ITrayPalette;
   radius: number;
   motion: ITrayMotion;

@@ -1,8 +1,7 @@
 //! Host-owned admission policy for durable delegation.
 //!
-//! The model selects only a target, a narrower permission request and one of
-//! the public workspace modes. Provenance and the parent ceiling come from
-//! the authenticated tool-call context and parent thread read.
+//! A plain cwd inherits the parent permissions. Isolation is opt-in. Provenance
+//! and the parent ceiling come from authenticated context and parent settings.
 
 use serde::Serialize;
 
@@ -11,7 +10,6 @@ use super::{
     task::{PermissionEnvelope, WorkspaceClaimState, WorkspaceMode},
     tools::WorkspaceRequest,
 };
-use crate::agent::permission_profiles::READ_ONLY;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -58,21 +56,22 @@ pub fn workspace(
     parent_profile: Option<&str>,
     requested_profile: Option<&str>,
 ) -> Result<WorkspaceAdmission, AdmissionRejection> {
-    let (mode, claim_state, requested) = match request {
-        WorkspaceRequest::SharedReadOnly { cwd } => {
+    let (mode, claim_state) = match request {
+        WorkspaceRequest::Inherit { cwd }
+        | WorkspaceRequest::SharedReadOnly { cwd }
+        | WorkspaceRequest::CompatibilitySpawn { cwd } => {
             let effective_cwd = cwd.as_deref().unwrap_or(parent_cwd);
             if effective_cwd.is_empty() {
                 return Err(AdmissionRejection::new(
                     RejectionCode::WorkspaceUnavailable,
-                    "the calling thread has no working directory; pass workspace.cwd",
+                    "the calling thread has no working directory; pass cwd or workspace.cwd",
                 ));
             }
             (
-                WorkspaceMode::SharedReadOnly,
+                WorkspaceMode::LegacyShared,
                 WorkspaceClaimState::Shared {
                     effective_cwd: effective_cwd.to_owned(),
                 },
-                Some(":read-only"),
             )
         }
         WorkspaceRequest::IsolatedWrite { source_workspace } => {
@@ -88,36 +87,10 @@ pub fn workspace(
                 WorkspaceClaimState::Pending {
                     source_workspace: source_workspace.to_owned(),
                 },
-                requested_profile,
             )
         }
-        WorkspaceRequest::CompatibilitySpawn { cwd } => {
-            let source_workspace = cwd.as_deref().unwrap_or(parent_cwd);
-            if source_workspace.is_empty() {
-                return Err(AdmissionRejection::new(
-                    RejectionCode::WorkspaceUnavailable,
-                    "the calling thread has no working directory; pass cwd",
-                ));
-            }
-            match requested_profile {
-                None | Some(READ_ONLY) => (
-                    WorkspaceMode::SharedReadOnly,
-                    WorkspaceClaimState::Shared {
-                        effective_cwd: source_workspace.to_owned(),
-                    },
-                    Some(READ_ONLY),
-                ),
-                Some(requested_profile) => (
-                    WorkspaceMode::IsolatedWrite,
-                    WorkspaceClaimState::Pending {
-                        source_workspace: source_workspace.to_owned(),
-                    },
-                    Some(requested_profile),
-                ),
-            }
-        }
     };
-    let target_profile = profiles::child_profile(parent_profile, requested)
+    let target_profile = profiles::child_profile(parent_profile, requested_profile)
         .map_err(|message| AdmissionRejection::new(RejectionCode::PermissionDenied, message))?;
     Ok(WorkspaceAdmission {
         mode,
@@ -133,7 +106,8 @@ pub fn permission_envelope(
     translated_profile: String,
 ) -> PermissionEnvelope {
     PermissionEnvelope {
-        parent_ceiling: parent_profile.unwrap_or(":read-only").to_owned(),
+        execution_policy: None,
+        parent_ceiling: parent_profile.unwrap_or("(unknown)").to_owned(),
         requested_profile: requested_profile.map(str::to_owned),
         translated_profile,
     }

@@ -487,7 +487,7 @@ impl ClientWireGateway {
             .capabilities()
             .supports(Capability::ThreadsHostMintedIds)
             .then(mint_app_thread_id);
-        self.create_thread_with_id(provider, wire, app_thread_id, cwd, settings)
+        self.create_thread_with_id(provider, wire, app_thread_id, cwd, settings, None)
             .await
     }
 
@@ -505,19 +505,22 @@ impl ClientWireGateway {
         app_thread_id: Option<AppThreadId>,
         cwd: String,
         settings: ThreadSettings,
+        execution_policy: Option<&crate::agent::provider::ExecutionPolicy>,
     ) -> Result<crate::agent::model::AgentThread, RpcFailure> {
         if let Some(id) = &app_thread_id {
             self.bind_created(&wire.descriptor.id, id.as_str()).await?;
         }
-        let thread = provider
-            .thread_create(ThreadCreateParams {
-                app_thread_id,
-                cwd,
-                settings,
-                client_tools: None,
-            })
-            .await
-            .map_err(|error| RpcFailure::from_provider(&error))?;
+        let params = ThreadCreateParams {
+            app_thread_id,
+            cwd,
+            settings,
+            client_tools: None,
+        };
+        let created = match execution_policy {
+            Some(policy) => provider.thread_create_with_policy(params, policy).await,
+            None => provider.thread_create(params).await,
+        };
+        let thread = created.map_err(|error| RpcFailure::from_provider(&error))?;
         self.bind_created(&wire.descriptor.id, thread.app_thread_id.as_str())
             .await?;
         Ok(thread)

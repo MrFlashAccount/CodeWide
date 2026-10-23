@@ -32,6 +32,10 @@ export const onboardingStyles = StyleSheet.create({
   authPending: {
     gap: spacing.sm,
   },
+  authPendingTitle: {
+    ...typeScale.title,
+    color: colors.text,
+  },
   body: {
     ...typeScale.body,
     color: colors.textMuted,

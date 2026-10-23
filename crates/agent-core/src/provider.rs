@@ -11,6 +11,7 @@
 //! client has a neutral or capability mapping and the client speaks the
 //! neutral protocol.
 
+mod execution;
 mod native_storage;
 mod stored_search;
 
@@ -34,6 +35,7 @@ use crate::model::{
     TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
 };
 
+pub use execution::{ExecutionApproval, ExecutionPolicy, ExecutionReviewer, ExecutionSandbox};
 pub use native_storage::{
     HistoryPageError, HistorySyncRequest, NativeMessageSearch, NativeThreadResources,
     NativeThreadStore,
@@ -250,6 +252,27 @@ pub trait AgentProvider: Send + Sync {
 
     async fn thread_create(&self, params: ThreadCreateParams)
     -> Result<AgentThread, ProviderError>;
+
+    /// Creates a delegated thread with the parent's frozen execution policy.
+    /// Adapters must reject policies they cannot reproduce rather than silently
+    /// replacing network or filesystem access with their own defaults.
+    async fn thread_create_with_policy(
+        &self,
+        params: ThreadCreateParams,
+        policy: &ExecutionPolicy,
+    ) -> Result<AgentThread, ProviderError> {
+        match policy.sandbox {
+            ExecutionSandbox::ConfiguredProfile | ExecutionSandbox::Unrestricted => {
+                self.thread_create(params).await
+            }
+            ExecutionSandbox::ReadOnly { .. } | ExecutionSandbox::Workspace { .. } => {
+                Err(ProviderError::Rejected(RpcError::new(
+                    ERROR_CAPABILITY_UNSUPPORTED,
+                    "the target provider cannot reproduce the parent's execution sandbox",
+                )))
+            }
+        }
+    }
 
     async fn thread_read(&self, thread: &AppThreadId) -> Result<ThreadReadResult, ProviderError>;
 

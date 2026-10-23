@@ -20,6 +20,7 @@ mod catalog_summary;
 mod catalog_visibility;
 mod client_tools;
 mod dispatch;
+mod execution;
 pub mod history;
 mod history_base;
 mod history_questions;
@@ -167,6 +168,35 @@ impl CodexProvider {
     #[must_use]
     pub fn version(&self) -> Option<String> {
         self.upstream.version()
+    }
+
+    async fn create_thread(
+        &self,
+        params: ThreadCreateParams,
+        policy: Option<&agent_core::provider::ExecutionPolicy>,
+    ) -> Result<AgentThread, ProviderError> {
+        let mut request = json!({
+            "cwd": params.cwd,
+            "model": params.settings.model,
+            "permissions": params.settings.permission_profile,
+        });
+        if let Some(policy) = policy {
+            execution::apply(&mut request, policy);
+        }
+        if let Some(tier) = params.settings.service_tier {
+            request["serviceTier"] = json!(tier);
+        }
+        // Codex declares its own tools from the installed host; the neutral
+        // `clientTools` field is the Claude host's channel.
+        self.client_tools.declare_on_params(&mut request);
+        let result = self.rpc("thread/start", request).await?;
+        let thread = result
+            .get("thread")
+            .and_then(|thread| mapping::thread(&self.id, thread, false))
+            .ok_or_else(|| {
+                ProviderError::Protocol("thread/start returned an invalid thread".into())
+            })?;
+        Ok(thread)
     }
 
     async fn rpc(&self, method: &str, params: Value) -> Result<Value, ProviderError> {
@@ -453,25 +483,15 @@ impl AgentProvider for CodexProvider {
         &self,
         params: ThreadCreateParams,
     ) -> Result<AgentThread, ProviderError> {
-        let mut request = json!({
-            "cwd": params.cwd,
-            "model": params.settings.model,
-            "permissions": params.settings.permission_profile,
-        });
-        if let Some(tier) = params.settings.service_tier {
-            request["serviceTier"] = json!(tier);
-        }
-        // Codex declares its own tools from the installed host; the neutral
-        // `clientTools` field is the Claude host's channel.
-        self.client_tools.declare_on_params(&mut request);
-        let result = self.rpc("thread/start", request).await?;
-        let thread = result
-            .get("thread")
-            .and_then(|thread| mapping::thread(&self.id, thread, false))
-            .ok_or_else(|| {
-                ProviderError::Protocol("thread/start returned an invalid thread".into())
-            })?;
-        Ok(thread)
+        self.create_thread(params, None).await
+    }
+
+    async fn thread_create_with_policy(
+        &self,
+        params: ThreadCreateParams,
+        policy: &agent_core::provider::ExecutionPolicy,
+    ) -> Result<AgentThread, ProviderError> {
+        self.create_thread(params, Some(policy)).await
     }
 
     async fn thread_read(&self, thread: &AppThreadId) -> Result<ThreadReadResult, ProviderError> {

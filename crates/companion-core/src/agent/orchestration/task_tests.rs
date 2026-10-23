@@ -4,14 +4,14 @@ use super::*;
 use crate::agent::orchestration::{
     journal::AdmissionRecord,
     task::{
-        AttemptId, AttemptState, CompletionDelivery, DeliveryId, DeliveryRoute, DeliveryState,
-        HostProvenance, OrchestrationTask, PermissionEnvelope, PublicTaskStatus, RecoveryAction,
-        TaskAttempt, TaskId, TaskState, WaitMode, WorkspaceClaim, WorkspaceClaimId,
-        WorkspaceClaimState, WorkspaceMode,
+        AttemptId, AttemptState, CompletionDelivery, DeliveryId, DeliveryProgress, DeliveryState,
+        HostProvenance, OrchestrationTask, ParentDeliveryState, PermissionEnvelope,
+        PublicTaskStatus, RecoveryAction, TaskAttempt, TaskId, TaskState, WaitMode, WorkspaceClaim,
+        WorkspaceClaimId, WorkspaceClaimState, WorkspaceMode,
     },
 };
 
-async fn task_call(
+pub(super) async fn task_call(
     service: &OrchestrationService,
     call_id: &str,
     tool: &str,
@@ -251,8 +251,10 @@ async fn wait_returns_the_initial_turn_result_and_acknowledges_delivery() -> Tes
             .get(&task_id)
             .await?
             .delivery
-            .state,
-        DeliveryState::Acknowledged
+            .progress,
+        DeliveryProgress::ParentTurn {
+            state: ParentDeliveryState::Acknowledged
+        }
     );
     let unchanged = harness
         .service
@@ -542,6 +544,7 @@ async fn claimed_turn_waiting_for_late_receipt(
                 model: "claude-default".into(),
                 name: None,
                 permission: PermissionEnvelope {
+                    execution_policy: None,
                     parent_ceiling: ":workspace".into(),
                     requested_profile: None,
                     translated_profile: ":read-only".into(),
@@ -559,8 +562,9 @@ async fn claimed_turn_waiting_for_late_receipt(
             delivery: CompletionDelivery {
                 delivery_id,
                 task_id: task_id.clone(),
-                route: DeliveryRoute::AwaitingResume,
-                state: DeliveryState::Pending,
+                progress: DeliveryProgress::AwaitingResume {
+                    state: DeliveryState::Pending,
+                },
                 dedupe_key: format!("task-completion:{}", task_id.as_str()),
             },
             workspace: WorkspaceClaim {
@@ -656,6 +660,7 @@ async fn provider_minted_create_crash_recovers_as_start_uncertain_without_retry(
         model: "gpt-parent".into(),
         name: None,
         permission: PermissionEnvelope {
+            execution_policy: None,
             parent_ceiling: ":workspace".into(),
             requested_profile: None,
             translated_profile: ":read-only".into(),
@@ -687,8 +692,9 @@ async fn provider_minted_create_crash_recovers_as_start_uncertain_without_retry(
             delivery: CompletionDelivery {
                 delivery_id,
                 task_id: task_id.clone(),
-                route: DeliveryRoute::AwaitingResume,
-                state: DeliveryState::Pending,
+                progress: DeliveryProgress::AwaitingResume {
+                    state: DeliveryState::Pending,
+                },
                 dedupe_key: format!("task-completion:{}", task_id.as_str()),
             },
             workspace: WorkspaceClaim {

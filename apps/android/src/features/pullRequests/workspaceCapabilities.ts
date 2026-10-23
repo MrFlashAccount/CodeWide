@@ -8,7 +8,7 @@ import type {
 
 /** Connect-flow and account mutations of the Pull requests catalog for one connection. */
 export type PullRequestsWorkspaceCapabilities = {
-  /** Cancels a live host-login flow; the card returns to Connect after the accounts re-read. */
+  /** Cancels a live host-login flow; Companion invalidation reconciles the accounts query. */
   readonly cancelAuth: (connectionId: string, flowId: string) => Promise<void>;
   /** Re-reads accounts and methods, for example after the user ran a host command. */
   readonly checkAgain: (connectionId: string) => Promise<void>;

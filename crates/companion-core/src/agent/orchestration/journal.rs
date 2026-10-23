@@ -10,8 +10,9 @@ use redb::{ReadableDatabase, ReadableTable};
 use serde::{Deserialize, Serialize};
 
 use super::task::{
-    CompletionDelivery, DeliveryState, OrchestrationTask, TaskAttempt, TaskEvent, TaskEventKind,
-    TaskId, TaskState, TaskTransition, WorkspaceClaim, WorkspaceClaimState,
+    CompletionDelivery, DeliveryProgress, OrchestrationTask, ParentDeliveryState, TaskAttempt,
+    TaskEvent, TaskEventKind, TaskId, TaskState, TaskTransition, WaitMode, WorkspaceClaim,
+    WorkspaceClaimState,
 };
 use crate::{
     agent::{
@@ -209,6 +210,65 @@ impl TaskJournal {
                 }
             }
             Ok(tasks)
+        })
+        .await
+    }
+
+    /// Returns terminal deferred completions not yet handed to the outbox.
+    pub(super) async fn pending_completions(&self) -> Result<Vec<TaskId>, JournalError> {
+        self.blocking(|store| {
+            let read = store.database().begin_read()?;
+            let deliveries = read.open_table(orchestration_tables::DELIVERIES)?;
+            let mut tasks = Vec::new();
+            for entry in deliveries.iter()? {
+                let (_, encoded) = entry?;
+                let delivery: CompletionDelivery = serde_json::from_slice(encoded.value())?;
+                if delivery.progress
+                    == (DeliveryProgress::ParentTurn {
+                        state: ParentDeliveryState::AwaitingResume,
+                    })
+                {
+                    tasks.push(delivery.task_id);
+                }
+            }
+            Ok(tasks)
+        })
+        .await
+    }
+
+    /// Atomically hands completion ownership to the prompt-bearing outbox.
+    /// The callback is owned by turn delivery; the journal sees no message.
+    pub(super) async fn enqueue_completion(
+        &self,
+        task_id: &TaskId,
+        enqueue: impl FnOnce(&redb::WriteTransaction, &str, &str) -> Result<(), StoreError>
+        + Send
+        + 'static,
+    ) -> Result<bool, JournalError> {
+        let task_id = task_id.clone();
+        self.blocking(move |store| {
+            let write = store.database().begin_write()?;
+            let mut bundle = read_bundle_from_write(&write, &task_id)?;
+            if !bundle.task.state.is_terminal()
+                || bundle.task.wait_mode != WaitMode::Deferred
+                || bundle.delivery.progress
+                    != (DeliveryProgress::ParentTurn {
+                        state: ParentDeliveryState::AwaitingResume,
+                    })
+            {
+                return Ok(false);
+            }
+            enqueue(
+                &write,
+                &bundle.delivery.dedupe_key,
+                bundle.task.parent_thread_id.as_str(),
+            )?;
+            bundle.delivery.progress = DeliveryProgress::ParentTurn {
+                state: ParentDeliveryState::Enqueued,
+            };
+            write_bundle(&write, &bundle)?;
+            write.commit()?;
+            Ok(true)
         })
         .await
     }
@@ -453,7 +513,7 @@ impl TaskJournal {
                     .task
                     .transition(transition)
                     .map_err(JournalError::InvalidTransition)?;
-                bundle.delivery.state = DeliveryState::AwaitingResume;
+                bundle.delivery.progress = bundle.delivery.progress.terminal();
                 bundle.task.updated_at_ms = unix_time_ms();
                 write_bundle(&write, &bundle)?;
                 append_next_event(&write, &task_id, TaskEventKind::AttemptTerminal)?;
@@ -484,11 +544,34 @@ impl TaskJournal {
                 }
                 task.transition(TaskTransition::Failed)
                     .map_err(JournalError::InvalidTransition)?;
-                delivery.state = DeliveryState::AwaitingResume;
+                delivery.progress = delivery.progress.terminal();
                 Ok(Some(TaskEventKind::TaskTerminal))
             })
             .await?;
         Ok(bundle)
+    }
+
+    /// Records a definite workspace failure without copying plugin payloads.
+    ///
+    /// # Errors
+    /// Returns a journal error when the durable transition cannot be committed.
+    pub async fn fail_workspace(&self, task_id: &TaskId) -> Result<TaskBundle, JournalError> {
+        self.mutate(task_id.clone(), |task, _attempt, delivery, workspace| {
+            if task.state.is_terminal() {
+                return Ok(None);
+            }
+            let WorkspaceClaimState::Pending { source_workspace } = &workspace.state else {
+                return Err(JournalError::InvalidTransition("workspace is not pending".into()));
+            };
+            workspace.state = WorkspaceClaimState::Failed {
+                source_workspace: source_workspace.clone(),
+                error: "Isolated workspace preparation failed. The source must be owned by a configured VCS provider supporting workspace.create@1; inspect the workspace operation for details.".into(),
+            };
+            task.transition(TaskTransition::Failed)
+                .map_err(JournalError::InvalidTransition)?;
+            delivery.progress = delivery.progress.terminal();
+            Ok(Some(TaskEventKind::TaskTerminal))
+        }).await
     }
 
     /// Records idempotent cancellation intent without claiming provider exit.
@@ -506,7 +589,7 @@ impl TaskJournal {
             task.transition(TaskTransition::CancelRequested)
                 .map_err(JournalError::InvalidTransition)?;
             if task.state == TaskState::Cancelled {
-                delivery.state = DeliveryState::AwaitingResume;
+                delivery.progress = delivery.progress.terminal();
             }
             Ok(Some(TaskEventKind::CancelRequested))
         })
@@ -528,7 +611,7 @@ impl TaskJournal {
             if task.state == TaskState::Cancelling && attempt.state.provider_turn_id().is_none() {
                 task.transition(TaskTransition::CancelledBeforeStart)
                     .map_err(JournalError::InvalidTransition)?;
-                delivery.state = DeliveryState::AwaitingResume;
+                delivery.progress = delivery.progress.terminal();
                 return Ok(Some(TaskEventKind::TaskTerminal));
             }
             Ok(None)
@@ -545,8 +628,8 @@ impl TaskJournal {
     pub async fn acknowledge_delivery(&self, task_id: &TaskId) -> Result<TaskBundle, JournalError> {
         let task_id = task_id.clone();
         self.mutate(task_id, |task, _attempt, delivery, _workspace| {
-            if task.state.is_terminal() && delivery.state == DeliveryState::AwaitingResume {
-                delivery.state = DeliveryState::Acknowledged;
+            if task.state.is_terminal() {
+                delivery.progress = delivery.progress.acknowledge();
             }
             Ok(None)
         })

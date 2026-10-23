@@ -77,16 +77,18 @@ impl OrchestrationService {
                 ))
             })?,
         };
-        let parent_profile = Some(parent.settings.permission_profile)
-            .filter(|profile| !profile.is_empty())
-            .or_else(|| {
-                self.profiles
-                    .get(&caller.provider.descriptor().id, caller.thread.as_str())
-            });
+        let inherited = self.inherited_permissions(
+            caller,
+            &parent.settings.permission_profile,
+            request.permission_profile.as_deref(),
+        );
+        let parent_profile = inherited
+            .as_ref()
+            .map(|permissions| permissions.profile.as_str());
         let workspace = admission::workspace(
             &request.workspace,
             &parent.cwd,
-            parent_profile.as_deref(),
+            parent_profile,
             request.permission_profile.as_deref(),
         )
         .map_err(ToolError::admission)?;
@@ -107,11 +109,12 @@ impl OrchestrationService {
                 message,
             ))
         })?;
-        let permission = admission::permission_envelope(
-            parent_profile.as_deref(),
+        let mut permission = admission::permission_envelope(
+            parent_profile,
             request.permission_profile.as_deref(),
             translated_profile.clone(),
         );
+        permission.execution_policy = inherited.and_then(|permissions| permissions.execution);
         Ok(DelegatePlan {
             wire,
             settings: ThreadSettings {
@@ -125,6 +128,35 @@ impl OrchestrationService {
             permission,
             root_thread_id: self.root_thread(&caller.thread).await?,
         })
+    }
+
+    fn inherited_permissions(
+        &self,
+        caller: &Caller,
+        fallback: &str,
+        requested: Option<&str>,
+    ) -> Option<crate::agent::permission_profiles::ObservedPermissions> {
+        use crate::agent::permission_profiles::ObservedPermissions;
+        let mut permissions = self
+            .profiles
+            .snapshot(&caller.provider.descriptor().id, caller.thread.as_str())
+            .or_else(|| {
+                (!fallback.is_empty()).then(|| ObservedPermissions {
+                    profile: fallback.to_owned(),
+                    execution: None,
+                })
+            })?;
+        // Only native settings report an authoritative OS sandbox. Projected
+        // settings from other adapters are UI compatibility values.
+        if !caller
+            .provider
+            .capabilities()
+            .supports(Capability::CodexNative)
+            || requested.is_some_and(|requested| requested != permissions.profile)
+        {
+            permissions.execution = None;
+        }
+        Some(permissions)
     }
 
     async fn root_thread(&self, thread: &AppThreadId) -> Result<AppThreadId, ToolError> {

@@ -28,7 +28,7 @@ export const githubProvider = {
       disconnectModes: ["unlink", "logoutHost"],
       existingLogins: [],
       kind: "hostLogin",
-      label: "Connect GitHub",
+      label: "Sign in with GitHub",
       links: [],
       methodId: "gh-login",
       purpose: "account",
@@ -44,17 +44,38 @@ export const githubProvider = {
       kind: "pasteToken",
       label: "Paste a token",
       links: [
-        { label: "Generate token", url: "https://github.com/settings/tokens/new?scopes=repo,read:org&description=CodeWide" },
-        { label: "Fine-grained token", url: "https://github.com/settings/personal-access-tokens/new" },
+        {
+          label: "Generate token",
+          url: "https://github.com/settings/tokens/new?scopes=repo,read:org&description=CodeWide",
+        },
+        {
+          label: "Fine-grained token",
+          url: "https://github.com/settings/personal-access-tokens/new",
+        },
       ],
       methodId: "gh-token",
       purpose: "account",
-      requiredPermissions: ["Pull requests: read and write", "Contents: read", "Checks: read", "Commit statuses: read", "Metadata: read"],
+      requiredPermissions: [
+        "Pull requests: read and write",
+        "Contents: read",
+        "Checks: read",
+        "Commit statuses: read",
+        "Metadata: read",
+      ],
       unavailableReason: null,
     },
   ],
   builtIn: true,
-  capabilities: ["forge.auth@1", "forge.list@1", "forge.read@1", "forge.diff@1", "forge.actions@1", "forge.review@1", "forge.checks@1", "forge.viewed@1"],
+  capabilities: [
+    "forge.auth@1",
+    "forge.list@1",
+    "forge.read@1",
+    "forge.diff@1",
+    "forge.actions@1",
+    "forge.review@1",
+    "forge.checks@1",
+    "forge.viewed@1",
+  ],
   checksCredential: { state: "notApplicable" },
   defaultHost: "github.com",
   enabled: true,
@@ -84,7 +105,14 @@ export const arcanumProvider = {
     },
   ],
   builtIn: false,
-  capabilities: ["forge.auth@1", "forge.list@1", "forge.read@1", "forge.diff@1", "forge.actions@1", "forge.review@1"],
+  capabilities: [
+    "forge.auth@1",
+    "forge.list@1",
+    "forge.read@1",
+    "forge.diff@1",
+    "forge.actions@1",
+    "forge.review@1",
+  ],
   checksCredential: { state: "missing" },
   defaultHost: "a.yandex-team.ru",
   enabled: true,
@@ -140,12 +168,19 @@ export const failedFlow = {
 };
 
 /** `companion/forge/accounts/read` with no linked account (onboarding). */
-export const onboardingAccounts = { accounts: [], flows: [], providers: [githubProvider, arcanumProvider] };
+export const onboardingAccounts = {
+  accounts: [],
+  flows: [],
+  providers: [githubProvider, arcanumProvider],
+};
 
 const passing = { failing: 0, passed: 6, pending: 0, state: "passing" };
 
 /** One list row. */
-export function listRow(number: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+export function listRow(
+  number: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     account: connectedAccount.account,
     author: "dana-r",
@@ -189,7 +224,10 @@ export const reviewRequestedPage = {
 };
 
 /** One catalog descriptor with contract defaults. */
-export function action(actionId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+export function action(
+  actionId: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     actionId,
     anchor: null,
@@ -231,7 +269,12 @@ export const overview91 = {
   catalog: {
     actions: [
       action("review", { kind: "reviewPr", label: "Review PR", order: 1, placement: "primary" }),
-      action("update", { confirm: "confirm", kind: "updateBranch", label: "Update branch", order: 2 }),
+      action("update", {
+        confirm: "confirm",
+        kind: "updateBranch",
+        label: "Update branch",
+        order: 2,
+      }),
       action("address", { kind: "addressComments", label: "Address comments", order: 3 }),
       action("merge", {
         confirm: "none",
@@ -247,22 +290,62 @@ export const overview91 = {
         label: "Merge",
         order: 4,
       }),
-      action("auto", { kind: "autoMerge", label: "Auto-merge when checks pass", order: 5, toggle: { on: false } }),
-      action("fix", { anchor: { checkId: "c-android", kind: "checks" }, kind: "fixCi", label: "Fix in agent", order: 6 }),
-      action("approve", { group: "verdict", isDefault: true, kind: "verdict", label: "Approve", order: 7 }),
+      action("auto", {
+        kind: "autoMerge",
+        label: "Auto-merge when checks pass",
+        order: 5,
+        toggle: { on: false },
+      }),
+      action("fix", {
+        anchor: { checkId: "c-android", kind: "checks" },
+        kind: "fixCi",
+        label: "Fix in agent",
+        order: 6,
+      }),
+      action("approve", {
+        group: "verdict",
+        isDefault: true,
+        kind: "verdict",
+        label: "Approve",
+        order: 7,
+      }),
       action("request", { group: "verdict", kind: "verdict", label: "Request changes", order: 8 }),
       action("comment", { group: "verdict", kind: "verdict", label: "Comment", order: 9 }),
-      action("close", { kind: "close", label: "Close pull request", order: 10, placement: "overflow" }),
+      action("close", {
+        kind: "close",
+        label: "Close pull request",
+        order: 10,
+        placement: "overflow",
+      }),
     ],
     headRevision: "3fa9e12",
   },
   checkItems: [
-    { checkId: "c-android", detailsUrl: null, durationSeconds: 192, name: "android / validate:android:v1", state: "failed" },
-    { checkId: "c-companion", detailsUrl: null, durationSeconds: 300, name: "companion", state: "passed" },
-    { checkId: "c-clippy", detailsUrl: null, durationSeconds: 120, name: "clippy", state: "passed" },
+    {
+      checkId: "c-android",
+      detailsUrl: null,
+      durationSeconds: 192,
+      name: "android / validate:android:v1",
+      state: "failed",
+    },
+    {
+      checkId: "c-companion",
+      detailsUrl: null,
+      durationSeconds: 300,
+      name: "companion",
+      state: "passed",
+    },
+    {
+      checkId: "c-clippy",
+      detailsUrl: null,
+      durationSeconds: 120,
+      name: "clippy",
+      state: "passed",
+    },
   ],
   checks: { failing: 1, passed: 6, pending: 0, state: "failing" },
-  description: "Plugins now keep stderr and map forge \"token expired\" output to an auth-required state.",
+  description:
+    'Plugins now keep stderr and map forge "token expired" output to an auth-required state.',
   fetchedAt: "2026-10-21T09:48:00Z",
   headBranch: "feat/forge-auth-state-and-error-envelope",
   headRevision: "3fa9e12",
@@ -270,7 +353,10 @@ export const overview91 = {
     { source: "branch", threadId: "thread-forge-auth" },
     { source: "manual", threadId: "thread-review-91" },
   ],
-  localCheckout: { branch: "feat/forge-auth-state-and-error-envelope", workspace: "/home/dev/CodeWide" },
+  localCheckout: {
+    branch: "feat/forge-auth-state-and-error-envelope",
+    workspace: "/home/dev/CodeWide",
+  },
   merge: { reason: "1 required check is failing", state: "blocked" },
   number: "91",
   pullRequest: "fpr1.github-91",
@@ -298,7 +384,17 @@ export const filesPage = {
       additions: 46,
       deletions: 9,
       patch: {
-        hunks: [{ fingerprint: "b3:aa", id: "crates/companion-core/src/vcs/plugin.rs#h1", newLines: 8, newStart: 208, oldLines: 6, oldStart: 208, ordinal: 1 }],
+        hunks: [
+          {
+            fingerprint: "b3:aa",
+            id: "crates/companion-core/src/vcs/plugin.rs#h1",
+            newLines: 8,
+            newStart: 208,
+            oldLines: 6,
+            oldStart: 208,
+            ordinal: 1,
+          },
+        ],
         state: "present",
         text: PATCH,
       },
@@ -336,7 +432,13 @@ const prSource = { kind: "pullRequest", pullRequest: "fpr1.github-91" };
 /** One companion draft on PR #91. */
 export function prDraft(id: string, overrides: Record<string, unknown>): Record<string, unknown> {
   return {
-    anchor: { endLine: 210, hunk: null, path: "crates/companion-core/src/vcs/plugin.rs", side: "new", startLine: 210 },
+    anchor: {
+      endLine: 210,
+      hunk: null,
+      path: "crates/companion-core/src/vcs/plugin.rs",
+      side: "new",
+      startLine: 210,
+    },
     author: { kind: "user" },
     body: "Should the host name be redacted before it reaches the error message?",
     createdAt: "2026-10-21T09:30:00Z",
@@ -378,8 +480,20 @@ export const guideState = {
       {
         chapterId: "ch-1",
         stops: [
-          { hunkIds: ["crates/companion-core/src/vcs/plugin.rs#h1"], prose: "The plugin now keeps stderr.", stopId: "s1", summary: "Keep stderr", title: "Keep stderr" },
-          { hunkIds: ["crates/companion-core/src/vcs/plugin.rs#h1"], prose: null, stopId: "s2", summary: "Map token expiry", title: "Map token expiry" },
+          {
+            hunkIds: ["crates/companion-core/src/vcs/plugin.rs#h1"],
+            prose: "The plugin now keeps stderr.",
+            stopId: "s1",
+            summary: "Keep stderr",
+            title: "Keep stderr",
+          },
+          {
+            hunkIds: ["crates/companion-core/src/vcs/plugin.rs#h1"],
+            prose: null,
+            stopId: "s2",
+            summary: "Map token expiry",
+            title: "Map token expiry",
+          },
         ],
         summary: null,
         title: "Error mapping",

@@ -19,6 +19,7 @@ mod coordinator;
 mod delivery;
 pub mod journal;
 pub mod lineage;
+mod notifications;
 mod observer;
 pub mod profiles;
 mod runtime;
@@ -190,6 +191,7 @@ impl OrchestrationService {
             delegate_task_enabled: std::sync::atomic::AtomicBool::new(true),
         });
         service.start_recovery();
+        service.start_completion_delivery();
         service
     }
 

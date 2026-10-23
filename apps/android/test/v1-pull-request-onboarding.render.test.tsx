@@ -182,7 +182,7 @@ it("keeps the one-time code separate from the compact copy and browser actions",
 
   fireEvent.press(view.getByRole("button", { name: "Connect a provider" }));
   fireEvent.press(view.getByRole("button", { name: "GitHub" }));
-  fireEvent.press(view.getByRole("button", { name: "Connect GitHub" }));
+  fireEvent.press(view.getByRole("button", { name: "Sign in with GitHub" }));
 
   const authHeader = within(view.getByTestId("provider-tray-header-left-step-3"));
   expect(authHeader.getByText("Sign in to GitHub")).toBeOnTheScreen();
@@ -222,7 +222,7 @@ it("binds each authentication method to its own view and keeps Back on the selec
       name: "Back",
     }),
   );
-  fireEvent.press(view.getByRole("button", { name: "Connect GitHub" }));
+  fireEvent.press(view.getByRole("button", { name: "Sign in with GitHub" }));
   expect(view.queryByText("Finish sign-in")).toBeNull();
   expect(view.getByText("ABCD-1234")).toBeOnTheScreen();
   expect(view.queryByTestId("forge-tray-token-panel")).toBeNull();
@@ -240,7 +240,7 @@ it("binds each authentication method to its own view and keeps Back on the selec
   fireEvent.press(view.getByRole("button", { name: "GitHub" }));
 
   expect(view.getByText("2 of 4")).toBeOnTheScreen();
-  expect(view.getByRole("button", { name: "Connect GitHub" })).toBeOnTheScreen();
+  expect(view.getByRole("button", { name: "Sign in with GitHub" })).toBeOnTheScreen();
   expect(view.queryByTestId("forge-tray-token-panel")).toBeNull();
 });
 
@@ -265,10 +265,7 @@ it("keeps all four onboarding steps through the terminal success state", async (
   const authHeader = within(view.getByTestId("provider-tray-header-left-step-3"));
   expect(authHeader.getByText("Connect GitHub")).toBeOnTheScreen();
   expect(authHeader.getByText("3 of 4")).toBeOnTheScreen();
-  expect(view.queryByText("Connecting @sergeigarin")).toBeNull();
-  expect(
-    view.getByText("The connection is handled by your Companion. You can keep this tray open."),
-  ).toBeOnTheScreen();
+  expect(view.getByText("Connecting @sergeigarin")).toBeOnTheScreen();
 
   await act(async () => {
     if (resolveStart === null) {
@@ -286,6 +283,47 @@ it("keeps all four onboarding steps through the terminal success state", async (
     view.getByText("Pull requests from this provider are ready in your review inbox."),
   ).toBeOnTheScreen();
   expect(view.getByRole("button", { name: "View pull requests" })).toBeOnTheScreen();
+});
+
+it("recovers the host-login code when the mutation reply is lost but accounts resynchronize", async () => {
+  const forge = forgeResources();
+  const connectionId = "recovered-auth-server";
+  forge.accounts.publish({ connectionId }, SINGLE_PROVIDER);
+  const pendingStart = new Promise<AuthStartResult>(() => undefined);
+  const workspaceCapabilities: PullRequestsWorkspaceCapabilities = {
+    ...capabilities(SINGLE_PROVIDER),
+    startAuth: () => pendingStart,
+  };
+  const view = render(
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { height: 800, width: 400, x: 0, y: 0 },
+        insets: { bottom: 0, left: 0, right: 0, top: 0 },
+      }}
+    >
+      <PullRequestsCatalog
+        capabilities={workspaceCapabilities}
+        connectionId={connectionId}
+        forge={forge}
+        onOpenPullRequest={() => undefined}
+        openingKey={null}
+      />
+    </SafeAreaProvider>,
+  );
+
+  fireEvent.press(view.getByRole("button", { name: "Connect a provider" }));
+  fireEvent.press(view.getByRole("button", { name: "GitHub" }));
+  fireEvent.press(view.getByRole("button", { name: "Sign in with GitHub" }));
+  expect(view.getByText("Starting GitHub sign-in")).toBeOnTheScreen();
+
+  act(() => {
+    forge.accounts.publish({ connectionId }, HOST_LOGIN);
+  });
+
+  expect(await view.findByText("ABCD-1234")).toBeOnTheScreen();
+  expect(view.getByRole("button", { name: "Copy one-time code" })).toBeOnTheScreen();
+  expect(view.getByRole("button", { name: "Open github.com verification page" })).toBeOnTheScreen();
+  expect(view.queryByText("Starting GitHub sign-in")).toBeNull();
 });
 
 it("keeps the terminal success visible after the authoritative account snapshot settles", async () => {

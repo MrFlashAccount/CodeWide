@@ -9,17 +9,16 @@ use std::{
 };
 
 use crate::agent::{
-    client_wire::observe,
+    client_wire::{execution, observe},
     model::{PermissionProfileCatalog, ProviderId},
-    provider::AgentProvider,
+    provider::{AgentProvider, ExecutionPolicy},
 };
 use serde_json::Value;
 
 /// Full access under each provider's name for it: Claude has both,
 /// Codex only `:danger-full-access`. Both lift every check.
 const FULL_ACCESS: [&str; 2] = [":full-access", ":danger-full-access"];
-/// The least privileged built-in profile and the safe fallback when a
-/// source thread's effective profile is unknown.
+/// The least privileged built-in profile, available as an explicit request.
 pub const READ_ONLY: &str = ":read-only";
 /// Bound of the observed-profile map; a full map starts over.
 const MAX_OBSERVED_THREADS: usize = 4_096;
@@ -30,11 +29,23 @@ const MAX_OBSERVED_THREADS: usize = 4_096;
 /// it actually runs under.
 #[derive(Default)]
 pub struct ProfileObservations {
-    profiles: Mutex<HashMap<(ProviderId, String), String>>,
+    profiles: Mutex<HashMap<(ProviderId, String), ObservedPermissions>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ObservedPermissions {
+    pub(crate) profile: String,
+    pub(crate) execution: Option<ExecutionPolicy>,
 }
 
 impl ProfileObservations {
-    fn record(&self, provider: &ProviderId, thread_id: &str, profile: &str) {
+    fn record(
+        &self,
+        provider: &ProviderId,
+        thread_id: &str,
+        profile: &str,
+        execution: Option<ExecutionPolicy>,
+    ) {
         let mut profiles = self
             .profiles
             .lock()
@@ -43,20 +54,48 @@ impl ProfileObservations {
         if profiles.len() >= MAX_OBSERVED_THREADS && !profiles.contains_key(&key) {
             profiles.clear();
         }
-        profiles.insert(key, profile.to_owned());
+        profiles.insert(
+            key,
+            ObservedPermissions {
+                profile: profile.to_owned(),
+                execution,
+            },
+        );
+    }
+
+    /// Records the policy applied when the host created a child. Later native
+    /// settings notifications replace this snapshot with the effective policy.
+    pub fn record_created(
+        &self,
+        provider: &ProviderId,
+        thread_id: &str,
+        profile: &str,
+        execution: Option<ExecutionPolicy>,
+    ) {
+        self.record(provider, thread_id, profile, execution);
     }
 
     /// Observes a provider notification.
     pub fn observe_event(&self, provider: &ProviderId, payload: &Value) {
         if let Some((thread_id, profile)) = observe::settings_profile(payload) {
-            self.record(provider, thread_id, profile);
+            self.record(
+                provider,
+                thread_id,
+                profile,
+                execution::event_policy(payload),
+            );
         }
     }
 
     /// Observes an RPC result.
     pub fn observe_rpc_result(&self, provider: &ProviderId, method: &str, result: &Value) {
         if let Some((thread_id, profile)) = observe::result_profile(method, result) {
-            self.record(provider, thread_id, profile);
+            self.record(
+                provider,
+                thread_id,
+                profile,
+                execution::result_policy(method, result),
+            );
         }
     }
 
@@ -67,7 +106,31 @@ impl ProfileObservations {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&(provider.clone(), thread_id.to_owned()))
+            .map(|observed| observed.profile.clone())
+    }
+
+    /// Captures profile and execution together, so a settings event cannot mix
+    /// policies while admission awaits a target catalog.
+    pub(crate) fn snapshot(
+        &self,
+        provider: &ProviderId,
+        thread_id: &str,
+    ) -> Option<ObservedPermissions> {
+        self.profiles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(provider.clone(), thread_id.to_owned()))
             .cloned()
+    }
+
+    /// The effective native execution policy observed with that profile.
+    #[must_use]
+    pub fn execution(&self, provider: &ProviderId, thread_id: &str) -> Option<ExecutionPolicy> {
+        self.profiles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(provider.clone(), thread_id.to_owned()))
+            .and_then(|observed| observed.execution.clone())
     }
 }
 

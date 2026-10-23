@@ -352,6 +352,7 @@ pub(crate) struct ScriptedProvider {
     /// `turn_start` answers `busy` while set.
     pub(crate) busy: Mutex<Option<String>>,
     pub(crate) created: Mutex<Vec<ThreadCreateParams>>,
+    pub(crate) inherited_policies: Mutex<Vec<crate::agent::provider::ExecutionPolicy>>,
     pub(crate) started: Mutex<Vec<TurnStartParams>>,
     pub(crate) steered: Mutex<Vec<TurnSteerParams>>,
     pub(crate) interrupted: Mutex<Vec<TurnInterruptParams>>,
@@ -384,6 +385,7 @@ impl ScriptedProvider {
             turns: Mutex::new(std::collections::HashMap::new()),
             busy: Mutex::new(None),
             created: Mutex::new(Vec::new()),
+            inherited_policies: Mutex::new(Vec::new()),
             started: Mutex::new(Vec::new()),
             steered: Mutex::new(Vec::new()),
             interrupted: Mutex::new(Vec::new()),
@@ -539,6 +541,15 @@ impl AgentProvider for ScriptedProvider {
         locked(&self.created).push(params);
         locked(&self.threads).push(created.clone());
         Ok(created)
+    }
+
+    async fn thread_create_with_policy(
+        &self,
+        params: ThreadCreateParams,
+        policy: &crate::agent::provider::ExecutionPolicy,
+    ) -> Result<AgentThread, ProviderError> {
+        locked(&self.inherited_policies).push(policy.clone());
+        self.thread_create(params).await
     }
 
     async fn thread_read(&self, id: &AppThreadId) -> Result<ThreadReadResult, ProviderError> {

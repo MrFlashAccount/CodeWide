@@ -4,7 +4,13 @@ import { parseForgeAccounts } from "../src/data/forgeContract";
 import { cardPlan, otherActionLabel } from "../src/features/pullRequests/onboarding/cardPlan";
 import { declaredScopes, detailRuns } from "../src/features/pullRequests/onboarding/tokenSheetText";
 import { providerExplanation } from "../src/features/pullRequests/onboarding/providerPresentation";
-import { arcanumProvider, failedFlow, githubProvider, hostLoginFlow, onboardingAccounts } from "./fixtures/forgeWireFixtures";
+import {
+  arcanumProvider,
+  failedFlow,
+  githubProvider,
+  hostLoginFlow,
+  onboardingAccounts,
+} from "./fixtures/forgeWireFixtures";
 
 const snapshot = parseForgeAccounts({ ...onboardingAccounts, flows: [hostLoginFlow, failedFlow] });
 const [github, arcanum] = snapshot?.providers ?? [];
@@ -18,18 +24,30 @@ describe("provider card plan", () => {
       return;
     }
     expect(plan.primary === null ? null : otherActionLabel(plan.primary)).toBe("Link @sergeigarin");
-    expect(plan.others.map(otherActionLabel)).toEqual(["Connect GitHub", "Paste a token"]);
+    expect(plan.others.map(otherActionLabel)).toEqual(["Sign in with GitHub", "Paste a token"]);
   });
 
   it("never offers Link for a login that is already linked", () => {
     const plan = github === undefined ? null : cardPlan(github, null, new Set(["sergeigarin"]));
-    expect(plan?.kind === "methods" && plan.primary !== null ? otherActionLabel(plan.primary) : null).toBe("Connect GitHub");
-    expect(plan?.kind === "methods" ? plan.others.map(otherActionLabel) : null).toEqual(["Paste a token"]);
+    expect(
+      plan?.kind === "methods" && plan.primary !== null ? otherActionLabel(plan.primary) : null,
+    ).toBe("Sign in with GitHub");
+    expect(plan?.kind === "methods" ? plan.others.map(otherActionLabel) : null).toEqual([
+      "Paste a token",
+    ]);
   });
 
   it("shows only the flow while a host login waits or failed", () => {
-    expect(github === undefined || awaiting === undefined ? null : cardPlan(github, awaiting, new Set()).kind).toBe("flow");
-    expect(github === undefined || failed === undefined ? null : cardPlan(github, failed, new Set()).kind).toBe("flow");
+    expect(
+      github === undefined || awaiting === undefined
+        ? null
+        : cardPlan(github, awaiting, new Set()).kind,
+    ).toBe("flow");
+    expect(
+      github === undefined || failed === undefined
+        ? null
+        : cardPlan(github, failed, new Set()).kind,
+    ).toBe("flow");
   });
 
   it("keeps the host steps actionable when the provider has nothing else", () => {
@@ -46,10 +64,21 @@ describe("provider card plan", () => {
 
 describe("token sheet text", () => {
   it("styles only the classic scopes the plugin declared in its own Generate link", () => {
-    const scopes = declaredScopes("https://github.com/settings/tokens/new?scopes=repo,read:org&description=CodeWide");
-    const runs = detailRuns("A classic token needs repo and read:org; repo grants full repository access.", scopes);
-    expect(runs.filter((run) => run.code).map((run) => run.text)).toEqual(["repo", "read:org", "repo"]);
-    expect(runs.map((run) => run.text).join("")).toBe("A classic token needs repo and read:org; repo grants full repository access.");
+    const scopes = declaredScopes(
+      "https://github.com/settings/tokens/new?scopes=repo,read:org&description=CodeWide",
+    );
+    const runs = detailRuns(
+      "A classic token needs repo and read:org; repo grants full repository access.",
+      scopes,
+    );
+    expect(runs.filter((run) => run.code).map((run) => run.text)).toEqual([
+      "repo",
+      "read:org",
+      "repo",
+    ]);
+    expect(runs.map((run) => run.text).join("")).toBe(
+      "A classic token needs repo and read:org; repo grants full repository access.",
+    );
     expect(declaredScopes(null).size).toBe(0);
     expect(detailRuns("repository access", scopes).some((run) => run.code)).toBe(false);
   });

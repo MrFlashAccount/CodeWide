@@ -8,6 +8,8 @@ The in-process `AgentProvider` implementation for Codex and the Codex-owned stor
 
 Adapter:
 
+- `execution.rs` — converts a frozen inherited execution policy to native thread-start sandbox/config and approval fields; named profiles keep their configuration.
+
 - `lib.rs` — `CodexProvider`, the `AgentProvider` implementation over `UpstreamHandle`, the account pool and the Codex storage modules; exposes the `codex.native` `NativeSurface` and the `OpenAI` price table (`usage_pricing`); stamps neutral turns and items with `provenance {provider: "codex", nativeThreadId}` (phase 1: the app thread id).
 - `storage.rs` — `CodexStorage`, the only bridge from the sync hub to the Codex storage modules: it implements `NativeThreadStore`, `NativeMessageSearch` and `NativeThreadResources` over `history_service` (rollout catalog and history), message search and `resources`, keeping the error messages and codes the hub forwarded before.
 - `rollout_changes.rs` — watches rollout files written by other App Server processes and turns them into thread invalidations for the sync hub's journal (echoes coalesced, the trailing write never dropped).

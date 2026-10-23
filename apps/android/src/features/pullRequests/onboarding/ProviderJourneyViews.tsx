@@ -27,6 +27,7 @@ import {
   onboardingModel,
   providerInteractionKey,
   providerInteractionState,
+  settleProviderInteraction,
   startProviderInteraction,
 } from "./onboardingModel";
 import {
@@ -84,13 +85,19 @@ export function ProviderJourneyViews({
   const connectedAccount = connectedProviderAccount(snapshot.accounts, provider);
   const authenticationActive = tray.view === authViewId;
   useEffect(() => {
+    if (flow !== null) {
+      // A reconnect can deliver the Companion-owned flow even when the
+      // original mutation response was lost. The authoritative flow settles
+      // the local pending marker and immediately restores its code/actions.
+      settleProviderInteraction(interactionKey);
+    }
     // A host-login completion arrives through the live accounts resource, not
     // through the original start request. Keep that external state in sync with
     // the already-open journey so its terminal step remains visible.
     if (authenticationActive && connectedAccount !== null) {
       complete();
     }
-  }, [authenticationActive, complete, connectedAccount]);
+  }, [authenticationActive, complete, connectedAccount, flow, interactionKey]);
 
   const start = useEvent(
     (action: ConnectAction, login: string | null, method: AuthMethod): void => {
@@ -418,8 +425,10 @@ function AuthenticationActionPanel({
   }
   return (
     <View style={styles.authPending}>
-      <AppText shimmering={pending} style={styles.body}>
-        The connection is handled by your Companion. You can keep this tray open.
+      <AppText shimmering={pending} style={styles.authPendingTitle}>
+        {action.kind === "link"
+          ? `Connecting @${action.login}`
+          : `Starting ${provider.forgeName} sign-in`}
       </AppText>
       <InteractionError error={error} />
     </View>
