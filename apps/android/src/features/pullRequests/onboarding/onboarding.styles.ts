@@ -204,6 +204,7 @@ export const onboardingStyles = StyleSheet.create({
   },
   successPanel: {
     gap: spacing.md,
+    paddingVertical: spacing.sm,
   },
   title: {
     ...typeScale.title,

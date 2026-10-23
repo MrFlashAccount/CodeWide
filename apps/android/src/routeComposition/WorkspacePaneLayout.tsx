@@ -46,7 +46,7 @@ export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
   const catalogMode = visibleCatalogMode(focusedRoute?.name, desktop, noServer);
   const { content: catalogContent, status: catalogStatus } = catalogPresentation(
     props,
-    pullRequestsCatalogFocused,
+    pullRequestsFocused,
   );
   const presentation = workspacePanePresentation({
     desktop,
@@ -144,7 +144,7 @@ function workspacePanePresentation({
     return desktop ? { kind: "wide", viewportWidth } : { kind: "catalogOnly" };
   }
   if (pullRequestsFocused) {
-    return { kind: "detailOnly" };
+    return desktop ? { kind: "wide", viewportWidth } : { kind: "detailOnly" };
   }
   if (welcomeVisible) {
     return { kind: "catalogOnly" };
@@ -157,7 +157,7 @@ function visibleCatalogMode(
   desktop: boolean,
   noServer: boolean,
 ): CatalogMode | null {
-  if (routeName === "pulls/index") {
+  if (routeName === "pulls/index" || (desktop && isPullRequestsRoute(routeName))) {
     return "pullRequests";
   }
   if (!noServer && !isPullRequestsRoute(routeName) && (routeName === "(lists)" || desktop)) {
@@ -191,8 +191,8 @@ function FloatingCatalogModeBar({
   );
 }
 
-function catalogPresentation(props: PaneLayoutProps, pullRequestsCatalogFocused: boolean) {
-  if (pullRequestsCatalogFocused) {
+function catalogPresentation(props: PaneLayoutProps, pullRequestsFocused: boolean) {
+  if (pullRequestsFocused) {
     return { content: <PullRequestsCatalogPane />, status: "present" as const };
   }
   const catalog = props.state.routes.find((route) => route.name === "(lists)");

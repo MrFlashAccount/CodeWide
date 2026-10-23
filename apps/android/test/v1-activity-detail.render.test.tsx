@@ -1,10 +1,12 @@
 import { render } from "@testing-library/react-native";
 import type { ReactNode } from "react";
+import type { ReactTestInstance } from "react-test-renderer";
+import { StyleSheet } from "react-native";
 
 import { LargeContentViewerContext } from "../src/features/conversation/content/contentViewerContext";
 import { ActivityDetailSheet } from "../src/features/conversation/turns/ActivityDetailSheet";
 import { TurnActivityMetricsContext } from "../src/features/conversation/turns/turnContexts";
-import { colors, typeScale } from "../src/theme";
+import { colors, radii, typeScale } from "../src/theme";
 
 // WHY: Node cannot mount the native bottom-sheet window. Keep the real Activity header and list.
 jest.mock("@expo/ui/community/bottom-sheet", () => {
@@ -30,6 +32,72 @@ it("uses a readable stable Activity heading instead of the block summary", () =>
   expect(heading).toHaveStyle({ color: colors.text, fontSize: typeScale.heading.fontSize });
   expect(view.queryByText("File, Run, Comments 18")).toBeNull();
 });
+
+it("invalidates recycled rows when an appended step changes the list tail", () => {
+  const first = {
+    body: "first",
+    collapsible: true,
+    content: null,
+    durationMs: 10,
+    key: "command:first",
+    kind: "commandExecution" as const,
+    raw: { command: "first", id: "first" },
+    status: "completed" as const,
+    title: "first",
+    tone: "neutral" as const,
+  };
+  const view = render(
+    <ActivityDetailSheet
+      blocks={[first]}
+      onClose={() => undefined}
+      turnKey="turn-1"
+      turnStatus="inProgress"
+      visible
+    />,
+  );
+  const initialVersion = view.getByTestId("activity-detail-list").props.extraData;
+
+  view.rerender(
+    <ActivityDetailSheet
+      blocks={[
+        first,
+        {
+          ...first,
+          body: "second",
+          key: "command:second",
+          raw: { command: "second", id: "second" },
+          title: "second",
+        },
+      ]}
+      onClose={() => undefined}
+      turnKey="turn-1"
+      turnStatus="inProgress"
+      visible
+    />,
+  );
+
+  expect(view.getByTestId("activity-detail-list").props.extraData).not.toBe(initialVersion);
+  const rows = view.getAllByTestId("activity-step-row");
+  expect(rows).toHaveLength(2);
+  const formerTailSurface = activityRowSurface(rows[0]);
+  const currentTailSurface = activityRowSurface(rows[1]);
+  expect(formerTailSurface).toHaveStyle({ borderTopLeftRadius: radii.medium });
+  expect(formerTailSurface).not.toHaveStyle({ borderBottomLeftRadius: radii.medium });
+  expect(currentTailSurface).not.toHaveStyle({ borderTopLeftRadius: radii.medium });
+  expect(currentTailSurface).toHaveStyle({ borderBottomLeftRadius: radii.medium });
+});
+
+function activityRowSurface(row: ReactTestInstance): ReactTestInstance {
+  let candidate = row.parent;
+  while (candidate !== null) {
+    const style = StyleSheet.flatten(candidate.props.style);
+    if (style?.backgroundColor === colors.surfaceContainer && style.width === "100%") {
+      return candidate;
+    }
+    candidate = candidate.parent;
+  }
+  throw new Error("Activity row surface was not rendered");
+}
 
 it("keeps tool icon, server output tokens, tool name and failed status in the list row", () => {
   const footprint = {

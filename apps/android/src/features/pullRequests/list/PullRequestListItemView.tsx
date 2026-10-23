@@ -15,7 +15,6 @@ export function PullRequestListItemView({
   onOpen,
   onReconnect,
   onRetry,
-  openingKey,
 }: {
   readonly iconFor: (pluginId: string) => ProviderIcon | null;
   readonly item: PullRequestListItem;
@@ -23,7 +22,6 @@ export function PullRequestListItemView({
   readonly onOpen: (row: Row) => void;
   readonly onReconnect: (account: AccountState) => void;
   readonly onRetry: () => void;
-  readonly openingKey: string | null;
 }): React.JSX.Element {
   if (item.kind === "header") {
     return (
@@ -38,14 +36,7 @@ export function PullRequestListItemView({
     return <AccountProblemRow account={item.account} onReconnect={onReconnect} onRetry={onRetry} />;
   }
   if (item.kind === "row") {
-    return (
-      <PullRequestRow
-        nowMs={nowMs}
-        onPress={onOpen}
-        opening={openingKey === item.row.pullRequest}
-        row={item.row}
-      />
-    );
+    return <PullRequestRow nowMs={nowMs} onPress={onOpen} row={item.row} />;
   }
   return <Text style={styles.notice}>No pull requests in this category.</Text>;
 }

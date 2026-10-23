@@ -5,7 +5,7 @@ import type { ActivityFootprint } from "@codewide/sync-client";
 import { useContext, useState, type ReactElement } from "react";
 import { Pressable, View } from "react-native";
 import { useInsideBubbleSurface } from "../../../rendering/Bubble";
-import { TimelineMotionContext } from "../../../rendering/FluidLayoutFrame";
+import { TimelineMotionContext } from "../../../rendering/TimelineMotionContext";
 import { NativeRevealSurface } from "../../../rendering/NativeRevealSurface";
 import type { TurnSequencePart } from "../../../rendering/turn-sequence";
 import { colors } from "../../../theme";

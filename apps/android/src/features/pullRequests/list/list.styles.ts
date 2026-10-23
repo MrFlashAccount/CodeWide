@@ -24,6 +24,14 @@ export const listStyles = StyleSheet.create({
     color: colors.textDim,
     fontVariant: ["tabular-nums"],
   },
+  categoryChips: {
+    columnGap: spacing.xs,
+    paddingRight: spacing.md,
+  },
+  categoryStrip: {
+    flex: 1,
+    minWidth: 0,
+  },
   chip: {
     alignItems: "center",
     borderColor: colors.border,
@@ -37,17 +45,9 @@ export const listStyles = StyleSheet.create({
     ...typeScale.label,
     color: colors.text,
   },
-  chips: {
-    columnGap: spacing.xs,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
   chipSelected: {
     backgroundColor: colors.surfaceContainerHigh,
     borderColor: colors.surfaceContainerHigh,
-  },
-  chipStrip: {
-    flexGrow: 0,
   },
   dot: {
     borderRadius: radii.pill,
@@ -69,6 +69,14 @@ export const listStyles = StyleSheet.create({
   },
   fill: {
     flex: 1,
+  },
+  filters: {
+    alignItems: "center",
+    columnGap: spacing.xs,
+    flexDirection: "row",
+    paddingBottom: spacing.xs,
+    paddingLeft: spacing.md,
+    paddingTop: spacing.xs,
   },
   floatingBarContent: {
     paddingBottom: catalogModeBarContentInset,
@@ -99,6 +107,21 @@ export const listStyles = StyleSheet.create({
   problemExpired: {
     ...typeScale.title,
     color: colors.warning,
+  },
+  repositoryFilter: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceContainer,
+    borderRadius: radii.small,
+    columnGap: spacing.compact,
+    flexDirection: "row",
+    maxWidth: "52%",
+    minHeight: controlSize.compact,
+    paddingHorizontal: spacing.sm,
+  },
+  repositoryLabel: {
+    ...typeScale.label,
+    color: colors.text,
+    flexShrink: 1,
   },
   row: {
     alignItems: "center",

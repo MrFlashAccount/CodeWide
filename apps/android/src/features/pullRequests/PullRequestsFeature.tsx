@@ -1,17 +1,17 @@
 import { useSelector } from "@legendapp/state/react";
-import { useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useDeferredValue, useState, useTransition } from "react";
 import { StyleSheet, View } from "react-native";
 
 import type { AccountState, ForgeProvider } from "../../data/forgeContract";
-import type { PullRequestRow } from "../../data/forgePullRequestContract";
-import { useForgeQuery } from "../../data/forgeQueryResource";
+import type { PullRequestCategory, PullRequestRow } from "../../data/forgePullRequestContract";
+import { forgeQueryRemoteValue, useForgeQuery } from "../../data/forgeQueryResource";
 import { remoteValue } from "../../data/forgeRemoteValue";
 import type { ForgeResources } from "../../data/forgeResources";
 import { hasLinkedAccount } from "./accounts/accountPresentation";
 import { useMinuteClock } from "../../data/minuteClock";
 import { useEvent } from "../../react/useEvent";
 import { AccountsSheet } from "./accounts/AccountsSheet";
-import { ListSkeleton } from "./list/ListSkeleton";
 import { PullRequestList } from "./list/PullRequestList";
 import { AccountsPlaceholder } from "./onboarding/AccountsPlaceholder";
 import { OnboardingScreen } from "./onboarding/OnboardingScreen";
@@ -21,6 +21,7 @@ import {
   pullRequestListModel,
   selectPullRequestCategory,
   selectPullRequestRepository,
+  type PullRequestListFilter,
 } from "./pullRequestListModel";
 import type { PullRequestsWorkspaceCapabilities } from "./workspaceCapabilities";
 
@@ -34,14 +35,12 @@ export function PullRequestsCatalog({
   connectionId,
   forge,
   onOpenPullRequest,
-  openingKey,
 }: {
   readonly capabilities: PullRequestsWorkspaceCapabilities;
   readonly connectionId: string;
   readonly forge: ForgeResources;
-  /** Navigation intent: preloads the overview, then reveals the PR screen. */
+  /** Navigation intent: reveals the PR destination immediately. */
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
-  readonly openingKey: string | null;
 }): React.JSX.Element {
   const accountsOpen = useSelector(forgeAccountsSheetOpen);
   const [openOnboardingConnection, setOpenOnboardingConnection] = useState<string | null>(null);
@@ -78,7 +77,6 @@ export function PullRequestsCatalog({
           forge={forge}
           onOpenPullRequest={onOpenPullRequest}
           onReconnect={openForgeAccounts}
-          openingKey={openingKey}
           providers={snapshot.providers}
         />
       ) : null}
@@ -101,20 +99,36 @@ function ConnectedList({
   forge,
   onOpenPullRequest,
   onReconnect,
-  openingKey,
   providers,
 }: {
   readonly connectionId: string;
   readonly forge: ForgeResources;
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
   readonly onReconnect: (account: AccountState) => void;
-  readonly openingKey: string | null;
   readonly providers: readonly ForgeProvider[];
 }): React.JSX.Element {
   const filter = useSelector(() => pullRequestListModel.get());
+  const deferredFilter = useDeferredValue(filter);
+  const [, startFilterTransition] = useTransition();
   const nowMs = useMinuteClock();
-  const params = { category: filter.category, connectionId, repository: filter.repository };
-  const state = useForgeQuery(forge.lists, params);
+  const params = {
+    category: deferredFilter.category,
+    connectionId,
+    repository: deferredFilter.repository,
+  };
+  const query = useQuery(
+    { ...forge.lists.options(params), placeholderData: keepPreviousData },
+    forge.lists.client,
+  );
+  const state = forgeQueryRemoteValue(query);
+  const page = remoteValue(state);
+  const pendingFilter = filterPendingState({
+    current: filter,
+    deferred: deferredFilter,
+    failed: query.isError,
+    placeholder: query.isPlaceholderData,
+    placeholderCategory: page?.category ?? null,
+  });
   const loadMore = useEvent((): void => {
     // A failed next page keeps the loaded pages; the next end-reached tries again.
     forge.loadMoreList(params).catch(() => undefined);
@@ -122,9 +136,16 @@ function ConnectedList({
   const retry = useEvent((): void => {
     forge.lists.refresh(params).catch(() => undefined);
   });
-  if (state.status === "loading" && state.value === null) {
-    return <ListSkeleton />;
-  }
+  const selectCategory = useEvent((category: PullRequestListFilter["category"]): void => {
+    startFilterTransition(() => {
+      selectPullRequestCategory(category);
+    });
+  });
+  const selectRepository = useEvent((repository: string | null): void => {
+    startFilterTransition(() => {
+      selectPullRequestRepository(repository);
+    });
+  });
   return (
     <PullRequestList
       filter={filter}
@@ -132,16 +153,42 @@ function ConnectedList({
         providers.find((provider) => provider.pluginId === pluginId)?.icon ?? null
       }
       nowMs={nowMs}
-      onCategory={selectPullRequestCategory}
+      onCategory={selectCategory}
       onEndReached={loadMore}
       onOpen={onOpenPullRequest}
       onReconnect={onReconnect}
-      onRepository={selectPullRequestRepository}
+      onRepository={selectRepository}
       onRetry={retry}
-      openingKey={openingKey}
+      pendingFilter={pendingFilter}
       state={state}
     />
   );
+}
+
+function filterPendingState({
+  current,
+  deferred,
+  failed,
+  placeholder,
+  placeholderCategory,
+}: {
+  readonly current: PullRequestListFilter;
+  readonly deferred: PullRequestListFilter;
+  readonly failed: boolean;
+  readonly placeholder: boolean;
+  readonly placeholderCategory: PullRequestCategory | null;
+}): { readonly category: boolean; readonly repository: boolean } {
+  if (failed) {
+    return { category: false, repository: false };
+  }
+  return {
+    category:
+      current.category !== deferred.category ||
+      (placeholder && placeholderCategory !== current.category),
+    repository:
+      current.repository !== deferred.repository ||
+      (placeholder && placeholderCategory === current.category),
+  };
 }
 
 const styles = StyleSheet.create({

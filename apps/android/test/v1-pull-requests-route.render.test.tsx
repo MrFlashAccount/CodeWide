@@ -42,7 +42,6 @@ jest.mock("../src/routeComposition/pullRequestCatalogConnection", () => ({
 jest.mock("../src/routeComposition/pullRequestNavigation", () => ({
   usePullRequestNavigation: () => ({
     openPullRequest: jest.fn(),
-    openingKey: null,
     switchCatalog: jest.fn(),
   }),
 }));

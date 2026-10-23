@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, ScrollView } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 
 import {
   PULL_REQUEST_CATEGORIES,
   type PullRequestCategory,
 } from "../../../data/forgePullRequestContract";
+import { useEvent } from "../../../react/useEvent";
 import { colors, controlHitSlop, iconSize } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import { listStyles as styles } from "./list.styles";
@@ -19,14 +20,15 @@ const CATEGORY_LABELS: Readonly<Record<PullRequestCategory, string>> = {
 };
 
 /**
- * Single-line, horizontally scrolling filter row: repository filter first,
- * then the categories at least one account supports. Never wraps.
+ * Fixed repository selector plus independently scrolling category tabs. The
+ * repository control never moves when the category strip scrolls.
  */
 export function CategoryChips({
   category,
   counts,
   onOpenRepositories,
   onSelect,
+  pending,
   repository,
   supported,
 }: {
@@ -35,67 +37,77 @@ export function CategoryChips({
   readonly counts: Partial<Readonly<Record<PullRequestCategory, number>>>;
   readonly onOpenRepositories: () => void;
   readonly onSelect: (category: PullRequestCategory) => void;
+  readonly pending: { readonly category: boolean; readonly repository: boolean };
   readonly repository: string | null;
   readonly supported: ReadonlySet<PullRequestCategory>;
 }): React.JSX.Element {
   return (
-    <ScrollView
-      contentContainerStyle={styles.chips}
-      horizontal
-      keyboardShouldPersistTaps="handled"
-      showsHorizontalScrollIndicator={false}
-      style={styles.chipStrip}
-      testID="pull-request-category-chips"
-    >
+    <View style={styles.filters} testID="pull-request-category-chips">
       <Pressable
         accessibilityLabel={`Repository filter: ${repository ?? "All repos"}`}
         accessibilityRole="button"
+        accessibilityState={{ busy: pending.repository }}
         hitSlop={controlHitSlop.compact}
         onPress={onOpenRepositories}
-        style={styles.chip}
+        style={styles.repositoryFilter}
+        testID="pull-request-repository-filter"
       >
-        <Text numberOfLines={1} style={styles.chipLabel}>
+        <Ionicons color={colors.textMuted} name="git-branch-outline" size={iconSize.indicator} />
+        <Text numberOfLines={1} shimmering={pending.repository} style={styles.repositoryLabel}>
           {repository ?? "All repos"}
         </Text>
         <Ionicons color={colors.textMuted} name="chevron-down" size={iconSize.indicator} />
       </Pressable>
-      {PULL_REQUEST_CATEGORIES.map((value) =>
-        supported.has(value) ? (
-          <CategoryChip
-            count={counts[value]}
-            key={value}
-            onSelect={onSelect}
-            selected={value === category}
-            value={value}
-          />
-        ) : null,
-      )}
-    </ScrollView>
+      <ScrollView
+        contentContainerStyle={styles.categoryChips}
+        horizontal
+        keyboardShouldPersistTaps="handled"
+        showsHorizontalScrollIndicator={false}
+        style={styles.categoryStrip}
+        testID="pull-request-category-strip"
+      >
+        {PULL_REQUEST_CATEGORIES.map((value) =>
+          supported.has(value) ? (
+            <CategoryChip
+              count={counts[value]}
+              key={value}
+              onSelect={onSelect}
+              pending={pending.category && value === category}
+              selected={value === category}
+              value={value}
+            />
+          ) : null,
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
 function CategoryChip({
   count,
   onSelect,
+  pending,
   selected,
   value,
 }: {
   readonly count: number | undefined;
   readonly onSelect: (category: PullRequestCategory) => void;
+  readonly pending: boolean;
   readonly selected: boolean;
   readonly value: PullRequestCategory;
 }): React.JSX.Element {
+  const handlePress = useEvent((): void => {
+    onSelect(value);
+  });
   return (
     <Pressable
       accessibilityRole="tab"
-      accessibilityState={{ selected }}
+      accessibilityState={{ busy: pending, selected }}
       hitSlop={controlHitSlop.compact}
-      onPress={() => {
-        onSelect(value);
-      }}
+      onPress={handlePress}
       style={[styles.chip, selected && styles.chipSelected]}
     >
-      <Text numberOfLines={1} style={styles.chipLabel}>
+      <Text numberOfLines={1} shimmering={pending} style={styles.chipLabel}>
         {count === undefined || count === 0
           ? CATEGORY_LABELS[value]
           : `${CATEGORY_LABELS[value]} ${String(count)}`}

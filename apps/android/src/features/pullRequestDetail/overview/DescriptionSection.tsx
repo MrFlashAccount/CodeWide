@@ -1,9 +1,10 @@
 import { View } from "react-native";
 
+import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import { AppText as Text } from "../../../ui/Typography";
 import { overviewStyles as styles } from "./overview.styles";
 
-/** PR description as plain selectable text: it is untrusted forge Markdown and is never executed as markup. */
+/** PR description through the same safe rich Markdown renderer as conversation bubbles. */
 export function DescriptionSection({
   description,
 }: {
@@ -19,10 +20,8 @@ export function DescriptionSection({
           Description
         </Text>
       </View>
-      <View style={styles.cardLine}>
-        <Text selectable style={styles.body}>
-          {description}
-        </Text>
+      <View style={[styles.cardLine, styles.markdownLine]}>
+        <RichMarkdown source={description} />
       </View>
     </View>
   );

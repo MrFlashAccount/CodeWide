@@ -2,6 +2,7 @@ import { StyleSheet, View } from "react-native";
 
 import type { DraftId } from "../../../data/reviewContract";
 import { useEvent } from "../../../react/useEvent";
+import { colors, layoutSize, radii, spacing } from "../../../theme";
 import { useAppDialog } from "../../../ui/AppDialog";
 import type { CodeReviewLineReference } from "../../review/comments/reviewComment";
 import { ChangesHeader } from "./ChangesHeader";
@@ -78,7 +79,7 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
   );
 }
 
-/** Files or Guide over the loaded files page; nothing until the first page exists. */
+/** Files or Guide over the loaded files page; a stable skeleton owns the first load. */
 function ChangesBody({
   composer,
   data,
@@ -96,7 +97,7 @@ function ChangesBody({
   const dialog = useAppDialog();
   const { page } = data;
   if (page === null) {
-    return <View style={styles.fill} />;
+    return <ChangesSkeleton />;
   }
   return (
     <>
@@ -154,9 +155,63 @@ function ChangesBody({
   );
 }
 
+const SKELETON_ROWS = ["first", "second", "third", "fourth"] as const;
+const ALTERNATING_ROW_DIVISOR = 2;
+const SHORT_ROW_REMAINDER = 1;
+const SKELETON_META_HEIGHT = 10;
+const SKELETON_PATH_HEIGHT = 12;
+
+function ChangesSkeleton(): React.JSX.Element {
+  return (
+    <View
+      accessibilityLabel="Pull request changes are loading"
+      accessibilityState={{ busy: true }}
+      style={styles.changesSkeleton}
+      testID="pull-request-changes-skeleton"
+    >
+      {SKELETON_ROWS.map((row, index) => (
+        <View key={row} style={styles.skeletonRow}>
+          <View
+            style={[
+              styles.skeletonPath,
+              index % ALTERNATING_ROW_DIVISOR === SHORT_ROW_REMAINDER && styles.skeletonPathShort,
+            ]}
+          />
+          <View style={styles.skeletonMeta} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  changesSkeleton: {
+    flex: 1,
+    paddingTop: spacing.xs,
+  },
   fill: {
     flex: 1,
     minHeight: 0,
+  },
+  skeletonMeta: {
+    backgroundColor: colors.surfaceContainer,
+    borderRadius: radii.compact,
+    height: SKELETON_META_HEIGHT,
+    width: "28%",
+  },
+  skeletonPath: {
+    backgroundColor: colors.surfaceContainerHigh,
+    borderRadius: radii.compact,
+    height: SKELETON_PATH_HEIGHT,
+    width: "64%",
+  },
+  skeletonPathShort: {
+    width: "48%",
+  },
+  skeletonRow: {
+    gap: spacing.xs,
+    height: layoutSize.row,
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
   },
 });

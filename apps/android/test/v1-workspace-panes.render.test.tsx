@@ -72,6 +72,9 @@ function PullRequests() {
     </View>
   );
 }
+function PullRequestDetail() {
+  return <Text testID="pull-request-detail">Pull request detail</Text>;
+}
 function Catalog() {
   const selectedProject = useWorkspaceProjectSessionId();
   return (
@@ -89,6 +92,10 @@ function Workspace() {
     <Root.Navigator layout={WorkspacePaneLayout} screenLayout={WorkspaceScreenLayout}>
       <Root.Screen name="(lists)" component={Catalog} />
       <Root.Screen name="pulls/index" component={PullRequests} />
+      <Root.Screen
+        name="pulls/[connectionId]/[pullRequestKey]"
+        component={PullRequestDetail}
+      />
       <Root.Screen name="thread" component={Thread} />
     </Root.Navigator>
   );
@@ -204,6 +211,37 @@ it("keeps the wide catalog geometry while switching to the Pull requests route",
   expect(view.getByTestId("workspace-catalog-pane")).not.toHaveStyle({ display: "none" });
   expect(view.getByTestId("header")).toBeVisible();
   expect(view.queryByTestId("pull-requests-route")).toBeNull();
+  view.unmount();
+});
+
+it("keeps the Pull requests catalog beside a wide pull-request detail", () => {
+  mockDesktop = true;
+  const view = render(<Application />);
+  const workspaceKey = mockReference.getRootState().routes[0]?.state?.key;
+  act(() =>
+    mockReference.dispatch({
+      type: "REPLACE",
+      target: workspaceKey,
+      payload: { name: "pulls/index" },
+    }),
+  );
+  const pullRequestsCatalog = view.getByTestId("pull-requests-catalog-pane");
+
+  act(() =>
+    mockReference.dispatch({
+      type: "PUSH",
+      target: workspaceKey,
+      payload: {
+        name: "pulls/[connectionId]/[pullRequestKey]",
+        params: { connectionId: "server", pullRequestKey: "pull-request" },
+      },
+    }),
+  );
+
+  expect(view.getByTestId("pull-request-detail")).toBeVisible();
+  expect(view.getByTestId("pull-requests-catalog-pane")).toBe(pullRequestsCatalog);
+  expect(view.getByTestId("workspace-catalog-pane")).not.toHaveStyle({ display: "none" });
+  expect(view.getByTestId("catalog-mode-bar-host").props.children).toBe("pullRequests");
   view.unmount();
 });
 

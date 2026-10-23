@@ -3,10 +3,10 @@
  * accounts (availability), list pages, the atomic PR overview, file and
  * activity pages, plus the invalidation subscription.
  *
- * `preloadOverview` returns the same cached Promise the PR screen reads with
- * Suspense, so navigation reveals the screen only after its snapshot exists.
- * Mutations live with their feature adapters and publish acknowledged results
- * back through `publish*`. No component or route session keeps a second copy.
+ * `preloadOverview` primes the same cached Promise the PR screen reads with
+ * Suspense when a caller has intent early enough. Mutations live with their
+ * feature adapters and publish acknowledged results back through `publish*`.
+ * No component or route session keeps a second copy.
  */
 import { QueryClient } from "@tanstack/react-query";
 import type { Persister } from "@tanstack/react-query-persist-client";

@@ -1,7 +1,7 @@
 /**
  * Validated client view of PR reads: list pages, the atomic overview and the
  * activity page. Titles, descriptions and comments are untrusted forge
- * content; they are rendered as text and never logged.
+ * content; rich content uses the safe renderer and is never logged.
  */
 import {
   actionCatalog,

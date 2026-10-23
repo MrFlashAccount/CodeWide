@@ -40,6 +40,9 @@ declare global {
 export const scenario = window.previewScenario ?? "list";
 window.previewWrites = [];
 
+const PREVIEW_CONNECTION_ID = "server";
+const OFFLINE_SNAPSHOT_AGE_MS = 12 * 60_000;
+
 /** An account whose plugin call failed, for the Accounts sheet's error row. */
 const erroredAccount = {
   ...connectedAccount,
@@ -252,15 +255,24 @@ export const forgeResources = createForgeResources({
   persister: createMemoryQueryPersister().persister,
   reportDroppedAction: () => undefined,
 });
-if (scenario === "offline") {
-  forgeResources.lists.publish(
-    { category: "reviewRequested", connectionId: PREVIEW_CONNECTION_ID, repository: null },
-    {
-      ...reviewRequestedPage,
-      fetchedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
-    },
-  );
-}
+/** The preview mounts only after TanStack restore, so a fixture snapshot cannot be overwritten by it. */
+export const previewReady = forgeResources.restored.then(() => {
+  if (scenario === "offline") {
+    const params = {
+      category: "reviewRequested",
+      connectionId: PREVIEW_CONNECTION_ID,
+      repository: null,
+    } as const;
+    forgeResources.queryClient.setQueryData(
+      forgeResources.lists.keyOf(params),
+      {
+        ...reviewRequestedPage,
+        fetchedAt: new Date(Date.now() - OFFLINE_SNAPSHOT_AGE_MS).toISOString(),
+      },
+      { updatedAt: Date.now() - OFFLINE_SNAPSHOT_AGE_MS },
+    );
+  }
+});
 export const reviewResources = createReviewResources({
   ...authority,
   queryClient: forgeResources.queryClient,

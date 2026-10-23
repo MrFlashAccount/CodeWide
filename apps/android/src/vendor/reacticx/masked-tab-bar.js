@@ -20,9 +20,9 @@ import Animated, {
   useAnimatedStyle,
   useFrameCallback,
   useSharedValue,
-  withSpring
+  withSpring as withSpring2
 } from "react-native-reanimated";
-import { scheduleOnRN } from "react-native-worklets";
+import { scheduleOnRN as scheduleOnRN2 } from "react-native-worklets";
 
 // vendor/reacticx/src/components/organisms/masked-tab-bar/const.ts
 var DEFAULT_HEIGHT = 52;
@@ -76,6 +76,16 @@ function useMaskedTabBar(part) {
 var MaskedTabLayerContext = createContext("base");
 function useMaskedTabLayer() {
   return useContext(MaskedTabLayerContext);
+}
+
+// vendor/reacticx/src/components/organisms/masked-tab-bar/motion.ts
+import { withSpring } from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
+function startPillSelectionOnUI(target, pillX, pillWidth, selectValue) {
+  "worklet";
+  pillX.value = withSpring(target.x, PILL_SPRING);
+  pillWidth.value = withSpring(target.width, PILL_SPRING);
+  scheduleOnRN(selectValue, target.value);
 }
 
 // vendor/reacticx/src/utils/create-compound-component/index.ts
@@ -186,8 +196,8 @@ var MaskedTabBarRoot = ({
       pillWidth.value = activeBox.width;
       return;
     }
-    pillX.value = withSpring(activeBox.x, PILL_SPRING);
-    pillWidth.value = withSpring(activeBox.width, PILL_SPRING);
+    pillX.value = withSpring2(activeBox.x, PILL_SPRING);
+    pillWidth.value = withSpring2(activeBox.width, PILL_SPRING);
   }, [activeBox, pillX, pillWidth, grabbed]);
   const ctx = useMemo(
     () => ({
@@ -302,12 +312,12 @@ var MaskedTabBarList = ({
   useAnimatedReaction(
     () => grabbed.value,
     (isGrabbed, wasGrabbed) => {
-      if (isGrabbed !== wasGrabbed) scheduleOnRN(setFollowActive, isGrabbed);
+      if (isGrabbed !== wasGrabbed) scheduleOnRN2(setFollowActive, isGrabbed);
     }
   );
   const gesture = useMemo(
     () => Gesture.Pan().minDistance(0).shouldCancelWhenOutside(false).onBegin((e) => {
-      press.value = withSpring(1, PRESS_SPRING);
+      press.value = withSpring2(1, PRESS_SPRING);
       hoveredValue.value = "";
       const inside = e.x >= pillX.value && e.x <= pillX.value + pillWidth.value;
       grabbed.value = draggable && inside;
@@ -315,10 +325,11 @@ var MaskedTabBarList = ({
       if (grabbed.value) {
         dragTarget.value = pillX.value;
         dragVelocity.value = 0;
-        return;
       }
+    }).onStart((e) => {
+      if (grabbed.value) return;
       const tapped = boxAtX(boxesValue.value, e.x);
-      if (tapped) scheduleOnRN(setValue, tapped.value);
+      if (tapped) startPillSelectionOnUI(tapped, pillX, pillWidth, setValue);
     }).onUpdate((e) => {
       if (!grabbed.value) return;
       dragTarget.value = clampValue(
@@ -332,10 +343,10 @@ var MaskedTabBarList = ({
       );
       if (over && over.value !== hoveredValue.value) {
         hoveredValue.value = over.value;
-        pillWidth.value = withSpring(over.width, PILL_SPRING);
+        pillWidth.value = withSpring2(over.width, PILL_SPRING);
       }
     }).onFinalize(() => {
-      press.value = withSpring(0, PRESS_SPRING);
+      press.value = withSpring2(0, PRESS_SPRING);
       if (!grabbed.value) return;
       grabbed.value = false;
       const box = nearestBox(
@@ -343,13 +354,13 @@ var MaskedTabBarList = ({
         pillX.value + pillWidth.value / 2
       );
       if (!box) return;
-      pillX.value = withSpring(box.x, {
+      pillX.value = withSpring2(box.x, {
         ...PILL_SPRING,
         velocity: dragVelocity.value
       });
-      pillWidth.value = withSpring(box.width, PILL_SPRING);
+      pillWidth.value = withSpring2(box.width, PILL_SPRING);
       dragVelocity.value = 0;
-      scheduleOnRN(setValue, box.value);
+      scheduleOnRN2(setValue, box.value);
     }),
     [
       boxesValue,

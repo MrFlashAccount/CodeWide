@@ -38,6 +38,7 @@ import {
   authority,
   forgeResources as forge,
   pullRequestCommentDestinations,
+  previewReady,
   reviewResources as review,
   scenario,
 } from "./previewCompanion";
@@ -92,7 +93,6 @@ function Catalog(): React.JSX.Element {
         connectionId="server"
         forge={forge}
         onOpenPullRequest={() => undefined}
-        openingKey={null}
       />
       <ModeBar />
     </View>
@@ -224,20 +224,22 @@ function Preview(): React.JSX.Element {
 
 const root = document.getElementById("app");
 if (root !== null) {
-  createRoot(root).render(
-    <SafeAreaProvider
-      initialMetrics={{
-        frame: { height: window.innerHeight, width: window.innerWidth, x: 0, y: 0 },
-        insets: { bottom: 0, left: 0, right: 0, top: 0 },
-      }}
-    >
-      <AppDialogProvider>
-        <View
-          style={{ backgroundColor: colors.background, height: window.innerHeight, width: "100%" }}
-        >
-          <Preview />
-        </View>
-      </AppDialogProvider>
-    </SafeAreaProvider>,
-  );
+  void previewReady.then(() => {
+    createRoot(root).render(
+      <SafeAreaProvider
+        initialMetrics={{
+          frame: { height: window.innerHeight, width: window.innerWidth, x: 0, y: 0 },
+          insets: { bottom: 0, left: 0, right: 0, top: 0 },
+        }}
+      >
+        <AppDialogProvider>
+          <View
+            style={{ backgroundColor: colors.background, height: window.innerHeight, width: "100%" }}
+          >
+            <Preview />
+          </View>
+        </AppDialogProvider>
+      </SafeAreaProvider>,
+    );
+  });
 }

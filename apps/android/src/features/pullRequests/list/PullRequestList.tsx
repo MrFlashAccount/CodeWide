@@ -8,10 +8,12 @@ import type {
   PullRequestRow as Row,
 } from "../../../data/forgePullRequestContract";
 import { remoteValue, type RemoteValue } from "../../../data/forgeRemoteValue";
+import { useEvent } from "../../../react/useEvent";
 import { layoutSize } from "../../../theme";
 import type { PullRequestListFilter } from "../pullRequestListModel";
 import { CategoryChips } from "./CategoryChips";
 import { listStyles as styles } from "./list.styles";
+import { ListSkeleton } from "./ListSkeleton";
 import { ListNotice } from "./ListNotice";
 import { pullRequestListItems, supportedCategories } from "./pullRequestListItems";
 import { PullRequestListItemView } from "./PullRequestListItemView";
@@ -33,63 +35,95 @@ export function PullRequestList(props: {
   readonly onReconnect: (account: AccountState) => void;
   readonly onRepository: (repository: string | null) => void;
   readonly onRetry: () => void;
-  /** PR whose overview is preloading for navigation. */
-  readonly openingKey: string | null;
+  readonly pendingFilter: { readonly category: boolean; readonly repository: boolean };
   readonly state: RemoteValue<PullRequestListPage> | undefined;
 }): React.JSX.Element {
   const { filter, state } = props;
   const [repositoriesOpen, setRepositoriesOpen] = useState(false);
   const page = remoteValue(state);
-  const items = page === null ? [] : pullRequestListItems(page);
+  const items = listItems(page);
+  const openRepositories = useEvent((): void => {
+    setRepositoriesOpen(true);
+  });
+  const closeRepositories = useEvent((): void => {
+    setRepositoriesOpen(false);
+  });
   return (
     <View style={styles.fill} testID="pull-request-list">
       <CategoryChips
         category={filter.category}
-        counts={
-          page === null
-            ? {}
-            : { [page.category]: items.filter((item) => item.kind === "row").length }
-        }
-        onOpenRepositories={() => {
-          setRepositoriesOpen(true);
-        }}
+        counts={categoryCounts(page, items)}
+        onOpenRepositories={openRepositories}
         onSelect={props.onCategory}
+        pending={props.pendingFilter}
         repository={filter.repository}
         supported={supportedCategories(page)}
       />
-      <ListNotice nowMs={props.nowMs} state={state} />
-      <LegendList
-        contentContainerStyle={styles.floatingBarContent}
-        data={items}
-        dataKey={`pull-requests:${filter.category}:${filter.repository ?? ""}`}
-        estimatedItemSize={layoutSize.row}
-        extraData={props.openingKey}
-        getItemType={(item) => item.kind}
-        keyExtractor={(item) => item.key}
-        onEndReached={props.onEndReached}
-        onEndReachedThreshold={0.4}
-        recycleItems
-        renderItem={({ item }) => (
-          <PullRequestListItemView
-            iconFor={props.iconFor}
-            item={item}
-            nowMs={props.nowMs}
-            onOpen={props.onOpen}
-            onReconnect={props.onReconnect}
-            onRetry={props.onRetry}
-            openingKey={props.openingKey}
-          />
-        )}
-      />
+      <ListNotice nowMs={props.nowMs} state={visibleNoticeState(state, props.pendingFilter)} />
+      <PullRequestRows items={items} page={page} props={props} />
       <RepositoryFilterSheet
-        onDismiss={() => {
-          setRepositoriesOpen(false);
-        }}
+        onDismiss={closeRepositories}
         onSelect={props.onRepository}
         open={repositoriesOpen}
         repositories={page?.repositories ?? []}
         selected={filter.repository}
       />
     </View>
+  );
+}
+
+function listItems(page: PullRequestListPage | null) {
+  return page === null ? [] : pullRequestListItems(page);
+}
+
+function categoryCounts(
+  page: PullRequestListPage | null,
+  items: ReturnType<typeof pullRequestListItems>,
+): Partial<Readonly<Record<PullRequestListFilter["category"], number>>> {
+  return page === null
+    ? {}
+    : { [page.category]: items.filter((item) => item.kind === "row").length };
+}
+
+function visibleNoticeState(
+  state: RemoteValue<PullRequestListPage> | undefined,
+  pending: { readonly category: boolean; readonly repository: boolean },
+): RemoteValue<PullRequestListPage> | undefined {
+  return pending.category || pending.repository ? undefined : state;
+}
+
+function PullRequestRows({
+  items,
+  page,
+  props,
+}: {
+  readonly items: ReturnType<typeof pullRequestListItems>;
+  readonly page: PullRequestListPage | null;
+  readonly props: Parameters<typeof PullRequestList>[0];
+}): React.JSX.Element {
+  if (page === null) {
+    return <ListSkeleton />;
+  }
+  return (
+    <LegendList
+      contentContainerStyle={styles.floatingBarContent}
+      data={items}
+      estimatedItemSize={layoutSize.row}
+      getItemType={(item) => item.kind}
+      keyExtractor={(item) => item.key}
+      onEndReached={props.onEndReached}
+      onEndReachedThreshold={0.4}
+      recycleItems
+      renderItem={({ item }) => (
+        <PullRequestListItemView
+          iconFor={props.iconFor}
+          item={item}
+          nowMs={props.nowMs}
+          onOpen={props.onOpen}
+          onReconnect={props.onReconnect}
+          onRetry={props.onRetry}
+        />
+      )}
+    />
   );
 }

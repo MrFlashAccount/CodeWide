@@ -109,6 +109,9 @@ function ActivityDetailList({
   turnKey: string;
   turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
 }): ReactElement {
+  // Recycled rows do not rerender when only a sibling is appended or the turn settles;
+  // both changes affect the tail row's placement or active presentation.
+  const rowPresentationVersion = `${turnKey}\u0000${String(blocks.length)}\u0000${turnStatus}`;
   const renderItem = ({ index, item: block }: { index: number; item: RenderBlock }) => (
     <ActivityDetailRow
       active={turnStatus === "inProgress" && index === blocks.length - 1}
@@ -126,6 +129,7 @@ function ActivityDetailList({
       data={blocks}
       drawDistance={300}
       estimatedItemSize={listRowHeight.double}
+      extraData={rowPresentationVersion}
       getFixedItemSize={activityRowSize}
       getItemType={activityBlockType}
       keyboardShouldPersistTaps="handled"

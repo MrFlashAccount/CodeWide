@@ -1,6 +1,5 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Suspense } from "react";
-import { StyleSheet, View } from "react-native";
 
 import { parsePullRequestKeyParam } from "../data/forgeContract";
 import {
@@ -9,18 +8,17 @@ import {
   reviewResources,
 } from "../data/forgeRuntime";
 import { PullRequestScreen } from "../features/pullRequestDetail/PullRequestScreen";
+import { PullRequestScreenSkeleton } from "../features/pullRequestDetail/PullRequestScreenSkeleton";
 import { workspaceFeatures } from "../features/workspace/createWorkspaceFeatures";
 import { useEvent } from "../react/useEvent";
-import { colors } from "../theme";
 import { RecoverableRenderBoundary } from "../ui/RecoverableRenderBoundary";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { linkedThreadSelectionKey } from "./pullRequestNavigation";
 import { useLinkedThreadDescriptions } from "./linkedThreadDescriptions";
 
 /**
- * PR destination. Navigation from the list arrives with the overview already
- * resolved; a cold deep link suspends on the same resource behind a blank
- * local fallback, never a progress label.
+ * PR destination. Navigation publishes this pane immediately; the overview
+ * suspends behind a stable detail skeleton while the same query cache loads.
  */
 export function PullRequestRoute(): React.JSX.Element | null {
   const params = useLocalSearchParams<{ connectionId?: string; pullRequestKey?: string }>();
@@ -50,7 +48,7 @@ export function PullRequestRoute(): React.JSX.Element | null {
       resetKey={`${connectionId}:${pullRequest}`}
       scope="surface"
     >
-      <Suspense fallback={<View style={styles.fallback} testID="pull-request-loading" />}>
+      <Suspense fallback={<PullRequestScreenSkeleton />}>
         <PullRequestScreen
           capabilities={workspaceFeatures.pullRequestDetail}
           commentDestinations={pullRequestCommentDestinations}
@@ -67,10 +65,3 @@ export function PullRequestRoute(): React.JSX.Element | null {
     </RecoverableRenderBoundary>
   );
 }
-
-const styles = StyleSheet.create({
-  fallback: {
-    backgroundColor: colors.conversationSurface,
-    flex: 1,
-  },
-});

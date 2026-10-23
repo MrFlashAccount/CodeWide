@@ -1,12 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRef, type RefObject } from "react";
-import { Pressable, View, type Text as NativeText } from "react-native";
+import { Pressable, View } from "react-native";
 
 import type { PullRequestRow as Row } from "../../../data/forgePullRequestContract";
+import { useEvent } from "../../../react/useEvent";
 import { colors, iconSize } from "../../../theme";
 import { CaptionBadge } from "../../../ui/CaptionBadge";
 import { compactAge } from "../../../ui/relativeAge";
-import { TextShimmer } from "../../../ui/TextShimmer";
 import { AppText as Text } from "../../../ui/Typography";
 import { listStyles as styles } from "./list.styles";
 import {
@@ -26,39 +25,34 @@ const DOT_STYLES = {
 
 /**
  * One PR in one read (Q1): check glyph, title, repo/number/author/you, at most
- * two badges, linked-thread count and age. While its overview preloads the
- * title keeps its text and shimmers in place.
+ * two badges, linked-thread count and age.
  */
 export function PullRequestRow({
   nowMs,
   onPress,
-  opening,
   row,
 }: {
   readonly nowMs: number;
   readonly onPress: (row: Row) => void;
-  readonly opening: boolean;
   readonly row: Row;
 }): React.JSX.Element {
-  const title = useRef<NativeText>(null);
   const glyph = checkGlyph(row.checks);
+  const handlePress = useEvent((): void => {
+    onPress(row);
+  });
   return (
     <Pressable
       accessibilityLabel={rowAccessibilityLabel(row, glyph)}
       accessibilityRole="button"
-      accessibilityState={{ busy: opening }}
-      onPress={() => {
-        onPress(row);
-      }}
+      onPress={handlePress}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
       testID={`pull-request-row-${row.number}`}
     >
       <CheckDot glyph={glyph} />
       <View style={styles.rowBody}>
-        <TitleLine age={compactAge(row.updatedAt, nowMs)} title={row.title} titleRef={title} />
+        <TitleLine age={compactAge(row.updatedAt, nowMs)} title={row.title} />
         <MetaLine row={row} />
       </View>
-      <TextShimmer shimmering={opening} target={title} />
     </Pressable>
   );
 }
@@ -74,20 +68,13 @@ function CheckDot({ glyph }: { readonly glyph: CheckGlyph }): React.JSX.Element 
 function TitleLine({
   age,
   title,
-  titleRef,
 }: {
   readonly age: string;
   readonly title: string;
-  readonly titleRef: RefObject<NativeText | null>;
 }): React.JSX.Element {
   return (
     <View style={styles.titleRow}>
-      <Text
-        ellipsizeMode="tail"
-        numberOfLines={1}
-        ref={titleRef}
-        style={[styles.title, styles.titleFill]}
-      >
+      <Text ellipsizeMode="tail" numberOfLines={1} style={[styles.title, styles.titleFill]}>
         {title}
       </Text>
       <Text style={styles.age}>{age}</Text>

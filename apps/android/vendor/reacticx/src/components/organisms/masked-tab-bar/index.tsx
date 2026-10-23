@@ -47,6 +47,7 @@ import {
   useMaskedTabBar,
   useMaskedTabLayer,
 } from "./context";
+import { startPillSelectionOnUI } from "./motion";
 import type {
   IMaskedTabBarContext,
   IMaskedTabBarIcon,
@@ -341,11 +342,12 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
           if (grabbed.value) {
             dragTarget.value = pillX.value;
             dragVelocity.value = 0;
-            return;
           }
-
+        })
+        .onStart((e) => {
+          if (grabbed.value) return;
           const tapped = boxAtX(boxesValue.value, e.x);
-          if (tapped) scheduleOnRN(setValue, tapped.value);
+          if (tapped) startPillSelectionOnUI(tapped, pillX, pillWidth, setValue);
         })
         .onUpdate((e) => {
           if (!grabbed.value) return;

@@ -42,10 +42,10 @@ export type PullRequestScreenData = {
 };
 
 /**
- * Reads the PR screen's data: the overview through the same cached Promise the
- * navigation preloaded (Suspense), then its live refresh state; the slotted
- * catalog for the measured action row; the draft count; and the thread a
- * review's agent half goes to. Owns one screen model per mounted route session.
+ * Reads the PR screen's data: the Suspense-owned overview and its live refresh
+ * state; the slotted catalog for the measured action row; the draft count; and
+ * the thread a review's agent half goes to. Owns one screen model per mounted
+ * route session.
  */
 export function usePullRequestScreen(props: PullRequestScreenProps): PullRequestScreenData {
   const params: OverviewParams = {

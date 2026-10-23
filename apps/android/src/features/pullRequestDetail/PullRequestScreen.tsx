@@ -21,9 +21,9 @@ import { threadTitle, usePullRequestScreen } from "./usePullRequestScreen";
 
 /**
  * PR screen (direction B): app bar, Overview | Changes tabs and one dock per
- * tab. It suspends on the overview Promise that navigation preloaded, so the
- * previous screen stays until the summary exists; files, drafts and the guide
- * fill in progressively below it. Offline, every write is refused locally.
+ * tab. Its overview suspends behind the route-owned detail skeleton; files,
+ * drafts and the guide fill in progressively below it. Offline, every write is
+ * refused locally.
  */
 export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Element {
   const data = usePullRequestScreen(props);

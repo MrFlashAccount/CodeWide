@@ -72,6 +72,10 @@ export const overviewStyles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  markdownLine: {
+    alignItems: "stretch",
+    flexDirection: "column",
+  },
   meta: {
     ...typeScale.label,
     color: colors.textMuted,

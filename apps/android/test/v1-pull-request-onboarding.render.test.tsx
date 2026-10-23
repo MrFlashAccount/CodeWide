@@ -306,7 +306,6 @@ it("recovers the host-login code when the mutation reply is lost but accounts re
         connectionId={connectionId}
         forge={forge}
         onOpenPullRequest={() => undefined}
-        openingKey={null}
       />
     </SafeAreaProvider>,
   );
@@ -345,7 +344,6 @@ it("keeps the terminal success visible after the authoritative account snapshot 
         connectionId="server"
         forge={forge}
         onOpenPullRequest={() => undefined}
-        openingKey={null}
       />
     </SafeAreaProvider>,
   );

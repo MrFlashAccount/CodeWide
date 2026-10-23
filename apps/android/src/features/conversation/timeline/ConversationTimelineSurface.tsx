@@ -1,6 +1,6 @@
 import { View } from "react-native";
 import { recordThreadNavigationVisualEvent } from "../../../data/thread-navigation-metrics";
-import { TimelineMotionContext } from "../../../rendering/FluidLayoutFrame";
+import { TimelineMotionContext } from "../../../rendering/TimelineMotionContext";
 import { spacing } from "../../../theme";
 import { CommitOnChangeProbe, EveryCommitProbe } from "../../../ui/CommitProbe";
 import {

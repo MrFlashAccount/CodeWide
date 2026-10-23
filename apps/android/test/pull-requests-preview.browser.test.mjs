@@ -135,7 +135,11 @@ async function assertControlsFit(page, width) {
   const offenders = await page.evaluate((viewportWidth) => {
     const controls = [...document.querySelectorAll('[role="button"],[role="tab"]')];
     return controls
-      .filter((node) => node.offsetParent !== null)
+      .filter(
+        (node) =>
+          node.offsetParent !== null &&
+          node.closest('[data-testid="pull-request-category-strip"]') === null,
+      )
       .map((node) => ({
         label: node.getAttribute("aria-label") ?? "unlabelled",
         rect: node.getBoundingClientRect(),
@@ -145,7 +149,7 @@ async function assertControlsFit(page, width) {
       .map(({ label, text }) => (text.length > 0 ? text : label));
   }, width);
   assert.deepEqual(
-    offenders.filter((text) => text.length > 0 && !/^(Mentioned|Drafts|Assigned)/u.test(text)),
+    offenders.filter((text) => text.length > 0),
     [],
   );
 }

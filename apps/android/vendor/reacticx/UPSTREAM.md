@@ -23,6 +23,12 @@ waiting for a spring's imperceptible tail. A React Native
 `KeyboardAvoidingView` owns keyboard overlap inside the Modal window, keeping
 the bottom-anchored tray above the IME without a feature-local keyboard model.
 Visuals, thresholds and ordinary-mode motion remain upstream-owned.
+The Masked Tab Bar has one interaction-scheduling patch: a pointer tap starts
+the pill position and width springs inside the gesture worklet before the
+controlled value callback reaches React. Route rendering may therefore occupy
+the JavaScript thread without delaying or stalling the already-running native
+selection animation; externally controlled value changes still reconcile
+through the upstream effect.
 
 Source files:
 

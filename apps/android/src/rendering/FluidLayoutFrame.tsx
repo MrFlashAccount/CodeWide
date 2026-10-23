@@ -1,9 +1,7 @@
-import { createContext, useContext } from "react";
+import { useContext } from "react";
 import { Platform, requireNativeComponent, UIManager, View, type ViewProps } from "react-native";
 import { useReducedMotionPreference } from "./reduced-motion-store";
-
-/** Only the visible, idle live tail may animate layout; history keeps its scroll anchor. */
-export const TimelineMotionContext = createContext(false);
+import { TimelineMotionContext } from "./TimelineMotionContext";
 
 interface FluidLayoutProps extends ViewProps {
   readonly animate: boolean;

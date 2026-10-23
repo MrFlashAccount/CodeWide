@@ -1,6 +1,6 @@
 # V1 pull request screen
 
-Public surfaces: `PullRequestScreen` and `pullRequestScreenContract`. Route composition preloads the overview through `data/forgeResources.ts` and reveals this screen in a Transition; the screen suspends on the same cached Promise, so it never commits a blank destination.
+Public surfaces: `PullRequestScreen`, `PullRequestScreenSkeleton` and `pullRequestScreenContract`. Route composition publishes the destination immediately; the screen suspends on the process-owned overview query behind its own stable skeleton, so the adjacent catalog does not disappear while the detail loads.
 
 The screen owns: the app bar, the Overview | Changes tabs with one dock per tab, the Overview sections (status header, slotted action row, conflict and notice banners, native merge card with the auto-merge switch, checks with anchored actions, linked threads, activity, description), the Changes tab (Files | Guide over the forge diff in recorded-patch mode, viewed marks with their source, drafts with per-axis badges, the comment sheet, the review dock and Submit sheet), and agent scenarios started from catalog actions or the Overview message dock.
 

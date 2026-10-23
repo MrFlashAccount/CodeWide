@@ -37,7 +37,6 @@ export function PullRequestsCatalogPane(): React.JSX.Element {
         connectionId={connectionId}
         onOpenPullRequest={openPullRequest}
         onPair={openPairing}
-        openingKey={navigation.openingKey}
       />
     </View>
   );
@@ -61,12 +60,10 @@ function PullRequestsCatalogContent({
   connectionId,
   onOpenPullRequest,
   onPair,
-  openingKey,
 }: {
   readonly connectionId: string | null;
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
   readonly onPair: () => void;
-  readonly openingKey: string | null;
 }): React.JSX.Element {
   return (
     <View style={styles.content} testID="pull-requests-catalog">
@@ -78,7 +75,6 @@ function PullRequestsCatalogContent({
           connectionId={connectionId}
           forge={forgeResources}
           onOpenPullRequest={onOpenPullRequest}
-          openingKey={openingKey}
         />
       )}
     </View>
