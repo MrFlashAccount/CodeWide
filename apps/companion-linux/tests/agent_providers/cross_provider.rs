@@ -68,6 +68,22 @@ async fn a_codex_model_spawns_an_agent_on_another_provider_shown_as_a_subagent()
             .any(|tool| tool["name"] == "codewide_spawn_agent")
     );
 
+    // The parent is an already-existing Codex thread. Its effective profile is
+    // learned from the same settings event a real App Server publishes before
+    // a model can delegate with inherited permissions.
+    harness
+        .pushed
+        .send(json!({"method": "thread/settings/updated", "params": {
+            "threadId": CODEX_PARENT,
+            "threadSettings": {
+                "activePermissionProfile": {"id": ":workspace", "extends": null}
+            }
+        }}))
+        .await?;
+    let _ = harness
+        .event_where(|payload| payload["method"] == "thread/settings/updated")
+        .await?;
+
     harness
         .pushed
         .send(
