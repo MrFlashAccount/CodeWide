@@ -17,7 +17,10 @@ import {
   WorkspacePaneLayout,
   WorkspaceScreenLayout,
 } from "../src/routeComposition/WorkspacePaneLayout";
-import { catalogModeBarHorizontalInset } from "../src/presentation/layouts/catalogModeBarGeometry";
+import {
+  catalogModeBarBottomInset,
+  catalogModeBarHorizontalInset,
+} from "../src/presentation/layouts/catalogModeBarGeometry";
 import { desktopThreadSidebarWidth } from "../src/presentation/layouts/windowLayout";
 import { radii } from "../src/theme";
 let mockDesktop = false;
@@ -153,7 +156,10 @@ it("keeps the wide catalog geometry while switching to the Pull requests route",
   const modeBar = view.getByTestId("catalog-mode-bar-host");
   expect(view.getByTestId("header")).toBeVisible();
   const floatingModeBar = view.getByTestId("floating-catalog-mode-bar");
-  expect(floatingModeBar).toHaveStyle({ position: "absolute" });
+  expect(floatingModeBar).toHaveStyle({
+    bottom: catalogModeBarBottomInset,
+    position: "absolute",
+  });
   expect(StyleSheet.flatten(floatingModeBar.props.style).width).toBe(
     desktopThreadSidebarWidth(1100) - catalogModeBarHorizontalInset * 2,
   );
