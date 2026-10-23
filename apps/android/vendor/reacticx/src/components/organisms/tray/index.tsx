@@ -58,6 +58,7 @@ import {
   projectPosition,
   resolveDetent,
   rubberBand,
+  shouldMountTrayView,
   toOffsets,
 } from "./helper";
 import { useTrayNavigation } from "./hooks";
@@ -592,7 +593,7 @@ const TrayView: React.FC<ITrayView> & React.FunctionComponent<ITrayView> = ({
     };
   });
 
-  if (!rendered) return null;
+  if (!shouldMountTrayView(active, rendered)) return null;
 
   return (
     <Animated.View

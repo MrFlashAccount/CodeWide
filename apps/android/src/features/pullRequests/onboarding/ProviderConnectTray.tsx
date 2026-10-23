@@ -14,13 +14,7 @@ import type { PullRequestsWorkspaceCapabilities } from "../workspaceCapabilities
 import { onboardingStyles as styles } from "./onboarding.styles";
 import { ProviderJourneyViews } from "./ProviderJourneyViews";
 import { ProviderTrayHeader, TrayTrust } from "./ProviderTrayChrome";
-import {
-  PROVIDERS_VIEW,
-  PROVIDER_STEP,
-  providerAuthView,
-  providerMethodsView,
-} from "./providerTrayNavigation";
-import { activeFlow } from "./providerPresentation";
+import { PROVIDERS_VIEW, PROVIDER_STEP, providerMethodsView } from "./providerTrayNavigation";
 
 const PROVIDER_LIST_MAX_HEIGHT = 440;
 const TRAY_PRESENT_START_SCALE = 0.5;
@@ -114,7 +108,6 @@ function ProviderListView({
           <ProviderRow
             capabilities={capabilities}
             connectionId={connectionId}
-            hasActiveFlow={activeFlow(provider, snapshot.flows) !== null}
             key={provider.pluginId}
             provider={provider}
           />
@@ -133,12 +126,10 @@ function ProviderListView({
 function ProviderRow({
   capabilities,
   connectionId,
-  hasActiveFlow,
   provider,
 }: {
   readonly capabilities: PullRequestsWorkspaceCapabilities;
   readonly connectionId: string;
-  readonly hasActiveFlow: boolean;
   readonly provider: ForgeProvider;
 }): React.JSX.Element {
   const dialog = useAppDialog();
@@ -146,11 +137,7 @@ function ProviderRow({
   const tray = useTray();
   const onPress = useEvent((): void => {
     if (provider.enabled) {
-      tray.setView(
-        hasActiveFlow
-          ? providerAuthView(provider.pluginId)
-          : providerMethodsView(provider.pluginId),
-      );
+      tray.setView(providerMethodsView(provider.pluginId));
       return;
     }
     if (enabling) {

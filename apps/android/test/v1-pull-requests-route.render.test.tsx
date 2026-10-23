@@ -1,11 +1,10 @@
 import { render } from "@testing-library/react-native";
-import { StyleSheet } from "react-native";
-
-import { desktopThreadSidebarWidth } from "../src/presentation/layouts/windowLayout";
-import { PullRequestsCatalogRoute } from "../src/routeComposition/PullRequestsCatalogRoute";
+import {
+  PullRequestsCatalogPane,
+  PullRequestsCatalogRoute,
+} from "../src/routeComposition/PullRequestsCatalogRoute";
 
 let mockDesktop = true;
-const mockViewportWidth = 1_000;
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn() }),
@@ -50,25 +49,31 @@ jest.mock("../src/services/workspace/workspaceRouteResources", () => ({
   useWorkspaceRouteResources: () => ({
     desktop: mockDesktop,
     list: { serverScope: null, servers: [] },
-    viewportWidth: mockViewportWidth,
   }),
 }));
 
-it("keeps the Pull requests catalog in the sidebar and previews review UI beside it", () => {
+it("projects the Pull requests catalog without owning workspace split geometry", () => {
+  mockDesktop = true;
+  const view = render(<PullRequestsCatalogPane />);
+
+  expect(view.getByTestId("pull-requests-catalog-pane")).toBeVisible();
+  expect(view.getByTestId("pull-requests-header")).toBeVisible();
+  expect(view.getByTestId("pull-requests-catalog-content")).toBeVisible();
+  expect(view.queryByTestId("pull-requests-preview-pane")).toBeNull();
+});
+
+it("leaves only the decorative preview in the desktop destination pane", () => {
   mockDesktop = true;
   const view = render(<PullRequestsCatalogRoute />);
 
-  expect(StyleSheet.flatten(view.getByTestId("pull-requests-catalog-pane").props.style).width).toBe(
-    desktopThreadSidebarWidth(mockViewportWidth),
-  );
   expect(view.getByTestId("pull-requests-preview-pane")).toBeVisible();
   expect(view.getByTestId("review-inbox-illustration")).toBeVisible();
+  expect(view.queryByTestId("pull-requests-catalog-pane")).toBeNull();
 });
 
-it("keeps compact Pull requests single-pane and omits the decorative preview", () => {
+it("omits the decorative preview on compact viewports", () => {
   mockDesktop = false;
   const view = render(<PullRequestsCatalogRoute />);
 
-  expect(view.getByTestId("pull-requests-catalog-pane")).toHaveStyle({ flex: 1 });
   expect(view.queryByTestId("pull-requests-preview-pane")).toBeNull();
 });

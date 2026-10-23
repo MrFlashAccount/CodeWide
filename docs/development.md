@@ -134,6 +134,13 @@ one-shots. Run the first two in this order for a complete local test release:
 ./scripts/release-candidate-android
 ```
 
+The default stable Preview origin is
+`https://codewide-rc-download-p4186.zrok-safe-share.garin.dev/`. From the
+`integration/release-candidate` context, an unqualified request to publish,
+release or deploy the current test build means the complete two-command Preview
+release above; it never selects a production release. A production release must
+be named explicitly and still runs only through its production workflow.
+
 The first command validates, builds, atomically replaces and verifies the
 running Companion. The second runs the complete Preview APK gate, publishes a
 signed Expo update for that exact native runtime, and then publishes the APK,
@@ -141,6 +148,11 @@ checksum, manifest and static page to the same zrok-backed origin. It verifies
 the public update manifest, launch asset, settled no-update directive, APK
 manifest and APK hash before succeeding. Do not reconstruct either sequence
 from its lower-level commands.
+
+The published APK filename contains its monotonic version code, for example
+`CodeWide-Preview-25534195.apk`. The download page reads the same filename and
+APK publication timestamp from the verified public manifest. OTA publication
+updates the manifest timestamp without changing the APK publication timestamp.
 
 After that baseline exists, a JavaScript-, TypeScript- or bundled-asset-only
 change can be published to its existing native runtime with:

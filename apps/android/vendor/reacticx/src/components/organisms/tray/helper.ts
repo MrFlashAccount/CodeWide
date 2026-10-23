@@ -57,10 +57,19 @@ function toOffsets(heights: readonly number[]): number[] {
   return heights.map((height) => tallest - height).sort((a, b) => a - b);
 }
 
+/**
+ * Keeps the active view in layout immediately while retaining an inactive view
+ * only for the duration of its exit animation.
+ */
+function shouldMountTrayView(active: boolean, retained: boolean): boolean {
+  return active || retained;
+}
+
 export {
   nearestOffsetIndex,
   projectPosition,
   resolveDetent,
   rubberBand,
+  shouldMountTrayView,
   toOffsets,
 };

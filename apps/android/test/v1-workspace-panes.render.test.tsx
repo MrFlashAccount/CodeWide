@@ -19,12 +19,21 @@ import {
 } from "../src/routeComposition/WorkspacePaneLayout";
 import { catalogModeBarHorizontalInset } from "../src/presentation/layouts/catalogModeBarGeometry";
 import { desktopThreadSidebarWidth } from "../src/presentation/layouts/windowLayout";
+import { radii } from "../src/theme";
 let mockDesktop = false;
 jest.mock("../src/routeComposition/CatalogModeBarHost", () => {
   const { Text: NativeText } = jest.requireActual("react-native");
   return {
     CatalogModeBarHost: ({ mode }: { readonly mode: string }) => (
       <NativeText testID="catalog-mode-bar-host">{mode}</NativeText>
+    ),
+  };
+});
+jest.mock("../src/routeComposition/PullRequestsCatalogRoute", () => {
+  const { Text: NativeText } = jest.requireActual("react-native");
+  return {
+    PullRequestsCatalogPane: () => (
+      <NativeText testID="pull-requests-catalog-pane">Pull requests catalog</NativeText>
     ),
   };
 });
@@ -166,9 +175,18 @@ it("keeps the wide catalog geometry while switching to the Pull requests route",
   expect(StyleSheet.flatten(floatingModeBar.props.style).width).toBe(
     desktopThreadSidebarWidth(1100) - catalogModeBarHorizontalInset * 2,
   );
-  expect(catalogPane).toHaveStyle({ display: "none" });
+  expect(view.getByTestId("workspace-catalog-pane")).toBe(catalogPane);
+  expect(catalogPane).not.toHaveStyle({ display: "none" });
+  expect(StyleSheet.flatten(catalogPane.props.style).width).toBe(desktopThreadSidebarWidth(1100));
+  expect(view.getByTestId("pull-requests-catalog-pane")).toBeVisible();
   expect(view.queryByTestId("header", { includeHiddenElements: true })).toBeNull();
-  expect(view.getByTestId("v1-workspace-destination")).toHaveStyle({ flex: 1, minWidth: 0 });
+  expect(view.getByTestId("v1-workspace-destination")).toHaveStyle({
+    borderBottomLeftRadius: radii.composer,
+    borderTopLeftRadius: radii.composer,
+    flex: 1,
+    minWidth: 0,
+    overflow: "hidden",
+  });
 
   act(() =>
     mockReference.dispatch({

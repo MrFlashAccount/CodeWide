@@ -19,6 +19,10 @@ export function providerAuthView(pluginId: string): string {
   return `provider:${pluginId}:auth`;
 }
 
+export function providerAuthActionView(pluginId: string, actionKey: string): string {
+  return `${providerAuthView(pluginId)}:${actionKey}`;
+}
+
 export function providerSuccessView(pluginId: string): string {
   return `provider:${pluginId}:success`;
 }

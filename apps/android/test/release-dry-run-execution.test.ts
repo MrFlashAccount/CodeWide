@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { gunzipSync } from "node:zlib";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -167,6 +168,9 @@ if [ "$1 $2" = "branch --show-current" ]; then printf '%s\\n' integration/releas
         environment,
       ).stdout,
     ).toContain('"release": "android-release-candidate"');
+    const apkPublishedAt = JSON.parse(readFileSync(join(siteRoot, "manifest.json"), "utf8"))
+      .artifacts[0].publishedAt;
+    expect(Number.isNaN(Date.parse(apkPublishedAt))).toBe(false);
     expect(
       runCommand("sh", ["scripts/release-candidate-android-ota"], fixture, environment).stdout,
     ).toContain('"release": "android-release-candidate"');
@@ -191,8 +195,15 @@ if [ "$1 $2" = "branch --show-current" ]; then printf '%s\\n' integration/releas
       expect.stringContaining("pnpm exec tsx scripts/verify-release-candidate.ts --manifest"),
       "",
     ]);
-    expect(readFileSync(join(siteRoot, "CodeWide-Preview.apk"), "utf8")).toBe("candidate");
-    expect(JSON.parse(readFileSync(join(siteRoot, "manifest.json"), "utf8"))).toMatchObject({
+    expect(readFileSync(join(siteRoot, "CodeWide-Preview-42.apk"), "utf8")).toBe("candidate");
+    expect(gunzipSync(readFileSync(join(siteRoot, "CodeWide-Preview-42.apk.gz"))).toString()).toBe(
+      "candidate",
+    );
+    expect(readFileSync(join(siteRoot, "CodeWide-Preview-42.apk.sha256"), "utf8")).toContain(
+      "CodeWide-Preview-42.apk",
+    );
+    const manifest = JSON.parse(readFileSync(join(siteRoot, "manifest.json"), "utf8"));
+    expect(manifest).toMatchObject({
       branch: "integration/release-candidate",
       revision: "0123456789abcdef",
       sourceDirty: true,
@@ -204,11 +215,20 @@ if [ "$1 $2" = "branch --show-current" ]; then printf '%s\\n' integration/releas
         {
           kind: "android-preview-apk",
           applicationId: "dev.codexremote.app.preview",
+          checksumFile: "CodeWide-Preview-42.apk.sha256",
+          file: "CodeWide-Preview-42.apk",
+          publishedAt: expect.any(String),
           versionName: "0.0.0.0",
           versionCode: 42,
         },
       ],
     });
+    expect(Number.isNaN(Date.parse(manifest.generatedAt))).toBe(false);
+    expect(manifest.artifacts[0].publishedAt).toBe(apkPublishedAt);
+    const page = readFileSync(join(siteRoot, "index.html"), "utf8");
+    expect(page).toContain("Опубликовано");
+    expect(page).toContain("artifact.publishedAt");
+    expect(page).toContain("download.textContent = `Скачать ${artifact.file}`");
   });
 
   it("refuses to attach an OTA to a different Preview runtime", () => {

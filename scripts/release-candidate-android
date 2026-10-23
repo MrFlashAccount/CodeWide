@@ -9,7 +9,6 @@ PUBLIC_URL=${CODEWIDE_RELEASE_CANDIDATE_URL:-"https://codewide-rc-download-p4186
 UPDATE_URL="${PUBLIC_URL%/}/api/updates"
 APK_SOURCE="$REPO_ROOT/apps/android/android/app/build/outputs/apk/preview/app-preview.apk"
 METADATA_SOURCE="$REPO_ROOT/apps/android/android/app/build/outputs/apk/preview/output-metadata.json"
-APK_NAME=CodeWide-Preview.apk
 TMP_ROOT=${TMPDIR:-/tmp}
 STAGING_DIR=
 
@@ -39,6 +38,7 @@ process.stdout.write(String(artifact.versionCode));
 NODE
 )
 RUNTIME_VERSION="0.0.0.0-native-$VERSION_CODE"
+APK_NAME="CodeWide-Preview-$VERSION_CODE.apk"
 pnpm exec tsx scripts/publish-release-candidate-ota.ts \
   --output-root "$SITE_ROOT/ota" \
   --runtime-version "$RUNTIME_VERSION" \
@@ -47,6 +47,7 @@ OTA_POINTER="$SITE_ROOT/ota/$RUNTIME_VERSION/current.json"
 test -r "$OTA_POINTER"
 STAGING_DIR=$(mktemp -d "$TMP_ROOT/codewide-android-candidate.XXXXXX")
 install -m 0644 "$APK_SOURCE" "$STAGING_DIR/$APK_NAME"
+gzip -9 -n -c "$STAGING_DIR/$APK_NAME" >"$STAGING_DIR/$APK_NAME.gz"
 install -m 0644 scripts/release-candidate-site.html "$STAGING_DIR/index.html"
 SOURCE_DIRTY=false
 if [ -n "$(git status --porcelain)" ]; then
@@ -55,6 +56,7 @@ fi
 
 METADATA_SOURCE="$METADATA_SOURCE" \
 APK_TARGET="$STAGING_DIR/$APK_NAME" \
+APK_NAME="$APK_NAME" \
 MANIFEST_TARGET="$STAGING_DIR/manifest.json" \
 CHECKSUM_TARGET="$STAGING_DIR/$APK_NAME.sha256" \
 OTA_POINTER="$OTA_POINTER" \
@@ -68,22 +70,25 @@ const { readFileSync, writeFileSync } = require("node:fs");
 const metadata = JSON.parse(readFileSync(process.env.METADATA_SOURCE, "utf8"));
 const ota = JSON.parse(readFileSync(process.env.OTA_POINTER, "utf8"));
 const artifact = metadata.elements?.find((element) => element.outputFile === "app-preview.apk");
+const apkName = process.env.APK_NAME;
 if (
   metadata.applicationId !== "dev.codexremote.app.preview"
   || metadata.variantName !== "preview"
   || artifact?.versionName !== "0.0.0.0"
   || !Number.isSafeInteger(artifact.versionCode)
+  || apkName !== `CodeWide-Preview-${artifact.versionCode}.apk`
 ) {
   throw new Error("Preview APK metadata is invalid");
 }
 const apk = readFileSync(process.env.APK_TARGET);
 const sha256 = createHash("sha256").update(apk).digest("hex");
+const publishedAt = new Date().toISOString();
 const manifest = {
   name: "CodeWide Release Candidate",
   branch: process.env.SOURCE_BRANCH,
   revision: process.env.SOURCE_REVISION,
   sourceDirty: process.env.SOURCE_DIRTY === "true",
-  generatedAt: new Date().toISOString(),
+  generatedAt: publishedAt,
   ota: {
     createdAt: ota.createdAt,
     runtimeVersion: ota.runtimeVersion,
@@ -93,11 +98,12 @@ const manifest = {
   artifacts: [
     {
       kind: "android-preview-apk",
-      file: "CodeWide-Preview.apk",
-      checksumFile: "CodeWide-Preview.apk.sha256",
+      file: apkName,
+      checksumFile: `${apkName}.sha256`,
       applicationId: metadata.applicationId,
       versionName: artifact.versionName,
       versionCode: artifact.versionCode,
+      publishedAt,
       architecture: "arm64-v8a",
       size: apk.byteLength,
       sha256,
@@ -105,11 +111,11 @@ const manifest = {
   ],
 };
 writeFileSync(process.env.MANIFEST_TARGET, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 });
-writeFileSync(process.env.CHECKSUM_TARGET, `${sha256}  CodeWide-Preview.apk\n`, { mode: 0o644 });
+writeFileSync(process.env.CHECKSUM_TARGET, `${sha256}  ${apkName}\n`, { mode: 0o644 });
 NODE
 
 mkdir -p "$SITE_ROOT"
-for file in "$APK_NAME" "$APK_NAME.sha256" manifest.json index.html; do
+for file in "$APK_NAME" "$APK_NAME.gz" "$APK_NAME.sha256" manifest.json index.html; do
   mv -f -- "$STAGING_DIR/$file" "$SITE_ROOT/$file"
 done
 

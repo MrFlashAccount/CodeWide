@@ -13,14 +13,13 @@ import { useWorkspaceRouteResources } from "../services/workspace/workspaceRoute
 import { colors } from "../theme";
 import { pullRequestCatalogConnection } from "./pullRequestCatalogConnection";
 import { usePullRequestNavigation } from "./pullRequestNavigation";
-import { WorkspaceTwoPaneLayout } from "./WorkspaceTwoPaneLayout";
 
 const PREVIEW_PANE_PADDING = 48;
 
-/** Complete `/pulls` destination with no Threads chrome or scene underneath it. */
-export function PullRequestsCatalogRoute(): React.JSX.Element {
+/** Pull requests content projected into the workspace-owned catalog pane. */
+export function PullRequestsCatalogPane(): React.JSX.Element {
   const router = useRouter();
-  const { desktop, list, viewportWidth } = useWorkspaceRouteResources();
+  const { list } = useWorkspaceRouteResources();
   const navigation = usePullRequestNavigation();
   const connectionId = pullRequestCatalogConnection(list.serverScope, list.servers);
   const openPairing = useEvent((): void => {
@@ -32,26 +31,29 @@ export function PullRequestsCatalogRoute(): React.JSX.Element {
     }
   });
   return (
-    <WorkspaceTwoPaneLayout
-      catalog={
-        <>
-          <PullRequestsHeader />
-          <PullRequestsCatalogContent
-            connectionId={connectionId}
-            onOpenPullRequest={openPullRequest}
-            onPair={openPairing}
-            openingKey={navigation.openingKey}
-          />
-        </>
-      }
-      catalogStyle={styles.catalogSurface}
-      catalogViewProps={{ testID: "pull-requests-catalog-pane" }}
-      detail={desktop && connectionId !== null ? <ReviewInboxIllustration /> : null}
-      detailStyle={styles.previewSurface}
-      detailViewProps={{ testID: "pull-requests-preview-pane" }}
-      presentation={desktop ? { kind: "wide", viewportWidth } : { kind: "catalogOnly" }}
-      testID="pull-requests-route"
-    />
+    <View style={styles.catalogSurface} testID="pull-requests-catalog-pane">
+      <PullRequestsHeader />
+      <PullRequestsCatalogContent
+        connectionId={connectionId}
+        onOpenPullRequest={openPullRequest}
+        onPair={openPairing}
+        openingKey={navigation.openingKey}
+      />
+    </View>
+  );
+}
+
+/** `/pulls` detail content; the workspace shell owns the adjacent catalog and its geometry. */
+export function PullRequestsCatalogRoute(): React.JSX.Element | null {
+  const { desktop, list } = useWorkspaceRouteResources();
+  const connectionId = pullRequestCatalogConnection(list.serverScope, list.servers);
+  if (!desktop || connectionId === null) {
+    return null;
+  }
+  return (
+    <View style={styles.previewSurface} testID="pull-requests-preview-pane">
+      <ReviewInboxIllustration />
+    </View>
   );
 }
 
@@ -89,6 +91,7 @@ const styles = StyleSheet.create({
     borderRightColor: colors.borderSoft,
     borderRightWidth: StyleSheet.hairlineWidth,
     flex: 1,
+    minWidth: 0,
   },
   content: {
     flex: 1,

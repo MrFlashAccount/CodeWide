@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import http.client
 import importlib.util
@@ -37,6 +38,11 @@ class CandidateServerTest(unittest.TestCase):
         cls.addClassCleanup(directory.cleanup)
         cls.site_root = Path(directory.name)
         (cls.site_root / "index.html").write_text("candidate", encoding="utf-8")
+        cls.apk = b"candidate-apk" * 128
+        (cls.site_root / "CodeWide-Preview-42.apk").write_bytes(cls.apk)
+        (cls.site_root / "CodeWide-Preview-42.apk.gz").write_bytes(
+            gzip.compress(cls.apk, compresslevel=9, mtime=0)
+        )
         private_key = cls.site_root / "private-key.pem"
         subprocess.run(
             [
@@ -139,6 +145,23 @@ class CandidateServerTest(unittest.TestCase):
         status, _, body = self.request("/")
         self.assertEqual(status, 200)
         self.assertEqual(body, b"candidate")
+
+    def test_serves_precompressed_apk_when_the_client_accepts_gzip(self) -> None:
+        status, headers, body = self.request(
+            "/CodeWide-Preview-42.apk", {"Accept-Encoding": "gzip"}
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["content-encoding"], "gzip")
+        self.assertEqual(headers["vary"], "Accept-Encoding")
+        self.assertEqual(gzip.decompress(body), self.apk)
+
+        identity_status, identity_headers, identity_body = self.request(
+            "/CodeWide-Preview-42.apk", {"Accept-Encoding": "gzip;q=0"}
+        )
+        self.assertEqual(identity_status, 200)
+        self.assertNotIn("content-encoding", identity_headers)
+        self.assertEqual(identity_headers["vary"], "Accept-Encoding")
+        self.assertEqual(identity_body, self.apk)
 
     def test_serves_signed_manifest_asset_and_settled_directive(self) -> None:
         headers = {

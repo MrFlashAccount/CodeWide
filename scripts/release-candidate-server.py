@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import mimetypes
+import os
 import re
 from dataclasses import dataclass
 from functools import partial
@@ -17,6 +18,26 @@ from urllib.parse import unquote, urlsplit
 
 
 SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def accepts_gzip(value: str) -> bool:
+    qualities: dict[str, float] = {}
+    for item in value.split(","):
+        parts = [part.strip() for part in item.split(";")]
+        coding = parts[0].lower()
+        if coding not in {"gzip", "*"}:
+            continue
+        quality = 1.0
+        for parameter in parts[1:]:
+            name, separator, raw_value = parameter.partition("=")
+            if name.strip().lower() != "q" or separator == "":
+                continue
+            try:
+                quality = float(raw_value.strip())
+            except ValueError:
+                quality = 0.0
+        qualities[coding] = quality
+    return qualities.get("gzip", qualities.get("*", 0.0)) > 0.0
 
 
 @dataclass(frozen=True)
@@ -129,11 +150,32 @@ class CandidateHandler(SimpleHTTPRequestHandler):
         return self.server.ota_catalog  # type: ignore[attr-defined]
 
     def end_headers(self) -> None:
+        if getattr(self, "_has_gzip_variant", False):
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Robots-Tag", "noindex, nofollow")
         super().end_headers()
+
+    def send_head(self):
+        path = Path(self.translate_path(self.path))
+        gzip_path = Path(f"{path}.gz")
+        self._has_gzip_variant = path.suffix.lower() == ".apk" and gzip_path.is_file()
+        if self._has_gzip_variant and accepts_gzip(self.headers.get("Accept-Encoding", "")):
+            try:
+                compressed = gzip_path.open("rb")
+            except OSError:
+                return super().send_head()
+            metadata = os.fstat(compressed.fileno())
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", self.guess_type(str(path)))
+            self.send_header("Content-Length", str(metadata.st_size))
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Last-Modified", self.date_time_string(metadata.st_mtime))
+            self.end_headers()
+            return compressed
+        return super().send_head()
 
     def _send_bytes(
         self,

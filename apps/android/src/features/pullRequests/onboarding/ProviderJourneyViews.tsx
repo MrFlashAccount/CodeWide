@@ -34,6 +34,7 @@ import {
   METHOD_STEP,
   PROVIDERS_VIEW,
   SUCCESS_STEP,
+  providerAuthActionView,
   providerAuthView,
   providerMethodsView,
   providerSuccessView,
@@ -72,8 +73,11 @@ export function ProviderJourneyViews({
   const [journey, setJourney] = useState<JourneyState>(() =>
     recoveredFlow === null ? { kind: "idle" } : { action: null, flow: recoveredFlow, kind: "auth" },
   );
-  const flow = journey.kind === "auth" && journey.flow !== null ? journey.flow : recoveredFlow;
-  const authViewId = providerAuthView(provider.pluginId);
+  const flow = journeyFlow(journey, recoveredFlow);
+  const authViewId =
+    journey.kind === "auth" && journey.action !== null
+      ? providerAuthActionView(provider.pluginId, connectActionKey(journey.action))
+      : providerAuthView(provider.pluginId);
   const complete = useEvent((): void => {
     tray.setView(providerSuccessView(provider.pluginId));
   });
@@ -116,10 +120,10 @@ export function ProviderJourneyViews({
   );
   const onAction = useEvent((action: ConnectAction): void => {
     setJourney({ action, flow: null, kind: "auth" });
-    tray.setView(providerAuthView(provider.pluginId));
+    tray.setView(providerAuthActionView(provider.pluginId, connectActionKey(action)));
     if (action.kind === "link") {
       start(action, action.login, action.method);
-    } else if (action.kind === "hostLogin") {
+    } else if (action.kind === "hostLogin" && recoveredFlow?.methodId !== action.method.methodId) {
       start(action, null, action.method);
     }
   });
@@ -191,6 +195,7 @@ export function ProviderJourneyViews({
         error={interaction.error}
         flow={flow}
         journey={journey}
+        key={authViewId}
         onCancel={cancel}
         onCheckAgain={checkAgain}
         onRetry={retry}
@@ -492,6 +497,19 @@ function connectedProviderAccount(
         account.state === "connected",
     ) ?? null
   );
+}
+
+function journeyFlow(journey: JourneyState, recoveredFlow: AuthFlow | null): AuthFlow | null {
+  if (journey.kind !== "auth") {
+    return null;
+  }
+  if (journey.flow !== null) {
+    return journey.flow;
+  }
+  if (journey.action === null || journey.action.method.methodId === recoveredFlow?.methodId) {
+    return recoveredFlow;
+  }
+  return null;
 }
 
 function linkedProviderLogins(

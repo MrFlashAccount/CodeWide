@@ -208,6 +208,9 @@ function toOffsets(heights) {
   const tallest = Math.max(...heights);
   return heights.map((height) => tallest - height).sort((a, b) => a - b);
 }
+function shouldMountTrayView(active, retained) {
+  return active || retained;
+}
 
 // vendor/reacticx/src/components/organisms/tray/hooks.ts
 import { useState as useState2 } from "react";
@@ -698,7 +701,7 @@ var TrayView = ({
       ]
     };
   });
-  if (!rendered) return null;
+  if (!shouldMountTrayView(active, rendered)) return null;
   return /* @__PURE__ */ jsx(
     Animated.View,
     {

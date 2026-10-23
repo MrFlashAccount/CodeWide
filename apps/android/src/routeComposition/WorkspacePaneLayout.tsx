@@ -19,6 +19,7 @@ import {
 import { desktopThreadSidebarWidth } from "../presentation/layouts/windowLayout";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { CatalogModeBarHost } from "./CatalogModeBarHost";
+import { PullRequestsCatalogPane } from "./PullRequestsCatalogRoute";
 import { v1WorkspaceShellStyles } from "./WorkspaceShell.styles";
 import {
   WorkspaceTwoPaneLayout,
@@ -36,14 +37,20 @@ const FLOATING_MODE_BAR_Z_INDEX = 20;
 export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
   const { desktop, runtime, viewportWidth } = useWorkspaceRouteResources();
   const focusedRoute = props.state.routes[props.state.index];
-  const catalogFocused = focusedRoute?.name === "(lists)";
+  const threadsCatalogFocused = focusedRoute?.name === "(lists)";
+  const pullRequestsCatalogFocused = focusedRoute?.name === "pulls/index";
   const pullRequestsFocused = isPullRequestsRoute(focusedRoute?.name);
+  const catalogFocused = threadsCatalogFocused || pullRequestsCatalogFocused;
   const noServer = isNoServerWorkspace(runtime);
-  const welcomeVisible = isWelcomeVisible(catalogFocused, noServer);
+  const welcomeVisible = isWelcomeVisible(threadsCatalogFocused, noServer);
   const catalogMode = visibleCatalogMode(focusedRoute?.name, desktop, noServer);
-  const { content: catalogContent, status: catalogStatus } = catalogPresentation(props);
+  const { content: catalogContent, status: catalogStatus } = catalogPresentation(
+    props,
+    pullRequestsCatalogFocused,
+  );
   const presentation = workspacePanePresentation({
     desktop,
+    pullRequestsCatalogFocused,
     pullRequestsFocused,
     viewportWidth,
     welcomeVisible,
@@ -74,7 +81,7 @@ export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
       detail={
         <DestinationPlacement.Provider value={true}>{props.children}</DestinationPlacement.Provider>
       }
-      detailStyle={workspaceDestinationSurfaceStyle(desktop, pullRequestsFocused)}
+      detailStyle={workspaceDestinationSurfaceStyle(desktop)}
       detailViewProps={{
         collapsable: false,
         ...detailInteraction,
@@ -122,15 +129,20 @@ function detailInteractionProps(desktop: boolean, catalogFocused: boolean) {
 
 function workspacePanePresentation({
   desktop,
+  pullRequestsCatalogFocused,
   pullRequestsFocused,
   viewportWidth,
   welcomeVisible,
 }: {
   readonly desktop: boolean;
+  readonly pullRequestsCatalogFocused: boolean;
   readonly pullRequestsFocused: boolean;
   readonly viewportWidth: number;
   readonly welcomeVisible: boolean;
 }): WorkspaceTwoPanePresentation {
+  if (pullRequestsCatalogFocused) {
+    return desktop ? { kind: "wide", viewportWidth } : { kind: "catalogOnly" };
+  }
   if (pullRequestsFocused) {
     return { kind: "detailOnly" };
   }
@@ -179,7 +191,10 @@ function FloatingCatalogModeBar({
   );
 }
 
-function catalogPresentation(props: PaneLayoutProps) {
+function catalogPresentation(props: PaneLayoutProps, pullRequestsCatalogFocused: boolean) {
+  if (pullRequestsCatalogFocused) {
+    return { content: <PullRequestsCatalogPane />, status: "present" as const };
+  }
   const catalog = props.state.routes.find((route) => route.name === "(lists)");
   if (catalog === undefined) {
     return { content: null, status: "missing-route" as const };
@@ -195,8 +210,8 @@ function isPullRequestsRoute(routeName: string | undefined): boolean {
   return routeName === "pulls" || routeName?.startsWith("pulls/") === true;
 }
 
-function workspaceDestinationSurfaceStyle(desktop: boolean, pullRequestsFocused: boolean) {
-  return desktop && !pullRequestsFocused ? v1WorkspaceShellStyles.destination : undefined;
+function workspaceDestinationSurfaceStyle(desktop: boolean) {
+  return desktop ? v1WorkspaceShellStyles.destination : undefined;
 }
 
 /** Leaves a native history entry for the catalog without mounting its navigator twice. */

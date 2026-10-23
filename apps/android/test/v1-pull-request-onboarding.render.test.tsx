@@ -20,6 +20,7 @@ import { PullRequestsCatalog } from "../src/features/pullRequests/PullRequestsFe
 import { OnboardingScreen } from "../src/features/pullRequests/onboarding/OnboardingScreen";
 import type { PullRequestsWorkspaceCapabilities } from "../src/features/pullRequests/workspaceCapabilities";
 import { Tray } from "../src/vendor/reacticx/tray";
+import { shouldMountTrayView } from "../vendor/reacticx/src/components/organisms/tray/helper";
 import {
   connectedAccount,
   githubProvider,
@@ -129,6 +130,12 @@ it("keeps provider choices behind one welcome action", () => {
   expect(firstHeader.queryByRole("button", { name: "Close" })).toBeNull();
 });
 
+it("mounts an incoming tray view before passive effects can update retention", () => {
+  expect(shouldMountTrayView(true, false)).toBe(true);
+  expect(shouldMountTrayView(false, true)).toBe(true);
+  expect(shouldMountTrayView(false, false)).toBe(false);
+});
+
 it("uses the tray navigation stack and resets it after dismissal", () => {
   const view = renderWelcome(MULTIPLE_PROVIDERS);
 
@@ -141,7 +148,7 @@ it("uses the tray navigation stack and resets it after dismissal", () => {
   expect(secondHeader.getByText("Connect GitHub")).toBeOnTheScreen();
   expect(secondHeader.getByText("2 of 4")).toBeOnTheScreen();
   expect(secondHeader.queryByRole("button", { name: "Close" })).toBeNull();
-  fireEvent.press(view.getByRole("button", { name: "Back" }));
+  fireEvent.press(secondHeader.getByRole("button", { name: "Back" }));
   expect(view.getByText("Choose where CodeWide should look for pull requests.")).toBeOnTheScreen();
 
   fireEvent.press(view.getByRole("button", { name: "GitHub" }));
@@ -174,6 +181,7 @@ it("keeps the one-time code separate from the compact copy and browser actions",
 
   fireEvent.press(view.getByRole("button", { name: "Connect a provider" }));
   fireEvent.press(view.getByRole("button", { name: "GitHub" }));
+  fireEvent.press(view.getByRole("button", { name: "Connect GitHub" }));
 
   const authHeader = within(view.getByTestId("provider-tray-header-left-step-3"));
   expect(authHeader.getByText("Sign in to GitHub")).toBeOnTheScreen();
@@ -189,6 +197,44 @@ it("keeps the one-time code separate from the compact copy and browser actions",
 
   fireEvent.press(actions.getByRole("button", { name: "Copy one-time code" }));
   expect(copy).toHaveBeenCalledWith("ABCD-1234");
+});
+
+it("binds each authentication method to its own view and keeps Back on the selected step", () => {
+  const view = renderWelcome(HOST_LOGIN);
+
+  fireEvent.press(view.getByRole("button", { name: "Connect a provider" }));
+  fireEvent.press(view.getByRole("button", { name: "GitHub" }));
+  expect(view.getByText("2 of 4")).toBeOnTheScreen();
+
+  fireEvent.press(view.getByRole("button", { name: "Paste a token" }));
+  expect(view.getByTestId("forge-tray-token-panel")).toBeOnTheScreen();
+  expect(view.queryByText("Finish sign-in")).toBeNull();
+
+  fireEvent.press(
+    within(view.getByTestId("provider-tray-header-left-step-3")).getByRole("button", {
+      name: "Back",
+    }),
+  );
+  fireEvent.press(view.getByRole("button", { name: "Connect GitHub" }));
+  expect(view.getByText("Finish sign-in")).toBeOnTheScreen();
+  expect(view.getByText("ABCD-1234")).toBeOnTheScreen();
+  expect(view.queryByTestId("forge-tray-token-panel")).toBeNull();
+
+  fireEvent.press(
+    within(view.getByTestId("provider-tray-header-left-step-3")).getByRole("button", {
+      name: "Back",
+    }),
+  );
+  fireEvent.press(
+    within(view.getByTestId("provider-tray-header-left-step-2")).getByRole("button", {
+      name: "Back",
+    }),
+  );
+  fireEvent.press(view.getByRole("button", { name: "GitHub" }));
+
+  expect(view.getByText("2 of 4")).toBeOnTheScreen();
+  expect(view.getByRole("button", { name: "Connect GitHub" })).toBeOnTheScreen();
+  expect(view.queryByTestId("forge-tray-token-panel")).toBeNull();
 });
 
 it("keeps all four onboarding steps through the terminal success state", async () => {

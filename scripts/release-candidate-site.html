@@ -18,8 +18,10 @@
       .platform { color: #8f97a4; font-size: 13px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
       h2 { margin: 10px 0 8px; font-size: 30px; letter-spacing: -.03em; }
       .meta { min-height: 74px; margin: 0; color: #aab0ba; line-height: 1.6; }
+      .published { margin: 12px 0 0; color: #7f8794; font-size: 14px; }
       .download { display: flex; justify-content: center; margin-top: 28px; padding: 15px 18px; border-radius: 14px; background: #f5f6f8; color: #08090b; font-weight: 800; text-decoration: none; }
       .checksum { display: inline-block; margin-top: 12px; color: #aab7cc; font-size: 13px; text-decoration: none; }
+      a[aria-disabled="true"] { opacity: .55; pointer-events: none; }
       footer { padding-top: 24px; color: #6f7682; font-size: 13px; line-height: 1.55; }
       code { overflow-wrap: anywhere; color: #c6cfdd; font-family: "SFMono-Regular", Consolas, monospace; }
       @media (max-width: 560px) { main { padding-top: 32px; } .card { padding: 23px; border-radius: 22px; } }
@@ -34,8 +36,9 @@
         <div class="platform">Android · arm64-v8a</div>
         <h2>Версия <span id="version">0.0.0.0</span></h2>
         <p class="meta" id="meta">Загрузка данных сборки…</p>
-        <a class="download" href="CodeWide-Preview.apk" download>Скачать APK</a>
-        <a class="checksum" href="CodeWide-Preview.apk.sha256">SHA-256 checksum</a>
+        <p class="published">Опубликовано <time id="published-at">—</time></p>
+        <a aria-disabled="true" class="download" id="download">Скачать APK</a>
+        <a aria-disabled="true" class="checksum" id="checksum">SHA-256 checksum</a>
       </article>
       <footer>Пакет <code id="package">dev.codexremote.app.preview</code><br />revision <code id="revision">—</code></footer>
     </main>
@@ -44,8 +47,22 @@
         .then((response) => response.json())
         .then((manifest) => {
           const artifact = manifest.artifacts[0];
+          const download = document.querySelector("#download");
+          const checksum = document.querySelector("#checksum");
+          const publishedAt = document.querySelector("#published-at");
           document.querySelector("#version").textContent = artifact.versionName;
           document.querySelector("#meta").textContent = `versionCode ${artifact.versionCode} · ${(artifact.size / 1048576).toFixed(1)} MiB · OTA включены для ${manifest.ota.runtimeVersion}`;
+          download.href = artifact.file;
+          download.download = artifact.file;
+          download.textContent = `Скачать ${artifact.file}`;
+          download.removeAttribute("aria-disabled");
+          checksum.href = artifact.checksumFile;
+          checksum.removeAttribute("aria-disabled");
+          publishedAt.dateTime = artifact.publishedAt;
+          publishedAt.textContent = new Intl.DateTimeFormat("ru-RU", {
+            dateStyle: "long",
+            timeStyle: "short",
+          }).format(new Date(artifact.publishedAt));
           document.querySelector("#package").textContent = artifact.applicationId;
           document.querySelector("#revision").textContent = `${manifest.revision}${manifest.sourceDirty ? " (dirty)" : ""}`;
         })

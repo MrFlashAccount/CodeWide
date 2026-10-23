@@ -9,7 +9,10 @@ stays enabled when reduced motion is requested; the existing immediate-settle
 path removes animation without removing the interaction. Retained callbacks in
 the Tray root and navigation hook use CodeWide's `useEvent`, so gesture,
 context, native and scheduled callbacks keep a stable identity while reading
-the latest render values. Visuals, thresholds and ordinary-mode motion remain
+the latest render values. An incoming `Tray.View` mounts synchronously when it
+becomes active; retained state owns only the outgoing view's exit animation, so
+the sheet cannot measure and present a handle-only intermediate layout after a
+navigation reset. Visuals, thresholds and ordinary-mode motion remain
 upstream-owned.
 
 Source files:

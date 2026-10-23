@@ -15,7 +15,11 @@ if (!publicManifestResponse.ok) {
 const publicManifest = readCandidateManifest(await publicManifestResponse.json());
 if (
   publicManifest.revision !== manifest.revision ||
+  publicManifest.generatedAt !== manifest.generatedAt ||
+  publicManifest.artifact.file !== manifest.artifact.file ||
+  publicManifest.artifact.publishedAt !== manifest.artifact.publishedAt ||
   publicManifest.artifact.sha256 !== manifest.artifact.sha256 ||
+  publicManifest.artifact.versionCode !== manifest.artifact.versionCode ||
   publicManifest.ota.runtimeVersion !== manifest.ota.runtimeVersion ||
   publicManifest.ota.updateId !== manifest.ota.updateId ||
   publicManifest.ota.updateUrl !== manifest.ota.updateUrl
@@ -24,9 +28,13 @@ if (
 }
 const apkResponse = await fetch(new URL(manifest.artifact.file, publicUrl), {
   cache: "no-store",
+  headers: { "accept-encoding": "gzip" },
 });
 if (!apkResponse.ok || apkResponse.body === null) {
   throw new Error(`Public candidate APK failed with HTTP ${apkResponse.status}`);
+}
+if (apkResponse.headers.get("content-encoding") !== "gzip") {
+  throw new Error("Public candidate APK is not served with gzip compression");
 }
 const digest = createHash("sha256");
 for await (const chunk of apkResponse.body) digest.update(chunk);
@@ -54,6 +62,7 @@ type CandidateArtifact = {
   readonly checksumFile: string;
   readonly file: string;
   readonly kind: string;
+  readonly publishedAt: string;
   readonly sha256: string;
   readonly size: number;
   readonly versionCode: number;
@@ -69,12 +78,19 @@ type CandidateOta = {
 
 type CandidateManifest = {
   readonly artifact: CandidateArtifact;
+  readonly generatedAt: string;
   readonly ota: CandidateOta;
   readonly revision: string;
 };
 
 function readCandidateManifest(value: unknown): CandidateManifest {
-  if (!isRecord(value) || typeof value.revision !== "string" || !isRecord(value.ota)) {
+  if (
+    !isRecord(value) ||
+    typeof value.generatedAt !== "string" ||
+    Number.isNaN(Date.parse(value.generatedAt)) ||
+    typeof value.revision !== "string" ||
+    !isRecord(value.ota)
+  ) {
     throw new Error("Candidate manifest is invalid");
   }
   const artifacts = value.artifacts;
@@ -86,12 +102,18 @@ function readCandidateManifest(value: unknown): CandidateManifest {
     typeof artifact.checksumFile !== "string" ||
     typeof artifact.file !== "string" ||
     typeof artifact.kind !== "string" ||
+    typeof artifact.publishedAt !== "string" ||
+    Number.isNaN(Date.parse(artifact.publishedAt)) ||
     typeof artifact.sha256 !== "string" ||
     typeof artifact.size !== "number" ||
     typeof artifact.versionCode !== "number" ||
     typeof artifact.versionName !== "string"
   ) {
     throw new Error("Candidate APK descriptor is invalid");
+  }
+  const expectedFile = `CodeWide-Preview-${artifact.versionCode}.apk`;
+  if (artifact.file !== expectedFile || artifact.checksumFile !== `${expectedFile}.sha256`) {
+    throw new Error("Candidate APK filename must contain its versionCode");
   }
   const ota = value.ota;
   if (
@@ -109,11 +131,13 @@ function readCandidateManifest(value: unknown): CandidateManifest {
       checksumFile: artifact.checksumFile,
       file: artifact.file,
       kind: artifact.kind,
+      publishedAt: artifact.publishedAt,
       sha256: artifact.sha256,
       size: artifact.size,
       versionCode: artifact.versionCode,
       versionName: artifact.versionName,
     },
+    generatedAt: value.generatedAt,
     ota: {
       createdAt: ota.createdAt,
       runtimeVersion: ota.runtimeVersion,
