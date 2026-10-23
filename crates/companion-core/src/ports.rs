@@ -1259,6 +1259,8 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let listener = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).await?;
         let port = listener.local_addr()?.port();
+        let ipv4_guard = tokio::net::TcpSocket::new_v4()?;
+        ipv4_guard.bind((std::net::Ipv4Addr::LOCALHOST, port).into())?;
         let accepted = tokio::spawn(async move { listener.accept().await.map(|_| ()) });
         let stream = connect_loopback(port).await?;
         assert!(stream.peer_addr()?.is_ipv6());
