@@ -141,7 +141,7 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
 
   const measured = useRef<number>(0);
   const presented = useRef<boolean>(false);
-  const dismissVelocity = useRef<number>(0);
+  const presentationFrame = useRef<number | null>(null);
   const transitionVersion = useRef<number>(0);
 
   const setOpen = useEvent((next: boolean) => {
@@ -150,6 +150,10 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
   });
 
   const reset = useEvent(() => {
+    if (presentationFrame.current !== null) {
+      cancelAnimationFrame(presentationFrame.current);
+      presentationFrame.current = null;
+    }
     presented.current = false;
     measured.current = 0;
     sheetHeight.value = 0;
@@ -171,16 +175,26 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
     reset();
   });
 
-  const requestClose = useEvent((velocity: number) => {
-    dismissVelocity.current = velocity;
+  const requestClose = useEvent(() => {
     setOpen(false);
   });
 
-  const close = useEvent(() => requestClose(0));
+  const close = useEvent(() => requestClose());
 
   const openTray = useEvent((view?: string) => {
     navigation.reset(view ?? defaultView);
     setOpen(true);
+  });
+
+  const presentMeasuredTray = useEvent(() => {
+    presentationFrame.current = null;
+    if (!open || presented.current || measured.current === 0) return;
+    presented.current = true;
+
+    const start = offsets[Math.min(initialDetent, offsets.length - 1)] ?? 0;
+    offset.value = start;
+    detentIndex.value = Math.min(initialDetent, offsets.length - 1);
+    present.value = reduceMotion ? 1 : withSpring(1, motion.presentSpring);
   });
 
   const onContentLayout = useEvent((event: LayoutChangeEvent) => {
@@ -197,16 +211,11 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
     if (first || reduceMotion) sheetHeight.value = next;
     else sheetHeight.value = withSpring(next, motion.heightSpring);
 
-    if (presented.current) return;
-    presented.current = true;
-
-    const start = offsets[Math.min(initialDetent, offsets.length - 1)] ?? 0;
-    offset.value = start;
-    detentIndex.value = Math.min(initialDetent, offsets.length - 1);
-    present.value = reduceMotion ? 1 : withSpring(1, motion.presentSpring);
+    if (presented.current || presentationFrame.current !== null) return;
+    presentationFrame.current = requestAnimationFrame(presentMeasuredTray);
   });
 
-  const dismiss = useEvent((velocity: number) => requestClose(velocity));
+  const dismiss = useEvent((_velocity: number) => requestClose());
 
   useEffect(() => {
     transitionVersion.current += 1;
@@ -223,25 +232,15 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
       finishClose(version);
       return;
     }
-    const velocity = dismissVelocity.current;
-    dismissVelocity.current = 0;
     if (reduceMotion) {
       present.value = 0;
       finishClose(version);
       return;
     }
-    present.value = withSpring(
-      0,
-      {
-        ...motion.presentSpring,
-        velocity: -velocity / Math.max(travel.value, 1),
-        overshootClamping: true,
-      },
-      (finished) => {
-        "worklet";
-        if (finished) scheduleOnRN(finishClose, version);
-      },
-    );
+    present.value = withTiming(0, motion.dismissTiming, (finished) => {
+      "worklet";
+      if (finished) scheduleOnRN(finishClose, version);
+    });
   }, [open, reduceMotion, motion, present, finishClose]);
 
   const settleTo = useEvent((index: number) => {
@@ -541,7 +540,11 @@ const TrayContent: React.FC<ITrayContent> &
                   ]}
                 >
                   <Animated.View style={[styles.clip, heightStyle]}>
-                    <View style={styles.measure} onLayout={onContentLayout}>
+                    <View
+                      style={styles.measure}
+                      onLayout={onContentLayout}
+                      testID="tray-content-measure"
+                    >
                       <View style={styles.handleArea}>
                         <View
                           style={[

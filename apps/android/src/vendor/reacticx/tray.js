@@ -81,6 +81,10 @@ var PRESENT_SPRING = {
   mass: 0.9,
   overshootClamping: false
 };
+var DISMISS_TIMING = {
+  duration: 180,
+  easing: Easing.out(Easing.cubic)
+};
 var HEIGHT_SPRING = {
   damping: 26,
   stiffness: 260,
@@ -120,6 +124,7 @@ var BACKDROP_DRAG_FALLOFF = 0.45;
 var SCROLL_DECELERATION = 0.998;
 var DEFAULT_MOTION = {
   presentSpring: PRESENT_SPRING,
+  dismissTiming: DISMISS_TIMING,
   startScale: PRESENT_START_SCALE,
   travelPadding: TRAVEL_PADDING,
   heightSpring: HEIGHT_SPRING,
@@ -311,13 +316,17 @@ var TrayRoot = ({
   const isDragging = useSharedValue(false);
   const measured = useRef2(0);
   const presented = useRef2(false);
-  const dismissVelocity = useRef2(0);
+  const presentationFrame = useRef2(null);
   const transitionVersion = useRef2(0);
   const setOpen = useEvent((next) => {
     if (!isControlled) setInternalOpen(next);
     onOpenChange?.(next);
   });
   const reset = useEvent(() => {
+    if (presentationFrame.current !== null) {
+      cancelAnimationFrame(presentationFrame.current);
+      presentationFrame.current = null;
+    }
     presented.current = false;
     measured.current = 0;
     sheetHeight.value = 0;
@@ -337,14 +346,22 @@ var TrayRoot = ({
     setMounted(false);
     reset();
   });
-  const requestClose = useEvent((velocity) => {
-    dismissVelocity.current = velocity;
+  const requestClose = useEvent(() => {
     setOpen(false);
   });
-  const close = useEvent(() => requestClose(0));
+  const close = useEvent(() => requestClose());
   const openTray = useEvent((view) => {
     navigation.reset(view ?? defaultView);
     setOpen(true);
+  });
+  const presentMeasuredTray = useEvent(() => {
+    presentationFrame.current = null;
+    if (!open || presented.current || measured.current === 0) return;
+    presented.current = true;
+    const start = offsets[Math.min(initialDetent, offsets.length - 1)] ?? 0;
+    offset.value = start;
+    detentIndex.value = Math.min(initialDetent, offsets.length - 1);
+    present.value = reduceMotion ? 1 : withSpring(1, motion.presentSpring);
   });
   const onContentLayout = useEvent((event) => {
     if (!open) return;
@@ -355,14 +372,10 @@ var TrayRoot = ({
     travel.value = next + insets.bottom + motion.travelPadding;
     if (first || reduceMotion) sheetHeight.value = next;
     else sheetHeight.value = withSpring(next, motion.heightSpring);
-    if (presented.current) return;
-    presented.current = true;
-    const start = offsets[Math.min(initialDetent, offsets.length - 1)] ?? 0;
-    offset.value = start;
-    detentIndex.value = Math.min(initialDetent, offsets.length - 1);
-    present.value = reduceMotion ? 1 : withSpring(1, motion.presentSpring);
+    if (presented.current || presentationFrame.current !== null) return;
+    presentationFrame.current = requestAnimationFrame(presentMeasuredTray);
   });
-  const dismiss = useEvent((velocity) => requestClose(velocity));
+  const dismiss = useEvent((_velocity) => requestClose());
   useEffect(() => {
     transitionVersion.current += 1;
     const version = transitionVersion.current;
@@ -378,25 +391,15 @@ var TrayRoot = ({
       finishClose(version);
       return;
     }
-    const velocity = dismissVelocity.current;
-    dismissVelocity.current = 0;
     if (reduceMotion) {
       present.value = 0;
       finishClose(version);
       return;
     }
-    present.value = withSpring(
-      0,
-      {
-        ...motion.presentSpring,
-        velocity: -velocity / Math.max(travel.value, 1),
-        overshootClamping: true
-      },
-      (finished) => {
-        "worklet";
-        if (finished) scheduleOnRN(finishClose, version);
-      }
-    );
+    present.value = withTiming(0, motion.dismissTiming, (finished) => {
+      "worklet";
+      if (finished) scheduleOnRN(finishClose, version);
+    });
   }, [open, reduceMotion, motion, present, finishClose]);
   const settleTo = useEvent((index) => {
     onDetentChange?.(index);
@@ -657,18 +660,26 @@ var TrayContent = ({
                       transformStyle,
                       style
                     ],
-                    children: /* @__PURE__ */ jsx(Animated.View, { style: [styles.clip, heightStyle], children: /* @__PURE__ */ jsxs(View, { style: styles.measure, onLayout: onContentLayout, children: [
-                      /* @__PURE__ */ jsx(View, { style: styles.handleArea, children: /* @__PURE__ */ jsx(
-                        View,
-                        {
-                          style: [
-                            styles.handle,
-                            { backgroundColor: palette.handle }
-                          ]
-                        }
-                      ) }),
-                      children
-                    ] }) })
+                    children: /* @__PURE__ */ jsx(Animated.View, { style: [styles.clip, heightStyle], children: /* @__PURE__ */ jsxs(
+                      View,
+                      {
+                        style: styles.measure,
+                        onLayout: onContentLayout,
+                        testID: "tray-content-measure",
+                        children: [
+                          /* @__PURE__ */ jsx(View, { style: styles.handleArea, children: /* @__PURE__ */ jsx(
+                            View,
+                            {
+                              style: [
+                                styles.handle,
+                                { backgroundColor: palette.handle }
+                              ]
+                            }
+                          ) }),
+                          children
+                        ]
+                      }
+                    ) })
                   }
                 ) })
               }

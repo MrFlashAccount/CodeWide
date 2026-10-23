@@ -41,12 +41,7 @@ export function HostLoginPanel({
   });
   return (
     <View style={styles.hostLoginPanel} testID="forge-host-login-panel">
-      <View style={styles.hostLoginLead}>
-        <ProductText style={styles.hostLoginTitle} weight="semibold">
-          Finish sign-in
-        </ProductText>
-        <ProductText style={styles.body}>Enter this one-time code on {flow.host}.</ProductText>
-      </View>
+      <ProductText style={styles.body}>Enter this one-time code on {flow.host}.</ProductText>
       <View style={styles.hostLoginCodeBox}>
         <ProductText
           accessibilityLabel={`One-time code ${flow.userCode}`}
@@ -61,28 +56,29 @@ export function HostLoginPanel({
           The verification page is not on {flow.host}. Run gh auth login on the companion host.
         </ProductText>
       ) : null}
-      <HostLoginFooter host={flow.host} onCopy={copy} onOpen={open} openAvailable={url !== null} />
-      <AppButton
-        accessibilityLabel="Cancel sign-in"
-        isDisabled={cancelling}
-        onPress={onCancel}
-        size="sm"
-        style={styles.hostLoginCancel}
-        variant="ghost"
-      >
-        Cancel
-      </AppButton>
+      <HostLoginFooter
+        cancelling={cancelling}
+        host={flow.host}
+        onCancel={onCancel}
+        onCopy={copy}
+        onOpen={open}
+        openAvailable={url !== null}
+      />
     </View>
   );
 }
 
 function HostLoginFooter({
+  cancelling,
   host,
+  onCancel,
   onCopy,
   onOpen,
   openAvailable,
 }: {
+  readonly cancelling: boolean;
   readonly host: string;
+  readonly onCancel: () => void;
   readonly onCopy: () => void;
   readonly onOpen: () => void;
   readonly openAvailable: boolean;
@@ -92,6 +88,44 @@ function HostLoginFooter({
       <AppText shimmering style={styles.hostLoginStatus}>
         Waiting for authorization…
       </AppText>
+      <HostLoginControls
+        cancelling={cancelling}
+        host={host}
+        onCancel={onCancel}
+        onCopy={onCopy}
+        onOpen={onOpen}
+        openAvailable={openAvailable}
+      />
+    </View>
+  );
+}
+
+function HostLoginControls({
+  cancelling,
+  host,
+  onCancel,
+  onCopy,
+  onOpen,
+  openAvailable,
+}: {
+  readonly cancelling: boolean;
+  readonly host: string;
+  readonly onCancel: () => void;
+  readonly onCopy: () => void;
+  readonly onOpen: () => void;
+  readonly openAvailable: boolean;
+}): React.JSX.Element {
+  return (
+    <View style={styles.hostLoginControls} testID="forge-host-login-controls">
+      <AppButton
+        accessibilityLabel="Cancel sign-in"
+        isDisabled={cancelling}
+        onPress={onCancel}
+        size="sm"
+        variant="ghost"
+      >
+        Cancel
+      </AppButton>
       <View style={styles.hostLoginActions} testID="forge-host-login-actions">
         <AppButton
           accessibilityLabel="Copy one-time code"

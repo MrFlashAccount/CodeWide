@@ -13,6 +13,11 @@ const PRESENT_SPRING: WithSpringConfig = {
   overshootClamping: false,
 };
 
+const DISMISS_TIMING: WithTimingConfig = {
+  duration: 180,
+  easing: Easing.out(Easing.cubic),
+};
+
 const HEIGHT_SPRING: WithSpringConfig = {
   damping: 26,
   stiffness: 260,
@@ -63,6 +68,7 @@ const SCROLL_DECELERATION = 0.998;
 
 const DEFAULT_MOTION: ITrayMotion = {
   presentSpring: PRESENT_SPRING,
+  dismissTiming: DISMISS_TIMING,
   startScale: PRESENT_START_SCALE,
   travelPadding: TRAVEL_PADDING,
   heightSpring: HEIGHT_SPRING,
@@ -106,6 +112,7 @@ const PALETTES: Record<TTrayTheme, ITrayPalette> = {
 
 export {
   BACKDROP_DRAG_FALLOFF,
+  DISMISS_TIMING,
   DEFAULT_MOTION,
   DETENT_SPRING,
   GESTURE_ACTIVE_OFFSET,

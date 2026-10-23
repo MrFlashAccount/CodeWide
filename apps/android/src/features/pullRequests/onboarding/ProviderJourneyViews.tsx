@@ -330,11 +330,7 @@ function ProviderSuccessTrayView({
     <Tray.View id={providerSuccessView(provider.pluginId)}>
       <ProviderTrayHeader step={SUCCESS_STEP} title="Connected" />
       <Tray.Body>
-        <ProviderSuccessPanel
-          onConnectAnother={onConnectAnother}
-          onDone={onDone}
-          provider={provider}
-        />
+        <ProviderSuccessPanel onConnectAnother={onConnectAnother} onDone={onDone} />
       </Tray.Body>
     </Tray.View>
   );
@@ -422,14 +418,9 @@ function AuthenticationActionPanel({
   }
   return (
     <View style={styles.authPending}>
-      <AppText shimmering={pending} style={styles.authPendingTitle}>
-        {action.kind === "link"
-          ? `Connecting @${action.login}`
-          : `Starting ${provider.forgeName} sign-in`}
-      </AppText>
-      <ProductText style={styles.body}>
+      <AppText shimmering={pending} style={styles.body}>
         The connection is handled by your Companion. You can keep this tray open.
-      </ProductText>
+      </AppText>
       <InteractionError error={error} />
     </View>
   );
@@ -438,25 +429,18 @@ function AuthenticationActionPanel({
 function ProviderSuccessPanel({
   onConnectAnother,
   onDone,
-  provider,
 }: {
   readonly onConnectAnother: () => void;
   readonly onDone: () => void;
-  readonly provider: ForgeProvider;
 }): React.JSX.Element {
   return (
     <View style={styles.successPanel} testID="forge-provider-success">
       <View style={styles.successIcon}>
         <Ionicons color={colors.green} name="checkmark" size={iconSize.navigation} />
       </View>
-      <View style={styles.successCopy}>
-        <ProductText style={styles.successTitle} weight="semibold">
-          {`${provider.forgeName} is connected`}
-        </ProductText>
-        <ProductText style={styles.body}>
-          Pull requests from this provider are ready in your review inbox.
-        </ProductText>
-      </View>
+      <ProductText style={styles.body}>
+        Pull requests from this provider are ready in your review inbox.
+      </ProductText>
       <View style={styles.successActions}>
         <AppButton onPress={onDone} size="sm" variant="primary">
           View pull requests

@@ -38,8 +38,10 @@ type TTrayViewAxis = "x" | "y" | "none";
  * it is merged over the defaults, so they override only what they care about.
  */
 interface ITrayMotion {
-  /** Presenting and dismissing the sheet. */
+  /** Presenting the sheet. */
   readonly presentSpring: WithSpringConfig;
+  /** Bounded dismissal that determines when the native Modal releases input. */
+  readonly dismissTiming: WithTimingConfig;
   /** Scale the sheet grows from as it presents. 1 disables the scale. */
   readonly startScale: number;
   /** Extra distance travelled off-screen, so the sheet clears its shadow. */

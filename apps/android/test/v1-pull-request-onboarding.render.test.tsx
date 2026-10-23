@@ -187,10 +187,16 @@ it("keeps the one-time code separate from the compact copy and browser actions",
   const authHeader = within(view.getByTestId("provider-tray-header-left-step-3"));
   expect(authHeader.getByText("Sign in to GitHub")).toBeOnTheScreen();
   expect(authHeader.getByText("3 of 4")).toBeOnTheScreen();
-  expect(view.getByText("Finish sign-in")).toBeOnTheScreen();
+  expect(view.queryByText("Finish sign-in")).toBeNull();
   expect(view.getByText("ABCD-1234")).toBeOnTheScreen();
   expect(view.getByText("Waiting for authorization…")).toBeOnTheScreen();
+  expect(view.getByTestId("forge-host-login-controls")).toHaveStyle({
+    flexDirection: "row",
+    flexWrap: "wrap",
+  });
   const actions = within(view.getByTestId("forge-host-login-actions"));
+  expect(view.getByTestId("forge-host-login-actions")).toHaveStyle({ marginLeft: "auto" });
+  expect(view.getByRole("button", { name: "Cancel sign-in" })).toBeOnTheScreen();
   expect(actions.getByRole("button", { name: "Copy one-time code" })).toBeOnTheScreen();
   expect(
     actions.getByRole("button", { name: "Open github.com verification page" }),
@@ -217,7 +223,7 @@ it("binds each authentication method to its own view and keeps Back on the selec
     }),
   );
   fireEvent.press(view.getByRole("button", { name: "Connect GitHub" }));
-  expect(view.getByText("Finish sign-in")).toBeOnTheScreen();
+  expect(view.queryByText("Finish sign-in")).toBeNull();
   expect(view.getByText("ABCD-1234")).toBeOnTheScreen();
   expect(view.queryByTestId("forge-tray-token-panel")).toBeNull();
 
@@ -259,7 +265,10 @@ it("keeps all four onboarding steps through the terminal success state", async (
   const authHeader = within(view.getByTestId("provider-tray-header-left-step-3"));
   expect(authHeader.getByText("Connect GitHub")).toBeOnTheScreen();
   expect(authHeader.getByText("3 of 4")).toBeOnTheScreen();
-  expect(view.getByText("Connecting @sergeigarin")).toBeOnTheScreen();
+  expect(view.queryByText("Connecting @sergeigarin")).toBeNull();
+  expect(
+    view.getByText("The connection is handled by your Companion. You can keep this tray open."),
+  ).toBeOnTheScreen();
 
   await act(async () => {
     if (resolveStart === null) {
@@ -272,7 +281,10 @@ it("keeps all four onboarding steps through the terminal success state", async (
   const successHeader = within(view.getByTestId("provider-tray-header-left-step-4"));
   expect(successHeader.getByText("Connected")).toBeOnTheScreen();
   expect(successHeader.getByText("4 of 4")).toBeOnTheScreen();
-  expect(view.getByText("GitHub is connected")).toBeOnTheScreen();
+  expect(view.queryByText("GitHub is connected")).toBeNull();
+  expect(
+    view.getByText("Pull requests from this provider are ready in your review inbox."),
+  ).toBeOnTheScreen();
   expect(view.getByRole("button", { name: "View pull requests" })).toBeOnTheScreen();
 });
 
@@ -306,13 +318,19 @@ it("keeps the terminal success visible after the authoritative account snapshot 
     fireEvent.press(view.getByRole("button", { name: "Use @sergeigarin" }));
     await Promise.resolve();
   });
-  expect(view.getByText("GitHub is connected")).toBeOnTheScreen();
+  expect(view.queryByText("GitHub is connected")).toBeNull();
+  expect(
+    view.getByText("Pull requests from this provider are ready in your review inbox."),
+  ).toBeOnTheScreen();
 
   act(() => {
     forge.accounts.publish({ connectionId: "server" }, CONNECTED_SNAPSHOT);
   });
 
-  expect(view.getByText("GitHub is connected")).toBeOnTheScreen();
+  expect(view.queryByText("GitHub is connected")).toBeNull();
+  expect(
+    view.getByText("Pull requests from this provider are ready in your review inbox."),
+  ).toBeOnTheScreen();
   expect(view.getByText("4 of 4")).toBeOnTheScreen();
 });
 
@@ -326,12 +344,25 @@ it("caps the tray at the same width as an Android Material sheet", () => {
   });
 });
 
-it("dismisses from the full-screen backdrop before layout and opens again", () => {
+it("dismisses from the full-screen backdrop after layout and opens again", () => {
+  let presentationFrame: FrameRequestCallback | null = null;
+  const frame = jest.spyOn(global, "requestAnimationFrame").mockImplementation((callback) => {
+    presentationFrame = callback;
+    return 1;
+  });
   const onOpenChange = jest.fn();
   const view = renderWelcome(SINGLE_PROVIDER, capabilities(SINGLE_PROVIDER), onOpenChange);
 
   fireEvent.press(view.getByRole("button", { name: "Connect a provider" }));
   expect(view.getByText("Choose where CodeWide should look for pull requests.")).toBeOnTheScreen();
+  fireEvent(view.getByTestId("tray-content-measure"), "layout", {
+    nativeEvent: { layout: { height: 420, width: 400, x: 0, y: 380 } },
+  });
+  expect(presentationFrame).not.toBeNull();
+  act(() => {
+    presentationFrame?.(0);
+  });
+  frame.mockRestore();
 
   fireEvent.press(view.getByTestId("tray-backdrop"));
   expect(view.queryByText("Choose where CodeWide should look for pull requests.")).toBeNull();

@@ -32,10 +32,6 @@ export const onboardingStyles = StyleSheet.create({
   authPending: {
     gap: spacing.sm,
   },
-  authPendingTitle: {
-    ...typeScale.title,
-    color: colors.text,
-  },
   body: {
     ...typeScale.body,
     color: colors.textMuted,
@@ -78,10 +74,7 @@ export const onboardingStyles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.xs,
     justifyContent: "flex-end",
-  },
-  hostLoginCancel: {
-    alignSelf: "flex-start",
-    marginLeft: -spacing.md,
+    marginLeft: "auto",
   },
   hostLoginCodeBox: {
     alignItems: "center",
@@ -92,15 +85,14 @@ export const onboardingStyles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
   },
-  hostLoginFooter: {
+  hostLoginControls: {
     alignItems: "center",
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.sm,
-    justifyContent: "space-between",
   },
-  hostLoginLead: {
-    gap: spacing.xs,
+  hostLoginFooter: {
+    gap: spacing.sm,
   },
   hostLoginOpenButton: {
     gap: spacing.xs,
@@ -115,11 +107,6 @@ export const onboardingStyles = StyleSheet.create({
   hostLoginStatus: {
     ...typeScale.body,
     color: colors.textMuted,
-    flexGrow: 1,
-  },
-  hostLoginTitle: {
-    ...typeScale.heading,
-    color: colors.text,
   },
   label: {
     ...typeScale.label,
@@ -202,9 +189,6 @@ export const onboardingStyles = StyleSheet.create({
     flexWrap: "wrap",
     gap: spacing.xs,
   },
-  successCopy: {
-    gap: spacing.xs,
-  },
   successIcon: {
     alignItems: "center",
     alignSelf: "flex-start",
@@ -216,10 +200,6 @@ export const onboardingStyles = StyleSheet.create({
   },
   successPanel: {
     gap: spacing.md,
-  },
-  successTitle: {
-    ...typeScale.heading,
-    color: colors.text,
   },
   title: {
     ...typeScale.title,

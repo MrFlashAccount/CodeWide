@@ -21,7 +21,6 @@ export function InstructionsPanel({
 }): React.JSX.Element {
   return (
     <View style={styles.section}>
-      <ProductText style={[styles.step, styles.weightMedium]}>{method.label}</ProductText>
       <ProductText selectable style={styles.body}>
         {method.detail}
       </ProductText>
