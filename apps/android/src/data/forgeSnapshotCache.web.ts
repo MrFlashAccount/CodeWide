@@ -1,8 +1,4 @@
-import {
-  OVERVIEW_SNAPSHOT_PREFIX,
-  RETAINED_OVERVIEW_SNAPSHOTS,
-  type ForgeSnapshotCache,
-} from "./forgeSnapshotCache.types";
+import type { ForgeSnapshotCache } from "./forgeSnapshotCache.types";
 
 const entries = new Map<string, Map<string, unknown>>();
 
@@ -29,15 +25,6 @@ export const forgeSnapshotCache: ForgeSnapshotCache = {
     const current = connectionEntries(connectionId);
     current.delete(key);
     current.set(key, value);
-    const overviews = [...current.keys()].filter((entry) =>
-      entry.startsWith(OVERVIEW_SNAPSHOT_PREFIX),
-    );
-    for (const stale of overviews.slice(
-      0,
-      Math.max(0, overviews.length - RETAINED_OVERVIEW_SNAPSHOTS),
-    )) {
-      current.delete(stale);
-    }
     await Promise.resolve();
   },
 };

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, within } from "@testing-library/react-native";
 import * as Clipboard from "expo-clipboard";
-import { StyleSheet } from "react-native";
+import { KeyboardAvoidingView, StyleSheet } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import {
   Gesture,
@@ -27,6 +27,7 @@ import {
   hostLoginFlow,
   onboardingAccounts,
 } from "./fixtures/forgeWireFixtures";
+import { createMemoryQueryPersister } from "./fixtures/queryPersister";
 
 const MULTIPLE_PROVIDERS = requiredSnapshot(onboardingAccounts);
 const SINGLE_PROVIDER = requiredSnapshot({
@@ -80,6 +81,7 @@ function capabilities(snapshot: ForgeAccountsSnapshot): PullRequestsWorkspaceCap
 function renderWelcome(
   snapshot: ForgeAccountsSnapshot,
   workspaceCapabilities = capabilities(snapshot),
+  onTrayOpenChange: (open: boolean) => void = () => undefined,
 ): ReturnType<typeof render> {
   return render(
     <SafeAreaProvider
@@ -91,7 +93,7 @@ function renderWelcome(
       <OnboardingScreen
         capabilities={workspaceCapabilities}
         connectionId="server"
-        onTrayOpenChange={() => undefined}
+        onTrayOpenChange={onTrayOpenChange}
         snapshot={snapshot}
       />
     </SafeAreaProvider>,
@@ -101,14 +103,10 @@ function renderWelcome(
 function forgeResources() {
   return createForgeResources({
     getSession: () => undefined,
+    persister: createMemoryQueryPersister().persister,
     reportDroppedAction: () => undefined,
     rpcAfterAttach: async <Result,>(): Promise<Result> => {
       throw new Error("Unexpected forge read");
-    },
-    snapshots: {
-      deleteConnection: () => Promise.resolve(),
-      read: () => Promise.resolve(null),
-      write: () => Promise.resolve(),
     },
   });
 }
@@ -128,6 +126,9 @@ it("keeps provider choices behind one welcome action", () => {
   expect(firstHeader.getByText("Connect a provider")).toBeOnTheScreen();
   expect(firstHeader.getByText("1 of 4")).toBeOnTheScreen();
   expect(firstHeader.queryByRole("button", { name: "Close" })).toBeNull();
+  expect(
+    StyleSheet.flatten(view.getByTestId("provider-tray-header-copy-step-1").props.style),
+  ).toMatchObject({ alignItems: "baseline", flexDirection: "row" });
 });
 
 it("mounts an incoming tray view before passive effects can update retention", () => {
@@ -322,6 +323,32 @@ it("caps the tray at the same width as an Android Material sheet", () => {
     alignSelf: "center",
     maxWidth: 640,
     width: "100%",
+  });
+});
+
+it("dismisses from the full-screen backdrop before layout and opens again", () => {
+  const onOpenChange = jest.fn();
+  const view = renderWelcome(SINGLE_PROVIDER, capabilities(SINGLE_PROVIDER), onOpenChange);
+
+  fireEvent.press(view.getByRole("button", { name: "Connect a provider" }));
+  expect(view.getByText("Choose where CodeWide should look for pull requests.")).toBeOnTheScreen();
+
+  fireEvent.press(view.getByTestId("tray-backdrop"));
+  expect(view.queryByText("Choose where CodeWide should look for pull requests.")).toBeNull();
+
+  fireEvent.press(view.getByRole("button", { name: "Connect a provider" }));
+  expect(view.getByText("Choose where CodeWide should look for pull requests.")).toBeOnTheScreen();
+  expect(onOpenChange.mock.calls).toEqual([[true], [false], [true]]);
+});
+
+it("moves the modal tray out of keyboard overlap", () => {
+  const view = renderWelcome(SINGLE_PROVIDER);
+
+  fireEvent.press(view.getByRole("button", { name: "Connect a provider" }));
+
+  expect(view.UNSAFE_getByType(KeyboardAvoidingView).props).toMatchObject({
+    behavior: "padding",
+    testID: "tray-keyboard-layout",
   });
 });
 

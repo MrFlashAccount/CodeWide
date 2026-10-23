@@ -1,5 +1,5 @@
-import { useSelector } from "@legendapp/state/react";
-
+import type { ListParams } from "../data/forgeListPages";
+import { useForgeQuery } from "../data/forgeQueryResource";
 import { remoteValue } from "../data/forgeRemoteValue";
 import { forgeResources } from "../data/forgeRuntime";
 import { CatalogModeBar, type CatalogMode } from "../features/pullRequests/CatalogModeBar";
@@ -20,18 +20,30 @@ export function CatalogModeBarHost({ mode }: { readonly mode: CatalogMode }): Re
   const navigation = usePullRequestNavigation();
   const connectionId = pullRequestCatalogConnection(list.serverScope, list.servers);
   const params = connectionId === null ? null : { ...REVIEW_REQUESTED, connectionId };
-  if (params !== null) {
-    forgeResources.lists.ensure(params);
+  if (params === null) {
+    return (
+      <CatalogModeBar mode={mode} onSelect={navigation.switchCatalog} reviewRequestedCount={0} />
+    );
   }
-  const page = useSelector(() =>
-    params === null
-      ? undefined
-      : forgeResources.lists.state$[forgeResources.lists.keyOf(params)]?.get(),
+  return (
+    <ConnectedCatalogModeBar mode={mode} onSelect={navigation.switchCatalog} params={params} />
   );
+}
+
+function ConnectedCatalogModeBar({
+  mode,
+  onSelect,
+  params,
+}: {
+  readonly mode: CatalogMode;
+  readonly onSelect: (mode: CatalogMode) => void;
+  readonly params: ListParams;
+}): React.JSX.Element {
+  const page = useForgeQuery(forgeResources.lists, params);
   return (
     <CatalogModeBar
       mode={mode}
-      onSelect={navigation.switchCatalog}
+      onSelect={onSelect}
       reviewRequestedCount={reviewRequestedCount(remoteValue(page))}
     />
   );

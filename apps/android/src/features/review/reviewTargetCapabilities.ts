@@ -7,15 +7,16 @@ export type GuideAuthor =
   | { readonly kind: "newThread"; readonly workspace: string | null };
 
 /**
- * Companion-owned drafts and guides of any diff source. Every mutation re-reads
- * the source's drafts or guide afterwards; nothing writes to a forge here.
+ * Companion-owned drafts and guides of any diff source. Replay-safe writes are
+ * persisted before transport and every settlement re-reads the source's drafts
+ * or guide; nothing writes to a forge here.
  */
 export type ReviewTargetCapabilities = {
   readonly deleteDraft: (
     connectionId: string,
     draft: Pick<DraftComment, "id" | "revision" | "version">,
   ) => Promise<void>;
-  /** Saves a draft; a version conflict rejects with the companion's reason and re-reads drafts. */
+  /** Durably saves a draft; an exact lost-response replay returns the same acknowledged draft. */
   readonly putDraft: (
     connectionId: string,
     draft: DraftInput,

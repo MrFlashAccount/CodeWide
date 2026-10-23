@@ -9,7 +9,7 @@ import { colors, iconSize } from "../../../theme";
 import { useAppDialog } from "../../../ui/AppDialog";
 import { AppText } from "../../../ui/AppText";
 import { ForgeIcon } from "../../../ui/ForgeIcon";
-import { Tray, useTray, type ITrayMotion, type ITrayPalette } from "../../../vendor/reacticx/tray";
+import { Tray, useTray, type ITrayPalette } from "../../../vendor/reacticx/tray";
 import type { PullRequestsWorkspaceCapabilities } from "../workspaceCapabilities";
 import { onboardingStyles as styles } from "./onboarding.styles";
 import { ProviderJourneyViews } from "./ProviderJourneyViews";
@@ -17,9 +17,6 @@ import { ProviderTrayHeader, TrayTrust } from "./ProviderTrayChrome";
 import { PROVIDERS_VIEW, PROVIDER_STEP, providerMethodsView } from "./providerTrayNavigation";
 
 const PROVIDER_LIST_MAX_HEIGHT = 440;
-const TRAY_PRESENT_START_SCALE = 0.5;
-const TRAY_VIEW_SLIDE = 90;
-const TRAY_VIEW_START_SCALE = 1;
 const TRAY_PALETTE: Partial<ITrayPalette> = {
   backdrop: colors.scrim,
   border: colors.surfaceContainer,
@@ -28,13 +25,6 @@ const TRAY_PALETTE: Partial<ITrayPalette> = {
   surface: colors.surfaceContainer,
   text: colors.text,
 };
-const TRAY_MOTION: Partial<ITrayMotion> = {
-  startScale: TRAY_PRESENT_START_SCALE,
-  viewAxis: "x",
-  viewSlide: TRAY_VIEW_SLIDE,
-  viewStartScale: TRAY_VIEW_START_SCALE,
-};
-
 /** Connect CTA and its server-driven provider/auth view stack. */
 export function ProviderConnectTray({
   capabilities,
@@ -54,7 +44,6 @@ export function ProviderConnectTray({
   return (
     <Tray
       defaultView={PROVIDERS_VIEW}
-      motion={TRAY_MOTION}
       onOpenChange={handleOpenChange}
       palette={TRAY_PALETTE}
       theme="dark"

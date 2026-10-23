@@ -88,8 +88,6 @@ function PullRequestsCatalogContent({
 const styles = StyleSheet.create({
   catalogSurface: {
     backgroundColor: colors.threadListSurface,
-    borderRightColor: colors.borderSoft,
-    borderRightWidth: StyleSheet.hairlineWidth,
     flex: 1,
     minWidth: 0,
   },

@@ -15,6 +15,18 @@ export function ListNotice({
   readonly nowMs: number;
   readonly state: RemoteValue<PullRequestListPage> | undefined;
 }): React.JSX.Element | null {
+  if (state?.status === "ready" && state.refreshing) {
+    return (
+      <Text
+        accessibilityLiveRegion="polite"
+        shimmering
+        style={styles.notice}
+        testID="pull-request-list-notice"
+      >
+        {`Last updated ${ageAgo(state.value.fetchedAt, nowMs)}`}
+      </Text>
+    );
+  }
   if (state?.status !== "failed") {
     return null;
   }

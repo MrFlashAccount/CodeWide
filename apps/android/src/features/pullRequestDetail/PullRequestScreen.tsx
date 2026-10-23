@@ -3,6 +3,7 @@ import { StyleSheet, View } from "react-native";
 
 import type { ActionDescriptor } from "../../data/forgeActionCatalog";
 import { remoteValue } from "../../data/forgeRemoteValue";
+import { useForgeQuery } from "../../data/forgeQueryResource";
 import { useMinuteClock } from "../../data/minuteClock";
 import type { ThreadId } from "../../data/reviewContract";
 import { useEvent } from "../../react/useEvent";
@@ -129,8 +130,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
 /** Provider icon of the PR's account from the accounts resource, if loaded. */
 function useProviderIcon(props: PullRequestScreenProps, pluginId: string) {
   // A cold deep link has no catalog behind it; the mark still comes from the accounts snapshot.
-  props.forge.accounts.ensure({ connectionId: props.connectionId });
-  const accounts = useSelector(() => props.forge.accounts.state$[props.connectionId]?.get());
+  const accounts = useForgeQuery(props.forge.accounts, { connectionId: props.connectionId });
   return (
     remoteValue(accounts)?.providers.find((candidate) => candidate.pluginId === pluginId)?.icon ??
     null

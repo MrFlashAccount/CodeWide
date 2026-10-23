@@ -1,3 +1,4 @@
+import { StyleSheet } from "react-native";
 import { render } from "@testing-library/react-native";
 import {
   PullRequestsCatalogPane,
@@ -60,6 +61,9 @@ it("projects the Pull requests catalog without owning workspace split geometry",
   expect(view.getByTestId("pull-requests-header")).toBeVisible();
   expect(view.getByTestId("pull-requests-catalog-content")).toBeVisible();
   expect(view.queryByTestId("pull-requests-preview-pane")).toBeNull();
+  expect(
+    StyleSheet.flatten(view.getByTestId("pull-requests-catalog-pane").props.style),
+  ).not.toHaveProperty("borderRightWidth");
 });
 
 it("leaves only the decorative preview in the desktop destination pane", () => {

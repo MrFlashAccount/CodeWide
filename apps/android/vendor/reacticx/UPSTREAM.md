@@ -12,8 +12,13 @@ context, native and scheduled callbacks keep a stable identity while reading
 the latest render values. An incoming `Tray.View` mounts synchronously when it
 becomes active; retained state owns only the outgoing view's exit animation, so
 the sheet cannot measure and present a handle-only intermediate layout after a
-navigation reset. Visuals, thresholds and ordinary-mode motion remain
-upstream-owned.
+navigation reset. Closing before the first layout now unmounts immediately,
+and a versioned close completion cannot unmount a later presentation. The
+full-screen backdrop hit target is independent from the animated scrim, so an
+outside press remains actionable throughout presentation. A React Native
+`KeyboardAvoidingView` owns keyboard overlap inside the Modal window, keeping
+the bottom-anchored tray above the IME without a feature-local keyboard model.
+Visuals, thresholds and ordinary-mode motion remain upstream-owned.
 
 Source files:
 

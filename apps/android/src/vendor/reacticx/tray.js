@@ -11,6 +11,7 @@ import {
   useState as useState3
 } from "react";
 import {
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -25,6 +26,7 @@ import {
   GestureHandlerRootView
 } from "react-native-gesture-handler";
 import Animated, {
+  cancelAnimation,
   Extrapolation,
   interpolate,
   scrollTo,
@@ -256,7 +258,6 @@ function createCompoundComponent(name, component, compound = {}) {
 
 // vendor/reacticx/src/components/organisms/tray/index.tsx
 import { jsx, jsxs } from "react/jsx-runtime";
-var AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 var TrayDismissContext = createContext2(true);
 var TrayRoot = ({
   children,
@@ -310,6 +311,8 @@ var TrayRoot = ({
   const isDragging = useSharedValue(false);
   const measured = useRef2(0);
   const presented = useRef2(false);
+  const dismissVelocity = useRef2(0);
+  const transitionVersion = useRef2(0);
   const setOpen = useEvent((next) => {
     if (!isControlled) setInternalOpen(next);
     onOpenChange?.(next);
@@ -321,21 +324,30 @@ var TrayRoot = ({
     travel.value = 0;
     offset.value = 0;
     startOffset.value = 0;
+    detentIndex.value = 0;
     scrollY.value = 0;
     owns.value = false;
     origin.value = 0;
+    hasScrollable.value = false;
+    isDragging.value = false;
     present.value = 0;
   });
-  const finishClose = useEvent(() => {
+  const finishClose = useEvent((version) => {
+    if (open || transitionVersion.current !== version) return;
     setMounted(false);
     reset();
   });
-  const close = useEvent(() => setOpen(false));
+  const requestClose = useEvent((velocity) => {
+    dismissVelocity.current = velocity;
+    setOpen(false);
+  });
+  const close = useEvent(() => requestClose(0));
   const openTray = useEvent((view) => {
     navigation.reset(view ?? defaultView);
     setOpen(true);
   });
   const onContentLayout = useEvent((event) => {
+    if (!open) return;
     const next = detentHeight ? detentHeight : Math.round(event.nativeEvent.layout.height);
     if (next <= 0 || Math.abs(measured.current - next) < 1) return;
     const first = measured.current === 0;
@@ -350,11 +362,27 @@ var TrayRoot = ({
     detentIndex.value = Math.min(initialDetent, offsets.length - 1);
     present.value = reduceMotion ? 1 : withSpring(1, motion.presentSpring);
   });
-  const dismiss = useEvent((velocity) => {
-    setOpen(false);
+  const dismiss = useEvent((velocity) => requestClose(velocity));
+  useEffect(() => {
+    transitionVersion.current += 1;
+    const version = transitionVersion.current;
+    cancelAnimation(present);
+    if (open) {
+      setMounted(true);
+      if (presented.current) {
+        present.value = reduceMotion ? 1 : withSpring(1, motion.presentSpring);
+      }
+      return;
+    }
+    if (!presented.current) {
+      finishClose(version);
+      return;
+    }
+    const velocity = dismissVelocity.current;
+    dismissVelocity.current = 0;
     if (reduceMotion) {
       present.value = 0;
-      finishClose();
+      finishClose(version);
       return;
     }
     present.value = withSpring(
@@ -366,27 +394,7 @@ var TrayRoot = ({
       },
       (finished) => {
         "worklet";
-        if (finished) scheduleOnRN(finishClose);
-      }
-    );
-  });
-  useEffect(() => {
-    if (open) {
-      setMounted(true);
-      return;
-    }
-    if (!presented.current) return;
-    if (reduceMotion) {
-      present.value = 0;
-      finishClose();
-      return;
-    }
-    present.value = withSpring(
-      0,
-      { ...motion.presentSpring, overshootClamping: true },
-      (finished) => {
-        "worklet";
-        if (finished) scheduleOnRN(finishClose);
+        if (finished) scheduleOnRN(finishClose, version);
       }
     );
   }, [open, reduceMotion, motion, present, finishClose]);
@@ -598,56 +606,76 @@ var TrayContent = ({
       visible: true,
       animationType: "none",
       onRequestClose: close,
-      children: /* @__PURE__ */ jsx(GestureHandlerRootView, { style: styles.fill, unstable_forceActive: true, children: /* @__PURE__ */ jsxs(View, { style: styles.fill, pointerEvents: "box-none", children: [
-        /* @__PURE__ */ jsx(
-          AnimatedPressable,
-          {
-            style: [
-              styles.backdrop,
-              { backgroundColor: palette.backdrop },
-              backdropStyle
-            ],
-            onPress: dismissOnBackdropPress ? close : void 0
-          }
-        ),
-        /* @__PURE__ */ jsx(
-          View,
-          {
-            style: [
-              styles.wrap,
-              { paddingBottom: Math.max(insets.bottom, 12) }
-            ],
-            pointerEvents: "box-none",
-            children: /* @__PURE__ */ jsx(GestureDetector, { gesture: pan, children: /* @__PURE__ */ jsx(
-              Animated.View,
+      children: /* @__PURE__ */ jsx(GestureHandlerRootView, { style: styles.fill, unstable_forceActive: true, children: /* @__PURE__ */ jsx(
+        KeyboardAvoidingView,
+        {
+          behavior: "padding",
+          pointerEvents: "box-none",
+          style: styles.fill,
+          testID: "tray-keyboard-layout",
+          children: /* @__PURE__ */ jsxs(View, { style: styles.fill, pointerEvents: "box-none", children: [
+            /* @__PURE__ */ jsx(
+              Pressable,
+              {
+                accessibilityLabel: "Dismiss tray",
+                accessibilityRole: "button",
+                onPress: dismissOnBackdropPress ? close : void 0,
+                pointerEvents: dismissOnBackdropPress ? "auto" : "none",
+                style: styles.backdrop,
+                testID: "tray-backdrop",
+                children: /* @__PURE__ */ jsx(
+                  Animated.View,
+                  {
+                    pointerEvents: "none",
+                    style: [
+                      styles.backdropFill,
+                      { backgroundColor: palette.backdrop },
+                      backdropStyle
+                    ]
+                  }
+                )
+              }
+            ),
+            /* @__PURE__ */ jsx(
+              View,
               {
                 style: [
-                  styles.sheet,
-                  {
-                    backgroundColor: palette.surface,
-                    borderColor: palette.border,
-                    borderRadius: radius
-                  },
-                  transformStyle,
-                  style
+                  styles.wrap,
+                  { paddingBottom: Math.max(insets.bottom, 12) }
                 ],
-                children: /* @__PURE__ */ jsx(Animated.View, { style: [styles.clip, heightStyle], children: /* @__PURE__ */ jsxs(View, { style: styles.measure, onLayout: onContentLayout, children: [
-                  /* @__PURE__ */ jsx(View, { style: styles.handleArea, children: /* @__PURE__ */ jsx(
-                    View,
-                    {
-                      style: [
-                        styles.handle,
-                        { backgroundColor: palette.handle }
-                      ]
-                    }
-                  ) }),
-                  children
-                ] }) })
+                pointerEvents: "box-none",
+                children: /* @__PURE__ */ jsx(GestureDetector, { gesture: pan, children: /* @__PURE__ */ jsx(
+                  Animated.View,
+                  {
+                    style: [
+                      styles.sheet,
+                      {
+                        backgroundColor: palette.surface,
+                        borderColor: palette.border,
+                        borderRadius: radius
+                      },
+                      transformStyle,
+                      style
+                    ],
+                    children: /* @__PURE__ */ jsx(Animated.View, { style: [styles.clip, heightStyle], children: /* @__PURE__ */ jsxs(View, { style: styles.measure, onLayout: onContentLayout, children: [
+                      /* @__PURE__ */ jsx(View, { style: styles.handleArea, children: /* @__PURE__ */ jsx(
+                        View,
+                        {
+                          style: [
+                            styles.handle,
+                            { backgroundColor: palette.handle }
+                          ]
+                        }
+                      ) }),
+                      children
+                    ] }) })
+                  }
+                ) })
               }
-            ) })
-          }
-        )
-      ] }) })
+            )
+          ] })
+        }
+      ) })
     }
   );
 };
@@ -844,6 +872,9 @@ var styles = StyleSheet.create({
     justifyContent: "flex-end"
   },
   backdrop: {
+    ...StyleSheet.absoluteFillObject
+  },
+  backdropFill: {
     ...StyleSheet.absoluteFillObject
   },
   wrap: {

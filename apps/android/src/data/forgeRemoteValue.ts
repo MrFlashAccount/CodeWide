@@ -1,5 +1,5 @@
 /**
- * Legend-owned snapshot of one progressive forge/review resource. Already
+ * View snapshot of one progressive forge/review query. Already
  * published data stays visible while a refresh runs or after it fails.
  */
 import type { ForgeFailure } from "./forgeErrors";
@@ -17,12 +17,4 @@ export function remoteValue<Value>(state: RemoteValue<Value> | undefined): Value
     return null;
   }
   return state.value;
-}
-
-/** The snapshot published when a load starts: keep the previous value visible. */
-export function loadingFrom<Value>(previous: RemoteValue<Value> | undefined): RemoteValue<Value> {
-  const value = remoteValue(previous);
-  return value === null
-    ? { status: "loading", value: null }
-    : { refreshing: true, status: "ready", value };
 }

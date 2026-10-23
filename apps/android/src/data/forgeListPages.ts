@@ -1,12 +1,14 @@
+import { useSyncExternalStore } from "react";
+
 import type { PullRequestKey } from "./forgeContract";
-import type { KeyedResource } from "./forgeKeyedResource";
+import type { ForgeQueryResource } from "./forgeQueryResource";
 import type {
   PullRequestCategory,
   PullRequestListPage,
   PullRequestListSection,
   PullRequestRow,
 } from "./forgePullRequestContract";
-import { remoteValue } from "./forgeRemoteValue";
+import { useEvent } from "../react/useEvent";
 
 /** Identity of one list: connection, category and optional repository filter. */
 export type ListParams = {
@@ -43,19 +45,18 @@ export function mergeListPages(
 
 /**
  * The PR's row in any list already loaded for the connection, for the facts the
- * overview read does not carry (review request, last update). Reads observables,
- * so a selector over it follows list refreshes; `null` on a cold deep link.
+ * overview read does not carry (review request, last update). `null` on a cold
+ * deep link.
  */
-export function loadedListRow(
-  lists: KeyedResource<ListParams, PullRequestListPage>,
+function loadedListRow(
+  lists: ForgeQueryResource<ListParams, PullRequestListPage>,
   connectionId: string,
   pullRequest: PullRequestKey,
 ): PullRequestRow | null {
-  for (const params of lists.loaded()) {
-    if (params.connectionId !== connectionId) {
-      continue;
-    }
-    const page = remoteValue(lists.state$[lists.keyOf(params)]?.get());
+  const cached = lists.client.getQueriesData<PullRequestListPage>({
+    queryKey: ["forge", "lists", connectionId],
+  });
+  for (const [, page] of cached) {
     for (const section of page?.sections ?? []) {
       const row = section.rows.find((candidate) => candidate.pullRequest === pullRequest);
       if (row !== undefined) {
@@ -64,4 +65,19 @@ export function loadedListRow(
     }
   }
   return null;
+}
+
+/** Subscribes to the cached list row used by the detail header. */
+export function useLoadedListRow(
+  lists: ForgeQueryResource<ListParams, PullRequestListPage>,
+  connectionId: string,
+  pullRequest: PullRequestKey,
+): PullRequestRow | null {
+  const subscribe = useEvent((onStoreChange: () => void) =>
+    lists.client.getQueryCache().subscribe(() => {
+      onStoreChange();
+    }),
+  );
+  const snapshot = useEvent(() => loadedListRow(lists, connectionId, pullRequest));
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
 }

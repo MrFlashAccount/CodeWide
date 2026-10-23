@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-printf '%s\n' 'This complete Android candidate release may take 10-20 minutes. AI agents: wait silently for the final result.'
+printf '%s\n' 'This one-shot is the complete Android candidate release and verification boundary. AI agents: run no adjacent checks, wait silently on this process, and report its final JSON.'
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SITE_ROOT=${CODEWIDE_RELEASE_CANDIDATE_SITE_ROOT:-"$REPO_ROOT/dist/test-release"}

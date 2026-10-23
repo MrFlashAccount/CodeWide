@@ -1,3 +1,5 @@
+import { randomUUID } from "expo-crypto";
+
 import { requireParsed, type ForgeResources } from "../../data/forgeResources";
 import {
   parseActionRun,
@@ -7,43 +9,37 @@ import {
 } from "../../data/forgeMutationContract";
 import { parseLinks } from "../../data/forgePullRequestContract";
 import type { ReviewResources } from "../../data/reviewResources";
-import type { WorkspaceSyncSession, createWorkspaceSession } from "../../data/workspace-session";
 import type { PullRequestDetailWorkspaceCapabilities } from "./workspaceCapabilities";
 
 /** Binds PR screen mutations and publishes their acknowledged results to the read models. */
 export function createPullRequestDetailWorkspaceAdapter({
   forge,
-  getSession,
   reportDroppedAction,
   review,
-  rpcAfterAttach,
 }: {
-  readonly forge: Pick<ForgeResources, "files" | "overviews">;
-  readonly getSession: (connectionId: string) => WorkspaceSyncSession | undefined;
+  readonly forge: Pick<ForgeResources, "files" | "mutations" | "overviews">;
   readonly reportDroppedAction: (actionId: string) => void;
   readonly review: Pick<ReviewResources, "drafts">;
-  readonly rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 }): PullRequestDetailWorkspaceCapabilities {
-  const call = async (connectionId: string, method: string, params: unknown): Promise<unknown> => {
-    const session = getSession(connectionId);
-    if (session === undefined) {
-      throw new Error("The server is not connected");
-    }
-    return rpcAfterAttach<unknown>(session, method, params);
-  };
   return {
     async runAction(target, request) {
       const result = requireParsed(
-        parseActionRun(
-          await call(target.connectionId, "companion/pullRequest/action/run", {
-            actionId: request.actionId,
-            confirmation: request.confirmation,
-            headRevision: target.headRevision,
-            idempotencyKey: request.idempotencyKey,
-            input: request.input,
-            pullRequest: target.pullRequest,
-          }),
-          reportDroppedAction,
+        await forge.mutations.execute(
+          {
+            connectionId: target.connectionId,
+            method: "companion/pullRequest/action/run",
+            operationId: request.idempotencyKey,
+            params: {
+              actionId: request.actionId,
+              confirmation: request.confirmation,
+              headRevision: target.headRevision,
+              idempotencyKey: request.idempotencyKey,
+              input: request.input,
+              pullRequest: target.pullRequest,
+            },
+            scope: `${target.connectionId}:pull-request:${target.pullRequest}`,
+          },
+          (value) => parseActionRun(value, reportDroppedAction),
         ),
         "action result",
       );
@@ -54,12 +50,19 @@ export function createPullRequestDetailWorkspaceAdapter({
     },
     async setLink(target, threadId, linked) {
       const links = requireParsed(
-        parseLinks(
-          await call(target.connectionId, "companion/pullRequest/links/set", {
-            linked,
-            pullRequest: target.pullRequest,
-            threadId,
-          }),
+        await forge.mutations.execute(
+          {
+            connectionId: target.connectionId,
+            method: "companion/pullRequest/links/set",
+            operationId: randomUUID(),
+            params: {
+              linked,
+              pullRequest: target.pullRequest,
+              threadId,
+            },
+            scope: `${target.connectionId}:pull-request:${target.pullRequest}`,
+          },
+          parseLinks,
         ),
         "links",
       );
@@ -68,21 +71,28 @@ export function createPullRequestDetailWorkspaceAdapter({
     },
     async setViewed(target, path, viewed) {
       const mark = requireParsed(
-        parseViewedSet(
-          await call(target.connectionId, "companion/pullRequest/viewed/set", {
-            headRevision: target.headRevision,
-            path,
-            pullRequest: target.pullRequest,
-            viewed,
-          }),
+        await forge.mutations.execute(
+          {
+            connectionId: target.connectionId,
+            method: "companion/pullRequest/viewed/set",
+            operationId: randomUUID(),
+            params: {
+              headRevision: target.headRevision,
+              path,
+              pullRequest: target.pullRequest,
+              viewed,
+            },
+            scope: `${target.connectionId}:pull-request:${target.pullRequest}`,
+          },
+          parseViewedSet,
         ),
         "viewed mark",
       );
-      const current = forge.files.state$[forge.files.keyOf(target)]?.peek();
-      if (current?.status === "ready") {
+      const current = forge.files.data(target);
+      if (current !== null) {
         forge.files.publish(target, {
-          ...current.value,
-          files: current.value.files.map((file) =>
+          ...current,
+          files: current.files.map((file) =>
             file.path === mark.path
               ? { ...file, viewed: { source: mark.source, viewed: mark.viewed } }
               : file,
@@ -93,16 +103,23 @@ export function createPullRequestDetailWorkspaceAdapter({
     },
     async startScenario(target, request) {
       return requireParsed(
-        parseScenarioStart(
-          await call(target.connectionId, "companion/pullRequest/scenario/start", {
-            checkId: request.checkId,
-            headRevision: target.headRevision,
-            idempotencyKey: request.idempotencyKey,
-            pullRequest: target.pullRequest,
-            scenario: request.scenario,
-            target: request.target,
-            text: request.text,
-          }),
+        await forge.mutations.execute(
+          {
+            connectionId: target.connectionId,
+            method: "companion/pullRequest/scenario/start",
+            operationId: request.idempotencyKey,
+            params: {
+              checkId: request.checkId,
+              headRevision: target.headRevision,
+              idempotencyKey: request.idempotencyKey,
+              pullRequest: target.pullRequest,
+              scenario: request.scenario,
+              target: request.target,
+              text: request.text,
+            },
+            scope: `${target.connectionId}:pull-request:${target.pullRequest}`,
+          },
+          parseScenarioStart,
         ),
         "scenario result",
       );
@@ -110,25 +127,34 @@ export function createPullRequestDetailWorkspaceAdapter({
     async submitReview(target, request) {
       try {
         return requireParsed(
-          parseSubmitOutcome(
-            await call(target.connectionId, "companion/pullRequest/review/submit", {
-              body: request.body,
-              draftIds: request.draftIds,
-              forwardBothToAgent: request.forwardBothToAgent,
-              headRevision: target.headRevision,
-              idempotencyKey: request.idempotencyKey,
-              pullRequest: target.pullRequest,
-              verdictActionId: request.verdictActionId,
-            }),
+          await forge.mutations.execute(
+            {
+              connectionId: target.connectionId,
+              method: "companion/pullRequest/review/submit",
+              operationId: request.idempotencyKey,
+              params: {
+                body: request.body,
+                draftIds: request.draftIds,
+                forwardBothToAgent: request.forwardBothToAgent,
+                headRevision: target.headRevision,
+                idempotencyKey: request.idempotencyKey,
+                pullRequest: target.pullRequest,
+                verdictActionId: request.verdictActionId,
+              },
+              scope: `${target.connectionId}:pull-request:${target.pullRequest}`,
+            },
+            parseSubmitOutcome,
           ),
           "submit outcome",
         );
       } finally {
         // Per-draft axes changed on the companion whether the review published or not.
-        review.drafts.revalidate({
-          connectionId: target.connectionId,
-          source: { kind: "pullRequest", pullRequest: target.pullRequest },
-        });
+        review.drafts
+          .invalidate({
+            connectionId: target.connectionId,
+            source: { kind: "pullRequest", pullRequest: target.pullRequest },
+          })
+          .catch(() => undefined);
       }
     },
   };

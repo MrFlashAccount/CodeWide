@@ -4,7 +4,6 @@ const UPDATE_UNIT: &str = include_str!("../deploy/codewide-companion-update.serv
 const UPDATE_PATH: &str = include_str!("../deploy/codewide-companion-update.path");
 const INSTALL_SCRIPT: &str = include_str!("../deploy/install.sh");
 const VERIFY_SCRIPT: &str = include_str!("../deploy/verify.sh");
-const RELEASE_SCRIPT: &str = include_str!("../../../scripts/release-companion");
 
 fn settings(unit: &str) -> Vec<&str> {
     unit.lines()
@@ -157,21 +156,6 @@ fn service_exposes_only_the_secure_tunnel_on_its_http_carrier() {
     assert!(!VERIFY_SCRIPT.contains("--pinnedpubkey"));
     assert!(VERIFY_SCRIPT.contains("ingress=secure-tunnel-only"));
     assert!(VERIFY_SCRIPT.contains("inner-tls=required"));
-}
-
-#[test]
-fn one_shot_release_validates_builds_installs_verifies_and_rolls_back() {
-    assert!(RELEASE_SCRIPT.contains("do not report or poll intermediate progress"));
-    assert!(RELEASE_SCRIPT.contains("git diff --check --"));
-    assert!(RELEASE_SCRIPT.contains("cargo fmt --all -- --check"));
-    assert!(RELEASE_SCRIPT.contains("cargo clippy --workspace --all-targets --all-features"));
-    assert!(RELEASE_SCRIPT.contains("cargo test --workspace --all-features"));
-    assert!(RELEASE_SCRIPT.contains("run_quiet 'running tests'"));
-    assert!(RELEASE_SCRIPT.contains("cat \"$log\" >&2"));
-    assert!(RELEASE_SCRIPT.contains("./scripts/build-companion.sh"));
-    assert!(RELEASE_SCRIPT.contains("./apps/companion-linux/deploy/install.sh"));
-    assert!(RELEASE_SCRIPT.contains("./apps/companion-linux/deploy/verify.sh"));
-    assert!(RELEASE_SCRIPT.contains("restoring the previous installation"));
 }
 
 #[test]

@@ -119,13 +119,12 @@ function createWorkspaceFeatures() {
   });
   const pullRequestDetail = createPullRequestDetailWorkspaceAdapter({
     forge: forgeResources,
-    getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
     reportDroppedAction: reportDroppedForgeAction,
     review: reviewResources,
-    rpcAfterAttach: rpcAfterAttach,
   });
   const reviewTarget = createReviewTargetAdapter({
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+    mutations: forgeResources.mutations,
     resources: reviewResources,
     rpcAfterAttach: rpcAfterAttach,
   });

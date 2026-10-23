@@ -1,8 +1,4 @@
-import {
-  OVERVIEW_SNAPSHOT_PREFIX,
-  RETAINED_OVERVIEW_SNAPSHOTS,
-  type ForgeSnapshotCache,
-} from "./forgeSnapshotCache.types";
+import type { ForgeSnapshotCache } from "./forgeSnapshotCache.types";
 import { sqliteRows } from "./sqliteResult";
 import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 
@@ -79,20 +75,6 @@ export const forgeSnapshotCache: ForgeSnapshotCache = {
           `updated_at = excluded.updated_at`,
         [connectionId, key, JSON.stringify(value), Date.now()],
       );
-      if (key.startsWith(OVERVIEW_SNAPSHOT_PREFIX)) {
-        await db.execute(
-          `DELETE FROM ${TABLE} WHERE connection_id = ? AND snapshot_key LIKE ? AND snapshot_key NOT IN ` +
-            `(SELECT snapshot_key FROM ${TABLE} WHERE connection_id = ? AND snapshot_key LIKE ? ` +
-            `ORDER BY updated_at DESC LIMIT ?)`,
-          [
-            connectionId,
-            `${OVERVIEW_SNAPSHOT_PREFIX}%`,
-            connectionId,
-            `${OVERVIEW_SNAPSHOT_PREFIX}%`,
-            RETAINED_OVERVIEW_SNAPSHOTS,
-          ],
-        );
-      }
     });
   },
 };

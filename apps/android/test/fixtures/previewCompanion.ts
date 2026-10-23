@@ -25,6 +25,7 @@ import {
   overview91,
   reviewRequestedPage,
 } from "./forgeWireFixtures";
+import { createMemoryQueryPersister } from "./queryPersister";
 
 type Answer = { readonly error: RpcResponseError } | { readonly result: unknown };
 
@@ -57,7 +58,11 @@ const connectedSnapshot = {
 
 function accountsAnswer(): Answer {
   const snapshots: Readonly<Record<string, unknown>> = {
-    accounts: { accounts: [connectedAccount, expiredAccount, erroredAccount], flows: [], providers: [githubProvider, arcanumProvider] },
+    accounts: {
+      accounts: [connectedAccount, expiredAccount, erroredAccount],
+      flows: [],
+      providers: [githubProvider, arcanumProvider],
+    },
     onboarding: onboardingAccounts,
     "onboarding-connecting": onboardingAccounts,
     "onboarding-failed": { ...onboardingAccounts, flows: [failedFlow] },
@@ -75,7 +80,13 @@ function overviewFor(name: string): unknown {
     // The plugin reports Update branch as impossible when the server cannot resolve the conflict.
     const actions = overview91.catalog.actions.map((entry) =>
       entry.actionId === "update"
-        ? { ...entry, availability: { reason: "The server cannot update a conflicting branch", state: "disabled" } }
+        ? {
+            ...entry,
+            availability: {
+              reason: "The server cannot update a conflicting branch",
+              state: "disabled",
+            },
+          }
         : entry,
     );
     return {
@@ -88,7 +99,10 @@ function overviewFor(name: string): unknown {
     return {
       ...overview91,
       checkItems: [],
-      checks: { reason: "No Arc CI token on the companion host. Diffs, comments and review still work.", state: "unavailable" },
+      checks: {
+        reason: "No Arc CI token on the companion host. Diffs, comments and review still work.",
+        state: "unavailable",
+      },
     };
   }
   return overview91;
@@ -105,7 +119,11 @@ const submittedDrafts = {
   ...draftsSnapshot,
   drafts: [
     { ...prOnly, pr: { state: "published" } },
-    { ...both, agent: { state: "sent", targetThreadId: "thread-forge-auth" }, pr: { state: "published" } },
+    {
+      ...both,
+      agent: { state: "sent", targetThreadId: "thread-forge-auth" },
+      pr: { state: "published" },
+    },
     agentOnly,
   ],
 };
@@ -122,12 +140,24 @@ const submitOutcome = {
 const threadLinks = {
   threads: [
     {
-      pullRequests: [{ icon: githubProvider.icon, number: "91", pullRequest: overview91.pullRequest, state: "open" }],
+      pullRequests: [
+        {
+          icon: githubProvider.icon,
+          number: "91",
+          pullRequest: overview91.pullRequest,
+          state: "open",
+        },
+      ],
       threadId: "thread-forge-auth",
     },
     {
       pullRequests: [
-        { icon: arcanumProvider.icon, number: "4120", pullRequest: "fpr1.arcanum-4120", state: "open" },
+        {
+          icon: arcanumProvider.icon,
+          number: "4120",
+          pullRequest: "fpr1.arcanum-4120",
+          state: "open",
+        },
         { icon: githubProvider.icon, number: "88", pullRequest: "fpr1.github-88", state: "draft" },
       ],
       threadId: "thread-arc-review",
@@ -140,7 +170,11 @@ function listAnswer(): Answer {
   if (scenario === "companion-old") {
     return { error: new RpcResponseError(-32_601, "Method not found") };
   }
-  return { result: scenario.startsWith("onboarding") ? { ...reviewRequestedPage, sections: [] } : reviewRequestedPage };
+  return {
+    result: scenario.startsWith("onboarding")
+      ? { ...reviewRequestedPage, sections: [] }
+      : reviewRequestedPage,
+  };
 }
 
 function submitAnswer(): Answer {
@@ -164,14 +198,18 @@ function answer(method: string): Answer | null {
     "companion/pullRequest/review/submit": submitAnswer,
     "companion/pullRequestLinks/read": () => ({ result: threadLinks }),
     "companion/pullRequests/list": listAnswer,
-    "companion/review/drafts/read": () => ({ result: submitted ? submittedDrafts : draftsSnapshot }),
+    "companion/review/drafts/read": () => ({
+      result: submitted ? submittedDrafts : draftsSnapshot,
+    }),
     "companion/review/guide/read": () => ({ result: guideState }),
   };
   if (scenario === "offline" && !method.endsWith("accounts/read")) {
     throw new Error("The companion is unreachable");
   }
   const reply = answers[method];
-  return reply === undefined ? { error: new RpcResponseError(-32_601, `Unknown ${method}`) } : reply();
+  return reply === undefined
+    ? { error: new RpcResponseError(-32_601, `Unknown ${method}`) }
+    : reply();
 }
 
 const NEVER = new Promise<never>(() => undefined);
@@ -195,7 +233,9 @@ async function fakeRpc<T>(_session: RpcClient, method: string, params: unknown):
 
 // WHY: the fake session is only a handle passed back to fakeRpc; nothing calls its methods.
 // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-const session = { connectionId: undefined, rpc: fakeRpc } as unknown as RpcClient & { stop: () => void };
+const session = { connectionId: undefined, rpc: fakeRpc } as unknown as RpcClient & {
+  stop: () => void;
+};
 const memory = new Map<string, unknown>();
 const snapshots: ForgeSnapshotCache = {
   deleteConnection: async () => undefined,
@@ -204,13 +244,26 @@ const snapshots: ForgeSnapshotCache = {
     memory.set(key, value);
   },
 };
-if (scenario === "offline") {
-  memory.set("list\u0000reviewRequested\u0000", { ...reviewRequestedPage, fetchedAt: new Date(Date.now() - 12 * 60_000).toISOString() });
-}
 
 /** Session authority over the fake transport. */
 export const authority = { getSession: () => session, rpcAfterAttach: fakeRpc };
-export const forgeResources = createForgeResources({ ...authority, reportDroppedAction: () => undefined, snapshots });
-export const reviewResources = createReviewResources(authority);
+export const forgeResources = createForgeResources({
+  ...authority,
+  persister: createMemoryQueryPersister().persister,
+  reportDroppedAction: () => undefined,
+});
+if (scenario === "offline") {
+  forgeResources.lists.publish(
+    { category: "reviewRequested", connectionId: PREVIEW_CONNECTION_ID, repository: null },
+    {
+      ...reviewRequestedPage,
+      fetchedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+    },
+  );
+}
+export const reviewResources = createReviewResources({
+  ...authority,
+  queryClient: forgeResources.queryClient,
+});
 export const pullRequestLinkResources = createPullRequestLinkResources(authority);
 export const pullRequestCommentDestinations = createPullRequestCommentDestinations(snapshots);

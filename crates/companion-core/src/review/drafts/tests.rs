@@ -95,3 +95,30 @@ fn a_claim_that_repeats_a_draft_claims_nothing() {
         .expect("the draft stayed claimable");
     assert_eq!(claimed.len(), 1);
 }
+
+#[test]
+fn an_identical_put_replays_the_acknowledged_create_or_edit() {
+    let directory = tempfile::tempdir().expect("dir");
+    let store = DraftStore::new(Arc::new(
+        IndexStore::open(directory.path().join("state.redb")).expect("store"),
+    ));
+    let id = "00000000-0000-4000-8000-000000000001";
+    let original = input(id);
+    let created = store
+        .put(&original, None, Author::User, None, "t0")
+        .expect("create");
+    let replayed_create = store
+        .put(&original, None, Author::User, None, "t1")
+        .expect("replay create");
+    assert_eq!(replayed_create, created);
+
+    let mut edited = original.clone();
+    edited.body = "changed".into();
+    let updated = store
+        .put(&edited, Some(created.version), Author::User, None, "t2")
+        .expect("edit");
+    let replayed_edit = store
+        .put(&edited, Some(created.version), Author::User, None, "t3")
+        .expect("replay edit");
+    assert_eq!(replayed_edit, updated);
+}

@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 
 import { activateRuntime, stopRuntime } from "../../src/boot/runtimeSlot";
+import { ForgeQueryProvider } from "../../src/data/ForgeQueryProvider";
+import { forgeResources } from "../../src/data/forgeRuntime";
 import {
   startLegacyNativeRuntimeResources,
   stopLegacyNativeRuntimeResources,
@@ -39,5 +41,9 @@ export function MountedV1Workspace(): React.JSX.Element {
     };
   }, []);
 
-  return <WorkspaceRouteComposition />;
+  return (
+    <ForgeQueryProvider client={forgeResources.queryClient} restored={forgeResources.restored}>
+      <WorkspaceRouteComposition />
+    </ForgeQueryProvider>
+  );
 }

@@ -1181,14 +1181,14 @@ it.each([
   view.unmount();
 });
 
-it("disposes owner work exactly once when the real V1 layout unmounts", () => {
+it("disposes owner work exactly once when the real V1 layout unmounts", async () => {
   holdInitialDeepLink();
   resetMockRouter("/");
   const session = searchRouteSessions.open(workspaceRouteSessionOwner);
   const cancelPending = jest.spyOn(session.session, "cancelPending");
-  const view = render(<V1RouteTree layout />);
+  const view = await renderAsync(<V1RouteTree layout />);
 
-  view.unmount();
+  await view.unmountAsync();
 
   expect(searchRouteSessions.get(session.id, workspaceRouteSessionOwner)).toBeNull();
   expect(cancelPending).toHaveBeenCalledTimes(1);

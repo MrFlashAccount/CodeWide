@@ -16,6 +16,8 @@ Feature-specific selection, interaction, form validation, view pending/error han
 
 Public lower contracts expose qualified model reads, command operations and retained resources. Existing native/web implementations adapt transport/storage variation. Feature `workspaceAdapter.ts` modules consume these contracts; composition binds stable capabilities without owning algorithms.
 
+Forge/review server reads and replay-safe writes share one process-owned TanStack `QueryClient`. `@tanstack/react-query-persist-client` with the official async-storage persister restores successful Forge/review queries as stale data before route content renders and resumes paused mutations through their registered default function. `forgeMutationQueue.ts` supplies only the closed non-secret RPC envelope contract, transport function, retry policy and cache invalidation; it does not own another journal or persistence format. Auth and token requests never enter this persistence path. This is not a replacement for the native message outbox, whose Kotlin lifetime can continue while Hermes sleeps.
+
 This folder must not import `features/**`, route composition, V2 source/runtime/storage, feature contracts or a view merely to get a type. Shared types leaking through the facade move to their actual lower contract owner with all consumers; no duplicated DTO/domain schema or unchecked assertion replaces a validated boundary. Type imports count in cycle/dependency rules. The versioned upstream protocol DTO path is not the forbidden `/v2` sync-client implementation.
 
 ## Global-supervisor lower owners

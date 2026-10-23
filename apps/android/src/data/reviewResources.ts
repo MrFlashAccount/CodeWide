@@ -1,13 +1,14 @@
 /**
  * Drafts, guide state and hunk catalogs keyed by diff source. These are
- * progressive resources: each surface reads its Legend snapshot and keeps the
- * last published value visible while a refresh runs. `companion/review/invalidated`
- * re-reads every demanded resource of the named source.
+ * progressive queries: each surface keeps the last published value visible
+ * while a refresh runs. `companion/review/invalidated` invalidates the named
+ * source in the shared QueryClient.
  */
 import type { RpcClient } from "@codewide/sync-client";
+import type { QueryClient } from "@tanstack/react-query";
 
 import { forgeInvalidationBus } from "./forgeInvalidationBus";
-import { createKeyedResource, type KeyedResource } from "./forgeKeyedResource";
+import { createForgeQueryResource, type ForgeQueryResource } from "./forgeQueryResource";
 import { requireParsed } from "./forgeResources";
 import {
   diffSourceKey,
@@ -26,9 +27,9 @@ type HunkParams = ReviewSourceParams & { readonly revision: string };
 
 /** Process-lifetime review read model. */
 export type ReviewResources = {
-  readonly drafts: KeyedResource<ReviewSourceParams, DraftsSnapshot>;
-  readonly guide: KeyedResource<ReviewSourceParams, GuideState>;
-  readonly hunks: KeyedResource<HunkParams, HunkCatalog>;
+  readonly drafts: ForgeQueryResource<ReviewSourceParams, DraftsSnapshot>;
+  readonly guide: ForgeQueryResource<ReviewSourceParams, GuideState>;
+  readonly hunks: ForgeQueryResource<HunkParams, HunkCatalog>;
 };
 
 function sourceKey(params: ReviewSourceParams): string {
@@ -38,9 +39,11 @@ function sourceKey(params: ReviewSourceParams): string {
 /** Builds the review read model over the existing session authority. */
 export function createReviewResources({
   getSession,
+  queryClient,
   rpcAfterAttach,
 }: {
   readonly getSession: (connectionId: string) => RpcClient | undefined;
+  readonly queryClient: QueryClient;
   readonly rpcAfterAttach: ReturnType<typeof createWorkspaceSession>["rpcAfterAttach"];
 }): ReviewResources {
   const call = async (connectionId: string, method: string, params: unknown): Promise<unknown> => {
@@ -50,24 +53,27 @@ export function createReviewResources({
     }
     return rpcAfterAttach<unknown>(session, method, params);
   };
-  const drafts = createKeyedResource<ReviewSourceParams, DraftsSnapshot>({
-    keyOf: sourceKey,
+  const drafts = createForgeQueryResource<ReviewSourceParams, DraftsSnapshot>({
+    client: queryClient,
+    keyOf: (params) => ["review", "drafts", sourceKey(params)],
     load: async ({ connectionId, source }) =>
       requireParsed(
         parseDrafts(await call(connectionId, "companion/review/drafts/read", { source })),
         "drafts",
       ),
   });
-  const guide = createKeyedResource<ReviewSourceParams, GuideState>({
-    keyOf: sourceKey,
+  const guide = createForgeQueryResource<ReviewSourceParams, GuideState>({
+    client: queryClient,
+    keyOf: (params) => ["review", "guide", sourceKey(params)],
     load: async ({ connectionId, source }) =>
       requireParsed(
         parseGuideState(await call(connectionId, "companion/review/guide/read", { source })),
         "guide",
       ),
   });
-  const hunks = createKeyedResource<HunkParams, HunkCatalog>({
-    keyOf: (params) => `${sourceKey(params)}\u0000${params.revision}`,
+  const hunks = createForgeQueryResource<HunkParams, HunkCatalog>({
+    client: queryClient,
+    keyOf: (params) => ["review", "hunks", sourceKey(params), params.revision],
     load: async ({ connectionId, revision, source }) =>
       requireParsed(
         parseHunkCatalog(
@@ -80,14 +86,9 @@ export function createReviewResources({
     if (invalidation.scope !== "review") {
       return;
     }
-    const key = diffSourceKey(invalidation.source);
-    for (const resource of [drafts, guide]) {
-      for (const params of resource.loaded()) {
-        if (params.connectionId === connectionId && diffSourceKey(params.source) === key) {
-          resource.revalidate(params);
-        }
-      }
-    }
+    const key = `${connectionId}\u0000${diffSourceKey(invalidation.source)}`;
+    queryClient.invalidateQueries({ queryKey: ["review", "drafts", key] }).catch(() => undefined);
+    queryClient.invalidateQueries({ queryKey: ["review", "guide", key] }).catch(() => undefined);
   });
   return { drafts, guide, hunks };
 }

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-printf '%s\n' 'This Android candidate OTA may take 5-10 minutes. AI agents: wait silently for the final result.'
+printf '%s\n' 'This one-shot is the complete Android candidate OTA and verification boundary. AI agents: run no adjacent checks, wait silently on this process, and report its final JSON.'
 
 if [ "$#" -ne 0 ]; then
   printf '%s\n' 'Usage: ./scripts/release-candidate-android-ota' >&2

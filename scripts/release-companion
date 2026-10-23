@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-printf '%s\n' 'This complete Companion release may take 3-10 minutes. AI agents: do not report or poll intermediate progress; wait silently for the final result.'
+printf '%s\n' 'This one-shot is the complete Companion release and verification boundary. AI agents: run no adjacent checks, wait silently on this process, and report its final JSON.'
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 INSTALL_ROOT="$HOME/.local/lib/codewide"

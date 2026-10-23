@@ -9,6 +9,7 @@ import React, {
   useState,
 } from "react";
 import {
+  KeyboardAvoidingView,
   LayoutChangeEvent,
   Modal,
   Platform,
@@ -24,6 +25,7 @@ import {
   GestureHandlerRootView,
 } from "react-native-gesture-handler";
 import Animated, {
+  cancelAnimation,
   Extrapolation,
   interpolate,
   scrollTo,
@@ -81,7 +83,6 @@ import type {
 } from "./types";
 import { createCompoundComponent } from "@/utils/create-compound-component";
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const TrayDismissContext = createContext<boolean>(true);
 
 const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
@@ -140,6 +141,8 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
 
   const measured = useRef<number>(0);
   const presented = useRef<boolean>(false);
+  const dismissVelocity = useRef<number>(0);
+  const transitionVersion = useRef<number>(0);
 
   const setOpen = useEvent((next: boolean) => {
     if (!isControlled) setInternalOpen(next);
@@ -153,18 +156,27 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
     travel.value = 0;
     offset.value = 0;
     startOffset.value = 0;
+    detentIndex.value = 0;
     scrollY.value = 0;
     owns.value = false;
     origin.value = 0;
+    hasScrollable.value = false;
+    isDragging.value = false;
     present.value = 0;
   });
 
-  const finishClose = useEvent(() => {
+  const finishClose = useEvent((version: number) => {
+    if (open || transitionVersion.current !== version) return;
     setMounted(false);
     reset();
   });
 
-  const close = useEvent(() => setOpen(false));
+  const requestClose = useEvent((velocity: number) => {
+    dismissVelocity.current = velocity;
+    setOpen(false);
+  });
+
+  const close = useEvent(() => requestClose(0));
 
   const openTray = useEvent((view?: string) => {
     navigation.reset(view ?? defaultView);
@@ -172,6 +184,7 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
   });
 
   const onContentLayout = useEvent((event: LayoutChangeEvent) => {
+    if (!open) return;
     const next = detentHeight
       ? detentHeight
       : Math.round(event.nativeEvent.layout.height);
@@ -193,11 +206,28 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
     present.value = reduceMotion ? 1 : withSpring(1, motion.presentSpring);
   });
 
-  const dismiss = useEvent((velocity: number) => {
-    setOpen(false);
+  const dismiss = useEvent((velocity: number) => requestClose(velocity));
+
+  useEffect(() => {
+    transitionVersion.current += 1;
+    const version = transitionVersion.current;
+    cancelAnimation(present);
+    if (open) {
+      setMounted(true);
+      if (presented.current) {
+        present.value = reduceMotion ? 1 : withSpring(1, motion.presentSpring);
+      }
+      return;
+    }
+    if (!presented.current) {
+      finishClose(version);
+      return;
+    }
+    const velocity = dismissVelocity.current;
+    dismissVelocity.current = 0;
     if (reduceMotion) {
       present.value = 0;
-      finishClose();
+      finishClose(version);
       return;
     }
     present.value = withSpring(
@@ -209,28 +239,7 @@ const TrayRoot: React.FC<ITray> & React.FunctionComponent<ITray> = ({
       },
       (finished) => {
         "worklet";
-        if (finished) scheduleOnRN(finishClose);
-      },
-    );
-  });
-
-  useEffect(() => {
-    if (open) {
-      setMounted(true);
-      return;
-    }
-    if (!presented.current) return;
-    if (reduceMotion) {
-      present.value = 0;
-      finishClose();
-      return;
-    }
-    present.value = withSpring(
-      0,
-      { ...motion.presentSpring, overshootClamping: true },
-      (finished) => {
-        "worklet";
-        if (finished) scheduleOnRN(finishClose);
+        if (finished) scheduleOnRN(finishClose, version);
       },
     );
   }, [open, reduceMotion, motion, present, finishClose]);
@@ -486,53 +495,69 @@ const TrayContent: React.FC<ITrayContent> &
       onRequestClose={close}
     >
       <GestureHandlerRootView style={styles.fill} unstable_forceActive>
-        <View style={styles.fill} pointerEvents="box-none">
-          <AnimatedPressable
-            style={[
-              styles.backdrop,
-              { backgroundColor: palette.backdrop },
-              backdropStyle,
-            ]}
-            onPress={dismissOnBackdropPress ? close : undefined}
-          />
-
-          <View
-            style={[
-              styles.wrap,
-              { paddingBottom: Math.max(insets.bottom, 12) },
-            ]}
-            pointerEvents="box-none"
-          >
-            <GestureDetector gesture={pan}>
+        <KeyboardAvoidingView
+          behavior="padding"
+          pointerEvents="box-none"
+          style={styles.fill}
+          testID="tray-keyboard-layout"
+        >
+          <View style={styles.fill} pointerEvents="box-none">
+            <Pressable
+              accessibilityLabel="Dismiss tray"
+              accessibilityRole="button"
+              onPress={dismissOnBackdropPress ? close : undefined}
+              pointerEvents={dismissOnBackdropPress ? "auto" : "none"}
+              style={styles.backdrop}
+              testID="tray-backdrop"
+            >
               <Animated.View
+                pointerEvents="none"
                 style={[
-                  styles.sheet,
-                  {
-                    backgroundColor: palette.surface,
-                    borderColor: palette.border,
-                    borderRadius: radius,
-                  },
-                  transformStyle,
-                  style,
+                  styles.backdropFill,
+                  { backgroundColor: palette.backdrop },
+                  backdropStyle,
                 ]}
-              >
-                <Animated.View style={[styles.clip, heightStyle]}>
-                  <View style={styles.measure} onLayout={onContentLayout}>
-                    <View style={styles.handleArea}>
-                      <View
-                        style={[
-                          styles.handle,
-                          { backgroundColor: palette.handle },
-                        ]}
-                      />
+              />
+            </Pressable>
+
+            <View
+              style={[
+                styles.wrap,
+                { paddingBottom: Math.max(insets.bottom, 12) },
+              ]}
+              pointerEvents="box-none"
+            >
+              <GestureDetector gesture={pan}>
+                <Animated.View
+                  style={[
+                    styles.sheet,
+                    {
+                      backgroundColor: palette.surface,
+                      borderColor: palette.border,
+                      borderRadius: radius,
+                    },
+                    transformStyle,
+                    style,
+                  ]}
+                >
+                  <Animated.View style={[styles.clip, heightStyle]}>
+                    <View style={styles.measure} onLayout={onContentLayout}>
+                      <View style={styles.handleArea}>
+                        <View
+                          style={[
+                            styles.handle,
+                            { backgroundColor: palette.handle },
+                          ]}
+                        />
+                      </View>
+                      {children}
                     </View>
-                    {children}
-                  </View>
+                  </Animated.View>
                 </Animated.View>
-              </Animated.View>
-            </GestureDetector>
+              </GestureDetector>
+            </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </GestureHandlerRootView>
     </Modal>
   );
@@ -791,6 +816,9 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   backdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  backdropFill: {
     ...StyleSheet.absoluteFillObject,
   },
   wrap: {

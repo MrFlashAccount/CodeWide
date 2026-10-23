@@ -2,6 +2,7 @@ import { useSelector } from "@legendapp/state/react";
 import { useState } from "react";
 
 import { remoteValue, type RemoteValue } from "../../../data/forgeRemoteValue";
+import { useForgeQuery } from "../../../data/forgeQueryResource";
 import { diffSourceKey, type DiffSource } from "../../../data/reviewContract";
 import type { GuideState, GuideStop } from "../../../data/reviewGuideContract";
 import type { ReviewResources } from "../../../data/reviewResources";
@@ -44,9 +45,8 @@ export function useGuideWalk({
 }): GuideWalk {
   const dialog = useAppDialog();
   const params = { connectionId, source };
-  resources.guide.ensure(params);
   const walkKey = `${connectionId}\u0000${diffSourceKey(source)}`;
-  const snapshot = useSelector(() => resources.guide.state$[resources.guide.keyOf(params)]?.get());
+  const snapshot = useForgeQuery(resources.guide, params);
   const state = remoteValue(snapshot);
   const selected = useSelector(() => guideWalkModel[walkKey]?.get());
   const [accepting, setAccepting] = useState(false);

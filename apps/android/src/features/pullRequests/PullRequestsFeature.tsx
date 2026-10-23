@@ -4,6 +4,7 @@ import { StyleSheet, View } from "react-native";
 
 import type { AccountState, ForgeProvider } from "../../data/forgeContract";
 import type { PullRequestRow } from "../../data/forgePullRequestContract";
+import { useForgeQuery } from "../../data/forgeQueryResource";
 import { remoteValue } from "../../data/forgeRemoteValue";
 import type { ForgeResources } from "../../data/forgeResources";
 import { hasLinkedAccount } from "./accounts/accountPresentation";
@@ -42,10 +43,9 @@ export function PullRequestsCatalog({
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
   readonly openingKey: string | null;
 }): React.JSX.Element {
-  forge.accounts.ensure({ connectionId });
   const accountsOpen = useSelector(forgeAccountsSheetOpen);
   const [openOnboardingConnection, setOpenOnboardingConnection] = useState<string | null>(null);
-  const state = useSelector(() => forge.accounts.state$[connectionId]?.get());
+  const state = useForgeQuery(forge.accounts, { connectionId });
   const snapshot = remoteValue(state);
   const handleTrayOpenChange = useEvent((open: boolean): void => {
     setOpenOnboardingConnection(open ? connectionId : null);
@@ -54,7 +54,7 @@ export function PullRequestsCatalog({
     return (
       <AccountsPlaceholder
         onRetry={() => {
-          forge.accounts.revalidate({ connectionId });
+          forge.accounts.refresh({ connectionId }).catch(() => undefined);
         }}
         state={state}
       />
@@ -114,20 +114,15 @@ function ConnectedList({
   const filter = useSelector(() => pullRequestListModel.get());
   const nowMs = useMinuteClock();
   const params = { category: filter.category, connectionId, repository: filter.repository };
-  forge.lists.ensure(params);
-  const state = useSelector(() => forge.lists.state$[forge.lists.keyOf(params)]?.get());
+  const state = useForgeQuery(forge.lists, params);
   const loadMore = useEvent((): void => {
     // A failed next page keeps the loaded pages; the next end-reached tries again.
     forge.loadMoreList(params).catch(() => undefined);
   });
   const retry = useEvent((): void => {
-    forge.lists.revalidate(params);
+    forge.lists.refresh(params).catch(() => undefined);
   });
-  if (
-    state === undefined ||
-    state.status === "idle" ||
-    (state.status === "loading" && state.value === null)
-  ) {
+  if (state.status === "loading" && state.value === null) {
     return <ListSkeleton />;
   }
   return (

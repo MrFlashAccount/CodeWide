@@ -9,16 +9,35 @@ import { parseDrafts } from "../src/data/reviewDraftContract";
 import { parseGuideState } from "../src/data/reviewGuideContract";
 import { settledChecksLabel } from "../src/features/pullRequestDetail/overview/checkPresentation";
 import { reviewRequestedCount } from "../src/features/pullRequests/pullRequestListModel";
-import { fileRowDetail, hunkAt, viewedLabel } from "../src/features/pullRequestDetail/changes/changesPresentation";
-import { dockCounts, submittableDraftIds } from "../src/features/pullRequestDetail/changes/dockCounts";
-import { publishedDetail, publishedTitle } from "../src/features/pullRequestDetail/changes/submitResultCopy";
+import {
+  fileRowDetail,
+  hunkAt,
+  viewedLabel,
+} from "../src/features/pullRequestDetail/changes/changesPresentation";
+import {
+  dockCounts,
+  submittableDraftIds,
+} from "../src/features/pullRequestDetail/changes/dockCounts";
+import {
+  publishedDetail,
+  publishedTitle,
+} from "../src/features/pullRequestDetail/changes/submitResultCopy";
 import { defaultScenarioTarget } from "../src/features/pullRequestDetail/actions/scenarioTarget";
 import { messageDockTarget } from "../src/features/pullRequestDetail/dock/messageDockTarget";
 import { safeProviderUrl } from "../src/data/forgeProviderUrl";
-import { defaultDestination, destinationExplanation } from "../src/features/review/comments/destinationPolicy";
+import {
+  defaultDestination,
+  destinationExplanation,
+} from "../src/features/review/comments/destinationPolicy";
 import { draftBadges } from "../src/features/review/comments/draftDisplay";
 import { resumeIndex, stopNarration, walkStops } from "../src/features/review/guide/guideWalk";
-import { draftsSnapshot, filesPage, guideState, prDraft, reviewRequestedPage } from "./fixtures/forgeWireFixtures";
+import {
+  draftsSnapshot,
+  filesPage,
+  guideState,
+  prDraft,
+  reviewRequestedPage,
+} from "./fixtures/forgeWireFixtures";
 
 describe("provider URLs", () => {
   it.each([
@@ -39,13 +58,21 @@ describe("Changes presentation", () => {
   const [present, tooLarge, notProvided] = page?.files ?? [];
 
   it("says where each viewed mark lives", () => {
-    expect(present === undefined ? null : viewedLabel(present, "github.com")).toBe("Viewed · github.com");
-    expect(notProvided === undefined ? null : viewedLabel(notProvided, "github.com")).toBe("Viewed · this companion");
+    expect(present === undefined ? null : viewedLabel(present, "github.com")).toBe(
+      "Viewed · github.com",
+    );
+    expect(notProvided === undefined ? null : viewedLabel(notProvided, "github.com")).toBe(
+      "Viewed · this companion",
+    );
   });
 
   it("explains files without a patch in place", () => {
-    expect(tooLarge === undefined ? null : fileRowDetail(tooLarge, 0, "github.com")).toBe("new file · Too large to render");
-    expect(present === undefined ? null : fileRowDetail(present, 2, "github.com")).toBe("2 drafts · viewed on github.com");
+    expect(tooLarge === undefined ? null : fileRowDetail(tooLarge, 0, "github.com")).toBe(
+      "new file · Too large to render",
+    );
+    expect(present === undefined ? null : fileRowDetail(present, 2, "github.com")).toBe(
+      "2 drafts · viewed on github.com",
+    );
   });
 
   it("finds the hunk under a new-side line for the draft anchor", () => {
@@ -64,14 +91,20 @@ describe("review dock and Submit", () => {
 
   it("shows one badge per active axis", () => {
     const both = drafts.find((draft) => draft.destination === "both");
-    expect(both === undefined ? [] : draftBadges(both, "github.com").map((badge) => badge.label)).toEqual(["PR", "Agent"]);
+    expect(
+      both === undefined ? [] : draftBadges(both, "github.com").map((badge) => badge.label),
+    ).toEqual(["PR", "Agent"]);
     const published = parseDrafts({
-      drafts: [prDraft("p", { destination: "pr", pr: { state: "published" }, sourceKind: "pullRequest" })],
+      drafts: [
+        prDraft("p", { destination: "pr", pr: { state: "published" }, sourceKind: "pullRequest" }),
+      ],
       revision: "3fa9e12",
     })?.drafts[0];
-    expect(published === undefined ? [] : draftBadges(published, "github.com").map((badge) => badge.label)).toEqual([
-      "Published · github.com",
-    ]);
+    expect(
+      published === undefined
+        ? []
+        : draftBadges(published, "github.com").map((badge) => badge.label),
+    ).toEqual(["Published · github.com"]);
   });
 });
 
@@ -129,20 +162,31 @@ describe("comment destination policy", () => {
 });
 
 describe("scenario target", () => {
-  const links = parseLinks({
-    links: [
-      { source: "branch", threadId: "thread-forge-auth" },
-      { source: "manual", threadId: "thread-review-91" },
-    ],
-  }) ?? [];
+  const links =
+    parseLinks({
+      links: [
+        { source: "branch", threadId: "thread-forge-auth" },
+        { source: "manual", threadId: "thread-review-91" },
+      ],
+    }) ?? [];
   const [branch, manual] = links;
   const describeThread = (threadId: string): string => `title of ${threadId}`;
 
   it("uses the single or the one branch-linked thread, asks otherwise, and starts a new one with none", () => {
     expect(defaultScenarioTarget([])).toEqual({ kind: "newThread" });
-    expect(manual === undefined ? null : defaultScenarioTarget([manual])).toEqual({ kind: "thread", threadId: manual?.threadId });
+    expect(manual === undefined ? null : defaultScenarioTarget([manual])).toEqual({
+      kind: "thread",
+      threadId: manual?.threadId,
+    });
     expect(defaultScenarioTarget(links)).toEqual({ kind: "thread", threadId: branch?.threadId });
-    expect(manual === undefined ? null : defaultScenarioTarget([manual, { ...manual, threadId: links[0]?.threadId ?? manual.threadId }])).toBeNull();
+    expect(
+      manual === undefined
+        ? null
+        : defaultScenarioTarget([
+            manual,
+            { ...manual, threadId: links[0]?.threadId ?? manual.threadId },
+          ]),
+    ).toBeNull();
   });
 
   it("names the same target in the dock chip that the send uses, and keeps a valid choice", () => {
@@ -155,10 +199,24 @@ describe("scenario target", () => {
       ["New thread", false],
     ]);
     const picked = initial.choices[1]?.target ?? null;
-    expect(messageDockTarget(links, picked, describeThread).label).toBe("title of thread-review-91");
+    expect(messageDockTarget(links, picked, describeThread).label).toBe(
+      "title of thread-review-91",
+    );
     // A choice that is no longer linked falls back to the default rule.
-    expect(manual === undefined ? null : messageDockTarget([manual], { kind: "thread", threadId: branch?.threadId ?? manual.threadId }, describeThread).label).toBe("title of thread-review-91");
-    expect(messageDockTarget([], null, describeThread)).toEqual({ choices: [], label: "New thread", target: { kind: "newThread" } });
+    expect(
+      manual === undefined
+        ? null
+        : messageDockTarget(
+            [manual],
+            { kind: "thread", threadId: branch?.threadId ?? manual.threadId },
+            describeThread,
+          ).label,
+    ).toBe("title of thread-review-91");
+    expect(messageDockTarget([], null, describeThread)).toEqual({
+      choices: [],
+      label: "New thread",
+      target: { kind: "newThread" },
+    });
   });
 });
 
@@ -180,13 +238,21 @@ function requireKey(value: string): PullRequestKey {
 }
 
 describe("counters agree with their headers", () => {
-  const passed = { checkId: "c1", detailsUrl: null, durationSeconds: 10, name: "companion", state: "passed" } as const;
+  const passed = {
+    checkId: "c1",
+    detailsUrl: null,
+    durationSeconds: 10,
+    name: "companion",
+    state: "passed",
+  } as const;
   const skipped = { ...passed, checkId: "c2", name: "docs", state: "skipped" } as const;
 
   it("labels the collapsed checks row with the summary's passed count, never fewer", () => {
     const summary = { failing: 1, passed: 6, pending: 0, state: "failing" } as const;
     expect(settledChecksLabel([passed, skipped], summary)).toBe("6 passed · 1 skipped");
-    expect(settledChecksLabel([passed], { reason: "No token", state: "unavailable" })).toBe("1 passed");
+    expect(settledChecksLabel([passed], { reason: "No token", state: "unavailable" })).toBe(
+      "1 passed",
+    );
   });
 
   it("counts review requests of connected accounts only", () => {
@@ -201,14 +267,30 @@ describe("review outcome copy", () => {
   it("reports a known verdict as done and keeps each count with its noun", () => {
     expect(publishedTitle("Approve", "github.com")).toBe("Approved on github.com");
     expect(publishedTitle("Request changes", "github.com")).toBe("Changes requested on github.com");
-    expect(publishedTitle("Sticky ship", "a.yandex-team.ru")).toBe("Review published on a.yandex-team.ru · Sticky ship");
+    expect(publishedTitle("Sticky ship", "a.yandex-team.ru")).toBe(
+      "Review published on a.yandex-team.ru · Sticky ship",
+    );
     const detail = publishedDetail({ left: 1, published: 2, toAgent: 1 });
     expect(detail.split(" · ")).toEqual(["2 published", "1 to agent", "1 left"]);
   });
 
   it("does not repeat a guide summary that equals the stop title", () => {
-    expect(stopNarration({ prose: null, summary: "Map token expiry", title: "Map token expiry" })).toBeNull();
-    expect(stopNarration({ prose: null, summary: "Maps expiry to AuthRequired", title: "Map token expiry" })).toBe("Maps expiry to AuthRequired");
-    expect(stopNarration({ prose: "Check the host is redacted.", summary: "Map token expiry", title: "Map token expiry" })).toBe("Check the host is redacted.");
+    expect(
+      stopNarration({ prose: null, summary: "Map token expiry", title: "Map token expiry" }),
+    ).toBeNull();
+    expect(
+      stopNarration({
+        prose: null,
+        summary: "Maps expiry to AuthRequired",
+        title: "Map token expiry",
+      }),
+    ).toBe("Maps expiry to AuthRequired");
+    expect(
+      stopNarration({
+        prose: "Check the host is redacted.",
+        summary: "Map token expiry",
+        title: "Map token expiry",
+      }),
+    ).toBe("Check the host is redacted.");
   });
 });

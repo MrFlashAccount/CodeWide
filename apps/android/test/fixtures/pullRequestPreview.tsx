@@ -11,6 +11,7 @@ import { StyleSheet, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { parsePullRequestKeyParam } from "../../src/data/forgeContract";
+import { useForgeQuery } from "../../src/data/forgeQueryResource";
 import { remoteValue } from "../../src/data/forgeRemoteValue";
 import { PullRequestScreen } from "../../src/features/pullRequestDetail/PullRequestScreen";
 import { createPullRequestDetailWorkspaceAdapter } from "../../src/features/pullRequestDetail/workspaceAdapter";
@@ -48,7 +49,11 @@ const detail = createPullRequestDetailWorkspaceAdapter({
   reportDroppedAction: () => undefined,
   review,
 });
-const reviewTarget = createReviewTargetAdapter({ ...authority, resources: review });
+const reviewTarget = createReviewTargetAdapter({
+  ...authority,
+  mutations: forge.mutations,
+  resources: review,
+});
 const pullRequest = parsePullRequestKeyParam(overview91.pullRequest);
 const REVIEW_REQUESTED = {
   category: "reviewRequested",
@@ -64,13 +69,9 @@ const threads: Readonly<Record<string, { readonly status: string; readonly title
 if (scenario === "accounts") {
   openForgeAccounts();
 }
-// A phone reaches the PR screen from the list, so the list is already loaded there too.
-forge.lists.ensure(REVIEW_REQUESTED);
-
 /** The bottom bar counts exactly as the app's host does, from the same list resource. */
 function ModeBar(): React.JSX.Element {
-  forge.lists.ensure(REVIEW_REQUESTED);
-  const page = useSelector(() => forge.lists.state$[forge.lists.keyOf(REVIEW_REQUESTED)]?.get());
+  const page = useForgeQuery(forge.lists, REVIEW_REQUESTED);
   return (
     <View pointerEvents="box-none" style={previewStyles.modeBar}>
       <CatalogModeBar

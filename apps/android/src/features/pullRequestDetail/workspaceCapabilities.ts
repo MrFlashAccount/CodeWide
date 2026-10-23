@@ -22,7 +22,8 @@ export type PullRequestTarget = {
 /**
  * Forge writes and agent starts of the PR screen. Each forge write has one
  * trigger, carries the head revision, and is acknowledged by the companion;
- * nothing is queued offline. Each idempotency key is generated per user tap.
+ * replay-safe writes enter the persisted TanStack mutation queue before their
+ * first RPC. Each idempotency key is generated per user tap and survives replay.
  */
 export type PullRequestDetailWorkspaceCapabilities = {
   readonly runAction: (

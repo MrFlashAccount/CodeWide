@@ -249,6 +249,13 @@ export const onboardingStyles = StyleSheet.create({
   trayAlternatives: {
     gap: 0,
   },
+  trayHeaderCopy: {
+    alignItems: "baseline",
+    flexDirection: "row",
+    flexShrink: 1,
+    gap: spacing.compact,
+    minWidth: 0,
+  },
   trayHeaderIdentity: {
     alignItems: "center",
     flexDirection: "row",

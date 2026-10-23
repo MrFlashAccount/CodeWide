@@ -176,6 +176,22 @@ impl DraftComment {
             matches!(&self.routing, Routing::Agent { agent } if agent.state == AgentState::Sent);
         !published && !sent_agent_only
     }
+
+    fn matches_input(&self, input: &DraftInput) -> bool {
+        let routing_matches = match (&self.routing, input.destination) {
+            (Routing::Pr { .. }, Destination::Pr) => input.target_thread_id.is_none(),
+            (Routing::Agent { agent }, Destination::Agent)
+            | (Routing::Both { agent, .. }, Destination::Both) => {
+                input.target_thread_id.as_deref() == Some(agent.target_thread_id.as_str())
+            }
+            _ => false,
+        };
+        self.id == input.id
+            && self.revision == input.revision
+            && self.anchor == input.anchor
+            && self.body == input.body
+            && routing_matches
+    }
 }
 
 /// The stored record: the draft plus where its anchor hunk started, so a
@@ -196,7 +212,7 @@ pub struct HunkOrigin {
 }
 
 /// `companion/review/draft/put` input.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DraftInput {
     pub id: String,
@@ -417,6 +433,19 @@ impl DraftStore {
         let routing = input.routing()?;
         let source_key = input.revision.source.storage_key();
         let existing = self.find(&input.id)?;
+        if let Some((existing_key, stored)) = &existing {
+            let replayed_version = match expected_version {
+                Some(version) => version.checked_add(1),
+                None => Some(1),
+            };
+            if *existing_key == key(&source_key, &input.id)
+                && Some(stored.draft.version) == replayed_version
+                && stored.draft.editable()
+                && stored.draft.matches_input(input)
+            {
+                return Ok(stored.draft.clone());
+            }
+        }
         let (created_at, version, author) = match (&existing, expected_version) {
             (None, None) => (now.to_owned(), 1, author),
             (None, Some(_)) => return Err(ReviewError::NotFound),

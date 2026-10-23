@@ -141,6 +141,13 @@ release or deploy the current test build means the complete two-command Preview
 release above; it never selects a production release. A production release must
 be named explicitly and still runs only through its production workflow.
 
+The one-shot is also the complete evidence boundary for an agent-driven
+candidate release. The agent starts it, waits silently on that same process,
+and reports its final JSON. It must not surround a successful one-shot with
+separate Git, test, service, HTTP, manifest or checksum checks, and it must not
+repeat a successful release merely to verify it independently. Separate
+diagnostics begin only when the one-shot itself reports a failing stage.
+
 The first command validates, builds, atomically replaces and verifies the
 running Companion. The second runs the complete Preview APK gate, publishes a
 signed Expo update for that exact native runtime, and then publishes the APK,

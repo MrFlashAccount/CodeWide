@@ -27,13 +27,27 @@ export function ProviderTrayHeader({
         testID={`provider-tray-header-left-step-${String(step)}`}
       >
         {back ? <ProviderTrayBack /> : null}
-        <Tray.Title>{title}</Tray.Title>
-        <ProductText style={styles.trayStep}>
-          {`${String(step)} of ${String(PROVIDER_ONBOARDING_STEP_COUNT)}`}
-        </ProductText>
+        <ProviderTrayHeaderCopy step={step} title={title} />
       </View>
       <TrayClose />
     </Tray.Header>
+  );
+}
+
+function ProviderTrayHeaderCopy({
+  step,
+  title,
+}: {
+  readonly step: ProviderOnboardingStep;
+  readonly title: string;
+}): React.JSX.Element {
+  return (
+    <View style={styles.trayHeaderCopy} testID={`provider-tray-header-copy-step-${String(step)}`}>
+      <Tray.Title>{title}</Tray.Title>
+      <ProductText style={styles.trayStep}>
+        {`${String(step)} of ${String(PROVIDER_ONBOARDING_STEP_COUNT)}`}
+      </ProductText>
+    </View>
   );
 }
 

@@ -2,6 +2,7 @@ import { useSelector } from "@legendapp/state/react";
 import { useState } from "react";
 
 import type { PullRequestFile, PullRequestFilesPage } from "../../../data/forgeMutationContract";
+import { useForgeQuery } from "../../../data/forgeQueryResource";
 import { remoteValue } from "../../../data/forgeRemoteValue";
 import type { DraftComment } from "../../../data/reviewDraftContract";
 import { useEvent } from "../../../react/useEvent";
@@ -38,12 +39,8 @@ export function useChangesData(props: PullRequestChangesProps): ChangesData {
     pullRequest: overview.pullRequest,
   };
   const source = { kind: "pullRequest" as const, pullRequest: overview.pullRequest };
-  forge.files.ensure(target);
-  review.drafts.ensure({ connectionId, source });
-  const files = useSelector(() => forge.files.state$[forge.files.keyOf(target)]?.get());
-  const drafts = useSelector(() =>
-    review.drafts.state$[review.drafts.keyOf({ connectionId, source })]?.get(),
-  );
+  const files = useForgeQuery(forge.files, target);
+  const drafts = useForgeQuery(review.drafts, { connectionId, source });
   const view = useSelector(() => model.changesView.get());
   const selectedPath = useSelector(() => model.selectedPath.get());
   const [viewedPending, setViewedPending] = useState<ReadonlySet<string>>(new Set());

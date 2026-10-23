@@ -1,5 +1,5 @@
-import { useSelector } from "@legendapp/state/react";
 import type { Observable } from "@legendapp/state";
+import { useSuspenseQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import type {
@@ -8,11 +8,13 @@ import type {
   PullRequestOverview,
   PullRequestRow,
 } from "../../data/forgePullRequestContract";
-import { loadedListRow } from "../../data/forgeListPages";
+import { useLoadedListRow } from "../../data/forgeListPages";
+import type { OverviewParams } from "../../data/forgeOverview";
+import { forgeQueryRemoteValue, useForgeQuery } from "../../data/forgeQueryResource";
 import { remoteValue } from "../../data/forgeRemoteValue";
-import type { OverviewParams } from "../../data/forgeOverviewPromises";
 import type { ThreadId } from "../../data/reviewContract";
 import { useConstant } from "../../react/useConstant";
+import { useEvent } from "../../react/useEvent";
 import { spacing } from "../../theme";
 import { measureActionLabel, OVERFLOW_BUTTON_WIDTH } from "./actions/actionMeasure";
 import { slotActions, type ActionSlots } from "./actions/actionSlotting";
@@ -65,9 +67,7 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
             title: props.describeThread(agentLink.threadId)?.title ?? "Linked thread",
           },
     draftCount: useDraftCount(props),
-    listRow: useSelector(() =>
-      loadedListRow(props.forge.lists, props.connectionId, props.pullRequest),
-    ),
+    listRow: useLoadedListRow(props.forge.lists, props.connectionId, props.pullRequest),
     loadMoreActivity,
     model,
     offline,
@@ -82,13 +82,14 @@ function useOverview(
   props: PullRequestScreenProps,
   params: OverviewParams,
 ): { readonly offline: boolean; readonly overview: PullRequestOverview } {
-  const preloaded = useSelector(() => props.forge.overviewReady$(params).get(), { suspense: true });
-  const live = useSelector(() =>
-    props.forge.overviews.state$[props.forge.overviews.keyOf(params)]?.get(),
+  const query = useSuspenseQuery(
+    props.forge.overviews.options(params),
+    props.forge.overviews.client,
   );
+  const live = forgeQueryRemoteValue(query);
   return {
-    offline: live?.status === "failed" && live.failure.kind === "unreachable",
-    overview: remoteValue(live) ?? preloaded,
+    offline: live.status === "failed" && live.failure.kind === "unreachable",
+    overview: remoteValue(live) ?? query.data,
   };
 }
 
@@ -97,10 +98,7 @@ function useDraftCount(props: PullRequestScreenProps): number {
     connectionId: props.connectionId,
     source: { kind: "pullRequest" as const, pullRequest: props.pullRequest },
   };
-  props.review.drafts.ensure(params);
-  const drafts = useSelector(() =>
-    props.review.drafts.state$[props.review.drafts.keyOf(params)]?.get(),
-  );
+  const drafts = useForgeQuery(props.review.drafts, params);
   return dockCounts(remoteValue(drafts)?.drafts ?? []).total;
 }
 
@@ -109,23 +107,19 @@ function useActivity(
   params: OverviewParams,
   overview: PullRequestOverview,
 ): { readonly activity: ActivityPage; readonly loadMoreActivity: (() => void) | null } {
-  const state = useSelector(() =>
-    props.forge.activity.state$[props.forge.activity.keyOf(params)]?.get(),
-  );
+  const state = useForgeQuery(props.forge.activity, params);
   const activity = remoteValue(state) ?? overview.activity;
+  const loadMore = useEvent((): void => {
+    if (props.forge.activity.data(params) === null) {
+      props.forge.activity.publish(params, overview.activity);
+    }
+    // A failed page keeps the items already shown; the button stays to try again.
+    props.forge.loadMoreActivity(params).catch(() => undefined);
+  });
   if (activity.nextCursor === null) {
     return { activity, loadMoreActivity: null };
   }
-  return {
-    activity,
-    loadMoreActivity: () => {
-      if (state === undefined) {
-        props.forge.activity.publish(params, overview.activity);
-      }
-      // A failed page keeps the items already shown; the button stays to try again.
-      props.forge.loadMoreActivity(params).catch(() => undefined);
-    },
-  };
+  return { activity, loadMoreActivity: loadMore };
 }
 
 /** Slots the catalog for the measured action row and the anchors visible on this screen. */
