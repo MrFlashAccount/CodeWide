@@ -11,7 +11,7 @@ Narrow host infrastructure contracts that `companion-core` hands to provider ada
 - `thread_index.rs` — `IndexedThreadMetadata`, `ThreadPinSnapshot`, `HostThreadIndex` (metadata writes, subagent tree, pins; implemented by `IndexStore`) and `ThreadMetadataSource` (an adapter's lookup of threads the index does not know yet).
 - `content.rs` — `CanonicalContentSource`: content an adapter proves from its canonical sources, asked by the private content service before its own bytes.
 - `files.rs`, `vcs.rs` — `PreviewFiles` (implemented by `FileService`) and `WorkspaceVcs` with the VCS value model (implemented by `VcsService`), used by thread resources.
-- `activity_metrics.rs` — companion-owned activity counters on client-wire items, shared by sync ingest and stored-history projection.
+- `activity_metrics.rs` — companion-owned activity counters on client-wire items, shared by sync ingest and stored-history projection. Turn plans participate in Activity; the aggregate turn diff is footer-owned and never counted as an Activity step.
 - `wire_items.rs` — CodeWide's own client-wire item type names (`codewideTaskNotification`), defined once for the wire projector and every reader of the item.
 
 ## Boundary

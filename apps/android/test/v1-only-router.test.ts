@@ -28,8 +28,9 @@ describe("Unversioned application entry", () => {
     }
     collect(tree, "");
     expect(paths).toEqual(expect.arrayContaining([
-      "/", "/new", "/search", "/settings", "/projects",
+      "/", "/new", "/search", "/settings", "/projects", "/pulls",
       "/browser/[sessionId]", "/drawing/[sessionId]",
+      "/pulls/[connectionId]/[pullRequestKey]",
       "/threads/[connectionId]/[threadId]",
       "/threads/[connectionId]/[threadId]/terminal",
       "/threads/[connectionId]/[threadId]/agents/[agentThreadId]",

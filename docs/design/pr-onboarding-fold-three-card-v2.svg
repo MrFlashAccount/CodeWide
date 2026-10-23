@@ -1,0 +1,183 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1664" height="1500" viewBox="0 0 1664 1500">
+  <defs>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="200%">
+      <feDropShadow dx="0" dy="26" stdDeviation="28" flood-color="#000" flood-opacity=".52"/>
+    </filter>
+    <filter id="sideShadow" x="-40%" y="-40%" width="180%" height="200%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#000" flood-opacity=".4"/>
+    </filter>
+    <linearGradient id="heroGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#242424"/>
+      <stop offset="1" stop-color="#171717"/>
+    </linearGradient>
+  </defs>
+  <style>
+    text { font-family: Inter, Roboto, Arial, sans-serif; }
+    .screen-title { fill:#f5f5f5; font-size:30px; font-weight:680; }
+    .hero { fill:#f5f5f5; font-size:34px; font-weight:680; }
+    .body { fill:#b4b4b4; font-size:18px; font-weight:440; }
+    .small { fill:#939393; font-size:14px; font-weight:520; }
+    .tiny { fill:#828282; font-size:12px; font-weight:560; }
+    .card-title { fill:#f0f0f0; font-size:19px; font-weight:660; }
+    .card-copy { fill:#c8c8c8; font-size:14px; font-weight:520; }
+    .card-meta { fill:#858585; font-size:12px; font-weight:520; }
+    .caps { fill:#767676; font-size:10px; font-weight:750; letter-spacing:1.2px; }
+  </style>
+
+  <rect width="1664" height="1500" fill="#0d0d0d"/>
+  <text x="30" y="38" fill="#f2f2f2" font-size="24" font-weight="620">00:32  Fri, Oct 23</text>
+  <text x="1460" y="38" fill="#f2f2f2" font-size="18">4G+  16%</text>
+  <rect y="52" width="1664" height="40" fill="#090909"/>
+  <circle cx="22" cy="72" r="5" fill="#35c778"/>
+  <text x="40" y="78" class="small">76 fps · CPU 25.9% · RSS 491 MB</text>
+
+  <!-- On Fold, onboarding owns the empty list rail. -->
+  <rect x="0" y="92" width="560" height="1312" fill="#0f0f0f"/>
+  <text x="28" y="150" class="screen-title">Pull requests</text>
+  <g transform="translate(76 438)">
+    <text x="204" y="0" class="hero" text-anchor="middle">Your review inbox</text>
+    <text x="204" y="48" class="body" text-anchor="middle">Connect a code host to review changes,</text>
+    <text x="204" y="77" class="body" text-anchor="middle">work with agents, and ship from one place.</text>
+    <rect x="0" y="128" width="408" height="70" rx="35" fill="#ededed"/>
+    <text x="204" y="171" text-anchor="middle" fill="#111" font-size="20" font-weight="680">+  Connect a provider</text>
+    <g transform="translate(34 235)">
+      <path d="M14 0l12 5v9c0 10-7 16-12 19C9 30 2 24 2 14V5z" fill="none" stroke="#7f7f7f" stroke-width="2"/>
+      <path d="M9 15l4 4 7-8" fill="none" stroke="#7f7f7f" stroke-width="2"/>
+      <text x="40" y="22" class="small">Credentials stay on your Companion.</text>
+    </g>
+  </g>
+  <rect x="22" y="1304" width="516" height="80" rx="40" fill="#171717"/>
+  <text x="154" y="1352" fill="#8d8d8d" font-size="17" font-weight="580" text-anchor="middle">Threads</text>
+  <rect x="282" y="1312" width="248" height="64" rx="32" fill="#ededed"/>
+  <text x="406" y="1352" fill="#111" font-size="17" font-weight="680" text-anchor="middle">Pull requests</text>
+
+  <!-- Product illustration exists only in the Fold detail pane. -->
+  <rect x="560" y="92" width="1104" height="1312" rx="28" fill="url(#heroGlow)"/>
+  <line x1="560" y1="92" x2="560" y2="1404" stroke="#252525"/>
+  <circle cx="1112" cy="727" r="476" fill="#191919"/>
+  <circle cx="1112" cy="727" r="380" fill="none" stroke="#242424" stroke-width="2"/>
+
+  <!-- Left side card, z-index 1. -->
+  <g transform="translate(664 360) rotate(-8 220 360)" filter="url(#sideShadow)">
+    <rect width="440" height="720" rx="26" fill="#252525" stroke="#3b3b3b" stroke-width="2"/>
+    <rect width="440" height="66" rx="26" fill="#2d2d2d"/>
+    <circle cx="30" cy="33" r="12" fill="#383838"/>
+    <rect x="52" y="20" width="126" height="10" rx="5" fill="#d0d0d0" opacity=".7"/>
+    <rect x="52" y="38" width="82" height="7" rx="3.5" fill="#8d8d8d" opacity=".38"/>
+    <text x="220" y="105" class="card-copy" text-anchor="middle">Overview</text>
+    <rect x="34" y="126" width="372" height="3" rx="1.5" fill="#e3e3e3" opacity=".8"/>
+    <rect x="28" y="158" width="88" height="28" rx="14" fill="#173526"/>
+    <circle cx="49" cy="172" r="5" fill="#35c778"/>
+    <text x="63" y="177" fill="#7de3a8" font-size="12" font-weight="680">Open</text>
+    <text x="28" y="232" class="card-title">Reconcile agent state</text>
+    <text x="28" y="258" class="card-meta">CodeWide #218 · updated 8m ago</text>
+    <rect x="28" y="292" width="384" height="108" rx="18" fill="#1d1d1d" stroke="#373737"/>
+    <text x="50" y="324" class="caps">MERGE READINESS</text>
+    <circle cx="54" cy="359" r="11" fill="#17472d"/>
+    <path d="M49 359l4 4 7-9" fill="none" stroke="#43d17c" stroke-width="2"/>
+    <text x="78" y="355" class="card-copy">Ready to merge</text>
+    <text x="78" y="377" class="card-meta">Auto-merge · squash</text>
+    <rect x="28" y="416" width="384" height="92" rx="18" fill="#1d1d1d" stroke="#373737"/>
+    <text x="50" y="448" class="caps">CHECKS</text>
+    <text x="50" y="480" class="card-copy">4 checks passed</text>
+    <circle cx="377" cy="468" r="8" fill="#35c778"/>
+    <rect x="28" y="524" width="384" height="132" rx="18" fill="#1d1d1d" stroke="#373737"/>
+    <text x="50" y="556" class="caps">LINKED THREAD</text>
+    <text x="50" y="590" class="card-copy">Fix stale agent status</text>
+    <text x="50" y="617" fill="#58d58c" font-size="13" font-weight="620">Message the agent →</text>
+  </g>
+
+  <!-- Right side card, z-index 1, mirrored angle. -->
+  <g transform="translate(1116 360) rotate(8 220 360)" filter="url(#sideShadow)">
+    <rect width="440" height="720" rx="26" fill="#252525" stroke="#3b3b3b" stroke-width="2"/>
+    <rect width="440" height="66" rx="26" fill="#2d2d2d"/>
+    <circle cx="30" cy="33" r="12" fill="#383838"/>
+    <rect x="52" y="20" width="126" height="10" rx="5" fill="#d0d0d0" opacity=".7"/>
+    <rect x="52" y="38" width="82" height="7" rx="3.5" fill="#8d8d8d" opacity=".38"/>
+    <text x="220" y="105" class="card-copy" text-anchor="middle">Guide</text>
+    <rect x="34" y="126" width="372" height="3" rx="1.5" fill="#e3e3e3" opacity=".8"/>
+    <text x="28" y="174" class="caps">AGENT GUIDE · 2 OF 3</text>
+    <rect x="28" y="193" width="384" height="5" rx="2.5" fill="#393939"/>
+    <rect x="28" y="193" width="256" height="5" rx="2.5" fill="#d8d8d8"/>
+    <text x="28" y="246" class="card-title">The status settles too early</text>
+    <text x="28" y="276" class="card-copy">The index cursor advances before the</text>
+    <text x="28" y="299" class="card-copy">authoritative step state is reconciled.</text>
+    <rect x="28" y="330" width="384" height="178" rx="18" fill="#1b1b1b" stroke="#373737"/>
+    <rect x="48" y="350" width="122" height="8" rx="4" fill="#777" opacity=".42"/>
+    <rect x="48" y="376" width="320" height="25" fill="#351d22"/>
+    <text x="60" y="394" fill="#ef8d9c" font-size="12">− return cached.status;</text>
+    <rect x="48" y="409" width="320" height="25" fill="#123923"/>
+    <text x="60" y="427" fill="#70dfa0" font-size="12">+ reconcile(cached, live);</text>
+    <rect x="48" y="450" width="228" height="8" rx="4" fill="#777" opacity=".25"/>
+    <rect x="48" y="472" width="286" height="8" rx="4" fill="#777" opacity=".2"/>
+    <rect x="28" y="528" width="116" height="42" rx="21" fill="#313131"/>
+    <text x="86" y="554" class="card-copy" text-anchor="middle">Comment</text>
+    <rect x="154" y="528" width="150" height="42" rx="21" fill="#313131"/>
+    <text x="229" y="554" class="card-copy" text-anchor="middle">Send to agent</text>
+    <rect x="314" y="528" width="98" height="42" rx="21" fill="#ececec"/>
+    <text x="363" y="554" fill="#181818" font-size="13" font-weight="680" text-anchor="middle">Accept</text>
+  </g>
+
+  <!-- Center card, z-index 2. -->
+  <g transform="translate(812 292)" filter="url(#shadow)">
+    <rect width="600" height="870" rx="28" fill="#292929" stroke="#454545" stroke-width="2"/>
+    <rect width="600" height="72" rx="28" fill="#303030"/>
+    <path d="M30 36h22M30 36l9-9M30 36l9 9" fill="none" stroke="#bdbdbd" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"/>
+    <rect x="76" y="22" width="208" height="11" rx="5.5" fill="#dedede" opacity=".76"/>
+    <rect x="76" y="42" width="132" height="8" rx="4" fill="#909090" opacity=".4"/>
+    <circle cx="558" cy="26" r="3" fill="#aaa"/><circle cx="558" cy="36" r="3" fill="#aaa"/><circle cx="558" cy="46" r="3" fill="#aaa"/>
+    <text x="150" y="112" class="card-meta" text-anchor="middle">Overview</text>
+    <text x="450" y="112" class="card-copy" text-anchor="middle">Changes · 2 drafts</text>
+    <rect x="328" y="129" width="244" height="3" rx="1.5" fill="#ededed"/>
+    <rect x="26" y="158" width="266" height="48" rx="15" fill="#222" stroke="#3a3a3a"/>
+    <rect x="30" y="162" width="126" height="40" rx="12" fill="#404040"/>
+    <text x="93" y="187" class="card-copy" text-anchor="middle">✓ Files</text>
+    <text x="222" y="187" class="card-meta" text-anchor="middle">Guide</text>
+    <text x="564" y="188" class="card-meta" text-anchor="end">2 of 5 viewed</text>
+    <rect x="26" y="228" width="176" height="568" rx="20" fill="#222" stroke="#3a3a3a"/>
+    <text x="46" y="260" class="caps">CHANGED FILES</text>
+    <rect x="38" y="279" width="152" height="76" rx="13" fill="#3a3a3a"/>
+    <text x="50" y="305" class="card-copy">threadStatus.ts</text>
+    <text x="50" y="329" class="card-meta">1 draft · viewed</text>
+    <text x="177" y="305" fill="#61d492" font-size="11" text-anchor="end">+18</text>
+    <text x="46" y="398" class="card-copy">reconcile.ts</text>
+    <text x="46" y="422" class="card-meta">Viewed · github.com</text>
+    <text x="177" y="398" fill="#61d492" font-size="11" text-anchor="end">+9</text>
+    <line x1="42" y1="448" x2="186" y2="448" stroke="#383838"/>
+    <text x="46" y="488" class="card-copy">threadStore.ts</text>
+    <text x="46" y="512" class="card-meta">1 draft</text>
+    <line x1="42" y1="538" x2="186" y2="538" stroke="#383838"/>
+    <text x="46" y="578" class="card-copy">status.test.ts</text>
+    <text x="46" y="602" class="card-meta">new file</text>
+    <rect x="222" y="228" width="352" height="568" rx="20" fill="#1c1c1c" stroke="#393939"/>
+    <rect x="222" y="228" width="352" height="52" rx="20" fill="#2d2d2d"/>
+    <text x="244" y="260" class="card-copy">threadStatus.ts</text>
+    <text x="550" y="260" fill="#62d493" font-size="12" text-anchor="end">+18</text>
+    <rect x="238" y="300" width="320" height="28" fill="#2f2a20"/>
+    <text x="250" y="319" class="card-meta">@@ -84,7 +84,12 @@ reconcileThreadStatus</text>
+    <rect x="238" y="340" width="320" height="31" fill="#3b1d25"/>
+    <text x="250" y="361" fill="#ef8b9b" font-size="12">− return cached.status;</text>
+    <rect x="238" y="377" width="320" height="31" fill="#123c25"/>
+    <text x="250" y="398" fill="#72e0a2" font-size="12">+ const live = processGeneration.get(threadId);</text>
+    <rect x="238" y="414" width="320" height="31" fill="#123c25"/>
+    <text x="250" y="435" fill="#72e0a2" font-size="12">+ return reconcile(cached, live);</text>
+    <text x="248" y="480" class="card-meta">if (live.stoppedAt !== null) {</text>
+    <rect x="238" y="496" width="320" height="31" fill="#123c25"/>
+    <text x="250" y="517" fill="#72e0a2" font-size="12">+ settleUnfinishedAgents(threadId);</text>
+    <rect x="238" y="560" width="320" height="150" rx="16" fill="#343434" stroke="#4a4a4a"/>
+    <text x="256" y="590" class="caps">LINE 91 · DRAFT</text>
+    <text x="256" y="625" class="card-copy">Should the generation be captured before</text>
+    <text x="256" y="649" class="card-copy">the async reconcile starts?</text>
+    <rect x="256" y="670" width="52" height="24" rx="12" fill="#484848"/>
+    <text x="282" y="686" class="tiny" text-anchor="middle">PR</text>
+    <rect x="316" y="670" width="62" height="24" rx="12" fill="#484848"/>
+    <text x="347" y="686" class="tiny" text-anchor="middle">Agent</text>
+    <rect x="386" y="670" width="56" height="24" rx="12" fill="#ececec"/>
+    <text x="414" y="686" fill="#191919" font-size="11" font-weight="680" text-anchor="middle">Both</text>
+    <rect x="26" y="816" width="548" height="40" rx="20" fill="#ededed"/>
+    <text x="300" y="842" fill="#171717" font-size="14" font-weight="680" text-anchor="middle">Submit review · Approve</text>
+  </g>
+
+  <circle cx="832" cy="1452" r="10" fill="#f0f0f0"/>
+  <rect x="1522" y="1442" width="20" height="20" rx="2" fill="#f0f0f0"/>
+</svg>

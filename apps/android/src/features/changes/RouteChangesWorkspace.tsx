@@ -9,7 +9,6 @@ import {
   loadRecordedTurnChanges,
   selectChangePresentation,
 } from "./changePresentation";
-import type { CodeReviewGuideBinding } from "../review/workspace/CodeReviewGuide";
 import { CodeReviewWorkspace } from "../review/workspace/CodeReviewWorkspace";
 import type {
   CurrentChangesRouteRequest,
@@ -23,12 +22,9 @@ const LAST_TURN_CHANGE_SCOPES: ThreadChangeScope[] = [];
 
 /** Renders current-thread review state captured by one route activation. */
 export function CurrentChangesRoute({
-  guide,
   onClose,
   request,
 }: {
-  /** Guide over this review; absent keeps the review exactly as before. */
-  readonly guide?: CodeReviewGuideBinding | undefined;
   readonly onClose: () => void;
   readonly request: CurrentChangesRouteRequest;
 }): React.JSX.Element {
@@ -52,7 +48,6 @@ export function CurrentChangesRoute({
       voiceRuntime={request.voiceRuntime}
       {...loading}
       {...diff}
-      {...(guide === undefined ? {} : { guide })}
       {...(presentation.vcs === undefined ? {} : { vcs: presentation.vcs })}
     />
   );
@@ -100,12 +95,9 @@ function currentChangesLoading(
 
 /** Renders the recorded patches for one Router-qualified turn. */
 export function TurnChangesRoute({
-  guide,
   onClose,
   request,
 }: {
-  /** Guide over this turn's review; absent keeps the review exactly as before. */
-  readonly guide?: CodeReviewGuideBinding | undefined;
   readonly onClose: () => void;
   readonly request: TurnChangesRouteRequest;
 }): React.JSX.Element {
@@ -137,7 +129,6 @@ export function TurnChangesRoute({
       scopeLabel="This turn"
       thread={request.thread}
       voiceRuntime={request.voiceRuntime}
-      {...(guide === undefined ? {} : { guide })}
       {...(request.loadTurnChanges === undefined
         ? {}
         : {

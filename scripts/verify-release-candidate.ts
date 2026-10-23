@@ -15,7 +15,10 @@ if (!publicManifestResponse.ok) {
 const publicManifest = readCandidateManifest(await publicManifestResponse.json());
 if (
   publicManifest.revision !== manifest.revision ||
-  publicManifest.artifact.sha256 !== manifest.artifact.sha256
+  publicManifest.artifact.sha256 !== manifest.artifact.sha256 ||
+  publicManifest.ota.runtimeVersion !== manifest.ota.runtimeVersion ||
+  publicManifest.ota.updateId !== manifest.ota.updateId ||
+  publicManifest.ota.updateUrl !== manifest.ota.updateUrl
 ) {
   throw new Error("Public candidate manifest is stale");
 }

@@ -33,7 +33,6 @@ pub(crate) fn observe(
             | "item/agentMessage/delta"
             | "thread/tokenUsage/updated"
             | "turn/plan/updated"
-            | "turn/diff/updated"
     ) {
         return Ok(None);
     }
@@ -105,9 +104,6 @@ pub(crate) fn observe(
     }
     if method == "turn/plan/updated" {
         state.plan = true;
-    }
-    if method == "turn/diff/updated" {
-        state.diff = true;
     }
     state.input_price = live
         .model
@@ -197,6 +193,18 @@ mod tests {
         assert_eq!(metrics, Some(Value::Null));
         let replay = attach(crate::thread_patch::attach_thread_patch(event), metrics);
         assert!(replay["codewideThreadPatch"]["operation"]["activityMetrics"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn footer_diff_does_not_mutate_activity_metrics() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = IndexStore::open(directory.path().join("index.redb"))?;
+        let event = json!({
+            "method": "turn/diff/updated",
+            "params": {"threadId": "thread", "turnId": "turn", "diff": "patch"}
+        });
+        assert_eq!(observe(&store, &event, None, &TestPricing)?, None);
         Ok(())
     }
 

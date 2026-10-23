@@ -22,7 +22,6 @@ features a thread's provider does not declare. See [docs/agent-providers.md](age
 
 ## Commands
 
-
 ```sh
 pnpm install
 pnpm typecheck
@@ -127,8 +126,8 @@ once under the user's CodeWide data directory and reuses it so later APKs
 upgrade the installed Preview. Production signing material is not read or
 passed to its Gradle build.
 
-The local release-candidate environment has exactly two operator-facing
-one-shots. Run them in this order for a complete local test release:
+The local release-candidate environment has exactly three operator-facing
+one-shots. Run the first two in this order for a complete local test release:
 
 ```sh
 ./scripts/release-candidate-companion
@@ -142,6 +141,20 @@ checksum, manifest and static page to the same zrok-backed origin. It verifies
 the public update manifest, launch asset, settled no-update directive, APK
 manifest and APK hash before succeeding. Do not reconstruct either sequence
 from its lower-level commands.
+
+After that baseline exists, a JavaScript-, TypeScript- or bundled-asset-only
+change can be published to its existing native runtime with:
+
+```sh
+./scripts/release-candidate-android-ota
+```
+
+The OTA one-shot runs the Android release gates, reads the runtime from the
+published Preview manifest, signs and publishes the bundle, updates the public
+candidate manifest and verifies the public endpoint. Native Android, native
+dependency, update-certificate or native application-configuration changes
+must use `release-candidate-android` with a new version code instead. Do not
+reconstruct the OTA sequence from its lower-level commands.
 
 The low-level Gradle/signing variables below remain available for debugging or
 nonstandard builds:

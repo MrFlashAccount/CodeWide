@@ -24,6 +24,8 @@ The root list scope remains unchanged when a project opens. The workspace-owned 
 survive child routes; the shared offset memory restores each list scope. The Router-owned catalog
 stack remains mounted in one pane, full width on compact layouts and left of the conversation
 on wide layouts. One shared header stays above Expo Stack; root/project content scenes contain no header.
+The top-level `/pulls` peer hides this entire pane while focused; Pull requests never inherit the
+Threads header, pull-search surface, rows or New message action.
 Expo Stack owns content placement and transition timing, while Orb and Search retain their native instances.
 
 The header orb reserves a fixed hit-target slot while its floating counterpart is active.

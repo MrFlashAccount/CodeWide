@@ -15,7 +15,6 @@ pub struct ActivityState {
     pub input_price: Option<f64>,
     pub active: bool,
     pub plan: bool,
-    pub diff: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -120,7 +119,6 @@ impl ActivityState {
             self.input_price = Some(price);
         }
         self.plan |= turn.pointer("/codewide/plan").is_some();
-        self.diff |= turn.pointer("/codewide/diff").is_some();
     }
 
     pub fn upsert(&mut self, mut item: ActivityItem) {
@@ -176,12 +174,10 @@ impl ActivityState {
             .map(|(_, i)| *i)
             .collect();
         let mut total = summary(&history, self.input_price);
-        for (enabled, kind) in [(self.plan, "turnPlan"), (self.diff, "turnDiff")] {
-            if enabled {
-                total["count"] = json!(total["count"].as_u64().unwrap_or(0) + 1);
-                if let Some(kinds) = total["kinds"].as_array_mut() {
-                    kinds.push(json!(kind));
-                }
+        if self.plan {
+            total["count"] = json!(total["count"].as_u64().unwrap_or(0) + 1);
+            if let Some(kinds) = total["kinds"].as_array_mut() {
+                kinds.push(json!("turnPlan"));
             }
         }
         let ranges = self.ranges(&visible, first_user, final_agent);
@@ -263,7 +259,7 @@ impl ActivityState {
                 group.push(*item);
             }
         }
-        let metadata: Vec<_> = [(self.plan, "turnPlan"), (self.diff, "turnDiff")]
+        let metadata: Vec<_> = [(self.plan, "turnPlan")]
             .into_iter()
             .filter(|(enabled, _)| *enabled)
             .map(|(_, kind)| ActivityItem {
@@ -468,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn closed_summary_stays_compact_and_metadata_belongs_to_its_group() {
+    fn closed_summary_stays_compact_and_footer_diff_is_not_activity() {
         let mut items = vec![user()];
         items.extend((0..300).map(|i| command(&format!("c{i}"), "abcd")));
         let mut metrics = ActivityState::from_turn(&turn(&items, "completed")).projection();
@@ -488,9 +484,10 @@ mod tests {
         );
         raw["codewide"]["diff"] = json!("patch");
         let metrics = ActivityState::from_turn(&raw).projection();
-        assert_eq!(metrics["total"]["count"], 2);
-        assert_eq!(metrics["ranges"][0]["lastItemId"], "codewide:turnDiff");
-        assert_eq!(metrics["ranges"][0]["summary"]["count"], 2);
+        assert_eq!(metrics["total"]["count"], 1);
+        assert_eq!(metrics["total"]["kinds"], json!(["commandExecution"]));
+        assert_eq!(metrics["ranges"][0]["lastItemId"], "a");
+        assert_eq!(metrics["ranges"][0]["summary"]["count"], 1);
     }
 
     #[test]

@@ -83,6 +83,7 @@ it("opens a finished tool group of a running turn in the sheet instead of expand
   );
 
   const row = view.getByRole("button", { name: /^Open activity/ });
+  expect(view.getByText("chevron-forward")).toBeOnTheScreen();
   fireEvent.press(row);
   expect(view.queryByRole("button", { name: /^(Expand|Collapse) activity/ })).toBeNull();
   expect(view.queryByTestId("turn-activity-list")).toBeNull();
@@ -102,6 +103,7 @@ it("opens the same group in the sheet once its turn has finished", () => {
   fireEvent.press(view.getByRole("button", { name: /^Open activity/ }));
   expect(view.queryByTestId("turn-activity-list")).toBeNull();
   expect(view.getByRole("header", { name: "Activity" })).toBeOnTheScreen();
+  expect(view.getByTestId("activity-step-row")).toBeOnTheScreen();
 });
 
 it("opens the collapsed earlier activity of a running turn in the sheet", () => {
@@ -112,7 +114,7 @@ it("opens the collapsed earlier activity of a running turn in the sheet", () => 
   expect(view.getByRole("header", { name: "Activity" })).toBeOnTheScreen();
 });
 
-it("shows a running turn's current action as its step row and opens its output in the sheet", () => {
+it("shows a running turn's current action without inventing a fallback destination", () => {
   const running: RenderBlock = { ...commandBlock, status: "inProgress" };
   const view = render(
     <ActiveTurnActivity
@@ -127,6 +129,8 @@ it("shows a running turn's current action as its step row and opens its output i
   expect(view.getByTestId("active-turn-current-actions")).toBeOnTheScreen();
   expect(view.queryByLabelText(/^(Expand|Collapse) printf done/)).toBeNull();
   expect(view.queryByText("done")).toBeNull();
-  fireEvent.press(view.getByLabelText("Open printf done"));
+  expect(view.queryByLabelText("Open printf done")).toBeNull();
+  expect(view.getByTestId("protocol-card-header")).toBeDisabled();
+  fireEvent.press(view.getByRole("button", { name: /^Open activity/ }));
   expect(view.getByRole("header", { name: "Activity" })).toBeOnTheScreen();
 });

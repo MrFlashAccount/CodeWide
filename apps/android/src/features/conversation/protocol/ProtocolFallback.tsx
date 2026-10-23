@@ -6,7 +6,7 @@ import { LargeContentControls } from "../content/FullContentViewer";
 import { Card } from "../turns/Card";
 import { styles } from "./ProtocolBlock.styles";
 import { protocolCopyText } from "./protocolCopyText";
-import { isToolActivityKind, protocolIcon } from "./protocolKind";
+import { protocolIcon } from "./protocolKind";
 import { ProtocolBody } from "./ToolContent";
 import type { TransferAccess } from "../../../data/private-transfer";
 
@@ -21,12 +21,7 @@ export function renderProtocolFallback(
       icon={protocolIcon(block.kind)}
       title={displayTitle}
       {...(block.status === null ? {} : { status: block.status })}
-      collapsible={block.collapsible}
       copyText={() => protocolCopyText(block)}
-      initiallyExpanded={
-        !isToolActivityKind(block.kind) &&
-        (block.status === "inProgress" || block.status === "running")
-      }
     >
       {block.body !== null &&
         (block.kind === "reasoning" ||

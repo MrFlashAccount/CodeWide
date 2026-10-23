@@ -111,6 +111,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
             ) : (
               <Reanimated.View style={styles.threadListSuspended}>
                 <LegendList
+                  contentContainerStyle={styles.floatingBarContent}
                   data={scroll.rows}
                   dataKey={`desktop-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
                   drawDistance={320}

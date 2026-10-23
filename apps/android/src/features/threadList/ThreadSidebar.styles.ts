@@ -1,7 +1,11 @@
 import { StyleSheet } from "react-native";
+import { catalogModeBarContentInset } from "../../presentation/layouts/catalogModeBarGeometry";
 import { colors, typeScale, typeWeight } from "../../theme";
 
 export const styles = StyleSheet.create({
+  floatingBarContent: {
+    paddingBottom: catalogModeBarContentInset,
+  },
   serverTitle: {
     color: colors.text,
     flex: 1,

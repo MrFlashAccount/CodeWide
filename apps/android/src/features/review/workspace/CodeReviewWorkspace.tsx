@@ -3,9 +3,6 @@ import { ActivityIndicator, Pressable, View } from "react-native";
 import type { CodeReviewWorkspaceProps } from "./codeReviewContract";
 import { useCodeReviewState } from "./codeReviewState";
 import { styles } from "./CodeReviewWorkspace.styles";
-import { CodeReviewGuide } from "./CodeReviewGuide";
-import { GuideToggle } from "./GuideToggle";
-import { useGuideFocus } from "./useGuideFocus";
 import { ReviewCommentStrip } from "./ReviewCommentStrip";
 
 import { changeScopeDisplay } from "../../../rendering/changeScopeDisplay";
@@ -57,12 +54,6 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
     wrapLines,
   } = useCodeReviewState(props);
   const scopeDisplay = changeScopeDisplay(changeScope, vcs);
-  const guide = useGuideFocus({
-    available: props.guide !== undefined,
-    changes,
-    selectFile,
-    selectLine,
-  });
 
   return (
     <View
@@ -85,7 +76,6 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
         >
           <Ionicons color={colors.text} name="folder-open-outline" size={iconSize.action} />
         </Pressable>
-        <GuideToggle guide={guide} />
         <View style={styles.headerTitle}>
           <Text ellipsizeMode="middle" numberOfLines={1} style={styles.title}>
             {effectiveSelectedPath === null
@@ -170,14 +160,6 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
         </Pressable>
       </View>
 
-      {guide.open && props.guide !== undefined ? (
-        <CodeReviewGuide
-          binding={props.guide}
-          onComment={guide.comment}
-          onReveal={guide.reveal}
-          scope={changeScope}
-        />
-      ) : null}
       <View style={styles.workspace}>
         <View style={styles.editorPane}>
           <CodeReviewEditor
@@ -202,7 +184,7 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
             }}
             onLinePress={selectLine}
             onVoicePress={(draft, selection) => void pressVoice(draft, selection)}
-            revealReference={selectedReference === null ? (guide.focus ?? revealReference) : null}
+            revealReference={selectedReference === null ? revealReference : null}
             selectedPath={effectiveSelectedPath}
             selectedReference={selectedReference}
             sidebarOpen={sidebarOpen}

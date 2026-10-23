@@ -29,6 +29,7 @@ import {
 } from "./onboardingModel";
 import { accountMethods, activeFlow, providerExplanation } from "./providerPresentation";
 import { TokenPasteSheet } from "./TokenPasteSheet";
+import { TrayConnectMethods } from "./TrayConnectMethods";
 import { useProviderConnect } from "./useProviderConnect";
 
 /**
@@ -39,6 +40,7 @@ import { useProviderConnect } from "./useProviderConnect";
  */
 export function ProviderCard({
   accounts,
+  appearance = "card",
   capabilities,
   connectionId,
   flows,
@@ -46,6 +48,8 @@ export function ProviderCard({
 }: {
   /** Accounts already linked on this connection; their logins are not offered again. */
   readonly accounts: readonly AccountState[];
+  /** A tray supplies its own provider header and surface. */
+  readonly appearance?: "card" | "tray";
   readonly capabilities: PullRequestsWorkspaceCapabilities;
   readonly connectionId: string;
   readonly flows: readonly AuthFlow[];
@@ -85,12 +89,12 @@ export function ProviderCard({
   return (
     <View
       accessibilityLabel={`${provider.forgeName} provider`}
-      style={styles.card}
+      style={providerCardStyle(appearance)}
       testID={`forge-provider-card-${provider.pluginId}`}
     >
-      <ProviderCardHeader provider={provider} />
-      <ProductText style={styles.body}>{providerExplanation(provider)}</ProductText>
+      <ProviderCardLead appearance={appearance} provider={provider} />
       <CardBody
+        appearance={appearance}
         cancelling={interaction.pending === "cancelling"}
         handlers={handlers}
         onCancel={connect.cancel}
@@ -114,6 +118,28 @@ export function ProviderCard({
   );
 }
 
+function providerCardStyle(appearance: "card" | "tray") {
+  return appearance === "card" ? styles.card : styles.providerPanel;
+}
+
+function ProviderCardLead({
+  appearance,
+  provider,
+}: {
+  readonly appearance: "card" | "tray";
+  readonly provider: ForgeProvider;
+}): React.JSX.Element | null {
+  if (appearance === "tray") {
+    return null;
+  }
+  return (
+    <>
+      <ProviderCardHeader provider={provider} />
+      <ProductText style={styles.body}>{providerExplanation(provider)}</ProductText>
+    </>
+  );
+}
+
 /** Logins already linked for the provider's own host on this connection. */
 function linkedLogins(
   accounts: readonly AccountState[],
@@ -129,6 +155,7 @@ function linkedLogins(
 }
 
 function CardBody({
+  appearance,
   cancelling,
   handlers,
   onCancel,
@@ -136,6 +163,7 @@ function CardBody({
   plan,
   provider,
 }: {
+  readonly appearance: "card" | "tray";
   readonly cancelling: boolean;
   readonly handlers: ConnectHandlers;
   readonly onCancel: () => void;
@@ -154,6 +182,9 @@ function CardBody({
         onStart={onStart}
       />
     );
+  }
+  if (appearance === "tray") {
+    return <TrayConnectMethods handlers={handlers} plan={plan} provider={provider} />;
   }
   return (
     <>

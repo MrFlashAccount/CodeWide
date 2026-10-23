@@ -59,6 +59,7 @@ export function PullRequestList(props: {
       />
       <ListNotice nowMs={props.nowMs} state={state} />
       <LegendList
+        contentContainerStyle={styles.floatingBarContent}
         data={items}
         dataKey={`pull-requests:${filter.category}:${filter.repository ?? ""}`}
         estimatedItemSize={layoutSize.row}

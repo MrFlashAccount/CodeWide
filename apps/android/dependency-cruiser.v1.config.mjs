@@ -131,12 +131,15 @@ const featurePublicModules = {
     "comments/reviewSubmission",
     "conversationReviewCapabilities",
     "resources/reviewFiles",
-    "workspace/CodeReviewGuide",
     "workspace/CodeReviewWorkspace",
-    "workspace/reviewDiffSource",
     "workspaceCapabilities",
   ],
-  pullRequests: ["PullRequestsFeature", "CatalogModeBar", "PullRequestsHeader", "pullRequestListModel"],
+  pullRequests: [
+    "PullRequestsFeature",
+    "CatalogModeBar",
+    "PullRequestsHeader",
+    "pullRequestListModel",
+  ],
   pullRequestDetail: ["PullRequestScreen", "pullRequestScreenContract"],
   changes: [
     "ChangesFeature",
@@ -270,28 +273,32 @@ export default {
     {
       name: "v1-review-does-not-import-pull-request-features",
       severity: "error",
-      comment: "Review targets are forge-independent; pull-request features depend on review, never the reverse.",
+      comment:
+        "Review targets are forge-independent; pull-request features depend on review, never the reverse.",
       from: { path: "^src/features/review/" },
       to: { path: "^src/features/pullRequest" },
     },
     {
       name: "v1-thread-list-does-not-import-pull-requests",
       severity: "error",
-      comment: "Thread rows read PR badges from data/pullRequestLinkResources and render ui/ForgeIcon.",
+      comment:
+        "Thread rows read PR badges from data/pullRequestLinkResources and render ui/ForgeIcon.",
       from: { path: "^src/features/threadList/" },
       to: { path: "^src/features/pullRequests/" },
     },
     {
       name: "v1-pull-request-features-meet-only-in-route-composition",
       severity: "error",
-      comment: "The PR catalog and PR screen reach each other only through routeComposition navigation intents.",
+      comment:
+        "The PR catalog and PR screen reach each other only through routeComposition navigation intents.",
       from: { path: "^src/features/pullRequests/" },
       to: { path: "^src/features/pullRequestDetail/" },
     },
     {
       name: "v1-pull-request-detail-does-not-import-catalog",
       severity: "error",
-      comment: "The PR catalog and PR screen reach each other only through routeComposition navigation intents.",
+      comment:
+        "The PR catalog and PR screen reach each other only through routeComposition navigation intents.",
       from: { path: "^src/features/pullRequestDetail/" },
       to: { path: "^src/features/pullRequests/" },
     },

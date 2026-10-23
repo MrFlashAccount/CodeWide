@@ -179,7 +179,7 @@ export function turnActivityLabel(
   count?: number,
 ): string {
   const labels: string[] = [];
-  if (kinds.some((kind) => kind === "fileChange" || kind === "turnDiff" || kind === "diff")) {
+  if (kinds.some((kind) => kind === "fileChange" || kind === "diff")) {
     labels.push("Edited files");
   }
   if (kinds.some((kind) => kind === "commandExecution" || kind === "terminal")) {
@@ -238,20 +238,6 @@ export function turnMetadataBlocks(scope: string, turn: Thread["turns"][number])
       status: `${String(completed)}/${String(metadata.plan.steps.length)}`,
       title: "Plan",
       tone: "info",
-    });
-  }
-  if (metadata.diff !== undefined) {
-    blocks.push({
-      body: metadata.diff,
-      collapsible: true,
-      content: null,
-      durationMs: null,
-      key: `${scope}/${turn.id}/live-diff`,
-      kind: "turnDiff",
-      raw: { diff: metadata.diff, id: "codewide:turnDiff" },
-      status: null,
-      title: "Turn diff",
-      tone: "neutral",
     });
   }
   return blocks;

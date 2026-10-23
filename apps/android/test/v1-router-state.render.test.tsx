@@ -96,6 +96,18 @@ it("keeps All and project in one nested navigator beneath the shared list header
   expect(list?.state?.routes.at(-1)?.params).toMatchObject({ sessionId: "project-session" });
 });
 
+it("resolves Pull requests as a workspace route instead of a Threads-list scene", () => {
+  const state = getStateFromPath("/pulls", applicationConfig());
+  const workspace = state?.routes[0];
+  expect(workspace?.name).toBe("(workspace)");
+  expect(workspace?.state?.routes.map((route) => route.name)).toEqual([
+    "(lists)",
+    "pulls/index",
+  ]);
+  const list = workspace?.state?.routes[0];
+  expect(list?.state?.routes.some((route) => route.name === "pulls")).not.toBe(true);
+});
+
 it("reads catalog selection through Expo's runtime root wrapper without using stale thread params", () => {
   const listOptions = {
     routeNames: ["index", "project/[sessionId]"],

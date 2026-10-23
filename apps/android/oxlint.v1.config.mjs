@@ -43,6 +43,7 @@ export default {
     "coverage/**",
     "dist/**",
     "node_modules/**",
+    "src/vendor/reacticx/**",
   ],
   jsPlugins: [
     ...base.jsPlugins,

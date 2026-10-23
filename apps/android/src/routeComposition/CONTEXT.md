@@ -13,6 +13,9 @@ transport, persistence, protocol reduction or application data loading.
 The root providers and workspace native runtime lifetime remain in their existing layouts.
 Moving composition must preserve immediate main-thread publication, progressive hydration,
 composer restoration, desktop sidebar identity, search history and route-session retention.
+`WorkspaceTwoPaneLayout` is the shared geometry owner for the retained Threads catalog/detail pair
+and the Pull requests catalog/preview pair. Its discriminated presentation mode owns only pane
+placement and width; route focus, accessibility, lifetimes, surfaces and data remain with callers.
 
 Run `pnpm validate:android:v1`, navigation contract tests and the Android bundle check after
 changing this owner. See [route architecture](../../../../docs/android-v1-route-architecture.md).

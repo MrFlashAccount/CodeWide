@@ -1,18 +1,30 @@
 import type { RenderBlock } from "@codewide/renderers";
-import { fireEvent, render, within } from "@testing-library/react-native";
+import { fireEvent, render, waitFor, within } from "@testing-library/react-native";
+import { Text } from "react-native";
 import { CommandItemOutputViewer } from "../src/features/conversation/content/CommandContentViewer";
 import { LargeContentViewerContext } from "../src/features/conversation/content/contentViewerContext";
 import { CommandExecutionProtocolBlock } from "../src/features/conversation/protocol/CommandOutput";
 import { FileChangeProtocolBlock } from "../src/features/conversation/protocol/FileChangeProtocolBlock";
+import { ImageProtocolBlock } from "../src/features/conversation/protocol/ImageProtocolBlock";
+import { ProtocolBlock } from "../src/features/conversation/protocol/ProtocolBlock";
+import { ActivityProtocolListRow } from "../src/features/conversation/protocol/ActivityProtocolListRow";
 import { ToolCallProtocolBlock } from "../src/features/conversation/protocol/ToolContent";
-import { TurnDiffProtocolBlock } from "../src/features/conversation/protocol/TurnDiffProtocolBlock";
+import { WebSearchProtocolBlock } from "../src/features/conversation/protocol/WebSearchProtocolBlock";
+import { webSearchSummary } from "../src/features/conversation/protocol/webSearchPresentation";
+import { Card } from "../src/features/conversation/turns/Card";
+import { persistentExpansionStates } from "../src/features/conversation/turns/disclosureState";
 import {
-  SHEET_TOOL_CARDS,
   ToolCardPlacementContext,
   TurnTargetContext,
 } from "../src/features/conversation/turns/turnContexts";
 import { TurnChangesContext } from "../src/rendering/TurnChangesContext";
+import { ImagePreviewGroup } from "../src/rendering/ImagePreviewHost";
+import {
+  ImagePreviewContext,
+  type ImagePreviewController,
+} from "../src/rendering/imagePreviewController";
 import type { LargeContentRouteRequest } from "../src/services/content/contentRouteSession";
+import { AppFullscreenOverlayProvider } from "../src/ui/AppFullscreenOverlay";
 
 const mockReadCommandOutput = jest.fn();
 
@@ -32,7 +44,12 @@ const outputReference = {
   id: "a".repeat(64),
 };
 
-it("opens the exact command output without using its disclosure action", () => {
+beforeEach(() => {
+  persistentExpansionStates.clear();
+});
+
+it("opens exact command output without offering a competing inline disclosure", () => {
+  persistentExpansionStates.set("item:card", true);
   const opened: LargeContentRouteRequest[] = [];
   const block: RenderBlock = {
     body: "first line\n",
@@ -53,7 +70,14 @@ it("opens the exact command output without using its disclosure action", () => {
           opened.push(request);
         }}
       >
-        <ToolCardPlacementContext.Provider value={SHEET_TOOL_CARDS}>
+        <ToolCardPlacementContext.Provider
+          value={{
+            description: "≈⟡137 · commandExecution",
+            kind: "sheet",
+            openDetail: jest.fn(),
+            position: "only",
+          }}
+        >
           <CommandExecutionProtocolBlock block={block} />
         </ToolCardPlacementContext.Provider>
       </LargeContentViewerContext.Provider>
@@ -73,7 +97,267 @@ it("opens the exact command output without using its disclosure action", () => {
       turnId: "turn",
     },
   ]);
-  expect(view.getByLabelText("Expand pnpm test")).toBeOnTheScreen();
+  expect(view.queryByLabelText(/^(Expand|Collapse) pnpm test/)).toBeNull();
+  expect(view.queryByText("Input")).toBeNull();
+  expect(view.queryByText("Output")).toBeNull();
+  expect(view.queryByText("first line")).toBeNull();
+});
+
+it("keeps a Card without a semantic viewer inactive", () => {
+  const openDetail = jest.fn();
+  const view = render(
+    <ToolCardPlacementContext.Provider
+      value={{ description: "dynamicToolCall", kind: "sheet", openDetail, position: "only" }}
+    >
+      <Card icon="extension-puzzle-outline" title="Fallback step">
+        <Text>Fallback details</Text>
+      </Card>
+    </ToolCardPlacementContext.Provider>,
+  );
+
+  expect(view.queryByText("Fallback details")).toBeNull();
+  expect(view.queryByLabelText(/^(Expand|Collapse) Fallback step/)).toBeNull();
+  expect(view.queryByLabelText("Open Fallback step")).toBeNull();
+  expect(view.getByTestId("activity-step-row")).not.toHaveProp("onPress");
+  expect(openDetail).not.toHaveBeenCalled();
+});
+
+it("opens unknown protocol output directly in the full-screen content viewer", () => {
+  const opened: LargeContentRouteRequest[] = [];
+  const block: RenderBlock = {
+    body: "raw output",
+    collapsible: true,
+    content: null,
+    durationMs: null,
+    key: "unknown:item",
+    kind: "unknown",
+    raw: { id: "item", payload: { result: "raw output" }, type: "providerExtension" },
+    status: "completed",
+    title: "Provider extension",
+    tone: "neutral",
+  };
+  const view = render(
+    <LargeContentViewerContext.Provider
+      value={(request) => {
+        opened.push(request);
+      }}
+    >
+      <ActivityProtocolListRow block={block} position="only" />
+    </LargeContentViewerContext.Provider>,
+  );
+
+  fireEvent.press(view.getByRole("button", { name: "Open Provider extension output" }));
+  expect(opened).toEqual([
+    {
+      kind: "inline",
+      presentation: "text",
+      text: expect.stringContaining("raw output"),
+      title: "Unsupported · providerExtension",
+    },
+  ]);
+});
+
+it("opens Web Search through its explicit second-sheet action", () => {
+  const openDetail = jest.fn();
+  const block: RenderBlock = {
+    body: null,
+    collapsible: false,
+    content: null,
+    durationMs: null,
+    key: "search:item",
+    kind: "webSearch",
+    raw: { id: "item", query: "CodeWide", results: [] },
+    status: "completed",
+    title: "Web search",
+    tone: "neutral",
+  };
+  const view = render(
+    <ToolCardPlacementContext.Provider
+      value={{ description: "webSearch", kind: "sheet", openDetail, position: "only" }}
+    >
+      <WebSearchProtocolBlock block={block} />
+    </ToolCardPlacementContext.Provider>,
+  );
+
+  fireEvent.press(view.getByRole("button", { name: "Open Web search · CodeWide" }));
+  expect(openDetail).toHaveBeenCalledTimes(1);
+});
+
+it("renders Web Search details as a quiet indexed source list", () => {
+  const block: RenderBlock = {
+    body: null,
+    collapsible: false,
+    content: null,
+    durationMs: null,
+    key: "search:item",
+    kind: "webSearch",
+    raw: {
+      id: "item",
+      query: "CodeWide",
+      results: [
+        {
+          snippet: "Agent workspace",
+          title: "CodeWide",
+          url: "https://www.example.com/full/path",
+        },
+      ],
+    },
+    status: "completed",
+    title: "Web search",
+    tone: "neutral",
+  };
+  const view = render(
+    <ToolCardPlacementContext.Provider value={{ kind: "sheetDetail" }}>
+      <WebSearchProtocolBlock block={block} />
+    </ToolCardPlacementContext.Provider>,
+  );
+
+  expect(webSearchSummary(block)).toEqual({ query: "CodeWide", resultCount: 1 });
+  expect(view.getByText("01")).toBeOnTheScreen();
+  expect(view.getByText("example.com")).toBeOnTheScreen();
+  expect(view.getByText("CodeWide")).toBeOnTheScreen();
+  expect(view.getByText("Agent workspace")).toBeOnTheScreen();
+  expect(view.getByRole("link", { name: "Open CodeWide from example.com" })).toBeOnTheScreen();
+  expect(view.queryByText("https://www.example.com/full/path")).toBeNull();
+});
+
+it.each([
+  ["started", "inProgress", "Compacting context"],
+  ["completed", "completed", "Context compacted"],
+] as const)("keeps a %s context-compaction row informational", (phase, status, title) => {
+  const openDetail = jest.fn();
+  const block: RenderBlock = {
+    body: null,
+    collapsible: false,
+    content: null,
+    durationMs: null,
+    key: `compaction:${phase}`,
+    kind: "contextCompaction",
+    raw: { codewideLifecyclePhase: phase, type: "contextCompaction" },
+    status,
+    title,
+    tone: status === "inProgress" ? "info" : "neutral",
+  };
+  const view = render(
+    <ToolCardPlacementContext.Provider
+      value={{ description: "contextCompaction", kind: "sheet", openDetail, position: "only" }}
+    >
+      <ProtocolBlock block={block} />
+    </ToolCardPlacementContext.Provider>,
+  );
+
+  expect(view.getByText(title)).toBeOnTheScreen();
+  expect(view.queryByRole("button", { name: `Open ${title}` })).toBeNull();
+  expect(view.getByTestId("activity-step-row")).not.toHaveProp("onPress");
+  expect(openDetail).not.toHaveBeenCalled();
+
+  const openActivity = jest.fn();
+  const bubble = render(
+    <ToolCardPlacementContext.Provider value={{ kind: "bubble", openActivity }}>
+      <ProtocolBlock block={block} />
+    </ToolCardPlacementContext.Provider>,
+  );
+  expect(bubble.queryByRole("button", { name: `Open ${title}` })).toBeNull();
+  expect(bubble.getByTestId("protocol-card-header")).toBeDisabled();
+  expect(openActivity).not.toHaveBeenCalled();
+});
+
+it("keeps every generic protocol fallback informational", () => {
+  const openDetail = jest.fn();
+  const block: RenderBlock = {
+    body: "Check the implementation",
+    collapsible: false,
+    content: null,
+    durationMs: null,
+    key: "plan:one",
+    kind: "plan",
+    raw: { id: "plan", text: "Check the implementation", type: "plan" },
+    status: "completed",
+    title: "Plan",
+    tone: "neutral",
+  };
+  const view = render(
+    <ToolCardPlacementContext.Provider
+      value={{ description: "plan", kind: "sheet", openDetail, position: "only" }}
+    >
+      <ProtocolBlock block={block} />
+    </ToolCardPlacementContext.Provider>,
+  );
+
+  expect(view.getByText("Plan")).toBeOnTheScreen();
+  expect(view.getByTestId("activity-step-row")).not.toHaveProp("onPress");
+  expect(openDetail).not.toHaveBeenCalled();
+});
+
+it("opens an image Activity step directly in the shared swipe preview", async () => {
+  const openDetail = jest.fn();
+  const open = jest.fn();
+  const registered = new Map<string, unknown>();
+  const imagePreview: ImagePreviewController = {
+    createSession: () => <></>,
+    open,
+    register: (groupId, item) => {
+      registered.set(`${groupId}:${item.id}`, item);
+      return () => {
+        registered.delete(`${groupId}:${item.id}`);
+      };
+    },
+    registerAnnotationHandler: () => () => undefined,
+  };
+  const first: RenderBlock = {
+    body: null,
+    collapsible: false,
+    content: null,
+    durationMs: null,
+    key: "image:first",
+    kind: "imageGeneration",
+    raw: {
+      id: "first",
+      result: "data:image/png;base64,iVBORw0KGgo=",
+    },
+    status: "completed",
+    title: "First image",
+    tone: "success",
+  };
+  const second: RenderBlock = {
+    ...first,
+    key: "image:second",
+    raw: {
+      id: "second",
+      result: "data:image/png;base64,iVBORw0KGgp=",
+    },
+    title: "Second image",
+  };
+  const view = render(
+    <AppFullscreenOverlayProvider>
+      <ImagePreviewContext.Provider value={imagePreview}>
+        <ImagePreviewGroup id="turn:agent">
+          <ToolCardPlacementContext.Provider
+            value={{
+              description: "imageGeneration",
+              kind: "sheet",
+              openDetail,
+              position: "only",
+            }}
+          >
+            <ImageProtocolBlock block={first} />
+            <ImageProtocolBlock block={second} />
+          </ToolCardPlacementContext.Provider>
+        </ImagePreviewGroup>
+      </ImagePreviewContext.Provider>
+    </AppFullscreenOverlayProvider>,
+  );
+
+  await waitFor(() => expect(registered.size).toBe(2));
+
+  fireEvent.press(view.getByLabelText("Open preview for First image"));
+
+  expect(openDetail).not.toHaveBeenCalled();
+  expect([...registered.keys()]).toEqual(["turn:agent:image:first", "turn:agent:image:second"]);
+  expect(open).toHaveBeenCalledWith(
+    expect.objectContaining({ groupId: "turn:agent", id: "image:first" }),
+    expect.any(Object),
+  );
 });
 
 it("opens a subagent's command output from the subagent's own thread", () => {
@@ -120,7 +404,7 @@ it("opens a subagent's command output from the subagent's own thread", () => {
   ]);
 });
 
-it("draws a tool step in a bubble as its row only, never its output", () => {
+it("keeps a tool step without its semantic viewer inactive in a bubble", () => {
   const block: RenderBlock = {
     body: "first line\n",
     collapsible: true,
@@ -134,7 +418,6 @@ it("draws a tool step in a bubble as its row only, never its output", () => {
     tone: "info",
   };
   const openActivity = jest.fn();
-  // Without an output viewer the row opens the activity sheet.
   const view = render(
     <ToolCardPlacementContext.Provider value={{ kind: "bubble", openActivity }}>
       <CommandExecutionProtocolBlock block={block} />
@@ -145,44 +428,9 @@ it("draws a tool step in a bubble as its row only, never its output", () => {
   expect(view.queryByLabelText(/^(Expand|Collapse) pnpm test/)).toBeNull();
   expect(view.queryByText("first line")).toBeNull();
   expect(view.queryByText("Output")).toBeNull();
-  fireEvent.press(view.getByLabelText("Open pnpm test"));
-  expect(openActivity).toHaveBeenCalledTimes(1);
-});
-
-it("opens a turn's recorded diff in the Changes workspace from the activity sheet", () => {
-  const present = jest.fn();
-  const diff =
-    "diff --git a/example.txt b/example.txt\n--- a/example.txt\n+++ b/example.txt\n@@ -1 +1 @@\n-before\n+after";
-  const block: RenderBlock = {
-    body: diff,
-    collapsible: true,
-    content: null,
-    durationMs: null,
-    key: "server/thread/turn/live-diff",
-    kind: "turnDiff",
-    raw: { diff, id: "codewide:turnDiff" },
-    status: null,
-    title: "Turn diff",
-    tone: "neutral",
-  };
-  const view = render(
-    <TurnTargetContext.Provider value={target}>
-      <TurnChangesContext.Provider value={present}>
-        <ToolCardPlacementContext.Provider value={SHEET_TOOL_CARDS}>
-          <TurnDiffProtocolBlock block={block} />
-        </ToolCardPlacementContext.Provider>
-      </TurnChangesContext.Provider>
-    </TurnTargetContext.Provider>,
-  );
-
-  fireEvent.press(view.getByLabelText("Open the changes of this turn"));
-  expect(present).toHaveBeenCalledWith(
-    target,
-    [expect.objectContaining({ path: "example.txt" })],
-    "turn",
-  );
-  // The diff opens in the workspace, not in place.
-  expect(view.queryByText(/\+after/)).toBeNull();
+  expect(view.queryByLabelText("Open pnpm test")).toBeNull();
+  expect(view.getByTestId("protocol-card-header")).toBeDisabled();
+  expect(openActivity).not.toHaveBeenCalled();
 });
 
 it("opens only the patches owned by the selected file-change call", () => {

@@ -32,27 +32,34 @@ export function useProviderConnect({
 }): ProviderConnect {
   const start = useEvent((method: AuthMethod, login: string | null): void => {
     if (host !== null) {
-      startProviderInteraction(interactionKey, "starting", async () =>
-        capabilities.startAuth(connectionId, {
-          host,
-          login,
-          methodId: method.methodId,
-          pluginId: provider.pluginId,
-        }),
-      );
+      startProviderInteraction({
+        key: interactionKey,
+        operation: async () =>
+          capabilities.startAuth(connectionId, {
+            host,
+            login,
+            methodId: method.methodId,
+            pluginId: provider.pluginId,
+          }),
+        pending: "starting",
+      });
     }
   });
   const cancel = useEvent((): void => {
     if (flow !== null) {
-      startProviderInteraction(interactionKey, "cancelling", async () =>
-        capabilities.cancelAuth(connectionId, flow.flowId),
-      );
+      startProviderInteraction({
+        key: interactionKey,
+        operation: async () => capabilities.cancelAuth(connectionId, flow.flowId),
+        pending: "cancelling",
+      });
     }
   });
   const checkAgain = useEvent((): void => {
-    startProviderInteraction(interactionKey, "checking", async () =>
-      capabilities.checkAgain(connectionId),
-    );
+    startProviderInteraction({
+      key: interactionKey,
+      operation: async () => capabilities.checkAgain(connectionId),
+      pending: "checking",
+    });
   });
   const submitToken = useEvent(async (token: string): Promise<void> => {
     if (host === null) {

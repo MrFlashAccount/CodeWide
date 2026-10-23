@@ -1,0 +1,252 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1664" height="1500" viewBox="0 0 1664 1500">
+  <defs>
+    <filter id="shadow" x="-30%" y="-30%" width="170%" height="180%">
+      <feDropShadow dx="0" dy="26" stdDeviation="28" flood-color="#000" flood-opacity=".48"/>
+    </filter>
+    <filter id="softShadow" x="-30%" y="-30%" width="170%" height="180%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000" flood-opacity=".34"/>
+    </filter>
+    <clipPath id="rightPane"><rect x="560" y="92" width="1104" height="1312" rx="26"/></clipPath>
+  </defs>
+  <style>
+    text { font-family: Inter, Roboto, Arial, sans-serif; }
+    .screenTitle { fill:#f4f4f4; font-size:30px; font-weight:650; }
+    .hero { fill:#f4f4f4; font-size:32px; font-weight:650; }
+    .body { fill:#b5b5b5; font-size:18px; }
+    .label { fill:#b8b8b8; font-size:16px; font-weight:520; }
+    .small { fill:#8b8b8b; font-size:14px; font-weight:500; }
+    .tiny { fill:#8b8b8b; font-size:12px; font-weight:520; }
+    .panelTitle { fill:#f2f2f2; font-size:20px; font-weight:650; }
+    .panelBody { fill:#c8c8c8; font-size:15px; font-weight:520; }
+    .panelMeta { fill:#8d8d8d; font-size:13px; font-weight:500; }
+    .caps { fill:#777; font-size:11px; font-weight:700; letter-spacing:1.3px; }
+  </style>
+
+  <rect width="1664" height="1500" fill="#0f0f0f"/>
+  <text x="30" y="38" fill="#f2f2f2" font-size="24" font-weight="600">00:32  Fri, Oct 23</text>
+  <text x="1460" y="38" fill="#f2f2f2" font-size="18">4G+  16%</text>
+  <rect y="52" width="1664" height="40" fill="#0b0b0b"/>
+  <circle cx="22" cy="72" r="5" fill="#35c778"/>
+  <text x="40" y="78" class="small">76 fps · CPU 25.9% · RSS 491 MB</text>
+
+  <rect x="560" y="92" width="1104" height="1312" rx="26" fill="#171717"/>
+  <line x1="560" y1="92" x2="560" y2="1404" stroke="#252525"/>
+  <text x="28" y="150" class="screenTitle">Pull requests</text>
+
+  <!-- Left: onboarding replaces the future PR list. -->
+  <g transform="translate(174 362)">
+    <circle cx="18" cy="18" r="8" fill="none" stroke="#858585" stroke-width="3"/>
+    <circle cx="18" cy="48" r="8" fill="none" stroke="#858585" stroke-width="3"/>
+    <circle cx="18" cy="78" r="8" fill="none" stroke="#858585" stroke-width="3"/>
+    <path d="M29 18h15c20 0 25 30 55 30h21M29 48h91M29 78h15c20 0 25-30 55-30" fill="none" stroke="#858585" stroke-linecap="round" stroke-width="3"/>
+    <rect x="130" y="24" width="54" height="54" rx="11" fill="none" stroke="#f2f2f2" stroke-width="4"/>
+    <path d="M145 50l9 9 17-20" fill="none" stroke="#f2f2f2" stroke-linecap="round" stroke-linejoin="round" stroke-width="4"/>
+  </g>
+  <text x="280" y="505" class="hero" text-anchor="middle">Your review inbox</text>
+  <text x="280" y="550" class="body" text-anchor="middle">Connect a code host to review changes,</text>
+  <text x="280" y="579" class="body" text-anchor="middle">work with agents, and ship from one place.</text>
+  <rect x="76" y="630" width="408" height="70" rx="35" fill="#e8e8e8"/>
+  <text x="280" y="673" text-anchor="middle" fill="#111" font-size="20" font-weight="650">+  Connect a provider</text>
+  <g transform="translate(110 734)">
+    <path d="M14 0l12 5v9c0 10-7 16-12 19C9 30 2 24 2 14V5z" fill="none" stroke="#858585" stroke-width="2"/>
+    <path d="M9 15l4 4 7-8" fill="none" stroke="#858585" stroke-width="2"/>
+    <text x="40" y="22" class="label">Credentials stay on your Companion.</text>
+  </g>
+
+  <!-- Right: deliberately layered product illustration. -->
+  <g clip-path="url(#rightPane)">
+    <circle cx="1136" cy="720" r="460" fill="#1a1a1a"/>
+    <circle cx="1136" cy="720" r="352" fill="none" stroke="#232323" stroke-width="2"/>
+
+    <!-- Rear sheet: the actual Overview surface. -->
+    <g transform="translate(658 230) rotate(-3 320 430)" filter="url(#softShadow)">
+      <rect width="650" height="875" rx="28" fill="#222" stroke="#373737" stroke-width="2"/>
+      <rect width="650" height="76" rx="28" fill="#292929"/>
+      <path d="M34 38h24M34 38l10-10M34 38l10 10" stroke="#aaa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="84" y="22" width="265" height="14" rx="7" fill="#d7d7d7" opacity=".74"/>
+      <rect x="84" y="45" width="155" height="9" rx="4.5" fill="#878787" opacity=".38"/>
+      <circle cx="603" cy="38" r="3" fill="#9b9b9b"/><circle cx="603" cy="48" r="3" fill="#9b9b9b"/><circle cx="603" cy="28" r="3" fill="#9b9b9b"/>
+
+      <rect x="0" y="76" width="650" height="52" fill="#202020"/>
+      <text x="178" y="109" class="panelBody" text-anchor="middle">Overview</text>
+      <text x="474" y="109" class="panelMeta" text-anchor="middle">Changes · 2 drafts</text>
+      <rect x="75" y="124" width="206" height="3" rx="1.5" fill="#e5e5e5"/>
+
+      <rect x="30" y="158" width="82" height="28" rx="14" fill="#173526"/>
+      <circle cx="50" cy="172" r="5" fill="#35c778"/>
+      <text x="64" y="177" fill="#7de3a8" font-size="13" font-weight="650">Open</text>
+      <rect x="122" y="158" width="172" height="28" rx="14" fill="#303030"/>
+      <text x="208" y="177" class="panelMeta" text-anchor="middle">Review requested · you</text>
+      <rect x="304" y="158" width="116" height="28" rx="14" fill="#303030"/>
+      <text x="362" y="177" class="panelMeta" text-anchor="middle">Local checkout</text>
+      <text x="30" y="230" class="panelTitle">Reconcile agent state after reconnect</text>
+      <text x="30" y="258" class="panelMeta">CodeWide #218 · sergey · updated 8m ago</text>
+
+      <rect x="30" y="294" width="355" height="168" rx="18" fill="#1b1b1b" stroke="#343434"/>
+      <text x="52" y="328" class="caps">DESCRIPTION</text>
+      <rect x="52" y="350" width="292" height="11" rx="5.5" fill="#8e8e8e" opacity=".34"/>
+      <rect x="52" y="375" width="260" height="11" rx="5.5" fill="#8e8e8e" opacity=".27"/>
+      <rect x="52" y="400" width="278" height="11" rx="5.5" fill="#8e8e8e" opacity=".22"/>
+      <rect x="52" y="425" width="184" height="11" rx="5.5" fill="#8e8e8e" opacity=".18"/>
+
+      <rect x="405" y="294" width="215" height="132" rx="18" fill="#1b1b1b" stroke="#343434"/>
+      <text x="427" y="328" class="caps">MERGE</text>
+      <rect x="427" y="345" width="66" height="26" rx="13" fill="#173526"/>
+      <text x="460" y="363" fill="#7de3a8" font-size="13" font-weight="650" text-anchor="middle">Ready</text>
+      <rect x="427" y="384" width="165" height="28" rx="14" fill="#e4e4e4"/>
+      <text x="509" y="403" fill="#171717" font-size="13" font-weight="650" text-anchor="middle">Merge</text>
+
+      <rect x="405" y="444" width="215" height="170" rx="18" fill="#1b1b1b" stroke="#343434"/>
+      <text x="427" y="478" class="caps">CHECKS</text>
+      <text x="592" y="478" fill="#7de3a8" font-size="12" font-weight="650" text-anchor="end">4 passed</text>
+      <circle cx="440" cy="512" r="10" fill="#173526"/><path d="M435 512l4 4 7-8" fill="none" stroke="#35c778" stroke-width="2"/>
+      <text x="460" y="517" class="panelBody">Android validation</text>
+      <circle cx="440" cy="552" r="10" fill="#173526"/><path d="M435 552l4 4 7-8" fill="none" stroke="#35c778" stroke-width="2"/>
+      <text x="460" y="557" class="panelBody">Companion tests</text>
+      <circle cx="440" cy="592" r="10" fill="#173526"/><path d="M435 592l4 4 7-8" fill="none" stroke="#35c778" stroke-width="2"/>
+      <text x="460" y="597" class="panelBody">Typecheck</text>
+
+      <rect x="405" y="632" width="215" height="180" rx="18" fill="#1b1b1b" stroke="#343434"/>
+      <text x="427" y="666" class="caps">LINKED THREADS</text>
+      <text x="592" y="666" class="panelMeta" text-anchor="end">1</text>
+      <circle cx="444" cy="706" r="17" fill="#303030"/>
+      <path d="M436 709c6 6 16 4 18-4M438 700h12" fill="none" stroke="#aaa" stroke-width="2" stroke-linecap="round"/>
+      <text x="470" y="703" class="panelBody">Fix stale agent status</text>
+      <text x="470" y="724" class="panelMeta">Claude · working on this PR</text>
+      <rect x="427" y="756" width="165" height="34" rx="17" fill="#2c2c2c"/>
+      <text x="509" y="778" class="panelBody" text-anchor="middle">Message the agent</text>
+    </g>
+
+    <!-- Overview rail pulled forward so its real capabilities stay legible under the Changes layer. -->
+    <g transform="translate(610 618) rotate(-4 160 150)" filter="url(#softShadow)">
+      <rect width="326" height="306" rx="22" fill="#303030" stroke="#464646" stroke-width="2"/>
+      <text x="24" y="38" class="caps">OVERVIEW</text>
+      <g transform="translate(20 58)">
+        <rect width="286" height="64" rx="14" fill="#222"/>
+        <circle cx="27" cy="32" r="12" fill="#173526"/>
+        <path d="M21 32l4 4 8-9" fill="none" stroke="#35c778" stroke-width="2.5"/>
+        <text x="50" y="28" class="panelBody">Ready to merge</text>
+        <text x="50" y="48" class="panelMeta">Merge method · Auto-merge</text>
+      </g>
+      <g transform="translate(20 132)">
+        <rect width="286" height="64" rx="14" fill="#222"/>
+        <circle cx="27" cy="32" r="12" fill="#173526"/>
+        <path d="M21 32l4 4 8-9" fill="none" stroke="#35c778" stroke-width="2.5"/>
+        <text x="50" y="28" class="panelBody">4 checks passed</text>
+        <text x="50" y="48" class="panelMeta">Actions stay anchored to each check</text>
+      </g>
+      <g transform="translate(20 206)">
+        <rect width="286" height="76" rx="14" fill="#222"/>
+        <circle cx="27" cy="30" r="12" fill="#393939"/>
+        <path d="M21 32c4 4 12 3 14-3M22 25h10" fill="none" stroke="#bbb" stroke-width="1.8" stroke-linecap="round"/>
+        <text x="50" y="27" class="panelBody">1 linked thread</text>
+        <text x="50" y="48" class="panelMeta">Fix stale agent status</text>
+        <text x="50" y="66" fill="#7de3a8" font-size="12">Message the agent →</text>
+      </g>
+    </g>
+
+    <!-- Foreground sheet: the real Changes review surface. -->
+    <g transform="translate(944 298) rotate(2 330 450)" filter="url(#shadow)">
+      <rect width="690" height="918" rx="30" fill="#262626" stroke="#3c3c3c" stroke-width="2"/>
+      <rect width="690" height="76" rx="30" fill="#2d2d2d"/>
+      <circle cx="36" cy="38" r="15" fill="#363636"/>
+      <rect x="68" y="25" width="282" height="13" rx="6.5" fill="#e4e4e4" opacity=".76"/>
+      <rect x="68" y="47" width="182" height="9" rx="4.5" fill="#8d8d8d" opacity=".4"/>
+      <rect x="0" y="76" width="690" height="52" fill="#242424"/>
+      <text x="188" y="109" class="panelMeta" text-anchor="middle">Overview</text>
+      <text x="500" y="109" class="panelBody" text-anchor="middle">Changes</text>
+      <rect x="388" y="124" width="224" height="3" rx="1.5" fill="#eee"/>
+      <rect x="550" y="91" width="62" height="24" rx="12" fill="#343434"/>
+      <text x="581" y="108" class="tiny" text-anchor="middle">2 drafts</text>
+
+      <rect x="24" y="150" width="188" height="40" rx="12" fill="#333" stroke="#474747"/>
+      <rect x="25" y="151" width="92" height="38" rx="11" fill="#474747"/>
+      <text x="71" y="176" class="panelBody" text-anchor="middle">✓ Files</text>
+      <text x="163" y="176" class="panelMeta" text-anchor="middle">Guide</text>
+      <text x="652" y="176" class="panelMeta" text-anchor="end">2 of 5 viewed</text>
+
+      <rect x="24" y="210" width="196" height="566" rx="16" fill="#202020" stroke="#363636"/>
+      <text x="44" y="244" class="caps">CHANGED FILES</text>
+      <g transform="translate(36 268)">
+        <rect x="-12" y="-12" width="172" height="72" rx="12" fill="#333"/>
+        <text x="4" y="10" class="panelBody">threadStatus.ts</text>
+        <text x="4" y="34" class="panelMeta">1 draft · viewed</text>
+        <text x="142" y="12" fill="#7de3a8" font-size="12" text-anchor="end">+18</text>
+        <text x="142" y="32" fill="#f07178" font-size="12" text-anchor="end">−4</text>
+      </g>
+      <g transform="translate(40 356)">
+        <text x="0" y="0" class="panelBody">reconcile.ts</text>
+        <text x="0" y="24" class="panelMeta">Viewed · github.com</text>
+        <text x="136" y="2" fill="#7de3a8" font-size="12" text-anchor="end">+9</text>
+      </g>
+      <line x1="36" y1="398" x2="208" y2="398" stroke="#333"/>
+      <g transform="translate(40 430)">
+        <text x="0" y="0" class="panelBody">threadStore.ts</text>
+        <text x="0" y="24" class="panelMeta">1 draft</text>
+        <text x="136" y="2" fill="#7de3a8" font-size="12" text-anchor="end">+7</text>
+        <text x="136" y="22" fill="#f07178" font-size="12" text-anchor="end">−2</text>
+      </g>
+      <line x1="36" y1="472" x2="208" y2="472" stroke="#333"/>
+      <g transform="translate(40 504)">
+        <text x="0" y="0" class="panelBody">status.test.ts</text>
+        <text x="0" y="24" class="panelMeta">new file</text>
+        <text x="136" y="2" fill="#7de3a8" font-size="12" text-anchor="end">+42</text>
+      </g>
+
+      <rect x="238" y="210" width="428" height="566" rx="16" fill="#191919" stroke="#363636"/>
+      <rect x="238" y="210" width="428" height="48" rx="16" fill="#292929"/>
+      <text x="260" y="241" class="panelBody">apps/android/src/data/threadStatus.ts</text>
+      <text x="628" y="241" fill="#7de3a8" font-size="12" text-anchor="end">+18</text>
+      <text x="647" y="241" fill="#f07178" font-size="12" text-anchor="end">−4</text>
+      <rect x="250" y="276" width="404" height="28" fill="#28231f"/>
+      <text x="264" y="295" fill="#a1a1a1" font-size="12">@@ -84,7 +84,12 @@ reconcileThreadStatus</text>
+      <rect x="250" y="316" width="404" height="28" fill="#321d21"/>
+      <text x="264" y="335" fill="#eaa0a5" font-size="12">− return cached.status;</text>
+      <rect x="250" y="348" width="404" height="28" fill="#173526"/>
+      <text x="264" y="367" fill="#9ce7b9" font-size="12">+ const live = processGeneration.get(threadId);</text>
+      <rect x="250" y="380" width="404" height="28" fill="#173526"/>
+      <text x="264" y="399" fill="#9ce7b9" font-size="12">+ return reconcile(cached, live);</text>
+      <text x="264" y="444" fill="#989898" font-size="12">  if (live.stoppedAt !== null) {</text>
+      <rect x="250" y="460" width="404" height="28" fill="#173526"/>
+      <text x="264" y="479" fill="#9ce7b9" font-size="12">+   settleUnfinishedAgents(threadId);</text>
+
+      <rect x="270" y="520" width="360" height="146" rx="14" fill="#303030" stroke="#4a4a4a"/>
+      <text x="290" y="548" class="caps">LINE 91 · DRAFT</text>
+      <text x="290" y="580" class="panelBody">Should the generation be captured before</text>
+      <text x="290" y="603" class="panelBody">the async reconcile starts?</text>
+      <rect x="290" y="622" width="40" height="22" rx="11" fill="#3d3d3d"/>
+      <text x="310" y="638" class="tiny" text-anchor="middle">PR</text>
+      <rect x="338" y="622" width="58" height="22" rx="11" fill="#3d3d3d"/>
+      <text x="367" y="638" class="tiny" text-anchor="middle">Agent</text>
+
+      <rect x="0" y="802" width="690" height="116" rx="30" fill="#303030"/>
+      <text x="28" y="842" class="panelTitle">2 drafts</text>
+      <text x="28" y="870" class="panelMeta">1 to PR · 1 to agent</text>
+      <rect x="456" y="829" width="206" height="58" rx="29" fill="#e7e7e7"/>
+      <text x="559" y="865" fill="#151515" font-size="15" font-weight="650" text-anchor="middle">Submit · Approve</text>
+    </g>
+
+    <!-- Small detached destination picker makes the stack read as an illustration. -->
+    <g transform="translate(842 1032) rotate(-5 180 90)" filter="url(#softShadow)">
+      <rect width="366" height="176" rx="22" fill="#343434" stroke="#4a4a4a" stroke-width="2"/>
+      <text x="24" y="36" class="caps">COMMENT ON THIS LINE</text>
+      <rect x="24" y="56" width="318" height="44" rx="12" fill="#222"/>
+      <text x="40" y="84" class="panelMeta">Comment</text>
+      <text x="24" y="130" class="panelMeta">Send to</text>
+      <rect x="94" y="112" width="58" height="34" rx="17" fill="#444"/>
+      <text x="123" y="134" class="panelBody" text-anchor="middle">PR</text>
+      <rect x="160" y="112" width="72" height="34" rx="17" fill="#444"/>
+      <text x="196" y="134" class="panelBody" text-anchor="middle">Agent</text>
+      <rect x="240" y="112" width="76" height="34" rx="17" fill="#e6e6e6"/>
+      <text x="278" y="134" fill="#171717" font-size="14" font-weight="650" text-anchor="middle">Both</text>
+    </g>
+  </g>
+
+  <rect x="22" y="1294" width="516" height="90" rx="45" fill="#181818"/>
+  <text x="147" y="1348" text-anchor="middle" class="label">Threads</text>
+  <rect x="282" y="1302" width="248" height="74" rx="37" fill="#e6e6e6"/>
+  <text x="406" y="1348" text-anchor="middle" fill="#111" font-size="17" font-weight="650">Pull requests</text>
+  <rect y="1404" width="1664" height="96" fill="#0b0b0b"/>
+  <circle cx="832" cy="1452" r="10" fill="#f2f2f2"/>
+  <rect x="1522" y="1442" width="20" height="20" rx="3" fill="#f2f2f2"/>
+</svg>

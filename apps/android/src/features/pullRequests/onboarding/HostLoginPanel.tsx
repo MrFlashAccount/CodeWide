@@ -1,9 +1,14 @@
+import { Ionicons } from "@expo/vector-icons";
+import { setStringAsync } from "expo-clipboard";
 import { Linking, View } from "react-native";
 
 import type { AuthFlow } from "../../../data/forgeContract";
 import { AppButton } from "../../../presentation/controls/AppButton";
 import { ProductText } from "../../../presentation/text/ProductText";
 import { useEvent } from "../../../react/useEvent";
+import { colors, iconSize } from "../../../theme";
+import { useAppDialog } from "../../../ui/AppDialog";
+import { AppText } from "../../../ui/AppText";
 import { onboardingStyles as styles } from "./onboarding.styles";
 import { safeProviderUrl } from "../../../data/forgeProviderUrl";
 
@@ -21,7 +26,13 @@ export function HostLoginPanel({
   readonly flow: Extract<AuthFlow, { readonly state: "awaitingUser" }>;
   readonly onCancel: () => void;
 }): React.JSX.Element {
+  const dialog = useAppDialog();
   const url = safeProviderUrl(flow.verificationUri, flow.host);
+  const copy = useEvent((): void => {
+    setStringAsync(flow.userCode).catch((error: unknown) => {
+      dialog.alert("Copy failed", error instanceof Error ? error.message : "Could not copy code");
+    });
+  });
   const open = useEvent((): void => {
     if (url !== null) {
       // Without a browser the code stays visible for entry on another device.
@@ -29,12 +40,14 @@ export function HostLoginPanel({
     }
   });
   return (
-    <View style={styles.section} testID="forge-host-login-panel">
-      <ProductText style={styles.body}>
-        Enter this code on {flow.host}. You can finish on this phone; the companion completes the
-        sign-in.
-      </ProductText>
-      <View style={styles.codeBox}>
+    <View style={styles.hostLoginPanel} testID="forge-host-login-panel">
+      <View style={styles.hostLoginLead}>
+        <ProductText style={styles.hostLoginTitle} weight="semibold">
+          Finish sign-in
+        </ProductText>
+        <ProductText style={styles.body}>Enter this one-time code on {flow.host}.</ProductText>
+      </View>
+      <View style={styles.hostLoginCodeBox}>
         <ProductText
           accessibilityLabel={`One-time code ${flow.userCode}`}
           selectable
@@ -48,19 +61,74 @@ export function HostLoginPanel({
           The verification page is not on {flow.host}. Run gh auth login on the companion host.
         </ProductText>
       ) : null}
-      <View style={styles.actions}>
+      <HostLoginFooter host={flow.host} onCopy={copy} onOpen={open} openAvailable={url !== null} />
+      <AppButton
+        accessibilityLabel="Cancel sign-in"
+        isDisabled={cancelling}
+        onPress={onCancel}
+        size="sm"
+        style={styles.hostLoginCancel}
+        variant="ghost"
+      >
+        Cancel
+      </AppButton>
+    </View>
+  );
+}
+
+function HostLoginFooter({
+  host,
+  onCopy,
+  onOpen,
+  openAvailable,
+}: {
+  readonly host: string;
+  readonly onCopy: () => void;
+  readonly onOpen: () => void;
+  readonly openAvailable: boolean;
+}): React.JSX.Element {
+  return (
+    <View style={styles.hostLoginFooter}>
+      <AppText shimmering style={styles.hostLoginStatus}>
+        Waiting for authorization…
+      </AppText>
+      <View style={styles.hostLoginActions} testID="forge-host-login-actions">
         <AppButton
-          accessibilityLabel={`Open ${flow.host} verification page`}
-          isDisabled={url === null}
-          onPress={open}
-          variant="primary"
+          accessibilityLabel="Copy one-time code"
+          onPress={onCopy}
+          size="sm"
+          variant="ghost"
         >
-          {`Open ${flow.host}`}
+          Copy code
         </AppButton>
-        <AppButton isDisabled={cancelling} onPress={onCancel} variant="ghost">
-          Cancel
-        </AppButton>
+        <OpenHostButton host={host} onPress={onOpen} openAvailable={openAvailable} />
       </View>
     </View>
+  );
+}
+
+function OpenHostButton({
+  host,
+  onPress,
+  openAvailable,
+}: {
+  readonly host: string;
+  readonly onPress: () => void;
+  readonly openAvailable: boolean;
+}): React.JSX.Element {
+  return (
+    <AppButton
+      accessibilityLabel={`Open ${host} verification page`}
+      isDisabled={!openAvailable}
+      onPress={onPress}
+      size="sm"
+      style={styles.hostLoginOpenButton}
+      variant="primary"
+    >
+      <Ionicons color={colors.onPrimary} name="open-outline" size={iconSize.inline} />
+      <ProductText style={styles.hostLoginOpenLabel} weight="semibold">
+        {`Open ${host}`}
+      </ProductText>
+    </AppButton>
   );
 }

@@ -1,4 +1,5 @@
 import { useSelector } from "@legendapp/state/react";
+import { useState } from "react";
 import { StyleSheet, View } from "react-native";
 
 import type { AccountState, ForgeProvider } from "../../data/forgeContract";
@@ -43,8 +44,12 @@ export function PullRequestsCatalog({
 }): React.JSX.Element {
   forge.accounts.ensure({ connectionId });
   const accountsOpen = useSelector(forgeAccountsSheetOpen);
+  const [openOnboardingConnection, setOpenOnboardingConnection] = useState<string | null>(null);
   const state = useSelector(() => forge.accounts.state$[connectionId]?.get());
   const snapshot = remoteValue(state);
+  const handleTrayOpenChange = useEvent((open: boolean): void => {
+    setOpenOnboardingConnection(open ? connectionId : null);
+  });
   if (snapshot === null) {
     return (
       <AccountsPlaceholder
@@ -55,16 +60,19 @@ export function PullRequestsCatalog({
       />
     );
   }
+  const linked = hasLinkedAccount(snapshot);
+  const onboardingOpen = openOnboardingConnection === connectionId;
   return (
     <View style={styles.fill}>
-      {hasLinkedAccount(snapshot) ? null : (
+      {!linked || onboardingOpen ? (
         <OnboardingScreen
           capabilities={capabilities}
           connectionId={connectionId}
+          onTrayOpenChange={handleTrayOpenChange}
           snapshot={snapshot}
         />
-      )}
-      {hasLinkedAccount(snapshot) ? (
+      ) : null}
+      {linked && !onboardingOpen ? (
         <ConnectedList
           connectionId={connectionId}
           forge={forge}

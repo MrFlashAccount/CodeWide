@@ -1,67 +1,78 @@
-import { ScrollView, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { View } from "react-native";
 
 import type { ForgeAccountsSnapshot } from "../../../data/forgeContract";
-import { AppButton } from "../../../presentation/controls/AppButton";
 import { ProductText } from "../../../presentation/text/ProductText";
+import { colors, iconSize } from "../../../theme";
 import type { PullRequestsWorkspaceCapabilities } from "../workspaceCapabilities";
 import { onboardingStyles as styles } from "./onboarding.styles";
-import { ProviderCard } from "./ProviderCard";
+import { ProviderConnectTray } from "./ProviderConnectTray";
 
 /**
- * Pull requests tab with no linked account: one card per enabled provider.
- * Disabled providers stay listed with Enable, because the tab is always present.
+ * Pull requests welcome with one action; provider and method choices live in
+ * the server-driven tray instead of competing on the empty screen.
  */
 export function OnboardingScreen({
   capabilities,
   connectionId,
+  onTrayOpenChange,
   snapshot,
 }: {
   readonly capabilities: PullRequestsWorkspaceCapabilities;
   readonly connectionId: string;
+  readonly onTrayOpenChange: (open: boolean) => void;
   readonly snapshot: ForgeAccountsSnapshot;
 }): React.JSX.Element {
-  const enabled = snapshot.providers.filter((provider) => provider.enabled);
-  const disabled = snapshot.providers.filter((provider) => !provider.enabled);
   return (
-    <ScrollView contentContainerStyle={styles.list} testID="forge-onboarding">
-      <ProductText accessibilityRole="header" style={styles.title}>
-        Connect a forge account
-      </ProductText>
-      <ProductText style={styles.body}>
-        Pull requests from every connected account appear here. Sign-in and tokens stay on the
-        companion host.
-      </ProductText>
-      {enabled.map((provider) => (
-        <ProviderCard
-          accounts={snapshot.accounts}
-          capabilities={capabilities}
-          connectionId={connectionId}
-          flows={snapshot.flows}
-          key={provider.pluginId}
-          provider={provider}
+    <View style={styles.welcome} testID="forge-onboarding">
+      <WelcomeCopy
+        capabilities={capabilities}
+        connectionId={connectionId}
+        onTrayOpenChange={onTrayOpenChange}
+        snapshot={snapshot}
+      />
+    </View>
+  );
+}
+
+function WelcomeCopy({
+  capabilities,
+  connectionId,
+  onTrayOpenChange,
+  snapshot,
+}: {
+  readonly capabilities: PullRequestsWorkspaceCapabilities;
+  readonly connectionId: string;
+  readonly onTrayOpenChange: (open: boolean) => void;
+  readonly snapshot: ForgeAccountsSnapshot;
+}): React.JSX.Element {
+  return (
+    <View style={styles.welcomeCopy}>
+      <View style={styles.welcomeMark}>
+        <Ionicons
+          color={colors.textMuted}
+          name="git-pull-request-outline"
+          size={iconSize.illustration}
         />
-      ))}
-      {disabled.map((provider) => (
-        <View key={provider.pluginId} style={[styles.card, styles.header]}>
-          <ProductText numberOfLines={1} style={styles.title}>
-            {`${provider.forgeName} · Disabled`}
-          </ProductText>
-          <AppButton
-            onPress={() =>
-              void capabilities.setProviderEnabled(connectionId, provider.pluginId, true)
-            }
-            size="sm"
-            variant="secondary"
-          >
-            Enable
-          </AppButton>
-        </View>
-      ))}
-      {snapshot.providers.length === 0 ? (
-        <ProductText style={styles.body}>
-          No forge provider is registered on this companion.
+      </View>
+      <ProductText accessibilityRole="header" style={styles.welcomeTitle} weight="semibold">
+        Your review inbox
+      </ProductText>
+      <ProductText style={styles.welcomeBody}>
+        Connect a code host to see every pull request that needs you.
+      </ProductText>
+      <ProviderConnectTray
+        capabilities={capabilities}
+        connectionId={connectionId}
+        onOpenChange={onTrayOpenChange}
+        snapshot={snapshot}
+      />
+      <View style={[styles.trust, styles.welcomeTrust]}>
+        <Ionicons color={colors.textMuted} name="shield-checkmark-outline" size={iconSize.inline} />
+        <ProductText style={styles.providerCaption}>
+          Credentials stay on your Companion.
         </ProductText>
-      ) : null}
-    </ScrollView>
+      </View>
+    </View>
   );
 }

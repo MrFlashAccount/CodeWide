@@ -18,6 +18,9 @@ export default {
     // Gradle copies the selected grammar files directly from this package into native assets.
     "tm-grammars",
   ],
+  // Reacticx Tray is vendored unchanged; its compound API intentionally exports
+  // more primitives than this first consumer uses.
+  ignore: ["src/vendor/reacticx/**"],
   // WHY: Metro resolves these exact module names to native, Android, or web files before
   // the unsuffixed fallback. Knip does not model React Native platform resolution.
   ignoreUnresolved: [
@@ -33,5 +36,10 @@ export default {
     "src/**/*.android.{ts,tsx}",
     "src/**/*.web.{ts,tsx}",
   ],
-  project: ["app/legacy.tsx", "app/(workspace)/**/*.{ts,tsx}", "src/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"],
+  project: [
+    "app/legacy.tsx",
+    "app/(workspace)/**/*.{ts,tsx}",
+    "src/**/*.{ts,tsx}",
+    "test/**/*.{ts,tsx}",
+  ],
 };

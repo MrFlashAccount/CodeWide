@@ -61,13 +61,9 @@ export const v1ProjectListScreenOptions = {
   contentStyle: { backgroundColor: colors.threadListSurface },
 } as const;
 
-/** Short crossfade of a peer catalog switch (N-05). */
-const CATALOG_SWITCH_DURATION_MS = 150;
-
-/** Crossfades the Threads and Pull requests catalogs, which are peers rather than a hierarchy. */
-export const v1CatalogSwitchScreenOptions = {
-  animation: "fade",
-  animationDuration: CATALOG_SWITCH_DURATION_MS,
+/** Replaces the whole catalog route atomically, without exposing either route's chrome mid-frame. */
+export const v1CatalogRootScreenOptions = {
+  animation: "none",
   contentStyle: { backgroundColor: colors.threadListSurface },
   headerShown: false,
 } as const;

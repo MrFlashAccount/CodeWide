@@ -9,7 +9,6 @@ export function protocolCopyText(block: RenderBlock): string {
     block.kind === "agentMessage" ||
     block.kind === "plan" ||
     block.kind === "turnPlan" ||
-    block.kind === "turnDiff" ||
     block.kind === "reasoning" ||
     block.kind === "commandExecution"
   ) {

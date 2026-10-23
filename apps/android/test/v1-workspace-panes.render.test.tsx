@@ -1,4 +1,4 @@
-import { Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { act, fireEvent, render } from "@testing-library/react-native";
 import { workspaceCatalogDiagnostics } from "../src/data/workspaceCatalogDiagnostics";
 import {
@@ -17,7 +17,17 @@ import {
   WorkspacePaneLayout,
   WorkspaceScreenLayout,
 } from "../src/routeComposition/WorkspacePaneLayout";
+import { catalogModeBarHorizontalInset } from "../src/presentation/layouts/catalogModeBarGeometry";
+import { desktopThreadSidebarWidth } from "../src/presentation/layouts/windowLayout";
 let mockDesktop = false;
+jest.mock("../src/routeComposition/CatalogModeBarHost", () => {
+  const { Text: NativeText } = jest.requireActual("react-native");
+  return {
+    CatalogModeBarHost: ({ mode }: { readonly mode: string }) => (
+      <NativeText testID="catalog-mode-bar-host">{mode}</NativeText>
+    ),
+  };
+});
 jest.mock("../src/services/workspace/workspaceRouteResources", () => ({
   useWorkspaceRouteResources: () => ({
     desktop: mockDesktop,
@@ -43,6 +53,13 @@ function Project() {
 function Thread() {
   return <Text testID="thread">Thread</Text>;
 }
+function PullRequests() {
+  return (
+    <View testID="pull-requests-route">
+      <Text testID="pull-requests-header">Pull requests</Text>
+    </View>
+  );
+}
 function Catalog() {
   const selectedProject = useWorkspaceProjectSessionId();
   return (
@@ -59,6 +76,7 @@ function Workspace() {
   return (
     <Root.Navigator layout={WorkspacePaneLayout} screenLayout={WorkspaceScreenLayout}>
       <Root.Screen name="(lists)" component={Catalog} />
+      <Root.Screen name="pulls/index" component={PullRequests} />
       <Root.Screen name="thread" component={Thread} />
     </Root.Navigator>
   );
@@ -115,6 +133,53 @@ it("mounts the catalog once outside the detail stack and updates it without chan
   act(() => mockReference.goBack());
   expect(mockReference.getCurrentRoute()?.name).toBe("index");
   expect(view.getByTestId("catalog-focus").props.children).toBe("focused");
+  view.unmount();
+});
+
+it("keeps the wide catalog geometry while switching to the Pull requests route", () => {
+  mockDesktop = true;
+  const view = render(<Application />);
+  const workspaceKey = mockReference.getRootState().routes[0]?.state?.key;
+  const catalogPane = view.getByTestId("workspace-catalog-pane");
+  const modeBar = view.getByTestId("catalog-mode-bar-host");
+  expect(view.getByTestId("header")).toBeVisible();
+  const floatingModeBar = view.getByTestId("floating-catalog-mode-bar");
+  expect(floatingModeBar).toHaveStyle({ position: "absolute" });
+  expect(StyleSheet.flatten(floatingModeBar.props.style).width).toBe(
+    desktopThreadSidebarWidth(1100) - catalogModeBarHorizontalInset * 2,
+  );
+  expect(modeBar.props.children).toBe("threads");
+
+  act(() =>
+    mockReference.dispatch({
+      type: "REPLACE",
+      target: workspaceKey,
+      payload: { name: "pulls/index" },
+    }),
+  );
+
+  expect(view.getByTestId("pull-requests-route")).toBeVisible();
+  expect(view.getByTestId("pull-requests-header")).toBeVisible();
+  expect(view.getByTestId("catalog-mode-bar-host")).toBe(modeBar);
+  expect(modeBar.props.children).toBe("pullRequests");
+  expect(view.getByTestId("floating-catalog-mode-bar")).toBe(floatingModeBar);
+  expect(StyleSheet.flatten(floatingModeBar.props.style).width).toBe(
+    desktopThreadSidebarWidth(1100) - catalogModeBarHorizontalInset * 2,
+  );
+  expect(catalogPane).toHaveStyle({ display: "none" });
+  expect(view.queryByTestId("header", { includeHiddenElements: true })).toBeNull();
+  expect(view.getByTestId("v1-workspace-destination")).toHaveStyle({ flex: 1, minWidth: 0 });
+
+  act(() =>
+    mockReference.dispatch({
+      type: "REPLACE",
+      target: workspaceKey,
+      payload: { name: "(lists)" },
+    }),
+  );
+  expect(view.getByTestId("workspace-catalog-pane")).not.toHaveStyle({ display: "none" });
+  expect(view.getByTestId("header")).toBeVisible();
+  expect(view.queryByTestId("pull-requests-route")).toBeNull();
   view.unmount();
 });
 

@@ -39,9 +39,7 @@ export function FileChangeProtocolBlock({ block }: { block: RenderBlock }) {
       icon="git-compare-outline"
       title={`File changes · ${String(changeCount)}`}
       {...(block.status === null ? {} : { status: block.status })}
-      collapsible
       copyText={() => protocolCopyText(block)}
-      initiallyExpanded={false}
       {...(canOpen ? { onOpen: openChanges, openLabel: "Open these file changes" } : {})}
     >
       <FileChangeProtocolDetails block={block} />

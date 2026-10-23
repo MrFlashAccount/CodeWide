@@ -1,20 +1,27 @@
 import type { RenderBlock } from "@codewide/renderers";
 import { LegendList } from "@legendapp/list/react-native";
-import type { ReactElement } from "react";
+import { useContext, useState, type ReactElement } from "react";
 import { View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
+import { listRowHeight, listRowPosition } from "../../../ui/AppListRow.types";
 import { AppSheet, AppSheetScrollView } from "../../../ui/AppSheet";
 import { AppText as Text } from "../../../ui/Typography";
+import { ActivityProtocolListRow } from "../protocol/ActivityProtocolListRow";
 import { ProtocolBlock } from "../protocol/ProtocolBlock";
+import { protocolActivityRow, protocolBlockUsesCard } from "../protocol/protocolActivityRow";
+import { WebSearchProtocolBlock } from "../protocol/WebSearchProtocolBlock";
+import { webSearchSummary } from "../protocol/webSearchPresentation";
 import { styles } from "./ActivityDetailSheet.styles";
 import {
   ActiveToolCallContext,
   ExpansionItemKeyContext,
-  SHEET_TOOL_CARDS,
   ToolCardPlacementContext,
   TurnActivityContentContext,
+  TurnActivityMetricsContext,
 } from "./turnContexts";
 import type { TransferAccess } from "../../../data/private-transfer";
+
+type WebSearchBlock = RenderBlock & { readonly kind: "webSearch" };
 
 /** Keeps detailed historical activity outside the conversation scroll owner. */
 export function ActivityDetailSheet({
@@ -34,14 +41,23 @@ export function ActivityDetailSheet({
   turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
   visible: boolean;
 }): ReactElement {
+  const [webSearchBlock, setWebSearchBlock] = useState<WebSearchBlock | null>(null);
+  const openWebSearch = useEvent((block: WebSearchBlock) => {
+    setWebSearchBlock(block);
+  });
+  const closeWebSearch = useEvent(() => {
+    setWebSearchBlock(null);
+  });
   const changeOpen = useEvent((open: boolean) => {
     if (!open) {
+      setWebSearchBlock(null);
       onClose();
     }
   });
   const content = (
     <ActivityDetailList
       blocks={blocks}
+      onOpenWebSearch={openWebSearch}
       turnKey={turnKey}
       turnStatus={turnStatus}
       {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
@@ -63,6 +79,7 @@ export function ActivityDetailSheet({
     >
       <ActivityDetailHeader />
       {content}
+      <WebSearchDetailSheet block={webSearchBlock} onClose={closeWebSearch} />
     </AppSheet>
   );
 }
@@ -81,12 +98,14 @@ function ActivityDetailList({
   blocks,
   getTransferAccess,
   onFixUnsupportedBlock,
+  onOpenWebSearch,
   turnKey,
   turnStatus,
 }: {
   blocks: readonly RenderBlock[];
   getTransferAccess?: () => Promise<TransferAccess>;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
+  onOpenWebSearch: (block: WebSearchBlock) => void;
   turnKey: string;
   turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
 }): ReactElement {
@@ -94,6 +113,8 @@ function ActivityDetailList({
     <ActivityDetailRow
       active={turnStatus === "inProgress" && index === blocks.length - 1}
       block={block}
+      onOpenWebSearch={onOpenWebSearch}
+      position={listRowPosition(index, blocks.length)}
       turnKey={turnKey}
       {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
@@ -104,12 +125,15 @@ function ActivityDetailList({
       contentContainerStyle={styles.content}
       data={blocks}
       drawDistance={300}
-      estimatedItemSize={180}
+      estimatedItemSize={listRowHeight.double}
+      getFixedItemSize={activityRowSize}
+      getItemType={activityBlockType}
       keyboardShouldPersistTaps="handled"
       keyExtractor={activityBlockKey}
-      recycleItems={false}
+      recycleItems
       renderItem={renderItem}
       renderScrollComponent={AppSheetScrollView}
+      testID="activity-detail-list"
     />
   );
   return <TurnActivityContentContext.Provider value>{list}</TurnActivityContentContext.Provider>;
@@ -120,12 +144,16 @@ function ActivityDetailRow({
   block,
   getTransferAccess,
   onFixUnsupportedBlock,
+  onOpenWebSearch,
+  position,
   turnKey,
 }: {
   active: boolean;
   block: RenderBlock;
   getTransferAccess?: () => Promise<TransferAccess>;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
+  onOpenWebSearch: (block: WebSearchBlock) => void;
+  position: "only" | "first" | "middle" | "last";
   turnKey: string;
 }): ReactElement {
   return (
@@ -133,6 +161,8 @@ function ActivityDetailRow({
       active={active}
       block={block}
       itemKey={`${turnKey}:${block.key}`}
+      onOpenWebSearch={onOpenWebSearch}
+      position={position}
       {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
     />
@@ -144,6 +174,8 @@ type ActivityDetailRowContentProps = {
   getTransferAccess?: () => Promise<TransferAccess>;
   itemKey: string;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
+  onOpenWebSearch: (block: WebSearchBlock) => void;
+  position: "only" | "first" | "middle" | "last";
 };
 
 function ActiveActivityDetailRow({
@@ -169,15 +201,31 @@ function ActivityDetailContent({
   block,
   getTransferAccess,
   onFixUnsupportedBlock,
+  onOpenWebSearch,
+  position,
 }: ActivityDetailRowContentProps): ReactElement {
+  const metrics = useContext(TurnActivityMetricsContext);
+  const row = protocolActivityRow(block, metrics);
+  const openDetail = useEvent(() => {
+    if (isWebSearchBlock(block)) {
+      onOpenWebSearch(block);
+    }
+  });
+  const content = protocolBlockUsesCard(block) ? (
+    <ProtocolBlock
+      block={block}
+      {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+      {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
+    />
+  ) : (
+    <ActivityProtocolListRow block={block} position={position} />
+  );
   return (
     <View style={styles.row}>
-      <ToolCardPlacementContext.Provider value={SHEET_TOOL_CARDS}>
-        <ProtocolBlock
-          block={block}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-          {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
-        />
+      <ToolCardPlacementContext.Provider
+        value={{ description: row.description, kind: "sheet", openDetail, position }}
+      >
+        {content}
       </ToolCardPlacementContext.Provider>
     </View>
   );
@@ -185,4 +233,78 @@ function ActivityDetailContent({
 
 function activityBlockKey(block: RenderBlock): string {
   return block.key;
+}
+
+function activityBlockType(block: RenderBlock): string {
+  return block.kind;
+}
+
+function activityRowSize(): number {
+  return listRowHeight.double;
+}
+
+function isWebSearchBlock(block: RenderBlock): block is WebSearchBlock {
+  return block.kind === "webSearch";
+}
+
+function WebSearchDetailSheet({
+  block,
+  onClose,
+}: {
+  block: WebSearchBlock | null;
+  onClose: () => void;
+}): ReactElement {
+  const changeOpen = useEvent((open: boolean) => {
+    if (!open) {
+      onClose();
+    }
+  });
+  return (
+    <AppSheet
+      contentProps={{
+        dismissLabel: "Close web search results",
+        enableDynamicSizing: false,
+        enableOverDrag: false,
+        index: 0,
+        snapPoints: ["70%", "90%"],
+      }}
+      isOpen={block !== null}
+      onOpenChange={changeOpen}
+    >
+      {block === null ? null : <WebSearchDetailContent block={block} />}
+    </AppSheet>
+  );
+}
+
+function WebSearchDetailContent({ block }: { block: WebSearchBlock }): ReactElement {
+  const { query, resultCount } = webSearchSummary(block);
+  return (
+    <>
+      <View style={styles.webSearchHeader}>
+        <Text style={styles.webSearchLabelText}>Web search</Text>
+        <Text accessibilityRole="header" numberOfLines={2} style={styles.webSearchQuery}>
+          {query}
+        </Text>
+        <Text style={styles.webSearchCount}>{webSearchResultCountLabel(resultCount)}</Text>
+      </View>
+      <AppSheetScrollView contentContainerStyle={styles.detailContent}>
+        <WebSearchDetailBody block={block} />
+      </AppSheetScrollView>
+    </>
+  );
+}
+
+function webSearchResultCountLabel(resultCount: number): string {
+  if (resultCount === 0) {
+    return "No results";
+  }
+  return `${String(resultCount)} ${resultCount === 1 ? "result" : "results"}`;
+}
+
+function WebSearchDetailBody({ block }: { block: WebSearchBlock }): ReactElement {
+  return (
+    <ToolCardPlacementContext.Provider value={{ kind: "sheetDetail" }}>
+      <WebSearchProtocolBlock block={block} />
+    </ToolCardPlacementContext.Provider>
+  );
 }

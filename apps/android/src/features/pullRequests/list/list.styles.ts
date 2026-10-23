@@ -10,6 +10,7 @@ import {
   typeScale,
   typeTracking,
 } from "../../../theme";
+import { catalogModeBarContentInset } from "../../../presentation/layouts/catalogModeBarGeometry";
 
 /** Diameter of the check-state dot; smaller than an indicator glyph so the title leads. */
 const CHECK_DOT_SIZE = 10;
@@ -68,6 +69,9 @@ export const listStyles = StyleSheet.create({
   },
   fill: {
     flex: 1,
+  },
+  floatingBarContent: {
+    paddingBottom: catalogModeBarContentInset,
   },
   meta: {
     ...typeScale.label,

@@ -37,18 +37,25 @@ function providerInteraction(key: string): ProviderInteraction {
  * is pending is ignored. The error shown is the companion's short reason; a
  * success clears it. The outcome lands in the model, so callers do not await it.
  */
-export function startProviderInteraction(
-  key: string,
-  pending: Exclude<ProviderPending, null>,
-  operation: () => Promise<unknown>,
-): void {
+export function startProviderInteraction<Result>({
+  key,
+  onSuccess,
+  operation,
+  pending,
+}: {
+  readonly key: string;
+  readonly onSuccess?: (result: Result) => void;
+  readonly operation: () => Promise<Result>;
+  readonly pending: Exclude<ProviderPending, null>;
+}): void {
   if (providerInteraction(key).pending !== null) {
     return;
   }
   onboardingModel[key]?.set({ error: null, pending });
   operation().then(
-    () => {
+    (result) => {
       onboardingModel[key]?.set(IDLE);
+      onSuccess?.(result);
     },
     (error: unknown) => {
       onboardingModel[key]?.set({

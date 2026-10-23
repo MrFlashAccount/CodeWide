@@ -20,11 +20,26 @@ before(async () => {
     absWorkingDir: androidRoot,
     entryPoints: ["test/fixtures/pullRequestPreview.tsx"],
     alias: { "react-native": "react-native-web" },
-    resolveExtensions: [".web.tsx", ".web.ts", ".web.jsx", ".web.js", ".tsx", ".ts", ".jsx", ".js", ".json"],
+    resolveExtensions: [
+      ".web.tsx",
+      ".web.ts",
+      ".web.jsx",
+      ".web.js",
+      ".tsx",
+      ".ts",
+      ".jsx",
+      ".js",
+      ".json",
+    ],
     mainFields: ["browser", "module", "main"],
     conditions: ["browser", "import", "default"],
     bundle: true,
-    define: { "process.env.NODE_ENV": '"production"', __DEV__: "false", global: "globalThis", "process.env.EXPO_OS": '"web"' },
+    define: {
+      "process.env.NODE_ENV": '"production"',
+      __DEV__: "false",
+      global: "globalThis",
+      "process.env.EXPO_OS": '"web"',
+    },
     format: "iife",
     jsx: "automatic",
     loader: { ".ttf": "dataurl", ".png": "dataurl", ".xml": "text", ".html": "text", ".js": "jsx" },
@@ -36,9 +51,13 @@ before(async () => {
         name: "web-preview-boundaries",
         setup(builder) {
           // Expo Font's server-rendering context is unused in a browser preview.
-          builder.onResolve({ filter: /^node:async_hooks$/ }, () => ({ path: "async_hooks", namespace: "stub" }));
+          builder.onResolve({ filter: /^node:async_hooks$/ }, () => ({
+            path: "async_hooks",
+            namespace: "stub",
+          }));
           builder.onLoad({ filter: /.*/, namespace: "stub" }, () => ({
-            contents: "export class AsyncLocalStorage { getStore() { return undefined; } run(_s, f) { return f(); } }",
+            contents:
+              "export class AsyncLocalStorage { getStore() { return undefined; } run(_s, f) { return f(); } }",
             loader: "js",
           }));
           // Process-lifetime forge owners bind to the native session supervisor; the preview
@@ -71,13 +90,20 @@ async function open(scenario, width, height = 780) {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   // A web textarea defaults to two rows; Android sizes a multiline field to its content.
-  await page.setContent('<style>html,body{margin:0;background:#0F0F0F}textarea{field-sizing:content}</style><div id="app"></div>');
+  await page.setContent(
+    '<style>html,body{margin:0;background:#0F0F0F}textarea{field-sizing:content}</style><div id="app"></div>',
+  );
   await page.evaluate((name) => {
     window.previewScenario = name;
     window.process = { env: { EXPO_OS: "web", NODE_ENV: "production" } };
     // about:blank is not a secure context, so the page lacks crypto.randomUUID.
-    crypto.randomUUID ??= () => "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
-      (Number(c) ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (Number(c) / 4)))).toString(16));
+    crypto.randomUUID ??= () =>
+      "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
+        (
+          Number(c) ^
+          (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (Number(c) / 4)))
+        ).toString(16),
+      );
   }, scenario);
   await page.addScriptTag({ content: script });
   await page.waitForTimeout(600);
@@ -87,6 +113,14 @@ async function open(scenario, width, height = 780) {
 /** Sheets animate in from below; frames are taken at rest. */
 async function settle(page) {
   await page.waitForTimeout(1200);
+}
+
+async function openGithubProvider(page) {
+  await page.getByText("Connect a provider", { exact: true }).click();
+  // React Native Web keeps the animated sheet layer above the row's hit target;
+  // dispatching the event exercises the same handler without a web-only pointer hit test.
+  await page.getByTestId("forge-provider-row-github").dispatchEvent("click");
+  await page.getByTestId("forge-provider-card-github").waitFor();
 }
 
 async function capture(page, name) {
@@ -110,7 +144,10 @@ async function assertControlsFit(page, width) {
       .filter(({ rect }) => rect.width > 0 && (rect.right > viewportWidth + 1 || rect.left < -1))
       .map(({ label, text }) => (text.length > 0 ? text : label));
   }, width);
-  assert.deepEqual(offenders.filter((text) => text.length > 0 && !/^(Mentioned|Drafts|Assigned)/u.test(text)), []);
+  assert.deepEqual(
+    offenders.filter((text) => text.length > 0 && !/^(Mentioned|Drafts|Assigned)/u.test(text)),
+    [],
+  );
 }
 
 for (const width of [320, 360, 1024]) {
@@ -127,6 +164,20 @@ for (const width of [320, 360, 1024]) {
     });
   }
 }
+
+test("the welcome action opens the server-declared provider tray", async () => {
+  const { errors, page } = await open("onboarding", 360);
+  try {
+    await page.getByText("Connect a provider", { exact: true }).click();
+    await page.getByTestId("forge-provider-row-github").waitFor();
+    await page.getByTestId("forge-provider-row-arcanum").waitFor();
+    await settle(page);
+    assert.deepEqual(errors, []);
+    await capture(page, "onboarding-provider-tray-360");
+  } finally {
+    await page.close();
+  }
+});
 
 test("a stale head writes once, shows the banner and keeps the screen", async () => {
   const { errors, page } = await open("pr", 360);
@@ -164,7 +215,13 @@ test("opening files, the guide and Submit writes nothing to the forge", async ()
   }
 });
 
-for (const scenario of ["offline", "companion-old", "onboarding-failed", "conflict", "checks-unavailable"]) {
+for (const scenario of [
+  "offline",
+  "companion-old",
+  "onboarding-failed",
+  "conflict",
+  "checks-unavailable",
+]) {
   test(`${scenario} renders its degraded state in place`, async () => {
     const { errors, page } = await open(scenario, 360);
     try {
@@ -176,6 +233,9 @@ for (const scenario of ["offline", "companion-old", "onboarding-failed", "confli
         conflict: "Conflicts with main",
         offline: "Offline · last updated",
       }[scenario];
+      if (scenario === "onboarding-failed") {
+        await openGithubProvider(page);
+      }
       await page.getByText(expected, { exact: false }).first().waitFor();
       await capture(page, `${scenario}-360`);
     } finally {
@@ -210,12 +270,17 @@ test("Accounts sheet shows connected, expired and error accounts", async () => {
 });
 
 test("the PR tab counts only connected review requests", async () => {
-  for (const [scenario, expected] of [["list", "Pull requests 2"], ["onboarding", "Pull requests"], ["companion-old", "Pull requests"]]) {
+  for (const [scenario, expected] of [
+    ["list", "Pull requests 2"],
+    ["onboarding", "Pull requests"],
+    ["companion-old", "Pull requests"],
+  ]) {
     const { page } = await open(scenario, 360);
     try {
-      const bar = await page.getByTestId("catalog-mode-bar").textContent();
-      // Icon glyphs are private-use characters; only the labels matter here.
-      assert.equal(bar?.replace(/[^\x20-\x7e]/gu, "").replace("Threads", "").trim(), expected, scenario);
+      const label = await page
+        .getByRole("tab", { name: /^Pull requests/ })
+        .getAttribute("aria-label");
+      assert.equal(label, expected, scenario);
     } finally {
       await page.close();
     }
@@ -238,7 +303,13 @@ for (const width of [360, 1024]) {
   test(`Paste a token opens its sheet at ${width}dp`, async () => {
     const { errors, page } = await open("onboarding", width);
     try {
-      await page.getByTestId("forge-provider-card-github").getByText("Paste a token", { exact: false }).first().click();
+      await openGithubProvider(page);
+      await settle(page);
+      await capture(page, `onboarding-provider-github-${width}`);
+      await page
+        .getByTestId("forge-provider-card-github")
+        .getByRole("button", { name: "Paste a token" })
+        .dispatchEvent("click");
       await page.getByText("Generate", { exact: false }).first().waitFor();
       await settle(page);
       assert.deepEqual(errors, []);
@@ -253,7 +324,10 @@ for (const width of [360, 1024]) {
     try {
       await page.getByTestId("pull-request-tab-changes").click();
       await page.getByTestId("changes-view-guide").click();
-      await page.getByTestId("review-guide-stop-actions").getByText("Comment", { exact: true }).click();
+      await page
+        .getByTestId("review-guide-stop-actions")
+        .getByText("Comment", { exact: true })
+        .click();
       await page.getByTestId("review-comment-sheet").waitFor();
       await settle(page);
       await capture(page, `comment-sheet-${width}`);
@@ -270,10 +344,17 @@ for (const width of [360, 1024]) {
 test("a host login in progress keeps the card in its connecting state", async () => {
   const { errors, page } = await open("onboarding-connecting", 360);
   try {
-    await page.getByTestId("forge-provider-card-github").getByText("Connect GitHub", { exact: true }).click();
+    await openGithubProvider(page);
+    await page
+      .getByTestId("forge-provider-card-github")
+      .getByRole("button", { name: "Connect GitHub" })
+      .dispatchEvent("click");
     await page.waitForTimeout(300);
     const writes = await page.evaluate(() => window.previewWrites);
-    assert.equal(writes.filter((write) => write.startsWith("companion/forge/auth/start")).length, 1);
+    assert.equal(
+      writes.filter((write) => write.startsWith("companion/forge/auth/start")).length,
+      1,
+    );
     assert.deepEqual(errors, []);
     await capture(page, "onboarding-connecting-360");
   } finally {
@@ -288,11 +369,17 @@ test("Submit publishes once and the dock reports the outcome", async () => {
     await page.getByTestId("review-dock-submit").click();
     await page.getByTestId("submit-review-sheet").waitFor();
     await settle(page);
-    await page.getByTestId("submit-review-sheet").getByText("Submit review · Approve", { exact: true }).click();
+    await page
+      .getByTestId("submit-review-sheet")
+      .getByText("Submit review · Approve", { exact: true })
+      .click();
     await page.getByTestId("review-dock-outcome").waitFor();
     await settle(page);
     const writes = await page.evaluate(() => window.previewWrites);
-    assert.equal(writes.filter((write) => write.startsWith("companion/pullRequest/review/submit")).length, 1);
+    assert.equal(
+      writes.filter((write) => write.startsWith("companion/pullRequest/review/submit")).length,
+      1,
+    );
     await page.getByText("View on forge", { exact: true }).waitFor();
     await page.getByText("Approved on github.com", { exact: true }).waitFor();
     assert.deepEqual(errors, []);

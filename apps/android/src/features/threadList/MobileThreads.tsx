@@ -108,6 +108,7 @@ export function MobileThreads(props: MobileThreadsProps) {
             ) : (
               <Reanimated.View style={styles.threadListSuspended}>
                 <LegendList
+                  contentContainerStyle={styles.floatingBarContent}
                   data={scroll.rows}
                   dataKey={`mobile-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
                   drawDistance={320}

@@ -1,10 +1,12 @@
 /** V1 Card owner, extracted without changing interaction or resource lifetime. */
-import type { Ionicons } from "@expo/vector-icons";
 import { useContext, useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
+import type { ComposeIconName } from "../../../presentation/icons/composeIconNames";
 import { useInsideBubbleSurface } from "../../../rendering/Bubble";
 import { useEvent } from "../../../react/useEvent";
 import { colors } from "../../../theme";
+import { AppListRow } from "../../../ui/AppListRow";
+import { listRowHeight } from "../../../ui/AppListRow.types";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { AppText as Text } from "../../../ui/Typography";
 import { WaveText } from "../../../ui/WaveText";
@@ -13,8 +15,8 @@ import { CopyButton } from "./MessageActionRail";
 import { persistentExpansionStates, writePersistentExpansionState } from "./disclosureState";
 import {
   ActiveToolCallContext,
-  ExpansionItemKeyContext,
   ToolCardPlacementContext,
+  type ToolCardPlacement,
 } from "./turnContexts";
 
 /** How far past the header a press still counts. */
@@ -22,11 +24,10 @@ const HEADER_HIT_SLOP = 10;
 
 type CardProps = {
   children: ReactNode;
-  collapsible?: boolean;
   copyText?: () => string;
+  detailSheetEnabled?: boolean;
   headerMeta?: ReactNode;
-  icon: keyof typeof Ionicons.glyphMap;
-  initiallyExpanded?: boolean;
+  icon: ComposeIconName;
   onOpen?: () => void;
   openEnabled?: boolean;
   openLabel?: string;
@@ -35,15 +36,62 @@ type CardProps = {
 };
 
 /**
- * A tool step. In a bubble it is the step's row and never draws its body; in
- * the activity sheet it discloses the body.
+ * A tool step. A bubble only draws its row. Activity rows open their semantic
+ * viewer, or an explicitly enabled detail sheet such as Web Search results.
  */
 export function Card(props: CardProps) {
   const placement = useContext(ToolCardPlacementContext);
-  return placement.kind === "bubble" ? (
-    <CardRow {...props} openActivity={placement.openActivity} />
-  ) : (
-    <DisclosureCard {...props} />
+  if (placement.kind === "bubble") {
+    return <CardRow {...props} openActivity={placement.openActivity} />;
+  }
+  if (placement.kind === "sheet") {
+    return <ActivityListCard {...props} placement={placement} />;
+  }
+  return <ActivitySheetDetail {...props} />;
+}
+
+/** One fixed-height native list row; detail belongs to its viewer or the fallback sheet. */
+function ActivityListCard({
+  detailSheetEnabled = false,
+  icon,
+  onOpen,
+  openEnabled = true,
+  openLabel,
+  placement,
+  status,
+  title,
+}: CardProps & { placement: Extract<ToolCardPlacement, { kind: "sheet" }> }) {
+  const hasOpenAction = onOpen !== undefined && openEnabled;
+  const open = hasOpenAction ? onOpen : detailSheetEnabled ? placement.openDetail : undefined;
+  const failed = status === "failed" || status === "error";
+  const activate = useEvent(open);
+  return (
+    <AppListRow
+      accessibilityLabel={
+        open === undefined
+          ? `${title}${failed ? ", failed" : ""}`
+          : `${hasOpenAction ? (openLabel ?? `Open ${title}`) : `Open ${title}`}${failed ? ", failed" : ""}`
+      }
+      danger={failed}
+      description={placement.description}
+      fixedHeight={listRowHeight.double}
+      leadingIcon={{ name: icon }}
+      {...(open === undefined ? {} : { onPress: activate })}
+      position={placement.position}
+      testID="activity-step-row"
+      title={title}
+      {...(failed ? { trailingIcon: { color: colors.red, name: "alert-circle" as const } } : {})}
+    />
+  );
+}
+
+/** The fallback sheet owns the detailed body; it has no nested disclosure control. */
+function ActivitySheetDetail({ children, copyText }: CardProps) {
+  return (
+    <View style={styles.cardContent} testID="activity-step-detail">
+      {children}
+      {copyText !== undefined && <CopyButton getText={copyText} />}
+    </View>
   );
 }
 
@@ -52,6 +100,7 @@ export function Card(props: CardProps) {
  * opens the step's full-screen viewer, else the activity sheet.
  */
 function CardRow({
+  detailSheetEnabled = false,
   headerMeta,
   icon,
   onOpen,
@@ -64,7 +113,7 @@ function CardRow({
   const insideBubbleSurface = useInsideBubbleSurface();
   const activeToolCall = useContext(ActiveToolCallContext);
   const opensViewer = onOpen !== undefined && openEnabled;
-  const open = opensViewer ? onOpen : openActivity;
+  const open = cardRowOpen({ detailSheetEnabled, onOpen, openActivity, opensViewer });
   const activate = useEvent(() => {
     open?.();
   });
@@ -92,6 +141,23 @@ function CardRow({
   );
 }
 
+function cardRowOpen({
+  detailSheetEnabled,
+  onOpen,
+  openActivity,
+  opensViewer,
+}: {
+  readonly detailSheetEnabled: boolean;
+  readonly onOpen: (() => void) | undefined;
+  readonly openActivity: (() => void) | null;
+  readonly opensViewer: boolean;
+}): (() => void) | null {
+  if (opensViewer) {
+    return onOpen ?? null;
+  }
+  return detailSheetEnabled ? openActivity : null;
+}
+
 /** A row opens something only when it has a target; a viewer may name its own action. */
 function rowPressProps(
   interactive: boolean,
@@ -111,84 +177,6 @@ function rowPressProps(
   };
 }
 
-function DisclosureCard({
-  children,
-  collapsible = false,
-  copyText,
-  headerMeta,
-  icon,
-  initiallyExpanded = true,
-  onOpen,
-  openEnabled = true,
-  openLabel,
-  status,
-  title,
-}: CardProps) {
-  const insideBubbleSurface = useInsideBubbleSurface();
-  const itemKey = useContext(ExpansionItemKeyContext);
-  const [expanded, setExpanded] = usePersistentExpansion(`${itemKey}:card`, initiallyExpanded);
-  const activeToolCall = useContext(ActiveToolCallContext);
-  const hasOpenAction = onOpen !== undefined && openEnabled;
-  const toggleExpanded = useEvent(() => {
-    setExpanded(!expanded);
-  });
-  const activateHeader = useEvent(hasOpenAction ? onOpen : toggleExpanded);
-  const headerIsButton = hasOpenAction || collapsible;
-  const disclosureIcon = collapsible ? (
-    <InlineIcon
-      color={colors.textDim}
-      name={expanded ? "chevron-up" : "chevron-down"}
-      role="label"
-    />
-  ) : null;
-  return (
-    <View
-      collapsable={false}
-      style={[styles.card, insideBubbleSurface && styles.bubbleNestedSurface]}
-      testID="protocol-card"
-    >
-      <View collapsable={false} style={styles.cardHeader} testID="protocol-card-header">
-        <Pressable
-          accessibilityLabel={
-            hasOpenAction
-              ? (openLabel ?? `Open ${title}`)
-              : collapsible
-                ? `${expanded ? "Collapse" : "Expand"} ${title}`
-                : undefined
-          }
-          accessibilityRole={headerIsButton ? "button" : undefined}
-          disabled={!headerIsButton}
-          hitSlop={headerIsButton ? HEADER_HIT_SLOP : undefined}
-          onPress={activateHeader}
-          style={styles.cardHeaderToggle}
-        >
-          <CardHeaderContent
-            headerMeta={headerMeta}
-            icon={icon}
-            running={isRunningStatus(status) || activeToolCall}
-            status={status}
-            title={title}
-          />
-          {!hasOpenAction && disclosureIcon}
-        </Pressable>
-        {collapsible && hasOpenAction && (
-          <Pressable
-            accessibilityLabel={`${expanded ? "Collapse" : "Expand"} ${title}`}
-            accessibilityRole="button"
-            hitSlop={HEADER_HIT_SLOP}
-            onPress={toggleExpanded}
-            style={styles.cardDisclosure}
-          >
-            {disclosureIcon}
-          </Pressable>
-        )}
-        {copyText !== undefined && !collapsible && <CopyButton getText={copyText} />}
-      </View>
-      {(!collapsible || expanded) && <View style={styles.cardContent}>{children}</View>}
-    </View>
-  );
-}
-
 /** The icon, the title (shimmering while the step runs), its meta and status. */
 function CardHeaderContent({
   headerMeta,
@@ -198,7 +186,7 @@ function CardHeaderContent({
   title,
 }: {
   headerMeta: ReactNode;
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: ComposeIconName;
   running: boolean;
   status: string | undefined;
   title: string;

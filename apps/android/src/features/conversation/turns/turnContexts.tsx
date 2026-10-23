@@ -4,18 +4,21 @@ import { createContext } from "react";
 
 /**
  * Where a tool card draws. In a bubble it is the one-line row of the step, never
- * its body: a tool's output belongs to the activity sheet or its full-screen
- * viewer, so the row opens one of them. In the activity sheet the card discloses
- * its body.
+ * its body: a tool's output belongs to the activity sheet or its semantic
+ * viewer, so the row opens one of them. Activity rows never disclose inline;
+ * a row without a semantic destination stays informational.
  */
 export type ToolCardPlacement =
   | { readonly kind: "bubble"; readonly openActivity: (() => void) | null }
-  | { readonly kind: "sheet" };
+  | {
+      readonly description: string;
+      readonly kind: "sheet";
+      readonly openDetail: () => void;
+      readonly position: "only" | "first" | "middle" | "last";
+    }
+  | { readonly kind: "sheetDetail" };
 
 const BUBBLE_ROW: ToolCardPlacement = { kind: "bubble", openActivity: null };
-
-/** The activity sheet's placement: its rows disclose their bodies. */
-export const SHEET_TOOL_CARDS: ToolCardPlacement = { kind: "sheet" };
 
 export const ToolCardPlacementContext = createContext<ToolCardPlacement>(BUBBLE_ROW);
 

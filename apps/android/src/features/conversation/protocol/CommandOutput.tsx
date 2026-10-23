@@ -56,9 +56,7 @@ export function CommandExecutionProtocolBlock({
       icon="terminal-outline"
       title={title}
       {...(block.status === null ? {} : { status: block.status })}
-      collapsible
       headerMeta={<OutputFootprintMetric footprint={outputFootprint} />}
-      initiallyExpanded={false}
       onOpen={outputAction.open}
       openEnabled={outputAction.enabled}
       openLabel={`Open output for ${title}`}

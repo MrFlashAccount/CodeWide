@@ -54,6 +54,14 @@ export function cardPlan(
   if (flow !== null) {
     return { flow, kind: "flow" };
   }
+  return methodsPlan(provider, linkedLogins);
+}
+
+/** Method-selection plan when navigation owns the live-flow step separately. */
+export function methodsPlan(
+  provider: ForgeProvider,
+  linkedLogins: ReadonlySet<string>,
+): Extract<CardPlan, { readonly kind: "methods" }> {
   const methods = accountMethods(provider);
   const actions = methods.filter(offered).flatMap((method) => actionsOf(method, linkedLogins));
   const [primary = null, ...others] = actions;

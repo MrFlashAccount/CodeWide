@@ -1,7 +1,11 @@
 import { StyleSheet } from "react-native";
+import { catalogModeBarContentInset } from "../../presentation/layouts/catalogModeBarGeometry";
 import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
 
 export const styles = StyleSheet.create({
+  floatingBarContent: {
+    paddingBottom: catalogModeBarContentInset,
+  },
   mobileIdentity: {
     flex: 1,
     minWidth: 0,

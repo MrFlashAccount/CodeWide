@@ -35,20 +35,27 @@ export function ChecksCredentialStep({
   const interaction = useSelector(() => providerInteractionState(onboardingModel[key]?.get()));
   const [startedKey, setStartedKey] = useState<string | null>(null);
   const onCheckAgain = useEvent((): void => {
-    startProviderInteraction(key, "checking", async () => capabilities.checkAgain(connectionId));
+    startProviderInteraction({
+      key,
+      operation: async () => capabilities.checkAgain(connectionId),
+      pending: "checking",
+    });
   });
   const onAction = useEvent((action: ConnectAction): void => {
     if (host !== null && (action.kind === "link" || action.kind === "hostLogin")) {
       const login = action.kind === "link" ? action.login : null;
       setStartedKey(connectActionKey(action));
-      startProviderInteraction(key, "starting", async () =>
-        capabilities.startAuth(connectionId, {
-          host,
-          login,
-          methodId: action.method.methodId,
-          pluginId: provider.pluginId,
-        }),
-      );
+      startProviderInteraction({
+        key,
+        operation: async () =>
+          capabilities.startAuth(connectionId, {
+            host,
+            login,
+            methodId: action.method.methodId,
+            pluginId: provider.pluginId,
+          }),
+        pending: "starting",
+      });
     }
   });
   const actions = checksActions(provider);

@@ -17,6 +17,10 @@ const manifest = readFileSync(
   new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url),
   "utf8",
 );
+const previewManifest = readFileSync(
+  new URL("../android/app/src/preview/AndroidManifest.xml", import.meta.url),
+  "utf8",
+);
 
 describe("Android release automation", () => {
   it("increments the patch, native runtime, and version code atomically", () => {
@@ -84,5 +88,12 @@ describe("Android release automation", () => {
     expect(() =>
       updateAndroidPreviewVersion({ appConfig, gradle, manifest }, 2_100_000_001),
     ).toThrow(/integer from 1/u);
+  });
+
+  it("makes Preview profileable with in-app performance monitoring enabled by default", () => {
+    expect(previewManifest).toContain('<profileable android:shell="true"/>');
+    expect(gradle).toMatch(
+      /preview\s*\{[\s\S]*buildConfigField "boolean", "PERFORMANCE_MONITORING_DEFAULT", "true"/u,
+    );
   });
 });

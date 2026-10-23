@@ -161,7 +161,9 @@ it.each(["summary", "notLoaded"] as const)(
 
 it("keeps real tool activity and its server-provided figures alongside hidden reasoning", () => {
   const item = completedTurn([reasoning, command], "full", {
-    activityMetrics: metrics(["commandExecution"], 58),
+    // A projection persisted by an older Companion may still count the
+    // footer-owned aggregate diff once. The client removes that legacy count.
+    activityMetrics: metrics(["commandExecution", "turnDiff"], 59),
   });
   const view = render(history(item, true));
   expect(view.getByRole("button", { name: "Collapse activity ran commands · 58" })).toBeVisible();
@@ -169,6 +171,7 @@ it("keeps real tool activity and its server-provided figures alongside hidden re
   expect(view.queryByText("printf done")).toBeNull();
   fireEvent.press(view.getByRole("button", { name: /^Open activity/ }));
   expect(view.getByText("printf done")).toBeVisible();
+  expect(view.queryByRole("button", { name: "Open printf done" })).toBeNull();
   expect(view.queryByTestId("thinking-status")).toBeNull();
   expect(projectTurnPresentation(item, null, false, false).agentBubbleFill).toBe(true);
 });
@@ -183,23 +186,33 @@ it("preserves earlier agent messages in completed history", () => {
   expect(view.queryByTestId("thinking-status")).toBeNull();
 });
 
-it.each([
-  {
+it("keeps a metadata-only plan even when item counts are zero", () => {
+  const metadata = {
     plan: {
       explanation: "Recorded plan",
       steps: [{ step: "Check output", status: "completed" as const }],
     },
-  },
-  {
-    diff: "diff --git a/example.txt b/example.txt\n--- a/example.txt\n+++ b/example.txt\n@@ -1 +1 @@\n-before\n+after",
-  },
-])("keeps metadata-only history even when item counts are zero: %j", (metadata) => {
+  };
   const item = completedTurn([reasoning], "full", { ...metadata, activityMetrics: metrics([], 0) });
   const view = render(history(item, true));
   expect(view.getAllByTestId("turn-activity-list").length).toBeGreaterThan(0);
   fireEvent.press(view.getByRole("button", { name: /^Open activity/ }));
-  expect(view.getByText("plan" in metadata ? "Plan" : "Turn diff")).toBeVisible();
+  expect(view.getByText("Plan")).toBeVisible();
+  expect(view.queryByRole("button", { name: "Open Plan" })).toBeNull();
+  expect(view.getByTestId("activity-step-row")).not.toHaveProp("onPress");
   expect(projectTurnPresentation(item, null, false, false).agentBubbleFill).toBe(true);
+});
+
+it("keeps a turn diff out of Activity because the footer owns it", () => {
+  const diff =
+    "diff --git a/example.txt b/example.txt\n--- a/example.txt\n+++ b/example.txt\n@@ -1 +1 @@\n-before\n+after";
+  const item = completedTurn([reasoning], "full", {
+    diff,
+    activityMetrics: metrics(["turnDiff"], 1),
+  });
+  const view = render(history(item, true));
+  expect(view.queryByTestId("turn-activity")).toBeNull();
+  expect(view.queryByText("Turn diff")).toBeNull();
 });
 
 it("hides a sparse summary without Companion's positive activity signal", () => {

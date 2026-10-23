@@ -201,7 +201,7 @@ type HistorySummary = {
 function turnActivitySummary(turn: HistoryTurn): HistorySummary | null {
   const summary = projectedActivityMetrics(turn.turn)?.total;
   if (summary !== undefined && summary.count > 0) {
-    return summary;
+    return activitySummaryWithoutFooterDiff(summary);
   }
   const kinds = selectTurnRenderWindow(turn.turn).collapsedActivityIndexes.flatMap((index) => {
     const item = turn.turn.items[index];
@@ -212,6 +212,20 @@ function turnActivitySummary(turn: HistoryTurn): HistorySummary | null {
   }
   return { count: kinds.length, kinds, outputFootprint: summary?.outputFootprint ?? null };
 }
+
+/** Normalizes projections written before aggregate turn diffs became footer-owned. */
+function activitySummaryWithoutFooterDiff(summary: ActivityFootprintSummary): HistorySummary {
+  if (!summary.kinds.includes("turnDiff")) {
+    return summary;
+  }
+  return {
+    count: Math.max(0, summary.count - 1),
+    kinds: summary.kinds.filter((kind) => kind !== "turnDiff"),
+    outputFootprint: summary.outputFootprint,
+  };
+}
+
+type ActivityFootprintSummary = NonNullable<ReturnType<typeof projectedActivityMetrics>>["total"];
 
 function collapsedActivityLabel(
   summary: ReturnType<typeof collapsedActivitySummary>,

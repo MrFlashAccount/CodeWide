@@ -79,17 +79,20 @@ printf '%s\\n' "$*" >>"$COMMAND_LOG"
     expect(log[2]).toMatch(/\/apps\/android\/android :app:assembleDebug$/u);
   });
 
-  it("keeps release-candidate deployment behind exactly two operator one-shots", () => {
+  it("keeps release-candidate deployment behind exactly three operator one-shots", () => {
     const fixture = createFixture("candidate-one-shots");
     for (const path of [
       "scripts/release-candidate-android",
+      "scripts/release-candidate-android-ota",
       "scripts/release-candidate-companion",
       "scripts/release-candidate-server.py",
       "scripts/release-candidate-server.test.py",
       "scripts/release-candidate-site.html",
+      "scripts/update-release-candidate-manifest.mjs",
     ])
       copyFixtureFile(fixture, path);
     chmodSync(join(fixture, "scripts/release-candidate-android"), 0o755);
+    chmodSync(join(fixture, "scripts/release-candidate-android-ota"), 0o755);
     chmodSync(join(fixture, "scripts/release-candidate-companion"), 0o755);
 
     const commandLog = join(fixture, "commands.log");
@@ -125,8 +128,13 @@ case "$*" in
         *) shift ;;
       esac
     done
+    PUBLISH_COUNT_FILE="$OUTPUT_ROOT/publish-count"
+    PUBLISH_COUNT=0
+    if [ -r "$PUBLISH_COUNT_FILE" ]; then PUBLISH_COUNT=$(cat "$PUBLISH_COUNT_FILE"); fi
+    PUBLISH_COUNT=$((PUBLISH_COUNT + 1))
     mkdir -p "$OUTPUT_ROOT/$RUNTIME_VERSION"
-    printf '{"createdAt":"2026-10-22T00:00:00.000Z","runtimeVersion":"%s","updateId":"candidate-update","updateUrl":"%s","directory":"candidate"}\\n' "$RUNTIME_VERSION" "$UPDATE_URL" >"$OUTPUT_ROOT/$RUNTIME_VERSION/current.json"
+    printf '%s\\n' "$PUBLISH_COUNT" >"$PUBLISH_COUNT_FILE"
+    printf '{"createdAt":"2026-10-22T00:00:0%s.000Z","runtimeVersion":"%s","updateId":"candidate-update-%s","updateUrl":"%s","directory":"candidate-%s"}\\n' "$PUBLISH_COUNT" "$RUNTIME_VERSION" "$PUBLISH_COUNT" "$UPDATE_URL" "$PUBLISH_COUNT" >"$OUTPUT_ROOT/$RUNTIME_VERSION/current.json"
     ;;
   *verify-release-candidate.ts*)
     printf '%s\\n' '{"release": "android-release-candidate", "status": "published"}'
@@ -159,11 +167,24 @@ if [ "$1 $2" = "branch --show-current" ]; then printf '%s\\n' integration/releas
         environment,
       ).stdout,
     ).toContain('"release": "android-release-candidate"');
+    expect(
+      runCommand("sh", ["scripts/release-candidate-android-ota"], fixture, environment).stdout,
+    ).toContain('"release": "android-release-candidate"');
 
     expect(readFileSync(commandLog, "utf8").split("\n")).toEqual([
       "companion ",
       "android --preview --version-code 42",
       "android-url https://codewide-rc-download-p4186.zrok-safe-share.garin.dev/api/updates",
+      expect.stringContaining(
+        "pnpm exec tsx scripts/publish-release-candidate-ota.ts --output-root",
+      ),
+      expect.stringContaining("pnpm exec tsx scripts/verify-release-candidate.ts --manifest"),
+      "pnpm validate:android:v1",
+      "pnpm --filter @codewide/android compile:android",
+      "pnpm --filter @codewide/android typecheck",
+      "pnpm --filter @codewide/android lint",
+      "pnpm test",
+      "pnpm security:scan-secrets",
       expect.stringContaining(
         "pnpm exec tsx scripts/publish-release-candidate-ota.ts --output-root",
       ),
@@ -175,6 +196,10 @@ if [ "$1 $2" = "branch --show-current" ]; then printf '%s\\n' integration/releas
       branch: "integration/release-candidate",
       revision: "0123456789abcdef",
       sourceDirty: true,
+      ota: {
+        runtimeVersion: "0.0.0.0-native-42",
+        updateId: "candidate-update-2",
+      },
       artifacts: [
         {
           kind: "android-preview-apk",
@@ -184,6 +209,57 @@ if [ "$1 $2" = "branch --show-current" ]; then printf '%s\\n' integration/releas
         },
       ],
     });
+  });
+
+  it("refuses to attach an OTA to a different Preview runtime", () => {
+    const fixture = createFixture("candidate-ota-runtime");
+    copyFixtureFile(fixture, "scripts/update-release-candidate-manifest.mjs");
+    const manifestPath = join(fixture, "manifest.json");
+    const pointerPath = join(fixture, "current.json");
+    const manifest = {
+      artifacts: [
+        {
+          applicationId: "dev.codexremote.app.preview",
+          kind: "android-preview-apk",
+          versionCode: 42,
+          versionName: "0.0.0.0",
+        },
+      ],
+    };
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    writeFileSync(
+      pointerPath,
+      JSON.stringify({
+        createdAt: "2026-10-22T00:00:00.000Z",
+        runtimeVersion: "0.0.0.0-native-43",
+        updateId: "wrong-runtime",
+        updateUrl: "https://candidate.invalid/api/updates",
+      }),
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "scripts/update-release-candidate-manifest.mjs",
+        "--manifest",
+        manifestPath,
+        "--ota-pointer",
+        pointerPath,
+        "--branch",
+        "integration/release-candidate",
+        "--revision",
+        "0123456789abcdef",
+        "--source-dirty",
+        "true",
+      ],
+      { cwd: fixture, encoding: "utf8" },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "OTA runtime 0.0.0.0-native-43 does not match published Preview 0.0.0.0-native-42",
+    );
+    expect(JSON.parse(readFileSync(manifestPath, "utf8"))).toEqual(manifest);
   });
 
   it("builds and validates Companion without installing or restarting it", () => {

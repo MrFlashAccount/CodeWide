@@ -17,6 +17,7 @@ import { WorkspaceVoiceAura } from "../ui/WorkspaceVoiceAura";
 import {
   v1FullscreenScreenOptions,
   v1BrowserScreenOptions,
+  v1CatalogRootScreenOptions,
   v1DesktopRouteScreenOptions,
   v1ListScreenOptions,
   v1MobileRouteScreenOptions,
@@ -116,6 +117,7 @@ function V1WorkspaceDestinationStack({
       screenOptions={routeScreenOptions}
     >
       <Stack.Screen name="(lists)" options={v1ListScreenOptions} />
+      <Stack.Screen name="pulls/index" options={v1CatalogRootScreenOptions} />
       <Stack.Screen name="browser/[sessionId]" options={v1BrowserScreenOptions} />
       <Stack.Screen name="drawing/[sessionId]" options={v1FullscreenScreenOptions} />
       <Stack.Screen name="projects/add/[connectionId]" options={v1SheetScreenOptions} />

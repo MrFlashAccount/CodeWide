@@ -1,5 +1,5 @@
-import type { ComponentType, ReactNode } from "react";
-import { Text, View } from "react-native";
+import { createRef, type ComponentType, type ReactNode, type RefObject } from "react";
+import { ScrollView, Text, View } from "react-native";
 
 // WHY: Interpolation is pure math; dialog render tests use the real implementation without the native runtime.
 export { Extrapolation, interpolate } from "react-native-reanimated/src/interpolation";
@@ -75,6 +75,41 @@ export function useAnimatedStyle<Result>(factory: () => Result): Result {
   return factory();
 }
 
+export function useAnimatedRef<Value>(): RefObject<Value | null> {
+  return createRef<Value>();
+}
+
+export function useAnimatedScrollHandler(_handlers: unknown): () => void {
+  return () => undefined;
+}
+
+export function useAnimatedReaction<Value>(
+  _prepare: () => Value,
+  _react: (current: Value, previous: Value | null) => void,
+): void {
+  // Render tests do not run the native UI-thread reaction loop.
+}
+
+interface FrameCallback {
+  setActive(active: boolean): void;
+}
+
+export function useFrameCallback(
+  _callback: (frame: { readonly timeSincePreviousFrame?: number }) => void,
+  _autostart?: boolean,
+): FrameCallback {
+  return { setActive: () => undefined };
+}
+
+export function scrollTo(
+  _ref: RefObject<unknown>,
+  _x: number,
+  _y: number,
+  _animated: boolean,
+): void {
+  // Render tests do not own a native scroll view.
+}
+
 export function useEvent<Handler>(handler: Handler): Handler {
   return handler;
 }
@@ -117,4 +152,4 @@ function createAnimatedComponent<Props>(component: ComponentType<Props>): Compon
   return component;
 }
 
-export default { Text, View, createAnimatedComponent };
+export default { ScrollView, Text, View, createAnimatedComponent };
