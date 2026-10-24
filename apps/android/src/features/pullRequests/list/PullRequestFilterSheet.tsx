@@ -1,6 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useSelector } from "@legendapp/state/react";
 import { Pressable, ScrollView, TextInput, useWindowDimensions, View } from "react-native";
+import { useKeyboardState } from "react-native-keyboard-controller";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { AccountState, ForgeProvider } from "../../../data/forgeContract";
 import type { PullRequestSearchFilter, SearchValues } from "../../../data/forgePullRequestSearch";
@@ -8,7 +10,7 @@ import { useEvent } from "../../../react/useEvent";
 import { colors, iconSize } from "../../../theme";
 import { ForgeIcon } from "../../../ui/ForgeIcon";
 import { AppText as Text } from "../../../ui/Typography";
-import { Tray, type ITrayPalette } from "../../../vendor/reacticx/tray";
+import { Tray, useTray, type ITrayPalette } from "../../../vendor/reacticx/tray";
 import {
   activePullRequestFilterCount,
   applyPullRequestFilters,
@@ -20,11 +22,11 @@ import {
   type PullRequestFilterFacet,
 } from "../pullRequestListModel";
 import { filterStyles as styles } from "./filter.styles";
+import { filterTrayViewportGeometry } from "./filterTrayViewport";
 
 const WIDE_FILTER_WIDTH = 600;
 const FILTERS_VIEW = "pull-request-filters";
-const FILTER_TRAY_HEIGHT_RATIO = 0.82;
-const FILTER_TRAY_MAX_HEIGHT = 720;
+const FILTER_DETAIL_VIEW = "pull-request-filter-detail";
 const FILTER_TRAY_PALETTE: Partial<ITrayPalette> = {
   backdrop: colors.scrim,
   border: colors.surfaceContainer,
@@ -107,11 +109,15 @@ export function PullRequestFilterSheet({
 }): React.JSX.Element {
   const state = useSelector(() => pullRequestFilterSheetModel.get());
   const { height, width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
   const wide = width >= WIDE_FILTER_WIDTH;
-  const trayHeight = Math.min(
-    Math.round(height * FILTER_TRAY_HEIGHT_RATIO),
-    FILTER_TRAY_MAX_HEIGHT,
-  );
+  const viewport = filterTrayViewportGeometry({
+    bottomInset: insets.bottom,
+    keyboardHeight,
+    topInset: insets.top,
+    windowHeight: height,
+  });
   const open = state.status === "open";
   const visibleState = state.status === "open" ? state : state.retained;
   const handleOpenChange = useEvent((next: boolean) => {
@@ -119,19 +125,27 @@ export function PullRequestFilterSheet({
       dismissPullRequestFilters();
     }
   });
+  const handleViewChange = useEvent((view: string) => {
+    if (view === FILTERS_VIEW) {
+      selectPullRequestFilterFacet(null);
+    }
+  });
   return (
     <Tray
       defaultView={FILTERS_VIEW}
+      key={state.session}
       onOpenChange={handleOpenChange}
+      onViewChange={handleViewChange}
       open={open}
       palette={FILTER_TRAY_PALETTE}
       theme="dark"
     >
       <FilterTraySurface
         accounts={accounts}
+        bottomInsetCompensation={viewport.bottomInsetCompensation}
         providers={providers}
         repositories={repositories}
-        trayHeight={trayHeight}
+        trayHeight={viewport.height}
         visibleState={visibleState}
         wide={wide}
       />
@@ -141,6 +155,7 @@ export function PullRequestFilterSheet({
 
 function FilterTraySurface({
   accounts,
+  bottomInsetCompensation,
   providers,
   repositories,
   trayHeight,
@@ -148,6 +163,7 @@ function FilterTraySurface({
   wide,
 }: {
   readonly accounts: readonly AccountState[];
+  readonly bottomInsetCompensation: number;
   readonly providers: readonly ForgeProvider[];
   readonly repositories: readonly string[];
   readonly trayHeight: number;
@@ -157,54 +173,113 @@ function FilterTraySurface({
   } | null;
   readonly wide: boolean;
 }): React.JSX.Element {
-  const content =
-    visibleState === null ? null : (
-      <OpenFilterSheet
-        accounts={accounts}
-        draft={visibleState.draft}
-        facet={visibleState.facet}
-        providers={providers}
-        repositories={repositories}
-        wide={wide}
-      />
-    );
   return (
-    <Tray.Content style={styles.sheet}>
+    <Tray.Content style={[styles.sheet, { marginBottom: -bottomInsetCompensation }]}>
       <Tray.View id={FILTERS_VIEW} style={[styles.fill, { height: trayHeight }]}>
-        {content}
+        {visibleState === null ? null : wide ? (
+          <WideFilterSheet
+            accounts={accounts}
+            draft={visibleState.draft}
+            facet={visibleState.facet}
+            providers={providers}
+            repositories={repositories}
+          />
+        ) : (
+          <FilterFacetIndex draft={visibleState.draft} />
+        )}
+      </Tray.View>
+      <Tray.View id={FILTER_DETAIL_VIEW} style={[styles.fill, { height: trayHeight }]}>
+        {visibleState === null || visibleState.facet === null || wide ? null : (
+          <FilterFacetDetail
+            accounts={accounts}
+            draft={visibleState.draft}
+            facet={visibleState.facet}
+            providers={providers}
+            repositories={repositories}
+          />
+        )}
       </Tray.View>
     </Tray.Content>
   );
 }
 
-function OpenFilterSheet({
+function WideFilterSheet({
   accounts,
   draft,
   facet,
   providers,
   repositories,
-  wide,
 }: {
   readonly accounts: readonly AccountState[];
   readonly draft: PullRequestSearchFilter;
   readonly facet: PullRequestFilterFacet | null;
   readonly providers: readonly ForgeProvider[];
   readonly repositories: readonly string[];
-  readonly wide: boolean;
 }): React.JSX.Element {
-  const visibleFacet = wide ? (facet ?? "sources") : facet;
+  const visibleFacet = facet ?? "sources";
   const activeCount = activePullRequestFilterCount(draft);
   return (
     <View style={styles.fill} testID="pull-request-filter-sheet">
-      <FilterHeader count={activeCount} facet={wide ? null : facet} />
+      <FilterHeader count={activeCount} title="Filters" />
       <FilterSheetBody
         accounts={accounts}
         draft={draft}
         providers={providers}
         repositories={repositories}
         visibleFacet={visibleFacet}
-        wide={wide}
+        wide
       />
+      <FilterFooter />
+    </View>
+  );
+}
+
+function FilterFacetIndex({
+  draft,
+}: {
+  readonly draft: PullRequestSearchFilter;
+}): React.JSX.Element {
+  return (
+    <View style={styles.fill} testID="pull-request-filter-sheet">
+      <FilterHeader count={activePullRequestFilterCount(draft)} title="Filters" />
+      <View style={styles.body}>
+        <FacetList draft={draft} selected={null} wide={false} />
+      </View>
+      <FilterFooter />
+    </View>
+  );
+}
+
+function FilterFacetDetail({
+  accounts,
+  draft,
+  facet,
+  providers,
+  repositories,
+}: {
+  readonly accounts: readonly AccountState[];
+  readonly draft: PullRequestSearchFilter;
+  readonly facet: PullRequestFilterFacet;
+  readonly providers: readonly ForgeProvider[];
+  readonly repositories: readonly string[];
+}): React.JSX.Element {
+  const selected = FACETS.find((item) => item.value === facet);
+  return (
+    <View style={styles.fill} testID={`pull-request-filter-${facet}-view`}>
+      <FilterHeader
+        back
+        count={activePullRequestFilterCount(draft)}
+        title={selected?.label ?? "Filters"}
+      />
+      <View style={styles.body}>
+        <FacetPane
+          accounts={accounts}
+          draft={draft}
+          facet={facet}
+          providers={providers}
+          repositories={repositories}
+        />
+      </View>
       <FilterFooter />
     </View>
   );
@@ -271,50 +346,43 @@ function FacetPane({
 }
 
 function FilterHeader({
+  back = false,
   count,
-  facet,
+  title,
 }: {
+  readonly back?: boolean;
   readonly count: number;
-  readonly facet: PullRequestFilterFacet | null;
+  readonly title: string;
 }): React.JSX.Element {
-  const selected = FACETS.find((item) => item.value === facet);
   return (
     <Tray.Header style={styles.header}>
-      <FilterHeaderIdentity facet={facet} title={selected?.label ?? "Filters"} />
+      <FilterHeaderIdentity back={back} title={title} />
       <FilterHeaderActions count={count} />
     </Tray.Header>
   );
 }
 
 function FilterHeaderIdentity({
-  facet,
+  back,
   title,
 }: {
-  readonly facet: PullRequestFilterFacet | null;
+  readonly back: boolean;
   readonly title: string;
 }): React.JSX.Element {
   return (
     <View style={styles.headerIdentity}>
-      <FilterHeaderBack visible={facet !== null} />
+      {back ? <FilterHeaderBack /> : null}
       <Tray.Title style={styles.headerTitle}>{title}</Tray.Title>
     </View>
   );
 }
 
-function FilterHeaderBack({ visible }: { readonly visible: boolean }): React.JSX.Element | null {
-  const back = useEvent(() => {
-    selectPullRequestFilterFacet(null);
-  });
-  return visible ? (
-    <Pressable
-      accessibilityLabel="Back to filter groups"
-      accessibilityRole="button"
-      onPress={back}
-      style={styles.headerButton}
-    >
+function FilterHeaderBack(): React.JSX.Element {
+  return (
+    <Tray.Back style={styles.headerButton}>
       <Ionicons color={colors.text} name="arrow-back" size={iconSize.action} />
-    </Pressable>
-  ) : null;
+    </Tray.Back>
+  );
 }
 
 function FilterHeaderActions({ count }: { readonly count: number }): React.JSX.Element {
@@ -323,16 +391,16 @@ function FilterHeaderActions({ count }: { readonly count: number }): React.JSX.E
   });
   return (
     <View style={styles.headerActions}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ disabled: count === 0 }}
-        disabled={count === 0}
-        onPress={reset}
-        style={[styles.resetButton, count === 0 && styles.resetButtonDisabled]}
-        testID="pull-request-reset-filters"
-      >
-        <Text style={styles.resetText}>Reset</Text>
-      </Pressable>
+      {count === 0 ? null : (
+        <Pressable
+          accessibilityRole="button"
+          onPress={reset}
+          style={styles.resetButton}
+          testID="pull-request-reset-filters"
+        >
+          <Text style={styles.resetText}>Reset</Text>
+        </Pressable>
+      )}
       <Tray.Close>
         {({ color, size }) => <Ionicons color={color} name="close" size={size} />}
       </Tray.Close>
@@ -391,8 +459,12 @@ function FacetRow({
   readonly selected: boolean;
   readonly wide: boolean;
 }): React.JSX.Element {
+  const tray = useTray();
   const select = useEvent(() => {
     selectPullRequestFilterFacet(facet.value);
+    if (!wide) {
+      tray.setView(FILTER_DETAIL_VIEW);
+    }
   });
   return (
     <Pressable

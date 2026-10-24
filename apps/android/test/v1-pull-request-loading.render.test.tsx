@@ -1,6 +1,6 @@
 import { LegendList } from "@legendapp/list/react-native";
-import { fireEvent, render } from "@testing-library/react-native";
-import { Animated, StyleSheet } from "react-native";
+import { act, fireEvent, render, within } from "@testing-library/react-native";
+import { Animated, Dimensions, StyleSheet } from "react-native";
 import { GestureDetector } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -15,14 +15,16 @@ import {
   dismissPullRequestFilters,
   closePullRequestSearch,
   openPullRequestFilters,
+  pullRequestFilterSheetModel,
   pullRequestListModel,
-  selectPullRequestFilterFacet,
 } from "../src/features/pullRequests/pullRequestListModel";
 import {
   connectedAccount,
   githubProvider,
   reviewRequestedPage,
 } from "./fixtures/forgeWireFixtures";
+import { setKeyboardHeightForTest } from "./mocks/KeyboardController";
+import { Tray } from "../src/vendor/reacticx/tray";
 
 jest.mock("../src/rendering/RichMarkdown", () => {
   const { Text } = jest.requireActual("react-native");
@@ -33,7 +35,11 @@ jest.mock("../src/rendering/RichMarkdown", () => {
   };
 });
 
+const originalWindow = Dimensions.get("window");
+
 afterEach(() => {
+  setKeyboardHeightForTest(0);
+  Dimensions.set({ window: originalWindow });
   pullRequestListModel.set(defaultPullRequestFilter());
   dismissPullRequestFilters();
   closePullRequestSearch();
@@ -74,10 +80,7 @@ it("presents filters in a tray with a full-width primary action", () => {
   );
 
   expect(view.getByRole("button", { name: "Close" })).toBeOnTheScreen();
-  expect(view.getByTestId("pull-request-reset-filters")).toHaveTextContent("Reset");
-  expect(view.getByTestId("pull-request-reset-filters").props.accessibilityState).toMatchObject({
-    disabled: true,
-  });
+  expect(view.queryByTestId("pull-request-reset-filters")).toBeNull();
   expect(
     StyleSheet.flatten(view.getByRole("button", { name: "Apply filters" }).props.style),
   ).toMatchObject({
@@ -86,9 +89,36 @@ it("presents filters in a tray with a full-width primary action", () => {
   });
 });
 
-it("replaces the implicit Open state when a different state is selected", () => {
+it("bounds the filter tray to the viewport above the keyboard", () => {
+  Dimensions.set({ window: { ...originalWindow, height: 800, width: 400 } });
+  setKeyboardHeightForTest(300);
   openPullRequestFilters();
-  selectPullRequestFilterFacet("state");
+  const view = render(
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { height: 800, width: 400, x: 0, y: 0 },
+        insets: { bottom: 24, left: 0, right: 0, top: 24 },
+      }}
+    >
+      <PullRequestFilterSheet
+        accounts={[connectedAccount]}
+        providers={[githubProvider]}
+        repositories={[]}
+      />
+    </SafeAreaProvider>,
+  );
+
+  for (const trayView of view.UNSAFE_getAllByType(Tray.View)) {
+    expect(StyleSheet.flatten(trayView.props.style).height).toBe(464);
+  }
+  expect(StyleSheet.flatten(view.UNSAFE_getByType(Tray.Content).props.style)).toMatchObject({
+    marginBottom: -24,
+  });
+});
+
+it("navigates into a filter facet through the Tray view stack", () => {
+  Dimensions.set({ window: { ...originalWindow, height: 800, width: 400 } });
+  openPullRequestFilters();
   const view = render(
     <SafeAreaProvider
       initialMetrics={{
@@ -104,13 +134,80 @@ it("replaces the implicit Open state when a different state is selected", () => 
     </SafeAreaProvider>,
   );
 
-  fireEvent.press(view.getByRole("button", { name: "Merged: off" }));
-  fireEvent.press(view.getByRole("button", { name: "Apply filters" }));
+  fireEvent.press(view.getByRole("button", { name: /State/u }));
+
+  const detail = view.getByTestId("pull-request-filter-state-view");
+  expect(detail).toBeOnTheScreen();
+  expect(view.getByRole("button", { name: "Back" })).toBeOnTheScreen();
+  fireEvent.press(within(detail).getByRole("button", { name: "Merged: off" }));
+  expect(within(detail).getByTestId("pull-request-reset-filters")).toHaveTextContent("Reset");
+  fireEvent.press(within(detail).getByRole("button", { name: "Apply filters" }));
 
   expect(pullRequestListModel.peek().query.states).toStrictEqual({
     exclude: [],
     include: ["merged"],
   });
+});
+
+it("returns from a filter facet through the Tray view stack", () => {
+  Dimensions.set({ window: { ...originalWindow, height: 800, width: 400 } });
+  openPullRequestFilters();
+  const view = render(
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { height: 800, width: 400, x: 0, y: 0 },
+        insets: { bottom: 0, left: 0, right: 0, top: 0 },
+      }}
+    >
+      <PullRequestFilterSheet
+        accounts={[connectedAccount]}
+        providers={[githubProvider]}
+        repositories={[]}
+      />
+    </SafeAreaProvider>,
+  );
+
+  fireEvent.press(view.getByRole("button", { name: /State/u }));
+  fireEvent.press(view.getByRole("button", { name: "Back" }));
+
+  const state = pullRequestFilterSheetModel.peek();
+  expect(state.status).toBe("open");
+  if (state.status === "open") {
+    expect(state.facet).toBeNull();
+  }
+});
+
+it("reopens at the filter index after closing from a facet", () => {
+  Dimensions.set({ window: { ...originalWindow, height: 800, width: 400 } });
+  openPullRequestFilters();
+  const view = render(
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { height: 800, width: 400, x: 0, y: 0 },
+        insets: { bottom: 0, left: 0, right: 0, top: 0 },
+      }}
+    >
+      <PullRequestFilterSheet
+        accounts={[connectedAccount]}
+        providers={[githubProvider]}
+        repositories={[]}
+      />
+    </SafeAreaProvider>,
+  );
+
+  fireEvent.press(view.getByRole("button", { name: /State/u }));
+  fireEvent.press(
+    within(view.getByTestId("pull-request-filter-state-view")).getByRole("button", {
+      name: "Close",
+    }),
+  );
+  act(() => {
+    openPullRequestFilters();
+  });
+
+  expect(view.getByTestId("pull-request-filter-sheet")).toBeOnTheScreen();
+  expect(view.queryByRole("button", { name: "Back" })).toBeNull();
+  expect(view.queryByTestId("pull-request-filter-state-view")).toBeNull();
 });
 
 it("renders a stable pull-request detail skeleton from the first route frame", () => {

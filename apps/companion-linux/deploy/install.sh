@@ -26,6 +26,22 @@ source_revision=${CODEWIDE_COMPANION_SOURCE_REVISION:-00000000000000000000000000
 build=${CODEWIDE_COMPANION_BUILD:-manual}
 activate=${CODEWIDE_COMPANION_ACTIVATE:-1}
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+sha256_stream() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    shasum -a 256 | awk '{print $1}'
+  fi
+}
+
 case "$activate" in 0|1) ;; *) printf '%s\n' 'CODEWIDE_COMPANION_ACTIVATE must be 0 or 1.' >&2; exit 2 ;; esac
 test -x "$binary"
 test -x "$git_plugin_binary"
@@ -33,17 +49,23 @@ test -x "$forge_github_plugin_binary"
 test -x "$update_guardian_binary"
 version=$($binary --version | awk 'NR == 1 { print $2 }')
 case "$version" in ''|*[!0-9.]*) printf '%s\n' 'Companion binary reports an invalid version.' >&2; exit 2 ;; esac
+case "$source_revision" in ????????????????????????????????????????) ;; *) printf '%s\n' 'Invalid Companion source revision.' >&2; exit 2 ;; esac
+case "$source_revision" in *[!0-9a-f]*) printf '%s\n' 'Invalid Companion source revision.' >&2; exit 2 ;; esac
 if [ -z "$artifact_digest" ]; then
-  if command -v sha256sum >/dev/null 2>&1; then
-    artifact_digest=$(sha256sum "$binary" | awk '{print $1}')
-  else
-    artifact_digest=$(shasum -a 256 "$binary" | awk '{print $1}')
-  fi
+  artifact_digest=$(
+    {
+      printf 'version %s\n' "$version"
+      printf 'build %s\n' "$build"
+      printf 'sourceRevision %s\n' "$source_revision"
+      printf 'bin/codewide-companion %s\n' "$(sha256_file "$binary")"
+      printf 'libexec/codewide-vcs-git %s\n' "$(sha256_file "$git_plugin_binary")"
+      printf 'libexec/codewide-forge-github %s\n' "$(sha256_file "$forge_github_plugin_binary")"
+      printf 'libexec/codewide-companion-memory-watch %s\n' "$(sha256_file "$memory_watch_source")"
+    } | sha256_stream
+  )
 fi
 case "$artifact_digest" in ????????????????????????????????????????????????????????????????) ;; *) printf '%s\n' 'Invalid Companion artifact digest.' >&2; exit 2 ;; esac
 case "$artifact_digest" in *[!0-9a-f]*) printf '%s\n' 'Invalid Companion artifact digest.' >&2; exit 2 ;; esac
-case "$source_revision" in ????????????????????????????????????????) ;; *) printf '%s\n' 'Invalid Companion source revision.' >&2; exit 2 ;; esac
-case "$source_revision" in *[!0-9a-f]*) printf '%s\n' 'Invalid Companion source revision.' >&2; exit 2 ;; esac
 
 umask 077
 mkdir -p "$install_root/generations" "$install_root/bootstrap" "$update_state_root" "$unit_root"

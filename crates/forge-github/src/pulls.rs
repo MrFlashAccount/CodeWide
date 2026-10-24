@@ -149,7 +149,7 @@ fn compile_search(login: &str, query: &PullRequestSearchQuery) -> Result<String,
         PullRequestReviewState::Approved => "review:approved".to_owned(),
         PullRequestReviewState::ChangesRequested => "review:changes_requested".to_owned(),
     });
-    push_state_values(&mut terms, &query.states);
+    push_state_values(&mut terms, &query.states)?;
     push_check_values(&mut terms, &query.checks);
     push_text_values(&mut terms, "label", &query.labels);
     push_text_values(&mut terms, "base", &query.base_branches);
@@ -226,26 +226,64 @@ fn push_negative_values(terms: &mut Vec<String>, values: Vec<String>) {
     terms.extend(values.into_iter().map(|value| format!("-{value}")));
 }
 
-fn push_state_values(terms: &mut Vec<String>, values: &SearchValues<PullRequestState>) {
-    push_group(
-        terms,
+fn push_state_values(
+    terms: &mut Vec<String>,
+    values: &SearchValues<PullRequestState>,
+) -> Result<(), PluginError> {
+    const OPEN: u8 = 1;
+    const DRAFT: u8 = 1 << 1;
+    const MERGED: u8 = 1 << 2;
+    const CLOSED: u8 = 1 << 3;
+    const ALL: u8 = OPEN | DRAFT | MERGED | CLOSED;
+    const OPEN_AND_DRAFT: u8 = OPEN | DRAFT;
+    const MERGED_AND_CLOSED: u8 = MERGED | CLOSED;
+    const OPEN_AND_CLOSED: u8 = OPEN | CLOSED;
+    const ALL_EXCEPT_MERGED: u8 = OPEN | DRAFT | CLOSED;
+    const ALL_EXCEPT_DRAFT: u8 = OPEN | MERGED | CLOSED;
+
+    let mut allowed = if values.include.is_empty() {
+        ALL
+    } else {
         values
             .include
             .iter()
-            .map(|state| match state {
-                PullRequestState::Open => "(is:open AND draft:false)".to_owned(),
-                PullRequestState::Draft => "is:draft".to_owned(),
-                PullRequestState::Merged => "is:merged".to_owned(),
-                PullRequestState::Closed => "(is:closed AND -is:merged)".to_owned(),
-            })
-            .collect(),
-    );
-    terms.extend(values.exclude.iter().map(|state| match state {
-        PullRequestState::Open => "(is:closed OR is:draft)".to_owned(),
-        PullRequestState::Draft => "-is:draft".to_owned(),
-        PullRequestState::Merged => "-is:merged".to_owned(),
-        PullRequestState::Closed => "(is:open OR is:merged)".to_owned(),
-    }));
+            .fold(0, |mask, state| mask | state_bit(*state))
+    };
+    for state in &values.exclude {
+        allowed &= !state_bit(*state);
+    }
+
+    // GitHub search treats adjacent qualifiers as conjunctions. Its textual
+    // `AND`/`OR` groups do not preserve qualifier semantics, so only exact
+    // single-query projections are accepted here; every other combination is
+    // rejected instead of returning a silently incomplete result.
+    match allowed {
+        ALL => {}
+        OPEN => terms.extend(["is:open".to_owned(), "draft:false".to_owned()]),
+        DRAFT => terms.push("is:draft".to_owned()),
+        MERGED => terms.push("is:merged".to_owned()),
+        CLOSED => terms.extend(["is:closed".to_owned(), "-is:merged".to_owned()]),
+        OPEN_AND_DRAFT => terms.push("is:open".to_owned()),
+        MERGED_AND_CLOSED => terms.push("is:closed".to_owned()),
+        OPEN_AND_CLOSED => terms.extend(["-is:draft".to_owned(), "-is:merged".to_owned()]),
+        ALL_EXCEPT_MERGED => terms.push("-is:merged".to_owned()),
+        ALL_EXCEPT_DRAFT => terms.push("-is:draft".to_owned()),
+        _ => {
+            return Err(PluginError::invalid_params(
+                "GitHub cannot represent the selected pull request states in one search",
+            ));
+        }
+    }
+    Ok(())
+}
+
+const fn state_bit(state: PullRequestState) -> u8 {
+    match state {
+        PullRequestState::Open => 1,
+        PullRequestState::Draft => 1 << 1,
+        PullRequestState::Merged => 1 << 2,
+        PullRequestState::Closed => 1 << 3,
+    }
 }
 
 fn quoted(value: &str) -> String {
@@ -563,11 +601,42 @@ mod tests {
         assert!(compiled.contains("author:\"alice\""));
         assert!(compiled.contains("-author:\"bot\""));
         assert!(compiled.contains("review:changes_requested"));
-        assert!(compiled.contains("((is:open AND draft:false) OR is:draft)"));
+        assert!(compiled.contains("is:open"));
+        assert!(!compiled.contains("draft:false"));
         assert!(compiled.contains("status:failure"));
         assert!(compiled.contains("label:\"bug\""));
         assert!(compiled.contains("base:\"main\""));
         assert!(compiled.ends_with("sort:updated-desc"));
+        Ok(())
+    }
+
+    #[test]
+    fn open_state_uses_github_qualifier_conjunction() -> Result<(), PluginError> {
+        let query = PullRequestSearchQuery {
+            text: String::new(),
+            category: PullRequestCategory::All,
+            repositories: SearchValues::default(),
+            authors: SearchValues::default(),
+            assignees: SearchValues::default(),
+            reviewers: SearchValues::default(),
+            review: SearchValues::default(),
+            states: values(vec![PullRequestState::Open], Vec::new()),
+            checks: SearchValues::default(),
+            labels: SearchValues::default(),
+            base_branches: SearchValues::default(),
+            head_branches: SearchValues::default(),
+            sort: forge_protocol::PullRequestSort {
+                field: PullRequestSortField::Updated,
+                direction: SortDirection::Descending,
+            },
+        };
+
+        // This exact string is an external GitHub search compatibility
+        // contract: explicit `AND` makes qualifier queries return no matches.
+        assert_eq!(
+            compile_search("sergey", &query)?,
+            "is:pr archived:false is:open draft:false sort:updated-desc"
+        );
         Ok(())
     }
 }

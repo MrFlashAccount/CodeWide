@@ -4,6 +4,7 @@ const UPDATE_UNIT: &str = include_str!("../deploy/codewide-companion-update.serv
 const UPDATE_PATH: &str = include_str!("../deploy/codewide-companion-update.path");
 const INSTALL_SCRIPT: &str = include_str!("../deploy/install.sh");
 const VERIFY_SCRIPT: &str = include_str!("../deploy/verify.sh");
+const RELEASE_SCRIPT: &str = include_str!("../../../scripts/release-companion");
 
 fn settings(unit: &str) -> Vec<&str> {
     unit.lines()
@@ -121,6 +122,25 @@ fn managed_install_uses_immutable_generations_and_a_stable_guardian() {
     assert!(INSTALL_SCRIPT.contains("enable --now codewide-companion-update.path"));
     assert!(UPDATE_UNIT.contains("IPAddressDeny=any"));
     assert!(!UPDATE_UNIT.contains("network-online.target"));
+}
+
+#[test]
+fn manual_generation_identity_covers_every_runtime_payload() {
+    for expected in [
+        "bin/codewide-companion %s",
+        "libexec/codewide-vcs-git %s",
+        "libexec/codewide-forge-github %s",
+        "libexec/codewide-companion-memory-watch %s",
+    ] {
+        assert!(
+            INSTALL_SCRIPT.contains(expected),
+            "manual generation digest includes {expected}"
+        );
+    }
+    assert!(RELEASE_SCRIPT.contains(
+        "cmp target/release/codewide-forge-github \"$CURRENT_LINK/libexec/codewide-forge-github\""
+    ));
+    assert!(RELEASE_SCRIPT.contains("forgeGithubPluginSha256"));
 }
 
 #[test]

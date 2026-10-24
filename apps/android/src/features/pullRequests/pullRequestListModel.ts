@@ -23,17 +23,20 @@ type FilterSheetState =
         readonly draft: PullRequestSearchFilter;
         readonly facet: PullRequestFilterFacet | null;
       } | null;
+      readonly session: number;
       readonly status: "closed";
     }
   | {
       readonly draft: PullRequestSearchFilter;
       readonly facet: PullRequestFilterFacet | null;
+      readonly session: number;
       readonly status: "open";
     };
 
 type StoredFilterSheetState = {
   readonly draft: PullRequestSearchFilter | null;
   readonly facet: PullRequestFilterFacet | null;
+  readonly session: number;
   readonly status: "closed" | "open";
 };
 
@@ -69,6 +72,7 @@ export const pullRequestSearchModel = observable({ draft: "", open: false });
 const storedFilterSheetState = observable<StoredFilterSheetState>({
   draft: null,
   facet: null,
+  session: 0,
   status: "closed",
 });
 
@@ -130,9 +134,11 @@ export function selectPullRequestSort(sort: PullRequestSearchQuery["sort"]): voi
 
 /** Opens a fresh draft copied from the applied filter. */
 export function openPullRequestFilters(): void {
+  const previous = storedFilterSheetState.peek();
   storedFilterSheetState.set({
     draft: copyFilter(pullRequestListModel.peek()),
     facet: null,
+    session: previous.session + 1,
     status: "open",
   });
 }
@@ -182,10 +188,11 @@ export function resetPullRequestFilterDraft(): void {
 
 function projectFilterSheetState(state: StoredFilterSheetState): FilterSheetState {
   if (state.status === "open" && state.draft !== null) {
-    return { draft: state.draft, facet: state.facet, status: "open" };
+    return { draft: state.draft, facet: state.facet, session: state.session, status: "open" };
   }
   return {
     retained: state.draft === null ? null : { draft: state.draft, facet: state.facet },
+    session: state.session,
     status: "closed",
   };
 }

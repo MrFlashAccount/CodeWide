@@ -114,6 +114,14 @@ validate_release_payload() {
   test -r apps/companion-linux/deploy/codewide-companion-memory-watch.timer
 }
 
+verify_installed_payload() {
+  cmp target/release/codewide-companion "$CURRENT_LINK/bin/codewide-companion"
+  cmp target/release/codewide-vcs-git "$CURRENT_LINK/libexec/codewide-vcs-git"
+  cmp target/release/codewide-forge-github "$CURRENT_LINK/libexec/codewide-forge-github"
+  cmp apps/companion-linux/deploy/memory-watch.sh \
+    "$CURRENT_LINK/libexec/codewide-companion-memory-watch"
+}
+
 finish_release() {
   status=$?
   trap - EXIT HUP INT TERM
@@ -171,9 +179,11 @@ fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
   BINARY_SHA256=$(sha256sum target/release/codewide-companion | cut -d ' ' -f 1)
+  GIT_PLUGIN_SHA256=$(sha256sum target/release/codewide-vcs-git | cut -d ' ' -f 1)
+  FORGE_GITHUB_PLUGIN_SHA256=$(sha256sum target/release/codewide-forge-github | cut -d ' ' -f 1)
   GUARDIAN_SHA256=$(sha256sum target/release/codewide-companion-update-guardian | cut -d ' ' -f 1)
   UPDATE_UNIT_SHA256=$(sha256sum apps/companion-linux/deploy/codewide-companion-update.service | cut -d ' ' -f 1)
-  printf '%s\n' "{\"release\":\"companion\",\"status\":\"validated\",\"dryRun\":true,\"sourceRevision\":\"$SOURCE_REVISION\",\"sourceDirty\":$SOURCE_DIRTY,\"binarySha256\":\"$BINARY_SHA256\",\"guardianSha256\":\"$GUARDIAN_SHA256\",\"updateUnitSha256\":\"$UPDATE_UNIT_SHA256\"}"
+  printf '%s\n' "{\"release\":\"companion\",\"status\":\"validated\",\"dryRun\":true,\"sourceRevision\":\"$SOURCE_REVISION\",\"sourceDirty\":$SOURCE_DIRTY,\"binarySha256\":\"$BINARY_SHA256\",\"gitPluginSha256\":\"$GIT_PLUGIN_SHA256\",\"forgeGithubPluginSha256\":\"$FORGE_GITHUB_PLUGIN_SHA256\",\"guardianSha256\":\"$GUARDIAN_SHA256\",\"updateUnitSha256\":\"$UPDATE_UNIT_SHA256\"}"
   exit 0
 fi
 
@@ -196,12 +206,15 @@ run_quiet 'installing companion' env \
   CODEWIDE_COMPANION_SOURCE_REVISION="$SOURCE_REVISION" \
   ./apps/companion-linux/deploy/install.sh
 run_quiet 'verifying installation' ./apps/companion-linux/deploy/verify.sh
+run_quiet 'verifying installed payload bytes' verify_installed_payload
 DEPLOYMENT_STARTED=0
 
 BINARY_SHA256=$(sha256sum "$CURRENT_LINK/bin/codewide-companion" | cut -d ' ' -f 1)
+GIT_PLUGIN_SHA256=$(sha256sum "$CURRENT_LINK/libexec/codewide-vcs-git" | cut -d ' ' -f 1)
+FORGE_GITHUB_PLUGIN_SHA256=$(sha256sum "$CURRENT_LINK/libexec/codewide-forge-github" | cut -d ' ' -f 1)
 GUARDIAN_SHA256=$(sha256sum "$BOOTSTRAP_ROOT/codewide-companion-update-guardian" | cut -d ' ' -f 1)
 UPDATE_UNIT_SHA256=$(sha256sum "$UNIT_ROOT/codewide-companion-update.service" | cut -d ' ' -f 1)
 MAIN_PID=$(systemctl --user show codewide-companion.service -p MainPID --value)
 RESTARTS=$(systemctl --user show codewide-companion.service -p NRestarts --value)
 
-printf '%s\n' "{\"release\":\"companion\",\"status\":\"published\",\"sourceRevision\":\"$SOURCE_REVISION\",\"sourceDirty\":$SOURCE_DIRTY,\"binarySha256\":\"$BINARY_SHA256\",\"guardianSha256\":\"$GUARDIAN_SHA256\",\"updateUnitSha256\":\"$UPDATE_UNIT_SHA256\",\"mainPid\":$MAIN_PID,\"restartCount\":$RESTARTS}"
+printf '%s\n' "{\"release\":\"companion\",\"status\":\"published\",\"sourceRevision\":\"$SOURCE_REVISION\",\"sourceDirty\":$SOURCE_DIRTY,\"binarySha256\":\"$BINARY_SHA256\",\"gitPluginSha256\":\"$GIT_PLUGIN_SHA256\",\"forgeGithubPluginSha256\":\"$FORGE_GITHUB_PLUGIN_SHA256\",\"guardianSha256\":\"$GUARDIAN_SHA256\",\"updateUnitSha256\":\"$UPDATE_UNIT_SHA256\",\"mainPid\":$MAIN_PID,\"restartCount\":$RESTARTS}"

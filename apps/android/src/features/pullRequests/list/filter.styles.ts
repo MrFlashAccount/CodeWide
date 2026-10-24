@@ -3,7 +3,6 @@ import { StyleSheet } from "react-native";
 import {
   colors,
   controlSize,
-  disabledOpacity,
   radii,
   spacing,
   typeScale,
@@ -194,9 +193,6 @@ export const filterStyles = StyleSheet.create({
     justifyContent: "center",
     minHeight: controlSize.regular,
     paddingHorizontal: spacing.sm,
-  },
-  resetButtonDisabled: {
-    opacity: disabledOpacity,
   },
   resetText: {
     ...typeScale.body,
