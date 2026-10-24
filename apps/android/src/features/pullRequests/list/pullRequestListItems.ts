@@ -23,8 +23,7 @@ export type PullRequestListItem =
       readonly key: string;
       readonly kind: "row";
       readonly row: PullRequestRow;
-    }
-  | { readonly key: string; readonly kind: "empty" };
+    };
 
 /** Builds the item sequence of one page. */
 export function pullRequestListItems(page: PullRequestListPage): readonly PullRequestListItem[] {
@@ -43,9 +42,6 @@ export function pullRequestListItems(page: PullRequestListPage): readonly PullRe
   rows.sort((left, right) => right.row.updatedAt.localeCompare(left.row.updatedAt));
   appendAttentionGroup(items, rows, "new");
   appendAttentionGroup(items, rows, "seen");
-  if (!items.some((item) => item.kind === "row" || item.kind === "problem")) {
-    items.push({ key: "empty", kind: "empty" });
-  }
   return items;
 }
 

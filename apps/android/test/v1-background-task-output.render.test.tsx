@@ -11,6 +11,7 @@ import { BackgroundTaskOutputHost } from "../src/features/conversation/turns/Bac
 import { BackgroundTaskOutputScreen } from "../src/features/conversation/turns/BackgroundTaskOutputScreen";
 import { CommandOutputScreen } from "../src/features/conversation/turns/CommandOutputScreen";
 import type { TaskOutputRouteRequest } from "../src/services/backgroundTasks/taskOutputRouteSession";
+import { colors, radii, spacing } from "../src/theme";
 import { AppText } from "../src/ui/AppText";
 import { TaskNotificationLine } from "../src/features/conversation/turns/TaskNotificationLine";
 import type { TaskNotificationReport } from "../src/rendering/taskNotifications";
@@ -139,8 +140,14 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
   // The task's name titles the screen; its command is a prompt line above the output.
   expect(view.getByRole("header")).toHaveTextContent("Wait for CI");
   const command = view.getByTestId("command-output-command");
+  expect(command).toHaveStyle({
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.medium,
+    marginHorizontal: spacing.md,
+    paddingHorizontal: spacing.md,
+  });
   expect(within(command).getByText("❯")).toBeOnTheScreen();
-  expect(within(command).getByText(COMMAND)).toBeOnTheScreen();
+  expect(within(command).getByText(COMMAND).props.selectable).toBeUndefined();
   // The command copies on its own, apart from the whole output.
   const copy = jest.spyOn(Clipboard, "setStringAsync");
   fireEvent.press(within(command).getByLabelText("Copy"));
@@ -153,9 +160,18 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
   expect(grid).toHaveTextContent("first page\r\nsecond\r\n[exited with code 0]", {
     normalizeWhitespace: false,
   });
+  expect(grid).toHaveStyle({
+    marginHorizontal: spacing.md,
+    marginVertical: spacing.xs,
+  });
   expect(grid.props.accessibilityHint).toBe("read-only");
   // The header copies everything like a terminal: the prompt line, then the output.
-  fireEvent.press(within(view.getByTestId("command-output-header")).getByLabelText("Copy"));
+  const header = within(view.getByTestId("command-output-header"));
+  const headerCopy = header.getByLabelText("Copy");
+  const headerSearch = header.getByLabelText("Search command output");
+  const headerActionStyle = headerSearch.props.style;
+  expect(headerCopy.props.style).toEqual(headerSearch.props.style);
+  fireEvent.press(headerCopy);
   expect(copy).toHaveBeenLastCalledWith(`❯ ${COMMAND}\nfirst page\nsecond\n[exited with code 0]`);
   // The raw terminal owns the remaining surface; there is no duplicate status footer.
   expect(view.queryByText("Finished")).toBeNull();
@@ -164,6 +180,9 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
 
   fireEvent.press(view.getByLabelText("Search command output"));
   fireEvent.changeText(view.getByLabelText("Find in command output"), "second");
+  expect(view.getByLabelText("Previous match").props.style).toEqual(headerActionStyle);
+  expect(view.getByLabelText("Next match").props.style).toEqual(headerActionStyle);
+  expect(view.getByLabelText("Close output search").props.style).toEqual(headerActionStyle);
   fireEvent.press(view.getByLabelText("Next match"));
   fireEvent.press(view.getByLabelText("Previous match"));
   expect(terminalFindNext).toHaveBeenLastCalledWith("second");

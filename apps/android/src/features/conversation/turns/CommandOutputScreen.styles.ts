@@ -7,7 +7,7 @@ export const styles = StyleSheet.create({
   command: {
     alignItems: "center",
     backgroundColor: colors.surfaceRaised,
-    borderRadius: radii.small,
+    borderRadius: radii.medium,
     flexDirection: "row",
     gap: spacing.xs,
     marginHorizontal: spacing.md,
@@ -44,7 +44,7 @@ export const styles = StyleSheet.create({
   },
   loading: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.xs,
   },
   search: {
     alignItems: "center",
@@ -52,13 +52,6 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.xs,
     minWidth: 0,
-  },
-  searchAction: {
-    alignItems: "center",
-    flexShrink: 0,
-    height: controlSize.compact,
-    justifyContent: "center",
-    width: controlSize.compact,
   },
   searchInput: {
     color: colors.text,

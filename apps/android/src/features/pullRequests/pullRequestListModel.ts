@@ -20,7 +20,13 @@ export type PullRequestFilterFacet =
   | "advanced";
 
 type FilterSheetState =
-  | { readonly status: "closed" }
+  | {
+      readonly retained: {
+        readonly draft: PullRequestSearchFilter;
+        readonly facet: PullRequestFilterFacet | null;
+      } | null;
+      readonly status: "closed";
+    }
   | {
       readonly draft: PullRequestSearchFilter;
       readonly facet: PullRequestFilterFacet | null;
@@ -85,12 +91,15 @@ export function openForgeAccounts(): void {
 
 /** Selects one quick view without changing the remaining applied filters. */
 export function selectPullRequestCategory(category: PullRequestCategory): void {
-  pullRequestListModel.query.category.set(category);
+  publishAppliedQuery((query) => (query.category === category ? query : { ...query, category }));
 }
 
 /** Applies the submitted free-text or qualifier query. */
 export function selectPullRequestSearchText(text: string): void {
-  pullRequestListModel.query.text.set(text.trim());
+  const normalized = text.trim();
+  publishAppliedQuery((query) =>
+    query.text === normalized ? query : { ...query, text: normalized },
+  );
 }
 
 /** Opens a fresh draft copied from the applied filter. */
@@ -102,9 +111,10 @@ export function openPullRequestFilters(): void {
   });
 }
 
-/** Discards the draft and closes the tray. */
+/** Closes without applying; the inaccessible draft survives only for the tray's exit frame. */
 export function dismissPullRequestFilters(): void {
-  storedFilterSheetState.set({ draft: null, facet: null, status: "closed" });
+  const state = storedFilterSheetState.peek();
+  storedFilterSheetState.set({ ...state, status: "closed" });
 }
 
 /** Shows one facet in the open draft. */
@@ -132,7 +142,8 @@ export function applyPullRequestFilters(): void {
     return;
   }
   pullRequestListModel.set(copyFilter(state.draft));
-  storedFilterSheetState.set({ draft: null, facet: null, status: "closed" });
+  // Keep the rendered snapshot until Tray finishes its native-thread exit animation.
+  storedFilterSheetState.set({ ...state, status: "closed" });
 }
 
 /** Resets the tray draft, not the visible list, until Apply. */
@@ -147,7 +158,10 @@ function projectFilterSheetState(state: StoredFilterSheetState): FilterSheetStat
   if (state.status === "open" && state.draft !== null) {
     return { draft: state.draft, facet: state.facet, status: "open" };
   }
-  return { status: "closed" };
+  return {
+    retained: state.draft === null ? null : { draft: state.draft, facet: state.facet },
+    status: "closed",
+  };
 }
 
 /** Removes one applied filter chip immediately. */
@@ -162,35 +176,62 @@ export function clearAppliedPullRequestFilter(
     | "sources",
 ): void {
   if (field === "sources") {
-    pullRequestListModel.assign({ accounts: [], providerIds: [] });
+    const current = pullRequestListModel.peek();
+    if (current.accounts.length > 0 || current.providerIds.length > 0) {
+      pullRequestListModel.set({ ...current, accounts: [], providerIds: [] });
+    }
     return;
   }
   if (field === "people") {
-    pullRequestListModel.query.authors.set(emptySearchValues());
-    pullRequestListModel.query.assignees.set(emptySearchValues());
-    pullRequestListModel.query.reviewers.set(emptySearchValues());
+    publishAppliedQuery((query) => ({
+      ...query,
+      assignees: emptySearchValues(),
+      authors: emptySearchValues(),
+      reviewers: emptySearchValues(),
+    }));
   } else if (field === "metadata") {
-    pullRequestListModel.query.labels.set(emptySearchValues());
-    pullRequestListModel.query.baseBranches.set(emptySearchValues());
-    pullRequestListModel.query.headBranches.set(emptySearchValues());
+    publishAppliedQuery((query) => ({
+      ...query,
+      baseBranches: emptySearchValues(),
+      headBranches: emptySearchValues(),
+      labels: emptySearchValues(),
+    }));
   } else {
     switch (field) {
       case "authors":
-        pullRequestListModel.query.authors.set(emptySearchValues());
+        publishAppliedQuery((query) => ({ ...query, authors: emptySearchValues() }));
         break;
       case "review":
-        pullRequestListModel.query.review.set(emptySearchValues());
+        publishAppliedQuery((query) => ({ ...query, review: emptySearchValues() }));
         break;
       case "states":
-        pullRequestListModel.query.states.set({ exclude: [], include: ["open"] });
+        publishAppliedQuery((query) => ({
+          ...query,
+          states: { exclude: [], include: ["open"] },
+        }));
         break;
       case "checks":
-        pullRequestListModel.query.checks.set(emptySearchValues());
+        publishAppliedQuery((query) => ({ ...query, checks: emptySearchValues() }));
         break;
       case "repositories":
-        pullRequestListModel.query.repositories.set(emptySearchValues());
+        publishAppliedQuery((query) => ({ ...query, repositories: emptySearchValues() }));
         break;
     }
+  }
+}
+
+/**
+ * Publishes a new immutable query snapshot. Query-cache keys retain old
+ * filter objects, so mutating a nested Legend node would corrupt identities of
+ * both the current and previously cached requests.
+ */
+function publishAppliedQuery(
+  update: (query: PullRequestSearchQuery) => PullRequestSearchQuery,
+): void {
+  const current = pullRequestListModel.peek();
+  const query = update(current.query);
+  if (query !== current.query) {
+    pullRequestListModel.set({ ...current, query });
   }
 }
 

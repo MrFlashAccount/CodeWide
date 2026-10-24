@@ -9,6 +9,7 @@ import {
   typeTracking,
   typeWeight,
 } from "../../../theme";
+import { APP_SHEET_MAX_WIDTH } from "../../../ui/appSheetGeometry";
 
 const ADVANCED_INPUT_HEIGHT = 120;
 const CHOICE_SIZE = 22;
@@ -25,10 +26,11 @@ export const filterStyles = StyleSheet.create({
   applyButton: {
     alignItems: "center",
     backgroundColor: colors.primary,
-    borderRadius: radii.medium,
+    borderRadius: radii.pill,
     justifyContent: "center",
-    minHeight: controlSize.regular,
+    minHeight: controlSize.touch,
     paddingHorizontal: spacing.lg,
+    width: "100%",
   },
   applyText: {
     ...typeScale.body,
@@ -120,25 +122,21 @@ export const filterStyles = StyleSheet.create({
   },
   footer: {
     alignItems: "center",
-    borderTopColor: colors.borderSoft,
-    borderTopWidth: 1,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingBottom: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
+    borderTopWidth: 0,
   },
   footerSummary: {
     ...typeScale.label,
     color: colors.textMuted,
+    textAlign: "center",
   },
   header: {
     alignItems: "center",
-    borderBottomColor: colors.borderSoft,
-    borderBottomWidth: 1,
-    flexDirection: "row",
     minHeight: FACET_ROW_HEIGHT,
-    paddingHorizontal: spacing.sm,
+  },
+  headerActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
   },
   headerButton: {
     alignItems: "center",
@@ -146,10 +144,16 @@ export const filterStyles = StyleSheet.create({
     justifyContent: "center",
     width: controlSize.regular,
   },
+  headerIdentity: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.compact,
+    minWidth: 0,
+  },
   headerTitle: {
     ...typeScale.title,
     color: colors.text,
-    flex: 1,
   },
   input: {
     ...typeScale.body,
@@ -211,9 +215,9 @@ export const filterStyles = StyleSheet.create({
     paddingTop: spacing.md,
   },
   sheet: {
-    flex: 1,
-    minHeight: 0,
-    paddingHorizontal: 0,
+    alignSelf: "center",
+    maxWidth: APP_SHEET_MAX_WIDTH,
+    width: "100%",
   },
   triState: {
     alignItems: "center",

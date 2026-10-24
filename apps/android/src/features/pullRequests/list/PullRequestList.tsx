@@ -12,6 +12,7 @@ import type { PullRequestSearchFilter } from "../../../data/forgePullRequestSear
 import { listStyles as styles } from "./list.styles";
 import { ListSkeleton } from "./ListSkeleton";
 import { ListNotice } from "./ListNotice";
+import { PullRequestEmptyState } from "./PullRequestEmptyState";
 import { pullRequestListItems } from "./pullRequestListItems";
 import { PullRequestListItemView } from "./PullRequestListItemView";
 import { PullRequestFilterBar } from "./PullRequestFilterBar";
@@ -93,6 +94,7 @@ function PullRequestRows({
       estimatedItemSize={layoutSize.row}
       getItemType={(item) => item.kind}
       keyExtractor={(item) => item.key}
+      ListEmptyComponent={<PullRequestEmptyState filter={props.filter} />}
       onEndReached={props.onEndReached}
       onEndReachedThreshold={0.4}
       recycleItems

@@ -8,7 +8,11 @@ import { createPullRequestCommentDestinations } from "../src/data/pullRequestCom
 import { parseDrafts } from "../src/data/reviewDraftContract";
 import { parseGuideState } from "../src/data/reviewGuideContract";
 import { settledChecksLabel } from "../src/features/pullRequestDetail/overview/checkPresentation";
-import { reviewRequestedCount } from "../src/features/pullRequests/pullRequestListModel";
+import {
+  defaultPullRequestFilter,
+  reviewRequestedCount,
+} from "../src/features/pullRequests/pullRequestListModel";
+import { pullRequestEmptyStateCopy } from "../src/features/pullRequests/list/pullRequestEmptyState";
 import { pullRequestListItems } from "../src/features/pullRequests/list/pullRequestListItems";
 import {
   fileRowDetail,
@@ -292,6 +296,30 @@ describe("pull request attention groups", () => {
         item.kind === "attentionHeader" ? `${item.attention}:${String(item.count)}` : item.kind,
       ),
     ).toEqual(["seen:1", "row"]);
+  });
+});
+
+describe("pull request empty state", () => {
+  it("treats an empty review inbox as completed work", () => {
+    expect(pullRequestEmptyStateCopy(defaultPullRequestFilter())).toEqual({
+      description: "No pull requests are waiting for your review.",
+      icon: "checkmark-done-outline",
+      title: "All clear",
+    });
+  });
+
+  it("does not claim inbox zero when an applied search hid the rows", () => {
+    const filter = defaultPullRequestFilter();
+    expect(
+      pullRequestEmptyStateCopy({
+        ...filter,
+        query: { ...filter.query, text: "missing repository" },
+      }),
+    ).toEqual({
+      description: "Try another search or adjust your filters.",
+      icon: "search-outline",
+      title: "No matches",
+    });
   });
 });
 

@@ -12,7 +12,8 @@ export const styles = StyleSheet.create({
   },
   error: {
     color: colors.red,
-    padding: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
     ...typeScale.label,
   },
   omitted: {
@@ -25,16 +26,17 @@ export const styles = StyleSheet.create({
     ...typeScale.code,
   },
   overlay: {
-    left: spacing.sm,
+    left: spacing.md,
     position: "absolute",
-    top: spacing.sm,
+    top: spacing.xs,
   },
   terminal: {
     backgroundColor: colors.code,
     flex: 1,
   },
   terminalContent: {
-    padding: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
   },
   terminalView: {
     flex: 1,

@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { setStringAsync } from "expo-clipboard";
 import { useRef, useState, type ReactElement, type RefObject } from "react";
 import { Pressable, View, type TextInput as NativeTextInput } from "react-native";
 import { useEvent } from "../../../react/useEvent";
@@ -229,8 +230,26 @@ function CommandOutputTitle({
       >
         <Ionicons color={colors.text} name="search-outline" size={iconSize.navigation} />
       </Pressable>
-      {whole === "" ? null : <CopyButton text={whole} />}
+      {whole === "" ? null : <HeaderCopyButton text={whole} />}
     </>
+  );
+}
+
+/** Copy in the app bar uses the same visual and touch geometry as search. */
+function HeaderCopyButton({ text }: { readonly text: string }): ReactElement {
+  const copy = useEvent(() => {
+    setStringAsync(text).catch(() => undefined);
+  });
+  return (
+    <Pressable
+      accessibilityLabel="Copy"
+      accessibilityRole="button"
+      hitSlop={controlHitSlop.regular}
+      onPress={copy}
+      style={viewerStyles.headerIcon}
+    >
+      <Ionicons color={colors.text} name="copy-outline" size={iconSize.navigation} />
+    </Pressable>
   );
 }
 
@@ -287,9 +306,9 @@ function SearchAction({
       accessibilityRole="button"
       hitSlop={controlHitSlop.regular}
       onPress={onPress}
-      style={styles.searchAction}
+      style={viewerStyles.headerIcon}
     >
-      <Ionicons color={colors.text} name={icon} size={iconSize.action} />
+      <Ionicons color={colors.text} name={icon} size={iconSize.navigation} />
     </Pressable>
   );
 }
@@ -313,7 +332,7 @@ function CommandPromptLine({
   return (
     <View style={styles.command} testID="command-output-command">
       <Text style={styles.commandPrompt}>{PROMPT}</Text>
-      <Text selectable={!running} shimmering={running} style={styles.commandText}>
+      <Text shimmering={running} style={styles.commandText}>
         {command}
       </Text>
       {showsFailure ? (

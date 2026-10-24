@@ -7,6 +7,7 @@ import {
   openPullRequestFilters,
   pullRequestFilterSheetModel,
   pullRequestListModel,
+  selectPullRequestCategory,
   updatePullRequestFilterDraft,
 } from "../src/features/pullRequests/pullRequestListModel";
 
@@ -18,6 +19,24 @@ afterEach(() => {
 });
 
 describe("pull-request filter draft", () => {
+  it("keeps cached filter snapshots stable while quick views switch forward and back", () => {
+    const reviewRequested = pullRequestListModel.peek();
+
+    selectPullRequestCategory("authored");
+    const authored = pullRequestListModel.peek();
+
+    expect(authored).not.toBe(reviewRequested);
+    expect(reviewRequested.query.category).toBe("reviewRequested");
+    expect(authored.query.category).toBe("authored");
+
+    selectPullRequestCategory("reviewRequested");
+    const selectedAgain = pullRequestListModel.peek();
+
+    expect(selectedAgain).not.toBe(authored);
+    expect(authored.query.category).toBe("authored");
+    expect(selectedAgain.query.category).toBe("reviewRequested");
+  });
+
   it("publishes all draft conditions atomically on Apply", () => {
     openPullRequestFilters();
     updatePullRequestFilterDraft((current) => ({
@@ -49,5 +68,12 @@ describe("pull-request filter draft", () => {
     dismissPullRequestFilters();
 
     expect(pullRequestListModel.peek()).toStrictEqual(defaultPullRequestFilter());
+
+    openPullRequestFilters();
+    const reopened = pullRequestFilterSheetModel.peek();
+    expect(reopened.status).toBe("open");
+    if (reopened.status === "open") {
+      expect(reopened.draft).toStrictEqual(defaultPullRequestFilter());
+    }
   });
 });

@@ -10,15 +10,17 @@ import {
   typeScale,
   typeTracking,
 } from "../../../theme";
+import { filterIconButtonDotLayout } from "../../../presentation/input/filterIconButtonLayout";
 import { catalogModeBarContentInset } from "../../../presentation/layouts/catalogModeBarGeometry";
+import { searchFieldLayout } from "../../../presentation/input/searchLayout";
 
 /** Stroke of the hollow dot used when checks are absent or unavailable. */
 const HOLLOW_DOT_STROKE = 1.5;
 const ATTENTION_DOT_SIZE = 7;
 const CHECK_BADGE_SIZE = 8;
-const FILTER_COUNT_SIZE = 18;
 const ACTIVE_TOKEN_MAX_WIDTH = 180;
-const FILTER_COUNT_BORDER_WIDTH = 2;
+const EMPTY_COPY_MAX_WIDTH = 280;
+const EMPTY_MARK_SIZE = 64;
 
 /** PR list geometry: 64dp rows, 16dp inset, label-role section headers. */
 export const listStyles = StyleSheet.create({
@@ -78,41 +80,48 @@ export const listStyles = StyleSheet.create({
   dotPending: {
     backgroundColor: colors.warning,
   },
+  emptyDescription: {
+    ...typeScale.body,
+    color: colors.textDim,
+    maxWidth: EMPTY_COPY_MAX_WIDTH,
+    textAlign: "center",
+  },
+  emptyMark: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceContainer,
+    borderColor: colors.borderSoft,
+    borderRadius: radii.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: EMPTY_MARK_SIZE,
+    justifyContent: "center",
+    marginBottom: spacing.xs,
+    width: EMPTY_MARK_SIZE,
+  },
+  emptyState: {
+    alignItems: "center",
+    flex: 1,
+    gap: spacing.xs,
+    justifyContent: "center",
+    paddingBottom: catalogModeBarContentInset,
+    paddingHorizontal: spacing.lg,
+  },
+  emptyTitle: {
+    ...typeScale.title,
+    color: colors.text,
+    textAlign: "center",
+  },
   fill: {
     flex: 1,
   },
-  filterButton: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainer,
-    borderColor: colors.border,
-    borderRadius: radii.medium,
-    borderWidth: 1,
-    height: controlSize.touch,
-    justifyContent: "center",
-    position: "relative",
-    width: controlSize.touch,
-  },
-  filterCount: {
-    alignItems: "center",
+  filterDot: {
+    ...filterIconButtonDotLayout,
     backgroundColor: colors.primary,
-    borderColor: colors.threadListSurface,
-    borderRadius: radii.pill,
-    borderWidth: FILTER_COUNT_BORDER_WIDTH,
-    height: FILTER_COUNT_SIZE,
-    justifyContent: "center",
-    minWidth: FILTER_COUNT_SIZE,
-    position: "absolute",
-    right: -spacing.xxs,
-    top: -spacing.xxs,
-  },
-  filterCountText: {
-    ...typeScale.caption,
-    color: colors.onPrimary,
   },
   filterHeader: {
     flexShrink: 0,
   },
   floatingBarContent: {
+    flexGrow: 1,
     paddingBottom: catalogModeBarContentInset,
   },
   meta: {
@@ -186,16 +195,10 @@ export const listStyles = StyleSheet.create({
     width: iconSize.inline,
   },
   searchField: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainer,
-    borderColor: colors.borderSoft,
-    borderRadius: radii.medium,
-    borderWidth: 1,
-    columnGap: spacing.xs,
+    ...searchFieldLayout,
     flex: 1,
-    flexDirection: "row",
-    height: controlSize.touch,
-    paddingHorizontal: spacing.sm,
+    height: controlSize.regular,
+    minWidth: 0,
   },
   searchInput: {
     ...typeScale.body,

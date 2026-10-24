@@ -1,11 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, ScrollView, TextInput, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 
 import type { PullRequestCategory } from "../../../data/forgePullRequestContract";
 import type { PullRequestSearchFilter } from "../../../data/forgePullRequestSearch";
+import { ThreadListHeaderAction } from "../../../presentation/navigation/ThreadListHeader";
 import { useEvent } from "../../../react/useEvent";
-import { colors, controlHitSlop, iconSize } from "../../../theme";
-import { AppText as Text } from "../../../ui/Typography";
+import { colors, iconSize } from "../../../theme";
+import { AppText as Text, AppTextInput as TextInput } from "../../../ui/Typography";
 import {
   activePullRequestFilterCount,
   clearAppliedPullRequestFilter,
@@ -13,7 +14,7 @@ import {
 import { listStyles as styles } from "./list.styles";
 
 const QUICK_VIEWS: readonly { readonly label: string; readonly value: PullRequestCategory }[] = [
-  { label: "Review requested", value: "reviewRequested" },
+  { label: "Needs your review", value: "reviewRequested" },
   { label: "Mine", value: "authored" },
   { label: "Assigned", value: "assigned" },
   { label: "All", value: "all" },
@@ -88,11 +89,12 @@ function SearchControls({
   return (
     <View style={styles.searchRow}>
       <View style={styles.searchField}>
-        <Ionicons color={colors.textMuted} name="search-outline" size={iconSize.inline} />
+        <Ionicons color={colors.textMuted} name="search" size={iconSize.inline} />
         <TextInput
           accessibilityLabel="Search pull requests"
           autoCapitalize="none"
           autoCorrect={false}
+          compact
           defaultValue={text}
           key={text}
           onSubmitEditing={submitSearch}
@@ -116,25 +118,14 @@ function FilterButton({
   readonly onPress: () => void;
 }): React.JSX.Element {
   return (
-    <Pressable
+    <ThreadListHeaderAction
       accessibilityLabel={`Filters${activeCount === 0 ? "" : `, ${String(activeCount)} active`}`}
-      accessibilityRole="button"
-      hitSlop={controlHitSlop.compact}
+      accessibilityState={{ selected: activeCount > 0 }}
+      name={activeCount > 0 ? "filter" : "filter-outline"}
       onPress={onPress}
-      style={({ pressed }) => [styles.filterButton, pressed && styles.pressed]}
-      testID="pull-request-open-filters"
     >
-      <Ionicons color={colors.text} name="options-outline" size={iconSize.action} />
-      {activeCount > 0 ? <FilterCount count={activeCount} /> : null}
-    </Pressable>
-  );
-}
-
-function FilterCount({ count }: { readonly count: number }): React.JSX.Element {
-  return (
-    <View style={styles.filterCount}>
-      <Text style={styles.filterCountText}>{String(count)}</Text>
-    </View>
+      {activeCount > 0 ? <View style={styles.filterDot} /> : null}
+    </ThreadListHeaderAction>
   );
 }
 
