@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 
-use forge_protocol::PullRequestCategory;
+use forge_protocol::{PullRequestCategory, PullRequestSearchQuery};
 
 use super::{
     ids::{ForgeAccountKey, PullRequestKey},
@@ -20,6 +20,9 @@ use super::{
 pub struct ListKey {
     pub category: PullRequestCategory,
     pub repository: Option<String>,
+    pub query: Option<PullRequestSearchQuery>,
+    pub provider_ids: Vec<String>,
+    pub accounts: Vec<String>,
     pub cursor: Option<String>,
 }
 
@@ -28,6 +31,7 @@ struct Entries {
     lists: HashMap<ListKey, (Instant, ListPageWire)>,
     overviews: HashMap<PullRequestKey, (Instant, OverviewWire)>,
     listed_by: HashMap<PullRequestKey, ForgeAccountKey>,
+    attention_revisions: HashMap<PullRequestKey, String>,
 }
 
 #[derive(Clone, Default)]
@@ -50,6 +54,9 @@ impl ForgeCache {
                     entries
                         .listed_by
                         .insert(row.pull_request.clone(), row.account.clone());
+                    entries
+                        .attention_revisions
+                        .insert(row.pull_request.clone(), row.attention.revision.clone());
                 }
             }
             entries.lists.insert(key, (Instant::now(), page.clone()));
@@ -79,6 +86,10 @@ impl ForgeCache {
                 overview.pull_request.clone(),
                 overview.account.account.clone(),
             );
+            entries.attention_revisions.insert(
+                overview.pull_request.clone(),
+                overview.attention.revision.clone(),
+            );
             entries.overviews.insert(
                 overview.pull_request.clone(),
                 (Instant::now(), overview.clone()),
@@ -89,6 +100,24 @@ impl ForgeCache {
     #[must_use]
     pub fn listed_by(&self, key: &PullRequestKey) -> Option<ForgeAccountKey> {
         self.entries.lock().ok()?.listed_by.get(key).cloned()
+    }
+
+    /// Last activity revision observed in either a list row or overview.
+    #[must_use]
+    pub fn attention_revision(&self, key: &PullRequestKey) -> Option<String> {
+        self.entries
+            .lock()
+            .ok()?
+            .attention_revisions
+            .get(key)
+            .cloned()
+    }
+
+    /// Drops list pages while retaining an otherwise valid overview.
+    pub fn invalidate_lists(&self) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.lists.clear();
+        }
     }
 
     /// Drops the overview of one pull request and every list page, so the

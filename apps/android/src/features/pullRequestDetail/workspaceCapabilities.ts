@@ -1,5 +1,5 @@
 import type { ConfirmLevel } from "../../data/forgeActionCatalog";
-import type { HeadRevision, PullRequestKey } from "../../data/forgeContract";
+import type { AttentionRevision, HeadRevision, PullRequestKey } from "../../data/forgeContract";
 import type { ActionRunResult, SubmitOutcome, ViewedMark } from "../../data/forgeMutationContract";
 import type { LinkedThread } from "../../data/forgePullRequestContract";
 import type { DraftId, ThreadId } from "../../data/reviewContract";
@@ -26,6 +26,14 @@ export type PullRequestTarget = {
  * first RPC. Each idempotency key is generated per user tap and survives replay.
  */
 export type PullRequestDetailWorkspaceCapabilities = {
+  readonly ensureReviewChat: (
+    target: Omit<PullRequestTarget, "headRevision">,
+  ) => Promise<{ readonly created: boolean; readonly threadId: ThreadId }>;
+  readonly markAttentionSeen: (target: {
+    readonly connectionId: string;
+    readonly pullRequest: PullRequestKey;
+    readonly revision: AttentionRevision;
+  }) => Promise<void>;
   readonly runAction: (
     target: PullRequestTarget,
     request: {

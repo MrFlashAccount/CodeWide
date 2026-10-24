@@ -34,6 +34,7 @@ export function renderConversationDestinationSurface(props: {
   features: ActiveWorkspaceConversationProps["features"];
   fileTransferController: ActiveWorkspaceConversationProps["fileTransferController"];
   forkCurrentThread: ReturnType<typeof useActiveThreadActions>["forkCurrentThread"];
+  headerActions: ActiveWorkspaceConversationProps["headerActions"];
   loadTurnChanges: ReturnType<typeof useTurnChangesLoader>["loadTurnChanges"];
   markActiveThreadRead: ReturnType<typeof useActiveThreadActions>["markActiveThreadRead"];
   native: ActiveWorkspaceConversationProps["native"];
@@ -83,6 +84,7 @@ export function renderConversationDestinationSurface(props: {
               features: props.features,
               fileTransferController: props.fileTransferController,
               forkCurrentThread: props.forkCurrentThread,
+              headerActions: props.headerActions,
               loadTurnChanges: props.loadTurnChanges,
               markActiveThreadRead: props.markActiveThreadRead,
               native: props.native,

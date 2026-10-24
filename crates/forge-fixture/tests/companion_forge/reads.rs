@@ -1,8 +1,27 @@
 //! Reads, degraded accounts and the provider rollback switch.
 
+use serde_json::Value;
 use serde_json::json;
 
 use crate::support::*;
+
+fn default_search_query() -> Value {
+    json!({
+        "text": "",
+        "category": "reviewRequested",
+        "repositories": {"include": [], "exclude": []},
+        "authors": {"include": [], "exclude": []},
+        "assignees": {"include": [], "exclude": []},
+        "reviewers": {"include": [], "exclude": []},
+        "review": {"include": [], "exclude": []},
+        "states": {"include": ["open"], "exclude": []},
+        "checks": {"include": [], "exclude": []},
+        "labels": {"include": [], "exclude": []},
+        "baseBranches": {"include": [], "exclude": []},
+        "headBranches": {"include": [], "exclude": []},
+        "sort": {"field": "updated", "direction": "descending"}
+    })
+}
 
 #[tokio::test]
 async fn the_directory_lists_built_in_and_external_providers_with_sanitized_methods() {
@@ -105,6 +124,89 @@ async fn the_list_and_atomic_overview_carry_keys_states_and_a_validated_catalog(
         fix_ci["availability"]["reason"],
         "No local checkout of this branch on the companion"
     );
+}
+
+#[tokio::test]
+async fn structured_search_reaches_the_selected_provider_without_dropping_fields() {
+    let harness = Harness::start(&base_fixture());
+    let account = harness.link().await;
+    let query = json!({
+        "text": "parser",
+        "category": "all",
+        "repositories": {"include": ["octo/repo"], "exclude": []},
+        "authors": {"include": ["someone"], "exclude": ["bot"]},
+        "assignees": {"include": [], "exclude": []},
+        "reviewers": {"include": [], "exclude": []},
+        "review": {"include": ["changesRequested"], "exclude": []},
+        "states": {"include": ["open"], "exclude": ["draft"]},
+        "checks": {"include": ["failing"], "exclude": []},
+        "labels": {"include": ["bug"], "exclude": []},
+        "baseBranches": {"include": ["main"], "exclude": []},
+        "headBranches": {"include": [], "exclude": []},
+        "sort": {"field": "updated", "direction": "descending"}
+    });
+
+    let page = harness
+        .ok(
+            "companion/pullRequests/search",
+            json!({
+                "accounts": [account],
+                "providerIds": ["fixture"],
+                "query": query,
+                "cursor": null
+            }),
+        )
+        .await;
+
+    assert_eq!(page["category"], "all");
+    assert_eq!(page["sections"][0]["rows"][0]["repository"], "octo/repo");
+    let traffic = harness.lines("traffic.jsonl");
+    let request = traffic
+        .iter()
+        .find(|frame| frame["in"]["method"] == "forge.pullRequests.search")
+        .expect("search request");
+    assert_eq!(request["in"]["params"]["query"], query);
+}
+
+#[tokio::test]
+async fn a_legacy_provider_serves_only_queries_the_list_contract_can_preserve() {
+    let mut fixture = base_fixture();
+    fixture["noSearch"] = json!(true);
+    let harness = Harness::start(&fixture);
+    let account = harness.link().await;
+    let query = default_search_query();
+
+    let page = harness
+        .ok(
+            "companion/pullRequests/search",
+            json!({
+                "accounts": [account],
+                "providerIds": ["fixture"],
+                "query": query,
+                "cursor": null
+            }),
+        )
+        .await;
+
+    assert_eq!(page["sections"][0]["rows"][0]["repository"], "octo/repo");
+    assert_eq!(harness.plugin_requests("forge.pullRequests.list"), 1);
+    assert_eq!(harness.plugin_requests("forge.pullRequests.search"), 0);
+
+    let mut filtered = default_search_query();
+    filtered["authors"]["include"] = json!(["someone"]);
+    let unavailable = harness
+        .call(
+            "companion/pullRequests/search",
+            json!({
+                "accounts": [account],
+                "providerIds": ["fixture"],
+                "query": filtered,
+                "cursor": null
+            }),
+        )
+        .await
+        .expect_err("unsupported filtered search");
+    assert_eq!(unavailable["code"], -32_084);
 }
 
 #[tokio::test]

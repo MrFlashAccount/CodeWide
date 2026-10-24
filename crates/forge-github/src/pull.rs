@@ -54,6 +54,10 @@ fn overview(
         state,
         web_url: text("/html_url"),
         head_revision: head_sha(pull)?,
+        activity_revision: pull
+            .get("updated_at")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         head_branch: text("/head/ref"),
         base_branch: text("/base/ref"),
         description: text("/body"),

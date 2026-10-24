@@ -3,7 +3,7 @@ import { useContext } from "react";
 import { subagentActivityTargetThreadId } from "../../../data/subagent-projection";
 import { useEvent } from "../../../react/useEvent";
 import { colors } from "../../../theme";
-import { AppListRow } from "../../../ui/AppListRow";
+import { AppListItem } from "../../../ui/AppListItem";
 import { listRowHeight } from "../../../ui/AppListRow.types";
 import { LargeContentViewerContext } from "../content/contentViewerContext";
 import { SubagentNavigationContext, TurnActivityMetricsContext } from "../turns/turnContexts";
@@ -21,10 +21,8 @@ type ActivityRowAction =
 /** A non-card Activity row either owns a semantic destination or remains informational. */
 export function ActivityProtocolListRow({
   block,
-  position,
 }: {
   readonly block: RenderBlock;
-  readonly position: "only" | "first" | "middle" | "last";
 }): React.JSX.Element {
   const metrics = useContext(TurnActivityMetricsContext);
   const openContent = useContext(LargeContentViewerContext);
@@ -58,35 +56,32 @@ export function ActivityProtocolListRow({
     title,
   });
   return action.kind === "open" ? (
-    <OpenActivityRow action={action} position={position} row={row} title={title} />
+    <OpenActivityRow action={action} row={row} title={title} />
   ) : (
-    <InactiveActivityRow position={position} row={row} title={title} />
+    <InactiveActivityRow row={row} title={title} />
   );
 }
 
 type ActivityRowPresentationProps = {
-  readonly position: "only" | "first" | "middle" | "last";
   readonly row: ReturnType<typeof protocolActivityRow>;
   readonly title: string;
 };
 
 function OpenActivityRow({
   action,
-  position,
   row,
   title,
 }: ActivityRowPresentationProps & {
   readonly action: Extract<ActivityRowAction, { kind: "open" }>;
 }): React.JSX.Element {
   return (
-    <AppListRow
+    <AppListItem
       accessibilityLabel={action.accessibilityLabel}
       danger={row.failed}
       description={row.description}
       fixedHeight={listRowHeight.double}
       leadingIcon={{ name: row.icon }}
       onPress={action.onPress}
-      position={position}
       testID="activity-step-row"
       title={title}
       trailingIcon={
@@ -96,19 +91,14 @@ function OpenActivityRow({
   );
 }
 
-function InactiveActivityRow({
-  position,
-  row,
-  title,
-}: ActivityRowPresentationProps): React.JSX.Element {
+function InactiveActivityRow({ row, title }: ActivityRowPresentationProps): React.JSX.Element {
   return (
-    <AppListRow
+    <AppListItem
       accessibilityLabel={title}
       danger={row.failed}
       description={row.description}
       fixedHeight={listRowHeight.double}
       leadingIcon={{ name: row.icon }}
-      position={position}
       testID="activity-step-row"
       title={title}
       {...(row.failed

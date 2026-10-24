@@ -20,7 +20,7 @@ export function FilesView(
 ): React.JSX.Element {
   const { selected } = props;
   return (
-    <View style={props.tablet ? styles.columns : styles.fill}>
+    <View style={styles.fill}>
       <FileList {...props} selectedPath={selected?.path ?? null} />
       <View style={styles.fill}>
         {selected === null ? null : (
@@ -48,10 +48,6 @@ export function FilesView(
 }
 
 const styles = StyleSheet.create({
-  columns: {
-    flex: 1,
-    flexDirection: "row",
-  },
   fill: {
     flex: 1,
     minWidth: 0,

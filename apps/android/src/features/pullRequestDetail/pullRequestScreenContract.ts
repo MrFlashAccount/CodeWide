@@ -4,13 +4,19 @@ import type { PullRequestCommentDestinations } from "../../data/pullRequestComme
 import type { ThreadId } from "../../data/reviewContract";
 import type { ReviewResources } from "../../data/reviewResources";
 import type { ReviewTargetCapabilities } from "../review/reviewTargetCapabilities";
-import type { LinkedThreadDescription } from "./overview/LinkedThreadsCard";
+import type { LinkedThreadDescription } from "./linkedThreadDescription";
 import type { PullRequestDetailWorkspaceCapabilities } from "./workspaceCapabilities";
 
 /** Route intents the PR screen raises; route composition owns navigation. */
 type PullRequestScreenNavigation = {
   readonly back: () => void;
+  /** Starts rendering the chat destination before its canonical id resolves. */
+  readonly beginChat: () => void;
+  readonly chatVisible: boolean;
+  readonly closeChat: () => void;
+  readonly openPullRequestFullscreen: () => void;
   readonly openThread: (threadId: ThreadId) => void;
+  readonly pullRequestFullscreen: boolean;
 };
 
 /** Stable owners and intents route composition passes to the PR screen. */

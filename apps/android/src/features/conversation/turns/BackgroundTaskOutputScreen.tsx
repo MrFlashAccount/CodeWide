@@ -7,7 +7,6 @@ import {
 import { useEphemeralAsyncResource } from "../../../rendering/async-resource-store";
 import { stripTerminalControlSequences } from "../../../rendering/native-code-block";
 import type { TaskOutputRouteRequest } from "../../../services/backgroundTasks/taskOutputRouteSession";
-import { formatByteSize } from "../../../ui/number-format";
 import { CommandOutputScreen, type CommandOutputStatus } from "./CommandOutputScreen";
 
 const STATUS: Record<BackgroundTaskOutputPage["status"], CommandOutputStatus> = {
@@ -54,11 +53,9 @@ export function BackgroundTaskOutputScreen({
   return (
     <CommandOutputScreen
       command={request.first.command}
-      details={[
-        ...(exit === undefined ? [] : [`exit ${exit}`]),
-        ...(output.sizeBytes > 0 ? [formatByteSize(output.sizeBytes)] : []),
-      ]}
-      error={resource.error}
+      error={
+        resource.error ?? (exit === undefined || exit === "0" ? null : `Exited with code ${exit}`)
+      }
       loading={false}
       onClose={onClose}
       output={output}

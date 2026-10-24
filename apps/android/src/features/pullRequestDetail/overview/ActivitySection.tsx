@@ -5,7 +5,7 @@ import type { ActivityItem } from "../../../data/forgePullRequestContract";
 import { compactAge } from "../../../ui/relativeAge";
 import { AppText as Text } from "../../../ui/Typography";
 import { CatalogActionButton } from "../actions/CatalogActionButton";
-import { CardHeader, CardNote } from "./CardHeader";
+import { CardNote } from "./CardHeader";
 import { overviewStyles as styles } from "./overview.styles";
 
 /** Activity excerpts show two lines (N-01); the rest stays on the forge. */
@@ -39,8 +39,10 @@ export function ActivitySection({
   readonly pending: Readonly<Record<string, true>>;
 }): React.JSX.Element {
   return (
-    <View style={styles.card} testID="pull-request-activity">
-      <CardHeader title="Activity" />
+    <View style={styles.section} testID="pull-request-activity">
+      <Text accessibilityRole="header" style={styles.sectionHeader}>
+        Activity
+      </Text>
       {items.length === 0 ? <CardNote text="No activity yet." /> : null}
       {items.map((item) => (
         <ActivityRow

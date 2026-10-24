@@ -5,8 +5,6 @@
  */
 import { observable, type Observable } from "@legendapp/state";
 
-import type { ScenarioTarget } from "./workspaceCapabilities";
-
 /** PR screen tab. */
 export type PullRequestTab = "changes" | "overview";
 
@@ -20,8 +18,6 @@ export type ActionNotice =
 /** Per-route-session PR screen state. */
 export type PullRequestScreenState = {
   readonly changesView: "files" | "guide";
-  /** Thread the Overview dock writes to when the user picked one; `null` follows the default rule. */
-  readonly messageTarget: ScenarioTarget | null;
   readonly notice: ActionNotice | null;
   /** Actions whose run is awaiting the companion's acknowledgement. */
   readonly pending: Readonly<Record<string, true>>;
@@ -35,7 +31,6 @@ export type PullRequestScreenState = {
 export function createPullRequestScreenModel(): Observable<PullRequestScreenState> {
   return observable<PullRequestScreenState>({
     changesView: "files",
-    messageTarget: null,
     notice: null,
     pending: {},
     pendingToggles: {},

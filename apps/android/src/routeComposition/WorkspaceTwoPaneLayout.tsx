@@ -1,5 +1,6 @@
 import type { ReactElement, ReactNode } from "react";
 import { StyleSheet, View, type StyleProp, type ViewProps, type ViewStyle } from "react-native";
+import Reanimated, { LinearTransition } from "react-native-reanimated";
 
 import { desktopThreadSidebarWidth } from "../presentation/layouts/windowLayout";
 
@@ -8,7 +9,11 @@ export type WorkspaceTwoPanePresentation =
   | { readonly kind: "catalogOnly" }
   | { readonly kind: "detailOnly" }
   | { readonly kind: "stacked" }
+  | { readonly kind: "wideDetailExpanded" }
   | { readonly kind: "wide"; readonly viewportWidth: number };
+
+const PANE_TRANSITION_DURATION_MS = 220;
+const PANE_TRANSITION = LinearTransition.duration(PANE_TRANSITION_DURATION_MS);
 
 type WorkspacePaneViewProps = Pick<
   ViewProps,
@@ -47,12 +52,20 @@ export function WorkspaceTwoPaneLayout({
 }): React.JSX.Element {
   return (
     <View style={styles.frame} testID={testID}>
-      <View {...catalogViewProps} style={[catalogPaneStyle(presentation), catalogStyle]}>
+      <Reanimated.View
+        {...catalogViewProps}
+        layout={PANE_TRANSITION}
+        style={[catalogPaneStyle(presentation), catalogStyle]}
+      >
         {catalog}
-      </View>
-      <View {...detailViewProps} style={[detailPaneStyle(presentation), detailSurfaceStyle]}>
+      </Reanimated.View>
+      <Reanimated.View
+        {...detailViewProps}
+        layout={PANE_TRANSITION}
+        style={[detailPaneStyle(presentation), detailSurfaceStyle]}
+      >
         {detail}
-      </View>
+      </Reanimated.View>
       {overlay}
     </View>
   );
@@ -64,6 +77,9 @@ function catalogPaneStyle(presentation: WorkspaceTwoPanePresentation): StyleProp
   }
   if (presentation.kind === "detailOnly") {
     return styles.hidden;
+  }
+  if (presentation.kind === "wideDetailExpanded") {
+    return styles.collapsed;
   }
   if (presentation.kind === "stacked") {
     return StyleSheet.absoluteFill;
@@ -78,6 +94,10 @@ function detailPaneStyle(presentation: WorkspaceTwoPanePresentation): StyleProp<
 const styles = StyleSheet.create({
   catalog: {
     flexShrink: 0,
+  },
+  collapsed: {
+    overflow: "hidden",
+    width: 0,
   },
   detail: {
     flex: 1,

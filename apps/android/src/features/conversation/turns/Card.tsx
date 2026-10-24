@@ -5,7 +5,7 @@ import type { ComposeIconName } from "../../../presentation/icons/composeIconNam
 import { useInsideBubbleSurface } from "../../../rendering/Bubble";
 import { useEvent } from "../../../react/useEvent";
 import { colors } from "../../../theme";
-import { AppListRow } from "../../../ui/AppListRow";
+import { AppListItem } from "../../../ui/AppListItem";
 import { listRowHeight } from "../../../ui/AppListRow.types";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { AppText as Text } from "../../../ui/Typography";
@@ -66,7 +66,7 @@ function ActivityListCard({
   const failed = status === "failed" || status === "error";
   const activate = useEvent(open);
   return (
-    <AppListRow
+    <AppListItem
       accessibilityLabel={
         open === undefined
           ? `${title}${failed ? ", failed" : ""}`
@@ -77,7 +77,6 @@ function ActivityListCard({
       fixedHeight={listRowHeight.double}
       leadingIcon={{ name: icon }}
       {...(open === undefined ? {} : { onPress: activate })}
-      position={placement.position}
       testID="activity-step-row"
       title={title}
       {...(failed ? { trailingIcon: { color: colors.red, name: "alert-circle" as const } } : {})}

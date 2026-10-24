@@ -17,11 +17,11 @@ import { AccountsPlaceholder } from "./onboarding/AccountsPlaceholder";
 import { OnboardingScreen } from "./onboarding/OnboardingScreen";
 import {
   forgeAccountsSheetOpen,
+  openPullRequestFilters,
   openForgeAccounts,
   pullRequestListModel,
   selectPullRequestCategory,
-  selectPullRequestRepository,
-  type PullRequestListFilter,
+  selectPullRequestSearchText,
 } from "./pullRequestListModel";
 import type { PullRequestsWorkspaceCapabilities } from "./workspaceCapabilities";
 
@@ -73,6 +73,7 @@ export function PullRequestsCatalog({
       ) : null}
       {linked && !onboardingOpen ? (
         <ConnectedList
+          accounts={snapshot.accounts}
           connectionId={connectionId}
           forge={forge}
           onOpenPullRequest={onOpenPullRequest}
@@ -95,12 +96,14 @@ export function PullRequestsCatalog({
 }
 
 function ConnectedList({
+  accounts,
   connectionId,
   forge,
   onOpenPullRequest,
   onReconnect,
   providers,
 }: {
+  readonly accounts: readonly AccountState[];
   readonly connectionId: string;
   readonly forge: ForgeResources;
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
@@ -112,23 +115,15 @@ function ConnectedList({
   const [, startFilterTransition] = useTransition();
   const nowMs = useMinuteClock();
   const params = {
-    category: deferredFilter.category,
     connectionId,
-    repository: deferredFilter.repository,
+    filter: deferredFilter,
   };
   const query = useQuery(
     { ...forge.lists.options(params), placeholderData: keepPreviousData },
     forge.lists.client,
   );
   const state = forgeQueryRemoteValue(query);
-  const page = remoteValue(state);
-  const pendingFilter = filterPendingState({
-    current: filter,
-    deferred: deferredFilter,
-    failed: query.isError,
-    placeholder: query.isPlaceholderData,
-    placeholderCategory: page?.category ?? null,
-  });
+  const pendingFilter = !query.isError && (filter !== deferredFilter || query.isPlaceholderData);
   const loadMore = useEvent((): void => {
     // A failed next page keeps the loaded pages; the next end-reached tries again.
     forge.loadMoreList(params).catch(() => undefined);
@@ -136,18 +131,19 @@ function ConnectedList({
   const retry = useEvent((): void => {
     forge.lists.refresh(params).catch(() => undefined);
   });
-  const selectCategory = useEvent((category: PullRequestListFilter["category"]): void => {
+  const selectCategory = useEvent((category: PullRequestCategory): void => {
     startFilterTransition(() => {
       selectPullRequestCategory(category);
     });
   });
-  const selectRepository = useEvent((repository: string | null): void => {
+  const submitSearch = useEvent((text: string): void => {
     startFilterTransition(() => {
-      selectPullRequestRepository(repository);
+      selectPullRequestSearchText(text);
     });
   });
   return (
     <PullRequestList
+      accounts={accounts}
       filter={filter}
       iconFor={(pluginId) =>
         providers.find((provider) => provider.pluginId === pluginId)?.icon ?? null
@@ -156,39 +152,15 @@ function ConnectedList({
       onCategory={selectCategory}
       onEndReached={loadMore}
       onOpen={onOpenPullRequest}
+      onOpenFilters={openPullRequestFilters}
       onReconnect={onReconnect}
-      onRepository={selectRepository}
       onRetry={retry}
+      onSearch={submitSearch}
       pendingFilter={pendingFilter}
+      providers={providers}
       state={state}
     />
   );
-}
-
-function filterPendingState({
-  current,
-  deferred,
-  failed,
-  placeholder,
-  placeholderCategory,
-}: {
-  readonly current: PullRequestListFilter;
-  readonly deferred: PullRequestListFilter;
-  readonly failed: boolean;
-  readonly placeholder: boolean;
-  readonly placeholderCategory: PullRequestCategory | null;
-}): { readonly category: boolean; readonly repository: boolean } {
-  if (failed) {
-    return { category: false, repository: false };
-  }
-  return {
-    category:
-      current.category !== deferred.category ||
-      (placeholder && placeholderCategory !== current.category),
-    repository:
-      current.repository !== deferred.repository ||
-      (placeholder && placeholderCategory === current.category),
-  };
 }
 
 const styles = StyleSheet.create({

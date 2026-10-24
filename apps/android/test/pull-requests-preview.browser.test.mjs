@@ -397,11 +397,14 @@ test("Submit publishes once and the dock reports the outcome", async () => {
   }
 });
 
-test("the dock names the branch-linked thread and sends there", async () => {
+test("the PR chat action resolves the branch-linked canonical thread", async () => {
   const { errors, page } = await open("pr", 360);
   try {
-    const chip = page.getByTestId("pull-request-message-target");
-    assert.equal(await chip.getAttribute("aria-label"), "Send to Forge auth state");
+    const action = page.getByTestId("pull-request-linked-chat");
+    assert.equal(
+      await action.getAttribute("aria-label"),
+      "Open linked review chat: Forge auth state",
+    );
     assert.deepEqual(errors, []);
   } finally {
     await page.close();

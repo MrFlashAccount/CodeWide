@@ -14,7 +14,6 @@ export type ToolCardPlacement =
       readonly description: string;
       readonly kind: "sheet";
       readonly openDetail: () => void;
-      readonly position: "only" | "first" | "middle" | "last";
     }
   | { readonly kind: "sheetDetail" };
 

@@ -75,7 +75,6 @@ it("opens exact command output without offering a competing inline disclosure", 
             description: "≈⟡137 · commandExecution",
             kind: "sheet",
             openDetail: jest.fn(),
-            position: "only",
           }}
         >
           <CommandExecutionProtocolBlock block={block} />
@@ -107,7 +106,7 @@ it("keeps a Card without a semantic viewer inactive", () => {
   const openDetail = jest.fn();
   const view = render(
     <ToolCardPlacementContext.Provider
-      value={{ description: "dynamicToolCall", kind: "sheet", openDetail, position: "only" }}
+      value={{ description: "dynamicToolCall", kind: "sheet", openDetail }}
     >
       <Card icon="extension-puzzle-outline" title="Fallback step">
         <Text>Fallback details</Text>
@@ -142,7 +141,7 @@ it("opens unknown protocol output directly in the full-screen content viewer", (
         opened.push(request);
       }}
     >
-      <ActivityProtocolListRow block={block} position="only" />
+      <ActivityProtocolListRow block={block} />
     </LargeContentViewerContext.Provider>,
   );
 
@@ -173,7 +172,7 @@ it("opens Web Search through its explicit second-sheet action", () => {
   };
   const view = render(
     <ToolCardPlacementContext.Provider
-      value={{ description: "webSearch", kind: "sheet", openDetail, position: "only" }}
+      value={{ description: "webSearch", kind: "sheet", openDetail }}
     >
       <WebSearchProtocolBlock block={block} />
     </ToolCardPlacementContext.Provider>,
@@ -240,7 +239,7 @@ it.each([
   };
   const view = render(
     <ToolCardPlacementContext.Provider
-      value={{ description: "contextCompaction", kind: "sheet", openDetail, position: "only" }}
+      value={{ description: "contextCompaction", kind: "sheet", openDetail }}
     >
       <ProtocolBlock block={block} />
     </ToolCardPlacementContext.Provider>,
@@ -277,9 +276,7 @@ it("keeps every generic protocol fallback informational", () => {
     tone: "neutral",
   };
   const view = render(
-    <ToolCardPlacementContext.Provider
-      value={{ description: "plan", kind: "sheet", openDetail, position: "only" }}
-    >
+    <ToolCardPlacementContext.Provider value={{ description: "plan", kind: "sheet", openDetail }}>
       <ProtocolBlock block={block} />
     </ToolCardPlacementContext.Provider>,
   );
@@ -337,7 +334,6 @@ it("opens an image Activity step directly in the shared swipe preview", async ()
               description: "imageGeneration",
               kind: "sheet",
               openDetail,
-              position: "only",
             }}
           >
             <ImageProtocolBlock block={first} />

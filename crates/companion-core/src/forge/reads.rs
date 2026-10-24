@@ -10,7 +10,8 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use forge_protocol::{
     ActivityPage, ActivityParams, CheckSummary, ChecksParams, ChecksResult, FilePatch, FilesParams,
     FilesResult, ListParams, ListResult, PullRequestCategory, PullRequestOverview,
-    PullRequestParams, RawActionCatalog, ViewedSetParams, capability, methods,
+    PullRequestParams, PullRequestSearchQuery, PullRequestSortField, RawActionCatalog,
+    SearchParams, SearchValues, SortDirection, ViewedSetParams, capability, methods,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -57,6 +58,9 @@ pub async fn list(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeErr
     let key = ListKey {
         category: request.category,
         repository: request.repository.clone(),
+        query: None,
+        provider_ids: Vec::new(),
+        accounts: Vec::new(),
         cursor: request.cursor.clone(),
     };
     if let Some(page) = context.cache.list(&key) {
@@ -109,7 +113,7 @@ pub async fn list(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeErr
                 cursor,
                 &mut batch,
             )
-            .await;
+            .await?;
         }
         session.shutdown().await;
     }
@@ -122,6 +126,189 @@ pub async fn list(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeErr
     };
     context.cache.put_list(key, &page);
     to_value(&page)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SearchRequest {
+    query: PullRequestSearchQuery,
+    #[serde(default)]
+    provider_ids: Vec<String>,
+    #[serde(default)]
+    accounts: Vec<String>,
+    cursor: Option<String>,
+}
+
+/// `companion/pullRequests/search`: one structured, provider-aware query over
+/// every selected account. A provider without `forge.search@1` is rejected
+/// explicitly rather than silently receiving a weaker query.
+///
+/// # Errors
+///
+/// Returns invalid params for an oversized query or malformed cursor, and a
+/// capability error when a selected provider cannot apply the full query.
+pub async fn search(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeError> {
+    let request: SearchRequest = params(raw)?;
+    validate_search(&request)?;
+    let key = ListKey {
+        category: request.query.category,
+        repository: None,
+        query: Some(request.query.clone()),
+        provider_ids: request.provider_ids.clone(),
+        accounts: request.accounts.clone(),
+        cursor: request.cursor.clone(),
+    };
+    if let Some(page) = context.cache.list(&key) {
+        return to_value(&page);
+    }
+    let cursors = decode_cursor(request.cursor.as_deref())?;
+    let mut batch = ListBatch {
+        facts: link_facts(&context.links.all()?),
+        sections: Vec::new(),
+        next: HashMap::new(),
+        repositories: BTreeSet::new(),
+    };
+    for entry in context.providers.entries()? {
+        if !entry.enabled
+            || (!request.provider_ids.is_empty()
+                && !request.provider_ids.contains(&entry.plugin_id))
+        {
+            continue;
+        }
+        let links: Vec<AccountLink> = context
+            .accounts
+            .links_of(&entry.plugin_id)?
+            .into_iter()
+            .filter(|link| {
+                (request.accounts.is_empty()
+                    || request.accounts.iter().any(|key| key == link.key.as_str()))
+                    && cursors
+                        .as_ref()
+                        .is_none_or(|cursors| cursors.contains_key(link.key.as_str()))
+            })
+            .collect();
+        if links.is_empty() {
+            continue;
+        }
+        let mut session = context.session(&entry.plugin_id).await?;
+        let legacy_request = if session.supports(capability::SEARCH) {
+            None
+        } else if let Some(legacy_request) = legacy_list_request(&request.query) {
+            Some(legacy_request)
+        } else {
+            session.shutdown().await;
+            return Err(ForgeError::CapabilityUnavailable {
+                reason: format!("{} does not support pull request filters", entry.plugin_id),
+            });
+        };
+        for link in &links {
+            let cursor = cursors
+                .as_ref()
+                .and_then(|cursors| cursors.get(link.key.as_str()).cloned());
+            if let Some(legacy_request) = &legacy_request {
+                list_account(
+                    context,
+                    &mut session,
+                    &entry.plugin_id,
+                    link,
+                    legacy_request,
+                    cursor,
+                    &mut batch,
+                )
+                .await?;
+            } else {
+                search_account(
+                    context,
+                    &mut session,
+                    &entry.plugin_id,
+                    link,
+                    &request.query,
+                    cursor,
+                    &mut batch,
+                )
+                .await?;
+            }
+        }
+        session.shutdown().await;
+    }
+    let page = ListPageWire {
+        category: request.query.category,
+        fetched_at: now_rfc3339(),
+        repositories: batch.repositories.into_iter().collect(),
+        sections: batch.sections,
+        next_cursor: encode_cursor(&batch.next),
+    };
+    context.cache.put_list(key, &page);
+    to_value(&page)
+}
+
+fn validate_search(request: &SearchRequest) -> Result<(), ForgeError> {
+    if request.query.text.len() > 512
+        || request.provider_ids.len() > 20
+        || request.accounts.len() > 50
+        || !valid_strings(&request.provider_ids, 128)
+        || !valid_strings(&request.accounts, 256)
+        || !valid_search_values(&request.query.repositories)
+        || !valid_search_values(&request.query.authors)
+        || !valid_search_values(&request.query.assignees)
+        || !valid_search_values(&request.query.reviewers)
+        || !valid_search_values(&request.query.labels)
+        || !valid_search_values(&request.query.base_branches)
+        || !valid_search_values(&request.query.head_branches)
+        || request.query.review.include.len() + request.query.review.exclude.len() > 20
+        || request.query.states.include.len() + request.query.states.exclude.len() > 20
+        || request.query.checks.include.len() + request.query.checks.exclude.len() > 20
+    {
+        return Err(ForgeError::invalid("invalid pull request search"));
+    }
+    Ok(())
+}
+
+fn valid_search_values(values: &SearchValues<String>) -> bool {
+    values.include.len() + values.exclude.len() <= 20
+        && valid_strings(&values.include, 256)
+        && valid_strings(&values.exclude, 256)
+}
+
+fn valid_strings(values: &[String], max_length: usize) -> bool {
+    values
+        .iter()
+        .all(|value| !value.is_empty() && value.len() <= max_length)
+}
+
+fn legacy_list_request(query: &PullRequestSearchQuery) -> Option<ListRequest> {
+    let repository = match query.repositories.include.as_slice() {
+        [] => None,
+        [repository] => Some(repository.clone()),
+        _ => return None,
+    };
+    if query.category == PullRequestCategory::All
+        || !query.text.is_empty()
+        || !query.repositories.exclude.is_empty()
+        || has_search_values(&query.authors)
+        || has_search_values(&query.assignees)
+        || has_search_values(&query.reviewers)
+        || has_search_values(&query.review)
+        || has_search_values(&query.checks)
+        || has_search_values(&query.labels)
+        || has_search_values(&query.base_branches)
+        || has_search_values(&query.head_branches)
+        || !query.states.exclude.is_empty()
+        || query.states.include != [forge_protocol::PullRequestState::Open]
+        || query.sort.field != PullRequestSortField::Updated
+        || query.sort.direction != SortDirection::Descending
+    {
+        return None;
+    }
+    Some(ListRequest {
+        category: query.category,
+        repository,
+        cursor: None,
+    })
+}
+
+fn has_search_values<T>(values: &SearchValues<T>) -> bool {
+    !values.include.is_empty() || !values.exclude.is_empty()
 }
 
 /// The sections and cursors of one list read.
@@ -141,7 +328,7 @@ async fn list_account(
     request: &ListRequest,
     cursor: Option<String>,
     batch: &mut ListBatch,
-) {
+) -> Result<(), ForgeError> {
     let listed: Result<ListResult, _> = session
         .call(
             methods::PULL_REQUESTS_LIST,
@@ -160,9 +347,51 @@ async fn list_account(
             let error = ForgeError::from_plugin(plugin_id, Some(&link.key), error);
             context.accounts.observe_error(&link.key, &error);
             batch.sections.push(empty_section(context, link));
-            return;
+            return Ok(());
         }
     };
+    append_listed(context, plugin_id, link, listed, batch)
+}
+
+async fn search_account(
+    context: &ForgeContext,
+    session: &mut PluginSession,
+    plugin_id: &str,
+    link: &AccountLink,
+    query: &PullRequestSearchQuery,
+    cursor: Option<String>,
+    batch: &mut ListBatch,
+) -> Result<(), ForgeError> {
+    let listed: Result<ListResult, _> = session
+        .call(
+            methods::PULL_REQUESTS_SEARCH,
+            &SearchParams {
+                account: link.account_ref(),
+                query: query.clone(),
+                cursor,
+                limit: limits::LIST_PAGE_LIMIT,
+            },
+        )
+        .await;
+    let listed = match listed {
+        Ok(listed) => listed,
+        Err(error) => {
+            let error = ForgeError::from_plugin(plugin_id, Some(&link.key), error);
+            context.accounts.observe_error(&link.key, &error);
+            batch.sections.push(empty_section(context, link));
+            return Ok(());
+        }
+    };
+    append_listed(context, plugin_id, link, listed, batch)
+}
+
+fn append_listed(
+    context: &ForgeContext,
+    plugin_id: &str,
+    link: &AccountLink,
+    listed: ListResult,
+    batch: &mut ListBatch,
+) -> Result<(), ForgeError> {
     context
         .accounts
         .observe(&link.key, super::wire::AccountCondition::Connected);
@@ -175,13 +404,19 @@ async fn list_account(
         .filter(|row| row.pr_ref.host.eq_ignore_ascii_case(&link.host))
         .map(|row| {
             let pull_request = PullRequestKey::issue(plugin_id, &row.pr_ref);
+            let attention = context.attention.state(
+                &pull_request,
+                super::attention::AttentionStore::revision(
+                    row.activity_revision.as_deref().unwrap_or(&row.updated_at),
+                ),
+            )?;
             let (count, local) = batch
                 .facts
                 .get(&pull_request)
                 .copied()
                 .unwrap_or((0, false));
             batch.repositories.insert(row.repository.clone());
-            PullRequestRowWire {
+            Ok(PullRequestRowWire {
                 pull_request,
                 account: link.key.clone(),
                 repository: row.repository,
@@ -195,14 +430,16 @@ async fn list_account(
                 linked_thread_count: count,
                 updated_at: row.updated_at,
                 web_url: super::wire::page_on_host(row.web_url, &link.host),
-            }
+                attention,
+            })
         })
-        .collect();
+        .collect::<Result<_, ForgeError>>()?;
     batch.sections.push(ListSectionWire {
         account: context.accounts.wire(link),
         supported_categories: listed.supported_categories,
         rows,
     });
+    Ok(())
 }
 
 fn empty_section(context: &ForgeContext, link: &AccountLink) -> ListSectionWire {
@@ -314,6 +551,15 @@ pub async fn load_overview(
         &check_items,
         local_checkout.is_some(),
     ));
+    let attention_revision = read.activity_revision.as_deref().map_or_else(
+        || {
+            context.cache.attention_revision(key).unwrap_or_else(|| {
+                super::attention::AttentionStore::revision(head_revision.as_str())
+            })
+        },
+        super::attention::AttentionStore::revision,
+    );
+    let attention = context.attention.state(key, attention_revision)?;
     let overview = OverviewWire {
         pull_request: key.clone(),
         account: context.accounts.wire(&account),
@@ -335,7 +581,9 @@ pub async fn load_overview(
         check_items,
         activity: read.activity,
         links: links.iter().map(LinkRecord::wire).collect(),
+        review_thread: super::review_chat::wire(context, key)?,
         local_checkout,
+        attention,
     };
     if let Err(error) = context.links.observe_state(key, overview.state) {
         tracing::warn!(kind = error.log_kind(), "link state refresh failed");

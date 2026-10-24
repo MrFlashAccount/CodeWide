@@ -10,6 +10,10 @@ import {
 } from "./forgeActionCatalog";
 import { headRevision, type HeadRevision } from "./forgeContract";
 import {
+  pullRequestAttention,
+  type SupportedPullRequestAttention,
+} from "./forgePullRequestContract";
+import {
   count,
   decodeOrNull,
   flag,
@@ -117,6 +121,11 @@ export function parseViewedSet(value: unknown): ({ readonly path: string } & Vie
   });
 }
 
+/** Parses the acknowledged `companion/pullRequest/attention/seen` marker. */
+export function parseAttentionSeen(value: unknown): SupportedPullRequestAttention | null {
+  return decodeOrNull(() => pullRequestAttention(value, "result"));
+}
+
 /** `companion/pullRequest/action/run` result with the refreshed catalog. */
 export type ActionRunResult = {
   readonly catalog: ActionCatalog;
@@ -173,6 +182,19 @@ export function parseSubmitOutcome(value: unknown): SubmitOutcome | null {
 
 /** Parses `companion/pullRequest/scenario/start`. */
 export function parseScenarioStart(
+  value: unknown,
+): { readonly created: boolean; readonly threadId: ThreadId } | null {
+  return parseThreadCreation(value);
+}
+
+/** Parses the canonical, message-free PR conversation returned by `chat/ensure`. */
+export function parseReviewChatEnsure(
+  value: unknown,
+): { readonly created: boolean; readonly threadId: ThreadId } | null {
+  return parseThreadCreation(value);
+}
+
+function parseThreadCreation(
   value: unknown,
 ): { readonly created: boolean; readonly threadId: ThreadId } | null {
   return decodeOrNull(() => {

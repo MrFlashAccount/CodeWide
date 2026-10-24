@@ -9,9 +9,16 @@ import {
 } from "../src/features/conversation/conversationRouteNavigation";
 import { BackgroundTaskOutputHost } from "../src/features/conversation/turns/BackgroundTaskOutputHost";
 import { BackgroundTaskOutputScreen } from "../src/features/conversation/turns/BackgroundTaskOutputScreen";
+import { CommandOutputScreen } from "../src/features/conversation/turns/CommandOutputScreen";
 import type { TaskOutputRouteRequest } from "../src/services/backgroundTasks/taskOutputRouteSession";
+import { AppText } from "../src/ui/AppText";
 import { TaskNotificationLine } from "../src/features/conversation/turns/TaskNotificationLine";
 import type { TaskNotificationReport } from "../src/rendering/taskNotifications";
+import {
+  terminalClearSearch,
+  terminalFindNext,
+  terminalFindPrevious,
+} from "./mocks/ExpoLibghostty";
 
 jest.mock("expo-libghostty", () => jest.requireActual("./mocks/ExpoLibghostty"));
 
@@ -150,10 +157,19 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
   // The header copies everything like a terminal: the prompt line, then the output.
   fireEvent.press(within(view.getByTestId("command-output-header")).getByLabelText("Copy"));
   expect(copy).toHaveBeenLastCalledWith(`❯ ${COMMAND}\nfirst page\nsecond\n[exited with code 0]`);
-  // The footer reads the result; nothing asks to load more.
-  expect(view.getByText("Finished")).toBeOnTheScreen();
-  expect(view.getByText("· exit 0 · 12 B")).toBeOnTheScreen();
+  // The raw terminal owns the remaining surface; there is no duplicate status footer.
+  expect(view.queryByText("Finished")).toBeNull();
+  expect(view.queryByText("· exit 0 · 12 B")).toBeNull();
   expect(view.queryByText(/load more|read new output/iu)).toBeNull();
+
+  fireEvent.press(view.getByLabelText("Search command output"));
+  fireEvent.changeText(view.getByLabelText("Find in command output"), "second");
+  fireEvent.press(view.getByLabelText("Next match"));
+  fireEvent.press(view.getByLabelText("Previous match"));
+  expect(terminalFindNext).toHaveBeenLastCalledWith("second");
+  expect(terminalFindPrevious).toHaveBeenLastCalledWith("second");
+  fireEvent.press(view.getByLabelText("Close output search"));
+  expect(terminalClearSearch).toHaveBeenCalled();
 
   fireEvent.press(view.getByLabelText("Close command output"));
   expect(onClose).toHaveBeenCalledTimes(1);
@@ -177,6 +193,45 @@ it("shows no prompt line when the Companion does not know the command", async ()
 
   expect(view.getByRole("header")).toHaveTextContent("Wait for CI");
   expect(view.queryByTestId("command-output-command")).toBeNull();
+});
+
+it("shimmers only the command text while it is running and puts failure on that row", () => {
+  const running = render(
+    <CommandOutputScreen
+      command={COMMAND}
+      error={null}
+      loading={false}
+      onClose={jest.fn()}
+      output={{ headOmitted: false, text: "building", totalChars: 8 }}
+      outputSource="running"
+      status="running"
+      title="Command"
+    />,
+  );
+  const runningCommand = running
+    .UNSAFE_getAllByType(AppText)
+    .find((node) => node.props.children === COMMAND);
+  expect(runningCommand?.props.shimmering).toBe(true);
+  expect(running.queryByTestId("command-output-error")).toBeNull();
+  running.unmount();
+
+  const failed = render(
+    <CommandOutputScreen
+      command={COMMAND}
+      error="Output reader failed"
+      loading={false}
+      onClose={jest.fn()}
+      output={{ headOmitted: false, text: "failed", totalChars: 6 }}
+      outputSource="failed"
+      status="failed"
+      title="Command"
+    />,
+  );
+  const failedCommand = failed
+    .UNSAFE_getAllByType(AppText)
+    .find((node) => node.props.children === COMMAND);
+  expect(failedCommand?.props.shimmering).toBe(false);
+  expect(failed.getByLabelText("Output reader failed")).toBeOnTheScreen();
 });
 
 it("opens a background Bash call's output from its command block", async () => {

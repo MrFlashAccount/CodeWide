@@ -93,6 +93,11 @@ export function registerForgeMutationDefaults({
       if (envelope === null) {
         return;
       }
+      // The detail screen hides this exact revision immediately. Refetching
+      // here would also move the row between attention groups while it is open.
+      if (envelope.method === "companion/pullRequest/attention/seen") {
+        return;
+      }
       client
         .invalidateQueries({
           predicate: (query) => queryBelongsToConnection(query.queryKey, envelope.connectionId),

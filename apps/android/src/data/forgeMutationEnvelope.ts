@@ -7,6 +7,8 @@ const DURABLE_FORGE_METHODS = [
   "companion/pullRequest/review/submit",
   "companion/pullRequest/scenario/start",
   "companion/pullRequest/viewed/set",
+  "companion/pullRequest/attention/seen",
+  "companion/pullRequest/chat/ensure",
   "companion/review/draft/put",
   "companion/review/draft/sendToAgent",
   "companion/review/guide/request",

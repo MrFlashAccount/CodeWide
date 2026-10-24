@@ -14,13 +14,11 @@ export function DescriptionSection({
     return null;
   }
   return (
-    <View style={styles.card} testID="pull-request-description">
-      <View style={styles.cardHeader}>
-        <Text accessibilityRole="header" style={styles.cardTitle}>
-          Description
-        </Text>
-      </View>
-      <View style={[styles.cardLine, styles.markdownLine]}>
+    <View style={styles.section} testID="pull-request-description">
+      <Text accessibilityRole="header" style={styles.sectionHeader}>
+        Description
+      </Text>
+      <View style={[styles.sectionBody, styles.markdownLine]}>
         <RichMarkdown source={description} />
       </View>
     </View>

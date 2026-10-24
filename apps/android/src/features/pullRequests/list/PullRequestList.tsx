@@ -1,23 +1,21 @@
 import { LegendList } from "@legendapp/list/react-native";
-import { useState } from "react";
 import { View } from "react-native";
 
-import type { AccountState, ProviderIcon } from "../../../data/forgeContract";
+import type { AccountState, ForgeProvider, ProviderIcon } from "../../../data/forgeContract";
 import type {
   PullRequestListPage,
   PullRequestRow as Row,
 } from "../../../data/forgePullRequestContract";
 import { remoteValue, type RemoteValue } from "../../../data/forgeRemoteValue";
-import { useEvent } from "../../../react/useEvent";
 import { layoutSize } from "../../../theme";
-import type { PullRequestListFilter } from "../pullRequestListModel";
-import { CategoryChips } from "./CategoryChips";
+import type { PullRequestSearchFilter } from "../../../data/forgePullRequestSearch";
 import { listStyles as styles } from "./list.styles";
 import { ListSkeleton } from "./ListSkeleton";
 import { ListNotice } from "./ListNotice";
-import { pullRequestListItems, supportedCategories } from "./pullRequestListItems";
+import { pullRequestListItems } from "./pullRequestListItems";
 import { PullRequestListItemView } from "./PullRequestListItemView";
-import { RepositoryFilterSheet } from "./RepositoryFilterSheet";
+import { PullRequestFilterBar } from "./PullRequestFilterBar";
+import { PullRequestFilterSheet } from "./PullRequestFilterSheet";
 
 /**
  * PR list for one connection: filter chips, account sections and rows. The
@@ -25,48 +23,41 @@ import { RepositoryFilterSheet } from "./RepositoryFilterSheet";
  * is unreachable the stored snapshot is shown with its age (Q3).
  */
 export function PullRequestList(props: {
-  readonly filter: PullRequestListFilter;
+  readonly accounts: readonly AccountState[];
+  readonly filter: PullRequestSearchFilter;
   /** Provider mark of an account's plugin, from the accounts snapshot. */
   readonly iconFor: (pluginId: string) => ProviderIcon | null;
   readonly nowMs: number;
-  readonly onCategory: (category: PullRequestListFilter["category"]) => void;
+  readonly onCategory: (category: PullRequestListPage["category"]) => void;
   readonly onEndReached: () => void;
   readonly onOpen: (row: Row) => void;
+  readonly onOpenFilters: () => void;
   readonly onReconnect: (account: AccountState) => void;
-  readonly onRepository: (repository: string | null) => void;
   readonly onRetry: () => void;
-  readonly pendingFilter: { readonly category: boolean; readonly repository: boolean };
+  readonly onSearch: (text: string) => void;
+  readonly pendingFilter: boolean;
+  readonly providers: readonly ForgeProvider[];
   readonly state: RemoteValue<PullRequestListPage> | undefined;
 }): React.JSX.Element {
   const { filter, state } = props;
-  const [repositoriesOpen, setRepositoriesOpen] = useState(false);
   const page = remoteValue(state);
   const items = listItems(page);
-  const openRepositories = useEvent((): void => {
-    setRepositoriesOpen(true);
-  });
-  const closeRepositories = useEvent((): void => {
-    setRepositoriesOpen(false);
-  });
   return (
     <View style={styles.fill} testID="pull-request-list">
-      <CategoryChips
-        category={filter.category}
-        counts={categoryCounts(page, items)}
-        onOpenRepositories={openRepositories}
-        onSelect={props.onCategory}
+      <PullRequestFilterBar
+        count={page === null ? undefined : items.filter((item) => item.kind === "row").length}
+        filter={filter}
+        onCategory={props.onCategory}
+        onOpenFilters={props.onOpenFilters}
+        onSearch={props.onSearch}
         pending={props.pendingFilter}
-        repository={filter.repository}
-        supported={supportedCategories(page)}
       />
       <ListNotice nowMs={props.nowMs} state={visibleNoticeState(state, props.pendingFilter)} />
       <PullRequestRows items={items} page={page} props={props} />
-      <RepositoryFilterSheet
-        onDismiss={closeRepositories}
-        onSelect={props.onRepository}
-        open={repositoriesOpen}
+      <PullRequestFilterSheet
+        accounts={props.accounts}
+        providers={props.providers}
         repositories={page?.repositories ?? []}
-        selected={filter.repository}
       />
     </View>
   );
@@ -76,20 +67,11 @@ function listItems(page: PullRequestListPage | null) {
   return page === null ? [] : pullRequestListItems(page);
 }
 
-function categoryCounts(
-  page: PullRequestListPage | null,
-  items: ReturnType<typeof pullRequestListItems>,
-): Partial<Readonly<Record<PullRequestListFilter["category"], number>>> {
-  return page === null
-    ? {}
-    : { [page.category]: items.filter((item) => item.kind === "row").length };
-}
-
 function visibleNoticeState(
   state: RemoteValue<PullRequestListPage> | undefined,
-  pending: { readonly category: boolean; readonly repository: boolean },
+  pending: boolean,
 ): RemoteValue<PullRequestListPage> | undefined {
-  return pending.category || pending.repository ? undefined : state;
+  return pending ? undefined : state;
 }
 
 function PullRequestRows({

@@ -59,7 +59,13 @@ export function rowBadges(row: PullRequestRow): readonly string[] {
 
 /** Spoken summary of a row: title, meta, check word, badges and linked threads. */
 export function rowAccessibilityLabel(row: PullRequestRow, glyph: CheckGlyph): string {
-  const parts = [row.title, rowMeta(row), glyph.word, ...rowBadges(row)];
+  const parts = [
+    row.title,
+    rowMeta(row),
+    ...(row.attention.state === "new" ? ["new activity"] : []),
+    glyph.word,
+    ...rowBadges(row),
+  ];
   if (row.linkedThreadCount > 0) {
     parts.push(`${String(row.linkedThreadCount)} linked threads`);
   }

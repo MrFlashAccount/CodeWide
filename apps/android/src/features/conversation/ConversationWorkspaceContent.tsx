@@ -187,6 +187,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         compact: !props.desktop,
         cwd: props.snapshot.cwd ?? "/workspace",
         firstUnreadAgentTurnId: props.snapshot.firstUnreadAgentTurnId ?? null,
+        headerActions: props.headerActions,
         newChat: props.newChatDraft !== null,
         onBack: props.desktop ? undefined : props.closeActiveConversation,
         onViewedLatest: props.markActiveThreadRead,

@@ -20,7 +20,9 @@ Deleting this module removes every PR surface; review targets that do not involv
 - `auth.rs` — auth flows: start, one dedicated plugin process per flow, poll every 5 s, cancel, 15-minute expiry reported as `failed` with a reason, and a terminal `failed` flow kept until dismissed, restarted or 15 minutes pass; `submitToken` handled before any journaling.
 - `plugin_client.rs` — spawn, `initialize`, capability check, timeouts, bounded concurrency. Uses `forge-protocol` framing; the VCS plugin client is not refactored.
 - `cache.rs` — in-memory list and overview cache with freshness windows. No PR content on disk.
-- `reads.rs` — the cross-account list, the atomic overview, activity pages, file pages with hunk catalogs and viewed marks; one plugin process per provider batch.
+- `attention.rs` — hashes a provider activity witness and durably records the exact revision last displayed for each PR; list and overview reads expose only the content-free digest plus `new | seen`.
+- `review_chat.rs` — durably assigns one canonical ordinary agent thread to a PR. `chat/ensure` may create and link the thread, but never enqueues a message or starts a turn.
+- `reads.rs` — the legacy cross-account list, provider-aware structured search, the atomic overview, activity pages, file pages with hunk catalogs and viewed marks; one plugin process per provider batch.
 - `pr_catalog.rs` — the pull request implementation of review's `DiffCatalogSource`.
 - `actions.rs` — catalog validation, kind floors, the `forge_action_runs` journal.
 - `action_run.rs` — `companion/pullRequest/action/run`: idempotency replay, fresh catalog at the requested head, effective confirmation, journal, then the plugin call.
@@ -46,12 +48,15 @@ Composition outside this folder, each with one job:
 
   Forge and review never hand-roll fencing; every third-party text an agent sees goes through `UntrustedText`.
 
-Durable state lives in `store/forge_tables.rs`: `forge_accounts`, `forge_provider_settings`, `forge_pr_links`, `forge_link_tombstones`, `forge_action_runs`. Tables are additive and created lazily on first write.
+Durable state lives in `store/forge_tables.rs`: `forge_accounts`, `forge_provider_settings`, `forge_pr_links`, `forge_link_tombstones`, `forge_action_runs`, `forge_pr_attention`, `forge_pr_review_threads`. Tables are additive and created lazily on first write.
 
 ## Invariants
 
 - **No token in the companion.** A forge token is never returned by a plugin, never stored in redb, `SecureStore`, the journal or logs, and never sent to Android. The only token that crosses the companion is the `submitToken` param, passed unchanged to the plugin's `auth.start` stdin and dropped; it is excluded from the replay journal, the outbox and request logging.
-- **One trigger per forge write.** Review comments and the verdict: only `companion/pullRequest/review/submit`. Catalog actions: only `companion/pullRequest/action/run` with `confirmation` at or above the effective level (`-32089` otherwise). Viewed marks: only `companion/pullRequest/viewed/set`. Auth flows: only `companion/forge/auth/start` from a device-authorized session. No agent tool, scenario or refresh path constructs an action run or starts an auth flow.
+- **One trigger per forge write.** Review comments and the verdict: only `companion/pullRequest/review/submit`. Catalog actions: only `companion/pullRequest/action/run` with `confirmation` at or above the effective level (`-32089` otherwise). Viewed marks: only `companion/pullRequest/viewed/set`. Attention: only `companion/pullRequest/attention/seen`, after the matching overview revision was displayed. Auth flows: only `companion/forge/auth/start` from a device-authorized session. No agent tool, scenario or refresh path constructs an action run or starts an auth flow.
+- **Attention is revision-exact and content-free.** A provider witness is hashed before storage or client projection. Opening revision A never marks a later revision B as seen. Recording a marker invalidates the server list cache but does not push a list invalidation to the active client, so a row cannot move between attention groups while its detail remains open.
+- **Opening chat is not sending.** `companion/pullRequest/chat/ensure` reuses the PR's live canonical thread or creates and links exactly one. It never calls the agent enqueue path; only an explicit composer submission or scenario starts a turn.
+- **Search is complete or rejected.** `companion/pullRequests/search` sends the same typed query to every selected account. A provider without `forge.search@1` may receive only the exact legacy projection supported by `forge.list@1` (category, zero or one repository, open state and default sort); any richer query fails the read. The companion never drops an unsupported condition and returns a broader result set.
 - **Stale head.** Every run and Submit carries `headRevision`; a moved head returns `-32082` with a refreshed catalog and writes nothing.
 - **Idempotency.** A run is journaled as `started` before the plugin call. A repeated `idempotencyKey` returns the stored terminal outcome without a plugin call; a timeout or restart in `started` ends as `unknown` (`-32083 outcomeUnknown`).
 - **Effective confirmation** = max(plugin `confirm`, kind floor), recomputed here and never trusted from the client.

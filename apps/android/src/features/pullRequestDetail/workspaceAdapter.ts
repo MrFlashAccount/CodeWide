@@ -3,13 +3,32 @@ import { randomUUID } from "expo-crypto";
 import { requireParsed, type ForgeResources } from "../../data/forgeResources";
 import {
   parseActionRun,
+  parseAttentionSeen,
+  parseReviewChatEnsure,
   parseScenarioStart,
   parseSubmitOutcome,
   parseViewedSet,
 } from "../../data/forgeMutationContract";
 import { parseLinks } from "../../data/forgePullRequestContract";
+import type { ThreadId } from "../../data/reviewContract";
 import type { ReviewResources } from "../../data/reviewResources";
 import type { PullRequestDetailWorkspaceCapabilities } from "./workspaceCapabilities";
+
+const reviewChatRequests = new Map<
+  string,
+  Promise<{ readonly created: boolean; readonly threadId: ThreadId }>
+>();
+
+async function settleReviewChatRequest(
+  key: string,
+  request: Promise<{ readonly created: boolean; readonly threadId: ThreadId }>,
+): Promise<{ readonly created: boolean; readonly threadId: ThreadId }> {
+  return request.finally(() => {
+    if (reviewChatRequests.get(key) === request) {
+      reviewChatRequests.delete(key);
+    }
+  });
+}
 
 /** Binds PR screen mutations and publishes their acknowledged results to the read models. */
 export function createPullRequestDetailWorkspaceAdapter({
@@ -22,6 +41,45 @@ export function createPullRequestDetailWorkspaceAdapter({
   readonly review: Pick<ReviewResources, "drafts">;
 }): PullRequestDetailWorkspaceCapabilities {
   return {
+    async ensureReviewChat(target) {
+      const key = `${target.connectionId}\u0000${target.pullRequest}`;
+      const running = reviewChatRequests.get(key);
+      if (running !== undefined) {
+        return running;
+      }
+      const request = forge.mutations
+        .execute(
+          {
+            connectionId: target.connectionId,
+            method: "companion/pullRequest/chat/ensure",
+            operationId: randomUUID(),
+            params: { pullRequest: target.pullRequest },
+            scope: `${target.connectionId}:pull-request:${target.pullRequest}`,
+          },
+          parseReviewChatEnsure,
+        )
+        .then((result) => requireParsed(result, "review chat"));
+      reviewChatRequests.set(key, request);
+      return settleReviewChatRequest(key, request);
+    },
+    async markAttentionSeen(target) {
+      requireParsed(
+        await forge.mutations.execute(
+          {
+            connectionId: target.connectionId,
+            method: "companion/pullRequest/attention/seen",
+            operationId: randomUUID(),
+            params: {
+              pullRequest: target.pullRequest,
+              revision: target.revision,
+            },
+            scope: `${target.connectionId}:pull-request:${target.pullRequest}`,
+          },
+          parseAttentionSeen,
+        ),
+        "attention marker",
+      );
+    },
     async runAction(target, request) {
       const result = requireParsed(
         await forge.mutations.execute(

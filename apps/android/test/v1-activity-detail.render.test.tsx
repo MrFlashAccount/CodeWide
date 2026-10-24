@@ -33,7 +33,7 @@ it("uses a readable stable Activity heading instead of the block summary", () =>
   expect(view.queryByText("File, Run, Comments 18")).toBeNull();
 });
 
-it("invalidates recycled rows when an appended step changes the list tail", () => {
+it("updates a recycled row when an appended step changes the list tail", () => {
   const first = {
     body: "first",
     collapsible: true,
@@ -55,8 +55,6 @@ it("invalidates recycled rows when an appended step changes the list tail", () =
       visible
     />,
   );
-  const initialVersion = view.getByTestId("activity-detail-list").props.extraData;
-
   view.rerender(
     <ActivityDetailSheet
       blocks={[
@@ -76,7 +74,6 @@ it("invalidates recycled rows when an appended step changes the list tail", () =
     />,
   );
 
-  expect(view.getByTestId("activity-detail-list").props.extraData).not.toBe(initialVersion);
   const rows = view.getAllByTestId("activity-step-row");
   expect(rows).toHaveLength(2);
   const formerTailSurface = activityRowSurface(rows[0]);

@@ -3,6 +3,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useState,
   type ComponentProps,
   type ReactElement,
 } from "react";
@@ -11,6 +12,7 @@ import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
 import { workspaceCatalogDiagnostics } from "../data/workspaceCatalogDiagnostics";
 import type { CatalogMode } from "../features/pullRequests/CatalogModeBar";
 import { useEvent } from "../react/useEvent";
+import { useConstant } from "../react/useConstant";
 import { ConversationSelectionPlaceholder } from "../features/conversation/ConversationEmptyState";
 import {
   catalogModeBarBottomInset,
@@ -26,6 +28,10 @@ import {
   type WorkspaceTwoPanePresentation,
 } from "./WorkspaceTwoPaneLayout";
 import { isNoServerWorkspace } from "./noServerWorkspace";
+import {
+  WorkspacePaneControllerContext,
+  type WorkspacePaneController,
+} from "./workspacePaneController";
 
 type PaneLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["layout"]>>[0];
 type ScreenLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["screenLayout"]>>[0];
@@ -36,6 +42,8 @@ const FLOATING_MODE_BAR_Z_INDEX = 20;
 /** Places the one Router-owned catalog beside or beneath the native detail stack. */
 export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
   const { desktop, runtime, viewportWidth } = useWorkspaceRouteResources();
+  const [detailExpanded, setDetailExpanded] = useState(false);
+  const paneController = useConstant<WorkspacePaneController>(() => ({ setDetailExpanded }));
   const focusedRoute = props.state.routes[props.state.index];
   const threadsCatalogFocused = focusedRoute?.name === "(lists)";
   const pullRequestsCatalogFocused = focusedRoute?.name === "pulls/index";
@@ -43,13 +51,19 @@ export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
   const catalogFocused = threadsCatalogFocused || pullRequestsCatalogFocused;
   const noServer = isNoServerWorkspace(runtime);
   const welcomeVisible = isWelcomeVisible(threadsCatalogFocused, noServer);
-  const catalogMode = visibleCatalogMode(focusedRoute?.name, desktop, noServer);
+  const catalogMode = visibleCatalogMode({
+    desktop,
+    detailExpanded,
+    noServer,
+    routeName: focusedRoute?.name,
+  });
   const { content: catalogContent, status: catalogStatus } = catalogPresentation(
     props,
     pullRequestsFocused,
   );
   const presentation = workspacePanePresentation({
     desktop,
+    detailExpanded,
     pullRequestsCatalogFocused,
     pullRequestsFocused,
     viewportWidth,
@@ -79,9 +93,13 @@ export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
         testID: "workspace-catalog-pane",
       }}
       detail={
-        <DestinationPlacement.Provider value={true}>{props.children}</DestinationPlacement.Provider>
+        <WorkspacePaneControllerContext.Provider value={paneController}>
+          <DestinationPlacement.Provider value={true}>
+            {props.children}
+          </DestinationPlacement.Provider>
+        </WorkspacePaneControllerContext.Provider>
       }
-      detailStyle={workspaceDestinationSurfaceStyle(desktop)}
+      detailStyle={workspaceDestinationSurfaceStyle(desktop, detailExpanded)}
       detailViewProps={{
         collapsable: false,
         ...detailInteraction,
@@ -108,7 +126,10 @@ function catalogAccessibilityProps(
   desktop: boolean,
   catalogFocused: boolean,
 ) {
-  const accessible = presentation.kind !== "detailOnly" && (desktop || catalogFocused);
+  const accessible =
+    presentation.kind !== "detailOnly" &&
+    presentation.kind !== "wideDetailExpanded" &&
+    (desktop || catalogFocused);
   if (accessible) {
     return {
       accessibilityElementsHidden: false,
@@ -129,12 +150,14 @@ function detailInteractionProps(desktop: boolean, catalogFocused: boolean) {
 
 function workspacePanePresentation({
   desktop,
+  detailExpanded,
   pullRequestsCatalogFocused,
   pullRequestsFocused,
   viewportWidth,
   welcomeVisible,
 }: {
   readonly desktop: boolean;
+  readonly detailExpanded: boolean;
   readonly pullRequestsCatalogFocused: boolean;
   readonly pullRequestsFocused: boolean;
   readonly viewportWidth: number;
@@ -144,7 +167,10 @@ function workspacePanePresentation({
     return desktop ? { kind: "wide", viewportWidth } : { kind: "catalogOnly" };
   }
   if (pullRequestsFocused) {
-    return desktop ? { kind: "wide", viewportWidth } : { kind: "detailOnly" };
+    if (!desktop) {
+      return { kind: "detailOnly" };
+    }
+    return detailExpanded ? { kind: "wideDetailExpanded" } : { kind: "wide", viewportWidth };
   }
   if (welcomeVisible) {
     return { kind: "catalogOnly" };
@@ -152,18 +178,36 @@ function workspacePanePresentation({
   return desktop ? { kind: "wide", viewportWidth } : { kind: "stacked" };
 }
 
-function visibleCatalogMode(
-  routeName: string | undefined,
-  desktop: boolean,
-  noServer: boolean,
-): CatalogMode | null {
+function visibleCatalogMode({
+  desktop,
+  detailExpanded,
+  noServer,
+  routeName,
+}: {
+  readonly desktop: boolean;
+  readonly detailExpanded: boolean;
+  readonly noServer: boolean;
+  readonly routeName: string | undefined;
+}): CatalogMode | null {
+  if (detailExpanded) {
+    return null;
+  }
   if (routeName === "pulls/index" || (desktop && isPullRequestsRoute(routeName))) {
     return "pullRequests";
   }
-  if (!noServer && !isPullRequestsRoute(routeName) && (routeName === "(lists)" || desktop)) {
-    return "threads";
-  }
-  return null;
+  return threadsCatalogVisible({ desktop, noServer, routeName }) ? "threads" : null;
+}
+
+function threadsCatalogVisible({
+  desktop,
+  noServer,
+  routeName,
+}: {
+  readonly desktop: boolean;
+  readonly noServer: boolean;
+  readonly routeName: string | undefined;
+}): boolean {
+  return !noServer && !isPullRequestsRoute(routeName) && (routeName === "(lists)" || desktop);
 }
 
 function FloatingCatalogModeBar({
@@ -210,8 +254,10 @@ function isPullRequestsRoute(routeName: string | undefined): boolean {
   return routeName === "pulls" || routeName?.startsWith("pulls/") === true;
 }
 
-function workspaceDestinationSurfaceStyle(desktop: boolean) {
-  return desktop ? v1WorkspaceShellStyles.destination : undefined;
+function workspaceDestinationSurfaceStyle(desktop: boolean, detailExpanded: boolean) {
+  return desktop
+    ? [v1WorkspaceShellStyles.destination, detailExpanded && styles.expandedDestination]
+    : undefined;
 }
 
 /** Leaves a native history entry for the catalog without mounting its navigator twice. */
@@ -237,6 +283,10 @@ function CatalogPlacement({
 }
 
 const styles = StyleSheet.create({
+  expandedDestination: {
+    borderBottomLeftRadius: 0,
+    borderTopLeftRadius: 0,
+  },
   floatingModeBar: {
     bottom: catalogModeBarBottomInset,
     left: catalogModeBarHorizontalInset,

@@ -7,7 +7,6 @@ import { colors, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import { ChangedFileRow } from "./ChangedFileRow";
 
-const FILE_SIDEBAR_WIDTH = 260;
 const PHONE_FILE_LIST_MAX_HEIGHT = 196;
 
 /** Everything the file list needs. */
@@ -26,13 +25,19 @@ export type FileListProps = {
 };
 
 /**
- * Changed files: a 260dp sidebar at ≥720dp, a short scrolling list above the
- * diff on phones. A truncated page says how many files the forge returned.
+ * Changed files form a horizontal work queue above the diff on wide screens;
+ * phones retain a short vertical chooser above the same editor.
  */
 export function FileList(props: FileListProps): React.JSX.Element {
   const { page } = props;
   return (
-    <ScrollView style={props.tablet ? styles.sidebar : styles.phoneList} testID="pr-file-list">
+    <ScrollView
+      contentContainerStyle={props.tablet ? styles.queueContent : undefined}
+      horizontal={props.tablet}
+      showsHorizontalScrollIndicator={false}
+      style={props.tablet ? styles.queue : styles.phoneList}
+      testID="pr-file-list"
+    >
       {page.truncated === null ? null : (
         <Text style={styles.notice}>
           {`Showing ${String(page.truncated.shown)} of ${String(page.truncated.total)} files. The forge limits this diff; the guide covers the shown files only.`}
@@ -43,6 +48,7 @@ export function FileList(props: FileListProps): React.JSX.Element {
           actions={props.fileActions.get(file.path) ?? []}
           draftCount={props.drafts.filter((draft) => draft.anchor.path === file.path).length}
           file={file}
+          horizontal={props.tablet}
           host={props.host}
           key={file.path}
           onRun={props.onRun}
@@ -73,9 +79,14 @@ const styles = StyleSheet.create({
     flexGrow: 0,
     maxHeight: PHONE_FILE_LIST_MAX_HEIGHT,
   },
-  sidebar: {
-    borderRightColor: colors.borderSoft,
-    borderRightWidth: StyleSheet.hairlineWidth,
-    width: FILE_SIDEBAR_WIDTH,
+  queue: {
+    borderBottomColor: colors.borderSoft,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexGrow: 0,
+  },
+  queueContent: {
+    columnGap: spacing.xxs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xxs,
   },
 });

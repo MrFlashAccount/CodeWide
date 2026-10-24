@@ -69,6 +69,7 @@ export const githubProvider = {
   capabilities: [
     "forge.auth@1",
     "forge.list@1",
+    "forge.search@1",
     "forge.read@1",
     "forge.diff@1",
     "forge.actions@1",
@@ -108,6 +109,7 @@ export const arcanumProvider = {
   capabilities: [
     "forge.auth@1",
     "forge.list@1",
+    "forge.search@1",
     "forge.read@1",
     "forge.diff@1",
     "forge.actions@1",
@@ -175,6 +177,7 @@ export const onboardingAccounts = {
 };
 
 const passing = { failing: 0, passed: 6, pending: 0, state: "passing" };
+const newAttention = { revision: "a".repeat(64), state: "new" };
 
 /** One list row. */
 export function listRow(
@@ -195,6 +198,7 @@ export function listRow(
     title: `Pull request ${number}`,
     updatedAt: "2026-10-21T09:00:00Z",
     webUrl: `https://github.com/MrFlashAccount/CodeWide/pull/${number}`,
+    attention: newAttention,
     ...overrides,
   };
 }
@@ -248,6 +252,7 @@ export function action(
 /** Overview of PR #91: blocked merge, one failing check, two links, a GitHub catalog. */
 export const overview91 = {
   account: connectedAccount,
+  attention: newAttention,
   activity: {
     items: [
       {

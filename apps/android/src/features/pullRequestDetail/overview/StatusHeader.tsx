@@ -24,14 +24,8 @@ export function StatusHeader({
 }): React.JSX.Element {
   const age = listRow === null ? "" : ageAgo(listRow.updatedAt, nowMs);
   return (
-    <View style={styles.column} testID="pull-request-status-header">
-      <View style={styles.row}>
-        <CaptionBadge label={STATE_LABELS[overview.state]} />
-        {listRow?.reviewRequestedFromMe === true ? (
-          <CaptionBadge label="Review requested · you" />
-        ) : null}
-        {overview.localCheckout === null ? null : <CaptionBadge label="Local checkout" />}
-      </View>
+    <View style={styles.statusStrip} testID="pull-request-status-header">
+      <CaptionBadge label={STATE_LABELS[overview.state]} />
       <Text
         accessibilityLabel={`Branch ${overview.headBranch} into ${overview.baseBranch}`}
         ellipsizeMode="middle"
@@ -40,12 +34,14 @@ export function StatusHeader({
       >
         {`${overview.headBranch} → ${overview.baseBranch}`}
       </Text>
-      <View style={styles.row}>
-        <Text style={styles.meta}>{`${String(overview.stats.files)} files · `}</Text>
-        <Text style={[styles.meta, styles.success]}>{`+${String(overview.stats.additions)}`}</Text>
-        <Text style={[styles.meta, styles.danger]}>{` −${String(overview.stats.deletions)}`}</Text>
-        {age === "" ? null : <Text style={styles.meta}>{` · updated ${age}`}</Text>}
-      </View>
+      <Text style={styles.meta}>{`${String(overview.stats.files)} files`}</Text>
+      <Text style={[styles.meta, styles.success]}>{`+${String(overview.stats.additions)}`}</Text>
+      <Text style={[styles.meta, styles.danger]}>{`−${String(overview.stats.deletions)}`}</Text>
+      {age === "" ? null : <Text style={styles.meta}>{`updated ${age}`}</Text>}
+      {listRow?.reviewRequestedFromMe === true ? (
+        <CaptionBadge label="Review requested · you" />
+      ) : null}
+      {overview.localCheckout === null ? null : <CaptionBadge label="Local checkout" />}
     </View>
   );
 }

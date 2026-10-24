@@ -9,6 +9,7 @@ import { parseDrafts } from "../src/data/reviewDraftContract";
 import { parseGuideState } from "../src/data/reviewGuideContract";
 import { settledChecksLabel } from "../src/features/pullRequestDetail/overview/checkPresentation";
 import { reviewRequestedCount } from "../src/features/pullRequests/pullRequestListModel";
+import { pullRequestListItems } from "../src/features/pullRequests/list/pullRequestListItems";
 import {
   fileRowDetail,
   hunkAt,
@@ -23,7 +24,6 @@ import {
   publishedTitle,
 } from "../src/features/pullRequestDetail/changes/submitResultCopy";
 import { defaultScenarioTarget } from "../src/features/pullRequestDetail/actions/scenarioTarget";
-import { messageDockTarget } from "../src/features/pullRequestDetail/dock/messageDockTarget";
 import { safeProviderUrl } from "../src/data/forgeProviderUrl";
 import {
   defaultDestination,
@@ -170,7 +170,6 @@ describe("scenario target", () => {
       ],
     }) ?? [];
   const [branch, manual] = links;
-  const describeThread = (threadId: string): string => `title of ${threadId}`;
 
   it("uses the single or the one branch-linked thread, asks otherwise, and starts a new one with none", () => {
     expect(defaultScenarioTarget([])).toEqual({ kind: "newThread" });
@@ -187,36 +186,6 @@ describe("scenario target", () => {
             { ...manual, threadId: links[0]?.threadId ?? manual.threadId },
           ]),
     ).toBeNull();
-  });
-
-  it("names the same target in the dock chip that the send uses, and keeps a valid choice", () => {
-    const initial = messageDockTarget(links, null, describeThread);
-    expect(initial.label).toBe("title of thread-forge-auth");
-    expect(initial.target).toEqual({ kind: "thread", threadId: branch?.threadId });
-    expect(initial.choices.map((choice) => [choice.label, choice.selected])).toEqual([
-      ["title of thread-forge-auth", true],
-      ["title of thread-review-91", false],
-      ["New thread", false],
-    ]);
-    const picked = initial.choices[1]?.target ?? null;
-    expect(messageDockTarget(links, picked, describeThread).label).toBe(
-      "title of thread-review-91",
-    );
-    // A choice that is no longer linked falls back to the default rule.
-    expect(
-      manual === undefined
-        ? null
-        : messageDockTarget(
-            [manual],
-            { kind: "thread", threadId: branch?.threadId ?? manual.threadId },
-            describeThread,
-          ).label,
-    ).toBe("title of thread-review-91");
-    expect(messageDockTarget([], null, describeThread)).toEqual({
-      choices: [],
-      label: "New thread",
-      target: { kind: "newThread" },
-    });
   });
 });
 
@@ -260,6 +229,69 @@ describe("counters agree with their headers", () => {
     expect(reviewRequestedCount(page)).toBe(2);
     expect(reviewRequestedCount(page === null ? null : { ...page, sections: [] })).toBe(0);
     expect(reviewRequestedCount(null)).toBe(0);
+  });
+});
+
+describe("pull request attention groups", () => {
+  it("puts new activity before seen rows and sorts each group across accounts", () => {
+    const page = parsePullRequestListPage(reviewRequestedPage);
+    if (page === null) {
+      throw new Error("The pull-request list fixture is invalid");
+    }
+    const connected = page.sections[0];
+    const first = connected?.rows[0];
+    const second = connected?.rows[1];
+    if (connected === undefined || first === undefined || second === undefined) {
+      throw new Error("The pull-request list fixture has no connected rows");
+    }
+    const items = pullRequestListItems({
+      ...page,
+      sections: [
+        {
+          ...connected,
+          rows: [
+            { ...first, updatedAt: "2026-10-21T09:30:00Z" },
+            {
+              ...second,
+              attention: { ...second.attention, state: "seen" },
+              updatedAt: "2026-10-21T10:00:00Z",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(
+      items.map((item) =>
+        item.kind === "row"
+          ? `${item.kind}:${item.row.number}`
+          : item.kind === "attentionHeader"
+            ? `${item.kind}:${item.attention}:${String(item.count)}`
+            : item.kind,
+      ),
+    ).toEqual(["attentionHeader:new:1", "row:91", "attentionHeader:seen:1", "row:88"]);
+  });
+
+  it("keeps rows from an older Companion in the up-to-date group", () => {
+    const firstSection = reviewRequestedPage.sections[0];
+    const firstRow = firstSection?.rows[0];
+    if (firstSection === undefined || firstRow === undefined) {
+      throw new Error("The pull-request list fixture has no connected row");
+    }
+    const { attention: _attention, ...legacyRow } = firstRow;
+    const page = parsePullRequestListPage({
+      ...reviewRequestedPage,
+      sections: [{ ...firstSection, rows: [legacyRow] }],
+    });
+    if (page === null) {
+      throw new Error("The legacy pull-request list fixture is invalid");
+    }
+
+    expect(
+      pullRequestListItems(page).map((item) =>
+        item.kind === "attentionHeader" ? `${item.attention}:${String(item.count)}` : item.kind,
+      ),
+    ).toEqual(["seen:1", "row"]);
   });
 });
 

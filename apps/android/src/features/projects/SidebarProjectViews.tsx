@@ -1,16 +1,16 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LegendList } from "@legendapp/list/react-native";
 import { Pressable, View } from "react-native";
 import { useId, type ReactNode } from "react";
 import { useEvent } from "../../react/useEvent";
 import { colors, iconSize } from "../../theme";
+import { AppList } from "../../ui/AppList";
 import { AppSheet, AppSheetScrollView } from "../../ui/AppSheet";
 import { AppText as Text } from "../../ui/Typography";
 import { useConversationOwner } from "../../ui/use-conversation-owner";
 import { useProjectManagement, type ProjectManagementState } from "./projectManagement";
 import { ProjectServerFilters } from "./ProjectServerFilters";
 import type { ProjectManagementProps } from "./projectManagementContract";
-import { ProjectManagementRow, projectManagerItemHeight } from "./ProjectManagementRow";
+import { ProjectManagementRow } from "./ProjectManagementRow";
 import type { SidebarProject } from "./sidebarProjects";
 import { styles } from "./SidebarProjects.styles";
 
@@ -131,10 +131,10 @@ function ProjectManagementSurface({
 
 export function SidebarProjectsSheet(
   props: ProjectManagementProps & { readonly visible: boolean },
-) {
+): React.JSX.Element {
   const { servers } = props;
   const state = useProjectManagement(props);
-  const { dataVersion, pending, rows, selectedServerId, setSelectedServerId } = state;
+  const { pending, rows, selectedServerId, setSelectedServerId } = state;
   return (
     <ProjectManagementSurface
       key={props.visible ? "open" : "closed"}
@@ -155,24 +155,19 @@ export function SidebarProjectsSheet(
           servers={servers}
         />
       ) : null}
-      <LegendList
+      <AppList
         contentContainerStyle={styles.sheetListContent}
         data={rows}
-        dataVersion={dataVersion}
-        drawDistance={320}
-        extraData={dataVersion}
-        getFixedItemSize={projectManagerItemHeight}
-        getItemType={(item) => item.kind}
         key={selectedServerId ?? "all"}
         keyboardShouldPersistTaps="handled"
         keyExtractor={(item) => item.key}
-        recycleItems
         renderItem={({ index, item }) => (
           <ProjectManagementRow index={index} item={item} props={props} state={state} />
         )}
-        renderScrollComponent={AppSheetScrollView}
+        scrollComponent={AppSheetScrollView}
         style={styles.sheetList}
         testID="project-management-list"
+        virtualized
       />
     </ProjectManagementSurface>
   );

@@ -25,8 +25,7 @@ export const overviewStyles = StyleSheet.create({
     color: colors.text,
   },
   card: {
-    backgroundColor: colors.surfaceContainer,
-    borderRadius: radii.medium,
+    backgroundColor: "transparent",
     overflow: "hidden",
   },
   cardHeader: {
@@ -47,8 +46,9 @@ export const overviewStyles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   cardTitle: {
-    ...typeScale.title,
+    ...typeScale.body,
     color: colors.text,
+    fontWeight: typeWeight.semibold,
   },
   code: {
     ...typeScale.code,
@@ -86,11 +86,29 @@ export const overviewStyles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "nowrap",
   },
+  section: {
+    gap: spacing.sm,
+  },
+  sectionBody: {
+    alignItems: "stretch",
+    flexDirection: "column",
+  },
+  sectionHeader: {
+    ...typeScale.heading,
+    color: colors.text,
+  },
   // A card line whose header and body stack (activity items).
   stacked: {
     alignItems: "stretch",
     flexDirection: "column",
     gap: spacing.xs,
+  },
+  statusStrip: {
+    alignItems: "center",
+    columnGap: spacing.sm,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    rowGap: spacing.xs,
   },
   success: {
     color: colors.success,

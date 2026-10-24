@@ -130,17 +130,18 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
   ): Promise<PullRequestListPage> =>
     requireParsed(
       parsePullRequestListPage(
-        await call(params.connectionId, "companion/pullRequests/list", {
-          category: params.category,
+        await call(params.connectionId, "companion/pullRequests/search", {
+          accounts: params.filter.accounts,
           cursor,
-          repository: params.repository,
+          providerIds: params.filter.providerIds,
+          query: params.filter.query,
         }),
       ),
       "pull request list",
     );
   const lists = createForgeQueryResource<ListParams, PullRequestListPage>({
     client: queryClient,
-    keyOf: (params) => ["forge", "lists", params.connectionId, params.category, params.repository],
+    keyOf: (params) => ["forge", "lists", params.connectionId, params.filter],
     load: async (params) => readList(params, null),
   });
   const overviews = createForgeQueryResource<OverviewParams, PullRequestOverview>({

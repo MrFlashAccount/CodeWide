@@ -195,6 +195,7 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
     features: props.features,
     fileTransferController: props.fileTransferController,
     forkCurrentThread,
+    headerActions: props.headerActions,
     loadTurnChanges,
     markActiveThreadRead,
     native: props.native,

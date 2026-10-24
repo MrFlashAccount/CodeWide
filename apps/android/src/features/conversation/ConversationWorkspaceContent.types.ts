@@ -1,4 +1,5 @@
 import type { NewChatProjectPickerBinding } from "../projects/NewChatProjectPicker";
+import type { ReactNode } from "react";
 import type { RenderBlock } from "@codewide/renderers";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { FileTransferController } from "../../data/file-transfer-controller";
@@ -44,6 +45,7 @@ export type RenderConversationWorkspaceContentProps = {
   >;
   fileTransferController: FileTransferController | null;
   forkCurrentThread: ReturnType<typeof useActiveThreadActions>["forkCurrentThread"];
+  headerActions: ReactNode;
   loadTurnChanges: ReturnType<typeof useTurnChangesLoader>["loadTurnChanges"];
   markActiveThreadRead: ReturnType<typeof useActiveThreadActions>["markActiveThreadRead"];
   native: boolean;

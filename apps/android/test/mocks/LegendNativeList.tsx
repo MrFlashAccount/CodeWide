@@ -22,7 +22,14 @@ function LegendListInner<ItemT>(
   props: LegendListProps<ItemT>,
   ref: ForwardedRef<LegendListRef>,
 ): ReactElement {
-  const { data, ListEmptyComponent, renderItem, ...viewProps } = props;
+  const {
+    data,
+    ListEmptyComponent,
+    ListFooterComponent,
+    ListHeaderComponent,
+    renderItem,
+    ...viewProps
+  } = props;
   const [renderLimit, setRenderLimit] = useState(initialRenderLimit);
   useImperativeHandle(
     ref,
@@ -39,8 +46,13 @@ function LegendListInner<ItemT>(
   );
   const empty =
     typeof ListEmptyComponent === "function" ? <ListEmptyComponent /> : ListEmptyComponent;
+  const footer =
+    typeof ListFooterComponent === "function" ? <ListFooterComponent /> : ListFooterComponent;
+  const header =
+    typeof ListHeaderComponent === "function" ? <ListHeaderComponent /> : ListHeaderComponent;
   return (
     <View {...viewProps}>
+      {header}
       {data.length === 0
         ? empty
         : data
@@ -50,6 +62,7 @@ function LegendListInner<ItemT>(
                 {renderItem({ extraData: props.extraData, index, item })}
               </View>
             ))}
+      {footer}
     </View>
   );
 }

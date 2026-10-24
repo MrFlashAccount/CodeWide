@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
-import { colors, controlHitSlop, controlSize, spacing, typeScale } from "../../../theme";
+import { colors, controlHitSlop, controlSize, radii, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import { OverflowActionsMenu } from "../actions/OverflowActionsMenu";
 import { fileRowDetail, viewedLabel } from "./changesPresentation";
@@ -15,6 +15,7 @@ export function ChangedFileRow({
   actions,
   draftCount,
   file,
+  horizontal,
   host,
   onRun,
   onSelect,
@@ -25,6 +26,7 @@ export function ChangedFileRow({
   readonly actions: readonly ActionDescriptor[];
   readonly draftCount: number;
   readonly file: PullRequestFile;
+  readonly horizontal: boolean;
   readonly host: string;
   readonly onRun: (action: ActionDescriptor) => void;
   readonly onSelect: (file: PullRequestFile) => void;
@@ -33,7 +35,10 @@ export function ChangedFileRow({
   readonly viewedPending: boolean;
 }): React.JSX.Element {
   return (
-    <View style={[styles.row, selected && styles.selected]} testID={`pr-file-${file.path}`}>
+    <View
+      style={[styles.row, horizontal && styles.queueItem, selected && styles.selected]}
+      testID={`pr-file-${file.path}`}
+    >
       <Pressable
         accessibilityLabel={
           file.viewed.viewed ? `${viewedLabel(file, host)}. Mark not viewed` : "Mark viewed"
@@ -78,6 +83,8 @@ export function ChangedFileRow({
   );
 }
 
+const FILE_QUEUE_ITEM_WIDTH = 344;
+
 const styles = StyleSheet.create({
   added: {
     ...typeScale.label,
@@ -110,6 +117,10 @@ const styles = StyleSheet.create({
   path: {
     ...typeScale.code,
     color: colors.text,
+  },
+  queueItem: {
+    borderRadius: radii.medium,
+    width: FILE_QUEUE_ITEM_WIDTH,
   },
   removed: {
     ...typeScale.label,

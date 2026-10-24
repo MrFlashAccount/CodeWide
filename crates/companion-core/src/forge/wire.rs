@@ -9,7 +9,10 @@ use forge_protocol::{
 use serde::Serialize;
 use serde_json::Value;
 
-use super::ids::{AuthFlowId, ForgeAccountKey, HeadRevision, PullRequestKey};
+use super::{
+    attention::AttentionWire,
+    ids::{AuthFlowId, ForgeAccountKey, HeadRevision, PullRequestKey},
+};
 use crate::review::hunks::Hunk;
 
 const MAX_GLYPH_PATH_BYTES: usize = 4 * 1024;
@@ -215,6 +218,7 @@ pub struct PullRequestRowWire {
     pub linked_thread_count: usize,
     pub updated_at: String,
     pub web_url: String,
+    pub attention: AttentionWire,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -288,8 +292,10 @@ pub struct OverviewWire {
     pub check_items: Vec<CheckItem>,
     pub activity: ActivityPage,
     pub links: Vec<LinkedThreadWire>,
+    pub review_thread: Option<LinkedThreadWire>,
     pub local_checkout: Option<LocalCheckoutWire>,
     pub catalog: ActionCatalogWire,
+    pub attention: AttentionWire,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

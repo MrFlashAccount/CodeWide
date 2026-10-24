@@ -1,4 +1,5 @@
 import type { RenderBlock } from "@codewide/renderers";
+import type { ReactNode } from "react";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { FileTransferController } from "../../data/file-transfer-controller";
 import type { PendingServerRequest } from "../../data/pending-request-types";
@@ -35,6 +36,8 @@ export type ActiveWorkspaceConversationProps = {
       };
   features: ConversationWorkspaceFeatures;
   fileTransferController: FileTransferController | null;
+  /** Controls owned by a host pane, rendered inside the canonical chat header. */
+  headerActions?: ReactNode;
   loadedThreadSummaries: StoredThreadSummary[];
   native: boolean;
   onChangeDraftProject: (draftId: string, cwd: string | null) => void;

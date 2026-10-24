@@ -97,6 +97,7 @@ export function createConversationChromeContent({
       forkPicker={forkPicker}
       historyActivityModel={historyActivityModel}
       historyActivityResourceId={historyActivityResourceId}
+      hostActions={surfaceInputs.headerActions}
       newChat={newChat}
       onArchive={actionsInputs.onArchive}
       onBack={surfaceInputs.onBack}

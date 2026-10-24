@@ -92,8 +92,13 @@ is optional and untrusted (see [Safety rules](#safety-rules)).
 Required: `forge.auth@1`, `forge.list@1`, `forge.read@1`, `forge.diff@1`, `forge.actions@1`,
 `forge.review@1`.
 
-Optional: `forge.checks@1`, `forge.viewed@1`, `forge.resolve@1`, `forge.scenarioContext@1`.
+Optional: `forge.search@1`, `forge.checks@1`, `forge.viewed@1`, `forge.resolve@1`,
+`forge.scenarioContext@1`.
 
+- Without `forge.search@1`, the provider remains available through `forge.list@1`. The companion
+  projects a legacy-compatible query (category, zero or one repository, open state and default
+  sort) to that method; any richer query selecting the provider fails instead of silently ignoring
+  filters.
 - Without `forge.checks@1`, or without its checks credential, checks show as `unavailable` with
   a reason; every other capability keeps working.
 - Without `forge.viewed@1`, viewed marks are stored only on the companion and labelled
@@ -117,10 +122,11 @@ known and takes only the remotes.
 | `auth.poll` | `forge.auth@1` | `{}` on the flow's own process → `{ state: "pending" }`, `{ state: "complete", login }` or `{ state: "failed", reason, fallbackInstructions, retryable }` (`retryable` defaults to `true`) |
 | `auth.verify` | `forge.auth@1` | `{ host, login, purpose }` → `{ login, credentialSource \| null, scopes \| null }` or `-32110` |
 | `auth.disconnect` | `forge.auth@1` | `{ host, login, mode: "logoutHost" \| "forgetToken" }` → `{}`; only modes the method declares in `disconnectModes` |
-| `forge.pullRequests.list` | `forge.list@1` | `{ account, category, repository \| null, cursor \| null, limit ≤ 50 }` → `{ supportedCategories, rows, nextCursor }`; rows carry `ref` and omit `pullRequest`, `account`, `localCheckout` and `linkedThreadCount` |
+| `forge.pullRequests.list` | `forge.list@1` | `{ account, category, repository \| null, cursor \| null, limit ≤ 50 }` → `{ supportedCategories, rows, nextCursor }`; rows carry `ref`, may carry `activityRevision`, and omit `pullRequest`, `account`, `localCheckout` and `linkedThreadCount` |
+| `forge.pullRequests.search` | `forge.search@1` | `{ account, query, cursor \| null, limit ≤ 50 }` → the same page shape; `query` has text, quick-view category, include/exclude sets for repositories, people, review, state, checks, labels and branches, plus sort; values within one field are ORed and different fields are ANDed |
 | `forge.pullRequests.byBranch` | `forge.resolve@1` | `{ account, repository, branch }` → `{ refs: ForgePrRef[] }`, open PRs only |
 | `forge.repository.resolve` | `forge.resolve@1` | `{ remotes: string[] }` → `{ host, repository }` or `-32004` |
-| `forge.pullRequest.read` | `forge.read@1` | `{ account, ref }` → overview fields except `links`, `localCheckout` and `catalog`; `checks`, `checkItems` and `activity` are optional, and `forge.checks@1` results take precedence |
+| `forge.pullRequest.read` | `forge.read@1` | `{ account, ref }` → overview fields except `links`, `localCheckout` and `catalog`; `activityRevision`, `checks`, `checkItems` and `activity` are optional, and `forge.checks@1` results take precedence |
 | `forge.pullRequest.activity` | `forge.read@1` | `{ account, ref, cursor }` → `ActivityPage` |
 | `forge.pullRequest.checks` | `forge.checks@1` | `{ account, ref, headRevision }` → `{ summary: CheckSummary, items: CheckItem[] }` |
 | `forge.pullRequest.files` | `forge.diff@1` | `{ account, ref, headRevision, cursor \| null }` → `{ headRevision, files, truncated, nextCursor }`; a file's `patch` is `{ state: "present", text }`, `tooLarge`, `binary` or `notProvided` (the companion adds hunks), and `viewed: boolean \| null` |
@@ -135,6 +141,7 @@ The shared shapes (`AuthMethod`, `CheckSummary`, `CheckItem`, `ActivityPage`, `A
 companion re-validates every result before it becomes a project type.
 
 - `HeadRevision` is opaque: the head SHA on GitHub, the diff-set id on Arcanum.
+- `activityRevision` is the same opaque provider witness on a list row and its overview. It changes when user-relevant PR activity changes. The companion hashes it before storage or client projection. Older plugins may omit it; the companion then falls back to the list row's `updatedAt`, or the head revision on a cold deep link.
 - `review.submit` reports per-comment results. A forge that publishes a review atomically
   (GitHub) reports all comments with one state; a forge that cannot must report partial
   publication explicitly. The companion never assumes all or nothing.

@@ -35,6 +35,10 @@ pub mod capability {
     pub const AUTH: &str = "forge.auth@1";
     /// `forge.pullRequests.list`.
     pub const LIST: &str = "forge.list@1";
+    /// Optional structured pull-request search. Unlike `forge.list@1`, every
+    /// filter in the request is part of the provider contract and may not be
+    /// silently ignored.
+    pub const SEARCH: &str = "forge.search@1";
     /// `forge.pullRequest.read` and `forge.pullRequest.activity`.
     pub const READ: &str = "forge.read@1";
     /// `forge.pullRequest.files`.

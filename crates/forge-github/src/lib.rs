@@ -128,6 +128,7 @@ impl GithubPlugin {
             capabilities: vec![
                 capability::AUTH.into(),
                 capability::LIST.into(),
+                capability::SEARCH.into(),
                 capability::READ.into(),
                 capability::DIFF.into(),
                 capability::ACTIONS.into(),
@@ -222,6 +223,21 @@ impl GithubPlugin {
                         &params.account.login,
                         params.category,
                         params.repository.as_deref(),
+                        params.cursor,
+                        params.limit,
+                    )
+                    .await?,
+                )
+            }
+            methods::PULL_REQUESTS_SEARCH => {
+                let params: forge_protocol::SearchParams = from_params(params)?;
+                let api = self.api_for(&params.account).await?;
+                to_result(
+                    &pulls::search(
+                        &api,
+                        &params.account.host,
+                        &params.account.login,
+                        &params.query,
                         params.cursor,
                         params.limit,
                     )

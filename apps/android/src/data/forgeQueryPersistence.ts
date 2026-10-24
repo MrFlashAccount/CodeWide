@@ -15,7 +15,9 @@ import { appLogger } from "../observability/logger";
 import { parseForgeMutationEnvelope } from "./forgeMutationEnvelope";
 
 const CACHE_MAX_AGE_MS = 604_800_000;
-const FORGE_QUERY_CACHE_BUSTER = "forge-query-cache-v1";
+// V2 adds the required in-memory PR attention discriminant. V1 snapshots may
+// contain rows without it because persisted query data bypasses wire decoding.
+const FORGE_QUERY_CACHE_BUSTER = "forge-query-cache-v2";
 
 function isForgeServerQuery(query: Query): boolean {
   const owner = query.queryKey[0];

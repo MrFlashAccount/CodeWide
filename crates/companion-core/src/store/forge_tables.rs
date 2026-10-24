@@ -12,8 +12,13 @@ pub(crate) const FORGE_PROVIDER_SETTINGS: BytesTable =
     TableDefinition::new("forge_provider_settings");
 /// `PullRequestKey NUL threadId` → pull request ↔ thread link.
 pub(crate) const FORGE_PR_LINKS: BytesTable = TableDefinition::new("forge_pr_links");
+/// `PullRequestKey` → the one canonical conversation opened by the PR workspace.
+pub(crate) const FORGE_PR_REVIEW_THREADS: BytesTable =
+    TableDefinition::new("forge_pr_review_threads");
 /// `PullRequestKey NUL threadId` → a user removal that blocks automatic
 /// re-linking.
 pub(crate) const FORGE_LINK_TOMBSTONES: BytesTable = TableDefinition::new("forge_link_tombstones");
 /// Idempotency key → action run journal record.
 pub(crate) const FORGE_ACTION_RUNS: BytesTable = TableDefinition::new("forge_action_runs");
+/// `PullRequestKey` → the opaque activity revision last displayed by a client.
+pub(crate) const FORGE_PR_ATTENTION: BytesTable = TableDefinition::new("forge_pr_attention");

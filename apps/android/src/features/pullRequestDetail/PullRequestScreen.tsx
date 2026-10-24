@@ -1,13 +1,13 @@
 import { useSelector } from "@legendapp/state/react";
-import { StyleSheet, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { Pressable, StyleSheet, View } from "react-native";
 
 import type { ActionDescriptor } from "../../data/forgeActionCatalog";
 import { remoteValue } from "../../data/forgeRemoteValue";
 import { useForgeQuery } from "../../data/forgeQueryResource";
 import { useMinuteClock } from "../../data/minuteClock";
-import type { ThreadId } from "../../data/reviewContract";
 import { useEvent } from "../../react/useEvent";
-import { colors } from "../../theme";
+import { colors, controlSize, iconSize, radii, spacing } from "../../theme";
 import { useAppDialog } from "../../ui/AppDialog";
 import { ExtensionInputSheet } from "./actions/ExtensionInputSheet";
 import { openOnForge } from "./actions/openOnForge";
@@ -20,10 +20,10 @@ import { PullRequestTabs } from "./PullRequestTabs";
 import { threadTitle, usePullRequestScreen } from "./usePullRequestScreen";
 
 /**
- * PR screen (direction B): app bar, Overview | Changes tabs and one dock per
- * tab. Its overview suspends behind the route-owned detail skeleton; files,
- * drafts and the guide fill in progressively below it. Offline, every write is
- * refused locally.
+ * PR screen: app bar, Details | Changes work surfaces and an intent that opens
+ * the canonical linked conversation in route-owned geometry. Details suspends
+ * behind the route-owned skeleton; files, drafts and the guide fill in
+ * progressively below it. Offline, every forge write is refused locally.
  */
 export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Element {
   const data = usePullRequestScreen(props);
@@ -51,10 +51,20 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
       actions.run(action, input);
     }
   });
-  const unlink = useEvent((threadId: ThreadId): void => {
-    props.capabilities.setLink(params, threadId, false).catch((error: unknown) => {
-      dialog.error("Could not unlink the thread", error);
-    });
+  const openReviewChat = useEvent((): void => {
+    props.navigation.beginChat();
+    props.capabilities
+      .ensureReviewChat({
+        connectionId: props.connectionId,
+        pullRequest: props.pullRequest,
+      })
+      .then(({ threadId }) => {
+        props.navigation.openThread(threadId);
+      })
+      .catch((error: unknown) => {
+        props.navigation.closeChat();
+        dialog.error("Could not open the review chat", error);
+      });
   });
   const extra = openOnForge(overview.webUrl, host);
   const icon = useProviderIcon(props, overview.account.pluginId);
@@ -62,8 +72,10 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
     <View style={styles.screen} testID="pull-request-screen">
       <PullRequestAppBar
         extra={extra}
+        fullscreen={props.navigation.pullRequestFullscreen}
         icon={icon}
-        onBack={props.navigation.back}
+        onBack={props.tablet ? null : props.navigation.back}
+        onFullscreen={props.tablet ? props.navigation.openPullRequestFullscreen : null}
         onRun={(action) => {
           run(action, null);
         }}
@@ -79,12 +91,11 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
       />
       {state.tab === "overview" ? (
         <OverviewPane
-          actions={actions}
           data={data}
           extra={extra}
           nowMs={nowMs}
+          onOpenReviewChat={openReviewChat}
           onRun={run}
-          onUnlink={unlink}
           props={props}
           state={state}
         />
@@ -123,7 +134,50 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
           onSubmit={actions.submitInput}
         />
       )}
+      {props.navigation.chatVisible ? null : (
+        <LinkedChatButton
+          aboveReviewDock={state.tab === "changes"}
+          disabled={false}
+          label={
+            data.agentThread === null
+              ? "Start linked review chat"
+              : `Open linked review chat: ${data.agentThread.title}`
+          }
+          onPress={openReviewChat}
+        />
+      )}
     </View>
+  );
+}
+
+/** Opens the PR's canonical ordinary conversation; the route owns its panel. */
+function LinkedChatButton({
+  aboveReviewDock,
+  disabled,
+  label,
+  onPress,
+}: {
+  readonly aboveReviewDock: boolean;
+  readonly disabled: boolean;
+  readonly label: string;
+  readonly onPress: () => void;
+}): React.JSX.Element {
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ busy: disabled, disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.chatButton,
+        aboveReviewDock ? styles.chatButtonAboveDock : styles.chatButtonAtEdge,
+        (disabled || pressed) && styles.chatButtonMuted,
+      ]}
+      testID="pull-request-linked-chat"
+    >
+      <Ionicons color={colors.onPrimary} name="chatbubble-outline" size={iconSize.navigation} />
+    </Pressable>
   );
 }
 
@@ -137,7 +191,30 @@ function useProviderIcon(props: PullRequestScreenProps, pluginId: string) {
   );
 }
 
+/** Keeps the linked-chat action above the Changes review dock. */
+const REVIEW_DOCK_CLEARANCE = 88;
+const MUTED_CONTROL_OPACITY = 0.6;
+
 const styles = StyleSheet.create({
+  chatButton: {
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    borderRadius: radii.pill,
+    height: controlSize.touch,
+    justifyContent: "center",
+    position: "absolute",
+    right: spacing.md,
+    width: controlSize.touch,
+  },
+  chatButtonAboveDock: {
+    bottom: REVIEW_DOCK_CLEARANCE,
+  },
+  chatButtonAtEdge: {
+    bottom: spacing.lg,
+  },
+  chatButtonMuted: {
+    opacity: MUTED_CONTROL_OPACITY,
+  },
   screen: {
     backgroundColor: colors.conversationSurface,
     flex: 1,

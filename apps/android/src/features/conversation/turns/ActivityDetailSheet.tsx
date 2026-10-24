@@ -1,9 +1,9 @@
 import type { RenderBlock } from "@codewide/renderers";
-import { LegendList } from "@legendapp/list/react-native";
 import { useContext, useState, type ReactElement } from "react";
 import { View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
-import { listRowHeight, listRowPosition } from "../../../ui/AppListRow.types";
+import { AppList } from "../../../ui/AppList";
+import { useAppListItemState } from "../../../ui/appListItemContext";
 import { AppSheet, AppSheetScrollView } from "../../../ui/AppSheet";
 import { AppText as Text } from "../../../ui/Typography";
 import { ActivityProtocolListRow } from "../protocol/ActivityProtocolListRow";
@@ -109,64 +109,53 @@ function ActivityDetailList({
   turnKey: string;
   turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
 }): ReactElement {
-  // Recycled rows do not rerender when only a sibling is appended or the turn settles;
-  // both changes affect the tail row's placement or active presentation.
-  const rowPresentationVersion = `${turnKey}\u0000${String(blocks.length)}\u0000${turnStatus}`;
-  const renderItem = ({ index, item: block }: { index: number; item: RenderBlock }) => (
+  const renderItem = ({ item: block }: { item: RenderBlock }) => (
     <ActivityDetailRow
-      active={turnStatus === "inProgress" && index === blocks.length - 1}
       block={block}
       onOpenWebSearch={onOpenWebSearch}
-      position={listRowPosition(index, blocks.length)}
       turnKey={turnKey}
+      turnStatus={turnStatus}
       {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
     />
   );
   const list = (
-    <LegendList
+    <AppList
       contentContainerStyle={styles.content}
       data={blocks}
-      drawDistance={300}
-      estimatedItemSize={listRowHeight.double}
-      extraData={rowPresentationVersion}
-      getFixedItemSize={activityRowSize}
-      getItemType={activityBlockType}
       keyboardShouldPersistTaps="handled"
       keyExtractor={activityBlockKey}
-      recycleItems
       renderItem={renderItem}
-      renderScrollComponent={AppSheetScrollView}
+      scrollComponent={AppSheetScrollView}
       testID="activity-detail-list"
+      virtualized
     />
   );
   return <TurnActivityContentContext.Provider value>{list}</TurnActivityContentContext.Provider>;
 }
 
 function ActivityDetailRow({
-  active,
   block,
   getTransferAccess,
   onFixUnsupportedBlock,
   onOpenWebSearch,
-  position,
   turnKey,
+  turnStatus,
 }: {
-  active: boolean;
   block: RenderBlock;
   getTransferAccess?: () => Promise<TransferAccess>;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   onOpenWebSearch: (block: WebSearchBlock) => void;
-  position: "only" | "first" | "middle" | "last";
   turnKey: string;
+  turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
 }): ReactElement {
+  const { isLast } = useAppListItemState();
   return (
     <ActiveActivityDetailRow
-      active={active}
+      active={turnStatus === "inProgress" && isLast}
       block={block}
       itemKey={`${turnKey}:${block.key}`}
       onOpenWebSearch={onOpenWebSearch}
-      position={position}
       {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
     />
@@ -179,7 +168,6 @@ type ActivityDetailRowContentProps = {
   itemKey: string;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   onOpenWebSearch: (block: WebSearchBlock) => void;
-  position: "only" | "first" | "middle" | "last";
 };
 
 function ActiveActivityDetailRow({
@@ -206,7 +194,6 @@ function ActivityDetailContent({
   getTransferAccess,
   onFixUnsupportedBlock,
   onOpenWebSearch,
-  position,
 }: ActivityDetailRowContentProps): ReactElement {
   const metrics = useContext(TurnActivityMetricsContext);
   const row = protocolActivityRow(block, metrics);
@@ -222,12 +209,12 @@ function ActivityDetailContent({
       {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
     />
   ) : (
-    <ActivityProtocolListRow block={block} position={position} />
+    <ActivityProtocolListRow block={block} />
   );
   return (
     <View style={styles.row}>
       <ToolCardPlacementContext.Provider
-        value={{ description: row.description, kind: "sheet", openDetail, position }}
+        value={{ description: row.description, kind: "sheet", openDetail }}
       >
         {content}
       </ToolCardPlacementContext.Provider>
@@ -237,14 +224,6 @@ function ActivityDetailContent({
 
 function activityBlockKey(block: RenderBlock): string {
   return block.key;
-}
-
-function activityBlockType(block: RenderBlock): string {
-  return block.kind;
-}
-
-function activityRowSize(): number {
-  return listRowHeight.double;
 }
 
 function isWebSearchBlock(block: RenderBlock): block is WebSearchBlock {

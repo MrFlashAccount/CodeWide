@@ -1,15 +1,16 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import type { ReactElement } from "react";
-import { Pressable, View } from "react-native";
+import { useRef, useState, type ReactElement, type RefObject } from "react";
+import { Pressable, View, type TextInput as NativeTextInput } from "react-native";
+import { useEvent } from "../../../react/useEvent";
 import { stripTerminalControlSequences } from "../../../rendering/native-code-block";
-import { colors, iconSize } from "../../../theme";
-import { AppText as Text } from "../../../ui/Typography";
+import { colors, controlHitSlop, iconSize } from "../../../theme";
+import { AppText as Text, AppTextInput as TextInput } from "../../../ui/Typography";
 import { WaveText } from "../../../ui/WaveText";
 import { styles as viewerStyles } from "../content/FullContentViewer.styles";
 import { styles } from "./CommandOutputScreen.styles";
 import { CopyButton } from "./MessageActionRail";
 import { TaskOutputTerminal } from "./TaskOutputTerminal";
-import type { TaskOutputTerminalProps } from "./TaskOutputTerminal.types";
+import type { TaskOutputTerminalHandle, TaskOutputTerminalProps } from "./TaskOutputTerminal.types";
 
 /** Where a command stands, whether it ran in the foreground or as a background task. */
 export type CommandOutputStatus =
@@ -21,6 +22,12 @@ export type CommandOutputStatus =
   | "stopped"
   | "unknown";
 
+/** The prompt glyph before the command, on screen and in the whole copy. */
+const PROMPT = "❯";
+
+/** Terminal states whose command row needs the one semantic failure accent. */
+const FAILED_STATUS: ReadonlySet<CommandOutputStatus> = new Set(["declined", "failed", "lost"]);
+
 const STATUS_LABEL: Record<CommandOutputStatus, string> = {
   declined: "Declined",
   failed: "Failed",
@@ -31,7 +38,6 @@ const STATUS_LABEL: Record<CommandOutputStatus, string> = {
   unknown: "Status unknown",
 };
 
-/** Green done, red for any failure, grey while it works or nobody knows. */
 const STATUS_DOT: Record<CommandOutputStatus, string> = {
   declined: colors.red,
   failed: colors.red,
@@ -42,14 +48,11 @@ const STATUS_DOT: Record<CommandOutputStatus, string> = {
   unknown: colors.textMuted,
 };
 
-/** The prompt glyph before the command, on screen and in the whole copy. */
-const PROMPT = "❯";
-
 /**
  * Every command an agent ran in a shell, on one screen: a header with a short
- * title and a copy of the prompt line with the output, the complete command as
- * a wrapping prompt line, its output in a read-only terminal and a footer with
- * its status. Owners differ only in where the output comes from.
+ * title, whole-output copy and native search, the complete command as a pinned
+ * wrapping prompt line, and its output in a read-only terminal. Owners differ
+ * only in where the output comes from.
  */
 export function CommandOutputScreen({
   command,
@@ -65,7 +68,7 @@ export function CommandOutputScreen({
   /** The command as launched; null when the Companion does not know it. */
   readonly command: string | null;
   /** Exit code, size and similar facts after the status word. */
-  readonly details: readonly string[];
+  readonly details?: readonly string[];
   readonly error: string | null;
   /** True while the output is still being read for the first time. */
   readonly loading: boolean;
@@ -80,15 +83,61 @@ export function CommandOutputScreen({
   readonly status: CommandOutputStatus;
   readonly title: string;
 }): ReactElement {
+  const terminal = useRef<TaskOutputTerminalHandle>(null);
+  const searchInput = useRef<NativeTextInput>(null);
+  const searchQuery = useRef("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const openSearch = useEvent(() => {
+    setSearchOpen(true);
+    requestAnimationFrame(() => {
+      searchInput.current?.focus();
+    });
+  });
+  const closeSearch = useEvent(() => {
+    searchQuery.current = "";
+    searchInput.current?.clear();
+    terminal.current?.clearSearch().catch(() => undefined);
+    setSearchOpen(false);
+  });
+  const updateSearch = useEvent((query: string) => {
+    searchQuery.current = query;
+  });
+  const findNext = useEvent(() => {
+    if (searchQuery.current !== "") {
+      terminal.current?.findNext(searchQuery.current).catch(() => false);
+    }
+  });
+  const findPrevious = useEvent(() => {
+    if (searchQuery.current !== "") {
+      terminal.current?.findPrevious(searchQuery.current).catch(() => false);
+    }
+  });
   const plain = stripTerminalControlSequences(output.text);
   // The whole copy reads like the terminal: the prompt line, then the output.
   const whole = command === null ? plain : `${PROMPT} ${command}\n${plain}`;
   return (
     <View style={viewerStyles.fullContentViewer} testID="command-output-screen">
-      <CommandOutputHeader onClose={onClose} title={title} whole={whole} />
-      {error === null ? null : <Text style={styles.error}>Could not read the output: {error}</Text>}
+      <CommandOutputHeader
+        findNext={findNext}
+        findPrevious={findPrevious}
+        onClose={onClose}
+        onCloseSearch={closeSearch}
+        onOpenSearch={openSearch}
+        onSearchChange={updateSearch}
+        searchInput={searchInput}
+        searchOpen={searchOpen}
+        title={title}
+        whole={whole}
+      />
       <View style={viewerStyles.fullContentViewport}>
-        {command === null ? null : <CommandPromptLine command={command} />}
+        {command === null ? null : (
+          <CommandPromptLine
+            command={command}
+            error={error}
+            failed={FAILED_STATUS.has(status)}
+            running={status === "running"}
+          />
+        )}
         {loading ? (
           <WaveText
             containerStyle={styles.loading}
@@ -96,21 +145,35 @@ export function CommandOutputScreen({
             text="Loading output…"
           />
         ) : (
-          <TaskOutputTerminal key={outputSource} output={output} />
+          <TaskOutputTerminal key={outputSource} output={output} ref={terminal} />
         )}
       </View>
-      <CommandOutputFooter details={details} status={status} />
+      {details === undefined ? null : <CommandOutputFooter details={details} status={status} />}
     </View>
   );
 }
 
 /** Close, the title and copying the command with its output. */
 function CommandOutputHeader({
+  findNext,
+  findPrevious,
   onClose,
+  onCloseSearch,
+  onOpenSearch,
+  onSearchChange,
+  searchInput,
+  searchOpen,
   title,
   whole,
 }: {
+  readonly findNext: () => void;
+  readonly findPrevious: () => void;
   readonly onClose: () => void;
+  readonly onCloseSearch: () => void;
+  readonly onOpenSearch: () => void;
+  readonly onSearchChange: (query: string) => void;
+  readonly searchInput: RefObject<NativeTextInput | null>;
+  readonly searchOpen: boolean;
   readonly title: string;
   readonly whole: string;
 }): ReactElement {
@@ -124,14 +187,110 @@ function CommandOutputHeader({
       >
         <Ionicons color={colors.text} name="close" size={iconSize.navigation} />
       </Pressable>
+      {searchOpen ? (
+        <CommandOutputSearch
+          findNext={findNext}
+          findPrevious={findPrevious}
+          input={searchInput}
+          onChange={onSearchChange}
+          onClose={onCloseSearch}
+        />
+      ) : (
+        <CommandOutputTitle onOpenSearch={onOpenSearch} title={title} whole={whole} />
+      )}
+    </View>
+  );
+}
+
+/** Stable non-search app-bar content. */
+function CommandOutputTitle({
+  onOpenSearch,
+  title,
+  whole,
+}: {
+  readonly onOpenSearch: () => void;
+  readonly title: string;
+  readonly whole: string;
+}): ReactElement {
+  return (
+    <>
       <View style={viewerStyles.fullContentHeaderIcon}>
         <Ionicons color={colors.textMuted} name="terminal-outline" size={iconSize.inline} />
       </View>
       <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
         {title}
       </Text>
+      <Pressable
+        accessibilityLabel="Search command output"
+        accessibilityRole="button"
+        hitSlop={controlHitSlop.regular}
+        onPress={onOpenSearch}
+        style={viewerStyles.headerIcon}
+      >
+        <Ionicons color={colors.text} name="search-outline" size={iconSize.navigation} />
+      </Pressable>
       {whole === "" ? null : <CopyButton text={whole} />}
+    </>
+  );
+}
+
+/** Search controls stay in the app bar while Ghostty owns matching and selection. */
+function CommandOutputSearch({
+  findNext,
+  findPrevious,
+  input,
+  onChange,
+  onClose,
+}: {
+  readonly findNext: () => void;
+  readonly findPrevious: () => void;
+  readonly input: RefObject<NativeTextInput | null>;
+  readonly onChange: (query: string) => void;
+  readonly onClose: () => void;
+}): ReactElement {
+  return (
+    <View style={styles.search}>
+      <Ionicons color={colors.textMuted} name="search" size={iconSize.inline} />
+      <TextInput
+        accessibilityLabel="Find in command output"
+        accessibilityRole="search"
+        compact
+        onChangeText={onChange}
+        onSubmitEditing={findNext}
+        placeholder="Find in output"
+        placeholderTextColor={colors.textDim}
+        ref={input}
+        returnKeyType="search"
+        style={styles.searchInput}
+        voiceInput={false}
+      />
+      <SearchAction accessibilityLabel="Previous match" icon="chevron-up" onPress={findPrevious} />
+      <SearchAction accessibilityLabel="Next match" icon="chevron-down" onPress={findNext} />
+      <SearchAction accessibilityLabel="Close output search" icon="close" onPress={onClose} />
     </View>
+  );
+}
+
+/** One compact app-bar action in the output search controls. */
+function SearchAction({
+  accessibilityLabel,
+  icon,
+  onPress,
+}: {
+  readonly accessibilityLabel: string;
+  readonly icon: "chevron-down" | "chevron-up" | "close";
+  readonly onPress: () => void;
+}): ReactElement {
+  return (
+    <Pressable
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
+      hitSlop={controlHitSlop.regular}
+      onPress={onPress}
+      style={styles.searchAction}
+    >
+      <Ionicons color={colors.text} name={icon} size={iconSize.action} />
+    </Pressable>
   );
 }
 
@@ -139,19 +298,40 @@ function CommandOutputHeader({
  * The complete command as a prompt line on the terminal's surface, wrapped
  * rather than cut, pinned while the output scrolls under it, with its own copy.
  */
-function CommandPromptLine({ command }: { readonly command: string }): ReactElement {
+function CommandPromptLine({
+  command,
+  error,
+  failed,
+  running,
+}: {
+  readonly command: string;
+  readonly error: string | null;
+  readonly failed: boolean;
+  readonly running: boolean;
+}): ReactElement {
+  const showsFailure = failed || error !== null;
   return (
     <View style={styles.command} testID="command-output-command">
       <Text style={styles.commandPrompt}>{PROMPT}</Text>
-      <Text selectable style={styles.commandText}>
+      <Text selectable={!running} shimmering={running} style={styles.commandText}>
         {command}
       </Text>
+      {showsFailure ? (
+        <View
+          accessibilityLabel={error ?? "Command failed"}
+          accessibilityRole="alert"
+          style={styles.commandError}
+          testID="command-output-error"
+        >
+          <Ionicons color={colors.red} name="alert-circle" size={iconSize.action} />
+        </View>
+      ) : null}
       <CopyButton compact text={command} />
     </View>
   );
 }
 
-/** The status dot and word, then the facts the owner knows. */
+/** The stable command result remains visible below the scrolling terminal. */
 function CommandOutputFooter({
   details,
   status,

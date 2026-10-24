@@ -1,6 +1,6 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { TurnUsageProjection } from "@codewide/sync-client";
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
 import type { AccountRateLimitsDatabase } from "../../../data/account-rate-limits-database";
 import type { ProviderLimitsSource } from "../../accounts/conversationAccountCapabilities";
 import type { ThreadChatModel } from "../../../data/thread-chat-model";
@@ -27,6 +27,7 @@ export type ConversationHeaderProps = {
   forkPicker: ForkTargetPicker | undefined;
   historyActivityModel: ThreadHistoryModel | null;
   historyActivityResourceId: string | null;
+  hostActions?: ReactNode;
   /** Optional owner-captured context shown instead of the ordinary workspace subtitle. */
   identitySubtitle?: string | null;
   newChat: boolean;

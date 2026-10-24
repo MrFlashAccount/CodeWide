@@ -9,17 +9,6 @@ import type {
 } from "./projectManagementContract";
 import type { SidebarProject } from "./sidebarProjects";
 
-function projectCatalogVersion(projects: readonly SidebarProject[]): string {
-  let version = `${String(projects.length)};`;
-  for (const project of projects) {
-    version += `${String(project.key.length)}:${project.key}`;
-    version += `${String(project.name.length)}:${project.name}`;
-    version += `${String(project.subtitle.length)}:${project.subtitle}`;
-    version += `${project.pinned ? "1" : "0"}:${String(project.lastUsedAt)};`;
-  }
-  return version;
-}
-
 export function useProjectManagement({
   errors,
   initialConnectionId,
@@ -110,7 +99,6 @@ export function useProjectManagement({
   });
   return {
     change,
-    dataVersion: projectCatalogVersion(filteredProjects),
     pending,
     pinned,
     rowIconSize,

@@ -10,6 +10,7 @@ import { sanitizeForgeGlyph, type ForgeGlyph } from "./forgeGlyph";
 import {
   decodeOrNull,
   flag,
+  ForgeWireError,
   list,
   nonEmptyText,
   oneOf,
@@ -23,6 +24,7 @@ declare const pullRequestKeyBrand: unique symbol;
 declare const forgeAccountKeyBrand: unique symbol;
 declare const headRevisionBrand: unique symbol;
 declare const authFlowIdBrand: unique symbol;
+declare const attentionRevisionBrand: unique symbol;
 
 /** Companion-issued opaque PR identity (`fpr1.…`); never parsed on the device. */
 export type PullRequestKey = string & { readonly [pullRequestKeyBrand]: true };
@@ -30,6 +32,8 @@ export type PullRequestKey = string & { readonly [pullRequestKeyBrand]: true };
 export type ForgeAccountKey = string & { readonly [forgeAccountKeyBrand]: true };
 /** Opaque forge revision: a head SHA on GitHub, a diff-set id on Arcanum. */
 export type HeadRevision = string & { readonly [headRevisionBrand]: true };
+/** Content-free digest of one provider activity revision. */
+export type AttentionRevision = string & { readonly [attentionRevisionBrand]: true };
 /** Companion-generated id of one connect attempt. */
 type AuthFlowId = string & { readonly [authFlowIdBrand]: true };
 
@@ -52,6 +56,17 @@ export function headRevision(value: unknown, path: string): HeadRevision {
   // WHY: the brand records that the value passed the non-empty wire check above; no runtime shape changes.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   return nonEmptyText(value, path) as HeadRevision;
+}
+
+/** Brands the fixed lowercase hexadecimal attention digest issued by Companion. */
+export function attentionRevision(value: unknown, path: string): AttentionRevision {
+  const revision = nonEmptyText(value, path);
+  if (!/^[0-9a-f]{64}$/.test(revision)) {
+    throw new ForgeWireError(path);
+  }
+  // WHY: the brand records the fixed digest validation above; no runtime shape changes.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return revision as AttentionRevision;
 }
 
 function authFlowId(value: unknown, path: string): AuthFlowId {

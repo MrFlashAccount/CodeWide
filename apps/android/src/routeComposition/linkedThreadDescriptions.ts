@@ -1,5 +1,5 @@
 import type { StoredThreadSummary } from "../data/thread-summary-types";
-import type { LinkedThreadDescription } from "../features/pullRequestDetail/overview/LinkedThreadsCard";
+import type { LinkedThreadDescription } from "../features/pullRequestDetail/linkedThreadDescription";
 
 /**
  * Resolves a linked thread's title and activity from the loaded thread

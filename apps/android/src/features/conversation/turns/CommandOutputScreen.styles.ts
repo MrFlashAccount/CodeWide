@@ -1,19 +1,26 @@
 import { StyleSheet } from "react-native";
-import { colors, spacing, typeScale, typeWeight } from "../../../theme";
+import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
 
-/** The status dot, like the avatars' badges. */
 const DOT_SIZE = 8;
 
 export const styles = StyleSheet.create({
   command: {
-    alignItems: "flex-start",
-    backgroundColor: colors.code,
-    borderBottomColor: colors.borderSoft,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.small,
     flexDirection: "row",
     gap: spacing.xs,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
+  },
+  commandError: {
+    alignItems: "center",
+    flexShrink: 0,
+    height: controlSize.compact,
+    justifyContent: "center",
+    width: controlSize.compact,
   },
   commandPrompt: {
     color: colors.textDim,
@@ -35,15 +42,31 @@ export const styles = StyleSheet.create({
     height: DOT_SIZE,
     width: DOT_SIZE,
   },
-  error: {
-    color: colors.red,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    ...typeScale.label,
-  },
   loading: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  search: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.xs,
+    minWidth: 0,
+  },
+  searchAction: {
+    alignItems: "center",
+    flexShrink: 0,
+    height: controlSize.compact,
+    justifyContent: "center",
+    width: controlSize.compact,
+  },
+  searchInput: {
+    color: colors.text,
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    ...typeScale.body,
   },
   status: {
     color: colors.textMuted,

@@ -1,11 +1,10 @@
-import { LegendList } from "@legendapp/list/react-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 import type { GetTransferAccess } from "../../../data/private-transfer";
 import type { CatalogSkill } from "../../../data/skill-catalog-types";
 import { colors } from "../../../theme";
 import { ActionMenu } from "../../../ui/ActionMenu";
-import { listRowHeight } from "../../../ui/AppListRow.types";
+import { AppList } from "../../../ui/AppList";
 import { AppSheetScrollView } from "../../../ui/AppSheet";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { skillFilters, skillPickerRows, type SkillFilter } from "../../../ui/skill-picker-model";
@@ -26,7 +25,7 @@ export function SkillsPicker({
   loading: boolean;
   onSelect: (skill: CatalogSkill) => void;
   skills: readonly CatalogSkill[];
-}) {
+}): React.JSX.Element {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SkillFilter>("all");
   const rows = skillPickerRows(skills, query, filter);
@@ -125,20 +124,13 @@ export function SkillsPicker({
       {!loading && error === null && unresolved && (
         <Text style={styles.notice}>Plugin details unavailable. Skills are still usable.</Text>
       )}
-      <LegendList
+      <AppList
         contentContainerStyle={styles.content}
         data={rows}
-        getFixedItemSize={(row) =>
-          row.kind === "header" ? listRowHeight.single : listRowHeight.double
-        }
-        getItemType={(row) => row.kind}
+        empty={!loading && error === null ? <Text style={styles.notice}>{emptyLabel}</Text> : null}
         key={`${filter}:${query.trim()}`}
         keyboardShouldPersistTaps="handled"
         keyExtractor={(row) => row.key}
-        ListEmptyComponent={
-          !loading && error === null ? <Text style={styles.notice}>{emptyLabel}</Text> : null
-        }
-        recycleItems
         renderItem={({ item }) =>
           item.kind === "header" ? (
             <View accessibilityRole="header" style={styles.groupHeader}>
@@ -167,8 +159,9 @@ export function SkillsPicker({
             </View>
           )
         }
-        renderScrollComponent={AppSheetScrollView}
+        scrollComponent={AppSheetScrollView}
         style={styles.list}
+        virtualized
       />
     </View>
   );

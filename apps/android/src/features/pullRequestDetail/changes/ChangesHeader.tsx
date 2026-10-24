@@ -65,10 +65,13 @@ const styles = StyleSheet.create({
   },
   row: {
     alignItems: "center",
+    borderBottomColor: colors.borderSoft,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     columnGap: spacing.sm,
     flexDirection: "row",
+    minHeight: controlSize.touch,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    paddingVertical: spacing.xxs,
   },
   segment: {
     justifyContent: "center",

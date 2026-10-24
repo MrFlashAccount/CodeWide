@@ -29,9 +29,10 @@ use tracing::info;
 use super::limits;
 
 /// Every capability this companion understands, sent in `initialize`.
-const KNOWN_CAPABILITIES: [&str; 10] = [
+const KNOWN_CAPABILITIES: [&str; 11] = [
     capability::AUTH,
     capability::LIST,
+    capability::SEARCH,
     capability::READ,
     capability::DIFF,
     capability::ACTIONS,

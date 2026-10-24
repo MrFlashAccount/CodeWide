@@ -8,6 +8,7 @@ pub const AUTH_POLL: &str = "auth.poll";
 pub const AUTH_VERIFY: &str = "auth.verify";
 pub const AUTH_DISCONNECT: &str = "auth.disconnect";
 pub const PULL_REQUESTS_LIST: &str = "forge.pullRequests.list";
+pub const PULL_REQUESTS_SEARCH: &str = "forge.pullRequests.search";
 pub const PULL_REQUESTS_BY_BRANCH: &str = "forge.pullRequests.byBranch";
 pub const REPOSITORY_RESOLVE: &str = "forge.repository.resolve";
 pub const PULL_REQUEST_READ: &str = "forge.pullRequest.read";
@@ -27,6 +28,7 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
     Some(match method {
         AUTH_METHODS | AUTH_START | AUTH_POLL | AUTH_VERIFY | AUTH_DISCONNECT => capability::AUTH,
         PULL_REQUESTS_LIST => capability::LIST,
+        PULL_REQUESTS_SEARCH => capability::SEARCH,
         PULL_REQUESTS_BY_BRANCH | REPOSITORY_RESOLVE => capability::RESOLVE,
         PULL_REQUEST_READ | PULL_REQUEST_ACTIVITY => capability::READ,
         PULL_REQUEST_CHECKS => capability::CHECKS,

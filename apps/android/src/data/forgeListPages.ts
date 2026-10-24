@@ -3,18 +3,17 @@ import { useSyncExternalStore } from "react";
 import type { PullRequestKey } from "./forgeContract";
 import type { ForgeQueryResource } from "./forgeQueryResource";
 import type {
-  PullRequestCategory,
   PullRequestListPage,
   PullRequestListSection,
   PullRequestRow,
 } from "./forgePullRequestContract";
+import type { PullRequestSearchFilter } from "./forgePullRequestSearch";
 import { useEvent } from "../react/useEvent";
 
-/** Identity of one list: connection, category and optional repository filter. */
+/** Identity of one provider-aware search result. */
 export type ListParams = {
-  readonly category: PullRequestCategory;
   readonly connectionId: string;
-  readonly repository: string | null;
+  readonly filter: PullRequestSearchFilter;
 };
 
 /**

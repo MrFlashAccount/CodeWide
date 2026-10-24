@@ -36,6 +36,7 @@ struct Fixture {
     open_by_branch: Vec<BranchPulls>,
     claim_host: Option<String>,
     no_resolve: bool,
+    no_search: bool,
     /// Overrides the pull request page the plugin reports.
     web_url: Option<String>,
 }
@@ -167,6 +168,9 @@ impl ForgePlugin for Fixtures {
                 capability::SCENARIO_CONTEXT,
             ];
             let fixture = self.fixture();
+            if !fixture.no_search {
+                capabilities.push(capability::SEARCH);
+            }
             if fixture.viewed.unwrap_or(true) {
                 capabilities.push(capability::VIEWED);
             }
@@ -219,6 +223,20 @@ impl Fixtures {
                 self.require_account(params)?;
                 Ok(json!({
                     "supportedCategories": ["reviewRequested", "authored"],
+                    "rows": [{
+                        "ref": {"host": "forge.test", "repository": "octo/repo", "number": "7"},
+                        "repository": "octo/repo", "number": "7", "title": "Fix the parser",
+                        "author": "someone", "state": "open", "reviewRequestedFromMe": true,
+                        "checks": {"state": "failing", "passed": 1, "failing": 1, "pending": 0},
+                        "updatedAt": "2026-10-01T00:00:00Z", "webUrl": fixture.web_url()
+                    }],
+                    "nextCursor": null
+                }))
+            }
+            methods::PULL_REQUESTS_SEARCH => {
+                self.require_account(params)?;
+                Ok(json!({
+                    "supportedCategories": ["reviewRequested", "authored", "assigned", "all"],
                     "rows": [{
                         "ref": {"host": "forge.test", "repository": "octo/repo", "number": "7"},
                         "repository": "octo/repo", "number": "7", "title": "Fix the parser",

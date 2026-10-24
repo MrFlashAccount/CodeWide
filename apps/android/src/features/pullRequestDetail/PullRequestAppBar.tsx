@@ -12,33 +12,55 @@ import { repositoryShortName } from "./pullRequestPresentation";
 /** `‹  [icon] #91 Title  ⋯` with `repo · author → base` below; ⋯ holds overflow actions. */
 export function PullRequestAppBar({
   extra,
+  fullscreen,
   icon,
   onBack,
+  onFullscreen,
   onRun,
   overflow,
   overview,
 }: {
   readonly extra: readonly ExtraMenuItem[];
+  readonly fullscreen: boolean;
   readonly icon: {
     readonly glyph: { readonly path: string } | null;
     readonly iconKey: string;
   } | null;
-  readonly onBack: () => void;
+  readonly onBack: (() => void) | null;
+  readonly onFullscreen: (() => void) | null;
   readonly onRun: (action: ActionDescriptor) => void;
   readonly overflow: readonly ActionDescriptor[];
   readonly overview: PullRequestOverview;
 }): React.JSX.Element {
   return (
     <View style={styles.bar} testID="pull-request-app-bar">
-      <Pressable
-        accessibilityLabel="Back"
-        accessibilityRole="button"
-        onPress={onBack}
-        style={styles.icon}
-      >
-        <Ionicons color={colors.text} name="chevron-back" size={iconSize.navigation} />
-      </Pressable>
+      {onBack === null ? null : (
+        <Pressable
+          accessibilityLabel="Back"
+          accessibilityRole="button"
+          onPress={onBack}
+          style={styles.icon}
+        >
+          <Ionicons color={colors.text} name="chevron-back" size={iconSize.navigation} />
+        </Pressable>
+      )}
       <AppBarTitles icon={icon} overview={overview} />
+      {onFullscreen === null ? null : (
+        <Pressable
+          accessibilityLabel={
+            fullscreen ? "Exit pull request fullscreen" : "Open pull request fullscreen"
+          }
+          accessibilityRole="button"
+          onPress={onFullscreen}
+          style={styles.icon}
+        >
+          <Ionicons
+            color={colors.text}
+            name={fullscreen ? "contract-outline" : "expand-outline"}
+            size={iconSize.action}
+          />
+        </Pressable>
+      )}
       <OverflowActionsMenu
         accessibilityLabel="Pull request menu"
         actions={overflow}

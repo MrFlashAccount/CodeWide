@@ -8,7 +8,7 @@ import type { PullRequestTab } from "./pullRequestScreenModel";
 /** Height of the selected tab's underline indicator. */
 const TAB_INDICATOR_HEIGHT = 2;
 
-/** Overview | Changes; the Changes tab carries the draft count. Labels never wrap. */
+/** Details | Changes; the Changes tab carries the draft count. Labels never wrap. */
 export function PullRequestTabs({
   draftCount,
   onSelect,
@@ -20,7 +20,7 @@ export function PullRequestTabs({
 }): React.JSX.Element {
   return (
     <View accessibilityRole="tablist" style={styles.tabs}>
-      <Tab label="Overview" onSelect={onSelect} selected={tab === "overview"} value="overview" />
+      <Tab label="Details" onSelect={onSelect} selected={tab === "overview"} value="overview" />
       <Tab
         badge={
           draftCount === 0 ? null : `${String(draftCount)} ${draftCount === 1 ? "draft" : "drafts"}`

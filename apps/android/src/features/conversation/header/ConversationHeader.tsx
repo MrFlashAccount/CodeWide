@@ -33,6 +33,7 @@ export function ConversationHeader({
   forkPicker,
   historyActivityModel,
   historyActivityResourceId,
+  hostActions,
   identitySubtitle = null,
   newChat,
   onArchive,
@@ -100,6 +101,7 @@ export function ConversationHeader({
           </Text>
         )}
       </View>
+      {hostActions}
       {!newChat && (
         <Pressable
           accessibilityLabel="Search in thread"

@@ -1,10 +1,9 @@
 import type { Observable } from "@legendapp/state";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type {
   ActivityPage,
-  LinkedThread,
   PullRequestOverview,
   PullRequestRow,
 } from "../../data/forgePullRequestContract";
@@ -12,6 +11,7 @@ import { useLoadedListRow } from "../../data/forgeListPages";
 import type { OverviewParams } from "../../data/forgeOverview";
 import { forgeQueryRemoteValue, useForgeQuery } from "../../data/forgeQueryResource";
 import { remoteValue } from "../../data/forgeRemoteValue";
+import { notePullRequestAttentionDisplayed } from "../../data/pullRequestAttention";
 import type { ThreadId } from "../../data/reviewContract";
 import { useConstant } from "../../react/useConstant";
 import { useEvent } from "../../react/useEvent";
@@ -55,8 +55,23 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
   const model = useConstant(createPullRequestScreenModel);
   const [rowWidth, setRowWidth] = useState(0);
   const { offline, overview } = useOverview(props, params);
+  const attentionRevision =
+    overview.attention.state === "unsupported" ? null : overview.attention.revision;
+  useEffect(() => {
+    if (attentionRevision === null) {
+      return;
+    }
+    notePullRequestAttentionDisplayed(props.pullRequest, attentionRevision);
+    props.capabilities
+      .markAttentionSeen({
+        connectionId: props.connectionId,
+        pullRequest: props.pullRequest,
+        revision: attentionRevision,
+      })
+      .catch(() => undefined);
+  }, [attentionRevision, props.capabilities, props.connectionId, props.pullRequest]);
   const { activity, loadMoreActivity } = useActivity(props, params, overview);
-  const agentLink = preferredLink(overview.links);
+  const agentLink = overview.reviewThread;
   return {
     activity,
     agentThread:
@@ -146,11 +161,6 @@ function pullRequestSlots(
       tablet,
     },
   );
-}
-
-/** The thread a PR's agent-bound drafts go to: a branch link first, else the first link. */
-function preferredLink(links: readonly LinkedThread[]): LinkedThread | null {
-  return links.find((link) => link.source === "branch") ?? links[0] ?? null;
 }
 
 /** Thread title fallback used where a label is required. */

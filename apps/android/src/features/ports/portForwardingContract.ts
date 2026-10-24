@@ -1,5 +1,3 @@
-import type { LegendListProps } from "@legendapp/list/react-native";
-
 /** Runtime lifecycle of one port-forwarding profile. */
 type PortForwardingStatus = "stopped" | "connecting" | "live" | "unavailable" | "error";
 
@@ -74,7 +72,6 @@ export type PortForwardingManagerProps = {
   onStart: (id: string) => Promise<void>;
   onStop: (id: string) => Promise<void>;
   profiles: readonly PortForwardingProfile[];
-  renderScrollComponent?: LegendListProps<ServiceListRow>["renderScrollComponent"];
   serverName: string;
 };
 

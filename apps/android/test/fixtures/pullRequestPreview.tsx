@@ -20,6 +20,7 @@ import { PullRequestsCatalog } from "../../src/features/pullRequests/PullRequest
 import { PullRequestsHeader } from "../../src/features/pullRequests/PullRequestsHeader";
 import { ReviewInboxIllustration } from "../../src/features/pullRequests/onboarding/ReviewInboxIllustration";
 import {
+  defaultPullRequestFilter,
   openForgeAccounts,
   reviewRequestedCount,
 } from "../../src/features/pullRequests/pullRequestListModel";
@@ -57,10 +58,9 @@ const reviewTarget = createReviewTargetAdapter({
 });
 const pullRequest = parsePullRequestKeyParam(overview91.pullRequest);
 const REVIEW_REQUESTED = {
-  category: "reviewRequested",
   connectionId: "server",
-  repository: null,
-} as const;
+  filter: defaultPullRequestFilter(),
+};
 
 const threads: Readonly<Record<string, { readonly status: string; readonly title: string }>> = {
   "thread-forge-auth": { status: "Working", title: "Forge auth state" },
@@ -177,7 +177,15 @@ function Screen({ tablet }: { readonly tablet: boolean }): React.JSX.Element | n
         connectionId="server"
         describeThread={(threadId) => threads[threadId] ?? null}
         forge={forge}
-        navigation={{ back: () => undefined, openThread: () => undefined }}
+        navigation={{
+          back: () => undefined,
+          beginChat: () => undefined,
+          chatVisible: false,
+          closeChat: () => undefined,
+          openPullRequestFullscreen: () => undefined,
+          openThread: () => undefined,
+          pullRequestFullscreen: false,
+        }}
         pullRequest={pullRequest}
         review={review}
         reviewCapabilities={reviewTarget}
@@ -234,7 +242,11 @@ if (root !== null) {
       >
         <AppDialogProvider>
           <View
-            style={{ backgroundColor: colors.background, height: window.innerHeight, width: "100%" }}
+            style={{
+              backgroundColor: colors.background,
+              height: window.innerHeight,
+              width: "100%",
+            }}
           >
             <Preview />
           </View>

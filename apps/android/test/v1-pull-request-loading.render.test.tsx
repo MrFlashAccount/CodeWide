@@ -1,12 +1,16 @@
-import { render, within } from "@testing-library/react-native";
-import { ScrollView } from "react-native";
+import { render } from "@testing-library/react-native";
 
 import { parsePullRequestListPage } from "../src/data/forgePullRequestContract";
 import { PullRequestScreenSkeleton } from "../src/features/pullRequestDetail/PullRequestScreenSkeleton";
 import { DescriptionSection } from "../src/features/pullRequestDetail/overview/DescriptionSection";
-import { CategoryChips } from "../src/features/pullRequests/list/CategoryChips";
+import { PullRequestFilterBar } from "../src/features/pullRequests/list/PullRequestFilterBar";
 import { PullRequestList } from "../src/features/pullRequests/list/PullRequestList";
-import { reviewRequestedPage } from "./fixtures/forgeWireFixtures";
+import { defaultPullRequestFilter } from "../src/features/pullRequests/pullRequestListModel";
+import {
+  connectedAccount,
+  githubProvider,
+  reviewRequestedPage,
+} from "./fixtures/forgeWireFixtures";
 
 jest.mock("../src/rendering/RichMarkdown", () => {
   const { Text } = jest.requireActual("react-native");
@@ -17,26 +21,24 @@ jest.mock("../src/rendering/RichMarkdown", () => {
   };
 });
 
-it("keeps the repository control outside the independently scrolling category tabs", () => {
+it("renders search, quick views and the filter entry point", () => {
   const view = render(
-    <CategoryChips
-      category="reviewRequested"
-      counts={{}}
-      onOpenRepositories={() => undefined}
-      onSelect={() => undefined}
-      pending={{ category: true, repository: true }}
-      repository={null}
-      supported={new Set(["reviewRequested", "authored"])}
+    <PullRequestFilterBar
+      count={2}
+      filter={defaultPullRequestFilter()}
+      onCategory={() => undefined}
+      onOpenFilters={() => undefined}
+      onSearch={() => undefined}
+      pending
     />,
   );
 
-  const repository = view.getByTestId("pull-request-repository-filter");
-  const categories = view.UNSAFE_getByType(ScrollView);
-  expect(within(categories).queryByTestId("pull-request-repository-filter")).toBeNull();
-  expect(repository.props.accessibilityState).toMatchObject({ busy: true });
-  expect(view.getByRole("tab", { name: "Review requested" }).props.accessibilityState).toMatchObject(
-    { busy: true, selected: true },
-  );
+  expect(view.getByLabelText("Search pull requests")).toBeVisible();
+  expect(view.getByTestId("pull-request-open-filters")).toBeVisible();
+  expect(
+    view.getByRole("tab", { name: /Review requested/u }).props.accessibilityState,
+  ).toMatchObject({ busy: true, selected: true });
+  expect(view.getByRole("tab", { name: "All" })).toBeVisible();
 });
 
 it("renders a stable pull-request detail skeleton from the first route frame", () => {
@@ -55,23 +57,30 @@ it("keeps the published rows visible while a category transition is pending", ()
   }
   const view = render(
     <PullRequestList
-      filter={{ category: "authored", repository: null }}
+      accounts={[connectedAccount]}
+      filter={{
+        ...defaultPullRequestFilter(),
+        query: { ...defaultPullRequestFilter().query, category: "authored" },
+      }}
       iconFor={() => null}
       nowMs={0}
       onCategory={() => undefined}
       onEndReached={() => undefined}
+      onOpenFilters={() => undefined}
       onOpen={() => undefined}
       onReconnect={() => undefined}
-      onRepository={() => undefined}
       onRetry={() => undefined}
-      pendingFilter={{ category: true, repository: false }}
+      onSearch={() => undefined}
+      pendingFilter
+      providers={[githubProvider]}
       state={{ refreshing: true, status: "ready", value: page }}
     />,
   );
 
   expect(view.getByText("Route forge auth errors to an auth-required state")).toBeVisible();
+  expect(view.getByText("NEED ATTENTION")).toBeVisible();
   expect(view.queryByTestId("pull-request-list-skeleton")).toBeNull();
-  expect(view.getByRole("tab", { name: "Mine" }).props.accessibilityState).toMatchObject({
+  expect(view.getByRole("tab", { name: /Mine/u }).props.accessibilityState).toMatchObject({
     busy: true,
     selected: true,
   });

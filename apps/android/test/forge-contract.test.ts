@@ -99,6 +99,10 @@ describe("pull request reads", () => {
       ["connected", 2],
       ["expired", 0],
     ]);
+    expect(page?.sections[0]?.rows[0]?.attention).toEqual({
+      revision: "a".repeat(64),
+      state: "new",
+    });
   });
 
   it("parses the atomic overview with links, local checkout and checks", () => {
@@ -107,6 +111,43 @@ describe("pull request reads", () => {
     expect(overview?.links.map((link) => link.source)).toEqual(["branch", "manual"]);
     expect(overview?.localCheckout?.workspace).toBe("/home/dev/CodeWide");
     expect(overview?.catalog.actions).toHaveLength(overview91.catalog.actions.length);
+    expect(overview?.attention).toEqual({ revision: "a".repeat(64), state: "new" });
+  });
+
+  it("rejects malformed attention revisions instead of treating them as unread", () => {
+    const firstSection = reviewRequestedPage.sections[0];
+    const firstRow = firstSection?.rows[0];
+    expect(firstSection).toBeDefined();
+    expect(firstRow).toBeDefined();
+    expect(
+      parsePullRequestListPage({
+        ...reviewRequestedPage,
+        sections: [
+          {
+            ...firstSection,
+            rows: [{ ...firstRow, attention: { revision: "not-a-digest", state: "new" } }],
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("marks attention unsupported when an older Companion omits it", () => {
+    const firstSection = reviewRequestedPage.sections[0];
+    const firstRow = firstSection?.rows[0];
+    expect(firstSection).toBeDefined();
+    expect(firstRow).toBeDefined();
+    const { attention: _rowAttention, ...legacyRow } = firstRow ?? {};
+    const { attention: _overviewAttention, ...legacyOverview } = overview91;
+    const page = parsePullRequestListPage({
+      ...reviewRequestedPage,
+      sections: [{ ...firstSection, rows: [legacyRow] }],
+    });
+
+    expect(page?.sections[0]?.rows[0]?.attention).toEqual({ state: "unsupported" });
+    expect(parsePullRequestOverview(legacyOverview, () => undefined)?.attention).toEqual({
+      state: "unsupported",
+    });
   });
 
   it("parses truncated pages and every patch state", () => {

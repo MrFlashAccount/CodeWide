@@ -9,12 +9,14 @@ import {
   type DroppedActionReporter,
 } from "./forgeActionCatalog";
 import {
+  attentionRevision,
   accountState,
   forgeAccountKey,
   headRevision,
   providerIcon,
   pullRequestKey,
   type AccountState,
+  type AttentionRevision,
   type ForgeAccountKey,
   type HeadRevision,
   type ProviderIcon,
@@ -35,12 +37,13 @@ import {
 } from "./forgeWire";
 import { threadId, type ThreadId } from "./reviewContract";
 
-export const PULL_REQUEST_CATEGORIES = [
+const PULL_REQUEST_CATEGORIES = [
   "reviewRequested",
   "authored",
   "assigned",
   "mentioned",
   "drafts",
+  "all",
 ] as const;
 /** List category; each section declares which ones its account supports. */
 export type PullRequestCategory = (typeof PULL_REQUEST_CATEGORIES)[number];
@@ -94,6 +97,7 @@ export type LinkedThread = {
 /** One row of the PR list. */
 export type PullRequestRow = {
   readonly account: ForgeAccountKey;
+  readonly attention: PullRequestAttention;
   readonly author: string;
   readonly checks: CheckSummary;
   readonly linkedThreadCount: number;
@@ -108,6 +112,19 @@ export type PullRequestRow = {
   readonly webUrl: string;
 };
 
+/** Whether the current provider activity revision has been displayed. */
+export type SupportedPullRequestAttention = {
+  readonly revision: AttentionRevision;
+  readonly state: "new" | "seen";
+};
+
+/** A revision marker, or an explicit legacy-Companion capability gap. */
+type PullRequestAttention =
+  | {
+      readonly state: "unsupported";
+    }
+  | SupportedPullRequestAttention;
+
 /** One account's section: its state degrades only this section. */
 export type PullRequestListSection = {
   readonly account: AccountState;
@@ -115,7 +132,7 @@ export type PullRequestListSection = {
   readonly supportedCategories: readonly PullRequestCategory[];
 };
 
-/** `companion/pullRequests/list` page; the cursor spans every account. */
+/** Companion list/search page; the cursor spans every selected account. */
 export type PullRequestListPage = {
   readonly category: PullRequestCategory;
   readonly fetchedAt: string;
@@ -128,6 +145,7 @@ export type PullRequestListPage = {
 export type PullRequestOverview = {
   readonly account: AccountState;
   readonly activity: ActivityPage;
+  readonly attention: PullRequestAttention;
   readonly author: string;
   readonly baseBranch: string;
   readonly catalog: ActionCatalog;
@@ -146,6 +164,8 @@ export type PullRequestOverview = {
   readonly number: string;
   readonly pullRequest: PullRequestKey;
   readonly repository: string;
+  /** The one ordinary conversation owned by this PR workspace. */
+  readonly reviewThread: LinkedThread | null;
   readonly state: PullRequestState;
   readonly stats: {
     readonly additions: number;
@@ -221,6 +241,7 @@ function row(value: unknown, path: string): PullRequestRow {
   const entry = record(value, path);
   return {
     account: forgeAccountKey(entry.account, `${path}.account`),
+    attention: pullRequestReadAttention(entry.attention, `${path}.attention`),
     author: text(entry.author, `${path}.author`),
     checks: checkSummary(entry.checks, `${path}.checks`),
     linkedThreadCount: count(entry.linkedThreadCount, `${path}.linkedThreadCount`),
@@ -236,11 +257,25 @@ function row(value: unknown, path: string): PullRequestRow {
   };
 }
 
+/** Decodes the Companion-owned PR attention marker. */
+export function pullRequestAttention(value: unknown, path: string): SupportedPullRequestAttention {
+  const entry = record(value, path);
+  return {
+    revision: attentionRevision(entry.revision, `${path}.revision`),
+    state: oneOf(entry.state, ["new", "seen"], `${path}.state`),
+  };
+}
+
+/** Keeps reads compatible with Companions from before attention revisions. */
+function pullRequestReadAttention(value: unknown, path: string): PullRequestAttention {
+  return value === undefined ? { state: "unsupported" } : pullRequestAttention(value, path);
+}
+
 function category(value: unknown, path: string): PullRequestCategory {
   return oneOf(value, PULL_REQUEST_CATEGORIES, path);
 }
 
-/** Parses `companion/pullRequests/list`. */
+/** Parses the shared `companion/pullRequests/list` and `/search` page shape. */
 export function parsePullRequestListPage(value: unknown): PullRequestListPage | null {
   return decodeOrNull(() => {
     const page = record(value, "result");
@@ -279,6 +314,7 @@ export function parsePullRequestOverview(
     return {
       account: accountState(overview.account, "account"),
       activity: activityPage(overview.activity, "activity"),
+      attention: pullRequestReadAttention(overview.attention, "attention"),
       author: text(overview.author, "author"),
       baseBranch: text(overview.baseBranch, "baseBranch"),
       catalog: actionCatalog(overview.catalog, "catalog", reportDropped),
@@ -303,6 +339,10 @@ export function parsePullRequestOverview(
       number: nonEmptyText(overview.number, "number"),
       pullRequest: pullRequestKey(overview.pullRequest, "pullRequest"),
       repository: nonEmptyText(overview.repository, "repository"),
+      reviewThread:
+        overview.reviewThread === null || overview.reviewThread === undefined
+          ? null
+          : linkedThread(overview.reviewThread, "reviewThread"),
       state: oneOf(overview.state, STATES, "state"),
       stats: {
         additions: count(stats.additions, "stats.additions"),

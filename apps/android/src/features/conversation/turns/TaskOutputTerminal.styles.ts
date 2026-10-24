@@ -38,7 +38,7 @@ export const styles = StyleSheet.create({
   },
   terminalView: {
     flex: 1,
-    marginHorizontal: spacing.sm,
+    marginHorizontal: spacing.md,
     marginVertical: spacing.xs,
   },
 });

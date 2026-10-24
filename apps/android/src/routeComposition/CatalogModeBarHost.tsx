@@ -3,12 +3,15 @@ import { useForgeQuery } from "../data/forgeQueryResource";
 import { remoteValue } from "../data/forgeRemoteValue";
 import { forgeResources } from "../data/forgeRuntime";
 import { CatalogModeBar, type CatalogMode } from "../features/pullRequests/CatalogModeBar";
-import { reviewRequestedCount } from "../features/pullRequests/pullRequestListModel";
+import {
+  defaultPullRequestFilter,
+  reviewRequestedCount,
+} from "../features/pullRequests/pullRequestListModel";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { pullRequestCatalogConnection } from "./pullRequestCatalogConnection";
 import { usePullRequestNavigation } from "./pullRequestNavigation";
 
-const REVIEW_REQUESTED = { category: "reviewRequested", repository: null } as const;
+const REVIEW_REQUESTED = defaultPullRequestFilter();
 
 /**
  * Always-mounted catalog bottom bar. Its count is the review-requested PR
@@ -19,7 +22,7 @@ export function CatalogModeBarHost({ mode }: { readonly mode: CatalogMode }): Re
   const { list } = useWorkspaceRouteResources();
   const navigation = usePullRequestNavigation();
   const connectionId = pullRequestCatalogConnection(list.serverScope, list.servers);
-  const params = connectionId === null ? null : { ...REVIEW_REQUESTED, connectionId };
+  const params = connectionId === null ? null : { connectionId, filter: REVIEW_REQUESTED };
   if (params === null) {
     return (
       <CatalogModeBar mode={mode} onSelect={navigation.switchCatalog} reviewRequestedCount={0} />

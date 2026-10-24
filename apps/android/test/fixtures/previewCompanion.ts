@@ -11,6 +11,7 @@ import type { ForgeSnapshotCache } from "../../src/data/forgeSnapshotCache.types
 import { createPullRequestCommentDestinations } from "../../src/data/pullRequestCommentDestinations";
 import { createPullRequestLinkResources } from "../../src/data/pullRequestLinkResources";
 import { createReviewResources } from "../../src/data/reviewResources";
+import { defaultPullRequestFilter } from "../../src/features/pullRequests/pullRequestListModel";
 import {
   arcanumProvider,
   connectedAccount,
@@ -201,6 +202,7 @@ function answer(method: string): Answer | null {
     "companion/pullRequest/review/submit": submitAnswer,
     "companion/pullRequestLinks/read": () => ({ result: threadLinks }),
     "companion/pullRequests/list": listAnswer,
+    "companion/pullRequests/search": listAnswer,
     "companion/review/drafts/read": () => ({
       result: submitted ? submittedDrafts : draftsSnapshot,
     }),
@@ -259,10 +261,9 @@ export const forgeResources = createForgeResources({
 export const previewReady = forgeResources.restored.then(() => {
   if (scenario === "offline") {
     const params = {
-      category: "reviewRequested",
       connectionId: PREVIEW_CONNECTION_ID,
-      repository: null,
-    } as const;
+      filter: defaultPullRequestFilter(),
+    };
     forgeResources.queryClient.setQueryData(
       forgeResources.lists.keyOf(params),
       {

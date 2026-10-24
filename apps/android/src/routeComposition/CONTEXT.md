@@ -19,6 +19,14 @@ slot content and must not nest another split layout. The discriminated presentat
 pane placement and width; route focus, accessibility, lifetimes, surfaces and data remain with the
 outer owner and its callers.
 
+On wide Pull request destinations, route composition may add the PR-linked thread as a right sidebar.
+It must mount the ordinary `ActiveWorkspaceConversation` with the same thread identity and workspace
+providers as the Chats route. The PR feature owns only the open/create intent; route composition owns
+sidebar placement, expansion, fullscreen and closing. On a foldable, opening chat immediately claims
+the catalog width and animates the PR surface left while the canonical chat enters from the right;
+compact navigation shows a local chat skeleton while the canonical thread id resolves. Never
+introduce a PR-specific conversation renderer or composer.
+
 Run `pnpm validate:android:v1`, navigation contract tests and the Android bundle check after
 changing this owner. See [route architecture](../../../../docs/android-v1-route-architecture.md).
 

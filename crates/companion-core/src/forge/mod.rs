@@ -14,6 +14,7 @@
 pub mod accounts;
 pub mod action_run;
 pub mod actions;
+pub mod attention;
 pub mod auth;
 pub mod bundled;
 pub mod cache;
@@ -28,6 +29,7 @@ pub mod pr_catalog;
 pub mod providers;
 pub mod reads;
 pub mod registry;
+pub mod review_chat;
 pub mod scenarios;
 pub mod submit;
 pub mod tools;
@@ -42,6 +44,7 @@ use tracing::info;
 use self::{
     accounts::{AccountLink, Accounts},
     actions::Journal,
+    attention::AttentionStore,
     auth::AuthFlows,
     bundled::BundledPlugins,
     cache::ForgeCache,
@@ -119,12 +122,14 @@ pub struct ForgeContext {
     pub providers: ProviderCatalog,
     pub limiter: ProcessLimiter,
     pub accounts: Accounts,
+    pub attention: AttentionStore,
     pub links: Links,
     pub cache: ForgeCache,
     pub journal: Journal,
     pub events: ForgeEvents,
     pub flows: AuthFlows,
     pub review: Arc<ReviewService>,
+    pub review_chats: review_chat::ReviewChats,
     pub agents: Option<crate::agent_bridge::AgentBridge>,
     pub workspaces: Option<Arc<crate::workspaces::WorkspaceAdmission>>,
     pub vcs: Option<Arc<crate::vcs::VcsService>>,
@@ -236,12 +241,14 @@ impl ForgeService {
             providers,
             limiter: ProcessLimiter::default(),
             accounts: Accounts::new(deps.store.clone()),
+            attention: AttentionStore::new(deps.store.clone()),
             links: Links::new(deps.store.clone()),
             cache: ForgeCache::default(),
-            journal: Journal::new(deps.store),
+            journal: Journal::new(deps.store.clone()),
             events: deps.events,
             flows: AuthFlows::default(),
             review: deps.review,
+            review_chats: review_chat::ReviewChats::new(deps.store),
             agents: deps.agents,
             workspaces: deps.workspaces,
             vcs: deps.vcs,
@@ -272,7 +279,7 @@ impl ForgeService {
         method.starts_with("companion/forge/") || method.starts_with("companion/pullRequest")
     }
 
-    /// The nine known reads of the forge and review families (outside the
+    /// The known reads of the forge and review families (outside the
     /// ordered lane).
     #[must_use]
     pub fn is_known_read(method: &str) -> bool {
@@ -281,6 +288,7 @@ impl ForgeService {
             "companion/forge/accounts/read"
                 | "companion/pullRequestLinks/read"
                 | "companion/pullRequests/list"
+                | "companion/pullRequests/search"
                 | "companion/pullRequest/read"
                 | "companion/pullRequest/activity/read"
                 | "companion/pullRequest/files/read"
@@ -305,14 +313,17 @@ impl ForgeService {
             "companion/forge/auth/submitToken" => auth::submit_token(context, params).await,
             "companion/forge/account/disconnect" => auth::disconnect(context, params).await,
             "companion/pullRequests/list" => reads::list(context, params).await,
+            "companion/pullRequests/search" => reads::search(context, params).await,
             "companion/pullRequest/read" => reads::overview(context, params).await,
             "companion/pullRequest/activity/read" => reads::activity(context, params).await,
             "companion/pullRequest/files/read" => reads::files(context, params).await,
             "companion/pullRequest/action/run" => action_run::run(context, params).await,
             "companion/pullRequest/review/submit" => submit::submit(context, params).await,
             "companion/pullRequest/viewed/set" => reads::set_viewed(context, params).await,
+            "companion/pullRequest/attention/seen" => attention::mark_seen(context, params),
             "companion/pullRequestLinks/read" => scenarios::links_read(context, params),
             "companion/pullRequest/links/set" => scenarios::links_set(context, params).await,
+            "companion/pullRequest/chat/ensure" => review_chat::ensure(context, params).await,
             "companion/pullRequest/scenario/start" => scenarios::start(context, params).await,
             _ => Err(ForgeError::invalid(format!(
                 "unknown forge method {method}"

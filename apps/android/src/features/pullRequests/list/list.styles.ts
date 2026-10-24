@@ -12,47 +12,58 @@ import {
 } from "../../../theme";
 import { catalogModeBarContentInset } from "../../../presentation/layouts/catalogModeBarGeometry";
 
-/** Diameter of the check-state dot; smaller than an indicator glyph so the title leads. */
-const CHECK_DOT_SIZE = 10;
 /** Stroke of the hollow dot used when checks are absent or unavailable. */
 const HOLLOW_DOT_STROKE = 1.5;
+const ATTENTION_DOT_SIZE = 7;
+const CHECK_BADGE_SIZE = 8;
+const FILTER_COUNT_SIZE = 18;
+const ACTIVE_TOKEN_MAX_WIDTH = 180;
+const FILTER_COUNT_BORDER_WIDTH = 2;
 
 /** PR list geometry: 64dp rows, 16dp inset, label-role section headers. */
 export const listStyles = StyleSheet.create({
+  activeToken: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceContainer,
+    borderColor: colors.border,
+    borderRadius: radii.small,
+    borderWidth: 1,
+    columnGap: spacing.compact,
+    flexDirection: "row",
+    height: controlSize.compact,
+    maxWidth: ACTIVE_TOKEN_MAX_WIDTH,
+    paddingHorizontal: spacing.sm,
+  },
+  activeTokens: {
+    columnGap: spacing.xs,
+    paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  activeTokenText: {
+    ...typeScale.label,
+    color: colors.text,
+    flexShrink: 1,
+  },
   age: {
     ...typeScale.label,
     color: colors.textDim,
     fontVariant: ["tabular-nums"],
   },
-  categoryChips: {
-    columnGap: spacing.xs,
-    paddingRight: spacing.md,
-  },
-  categoryStrip: {
-    flex: 1,
-    minWidth: 0,
-  },
-  chip: {
-    alignItems: "center",
-    borderColor: colors.border,
-    borderRadius: radii.small,
-    borderWidth: 1,
-    flexDirection: "row",
-    minHeight: controlSize.compact,
-    paddingHorizontal: spacing.sm,
-  },
-  chipLabel: {
-    ...typeScale.label,
-    color: colors.text,
-  },
-  chipSelected: {
-    backgroundColor: colors.surfaceContainerHigh,
-    borderColor: colors.surfaceContainerHigh,
-  },
-  dot: {
+  attentionDot: {
+    backgroundColor: colors.text,
     borderRadius: radii.pill,
-    height: CHECK_DOT_SIZE,
-    width: CHECK_DOT_SIZE,
+    height: ATTENTION_DOT_SIZE,
+    width: ATTENTION_DOT_SIZE,
+  },
+  checkDot: {
+    borderColor: colors.threadListSurface,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    bottom: -1,
+    height: CHECK_BADGE_SIZE,
+    position: "absolute",
+    right: -1,
+    width: CHECK_BADGE_SIZE,
   },
   dotFailing: {
     backgroundColor: colors.error,
@@ -70,13 +81,36 @@ export const listStyles = StyleSheet.create({
   fill: {
     flex: 1,
   },
-  filters: {
+  filterButton: {
     alignItems: "center",
-    columnGap: spacing.xs,
-    flexDirection: "row",
-    paddingBottom: spacing.xs,
-    paddingLeft: spacing.md,
-    paddingTop: spacing.xs,
+    backgroundColor: colors.surfaceContainer,
+    borderColor: colors.border,
+    borderRadius: radii.medium,
+    borderWidth: 1,
+    height: controlSize.touch,
+    justifyContent: "center",
+    position: "relative",
+    width: controlSize.touch,
+  },
+  filterCount: {
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    borderColor: colors.threadListSurface,
+    borderRadius: radii.pill,
+    borderWidth: FILTER_COUNT_BORDER_WIDTH,
+    height: FILTER_COUNT_SIZE,
+    justifyContent: "center",
+    minWidth: FILTER_COUNT_SIZE,
+    position: "absolute",
+    right: -spacing.xxs,
+    top: -spacing.xxs,
+  },
+  filterCountText: {
+    ...typeScale.caption,
+    color: colors.onPrimary,
+  },
+  filterHeader: {
+    flexShrink: 0,
   },
   floatingBarContent: {
     paddingBottom: catalogModeBarContentInset,
@@ -108,20 +142,30 @@ export const listStyles = StyleSheet.create({
     ...typeScale.title,
     color: colors.warning,
   },
-  repositoryFilter: {
+  quickView: {
     alignItems: "center",
-    backgroundColor: colors.surfaceContainer,
-    borderRadius: radii.small,
-    columnGap: spacing.compact,
-    flexDirection: "row",
-    maxWidth: "52%",
-    minHeight: controlSize.compact,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    height: controlSize.compact,
+    justifyContent: "center",
     paddingHorizontal: spacing.sm,
   },
-  repositoryLabel: {
+  quickViews: {
+    columnGap: spacing.xs,
+    paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  quickViewSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  quickViewText: {
     ...typeScale.label,
-    color: colors.text,
-    flexShrink: 1,
+    color: colors.textMuted,
+  },
+  quickViewTextSelected: {
+    color: colors.onPrimary,
   },
   row: {
     alignItems: "center",
@@ -138,7 +182,35 @@ export const listStyles = StyleSheet.create({
   rowLead: {
     alignItems: "center",
     justifyContent: "center",
+    position: "relative",
     width: iconSize.inline,
+  },
+  searchField: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceContainer,
+    borderColor: colors.borderSoft,
+    borderRadius: radii.medium,
+    borderWidth: 1,
+    columnGap: spacing.xs,
+    flex: 1,
+    flexDirection: "row",
+    height: controlSize.touch,
+    paddingHorizontal: spacing.sm,
+  },
+  searchInput: {
+    ...typeScale.body,
+    color: colors.text,
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 0,
+  },
+  searchRow: {
+    alignItems: "center",
+    columnGap: spacing.xs,
+    flexDirection: "row",
+    paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xs,
   },
   section: {
     alignItems: "center",

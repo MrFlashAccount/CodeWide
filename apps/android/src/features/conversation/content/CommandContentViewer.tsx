@@ -103,6 +103,14 @@ function commandFacts(
   };
 }
 
+function commandOutputDetails(exitCode: number | null, text: string): readonly string[] {
+  const byteLength = new TextEncoder().encode(text).byteLength;
+  return [
+    ...(exitCode === null ? [] : [`exit ${String(exitCode)}`]),
+    ...(byteLength > 0 ? [formatByteSize(byteLength)] : []),
+  ];
+}
+
 /**
  * The text the terminal shows and where it comes from. A live item's inline
  * output only grows, so the terminal appends it; a switch to another source
@@ -120,14 +128,6 @@ function commandOutputText(
   return inline === ""
     ? { source: "fallback", text: fallbackOutput }
     : { source: "inline", text: inline };
-}
-
-function commandOutputDetails(exitCode: number | null, text: string): readonly string[] {
-  const byteLength = new TextEncoder().encode(text).byteLength;
-  return [
-    ...(exitCode === null ? [] : [`exit ${String(exitCode)}`]),
-    ...(byteLength > 0 ? [formatByteSize(byteLength)] : []),
-  ];
 }
 
 const COMMAND_STATUS: Record<CommandItem["status"], CommandOutputStatus> = {

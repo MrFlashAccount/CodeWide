@@ -32,9 +32,6 @@ use super::{
     reads::load_overview,
     wire::{LinkSource, OverviewWire, ProviderIconWire},
 };
-use crate::agent::permission_profiles::READ_ONLY;
-
-const WORKSPACE_PROFILE: &str = ":workspace";
 const NO_CHECKOUT: &str = "No local checkout of this branch on the companion";
 const MAX_MESSAGE_CHARS: usize = 16_384;
 
@@ -330,27 +327,7 @@ async fn launch(
     let (thread, created) = if let Some(thread) = launch.target {
         (thread, false)
     } else {
-        let (cwd, profile) =
-            if let Some(checkout) = &launch.overview.local_checkout {
-                (checkout.workspace.clone(), WORKSPACE_PROFILE)
-            } else {
-                let admission = context.workspaces.as_ref().ok_or_else(|| {
-                    ForgeError::CapabilityUnavailable {
-                        reason: "workspace admission is unavailable".into(),
-                    }
-                })?;
-                (
-                    admission
-                        .admit(None)
-                        .await
-                        .map_err(ForgeError::InvalidParams)?,
-                    READ_ONLY,
-                )
-            };
-        let thread = agents
-            .create_thread(cwd, profile)
-            .await
-            .map_err(|reason| ForgeError::CapabilityUnavailable { reason })?;
+        let thread = super::review_chat::create_thread(context, agents, launch.overview).await?;
         (thread, true)
     };
     let instruction = instruction(launch.overview, launch.scenario, launch.text);
@@ -557,6 +534,7 @@ pub async fn links_set(context: &ForgeContext, raw: &Value) -> Result<Value, For
         debug_assert_ne!(outcome, LinkOutcome::Tombstoned);
     } else {
         context.links.unlink(&key, &thread)?;
+        context.review_chats.clear_if(&key, &thread)?;
     }
     context.cache.invalidate_pull_request(&key);
     context.events.pull_request(&key).await;

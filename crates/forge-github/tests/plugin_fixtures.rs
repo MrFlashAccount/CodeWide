@@ -127,7 +127,8 @@ fn respond(
             "node_id": "PR_1", "head": {"sha": "abc123", "ref": "fix"}, "base": {"ref": "main"},
             "state": "open", "draft": false, "merged": false, "user": {"login": "someone"},
             "title": "Fix the parser", "body": "Body", "html_url": "https://github.com/octo/repo/pull/1",
-            "changed_files": 1, "additions": 1, "deletions": 0, "mergeable_state": "clean"
+            "changed_files": 1, "additions": 1, "deletions": 0, "mergeable_state": "clean",
+            "updated_at": "2026-10-01T00:00:00Z"
         })),
         ("GET", "/repos/octo/repo") => json(json!({"allow_merge_commit": true})),
         ("GET", path) if path.ends_with("/comments") || path.ends_with("/reviews") => {
@@ -688,6 +689,7 @@ async fn a_full_run_carries_no_token_in_any_frame_but_the_pasted_start() {
         json!({"host": "github.com", "repository": "octo/repo", "number": "1"})
     );
     assert_eq!(row["reviewRequestedFromMe"], true);
+    assert_eq!(row["activityRevision"], "2026-10-01T00:00:00Z");
     let pr = json!({"host": "github.com", "repository": "octo/repo", "number": "1"});
     let read = harness
         .call(
@@ -696,6 +698,7 @@ async fn a_full_run_carries_no_token_in_any_frame_but_the_pasted_start() {
         )
         .await;
     assert_eq!(read["result"]["headRevision"], "abc123");
+    assert_eq!(read["result"]["activityRevision"], row["activityRevision"]);
     let stale = harness
         .call(
             "forge.pullRequest.review.submit",

@@ -263,6 +263,7 @@ pub enum PullRequestCategory {
     Assigned,
     Mentioned,
     Drafts,
+    All,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -274,7 +275,7 @@ pub enum PullRequestState {
     Closed,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum CheckRollup {
     Passing,
@@ -390,6 +391,10 @@ pub struct ListRow {
     pub review_requested_from_me: bool,
     pub checks: CheckSummary,
     pub updated_at: String,
+    /// Same opaque activity witness returned by `forge.pullRequest.read`.
+    /// Older plugins may omit it; the companion falls back to `updatedAt`.
+    #[serde(default)]
+    pub activity_revision: Option<String>,
     pub web_url: String,
 }
 
@@ -399,6 +404,107 @@ pub struct ListResult {
     pub supported_categories: Vec<PullRequestCategory>,
     pub rows: Vec<ListRow>,
     pub next_cursor: Option<String>,
+}
+
+/// Include and exclude values of one search field. Values inside either side
+/// use `OR`; the provider combines different fields with `AND`.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(
+    rename_all = "camelCase",
+    bound(deserialize = "T: Deserialize<'de>", serialize = "T: Serialize")
+)]
+pub struct SearchValues<T> {
+    #[serde(default)]
+    pub include: Vec<T>,
+    #[serde(default)]
+    pub exclude: Vec<T>,
+}
+
+impl<T> SearchValues<T> {
+    fn empty() -> Self {
+        Self {
+            include: Vec::new(),
+            exclude: Vec::new(),
+        }
+    }
+}
+
+impl<T> Default for SearchValues<T> {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum PullRequestReviewState {
+    None,
+    Required,
+    Approved,
+    ChangesRequested,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum PullRequestSortField {
+    Updated,
+    Created,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum SortDirection {
+    Descending,
+    Ascending,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestSort {
+    pub field: PullRequestSortField,
+    pub direction: SortDirection,
+}
+
+/// Provider-neutral query of `forge.pullRequests.search`. The provider must
+/// either apply every field or reject the request; partial interpretation is
+/// forbidden.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestSearchQuery {
+    #[serde(default)]
+    pub text: String,
+    pub category: PullRequestCategory,
+    #[serde(default = "SearchValues::empty")]
+    pub repositories: SearchValues<String>,
+    #[serde(default = "SearchValues::empty")]
+    pub authors: SearchValues<String>,
+    #[serde(default = "SearchValues::empty")]
+    pub assignees: SearchValues<String>,
+    #[serde(default = "SearchValues::empty")]
+    pub reviewers: SearchValues<String>,
+    #[serde(default = "SearchValues::empty")]
+    pub review: SearchValues<PullRequestReviewState>,
+    #[serde(default = "SearchValues::empty")]
+    pub states: SearchValues<PullRequestState>,
+    #[serde(default = "SearchValues::empty")]
+    pub checks: SearchValues<CheckRollup>,
+    #[serde(default = "SearchValues::empty")]
+    pub labels: SearchValues<String>,
+    #[serde(default = "SearchValues::empty")]
+    pub base_branches: SearchValues<String>,
+    #[serde(default = "SearchValues::empty")]
+    pub head_branches: SearchValues<String>,
+    pub sort: PullRequestSort,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchParams {
+    pub account: ForgeAccountRef,
+    pub query: PullRequestSearchQuery,
+    pub cursor: Option<String>,
+    /// At most 50.
+    pub limit: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -474,6 +580,11 @@ pub struct PullRequestOverview {
     pub state: PullRequestState,
     pub web_url: String,
     pub head_revision: String,
+    /// Opaque witness that changes when user-relevant PR activity changes.
+    /// Older plugins may omit it; the companion then falls back to the list
+    /// row's `updatedAt`, or the head revision on a cold deep link.
+    #[serde(default)]
+    pub activity_revision: Option<String>,
     pub head_branch: String,
     pub base_branch: String,
     /// Untrusted Markdown.

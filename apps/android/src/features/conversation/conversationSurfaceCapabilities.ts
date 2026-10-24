@@ -1,10 +1,12 @@
 import type { ThreadListServer } from "../connections/connectionPresentation";
 import type { ThreadListItem } from "../threadList/threadListTypes";
+import type { ReactNode } from "react";
 /** Qualified capabilities consumed by the conversation owner in conversation composition. */
 export type ConversationSurfaceCapabilities = {
   compact: boolean;
   cwd: string;
   firstUnreadAgentTurnId: string | null;
+  headerActions: ReactNode;
   newChat: boolean;
   onBack: (() => void) | undefined;
   onViewedLatest: (() => void) | undefined;

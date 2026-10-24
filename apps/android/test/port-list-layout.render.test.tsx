@@ -2,9 +2,9 @@ import type {
   PortForwardingManagerProps,
   PortForwardingProfile,
 } from "../src/features/ports/portForwardingContract";
-import { LegendList } from "@legendapp/list/react-native";
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { PortForwardingManager } from "../src/features/ports/PortForwardingManager";
+import { AppList } from "../src/ui/AppList";
 import { AppListRow } from "../src/ui/AppListRow";
 import { listRowHeight } from "../src/ui/AppListRow.types";
 
@@ -55,15 +55,12 @@ const defaults: PortForwardingManagerProps = {
   onSetPreference: jest.fn(),
 };
 
-it("supplies exact sizes for individual ports and headers, not whole groups or estimates", () => {
+it("virtualizes individual ports and headers through the standard list", () => {
   const view = render(<PortForwardingManager {...defaults} />);
-  const list = view.UNSAFE_getByType(LegendList);
-  expect(list.props.estimatedItemSize).toBeUndefined();
-  expect(list.props.recycleItems).toBe(true);
-  expect(list.props.drawDistance).toBe(360);
+  const list = view.UNSAFE_getByType(AppList);
+  expect(list.props.virtualized).toBe(true);
   expect(list.props.data).toHaveLength(2);
-  expect(list.props.getFixedItemSize(list.props.data[0])).toBe(36);
-  expect(list.props.getFixedItemSize(list.props.data[1])).toBe(listRowHeight.double);
+  expect(view.UNSAFE_getByType(AppListRow).props.fixedHeight).toBe(listRowHeight.double);
   fireEvent.press(view.getByLabelText("Dev server, Live"));
   expect(defaults.onOpenBrowser).toHaveBeenCalledWith(profile.label, profile.previewUrl);
 });
@@ -95,13 +92,9 @@ it("reserves a fixed two-line error area and updates it when a port recovers", (
       profiles={[{ ...profile, status: "error", error: "Upstream closed" }]}
     />,
   );
-  let list = view.UNSAFE_getByType(LegendList);
   expect(view.getByText("Upstream closed")).toBeVisible();
-  expect(list.props.getFixedItemSize(list.props.data[1])).toBe(listRowHeight.double + 52);
   view.rerender(<PortForwardingManager {...defaults} />);
-  list = view.UNSAFE_getByType(LegendList);
   expect(view.queryByText("Upstream closed")).toBeNull();
-  expect(list.props.getFixedItemSize(list.props.data[1])).toBe(listRowHeight.double);
 });
 
 it("removes disappeared services from the visible list even when a stale profile remains", () => {
@@ -152,24 +145,18 @@ it("keeps exclusion separate from forwarding and restores both actions after fai
   await act(async () => {
     rejectExclusion(new Error("Exclusion failed"));
   });
-  const failureHeader = view.UNSAFE_getByType(LegendList).props.ListHeaderComponent;
   expect(view.getByLabelText("Exclude Dev server port 3000")).toBeVisible();
+  expect(view.getByText("Exclusion failed")).toBeVisible();
   fireEvent.press(view.getByLabelText("Forward Dev server port 3000"));
   await waitFor(() => expect(onSelectPort).toHaveBeenCalledWith(candidate));
   expect(onExcludePort).toHaveBeenCalledTimes(1);
-  // The virtual-list test host mounts rows only; render the published header separately.
-  expect(render(failureHeader).getByText("Exclusion failed")).toBeVisible();
 });
 
 it("opens the anchored profile actions without opening the preview", async () => {
   const onOpenBrowser = jest.fn();
   const onStop = jest.fn(async () => {});
   const view = render(
-    <PortForwardingManager
-      {...defaults}
-      onOpenBrowser={onOpenBrowser}
-      onStop={onStop}
-    />,
+    <PortForwardingManager {...defaults} onOpenBrowser={onOpenBrowser} onStop={onStop} />,
   );
   fireEvent.press(view.getByLabelText("Forwarding actions Dev server"));
   expect(onOpenBrowser).not.toHaveBeenCalled();

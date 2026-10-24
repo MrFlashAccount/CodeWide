@@ -14,11 +14,10 @@ import type { ActionNotice } from "../pullRequestScreenModel";
 import { ActionNoticeBanner } from "./ActionNoticeBanner";
 import { ActionRow } from "./ActionRow";
 import { ActivitySection } from "./ActivitySection";
-import { ChecksCard } from "./ChecksCard";
 import { ConflictBanner } from "./ConflictBanner";
 import { DescriptionSection } from "./DescriptionSection";
-import { LinkedThreadsCard, type LinkedThreadDescription } from "./LinkedThreadsCard";
-import { MergeCard } from "./MergeCard";
+import type { LinkedThreadDescription } from "../linkedThreadDescription";
+import { ReadinessPanel } from "./ReadinessPanel";
 import { StatusHeader } from "./StatusHeader";
 
 /** Everything the Overview tab renders; the screen owns data and intents. */
@@ -33,9 +32,8 @@ export type OverviewTabProps = {
   readonly nowMs: number;
   readonly onActionRowWidth: (width: number) => void;
   readonly onLoadMoreActivity: (() => void) | null;
-  readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly onOpenReviewChat: () => void;
   readonly onRun: (action: ActionDescriptor, input: boolean | string | null) => void;
-  readonly onUnlink: (threadId: ThreadId) => void;
   readonly overview: PullRequestOverview;
   readonly pending: Readonly<Record<string, true>>;
   readonly pendingToggles: Readonly<Record<string, boolean>>;
@@ -43,7 +41,7 @@ export type OverviewTabProps = {
   readonly tablet: boolean;
 };
 
-const RAIL_WIDTH = 320;
+const RAIL_WIDTH = 328;
 
 /** The refusal shown on the merge card when it came from a merge-card action. */
 function mergeCardRefusal(
@@ -60,9 +58,9 @@ function mergeCardRefusal(
 }
 
 /**
- * Overview: status and blockers before the diff (R3). Phone is one column with
- * rail cards after the action row; ≥720dp is a work column plus a 320dp rail
- * (merge, checks, linked threads). The description follows activity on phone.
+ * Details is an editorial work surface, not a grid of unrelated cards. The
+ * description and activity form the reading column; merge readiness, checks
+ * and the linked conversation share one restrained rail.
  */
 export function OverviewTab(props: OverviewTabProps): React.JSX.Element {
   return (
@@ -74,26 +72,40 @@ export function OverviewTab(props: OverviewTabProps): React.JSX.Element {
 
 function PhoneColumn(props: OverviewTabProps): React.JSX.Element {
   return (
-    <View style={styles.column}>
+    <View style={styles.page}>
       <WorkHeader {...props} />
+      <DescriptionSection description={props.overview.description} />
       <RailCards {...props} />
       <Activity {...props} />
-      <DescriptionSection description={props.overview.description} />
     </View>
   );
 }
 
 function TabletColumns(props: OverviewTabProps): React.JSX.Element {
   return (
-    <View style={styles.columns}>
-      <View style={[styles.column, styles.workColumn]}>
-        <WorkHeader {...props} />
-        <DescriptionSection description={props.overview.description} />
-        <Activity {...props} />
+    <View style={styles.page}>
+      <WorkHeader {...props} />
+      <View style={styles.columns}>
+        <ReadingColumn {...props} />
+        <ReadinessColumn {...props} />
       </View>
-      <View style={styles.rail}>
-        <RailCards {...props} />
-      </View>
+    </View>
+  );
+}
+
+function ReadinessColumn(props: OverviewTabProps): React.JSX.Element {
+  return (
+    <View style={styles.rail}>
+      <RailCards {...props} />
+    </View>
+  );
+}
+
+function ReadingColumn(props: OverviewTabProps): React.JSX.Element {
+  return (
+    <View style={[styles.readingColumn, styles.workColumn]}>
+      <DescriptionSection description={props.overview.description} />
+      <Activity {...props} />
     </View>
   );
 }
@@ -107,7 +119,7 @@ function WorkHeader(props: OverviewTabProps): React.JSX.Element {
   const refusal =
     props.notice?.kind === "refused" && mergeCardRefusal(props) === null ? props.notice : null;
   return (
-    <View style={styles.column}>
+    <View style={styles.header}>
       <StatusHeader listRow={props.listRow} nowMs={props.nowMs} overview={overview} />
       <ActionRow
         extra={props.extraOverflow}
@@ -139,34 +151,18 @@ function WorkHeader(props: OverviewTabProps): React.JSX.Element {
 
 /** Merge, checks and linked threads: the rail on tablets, after the action row on phones. */
 function RailCards(props: OverviewTabProps): React.JSX.Element {
-  const { slots } = props;
   return (
-    <View style={styles.column}>
-      <MergeCard
-        autoMerge={slots.autoMerge}
-        host={props.host}
-        merge={slots.merge}
-        onRun={props.onRun}
-        overview={props.overview}
-        pending={props.pending}
-        pendingToggles={props.pendingToggles}
-        refusal={mergeCardRefusal(props)}
-      />
-      <ChecksCard
-        anchored={slots.anchored.checks}
-        onRun={(action) => {
-          props.onRun(action, null);
-        }}
-        overview={props.overview}
-        pending={props.pending}
-      />
-      <LinkedThreadsCard
-        describeThread={props.describeThread}
-        links={props.overview.links}
-        onOpenThread={props.onOpenThread}
-        onUnlink={props.onUnlink}
-      />
-    </View>
+    <ReadinessPanel
+      describeThread={props.describeThread}
+      host={props.host}
+      listRow={props.listRow}
+      onOpenReviewChat={props.onOpenReviewChat}
+      onRun={props.onRun}
+      overview={props.overview}
+      pending={props.pending}
+      pendingToggles={props.pendingToggles}
+      slots={props.slots}
+    />
   );
 }
 
@@ -186,20 +182,26 @@ function Activity(props: OverviewTabProps): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  column: {
-    gap: spacing.xs,
-  },
   columns: {
-    columnGap: spacing.md,
+    alignItems: "flex-start",
+    columnGap: spacing.lg,
     flexDirection: "row",
   },
   content: {
-    padding: spacing.md,
-    paddingBottom: spacing.xl,
+    padding: spacing.lg,
+    paddingBottom: spacing.xl + spacing.lg,
+  },
+  header: {
+    gap: spacing.sm,
+  },
+  page: {
+    gap: spacing.lg,
   },
   rail: {
-    gap: spacing.xs,
     width: RAIL_WIDTH,
+  },
+  readingColumn: {
+    gap: spacing.xl,
   },
   workColumn: {
     flex: 1,

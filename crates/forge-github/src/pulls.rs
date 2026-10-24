@@ -3,7 +3,8 @@
 
 use forge_protocol::{
     ByBranchResult, CheckRollup, CheckSummary, ForgePrRef, ListResult, PluginError,
-    PullRequestCategory, PullRequestState,
+    PullRequestCategory, PullRequestReviewState, PullRequestSearchQuery, PullRequestSortField,
+    PullRequestState, SearchValues, SortDirection,
 };
 use serde_json::{Value, json};
 
@@ -50,6 +51,7 @@ pub async fn list(
         PullRequestCategory::Assigned => format!("assignee:{login}"),
         PullRequestCategory::Mentioned => format!("mentions:{login}"),
         PullRequestCategory::Drafts => format!("draft:true author:{login}"),
+        PullRequestCategory::All => String::new(),
     };
     query.push_str(" is:pr is:open archived:false sort:updated-desc");
     if let Some(repository) = repository {
@@ -96,6 +98,221 @@ pub async fn list(
     })
 }
 
+/// `forge.pullRequests.search`: compiles the provider-neutral query to GitHub
+/// search syntax and applies every field.
+///
+/// # Errors
+///
+/// Returns invalid params for an invalid repository or an oversized query,
+/// and the mapped GitHub failure otherwise.
+pub async fn search(
+    api: &Api,
+    host: &str,
+    login: &str,
+    query: &PullRequestSearchQuery,
+    cursor: Option<String>,
+    limit: u32,
+) -> Result<ListResult, PluginError> {
+    let compiled = compile_search(login, query)?;
+    run_search(api, host, login, compiled, query, cursor, limit).await
+}
+
+fn compile_search(login: &str, query: &PullRequestSearchQuery) -> Result<String, PluginError> {
+    if query.text.len() > 512 {
+        return Err(PluginError::invalid_params("search text is too long"));
+    }
+    let mut terms = vec!["is:pr".to_owned(), "archived:false".to_owned()];
+    let text = query.text.trim();
+    if !text.is_empty() {
+        terms.push(text.to_owned());
+    }
+    match query.category {
+        PullRequestCategory::ReviewRequested => {
+            terms.push(format!("review-requested:{}", quoted(login)));
+        }
+        PullRequestCategory::Authored => terms.push(format!("author:{}", quoted(login))),
+        PullRequestCategory::Assigned => terms.push(format!("assignee:{}", quoted(login))),
+        PullRequestCategory::Mentioned => terms.push(format!("mentions:{}", quoted(login))),
+        PullRequestCategory::Drafts => {
+            terms.push(format!("author:{}", quoted(login)));
+            terms.push("draft:true".to_owned());
+        }
+        PullRequestCategory::All => {}
+    }
+    push_repository_values(&mut terms, &query.repositories)?;
+    push_text_values(&mut terms, "author", &query.authors);
+    push_text_values(&mut terms, "assignee", &query.assignees);
+    push_text_values(&mut terms, "reviewed-by", &query.reviewers);
+    push_values(&mut terms, &query.review, |state| match state {
+        PullRequestReviewState::None => "review:none".to_owned(),
+        PullRequestReviewState::Required => "review:required".to_owned(),
+        PullRequestReviewState::Approved => "review:approved".to_owned(),
+        PullRequestReviewState::ChangesRequested => "review:changes_requested".to_owned(),
+    });
+    push_state_values(&mut terms, &query.states);
+    push_check_values(&mut terms, &query.checks);
+    push_text_values(&mut terms, "label", &query.labels);
+    push_text_values(&mut terms, "base", &query.base_branches);
+    push_text_values(&mut terms, "head", &query.head_branches);
+    let field = match query.sort.field {
+        PullRequestSortField::Updated => "updated",
+        PullRequestSortField::Created => "created",
+    };
+    let direction = match query.sort.direction {
+        SortDirection::Descending => "desc",
+        SortDirection::Ascending => "asc",
+    };
+    terms.push(format!("sort:{field}-{direction}"));
+    Ok(terms.join(" "))
+}
+
+fn push_repository_values(
+    terms: &mut Vec<String>,
+    values: &SearchValues<String>,
+) -> Result<(), PluginError> {
+    let include = values
+        .include
+        .iter()
+        .map(|value| Repo::parse(value).map(|repo| format!("repo:{}", quoted(&repo.full()))))
+        .collect::<Result<Vec<_>, _>>()?;
+    let exclude = values
+        .exclude
+        .iter()
+        .map(|value| Repo::parse(value).map(|repo| format!("repo:{}", quoted(&repo.full()))))
+        .collect::<Result<Vec<_>, _>>()?;
+    push_group(terms, include);
+    push_negative_values(terms, exclude);
+    Ok(())
+}
+
+fn push_text_values(terms: &mut Vec<String>, qualifier: &str, values: &SearchValues<String>) {
+    let render = |value: &String| format!("{qualifier}:{}", quoted(value));
+    push_group(terms, values.include.iter().map(render).collect());
+    push_negative_values(terms, values.exclude.iter().map(render).collect());
+}
+
+fn push_check_values(terms: &mut Vec<String>, values: &SearchValues<CheckRollup>) {
+    push_group(
+        terms,
+        values
+            .include
+            .iter()
+            .map(|state| match state {
+                CheckRollup::Passing => "status:success".to_owned(),
+                CheckRollup::Failing => "status:failure".to_owned(),
+                CheckRollup::Pending => "status:pending".to_owned(),
+                CheckRollup::None => "no:status".to_owned(),
+            })
+            .collect(),
+    );
+    // `status:pending` also matches PRs without statuses on GitHub. Exact
+    // include/exclude semantics are therefore enforced on decoded rows below.
+}
+
+fn push_values<T>(terms: &mut Vec<String>, values: &SearchValues<T>, render: fn(&T) -> String) {
+    push_group(terms, values.include.iter().map(render).collect());
+    push_negative_values(terms, values.exclude.iter().map(render).collect());
+}
+
+fn push_group(terms: &mut Vec<String>, values: Vec<String>) {
+    match values.len() {
+        0 => {}
+        1 => terms.extend(values),
+        _ => terms.push(format!("({})", values.join(" OR "))),
+    }
+}
+
+fn push_negative_values(terms: &mut Vec<String>, values: Vec<String>) {
+    terms.extend(values.into_iter().map(|value| format!("-{value}")));
+}
+
+fn push_state_values(terms: &mut Vec<String>, values: &SearchValues<PullRequestState>) {
+    push_group(
+        terms,
+        values
+            .include
+            .iter()
+            .map(|state| match state {
+                PullRequestState::Open => "(is:open AND draft:false)".to_owned(),
+                PullRequestState::Draft => "is:draft".to_owned(),
+                PullRequestState::Merged => "is:merged".to_owned(),
+                PullRequestState::Closed => "(is:closed AND -is:merged)".to_owned(),
+            })
+            .collect(),
+    );
+    terms.extend(values.exclude.iter().map(|state| match state {
+        PullRequestState::Open => "(is:closed OR is:draft)".to_owned(),
+        PullRequestState::Draft => "-is:draft".to_owned(),
+        PullRequestState::Merged => "-is:merged".to_owned(),
+        PullRequestState::Closed => "(is:open OR is:merged)".to_owned(),
+    }));
+}
+
+fn quoted(value: &str) -> String {
+    format!("\"{}\"", value.replace(['\\', '"'], ""))
+}
+
+async fn run_search(
+    api: &Api,
+    host: &str,
+    login: &str,
+    query: String,
+    search_query: &PullRequestSearchQuery,
+    cursor: Option<String>,
+    limit: u32,
+) -> Result<ListResult, PluginError> {
+    let data = api
+        .graphql(
+            LIST_QUERY,
+            json!({ "q": query, "n": limit.clamp(1, forge_protocol::MAX_LIST_LIMIT), "after": cursor }),
+        )
+        .await?;
+    let search = data
+        .get("search")
+        .ok_or_else(|| PluginError::internal("GitHub returned no search result"))?;
+    let rows = search
+        .get("nodes")
+        .and_then(Value::as_array)
+        .map(|nodes| {
+            nodes
+                .iter()
+                .filter_map(|node| list_row(node, host, login))
+                .filter(|row| matches_check_values(&row.checks, &search_query.checks))
+                .collect()
+        })
+        .unwrap_or_default();
+    let next_cursor = (search.pointer("/pageInfo/hasNextPage") == Some(&Value::Bool(true)))
+        .then(|| {
+            search
+                .pointer("/pageInfo/endCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .flatten();
+    Ok(ListResult {
+        supported_categories: vec![
+            PullRequestCategory::ReviewRequested,
+            PullRequestCategory::Authored,
+            PullRequestCategory::Assigned,
+            PullRequestCategory::Mentioned,
+            PullRequestCategory::Drafts,
+            PullRequestCategory::All,
+        ],
+        rows,
+        next_cursor,
+    })
+}
+
+fn matches_check_values(summary: &CheckSummary, values: &SearchValues<CheckRollup>) -> bool {
+    if values.include.is_empty() && values.exclude.is_empty() {
+        return true;
+    }
+    let CheckSummary::Counted { state, .. } = summary else {
+        return false;
+    };
+    (values.include.is_empty() || values.include.contains(state)) && !values.exclude.contains(state)
+}
+
 fn list_row(node: &Value, host: &str, login: &str) -> Option<forge_protocol::ListRow> {
     let number = node.get("number")?.as_u64()?.to_string();
     let repository = node
@@ -116,6 +333,7 @@ fn list_row(node: &Value, host: &str, login: &str) -> Option<forge_protocol::Lis
             })
         });
     let contexts = node.pointer("/commits/nodes/0/commit/statusCheckRollup/contexts");
+    let updated_at = node.get("updatedAt")?.as_str()?.to_owned();
     Some(forge_protocol::ListRow {
         pr_ref: ForgePrRef {
             host: host.to_owned(),
@@ -141,7 +359,8 @@ fn list_row(node: &Value, host: &str, login: &str) -> Option<forge_protocol::Lis
             },
             rollup_counts,
         ),
-        updated_at: node.get("updatedAt")?.as_str()?.to_owned(),
+        activity_revision: Some(updated_at.clone()),
+        updated_at,
         web_url: node.get("url")?.as_str()?.to_owned(),
     })
 }
@@ -289,6 +508,10 @@ pub async fn by_branch(
 mod tests {
     use super::*;
 
+    fn values<T>(include: Vec<T>, exclude: Vec<T>) -> SearchValues<T> {
+        SearchValues { exclude, include }
+    }
+
     #[test]
     fn rollup_counts_map_run_and_status_states() {
         let contexts = json!({
@@ -307,5 +530,44 @@ mod tests {
                 pending: 2
             }
         );
+    }
+
+    #[test]
+    fn structured_search_applies_every_filter_and_preserves_or_groups() -> Result<(), PluginError> {
+        let query = PullRequestSearchQuery {
+            text: "parser".into(),
+            category: PullRequestCategory::ReviewRequested,
+            repositories: values(vec!["team/one".into(), "team/two".into()], Vec::new()),
+            authors: values(vec!["alice".into()], vec!["bot".into()]),
+            assignees: SearchValues::default(),
+            reviewers: SearchValues::default(),
+            review: values(vec![PullRequestReviewState::ChangesRequested], Vec::new()),
+            states: values(
+                vec![PullRequestState::Open, PullRequestState::Draft],
+                Vec::new(),
+            ),
+            checks: values(vec![CheckRollup::Failing], Vec::new()),
+            labels: values(vec!["bug".into()], Vec::new()),
+            base_branches: values(vec!["main".into()], Vec::new()),
+            head_branches: SearchValues::default(),
+            sort: forge_protocol::PullRequestSort {
+                field: PullRequestSortField::Updated,
+                direction: SortDirection::Descending,
+            },
+        };
+
+        let compiled = compile_search("sergey", &query)?;
+
+        assert!(compiled.contains("review-requested:\"sergey\""));
+        assert!(compiled.contains("(repo:\"team/one\" OR repo:\"team/two\")"));
+        assert!(compiled.contains("author:\"alice\""));
+        assert!(compiled.contains("-author:\"bot\""));
+        assert!(compiled.contains("review:changes_requested"));
+        assert!(compiled.contains("((is:open AND draft:false) OR is:draft)"));
+        assert!(compiled.contains("status:failure"));
+        assert!(compiled.contains("label:\"bug\""));
+        assert!(compiled.contains("base:\"main\""));
+        assert!(compiled.ends_with("sort:updated-desc"));
+        Ok(())
     }
 }

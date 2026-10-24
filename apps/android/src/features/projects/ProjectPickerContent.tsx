@@ -1,9 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LegendList } from "@legendapp/list/react-native";
 import { Pressable, View } from "react-native";
 import { useEvent } from "../../react/useEvent";
-import { colors, controlSize, iconSize, spacing } from "../../theme";
-import { listRowHeight } from "../../ui/AppListRow.types";
+import { colors, iconSize } from "../../theme";
+import { AppList } from "../../ui/AppList";
 import { AppSheetScrollView } from "../../ui/AppSheet";
 import { useAppDialog } from "../../ui/AppDialog";
 import { AppText as Text } from "../../ui/Typography";
@@ -21,7 +20,7 @@ export function ProjectPickerContent({
 }: {
   props: ScopedProjectPickerProps;
   state: ProjectPickerSession;
-}) {
+}): React.JSX.Element {
   const { busy, current, onAddProject, onManageProjects, onSelect } = props;
   const dialog = useAppDialog();
   const selectProject = useEvent((destination: ProjectDestination): void => {
@@ -39,25 +38,12 @@ export function ProjectPickerContent({
   return (
     <View style={styles.listFrame}>
       {mode === "projects" ? (
-        <LegendList
+        <AppList
           contentContainerStyle={styles.listContent}
           data={projectRows}
-          drawDistance={360}
-          getFixedItemSize={(item) =>
-            item.kind === "server-default"
-              ? listRowHeight.double + spacing.md
-              : item.kind === "project"
-                ? listRowHeight.double
-                : item.kind === "section"
-                  ? controlSize.regular
-                  : item.compact
-                    ? 92
-                    : 150
-          }
           key={state.serverFilter ?? "all"}
           keyboardShouldPersistTaps="handled"
           keyExtractor={(item) => item.id}
-          recycleItems
           renderItem={({ item }) => {
             if (item.kind === "section") {
               return item.sectionId === null ? (
@@ -127,8 +113,9 @@ export function ProjectPickerContent({
               />
             );
           }}
-          renderScrollComponent={AppSheetScrollView}
+          scrollComponent={AppSheetScrollView}
           style={styles.projectScroll}
+          virtualized
         />
       ) : mode === "servers" ? (
         <ProjectServerContent props={props} state={state} />
