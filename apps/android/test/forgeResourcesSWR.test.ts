@@ -3,7 +3,7 @@ import type { RpcClient } from "@codewide/sync-client";
 
 import { createForgeResources } from "../src/data/forgeResources";
 import { defaultPullRequestFilter } from "../src/features/pullRequests/pullRequestListModel";
-import { reviewRequestedPage } from "./fixtures/forgeWireFixtures";
+import { involvedPage } from "./fixtures/forgeWireFixtures";
 import { createMemoryQueryPersister } from "./fixtures/queryPersister";
 
 function createResources(persister: ReturnType<typeof createMemoryQueryPersister>["persister"]) {
@@ -24,7 +24,7 @@ describe("forge persisted stale-while-revalidate", () => {
     await first.restored;
     first.lists.publish(
       { connectionId: "server", filter: defaultPullRequestFilter() },
-      reviewRequestedPage,
+      involvedPage,
     );
     await vi.waitFor(() => {
       expect(memory.read()).not.toBeNull();
@@ -38,7 +38,7 @@ describe("forge persisted stale-while-revalidate", () => {
         connectionId: "server",
         filter: defaultPullRequestFilter(),
       }),
-    ).toMatchObject({ category: "reviewRequested" });
+    ).toMatchObject({ category: "involved" });
   });
 
   it("discards persisted list rows from the previous cache schema", async () => {
@@ -50,8 +50,8 @@ describe("forge persisted stale-while-revalidate", () => {
       filter: defaultPullRequestFilter(),
     };
     first.queryClient.setQueryData(first.lists.keyOf(params), {
-      ...reviewRequestedPage,
-      sections: reviewRequestedPage.sections.map((section) => ({
+      ...involvedPage,
+      sections: involvedPage.sections.map((section) => ({
         ...section,
         rows: section.rows.map(({ attention: _attention, ...row }) => row),
       })),
@@ -87,7 +87,7 @@ describe("forge persisted stale-while-revalidate", () => {
         calls.push({ method, params });
         // WHY: this transport fixture returns the wire-contract page consumed by the production parser.
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-        return reviewRequestedPage as Result;
+        return involvedPage as Result;
       },
     });
     await resources.restored;

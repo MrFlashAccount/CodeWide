@@ -5,15 +5,13 @@ import { usePullRequestNavigation } from "../src/routeComposition/pullRequestNav
 import { overview91 } from "./fixtures/forgeWireFixtures";
 
 const mockPush = jest.fn();
-const mockReplace = jest.fn();
 
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: mockPush, replace: mockReplace }),
+  useRouter: () => ({ push: mockPush }),
 }));
 
 beforeEach(() => {
   mockPush.mockClear();
-  mockReplace.mockClear();
 });
 
 it("publishes the pull-request route immediately without waiting for a preload", () => {

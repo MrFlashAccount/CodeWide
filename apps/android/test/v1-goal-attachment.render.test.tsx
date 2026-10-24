@@ -37,7 +37,11 @@ it("renders Goal inside the same horizontal attachment strip as files", () => {
     <AppRootProviders>
       <ComposerAttachmentTray
         attachments={[attachment]}
-        getAccess={async () => ({ authorization: "test", baseUrl: "https://example.test", transport: urlTransport, })}
+        getAccess={async () => ({
+          authorization: "test",
+          baseUrl: "https://example.test",
+          transport: urlTransport,
+        })}
         onRemove={jest.fn()}
         scope="test-scope"
         startAttachment={<ComposerGoalAttachment onClose={jest.fn()} />}
@@ -55,7 +59,8 @@ it("keeps image detail available when a composer attachment uses a local thumbna
   const open = jest.fn();
   const getAccess = jest.fn(async () => ({
     authorization: "test",
-    baseUrl: "https://example.test", transport: urlTransport,
+    baseUrl: "https://example.test",
+    transport: urlTransport,
   }));
   const imagePreview: ImagePreviewController = {
     createSession: () => <></>,

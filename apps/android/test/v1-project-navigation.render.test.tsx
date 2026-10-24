@@ -1,9 +1,11 @@
-import { act, render, renderHook, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, renderHook, waitFor } from "@testing-library/react-native";
 import { KeyboardController } from "react-native-keyboard-controller";
 
 import { useComposerProjectSelection } from "../src/features/projects/composerProjectSelection";
+import { ProjectDirectoryPicker } from "../src/features/projects/ProjectDirectoryPicker";
 import { useProjectPickerSession } from "../src/features/projects/projectPickerSession";
 import { SidebarProjectsSheet } from "../src/features/projects/SidebarProjectViews";
+import { SidebarProjectsRouteSurface } from "../src/features/projects/SidebarProjectsRouteSurface";
 import { useRemoteProjectCatalog } from "../src/features/projects/useRemoteProjectCatalog";
 import type { SidebarProject } from "../src/features/projects/sidebarProjects";
 import {
@@ -190,6 +192,42 @@ it("updates the management list when a pin acknowledgement changes rows", () => 
       .UNSAFE_getByType(AppList)
       .props.data.filter((item: { kind: string }) => item.kind === "project"),
   ).toHaveLength(2);
+});
+
+it("lets the Projects route own dismissal without mounting another sheet", () => {
+  const onClose = jest.fn();
+  const view = render(
+    <SidebarProjectsRouteSurface
+      {...projectManagementProps}
+      onClose={onClose}
+      projects={[managedProject]}
+    />,
+  );
+
+  expect(view.getByTestId("project-management-route")).toBeVisible();
+  expect(view.queryByTestId("native-sheet")).toBeNull();
+  fireEvent.press(view.getByLabelText("Close project management"));
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+it("lets the Add project route own its surface without a nested native sheet", () => {
+  const onClose = jest.fn();
+  const view = render(
+    <ProjectDirectoryPicker
+      connections={[]}
+      initialConnectionId={null}
+      native={false}
+      onAddProject={jest.fn()}
+      onClose={onClose}
+      remote={{ readDirectory: jest.fn(), readProjectHome: jest.fn() }}
+      servers={[]}
+      visible
+    />,
+  );
+
+  expect(view.queryByTestId("native-sheet")).toBeNull();
+  fireEvent.press(view.getByLabelText("Close project picker"));
+  expect(onClose).toHaveBeenCalledTimes(1);
 });
 
 it("publishes the qualified route before observer hydration settles and keeps stable intents", async () => {

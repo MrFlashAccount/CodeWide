@@ -24,7 +24,6 @@ import {
 import { filterStyles as styles } from "./filter.styles";
 import { filterTrayViewportGeometry } from "./filterTrayViewport";
 
-const WIDE_FILTER_WIDTH = 600;
 const FILTERS_VIEW = "pull-request-filters";
 const FILTER_DETAIL_VIEW = "pull-request-filter-detail";
 const FILTER_TRAY_PALETTE: Partial<ITrayPalette> = {
@@ -108,10 +107,9 @@ export function PullRequestFilterSheet({
   readonly repositories: readonly string[];
 }): React.JSX.Element {
   const state = useSelector(() => pullRequestFilterSheetModel.get());
-  const { height, width } = useWindowDimensions();
+  const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
-  const wide = width >= WIDE_FILTER_WIDTH;
   const viewport = filterTrayViewportGeometry({
     bottomInset: insets.bottom,
     keyboardHeight,
@@ -147,7 +145,6 @@ export function PullRequestFilterSheet({
         repositories={repositories}
         trayHeight={viewport.height}
         visibleState={visibleState}
-        wide={wide}
       />
     </Tray>
   );
@@ -160,7 +157,6 @@ function FilterTraySurface({
   repositories,
   trayHeight,
   visibleState,
-  wide,
 }: {
   readonly accounts: readonly AccountState[];
   readonly bottomInsetCompensation: number;
@@ -171,25 +167,14 @@ function FilterTraySurface({
     readonly draft: PullRequestSearchFilter;
     readonly facet: PullRequestFilterFacet | null;
   } | null;
-  readonly wide: boolean;
 }): React.JSX.Element {
   return (
     <Tray.Content style={[styles.sheet, { marginBottom: -bottomInsetCompensation }]}>
       <Tray.View id={FILTERS_VIEW} style={[styles.fill, { height: trayHeight }]}>
-        {visibleState === null ? null : wide ? (
-          <WideFilterSheet
-            accounts={accounts}
-            draft={visibleState.draft}
-            facet={visibleState.facet}
-            providers={providers}
-            repositories={repositories}
-          />
-        ) : (
-          <FilterFacetIndex draft={visibleState.draft} />
-        )}
+        {visibleState === null ? null : <FilterFacetIndex draft={visibleState.draft} />}
       </Tray.View>
       <Tray.View id={FILTER_DETAIL_VIEW} style={[styles.fill, { height: trayHeight }]}>
-        {visibleState === null || visibleState.facet === null || wide ? null : (
+        {visibleState === null || visibleState.facet === null ? null : (
           <FilterFacetDetail
             accounts={accounts}
             draft={visibleState.draft}
@@ -203,37 +188,6 @@ function FilterTraySurface({
   );
 }
 
-function WideFilterSheet({
-  accounts,
-  draft,
-  facet,
-  providers,
-  repositories,
-}: {
-  readonly accounts: readonly AccountState[];
-  readonly draft: PullRequestSearchFilter;
-  readonly facet: PullRequestFilterFacet | null;
-  readonly providers: readonly ForgeProvider[];
-  readonly repositories: readonly string[];
-}): React.JSX.Element {
-  const visibleFacet = facet ?? "sources";
-  const activeCount = activePullRequestFilterCount(draft);
-  return (
-    <View style={styles.fill} testID="pull-request-filter-sheet">
-      <FilterHeader count={activeCount} title="Filters" />
-      <FilterSheetBody
-        accounts={accounts}
-        draft={draft}
-        providers={providers}
-        repositories={repositories}
-        visibleFacet={visibleFacet}
-        wide
-      />
-      <FilterFooter />
-    </View>
-  );
-}
-
 function FilterFacetIndex({
   draft,
 }: {
@@ -243,7 +197,7 @@ function FilterFacetIndex({
     <View style={styles.fill} testID="pull-request-filter-sheet">
       <FilterHeader count={activePullRequestFilterCount(draft)} title="Filters" />
       <View style={styles.body}>
-        <FacetList draft={draft} selected={null} wide={false} />
+        <FacetList draft={draft} />
       </View>
       <FilterFooter />
     </View>
@@ -281,37 +235,6 @@ function FilterFacetDetail({
         />
       </View>
       <FilterFooter />
-    </View>
-  );
-}
-
-function FilterSheetBody({
-  accounts,
-  draft,
-  providers,
-  repositories,
-  visibleFacet,
-  wide,
-}: {
-  readonly accounts: readonly AccountState[];
-  readonly draft: PullRequestSearchFilter;
-  readonly providers: readonly ForgeProvider[];
-  readonly repositories: readonly string[];
-  readonly visibleFacet: PullRequestFilterFacet | null;
-  readonly wide: boolean;
-}): React.JSX.Element {
-  return (
-    <View style={[styles.body, wide && styles.bodyWide]}>
-      {wide || visibleFacet === null ? (
-        <FacetList draft={draft} selected={visibleFacet} wide={wide} />
-      ) : null}
-      <FacetPane
-        accounts={accounts}
-        draft={draft}
-        facet={visibleFacet}
-        providers={providers}
-        repositories={repositories}
-      />
     </View>
   );
 }
@@ -421,28 +344,11 @@ function FilterFooter(): React.JSX.Element {
   );
 }
 
-function FacetList({
-  draft,
-  selected,
-  wide,
-}: {
-  readonly draft: PullRequestSearchFilter;
-  readonly selected: PullRequestFilterFacet | null;
-  readonly wide: boolean;
-}): React.JSX.Element {
+function FacetList({ draft }: { readonly draft: PullRequestSearchFilter }): React.JSX.Element {
   return (
-    <ScrollView
-      contentContainerStyle={styles.facetList}
-      style={[styles.facetNav, wide && styles.facetNavWide]}
-    >
+    <ScrollView contentContainerStyle={styles.facetList} style={styles.facetNav}>
       {FACETS.map((facet) => (
-        <FacetRow
-          draft={draft}
-          facet={facet}
-          key={facet.value}
-          selected={selected === facet.value}
-          wide={wide}
-        />
+        <FacetRow draft={draft} facet={facet} key={facet.value} />
       ))}
     </ScrollView>
   );
@@ -451,31 +357,21 @@ function FacetList({
 function FacetRow({
   draft,
   facet,
-  selected,
-  wide,
 }: {
   readonly draft: PullRequestSearchFilter;
   readonly facet: (typeof FACETS)[number];
-  readonly selected: boolean;
-  readonly wide: boolean;
 }): React.JSX.Element {
   const tray = useTray();
   const select = useEvent(() => {
     selectPullRequestFilterFacet(facet.value);
-    if (!wide) {
-      tray.setView(FILTER_DETAIL_VIEW);
-    }
+    tray.setView(FILTER_DETAIL_VIEW);
   });
   return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={select}
-      style={[styles.facetRow, selected && styles.facetRowSelected]}
-    >
+    <Pressable accessibilityRole="button" onPress={select} style={styles.facetRow}>
       <FacetIcon facet={facet} />
       <View style={styles.facetBody}>
         <Text style={styles.optionTitle}>{facet.label}</Text>
-        {wide ? null : <Text style={styles.optionDetail}>{facet.detail}</Text>}
+        <Text style={styles.optionDetail}>{facet.detail}</Text>
       </View>
       <FacetBadge draft={draft} facet={facet.value} />
       <Ionicons color={colors.textDim} name="chevron-forward" size={iconSize.inline} />

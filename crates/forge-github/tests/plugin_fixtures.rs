@@ -49,6 +49,7 @@ struct FakeGithub {
     tokens: HashMap<String, (String, Option<String>)>,
     /// `(api tag, bearer token)` of every request.
     seen: Vec<(String, String)>,
+    search_queries: Vec<String>,
     submitted_reviews: usize,
 }
 
@@ -107,6 +108,13 @@ fn respond(
             let query: Value = serde_json::from_slice(body).expect("graphql body");
             let text = query["query"].as_str().unwrap_or_default();
             if text.contains("search(") {
+                state.search_queries.push(
+                    query
+                        .pointer("/variables/q")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                );
                 json(json!({"data": {"search": {
                     "pageInfo": {"hasNextPage": false, "endCursor": null},
                     "nodes": [{
@@ -761,4 +769,48 @@ async fn a_full_run_carries_no_token_in_any_frame_but_the_pasted_start() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn involved_search_scopes_the_real_plugin_request_to_the_account() {
+    let mut harness = Harness::start(Some("2.96.0"), no_env(), Duration::from_mins(1)).await;
+    fs::write(harness.gh_state().join("logins"), "hubot\n").expect("logins");
+    fs::write(harness.gh_state().join("tokens/hubot"), GH_TOKEN).expect("token");
+    harness
+        .call(
+            "auth.start",
+            json!({"methodId": "gh-existing", "host": "github.com", "login": "hubot", "token": null}),
+        )
+        .await;
+
+    let listed = harness
+        .call(
+            "forge.pullRequests.search",
+            json!({
+                "account": account("hubot"),
+                "query": {
+                    "text": "", "category": "involved",
+                    "repositories": {"include": [], "exclude": []},
+                    "authors": {"include": [], "exclude": []},
+                    "assignees": {"include": [], "exclude": []},
+                    "reviewers": {"include": [], "exclude": []},
+                    "review": {"include": [], "exclude": []},
+                    "states": {"include": ["open"], "exclude": []},
+                    "checks": {"include": [], "exclude": []},
+                    "labels": {"include": [], "exclude": []},
+                    "baseBranches": {"include": [], "exclude": []},
+                    "headBranches": {"include": [], "exclude": []},
+                    "sort": {"field": "updated", "direction": "descending"}
+                },
+                "cursor": null,
+                "limit": 50
+            }),
+        )
+        .await;
+
+    assert_eq!(listed["result"]["rows"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        harness.api.lock().expect("state").search_queries,
+        ["is:pr archived:false involves:\"hubot\" is:open draft:false sort:updated-desc"]
+    );
 }

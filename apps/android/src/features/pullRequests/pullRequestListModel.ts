@@ -1,7 +1,6 @@
 /** Process-owned interaction model for the PR search header and filter tray. */
 import { observable } from "@legendapp/state";
 
-import type { PullRequestListPage } from "../../data/forgePullRequestContract";
 import {
   emptySearchValues,
   type PullRequestSearchFilter,
@@ -45,7 +44,7 @@ function defaultQuery(): PullRequestSearchQuery {
     assignees: emptySearchValues(),
     authors: emptySearchValues(),
     baseBranches: emptySearchValues(),
-    category: "all",
+    category: "involved",
     checks: emptySearchValues(),
     headBranches: emptySearchValues(),
     labels: emptySearchValues(),
@@ -57,8 +56,7 @@ function defaultQuery(): PullRequestSearchQuery {
     text: "",
   };
 }
-
-/** Default search is every open PR across the selected sources. */
+/** Default search is open PRs involving the connected account. */
 export function defaultPullRequestFilter(): PullRequestSearchFilter {
   return { accounts: [], providerIds: [], query: defaultQuery() };
 }
@@ -279,14 +277,4 @@ function copyFilter(filter: PullRequestSearchFilter): PullRequestSearchFilter {
       text: query.text,
     },
   };
-}
-
-/** Catalog bar count: review-requested rows of connected accounts only. */
-export function reviewRequestedCount(page: PullRequestListPage | null): number {
-  return (
-    page?.sections.reduce(
-      (total, section) => total + (section.account.state === "connected" ? section.rows.length : 0),
-      0,
-    ) ?? 0
-  );
 }

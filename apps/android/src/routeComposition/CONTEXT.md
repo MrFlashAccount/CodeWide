@@ -19,6 +19,12 @@ slot content and must not nest another split layout. The discriminated presentat
 pane placement and width; route focus, accessibility, lifetimes, surfaces and data remain with the
 outer owner and its callers.
 
+The Router tree is the only workspace-selection authority. Catalog switching resets the owning
+workspace stack to exactly one catalog root. Route-owned overlays project the primary destination
+below them instead of being classified as a catalog themselves. A transparent modal route owns its
+sheet-shaped surface directly and must not open another native modal. Pull-request Details and
+Changes are canonical sibling URLs; the feature model must not duplicate that tab selection.
+
 On wide Pull request destinations, route composition may add the PR-linked thread as a right sidebar.
 It must mount the ordinary `ActiveWorkspaceConversation` with the same thread identity and workspace
 providers as the Chats route. The PR feature owns only the open/create intent; route composition owns

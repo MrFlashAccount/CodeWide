@@ -6,6 +6,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { parsePullRequestListPage } from "../src/data/forgePullRequestContract";
 import { PullRequestScreenSkeleton } from "../src/features/pullRequestDetail/PullRequestScreenSkeleton";
+import { ActivitySection } from "../src/features/pullRequestDetail/overview/ActivitySection";
 import { DescriptionSection } from "../src/features/pullRequestDetail/overview/DescriptionSection";
 import { PullRequestFilterBar } from "../src/features/pullRequests/list/PullRequestFilterBar";
 import { PullRequestFilterSheet } from "../src/features/pullRequests/list/PullRequestFilterSheet";
@@ -15,6 +16,7 @@ import {
   dismissPullRequestFilters,
   closePullRequestSearch,
   openPullRequestFilters,
+  openPullRequestSearch,
   pullRequestFilterSheetModel,
   pullRequestListModel,
 } from "../src/features/pullRequests/pullRequestListModel";
@@ -51,7 +53,6 @@ it("renders only search, sort and filters above the list", () => {
       filter={defaultPullRequestFilter()}
       onOpenFilters={() => undefined}
       onOpenSearch={() => undefined}
-      onSearch={() => undefined}
       onSort={() => undefined}
     />,
   );
@@ -60,6 +61,51 @@ it("renders only search, sort and filters above the list", () => {
   expect(view.getByRole("button", { name: "Filters" })).toBeVisible();
   expect(view.queryByTestId("pull-request-quick-views")).toBeNull();
   expect(view.queryByTestId("pull-request-active-filters")).toBeNull();
+});
+
+it("opens pull-request search in the shared overlay without the sort action", () => {
+  const page = parsePullRequestListPage(reviewRequestedPage);
+  if (page === null) {
+    throw new Error("The pull-request list fixture is invalid");
+  }
+  const view = render(
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { height: 800, width: 400, x: 0, y: 0 },
+        insets: { bottom: 0, left: 0, right: 0, top: 0 },
+      }}
+    >
+      <PullRequestList
+        accounts={[connectedAccount]}
+        filter={defaultPullRequestFilter()}
+        iconFor={() => null}
+        nowMs={0}
+        onEndReached={() => undefined}
+        onOpen={() => undefined}
+        onOpenFilters={() => undefined}
+        onOpenSearch={openPullRequestSearch}
+        onReconnect={() => undefined}
+        onRetry={() => undefined}
+        onSearch={() => undefined}
+        onSort={() => undefined}
+        pendingFilter={false}
+        providers={[githubProvider]}
+        state={{ refreshing: false, status: "ready", value: page }}
+      />
+    </SafeAreaProvider>,
+  );
+
+  fireEvent.press(view.getByLabelText("Search pull requests"));
+
+  expect(view.getByTestId("pull-request-search-overlay")).toBeOnTheScreen();
+  expect(view.getByLabelText("Back to pull requests")).toBeOnTheScreen();
+  expect(view.getByTestId("pull-request-search-input")).toBeOnTheScreen();
+  expect(view.queryByLabelText("Sort pull requests")).toBeNull();
+  expect(
+    within(view.getByTestId("pull-request-search-overlay")).getByRole("button", {
+      name: "Filters",
+    }),
+  ).toBeOnTheScreen();
 });
 
 it("presents filters in a tray with a full-width primary action", () => {
@@ -147,6 +193,31 @@ it("navigates into a filter facet through the Tray view stack", () => {
     exclude: [],
     include: ["merged"],
   });
+});
+
+it("keeps filter facets in the Tray view stack on fold width", () => {
+  Dimensions.set({ window: { ...originalWindow, height: 800, width: 900 } });
+  openPullRequestFilters();
+  const view = render(
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { height: 800, width: 900, x: 0, y: 0 },
+        insets: { bottom: 0, left: 0, right: 0, top: 0 },
+      }}
+    >
+      <PullRequestFilterSheet
+        accounts={[connectedAccount]}
+        providers={[githubProvider]}
+        repositories={[]}
+      />
+    </SafeAreaProvider>,
+  );
+
+  expect(view.queryByRole("button", { name: "Back" })).toBeNull();
+  fireEvent.press(view.getByRole("button", { name: /State/u }));
+
+  expect(view.getByTestId("pull-request-filter-state-view")).toBeOnTheScreen();
+  expect(view.getByRole("button", { name: "Back" })).toBeOnTheScreen();
 });
 
 it("returns from a filter facet through the Tray view stack", () => {
@@ -266,9 +337,38 @@ it("keeps the published rows visible while a filter refresh is pending", () => {
   expect(view.getByTestId("pull-request-list-pull-backdrop")).toBeOnTheScreen();
 });
 
-it("sends the pull-request description through the shared rich Markdown renderer", () => {
-  const description = "```mermaid\ngraph TD\nA-->B\n```";
+it("sends the pull-request description through the complete bubble Markdown renderer", () => {
+  const description = "| State | Result |\n| --- | --- |\n| Open | Ready |";
   const view = render(<DescriptionSection description={description} />);
 
   expect(view.getByTestId("rich-markdown")).toHaveTextContent(description);
+});
+
+it("renders pull-request activity comment bodies through the complete bubble Markdown renderer", () => {
+  const body = "**Blocking:** use `AbortSignal` before merging.";
+  const view = render(
+    <ActivitySection
+      anchored={new Map()}
+      items={[
+        {
+          author: "reviewer",
+          body,
+          createdAt: "2026-10-24T10:00:00.000Z",
+          id: "comment-1",
+          kind: "comment",
+          line: 12,
+          path: "src/index.ts",
+          reviewThreadId: null,
+          verdictLabel: null,
+        },
+      ]}
+      nowMs={Date.parse("2026-10-24T10:01:00.000Z")}
+      onLoadMore={null}
+      onRun={() => undefined}
+      pending={{}}
+    />,
+  );
+
+  expect(view.getByTestId("pull-request-activity-body-comment-1")).toBeVisible();
+  expect(view.getByTestId("rich-markdown")).toHaveTextContent(body);
 });

@@ -31,10 +31,18 @@ describe("V1 feature gate coverage", () => {
 
     const knip = (await import(new URL("../knip.v1.config.mjs", import.meta.url))).default;
     expect(knip.entry).toEqual(
-      expect.arrayContaining(["app/legacy.tsx", "app/(workspace)/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"]),
+      expect.arrayContaining([
+        "app/legacy.tsx",
+        "app/(workspace)/**/*.{ts,tsx}",
+        "test/**/*.{ts,tsx}",
+      ]),
     );
     expect(knip.project).toEqual(
-      expect.arrayContaining(["app/legacy.tsx", "app/(workspace)/**/*.{ts,tsx}", "src/**/*.{ts,tsx}"]),
+      expect.arrayContaining([
+        "app/legacy.tsx",
+        "app/(workspace)/**/*.{ts,tsx}",
+        "src/**/*.{ts,tsx}",
+      ]),
     );
   });
 

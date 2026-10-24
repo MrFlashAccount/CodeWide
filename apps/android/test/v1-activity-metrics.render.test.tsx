@@ -13,16 +13,34 @@ const footprint = {
 };
 
 it("renders the server count, tokens and price verbatim apart from display formatting", () => {
-  const metrics = parseActivityMetrics({version: 1, total: { count: 58, kinds: ["commandExecution"], outputFootprint: footprint }, ranges: [], commands: {}});
+  const metrics = parseActivityMetrics({
+    version: 1,
+    total: { count: 58, kinds: ["commandExecution"], outputFootprint: footprint },
+    ranges: [],
+    commands: {},
+  });
   if (metrics === null) throw new Error("invalid fixture");
-  const view = render(<TurnActivity expanded={false} label={turnActivityLabel(metrics.total.kinds, true, metrics.total.count)} onToggle={() => undefined} outputFootprint={metrics.total.outputFootprint}>{null}</TurnActivity>);
+  const view = render(
+    <TurnActivity
+      expanded={false}
+      label={turnActivityLabel(metrics.total.kinds, true, metrics.total.count)}
+      onToggle={() => undefined}
+      outputFootprint={metrics.total.outputFootprint}
+    >
+      {null}
+    </TurnActivity>,
+  );
   expect(view.getByText("ran commands · 58")).toBeTruthy();
   expect(view.getByLabelText(/137 tokens.*\$0.125/)).toBeTruthy();
 });
 
 it("updates server figures and hides unknown prices without inventing a price", () => {
   const view = render(<OutputFootprintMetric footprint={footprint} />);
-  view.rerender(<OutputFootprintMetric footprint={{...footprint, estimatedTokens: 901, estimatedInputCostUsd: null}} />);
+  view.rerender(
+    <OutputFootprintMetric
+      footprint={{ ...footprint, estimatedTokens: 901, estimatedInputCostUsd: null }}
+    />,
+  );
   expect(view.getByLabelText("Estimated command output footprint 901 tokens")).toBeTruthy();
   expect(view.queryByText(/\$/)).toBeNull();
   view.rerender(<OutputFootprintMetric footprint={null} />);

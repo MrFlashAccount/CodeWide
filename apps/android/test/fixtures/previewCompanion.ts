@@ -22,9 +22,9 @@ import {
   githubProvider,
   guideState,
   hostLoginFlow,
+  involvedPage,
   onboardingAccounts,
   overview91,
-  reviewRequestedPage,
 } from "./forgeWireFixtures";
 import { createMemoryQueryPersister } from "./queryPersister";
 
@@ -175,9 +175,7 @@ function listAnswer(): Answer {
     return { error: new RpcResponseError(-32_601, "Method not found") };
   }
   return {
-    result: scenario.startsWith("onboarding")
-      ? { ...reviewRequestedPage, sections: [] }
-      : reviewRequestedPage,
+    result: scenario.startsWith("onboarding") ? { ...involvedPage, sections: [] } : involvedPage,
   };
 }
 
@@ -267,7 +265,7 @@ export const previewReady = forgeResources.restored.then(() => {
     forgeResources.queryClient.setQueryData(
       forgeResources.lists.keyOf(params),
       {
-        ...reviewRequestedPage,
+        ...involvedPage,
         fetchedAt: new Date(Date.now() - OFFLINE_SNAPSHOT_AGE_MS).toISOString(),
       },
       { updatedAt: Date.now() - OFFLINE_SNAPSHOT_AGE_MS },

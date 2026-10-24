@@ -16,10 +16,18 @@ const archivedRequest: ThreadSummaryViewRequest = {
 };
 
 it("refreshes the archive only while an archive view requests it", async () => {
-  const rpc = jest.fn(async (_method: string, _params: unknown) => ({ data: [], nextCursor: null }));
+  const rpc = jest.fn(async (_method: string, _params: unknown) => ({
+    data: [],
+    nextCursor: null,
+  }));
   // WHY: RpcClient has a caller-selected generic result. This fixture supplies
   // the validated thread/list wire shape consumed by the real catalog adapter.
-  const session = { rpc: (method: string, params: unknown) => method === "companion/thread/pins/list" ? Promise.resolve({ archivedThreadIds: [], cursor: 0, threadIds: [] }) : rpc(method, params) } as unknown as RpcClient;
+  const session = {
+    rpc: (method: string, params: unknown) =>
+      method === "companion/thread/pins/list"
+        ? Promise.resolve({ archivedThreadIds: [], cursor: 0, threadIds: [] })
+        : rpc(method, params),
+  } as unknown as RpcClient;
   let requests: readonly ThreadSummaryViewRequest[] = [archivedRequest];
   let loadCatalog: ((request: ThreadSummaryViewRequest) => Promise<boolean>) | undefined;
   const release = jest.fn();
@@ -54,7 +62,8 @@ it("refreshes the archive only while an archive view requests it", async () => {
 
   await loadCatalog(archivedRequest);
   const archiveReads = () =>
-    rpc.mock.calls.filter(([, params]) => (params as { archived?: boolean }).archived === true).length;
+    rpc.mock.calls.filter(([, params]) => (params as { archived?: boolean }).archived === true)
+      .length;
   expect(archiveReads()).toBe(1);
 
   await runtime.refreshThreadCatalog("server");
@@ -72,15 +81,24 @@ it("reads a root's subagents on every request and shares a concurrent read", asy
   // WHY: RpcClient has a caller-selected generic result; this fixture answers only the
   // descendant-index read with its validated wire shape.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const session = { rpc: async (method: string) => (method === "companion/threadSubagents/read" ? reads() : { data: [], nextCursor: null }) } as unknown as RpcClient;
+  const session = {
+    rpc: async (method: string) =>
+      method === "companion/threadSubagents/read" ? reads() : { data: [], nextCursor: null },
+  } as unknown as RpcClient;
   const replaced: string[][] = [];
   // WHY: The catalog runtime consumes this established database port, while this behavior
   // test supplies only the subagent-catalog method it exercises.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const summaries = {
-    replaceSubagentCatalog: jest.fn(async (_connectionId: string, _root: string, threads: Array<{ thread: { id: string; status: { type: string } } }>) => {
-      replaced.push(threads.map(({ thread }) => `${thread.id}:${thread.status.type}`));
-    }),
+    replaceSubagentCatalog: jest.fn(
+      async (
+        _connectionId: string,
+        _root: string,
+        threads: Array<{ thread: { id: string; status: { type: string } } }>,
+      ) => {
+        replaced.push(threads.map(({ thread }) => `${thread.id}:${thread.status.type}`));
+      },
+    ),
   } as unknown as ThreadSummaryDatabase;
   const runtime = createCatalogRuntime({
     desiredThreadId: () => undefined,
@@ -92,13 +110,24 @@ it("reads a root's subagents on every request and shares a concurrent read", asy
     setListStreamVisible: async () => undefined,
   });
   const row = {
-    agentNickname: null, agentRole: "Explore", archived: false, cliVersion: "claude", createdAt: 1,
-    cwd: "/repo", id: "root:agent:a1", modelProvider: "anthropic", parentThreadId: "root",
-    source: "appServer", updatedAt: 2,
+    agentNickname: null,
+    agentRole: "Explore",
+    archived: false,
+    cliVersion: "claude",
+    createdAt: 1,
+    cwd: "/repo",
+    id: "root:agent:a1",
+    modelProvider: "anthropic",
+    parentThreadId: "root",
+    source: "appServer",
+    updatedAt: 2,
   };
 
   indexed.threads = [{ ...row, running: true }];
-  await Promise.all([runtime.refreshSubagents("server", "root"), runtime.refreshSubagents("server", "root")]);
+  await Promise.all([
+    runtime.refreshSubagents("server", "root"),
+    runtime.refreshSubagents("server", "root"),
+  ]);
   expect(reads).toHaveBeenCalledTimes(1);
   // A finished agent must reach the catalog at once, not after a freshness window.
   indexed.threads = [{ ...row, running: false }];

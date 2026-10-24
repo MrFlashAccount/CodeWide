@@ -5,7 +5,7 @@ import { workspaceRuntime } from "../../../src/data/workspace-runtime";
 import { workspaceFeatures as features } from "../../../src/features/workspace/createWorkspaceFeatures";
 import { ALL_SERVER_SCOPE } from "../../../src/services/servers/serverScope";
 import { useProjectWorkspace } from "../../../src/features/projects/projectWorkspace";
-import { SidebarProjectsSheet } from "../../../src/features/projects/SidebarProjectViews";
+import { SidebarProjectsRouteSurface } from "../../../src/features/projects/SidebarProjectsRouteSurface";
 import { useWorkspaceRouteResources } from "../../../src/services/workspace/workspaceRouteResources";
 
 /** Composes project management while each directory browser has its own route. */
@@ -28,7 +28,7 @@ export default function V1ProjectsRoute(): React.JSX.Element {
     false,
   );
   return (
-    <SidebarProjectsSheet
+    <SidebarProjectsRouteSurface
       errors={project.sidebarProjectErrors}
       initialConnectionId={
         resources.list.servers.find((server) => server.id === connectionId)?.id ?? null
@@ -47,7 +47,6 @@ export default function V1ProjectsRoute(): React.JSX.Element {
       onToggle={project.toggleSidebarProject}
       projects={project.availableSidebarProjects}
       servers={project.sidebarServers}
-      visible={visible}
     />
   );
 }

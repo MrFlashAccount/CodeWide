@@ -32,6 +32,7 @@ import {
   WorkspacePaneControllerContext,
   type WorkspacePaneController,
 } from "./workspacePaneController";
+import { projectWorkspaceRoutes } from "./workspaceRouteProjection";
 
 type PaneLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["layout"]>>[0];
 type ScreenLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["screenLayout"]>>[0];
@@ -44,10 +45,16 @@ export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
   const { desktop, runtime, viewportWidth } = useWorkspaceRouteResources();
   const [detailExpanded, setDetailExpanded] = useState(false);
   const paneController = useConstant<WorkspacePaneController>(() => ({ setDetailExpanded }));
-  const focusedRoute = props.state.routes[props.state.index];
-  const threadsCatalogFocused = focusedRoute?.name === "(lists)";
-  const pullRequestsCatalogFocused = focusedRoute?.name === "pulls/index";
-  const pullRequestsFocused = isPullRequestsRoute(focusedRoute?.name);
+  const routeProjection = projectWorkspaceRoutes(props.state.routes, props.state.index);
+  const threadsCatalogFocused =
+    !routeProjection.overlayFocused &&
+    routeProjection.primary.kind === "catalog" &&
+    routeProjection.primary.mode === "threads";
+  const pullRequestsCatalogFocused =
+    !routeProjection.overlayFocused &&
+    routeProjection.primary.kind === "catalog" &&
+    routeProjection.primary.mode === "pullRequests";
+  const pullRequestsFocused = routeProjection.primary.mode === "pullRequests";
   const catalogFocused = threadsCatalogFocused || pullRequestsCatalogFocused;
   const noServer = isNoServerWorkspace(runtime);
   const welcomeVisible = isWelcomeVisible(threadsCatalogFocused, noServer);
@@ -55,7 +62,8 @@ export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
     desktop,
     detailExpanded,
     noServer,
-    routeName: focusedRoute?.name,
+    overlayFocused: routeProjection.overlayFocused,
+    primary: routeProjection.primary,
   });
   const { content: catalogContent, status: catalogStatus } = catalogPresentation(
     props,
@@ -74,6 +82,12 @@ export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
   const onCatalogLayout = useEvent((event: LayoutChangeEvent): void => {
     const { height, width } = event.nativeEvent.layout;
     workspaceCatalogDiagnostics.record({ height, surface: "pane", type: "layout", width });
+  });
+  const switchCatalog = useEvent((mode: CatalogMode): void => {
+    props.navigation.reset({
+      index: 0,
+      routes: [{ name: mode === "pullRequests" ? "pulls/index" : "(lists)" }],
+    });
   });
   useEffect(() => {
     workspaceCatalogDiagnostics.record({
@@ -109,6 +123,7 @@ export function WorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
         <FloatingCatalogModeBar
           desktop={desktop}
           mode={catalogMode}
+          onSelect={switchCatalog}
           viewportWidth={viewportWidth}
         />
       }
@@ -182,41 +197,33 @@ function visibleCatalogMode({
   desktop,
   detailExpanded,
   noServer,
-  routeName,
+  overlayFocused,
+  primary,
 }: {
   readonly desktop: boolean;
   readonly detailExpanded: boolean;
   readonly noServer: boolean;
-  readonly routeName: string | undefined;
+  readonly overlayFocused: boolean;
+  readonly primary: ReturnType<typeof projectWorkspaceRoutes>["primary"];
 }): CatalogMode | null {
-  if (detailExpanded) {
+  if (detailExpanded || overlayFocused) {
     return null;
   }
-  if (routeName === "pulls/index" || (desktop && isPullRequestsRoute(routeName))) {
+  if (primary.mode === "pullRequests") {
     return "pullRequests";
   }
-  return threadsCatalogVisible({ desktop, noServer, routeName }) ? "threads" : null;
-}
-
-function threadsCatalogVisible({
-  desktop,
-  noServer,
-  routeName,
-}: {
-  readonly desktop: boolean;
-  readonly noServer: boolean;
-  readonly routeName: string | undefined;
-}): boolean {
-  return !noServer && !isPullRequestsRoute(routeName) && (routeName === "(lists)" || desktop);
+  return !noServer && (primary.kind === "catalog" || desktop) ? "threads" : null;
 }
 
 function FloatingCatalogModeBar({
   desktop,
   mode,
+  onSelect,
   viewportWidth,
 }: {
   readonly desktop: boolean;
   readonly mode: CatalogMode | null;
+  readonly onSelect: (mode: CatalogMode) => void;
   readonly viewportWidth: number;
 }): React.JSX.Element | null {
   if (mode === null) {
@@ -230,7 +237,7 @@ function FloatingCatalogModeBar({
       style={[styles.floatingModeBar, { width: surfaceWidth - horizontalInsets }]}
       testID="floating-catalog-mode-bar"
     >
-      <CatalogModeBarHost mode={mode} />
+      <CatalogModeBarHost mode={mode} onSelect={onSelect} />
     </View>
   );
 }
@@ -248,10 +255,6 @@ function catalogPresentation(props: PaneLayoutProps, pullRequestsFocused: boolea
     return { content: null, status: "missing-descriptor" as const };
   }
   return { content: descriptor.render(), status: "present" as const };
-}
-
-function isPullRequestsRoute(routeName: string | undefined): boolean {
-  return routeName === "pulls" || routeName?.startsWith("pulls/") === true;
 }
 
 function workspaceDestinationSurfaceStyle(desktop: boolean, detailExpanded: boolean) {

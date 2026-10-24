@@ -79,17 +79,15 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
         onRun={(action) => {
           run(action, null);
         }}
-        overflow={state.tab === "overview" ? [] : data.slots.overflow}
+        overflow={props.tab === "overview" ? [] : data.slots.overflow}
         overview={overview}
       />
       <PullRequestTabs
         draftCount={data.draftCount}
-        onSelect={(next) => {
-          model.tab.set(next);
-        }}
-        tab={state.tab}
+        onSelect={props.navigation.openTab}
+        tab={props.tab}
       />
-      {state.tab === "overview" ? (
+      {props.tab === "overview" ? (
         <OverviewPane
           data={data}
           extra={extra}
@@ -136,7 +134,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
       )}
       {props.navigation.chatVisible ? null : (
         <LinkedChatButton
-          aboveReviewDock={state.tab === "changes"}
+          aboveReviewDock={props.tab === "changes"}
           disabled={false}
           label={
             data.agentThread === null

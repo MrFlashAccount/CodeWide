@@ -12,10 +12,13 @@ let mockTransaction = Promise.resolve();
 jest.mock("react-native", () => {
   const runtime = jest.requireActual("react-native");
   runtime.NativeModules.CodeWideNative = {
-      attachSocket: jest.fn(async () => undefined), acknowledgeProjection: jest.fn(),
-      readCommittedFrames: jest.fn(), engineRpc: jest.fn(),
-      engineListCommands: jest.fn(async () => JSON.stringify({ ok: true, result: [] })),
-      addListener: jest.fn(), removeListeners: jest.fn(),
+    attachSocket: jest.fn(async () => undefined),
+    acknowledgeProjection: jest.fn(),
+    readCommittedFrames: jest.fn(),
+    engineRpc: jest.fn(),
+    engineListCommands: jest.fn(async () => JSON.stringify({ ok: true, result: [] })),
+    addListener: jest.fn(),
+    removeListeners: jest.fn(),
   };
   return runtime;
 });
@@ -61,33 +64,68 @@ import { createV1TestThread } from "./fixtures/v1Thread";
 
 const request = { connectionId: "server", threadId: "thread", anchorTurnId: null };
 const answer: Turn = {
-  id: "turn", status: "inProgress", startedAt: 1, completedAt: null, durationMs: null,
-  itemsView: "full", error: null,
-  items: [{ type: "agentMessage", id: "answer", text: "Recovered", phase: null,
-    delivery: null, questions: null, memoryCitation: null }],
+  id: "turn",
+  status: "inProgress",
+  startedAt: 1,
+  completedAt: null,
+  durationMs: null,
+  itemsView: "full",
+  error: null,
+  items: [
+    {
+      type: "agentMessage",
+      id: "answer",
+      text: "Recovered",
+      phase: null,
+      delivery: null,
+      questions: null,
+      memoryCitation: null,
+    },
+  ],
 };
 
 function wireSnapshot(throughCursor: number) {
-  return { readModelVersion: 3, throughCursor,
-    thread: createV1TestThread("thread", null, 1, []), activeTurn: answer,
-    history: { kind: "reset", turns: [], headTurnId: null, hasMore: false, olderCursor: null } };
+  return {
+    readModelVersion: 3,
+    throughCursor,
+    thread: createV1TestThread("thread", null, 1, []),
+    activeTurn: answer,
+    history: { kind: "reset", turns: [], headTurnId: null, hasMore: false, olderCursor: null },
+  };
 }
 
 function Conversation({ details }: { details: ReturnType<typeof createThreadDetailDatabase> }) {
   const window = useThreadChatWindow(details, request, false);
-  const projection = window === null ? null : projectThreadChatWindow(details, window, "server", "thread", false);
-  return <View>{projection?.timeline.flatMap((entry) => entry.kind === "turn"
-    ? entry.turn.items.flatMap((item) => item.type === "agentMessage"
-      ? [<Text key={item.id}>{item.text}</Text>] : []) : [])}</View>;
+  const projection =
+    window === null ? null : projectThreadChatWindow(details, window, "server", "thread", false);
+  return (
+    <View>
+      {projection?.timeline.flatMap((entry) =>
+        entry.kind === "turn"
+          ? entry.turn.items.flatMap((item) =>
+              item.type === "agentMessage" ? [<Text key={item.id}>{item.text}</Text>] : [],
+            )
+          : [],
+      )}
+    </View>
+  );
 }
 
 async function setup(
   resident: boolean,
-  declareInterest: (connectionId: string, threadIds: readonly string[]) => Promise<void> = async () => undefined,
+  declareInterest: (
+    connectionId: string,
+    threadIds: readonly string[],
+  ) => Promise<void> = async () => undefined,
 ) {
   const details = createThreadDetailDatabase();
   await details.prepare();
-  await details.importThreadSnapshot("server", createV1TestThread("thread", null, 1, resident ? [answer] : []), "initial", null);
+  await details.importThreadSnapshot(
+    "server",
+    createV1TestThread("thread", null, 1, resident ? [answer] : []),
+    "initial",
+    null,
+  );
   await details.windowResource(request).ready$.peek();
   const model = createConnectionStateModel();
   model.reconcileProfiles([{ connectionId: "server", id: "server", enabled: true }]);
@@ -97,50 +135,118 @@ async function setup(
     projection: details,
   });
   const sync = createThreadSyncRuntime({
-    clearInvalidationArchived() {}, declareInterest,
-    getDetails: () => details, getSession: () => session,
-    getSummaries: () => null, loadTurnControls: async () => { throw new Error("Not needed"); },
-    readInvalidationArchived: () => undefined, refreshSubagents: async () => undefined,
+    clearInvalidationArchived() {},
+    declareInterest,
+    getDetails: () => details,
+    getSession: () => session,
+    getSummaries: () => null,
+    loadTurnControls: async () => {
+      throw new Error("Not needed");
+    },
+    readInvalidationArchived: () => undefined,
+    refreshSubagents: async () => undefined,
     refreshThreadCatalog: async () => undefined,
     rpcAfterAttach: (rpc, method, params) => rpc.rpc(method, params),
-    transferAccess: async () => { throw new Error("Not needed"); },
+    transferAccess: async () => {
+      throw new Error("Not needed");
+    },
   });
   details.setRemoteLoader(createThreadSyncRemoteLoader(details, sync));
   await sync.observeThread("server", "thread");
   const reads = jest.spyOn(sync, "readThread");
   const refreshAgentProviders = jest.fn(async (_connectionId: string) => undefined);
   const reconnect = createThreadSyncReconnect({
-    catalog: { refreshVisibleCatalog: async () => undefined }, details,
+    catalog: { refreshVisibleCatalog: async () => undefined },
+    details,
     readConnection: () => model.rows$.peek()[0],
-    refreshAccountRateLimits: async () => undefined, refreshAgentProviders, sync,
+    refreshAccountRateLimits: async () => undefined,
+    refreshAgentProviders,
+    sync,
   });
   const subscription = model.subscribeChanges(reconnect.accept);
-  const state = (rpcAvailable: boolean, epoch: number, status = "unvalidated", projectionState = rpcAvailable ? "live" : "connecting") => session.receive({
-    contractVersion: 2, connectionId: "server", type: "state",
-    data: JSON.stringify({ state: projectionState, rpcAvailable,
-      path: { network: { epoch, status }, companion: rpcAvailable ? "connected" : "backoff",
-        appServer: rpcAvailable ? "live" : "unknown" } }),
-  });
+  const state = (
+    rpcAvailable: boolean,
+    epoch: number,
+    status = "unvalidated",
+    projectionState = rpcAvailable ? "live" : "connecting",
+  ) =>
+    session.receive({
+      contractVersion: 2,
+      connectionId: "server",
+      type: "state",
+      data: JSON.stringify({
+        state: projectionState,
+        rpcAvailable,
+        path: {
+          network: { epoch, status },
+          companion: rpcAvailable ? "connected" : "backoff",
+          appServer: rpcAvailable ? "live" : "unknown",
+        },
+      }),
+    });
   const event = (cursor: number, delta: string) => {
-    const payload = { method: "item/agentMessage/delta", params: { threadId: "thread", turnId: "turn", itemId: "answer", delta },
-      codewideThreadPatch: { version: 1, threadId: "thread", operation: { kind: "itemTextDelta", itemType: "agentMessage", turnId: "turn", itemId: "answer", delta } } };
-    mockNative.readCommittedFrames.mockResolvedValueOnce({ baseCursor: cursor - 1, headCursor: cursor,
-      frames: [{ cursor, payload: JSON.stringify({ type: "event", cursor, payload }) }] });
-    session.receive({ contractVersion: 2, connectionId: "server", type: "journalAdvanced", projectionCursor: cursor, data: "{}" });
+    const payload = {
+      method: "item/agentMessage/delta",
+      params: { threadId: "thread", turnId: "turn", itemId: "answer", delta },
+      codewideThreadPatch: {
+        version: 1,
+        threadId: "thread",
+        operation: {
+          kind: "itemTextDelta",
+          itemType: "agentMessage",
+          turnId: "turn",
+          itemId: "answer",
+          delta,
+        },
+      },
+    };
+    mockNative.readCommittedFrames.mockResolvedValueOnce({
+      baseCursor: cursor - 1,
+      headCursor: cursor,
+      frames: [{ cursor, payload: JSON.stringify({ type: "event", cursor, payload }) }],
+    });
+    session.receive({
+      contractVersion: 2,
+      connectionId: "server",
+      type: "journalAdvanced",
+      projectionCursor: cursor,
+      data: "{}",
+    });
   };
-  return { details, model, sync, reads, refreshAgentProviders, state, event, async close() {
-    subscription.unsubscribe(); reconnect.close(); session.stop(); model.close(); await details.close();
-  } };
+  return {
+    details,
+    model,
+    sync,
+    reads,
+    refreshAgentProviders,
+    state,
+    event,
+    async close() {
+      subscription.unsubscribe();
+      reconnect.close();
+      session.stop();
+      model.close();
+      await details.close();
+    },
+  };
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockSqlite = new DatabaseSync(":memory:");
   mockTransaction = Promise.resolve();
-  mockNative.engineRpc.mockImplementation(async (_id, method) => JSON.stringify({ ok: true,
-    result: method === "companion/thread/sync" ? wireSnapshot(1) : { data: [], nextCursor: null } }));
+  mockNative.engineRpc.mockImplementation(async (_id, method) =>
+    JSON.stringify({
+      ok: true,
+      result: method === "companion/thread/sync" ? wireSnapshot(1) : { data: [], nextCursor: null },
+    }),
+  );
 });
-afterEach(() => { cleanup(); mockSqlite.close(); jest.useRealTimers(); });
+afterEach(() => {
+  cleanup();
+  mockSqlite.close();
+  jest.useRealTimers();
+});
 
 it("declares an interest set rejected before the engine existed ahead of the repair thread sync", async () => {
   const order: string[] = [];
@@ -151,17 +257,24 @@ it("declares an interest set rejected before the engine existed ahead of the rep
   });
   mockNative.engineRpc.mockImplementation(async (_id, method) => {
     order.push(method);
-    return JSON.stringify({ ok: true, result: method === "companion/thread/sync" ? wireSnapshot(1) : { data: [], nextCursor: null } });
+    return JSON.stringify({
+      ok: true,
+      result: method === "companion/thread/sync" ? wireSnapshot(1) : { data: [], nextCursor: null },
+    });
   });
   test.sync.interest.update("server", "thread", true);
-  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
   expect(test.sync.interest.threadIds("server")).toEqual(["thread"]);
   engineRunning = true;
   // The reconnect and foreground repair path: an authoritative read without a window.
   await test.sync.readThread("server", "thread", undefined, true);
   // The rejected declaration, its retry, then the sync that the retry fences.
   expect(order.slice(0, order.indexOf("companion/thread/sync") + 1)).toEqual([
-    "interest:thread", "interest:thread", "companion/thread/sync",
+    "interest:thread",
+    "interest:thread",
+    "companion/thread/sync",
   ]);
   await test.close();
 });
@@ -171,15 +284,23 @@ it("repairs an incoming frame with Companion v3, publishes text, ACKs only after
   const view = render(<Conversation details={test.details} />);
   const repair = Promise.withResolvers<string>();
   mockNative.engineRpc.mockReturnValueOnce(repair.promise);
-  await act(async () => { test.event(1, "already in snapshot"); });
+  await act(async () => {
+    test.event(1, "already in snapshot");
+  });
   expect(mockNative.acknowledgeProjection).not.toHaveBeenCalled();
   expect(view.queryByText("Recovered")).toBeNull();
-  await act(async () => { repair.resolve(JSON.stringify({ ok: true, result: wireSnapshot(1) })); });
+  await act(async () => {
+    repair.resolve(JSON.stringify({ ok: true, result: wireSnapshot(1) }));
+  });
   await waitFor(() => expect(view.getByText("Recovered")).toBeVisible());
   await waitFor(() => expect(mockNative.acknowledgeProjection).toHaveBeenCalledWith("server", 1));
-  await act(async () => { test.event(2, " incoming"); });
+  await act(async () => {
+    test.event(2, " incoming");
+  });
   await waitFor(() => expect(view.getByText("Recovered incoming")).toBeVisible());
-  expect(test.details.getThread("server", "thread")?.turns[0]?.items[0]).toMatchObject({ text: "Recovered incoming" });
+  expect(test.details.getThread("server", "thread")?.turns[0]?.items[0]).toMatchObject({
+    text: "Recovered incoming",
+  });
   view.unmount();
   const reopened = render(<Conversation details={test.details} />);
   await waitFor(() => expect(reopened.getByText("Recovered incoming")).toBeVisible());
@@ -201,7 +322,9 @@ it("does not supersede a healthy history read when projection status changes but
   }
   response.resolve(JSON.stringify({ ok: true, result: wireSnapshot(1) }));
   await expect(pending).resolves.toBeDefined();
-  expect(test.details.getThread("server", "thread")?.turns[0]?.items[0]).toMatchObject({ text: "Recovered" });
+  expect(test.details.getThread("server", "thread")?.turns[0]?.items[0]).toMatchObject({
+    text: "Recovered",
+  });
   await jest.advanceTimersByTimeAsync(1000);
   expect(test.reads).toHaveBeenCalledTimes(2);
   await test.close();
@@ -211,8 +334,12 @@ it("coalesces repeated capabilities and a real RPC loss without dropping the pen
   jest.useFakeTimers();
   const test = await setup(true);
   const view = render(<Conversation details={test.details} />);
-  await act(async () => { test.state(true, 1); });
-  await act(async () => { await jest.advanceTimersByTimeAsync(1000); });
+  await act(async () => {
+    test.state(true, 1);
+  });
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(1000);
+  });
   expect(test.reads).toHaveBeenCalledTimes(1);
   expect(test.reads).toHaveBeenLastCalledWith("server", "thread", undefined, true);
   // The provider list (sign-ins, limits, pool owner) is read with every recovery.
@@ -231,10 +358,14 @@ it("coalesces repeated capabilities and a real RPC loss without dropping the pen
     old.resolve(JSON.stringify({ ok: true, result: wireSnapshot(1) }));
     await obsolete;
   });
-  await act(async () => { await jest.advanceTimersByTimeAsync(999); });
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(999);
+  });
   expect(test.reads).toHaveBeenCalledTimes(2);
   expect(view.getByText("Recovered delivered")).toBeVisible();
-  await act(async () => { await jest.advanceTimersByTimeAsync(1); });
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(1);
+  });
   expect(test.reads).toHaveBeenCalledTimes(3);
   expect(test.reads).toHaveBeenLastCalledWith("server", "thread", undefined, true);
   expect(mockNative.acknowledgeProjection).toHaveBeenCalledWith("server", 2);

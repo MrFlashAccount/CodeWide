@@ -258,6 +258,7 @@ pub struct ForgePrRef {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum PullRequestCategory {
+    Involved,
     ReviewRequested,
     Authored,
     Assigned,
@@ -876,6 +877,14 @@ mod tests {
             assert_eq!(serde_json::to_value(parsed).expect("encodes"), value);
         }
         assert!(serde_json::from_value::<CheckSummary>(json!({"state": "unavailable"})).is_err());
+    }
+
+    #[test]
+    fn involved_pull_request_category_round_trips() {
+        let wire = json!("involved");
+        let category = serde_json::from_value::<PullRequestCategory>(wire.clone()).expect("parses");
+        assert_eq!(category, PullRequestCategory::Involved);
+        assert_eq!(serde_json::to_value(category).expect("encodes"), wire);
     }
 
     #[test]

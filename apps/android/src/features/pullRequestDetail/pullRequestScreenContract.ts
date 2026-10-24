@@ -6,6 +6,7 @@ import type { ReviewResources } from "../../data/reviewResources";
 import type { ReviewTargetCapabilities } from "../review/reviewTargetCapabilities";
 import type { LinkedThreadDescription } from "./linkedThreadDescription";
 import type { PullRequestDetailWorkspaceCapabilities } from "./workspaceCapabilities";
+import type { PullRequestTab } from "./pullRequestScreenModel";
 
 /** Route intents the PR screen raises; route composition owns navigation. */
 type PullRequestScreenNavigation = {
@@ -15,6 +16,7 @@ type PullRequestScreenNavigation = {
   readonly chatVisible: boolean;
   readonly closeChat: () => void;
   readonly openPullRequestFullscreen: () => void;
+  readonly openTab: (tab: PullRequestTab) => void;
   readonly openThread: (threadId: ThreadId) => void;
   readonly pullRequestFullscreen: boolean;
 };
@@ -30,5 +32,6 @@ export type PullRequestScreenProps = {
   readonly pullRequest: PullRequestKey;
   readonly review: Pick<ReviewResources, "drafts" | "guide">;
   readonly reviewCapabilities: ReviewTargetCapabilities;
+  readonly tab: PullRequestTab;
   readonly tablet: boolean;
 };

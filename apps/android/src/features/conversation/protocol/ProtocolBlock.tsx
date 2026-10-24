@@ -4,9 +4,9 @@ import type { RenderBlock } from "@codewide/renderers";
 import { useContext } from "react";
 import { View } from "react-native";
 import type { ContentReviewTarget } from "../../../rendering/content-review";
+import { CompleteMarkdown } from "../../../rendering/CompleteMarkdown";
 import { reasoningActivityTitle } from "../../../rendering/reasoning-title";
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
-import { CompleteAgentMarkdown } from "../content/AgentResponseMarkdown";
 import { LargeContentControls } from "../content/FullContentViewer";
 import { ActiveToolCallContext } from "../turns/turnContexts";
 import { UserMessageContent } from "../turns/UserMessageContent";
@@ -60,7 +60,7 @@ export function ProtocolBlock({
     return (
       <View style={styles.agentMessage}>
         <SearchMessage itemId={block.raw.id}>
-          <CompleteAgentMarkdown
+          <CompleteMarkdown
             reviewTarget={reviewTarget}
             source={block.body ?? ""}
             streamKey={block.key}

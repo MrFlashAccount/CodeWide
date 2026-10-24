@@ -76,7 +76,7 @@ describe("pull-request filter draft", () => {
     expect(state.status).toBe("open");
     if (state.status === "open") {
       expect(activePullRequestFilterCount(state.draft)).toBe(0);
-      expect(state.draft.query.category).toBe("all");
+      expect(state.draft.query.category).toBe("involved");
       expect(state.draft.query.text).toBe("is:team");
       expect(state.draft.query.sort).toStrictEqual({ direction: "ascending", field: "created" });
     }

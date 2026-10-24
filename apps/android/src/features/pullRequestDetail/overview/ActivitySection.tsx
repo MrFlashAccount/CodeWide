@@ -2,14 +2,12 @@ import { View } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type { ActivityItem } from "../../../data/forgePullRequestContract";
+import { CompleteMarkdown } from "../../../rendering/CompleteMarkdown";
 import { compactAge } from "../../../ui/relativeAge";
 import { AppText as Text } from "../../../ui/Typography";
 import { CatalogActionButton } from "../actions/CatalogActionButton";
 import { CardNote } from "./CardHeader";
 import { overviewStyles as styles } from "./overview.styles";
-
-/** Activity excerpts show two lines (N-01); the rest stays on the forge. */
-const ACTIVITY_EXCERPT_LINES = 2;
 
 /** `mikhail-p commented on plugin.rs:214`; the age sits beside it so truncation never hides it. */
 function activityHeadline(item: ActivityItem): string {
@@ -20,7 +18,8 @@ function activityHeadline(item: ActivityItem): string {
 }
 
 /**
- * Recent forge activity as untrusted text: author, location, two-line excerpt.
+ * Recent forge activity: metadata stays plain while the untrusted body uses the
+ * same safe complete-document renderer as conversation responses.
  * Actions anchored to a review thread sit in that item's header.
  */
 export function ActivitySection({
@@ -98,9 +97,9 @@ function ActivityRow({
         ))}
       </View>
       {item.body.length === 0 ? null : (
-        <Text ellipsizeMode="tail" numberOfLines={ACTIVITY_EXCERPT_LINES} style={styles.body}>
-          {item.body}
-        </Text>
+        <View style={styles.markdownLine} testID={`pull-request-activity-body-${item.id}`}>
+          <CompleteMarkdown source={item.body} />
+        </View>
       )}
     </View>
   );

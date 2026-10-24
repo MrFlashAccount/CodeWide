@@ -2,7 +2,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ComposerSuggestions } from "../src/features/composer/input/composer-suggestions";
 import type { ComposerMention } from "../src/features/composer/input/composer-mentions";
 
-const item: ComposerMention = { kind: "skill", id: "skill", label: "Skill", insertText: "$skill", name: "skill", path: "/skills/skill", url: "codewide-skill://%2Fskills%2Fskill", description: "", group: "", plugin: null };
+const item: ComposerMention = {
+  kind: "skill",
+  id: "skill",
+  label: "Skill",
+  insertText: "$skill",
+  name: "skill",
+  path: "/skills/skill",
+  url: "codewide-skill://%2Fskills%2Fskill",
+  description: "",
+  group: "",
+  plugin: null,
+};
 
 describe("composer suggestion search lifetime", () => {
   afterEach(() => vi.useRealTimers());
@@ -28,13 +39,25 @@ describe("composer suggestion search lifetime", () => {
     await vi.runAllTimersAsync();
     const pending = Promise.withResolvers<readonly ComposerMention[]>();
     model.search({ indicator: "/", text: "sk" }, () => pending.promise);
-    expect(model.state$.get().value).toEqual({ status: "loading", query: { indicator: "/", text: "sk" }, items: [item] });
+    expect(model.state$.get().value).toEqual({
+      status: "loading",
+      query: { indicator: "/", text: "sk" },
+      items: [item],
+    });
     await vi.runAllTimersAsync();
     model.search({ indicator: "@", text: "" }, async () => []);
-    expect(model.state$.get().value).toEqual({ status: "loading", query: { indicator: "@", text: "" }, items: [] });
+    expect(model.state$.get().value).toEqual({
+      status: "loading",
+      query: { indicator: "@", text: "" },
+      items: [],
+    });
     pending.resolve([item]);
     await vi.runAllTimersAsync();
-    expect(model.state$.get().value).toEqual({ status: "ready", query: { indicator: "@", text: "" }, items: [] });
+    expect(model.state$.get().value).toEqual({
+      status: "ready",
+      query: { indicator: "@", text: "" },
+      items: [],
+    });
   });
 
   it("publishes the latest query even if an earlier search finishes afterwards", async () => {
@@ -47,7 +70,11 @@ describe("composer suggestion search lifetime", () => {
     await vi.runAllTimersAsync();
     older.resolve([]);
     await older.promise;
-    expect(model.state$.get().value).toEqual({ status: "ready", query: { indicator: "/", text: "new" }, items: [item] });
+    expect(model.state$.get().value).toEqual({
+      status: "ready",
+      query: { indicator: "/", text: "new" },
+      items: [item],
+    });
   });
 
   it("does not reopen after selection, dismissal, or input unmount", async () => {
@@ -71,7 +98,9 @@ describe("composer suggestion search lifetime", () => {
     await vi.runAllTimersAsync();
     expect(search).toHaveBeenCalledTimes(1);
     expect(search).toHaveBeenCalledWith({ indicator: "/", text: "sk" });
-    model.search({ indicator: "@", text: "failed" }, async () => { throw new Error("unavailable"); });
+    model.search({ indicator: "@", text: "failed" }, async () => {
+      throw new Error("unavailable");
+    });
     await vi.runAllTimersAsync();
     expect(model.state$.get().value.status).toBe("error");
     model.search({ indicator: "/", text: "sk" }, search);

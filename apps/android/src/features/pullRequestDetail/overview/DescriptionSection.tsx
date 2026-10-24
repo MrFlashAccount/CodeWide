@@ -1,6 +1,6 @@
 import { View } from "react-native";
 
-import { RichMarkdown } from "../../../rendering/RichMarkdown";
+import { CompleteMarkdown } from "../../../rendering/CompleteMarkdown";
 import { AppText as Text } from "../../../ui/Typography";
 import { overviewStyles as styles } from "./overview.styles";
 
@@ -19,7 +19,7 @@ export function DescriptionSection({
         Description
       </Text>
       <View style={[styles.sectionBody, styles.markdownLine]}>
-        <RichMarkdown source={description} />
+        <CompleteMarkdown source={description} />
       </View>
     </View>
   );

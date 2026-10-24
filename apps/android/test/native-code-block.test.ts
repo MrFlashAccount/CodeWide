@@ -28,7 +28,9 @@ describe("native code block projection", () => {
   it("uses a deterministic bounded height for native layout", () => {
     expect(nativeCodeHeight("one line")).toBe(24);
     expect(nativeCodeHeight("a\nb\nc", 400, 2)).toBe(40);
-    expect(nativeCodeHeight(Array.from({ length: 100 }, (_, index) => String(index)).join("\n"))).toBe(NATIVE_CODE_DEFAULT_MAX_HEIGHT);
+    expect(
+      nativeCodeHeight(Array.from({ length: 100 }, (_, index) => String(index)).join("\n")),
+    ).toBe(NATIVE_CODE_DEFAULT_MAX_HEIGHT);
   });
 
   it("keeps collapsed code at the requested edge", () => {
@@ -38,13 +40,18 @@ describe("native code block projection", () => {
   });
 
   it("bounds pathological inline output before it reaches Android TextView", () => {
-    const preview = nativeCodePreview(Array.from({ length: NATIVE_CODE_MAX_PREVIEW_LINES + 10 }, () => "line").join("\n"));
+    const preview = nativeCodePreview(
+      Array.from({ length: NATIVE_CODE_MAX_PREVIEW_LINES + 10 }, () => "line").join("\n"),
+    );
     expect(preview.truncated).toBe(true);
     expect(preview.value.split("\n")).toHaveLength(NATIVE_CODE_MAX_PREVIEW_LINES);
   });
 
   it("removes terminal control sequences from the plain fallback without losing text", () => {
-    expect(stripTerminalControlSequences("\u001b[31mfailed\u001b[0m\r\nnext\rstep\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007"))
-      .toBe("failed\nnext\nsteplink");
+    expect(
+      stripTerminalControlSequences(
+        "\u001b[31mfailed\u001b[0m\r\nnext\rstep\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007",
+      ),
+    ).toBe("failed\nnext\nsteplink");
   });
 });

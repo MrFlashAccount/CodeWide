@@ -27,16 +27,27 @@ describe("Unversioned application entry", () => {
       for (const child of node.children) collect(child, path);
     }
     collect(tree, "");
-    expect(paths).toEqual(expect.arrayContaining([
-      "/", "/new", "/search", "/settings", "/projects", "/pulls",
-      "/browser/[sessionId]", "/drawing/[sessionId]",
-      "/pulls/[connectionId]/[pullRequestKey]",
-      "/threads/[connectionId]/[threadId]",
-      "/threads/[connectionId]/[threadId]/terminal",
-      "/threads/[connectionId]/[threadId]/agents/[agentThreadId]",
-    ]));
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        "/",
+        "/new",
+        "/search",
+        "/settings",
+        "/projects",
+        "/pulls",
+        "/browser/[sessionId]",
+        "/drawing/[sessionId]",
+        "/pulls/[connectionId]/[pullRequestKey]",
+        "/pulls/[connectionId]/[pullRequestKey]/changes",
+        "/threads/[connectionId]/[threadId]",
+        "/threads/[connectionId]/[threadId]/terminal",
+        "/threads/[connectionId]/[threadId]/agents/[agentThreadId]",
+      ]),
+    );
     expect(paths.filter((path) => /^\/v[12]/iu.test(path))).toEqual([]);
-    expect(paths.filter((path) => /Workspace|RouteSession|RouteNavigation/u.test(path))).toEqual([]);
+    expect(paths.filter((path) => /Workspace|RouteSession|RouteNavigation/u.test(path))).toEqual(
+      [],
+    );
     expect(paths.filter((path) => path === "/")).toHaveLength(1);
   });
 });

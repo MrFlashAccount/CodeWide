@@ -52,7 +52,7 @@ app/(workspace)/
 ├── search.tsx                                     /search; mobile stack screen, desktop list pane when no chat is selected
 ├── projects/
 │   ├── index.tsx
-│   └── add/[connectionId].tsx
+│   └── add/{index,[connectionId]}.tsx
 ├── settings/
 │   ├── index.tsx
 │   └── servers/new/index.tsx
@@ -60,7 +60,9 @@ app/(workspace)/
 ├── drawing/[sessionId].tsx
 ├── pulls/
 │   ├── index.tsx                                  /pulls; complete Pull requests catalog route
-│   └── [connectionId]/[pullRequestKey].tsx        /pulls/:connectionId/:pullRequestKey; PR screen
+│   └── [connectionId]/[pullRequestKey]/
+│       ├── index.tsx                              /pulls/:connectionId/:pullRequestKey; Details
+│       └── changes.tsx                            /pulls/:connectionId/:pullRequestKey/changes
 └── threads/[connectionId]/[threadId]/
     ├── _layout.tsx
     ├── index.tsx
@@ -92,7 +94,7 @@ see [the retirement audit](android-v2-retirement.md).
 | Open a search result | `push` from Search; clear the session parameter on a selected wide origin first | Back returns to the retained search query/results on compact layouts; closing wide Search keeps the selected result and removes its search parameter. |
 | Open browser, drawing, content or document | `push` with an opaque session id and fullscreen modal presentation                                            | private resources and callbacks stay in bounded services; root modals carry the owning thread identity                                           |
 | Navigate within a WebView                  | widget-owned history                                                                                          | page history stays separate from application navigation                                                                                          |
-| Switch catalog mode (Threads / Pull requests) | `replace` between `/` and `/pulls` | no history entry; each destination commits its own header, content, actions and mode bar atomically; the retained threads list and its scroll position stay mounted but hidden throughout Pull requests |
+| Switch catalog mode (Threads / Pull requests) | reset the workspace stack to exactly `/` or `/pulls` | no stale detail or overlay entry survives the switch; each destination commits its own header, content, actions and mode bar atomically |
 | Open a pull request | preload the overview resource, then navigate inside `startTransition` | the catalog stays visible until the atomic overview is ready; no blank destination is committed |
 | Open a linked thread from a PR | qualified thread navigation intent from `pullRequestNavigation` | the thread opens as from Select a thread |
 
@@ -122,21 +124,26 @@ Status: **implemented**. Feature ownership is in
 [V1 feature architecture](android-v1-feature-architecture.md#approved-pull-requests-extension);
 the companion contract is in [Forge plugins](forge-plugins.md).
 
-- `CatalogModeBar` is rendered by each complete catalog route and never by a PR detail screen.
-  Threads and Pull requests do not share a header, content scene or floating action.
+- `WorkspacePaneLayout` owns one persistent `CatalogModeBarHost`. It derives the selected mode from
+  the primary route below any route-owned overlay; overlays never masquerade as Threads. Threads and
+  Pull requests do not share a header, content scene or floating action.
 - `pulls/index.tsx` renders `features/pullRequests`: onboarding while the connection has no
   connected account, the PR list otherwise. It is a top-level workspace peer of `(lists)`, so wide
   layouts hide the retained Threads pane and give Pull requests the full workspace width.
-- `pulls/[connectionId]/[pullRequestKey].tsx` renders `features/pullRequestDetail`.
+- `pulls/[connectionId]/[pullRequestKey]/{index,changes}.tsx` renders `features/pullRequestDetail`.
   `pullRequestKey` is the companion-issued opaque `PullRequestKey`; route params accept it as an
-  opaque nonempty string and brand it, and Android never parses it. Overview/Changes tab state
-  lives in the feature's per-route-session Legend model, not in the URL. Back leaves the screen.
-- `routeComposition/pullRequestNavigation.ts` owns the navigation intents only: it calls
-  `data/forgeResources.preloadOverview`, then navigates inside `startTransition`; it opens linked
-  threads and switches catalog mode with `replace`. It owns no Promise; `forgeResources` is the
-  single owner of the overview Promise, which the screen reads with suspense.
+  opaque nonempty string and brand it, and Android never parses it. Details/Changes selection is
+  canonical URL state; the feature receives it as a route prop and does not mirror it. Back dismisses
+  either tab to `/pulls`.
+- `routeComposition/pullRequestNavigation.ts` owns the navigation intent only: it publishes the
+  canonical PR destination immediately. The screen's local Suspense boundary reads the process-owned
+  overview resource and owns its stable skeleton; navigation never owns or waits on that Promise.
 - Features emit typed navigation intents; `features/pullRequests` and
   `features/pullRequestDetail` reach each other only through these intents.
+
+`/projects` and `/projects/add/**` are transparent native-stack routes whose React trees draw the
+backdrop and sheet surface directly. They never create a nested native `AppSheet`; route Back,
+outside dismissal, focus and native-stack animation therefore share one lifecycle.
 
 ## Global Voice non-route boundary
 

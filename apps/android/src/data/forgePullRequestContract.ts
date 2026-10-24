@@ -38,6 +38,7 @@ import {
 import { threadId, type ThreadId } from "./reviewContract";
 
 const PULL_REQUEST_CATEGORIES = [
+  "involved",
   "reviewRequested",
   "authored",
   "assigned",

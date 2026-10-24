@@ -1,7 +1,7 @@
 /**
- * Interaction state of one PR route session: tab, pending runs and toggles,
- * the stale-head banner and the last forge refusal. It never copies resource
- * data; the overview, files and drafts stay with their resource owners.
+ * Interaction state of one PR route session: pending runs, file selection and
+ * toggles, the stale-head banner and the last forge refusal. The active tab is
+ * route state; this model never copies resource or navigation state.
  */
 import { observable, type Observable } from "@legendapp/state";
 
@@ -24,7 +24,6 @@ export type PullRequestScreenState = {
   /** Requested toggle values while their run is pending (shown disabled, label shimmering). */
   readonly pendingToggles: Readonly<Record<string, boolean>>;
   readonly selectedPath: string | null;
-  readonly tab: PullRequestTab;
 };
 
 /** Creates the state owner of one mounted PR screen. */
@@ -35,6 +34,5 @@ export function createPullRequestScreenModel(): Observable<PullRequestScreenStat
     pending: {},
     pendingToggles: {},
     selectedPath: null,
-    tab: "overview",
   });
 }

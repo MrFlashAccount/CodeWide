@@ -69,7 +69,11 @@ it("shows an attached SVG in the image gallery", async () => {
             <DocumentPreviewHost>
               <UserMessageContent
                 content={[{ type: "mention", name: "drawing.svg", path: "/tmp/drawing.svg" }]}
-                getTransferAccess={async () => ({ authorization: "test", baseUrl: "https://example.test", transport: urlTransport, })}
+                getTransferAccess={async () => ({
+                  authorization: "test",
+                  baseUrl: "https://example.test",
+                  transport: urlTransport,
+                })}
               />
             </DocumentPreviewHost>
           </ImagePreviewHost>

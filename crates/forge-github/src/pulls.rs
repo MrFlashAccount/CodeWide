@@ -46,6 +46,7 @@ pub async fn list(
     limit: u32,
 ) -> Result<ListResult, PluginError> {
     let mut query = match category {
+        PullRequestCategory::Involved => format!("involves:{login}"),
         PullRequestCategory::ReviewRequested => format!("review-requested:{login}"),
         PullRequestCategory::Authored => format!("author:{login}"),
         PullRequestCategory::Assigned => format!("assignee:{login}"),
@@ -87,6 +88,7 @@ pub async fn list(
         .flatten();
     Ok(ListResult {
         supported_categories: vec![
+            PullRequestCategory::Involved,
             PullRequestCategory::ReviewRequested,
             PullRequestCategory::Authored,
             PullRequestCategory::Assigned,
@@ -127,6 +129,7 @@ fn compile_search(login: &str, query: &PullRequestSearchQuery) -> Result<String,
         terms.push(text.to_owned());
     }
     match query.category {
+        PullRequestCategory::Involved => terms.push(format!("involves:{}", quoted(login))),
         PullRequestCategory::ReviewRequested => {
             terms.push(format!("review-requested:{}", quoted(login)));
         }
@@ -329,6 +332,7 @@ async fn run_search(
         .flatten();
     Ok(ListResult {
         supported_categories: vec![
+            PullRequestCategory::Involved,
             PullRequestCategory::ReviewRequested,
             PullRequestCategory::Authored,
             PullRequestCategory::Assigned,
@@ -636,6 +640,34 @@ mod tests {
         assert_eq!(
             compile_search("sergey", &query)?,
             "is:pr archived:false is:open draft:false sort:updated-desc"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn involved_category_is_scoped_to_the_authenticated_user() -> Result<(), PluginError> {
+        let query = PullRequestSearchQuery {
+            text: String::new(),
+            category: PullRequestCategory::Involved,
+            repositories: SearchValues::default(),
+            authors: SearchValues::default(),
+            assignees: SearchValues::default(),
+            reviewers: SearchValues::default(),
+            review: SearchValues::default(),
+            states: values(vec![PullRequestState::Open], Vec::new()),
+            checks: SearchValues::default(),
+            labels: SearchValues::default(),
+            base_branches: SearchValues::default(),
+            head_branches: SearchValues::default(),
+            sort: forge_protocol::PullRequestSort {
+                field: PullRequestSortField::Updated,
+                direction: SortDirection::Descending,
+            },
+        };
+
+        assert_eq!(
+            compile_search("sergey", &query)?,
+            "is:pr archived:false involves:\"sergey\" is:open draft:false sort:updated-desc"
         );
         Ok(())
     }

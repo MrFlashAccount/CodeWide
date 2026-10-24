@@ -9,6 +9,7 @@ export function useThreadListPullGesture(
   scope: string,
 ): ReturnType<typeof useCatalogSearchPullGesture> {
   return useCatalogSearchPullGesture({
+    enabled: true,
     gestureTestID: "thread-list-pull-to-search",
     initialOffset,
     onOpenSearch,

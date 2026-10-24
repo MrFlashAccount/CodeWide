@@ -13,7 +13,6 @@ import { APP_SHEET_MAX_WIDTH } from "../../../ui/appSheetGeometry";
 
 const CHOICE_SIZE = 22;
 const FACET_ICON_SIZE = 34;
-const FACET_NAV_WIDTH = 230;
 const FACET_ROW_HEIGHT = 58;
 const OPTION_ROW_HEIGHT = 54;
 
@@ -35,9 +34,6 @@ export const filterStyles = StyleSheet.create({
   body: {
     flex: 1,
     minHeight: 0,
-  },
-  bodyWide: {
-    flexDirection: "row",
   },
   checkBox: {
     alignItems: "center",
@@ -91,22 +87,12 @@ export const filterStyles = StyleSheet.create({
   facetNav: {
     flex: 1,
   },
-  facetNavWide: {
-    borderRightColor: colors.borderSoft,
-    borderRightWidth: 1,
-    flexBasis: FACET_NAV_WIDTH,
-    flexGrow: 0,
-  },
   facetRow: {
     alignItems: "center",
     columnGap: spacing.sm,
     flexDirection: "row",
     minHeight: FACET_ROW_HEIGHT,
     paddingHorizontal: spacing.sm,
-  },
-  facetRowSelected: {
-    backgroundColor: colors.surfaceContainerHigh,
-    borderRadius: radii.medium,
   },
   facetScroll: {
     flex: 1,

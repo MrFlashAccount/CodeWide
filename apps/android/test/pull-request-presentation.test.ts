@@ -8,10 +8,7 @@ import { createPullRequestCommentDestinations } from "../src/data/pullRequestCom
 import { parseDrafts } from "../src/data/reviewDraftContract";
 import { parseGuideState } from "../src/data/reviewGuideContract";
 import { settledChecksLabel } from "../src/features/pullRequestDetail/overview/checkPresentation";
-import {
-  defaultPullRequestFilter,
-  reviewRequestedCount,
-} from "../src/features/pullRequests/pullRequestListModel";
+import { defaultPullRequestFilter } from "../src/features/pullRequests/pullRequestListModel";
 import { pullRequestEmptyStateCopy } from "../src/features/pullRequests/list/pullRequestEmptyState";
 import { pullRequestListItems } from "../src/features/pullRequests/list/pullRequestListItems";
 import {
@@ -226,13 +223,6 @@ describe("counters agree with their headers", () => {
     expect(settledChecksLabel([passed], { reason: "No token", state: "unavailable" })).toBe(
       "1 passed",
     );
-  });
-
-  it("counts review requests of connected accounts only", () => {
-    const page = parsePullRequestListPage(reviewRequestedPage);
-    expect(reviewRequestedCount(page)).toBe(2);
-    expect(reviewRequestedCount(page === null ? null : { ...page, sections: [] })).toBe(0);
-    expect(reviewRequestedCount(null)).toBe(0);
   });
 });
 

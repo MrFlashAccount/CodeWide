@@ -7,9 +7,7 @@ import { startPillSelectionOnUI } from "../vendor/reacticx/src/components/organi
 
 it("exposes the two masked destinations as accessible tabs", () => {
   const onSelect = jest.fn();
-  const view = render(
-    <CatalogModeBar mode="threads" onSelect={onSelect} reviewRequestedCount={2} />,
-  );
+  const view = render(<CatalogModeBar mode="threads" onSelect={onSelect} />);
 
   expect(view.getByTestId("catalog-mode-bar")).not.toHaveStyle({
     backgroundColor: colors.threadListSurface,
@@ -17,11 +15,11 @@ it("exposes the two masked destinations as accessible tabs", () => {
   expect(view.getByRole("tab", { name: "Threads" }).props.accessibilityState).toEqual({
     selected: true,
   });
-  expect(view.getByRole("tab", { name: "Pull requests 2" }).props.accessibilityState).toEqual({
+  expect(view.getByRole("tab", { name: "Pull requests" }).props.accessibilityState).toEqual({
     selected: false,
   });
 
-  fireEvent(view.getByRole("tab", { name: "Pull requests 2" }), "accessibilityAction", {
+  fireEvent(view.getByRole("tab", { name: "Pull requests" }), "accessibilityAction", {
     nativeEvent: { actionName: "activate" },
   });
   expect(onSelect).toHaveBeenCalledWith("pullRequests");
@@ -37,19 +35,12 @@ it("starts pointer selection motion before handing route selection to JavaScript
   const pillWidth = { value: 150 };
   spring.mockClear();
 
-  startPillSelectionOnUI(
-    { value: "pullRequests", width: 150, x: 150 },
-    pillX,
-    pillWidth,
-    onSelect,
-  );
+  startPillSelectionOnUI({ value: "pullRequests", width: 150, x: 150 }, pillX, pillWidth, onSelect);
 
   expect(pillX.value).toBe(150);
   expect(pillWidth.value).toBe(150);
   expect(onSelect).toHaveBeenCalledWith("pullRequests");
   const selectionOrder = onSelect.mock.invocationCallOrder[0];
-  expect(
-    spring.mock.invocationCallOrder.filter((order) => order < selectionOrder),
-  ).toHaveLength(2);
+  expect(spring.mock.invocationCallOrder.filter((order) => order < selectionOrder)).toHaveLength(2);
   spring.mockRestore();
 });

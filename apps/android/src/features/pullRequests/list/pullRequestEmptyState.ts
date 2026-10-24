@@ -34,6 +34,11 @@ const CATEGORY_COPY: Readonly<Record<PullRequestCategory, PullRequestEmptyStateC
     icon: "git-pull-request-outline",
     title: "No drafts",
   },
+  involved: {
+    description: "Pull requests involving you will appear here.",
+    icon: "checkmark-done-outline",
+    title: "You're all caught up",
+  },
   mentioned: {
     description: "Pull requests that mention you will appear here.",
     icon: "at-outline",

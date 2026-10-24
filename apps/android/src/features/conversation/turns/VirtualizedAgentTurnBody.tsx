@@ -14,6 +14,7 @@ import { RichMarkdownPremeasurementBoundary } from "../../../rendering/RichMarkd
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
 import { StreamingRevealSurface } from "../../../rendering/StreamingRevealSurface";
 import { AppText as Text } from "../../../ui/Typography";
+import { completeMarkdownStyles } from "../../../rendering/CompleteMarkdown.styles";
 import { styles as markdownStyles } from "../content/AgentResponseMarkdown.styles";
 import { AgentResponseMarkdown } from "../content/AgentResponseMarkdown";
 import { ThinkingStatus } from "../protocol/ThinkingStatus";
@@ -203,8 +204,8 @@ function VirtualizedMarkdownGroup({
     <RichMarkdownPremeasurementBoundary>
       <View
         style={[
-          markdownStyles.agentMarkdownDocument,
-          presentation.agentBubbleFill && markdownStyles.agentMarkdownDocumentFill,
+          completeMarkdownStyles.document,
+          presentation.agentBubbleFill && completeMarkdownStyles.documentFill,
           !isTrailingSlice(placement) && markdownStyles.virtualizedMarkdownBlockGap,
         ]}
       >

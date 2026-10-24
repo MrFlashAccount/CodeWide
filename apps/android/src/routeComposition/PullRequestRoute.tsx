@@ -14,6 +14,7 @@ import type { ThreadId } from "../data/reviewContract";
 import { PullRequestScreen } from "../features/pullRequestDetail/PullRequestScreen";
 import { PullRequestScreenSkeleton } from "../features/pullRequestDetail/PullRequestScreenSkeleton";
 import type { PullRequestScreenProps } from "../features/pullRequestDetail/pullRequestScreenContract";
+import type { PullRequestTab } from "../features/pullRequestDetail/pullRequestScreenModel";
 import { workspaceFeatures } from "../features/workspace/createWorkspaceFeatures";
 import { desktopThreadSidebarWidth } from "../presentation/layouts/windowLayout";
 import { useEvent } from "../react/useEvent";
@@ -41,7 +42,11 @@ const CHAT_SKELETON_TITLE_HEIGHT = 18;
 const PANE_TRANSITION = LinearTransition.duration(PANE_TRANSITION_DURATION_MS);
 
 /** PR destination with adaptive PR/chat pane geometry. */
-export function PullRequestRoute(): React.JSX.Element | null {
+export function PullRequestRoute({
+  tab,
+}: {
+  readonly tab: PullRequestTab;
+}): React.JSX.Element | null {
   const params = useLocalSearchParams<{ connectionId?: string; pullRequestKey?: string }>();
   const router = useRouter();
   const overlay = useAppFullscreenOverlay({ scope: "pull-request-workspace" });
@@ -53,11 +58,19 @@ export function PullRequestRoute(): React.JSX.Element | null {
   const connectionId = typeof params.connectionId === "string" ? params.connectionId : null;
   const pullRequest = parsePullRequestKeyParam(params.pullRequestKey);
   const back = useEvent((): void => {
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace("/pulls");
+    router.dismissTo("/pulls");
+  });
+  const openTab = useEvent((nextTab: PullRequestTab): void => {
+    if (connectionId === null || pullRequest === null || nextTab === tab) {
+      return;
     }
+    router.replace({
+      params: { connectionId, pullRequestKey: pullRequest },
+      pathname:
+        nextTab === "changes"
+          ? "/pulls/[connectionId]/[pullRequestKey]/changes"
+          : "/pulls/[connectionId]/[pullRequestKey]",
+    });
   });
   const setCatalogClaimed = useEvent((claimed: boolean): void => {
     paneController.setDetailExpanded(claimed && desktop && viewportWidth < THREE_PANE_MIN_WIDTH);
@@ -98,8 +111,10 @@ export function PullRequestRoute(): React.JSX.Element | null {
         close={close}
         connectionId={connectionId}
         describeThread={(threadId) => describeThread(connectionId, threadId)}
+        openTab={openTab}
         openThread={openThread}
         pullRequest={pullRequest}
+        tab={tab}
       />
     ));
   });
@@ -132,6 +147,7 @@ export function PullRequestRoute(): React.JSX.Element | null {
     chatVisible: chat.status !== "closed",
     closeChat,
     openPullRequestFullscreen,
+    openTab,
     openThread,
     pullRequestFullscreen: false,
   };
@@ -149,6 +165,7 @@ export function PullRequestRoute(): React.JSX.Element | null {
           desktop={desktop}
           navigation={navigation}
           pullRequest={pullRequest}
+          tab={tab}
         />
         <PullRequestChatDestination
           chat={chat}
@@ -170,15 +187,19 @@ function FullscreenPullRequestDetail({
   close,
   connectionId,
   describeThread,
+  openTab,
   openThread,
   pullRequest,
+  tab,
 }: {
   readonly beginChat: () => void;
   readonly close: () => void;
   readonly connectionId: string;
   readonly describeThread: PullRequestScreenProps["describeThread"];
+  readonly openTab: (tab: PullRequestTab) => void;
   readonly openThread: (threadId: ThreadId) => void;
   readonly pullRequest: PullRequestScreenProps["pullRequest"];
+  readonly tab: PullRequestTab;
 }): React.JSX.Element {
   const leaveForChat = useEvent((): void => {
     close();
@@ -187,6 +208,10 @@ function FullscreenPullRequestDetail({
   const leaveForThread = useEvent((threadId: ThreadId): void => {
     close();
     openThread(threadId);
+  });
+  const leaveForTab = useEvent((nextTab: PullRequestTab): void => {
+    close();
+    openTab(nextTab);
   });
   return (
     <PullRequestDetailSurface
@@ -199,10 +224,12 @@ function FullscreenPullRequestDetail({
         chatVisible: false,
         closeChat: close,
         openPullRequestFullscreen: close,
+        openTab: leaveForTab,
         openThread: leaveForThread,
         pullRequestFullscreen: true,
       }}
       pullRequest={pullRequest}
+      tab={tab}
     />
   );
 }
@@ -267,6 +294,7 @@ type PullRequestDetailSurfaceProps = {
   readonly desktop: boolean;
   readonly navigation: PullRequestScreenProps["navigation"];
   readonly pullRequest: PullRequestScreenProps["pullRequest"];
+  readonly tab: PullRequestTab;
 };
 
 function PullRequestDetailSurface(props: PullRequestDetailSurfaceProps): React.JSX.Element {
@@ -282,6 +310,7 @@ function PullRequestDetailSurface(props: PullRequestDetailSurfaceProps): React.J
         pullRequest={props.pullRequest}
         review={reviewResources}
         reviewCapabilities={workspaceFeatures.reviewTarget}
+        tab={props.tab}
         tablet={props.desktop}
       />
     </Suspense>

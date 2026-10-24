@@ -14,7 +14,7 @@ import { useReducedMotionPreference } from "../../rendering/reduced-motion-store
 
 const SEARCH_OVERLAY_DURATION_MS = 350;
 
-/** Search appears over the retained catalog and closes before its route is dismissed. */
+/** Search appears over the retained catalog and closes before its owner is dismissed. */
 export function useSearchOverlayMotion(onClose: () => void): {
   readonly close: () => void;
   readonly progress: SharedValue<number>;

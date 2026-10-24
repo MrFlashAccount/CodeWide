@@ -83,6 +83,13 @@ export const v1SheetScreenOptions = {
   presentation: "transparentModal",
 } as const;
 
+/** Lets native-stack animate a route-owned sheet surface without a second JS/native modal. */
+export const v1RouteSheetScreenOptions = {
+  ...v1SheetScreenOptions,
+  animation: "fade_from_bottom",
+  animationDuration: v1MobileRouteMotion.durationMs,
+} as const;
+
 /** Only the browser grip owns sheet dragging; the browser route reveals the retained app below. */
 export const v1BrowserScreenOptions = {
   ...v1SheetScreenOptions,

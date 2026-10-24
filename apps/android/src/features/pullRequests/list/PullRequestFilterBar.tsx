@@ -1,18 +1,13 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useSelector } from "@legendapp/state/react";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 
 import type { PullRequestSearchFilter } from "../../../data/forgePullRequestSearch";
 import { CatalogSearchRow } from "../../../presentation/input/CatalogSearchRow";
+import { SearchOverlayHeader } from "../../../presentation/input/SearchOverlayHeader";
 import { ThreadListHeaderAction } from "../../../presentation/navigation/ThreadListHeader";
 import { useEvent } from "../../../react/useEvent";
-import { colors, controlHitSlop, iconSize } from "../../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../../ui/ActionMenu";
-import { AppTextInput as TextInput } from "../../../ui/Typography";
 import {
   activePullRequestFilterCount,
-  closePullRequestSearch,
-  pullRequestSearchModel,
   updatePullRequestSearchDraft,
 } from "../pullRequestListModel";
 import { listStyles as styles } from "./list.styles";
@@ -49,13 +44,11 @@ export function PullRequestFilterBar({
   filter,
   onOpenFilters,
   onOpenSearch,
-  onSearch,
   onSort,
 }: {
   readonly filter: PullRequestSearchFilter;
   readonly onOpenFilters: () => void;
   readonly onOpenSearch: () => void;
-  readonly onSearch: (text: string) => void;
   readonly onSort: (sort: PullRequestSearchFilter["query"]["sort"]) => void;
 }): React.JSX.Element {
   const activeCount = activePullRequestFilterCount(filter);
@@ -65,7 +58,6 @@ export function PullRequestFilterBar({
         activeCount={activeCount}
         onOpenFilters={onOpenFilters}
         onOpenSearch={onOpenSearch}
-        onSearch={onSearch}
         onSort={onSort}
         sort={filter.query.sort}
       />
@@ -77,90 +69,68 @@ function SearchControls({
   activeCount,
   onOpenFilters,
   onOpenSearch,
-  onSearch,
   onSort,
   sort,
 }: {
   readonly activeCount: number;
   readonly onOpenFilters: () => void;
   readonly onOpenSearch: () => void;
-  readonly onSearch: (text: string) => void;
   readonly onSort: (sort: PullRequestSearchFilter["query"]["sort"]) => void;
   readonly sort: PullRequestSearchFilter["query"]["sort"];
 }): React.JSX.Element {
-  const search = useSelector(() => pullRequestSearchModel.get());
-  if (!search.open) {
-    return (
-      <CatalogSearchRow
-        accessibilityLabel="Search pull requests"
-        actions={
-          <>
-            <PullRequestSortMenu onSort={onSort} sort={sort} />
-            <FilterButton activeCount={activeCount} onPress={onOpenFilters} />
-          </>
-        }
-        onOpenSearch={onOpenSearch}
-        placeholder="Search pull requests"
-        testID="pull-request-search-row"
-      />
-    );
-  }
   return (
-    <View style={styles.searchRow}>
-      <ThreadListHeaderAction
-        accessibilityLabel="Close pull request search"
-        name="arrow-back"
-        onPress={closePullRequestSearch}
-      />
-      <PullRequestSearchInput draft={search.draft} onSearch={onSearch} />
-      <PullRequestSortMenu onSort={onSort} sort={sort} />
-      <FilterButton activeCount={activeCount} onPress={onOpenFilters} />
-    </View>
+    <CatalogSearchRow
+      accessibilityLabel="Search pull requests"
+      actions={
+        <>
+          <PullRequestSortMenu onSort={onSort} sort={sort} />
+          <FilterButton activeCount={activeCount} onPress={onOpenFilters} />
+        </>
+      }
+      onOpenSearch={onOpenSearch}
+      placeholder="Search pull requests"
+      testID="pull-request-search-row"
+    />
   );
 }
 
-function PullRequestSearchInput({
+/** Search-mode header shared with Threads; PR filters remain available, sorting stays outside. */
+export function PullRequestSearchHeader({
+  activeCount,
+  close,
   draft,
+  onOpenFilters,
   onSearch,
 }: {
+  readonly activeCount: number;
+  readonly close: () => void;
   readonly draft: string;
+  readonly onOpenFilters: () => void;
   readonly onSearch: (text: string) => void;
 }): React.JSX.Element {
-  const submitSearch = useEvent((event: { readonly nativeEvent: { readonly text: string } }) => {
-    onSearch(event.nativeEvent.text);
+  const changeSearch = useEvent((text: string): void => {
+    updatePullRequestSearchDraft(text);
+    if (text === "") {
+      onSearch("");
+    }
   });
-  const clearSearch = useEvent(() => {
-    updatePullRequestSearchDraft("");
-    onSearch("");
+  const submitSearch = useEvent((): void => {
+    onSearch(draft);
   });
   return (
-    <View style={styles.searchField}>
-      <Ionicons color={colors.textMuted} name="search" size={iconSize.inline} />
-      <TextInput
-        accessibilityLabel="Search pull requests"
-        autoCapitalize="none"
-        autoCorrect={false}
-        compact
-        onChangeText={updatePullRequestSearchDraft}
-        onSubmitEditing={submitSearch}
-        placeholder="Search pull requests"
-        placeholderTextColor={colors.textDim}
-        returnKeyType="search"
-        style={styles.searchInput}
-        testID="pull-request-search-input"
-        value={draft}
-      />
-      {draft === "" ? null : (
-        <Pressable
-          accessibilityLabel="Clear pull request search"
-          accessibilityRole="button"
-          hitSlop={controlHitSlop.regular}
-          onPress={clearSearch}
-        >
-          <Ionicons color={colors.textMuted} name="close" size={iconSize.action} />
-        </Pressable>
-      )}
-    </View>
+    <SearchOverlayHeader
+      accessibilityLabel="Search pull requests"
+      backAccessibilityLabel="Back to pull requests"
+      fieldTestID="pull-request-search-input"
+      focusOnMount
+      onBack={close}
+      onChangeText={changeSearch}
+      onSubmit={submitSearch}
+      placeholder="Search pull requests"
+      testID="pull-request-search-header"
+      trailing={<FilterButton activeCount={activeCount} onPress={onOpenFilters} />}
+      value={draft}
+    />
   );
 }
 

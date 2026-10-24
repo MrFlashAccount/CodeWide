@@ -221,11 +221,21 @@ export const reviewRequestedPage = {
         }),
         listRow("88", { author: "mikhail-p", title: "Add GitLab draft-notes publishing" }),
       ],
-      supportedCategories: ["reviewRequested", "authored", "assigned", "mentioned", "drafts"],
+      supportedCategories: [
+        "involved",
+        "reviewRequested",
+        "authored",
+        "assigned",
+        "mentioned",
+        "drafts",
+      ],
     },
     { account: expiredAccount, rows: [], supportedCategories: ["reviewRequested", "authored"] },
   ],
 };
+
+/** Default personal inbox returned for the provider-neutral involved category. */
+export const involvedPage = { ...reviewRequestedPage, category: "involved" };
 
 /** One catalog descriptor with contract defaults. */
 export function action(

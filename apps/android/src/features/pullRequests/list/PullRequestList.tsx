@@ -1,4 +1,5 @@
 import { LegendList } from "@legendapp/list/react-native";
+import { useSelector } from "@legendapp/state/react";
 import { Animated, View } from "react-native";
 import { GestureDetector } from "react-native-gesture-handler";
 
@@ -11,6 +12,8 @@ import { remoteValue, type RemoteValue } from "../../../data/forgeRemoteValue";
 import { useCatalogSearchPullGesture } from "../../../presentation/input/catalogSearchPullModel";
 import { CatalogSearchPullProvider } from "../../../presentation/input/CatalogSearchPullProvider";
 import { CatalogSearchPullBackdrop } from "../../../presentation/input/CatalogSearchPullBackdrop";
+import { SearchOverlayMotion } from "../../../presentation/input/SearchOverlayMotionView";
+import { useSearchOverlayMotion } from "../../../presentation/input/searchOverlayMotion";
 import { layoutSize } from "../../../theme";
 import type { PullRequestSearchFilter } from "../../../data/forgePullRequestSearch";
 import { listStyles as styles } from "./list.styles";
@@ -19,8 +22,13 @@ import { ListNotice } from "./ListNotice";
 import { PullRequestEmptyState } from "./PullRequestEmptyState";
 import { pullRequestListItems } from "./pullRequestListItems";
 import { PullRequestListItemView } from "./PullRequestListItemView";
-import { PullRequestFilterBar } from "./PullRequestFilterBar";
+import { PullRequestFilterBar, PullRequestSearchHeader } from "./PullRequestFilterBar";
 import { PullRequestFilterSheet } from "./PullRequestFilterSheet";
+import {
+  activePullRequestFilterCount,
+  closePullRequestSearch,
+  pullRequestSearchModel,
+} from "../pullRequestListModel";
 
 /**
  * PR list for one connection: filter chips, account sections and rows. The
@@ -53,28 +61,128 @@ export function PullRequestList(props: {
 }
 
 function PullRequestListSurface(props: Parameters<typeof PullRequestList>[0]): React.JSX.Element {
-  const { filter, state } = props;
-  const page = remoteValue(state);
+  const search = useSelector(() => pullRequestSearchModel.get());
+  const page = remoteValue(props.state);
   const items = listItems(page);
   return (
     <View style={styles.fill} testID="pull-request-list">
-      <PullRequestFilterBar
-        filter={filter}
-        onOpenFilters={props.onOpenFilters}
-        onOpenSearch={props.onOpenSearch}
-        onSearch={props.onSearch}
-        onSort={props.onSort}
-      />
-      <ListNotice nowMs={props.nowMs} state={visibleNoticeState(state, props.pendingFilter)} />
-      <View style={styles.fill}>
-        <PullRequestRows items={items} page={page} props={props} />
-        <CatalogSearchPullBackdrop testID="pull-request-list-pull-backdrop" />
-      </View>
+      <PullRequestCatalogSurface hidden={search.open} items={items} page={page} props={props} />
+      {search.open ? (
+        <PullRequestSearchSurface draft={search.draft} items={items} page={page} props={props} />
+      ) : null}
       <PullRequestFilterSheet
         accounts={props.accounts}
         providers={props.providers}
         repositories={page?.repositories ?? []}
       />
+    </View>
+  );
+}
+
+function PullRequestCatalogSurface({
+  hidden,
+  items,
+  page,
+  props,
+}: {
+  readonly hidden: boolean;
+  readonly items: ReturnType<typeof pullRequestListItems>;
+  readonly page: PullRequestListPage | null;
+  readonly props: Parameters<typeof PullRequestList>[0];
+}): React.JSX.Element {
+  return (
+    <View
+      accessibilityElementsHidden={hidden}
+      importantForAccessibility={hidden ? "no-hide-descendants" : "auto"}
+      pointerEvents={hidden ? "none" : "auto"}
+      style={styles.fill}
+    >
+      <PullRequestFilterBar
+        filter={props.filter}
+        onOpenFilters={props.onOpenFilters}
+        onOpenSearch={props.onOpenSearch}
+        onSort={props.onSort}
+      />
+      <ListNotice
+        nowMs={props.nowMs}
+        state={visibleNoticeState(props.state, props.pendingFilter)}
+      />
+      <PullRequestCatalogRows items={items} page={page} props={props} />
+    </View>
+  );
+}
+
+function PullRequestCatalogRows({
+  items,
+  page,
+  props,
+}: {
+  readonly items: ReturnType<typeof pullRequestListItems>;
+  readonly page: PullRequestListPage | null;
+  readonly props: Parameters<typeof PullRequestList>[0];
+}): React.JSX.Element {
+  return (
+    <View style={styles.fill}>
+      <PullRequestRows items={items} page={page} props={props} pullToSearch />
+      <CatalogSearchPullBackdrop testID="pull-request-list-pull-backdrop" />
+    </View>
+  );
+}
+
+function PullRequestSearchSurface({
+  draft,
+  items,
+  page,
+  props,
+}: {
+  readonly draft: string;
+  readonly items: ReturnType<typeof pullRequestListItems>;
+  readonly page: PullRequestListPage | null;
+  readonly props: Parameters<typeof PullRequestList>[0];
+}): React.JSX.Element {
+  const overlay = useSearchOverlayMotion(closePullRequestSearch);
+  return (
+    <View style={styles.searchOverlay}>
+      <SearchOverlayMotion onBackdropPress={overlay.close} progress={overlay.progress}>
+        <PullRequestSearchPanel
+          close={overlay.close}
+          draft={draft}
+          items={items}
+          page={page}
+          props={props}
+        />
+      </SearchOverlayMotion>
+    </View>
+  );
+}
+
+function PullRequestSearchPanel({
+  close,
+  draft,
+  items,
+  page,
+  props,
+}: {
+  readonly close: () => void;
+  readonly draft: string;
+  readonly items: ReturnType<typeof pullRequestListItems>;
+  readonly page: PullRequestListPage | null;
+  readonly props: Parameters<typeof PullRequestList>[0];
+}): React.JSX.Element {
+  return (
+    <View style={styles.fill} testID="pull-request-search-overlay">
+      <PullRequestSearchHeader
+        activeCount={activePullRequestFilterCount(props.filter)}
+        close={close}
+        draft={draft}
+        onOpenFilters={props.onOpenFilters}
+        onSearch={props.onSearch}
+      />
+      <ListNotice
+        nowMs={props.nowMs}
+        state={visibleNoticeState(props.state, props.pendingFilter)}
+      />
+      <PullRequestRows items={items} page={page} props={props} pullToSearch={false} />
     </View>
   );
 }
@@ -94,12 +202,15 @@ function PullRequestRows({
   items,
   page,
   props,
+  pullToSearch,
 }: {
   readonly items: ReturnType<typeof pullRequestListItems>;
   readonly page: PullRequestListPage | null;
   readonly props: Parameters<typeof PullRequestList>[0];
+  readonly pullToSearch: boolean;
 }): React.JSX.Element {
   const pullSearch = useCatalogSearchPullGesture({
+    enabled: pullToSearch,
     gestureTestID: "pull-request-list-pull-to-search",
     initialOffset: 0,
     onOpenSearch: props.onOpenSearch,

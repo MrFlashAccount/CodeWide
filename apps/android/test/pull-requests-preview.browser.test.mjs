@@ -277,18 +277,14 @@ test("Accounts sheet shows connected, expired and error accounts", async () => {
   }
 });
 
-test("the PR tab counts only connected review requests", async () => {
-  for (const [scenario, expected] of [
-    ["list", "Pull requests 2"],
-    ["onboarding", "Pull requests"],
-    ["companion-old", "Pull requests"],
-  ]) {
+test("the PR tab keeps a stable count-free label", async () => {
+  for (const scenario of ["list", "onboarding", "companion-old"]) {
     const { page } = await open(scenario, 360);
     try {
       const label = await page
         .getByRole("tab", { name: /^Pull requests/ })
         .getAttribute("aria-label");
-      assert.equal(label, expected, scenario);
+      assert.equal(label, "Pull requests", scenario);
     } finally {
       await page.close();
     }

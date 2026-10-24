@@ -132,15 +132,30 @@ function ProjectManagementSurface({
 export function SidebarProjectsSheet(
   props: ProjectManagementProps & { readonly visible: boolean },
 ): React.JSX.Element {
-  const { servers } = props;
-  const state = useProjectManagement(props);
-  const { pending, rows, selectedServerId, setSelectedServerId } = state;
   return (
     <ProjectManagementSurface
       key={props.visible ? "open" : "closed"}
       onClose={props.onClose}
       visible={props.visible}
     >
+      <ProjectManagementContent props={props} sheetScroll />
+    </ProjectManagementSurface>
+  );
+}
+
+/** Shared project-management body for sheet-owned and route-owned presentation. */
+export function ProjectManagementContent({
+  props,
+  sheetScroll = false,
+}: {
+  readonly props: ProjectManagementProps;
+  readonly sheetScroll?: boolean;
+}): React.JSX.Element {
+  const { servers } = props;
+  const state = useProjectManagement(props);
+  const { pending, rows, selectedServerId, setSelectedServerId } = state;
+  return (
+    <>
       <View style={styles.sheetHeader} testID="project-management-header">
         <Text accessibilityRole="header" style={styles.sheetTitle}>
           Manage Projects
@@ -164,11 +179,11 @@ export function SidebarProjectsSheet(
         renderItem={({ index, item }) => (
           <ProjectManagementRow index={index} item={item} props={props} state={state} />
         )}
-        scrollComponent={AppSheetScrollView}
+        {...(sheetScroll ? { scrollComponent: AppSheetScrollView } : {})}
         style={styles.sheetList}
         testID="project-management-list"
         virtualized
       />
-    </ProjectManagementSurface>
+    </>
   );
 }

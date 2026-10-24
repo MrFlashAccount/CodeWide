@@ -25,11 +25,9 @@ export type CatalogMode = "pullRequests" | "threads";
 export function CatalogModeBar({
   mode,
   onSelect,
-  reviewRequestedCount,
 }: {
   readonly mode: CatalogMode;
   readonly onSelect: (mode: CatalogMode) => void;
-  readonly reviewRequestedCount: number;
 }): React.JSX.Element {
   const selectMode = useEvent((value: string) => {
     const nextMode = parseCatalogMode(value);
@@ -37,8 +35,7 @@ export function CatalogModeBar({
       onSelect(nextMode);
     }
   });
-  const pullRequestsLabel =
-    reviewRequestedCount > 0 ? `Pull requests ${String(reviewRequestedCount)}` : "Pull requests";
+  const pullRequestsLabel = "Pull requests";
 
   return (
     <View accessibilityRole="tablist" style={styles.shell} testID="catalog-mode-bar">

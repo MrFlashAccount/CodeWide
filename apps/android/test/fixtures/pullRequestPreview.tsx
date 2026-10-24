@@ -5,25 +5,19 @@
  * `pull-requests-preview.browser.test.mjs` for layout checks and captures.
  */
 import { useSelector } from "@legendapp/state/react";
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { StyleSheet, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { parsePullRequestKeyParam } from "../../src/data/forgeContract";
-import { useForgeQuery } from "../../src/data/forgeQueryResource";
-import { remoteValue } from "../../src/data/forgeRemoteValue";
 import { PullRequestScreen } from "../../src/features/pullRequestDetail/PullRequestScreen";
 import { createPullRequestDetailWorkspaceAdapter } from "../../src/features/pullRequestDetail/workspaceAdapter";
 import { CatalogModeBar } from "../../src/features/pullRequests/CatalogModeBar";
 import { PullRequestsCatalog } from "../../src/features/pullRequests/PullRequestsFeature";
 import { PullRequestsHeader } from "../../src/features/pullRequests/PullRequestsHeader";
 import { ReviewInboxIllustration } from "../../src/features/pullRequests/onboarding/ReviewInboxIllustration";
-import {
-  defaultPullRequestFilter,
-  openForgeAccounts,
-  reviewRequestedCount,
-} from "../../src/features/pullRequests/pullRequestListModel";
+import { openForgeAccounts } from "../../src/features/pullRequests/pullRequestListModel";
 import { createPullRequestsWorkspaceAdapter } from "../../src/features/pullRequests/workspaceAdapter";
 import {
   catalogModeBarBottomInset,
@@ -57,11 +51,6 @@ const reviewTarget = createReviewTargetAdapter({
   resources: review,
 });
 const pullRequest = parsePullRequestKeyParam(overview91.pullRequest);
-const REVIEW_REQUESTED = {
-  connectionId: "server",
-  filter: defaultPullRequestFilter(),
-};
-
 const threads: Readonly<Record<string, { readonly status: string; readonly title: string }>> = {
   "thread-forge-auth": { status: "Working", title: "Forge auth state" },
   "thread-review-91": { status: "Idle", title: "Review #91" },
@@ -70,16 +59,11 @@ const threads: Readonly<Record<string, { readonly status: string; readonly title
 if (scenario === "accounts") {
   openForgeAccounts();
 }
-/** The bottom bar counts exactly as the app's host does, from the same list resource. */
+/** The bottom bar uses the same count-free labels as the app. */
 function ModeBar(): React.JSX.Element {
-  const page = useForgeQuery(forge.lists, REVIEW_REQUESTED);
   return (
     <View pointerEvents="box-none" style={previewStyles.modeBar}>
-      <CatalogModeBar
-        mode="pullRequests"
-        onSelect={() => undefined}
-        reviewRequestedCount={reviewRequestedCount(remoteValue(page))}
-      />
+      <CatalogModeBar mode="pullRequests" onSelect={() => undefined} />
     </View>
   );
 }
@@ -166,6 +150,7 @@ function ThreadRows(): React.JSX.Element {
 }
 
 function Screen({ tablet }: { readonly tablet: boolean }): React.JSX.Element | null {
+  const [tab, setTab] = useState<"changes" | "overview">("overview");
   if (pullRequest === null) {
     return null;
   }
@@ -183,12 +168,14 @@ function Screen({ tablet }: { readonly tablet: boolean }): React.JSX.Element | n
           chatVisible: false,
           closeChat: () => undefined,
           openPullRequestFullscreen: () => undefined,
+          openTab: setTab,
           openThread: () => undefined,
           pullRequestFullscreen: false,
         }}
         pullRequest={pullRequest}
         review={review}
         reviewCapabilities={reviewTarget}
+        tab={tab}
         tablet={tablet}
       />
     </Suspense>

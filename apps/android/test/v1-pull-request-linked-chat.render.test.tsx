@@ -5,11 +5,13 @@ import { PullRequestRoute } from "../src/routeComposition/PullRequestRoute";
 const mockSelectThread = jest.fn();
 const mockSetDetailExpanded = jest.fn();
 const mockPresent = jest.fn();
+const mockDismissTo = jest.fn();
+const mockReplace = jest.fn();
 let mockDesktop = true;
 
 jest.mock("expo-router", () => ({
   useLocalSearchParams: () => ({ connectionId: "server", pullRequestKey: "fpr1.github-91" }),
-  useRouter: () => ({ back: jest.fn(), canGoBack: () => true, replace: jest.fn() }),
+  useRouter: () => ({ dismissTo: mockDismissTo, replace: mockReplace }),
 }));
 jest.mock("../src/data/forgeRuntime", () => ({
   forgeResources: {},
@@ -23,11 +25,33 @@ jest.mock("../src/features/pullRequestDetail/PullRequestScreen", () => {
       navigation,
     }: {
       readonly navigation: {
+        readonly back: () => void;
         readonly beginChat: () => void;
+        readonly openTab: (tab: "changes" | "overview") => void;
         readonly openThread: (threadId: string) => void;
       };
+      readonly tab: "changes" | "overview";
     }) => (
       <>
+        <MockPressable onPress={navigation.back} testID="close-pull-request">
+          <MockText>Close pull request</MockText>
+        </MockPressable>
+        <MockPressable
+          onPress={() => {
+            navigation.openTab("changes");
+          }}
+          testID="open-changes"
+        >
+          <MockText>Open changes</MockText>
+        </MockPressable>
+        <MockPressable
+          onPress={() => {
+            navigation.openTab("overview");
+          }}
+          testID="open-details"
+        >
+          <MockText>Open details</MockText>
+        </MockPressable>
         <MockPressable
           onPress={() => {
             navigation.openThread("linked-thread");
@@ -96,10 +120,12 @@ beforeEach(() => {
   mockSelectThread.mockClear();
   mockSetDetailExpanded.mockClear();
   mockPresent.mockClear();
+  mockDismissTo.mockClear();
+  mockReplace.mockClear();
 });
 
 it("reveals the chat skeleton immediately while the canonical thread resolves", () => {
-  const view = render(<PullRequestRoute />);
+  const view = render(<PullRequestRoute tab="overview" />);
 
   fireEvent.press(view.getByTestId("begin-linked-chat"));
 
@@ -108,7 +134,7 @@ it("reveals the chat skeleton immediately while the canonical thread resolves", 
 });
 
 it("mounts the canonical conversation for the linked thread in the wide PR sidebar", () => {
-  const view = render(<PullRequestRoute />);
+  const view = render(<PullRequestRoute tab="overview" />);
 
   fireEvent.press(view.getByTestId("open-linked-thread"));
 
@@ -117,7 +143,7 @@ it("mounts the canonical conversation for the linked thread in the wide PR sideb
 });
 
 it("exposes width, fullscreen and close controls in the canonical chat header", () => {
-  const view = render(<PullRequestRoute />);
+  const view = render(<PullRequestRoute tab="overview" />);
 
   fireEvent.press(view.getByTestId("open-linked-thread"));
   fireEvent.press(view.getByLabelText("Widen review chat"));
@@ -132,7 +158,7 @@ it("exposes width, fullscreen and close controls in the canonical chat header", 
 
 it("shows a full-surface opening state immediately on compact screens", () => {
   mockDesktop = false;
-  const view = render(<PullRequestRoute />);
+  const view = render(<PullRequestRoute tab="overview" />);
 
   fireEvent.press(view.getByTestId("begin-linked-chat"));
 
@@ -141,10 +167,35 @@ it("shows a full-surface opening state immediately on compact screens", () => {
 
 it("uses ordinary thread navigation instead of a second chat surface on compact screens", () => {
   mockDesktop = false;
-  const view = render(<PullRequestRoute />);
+  const view = render(<PullRequestRoute tab="overview" />);
 
   fireEvent.press(view.getByTestId("open-linked-thread"));
 
   expect(view.queryByTestId("canonical-conversation")).toBeNull();
   expect(mockSelectThread).toHaveBeenCalledWith("server:linked-thread");
+});
+
+it("closes every PR tab to the canonical pull-request catalog route", () => {
+  const view = render(<PullRequestRoute tab="changes" />);
+
+  fireEvent.press(view.getByTestId("close-pull-request"));
+
+  expect(mockDismissTo).toHaveBeenCalledWith("/pulls");
+});
+
+it("routes Details and Changes through distinct canonical URLs", () => {
+  const details = render(<PullRequestRoute tab="overview" />);
+  fireEvent.press(details.getByTestId("open-changes"));
+  expect(mockReplace).toHaveBeenLastCalledWith({
+    params: { connectionId: "server", pullRequestKey: "fpr1.github-91" },
+    pathname: "/pulls/[connectionId]/[pullRequestKey]/changes",
+  });
+  details.unmount();
+
+  const changes = render(<PullRequestRoute tab="changes" />);
+  fireEvent.press(changes.getByTestId("open-details"));
+  expect(mockReplace).toHaveBeenLastCalledWith({
+    params: { connectionId: "server", pullRequestKey: "fpr1.github-91" },
+    pathname: "/pulls/[connectionId]/[pullRequestKey]",
+  });
 });

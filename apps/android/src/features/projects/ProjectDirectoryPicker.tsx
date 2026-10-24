@@ -2,7 +2,7 @@ import type { StoredConnection } from "../../data/connection-profile-types";
 import { useEvent } from "../../react/useEvent";
 import type { ThreadListServer } from "../connections/connectionPresentation";
 import type { ProjectsWorkspaceCapabilities } from "./workspaceCapabilities";
-import { ProjectPickerSurface } from "./ProjectPickerSurface";
+import { ProjectPickerRouteSurface } from "./ProjectPickerSurface";
 import { projectPickerServers } from "./projectPickerServers";
 
 /** Adds a folder on an explicitly chosen server without changing the conversation destination. */
@@ -32,7 +32,7 @@ export function ProjectDirectoryPicker({
     return Promise.resolve();
   });
   return (
-    <ProjectPickerSurface
+    <ProjectPickerRouteSurface
       browseOnly
       busy={false}
       choices={[]}

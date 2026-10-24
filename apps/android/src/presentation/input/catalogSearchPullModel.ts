@@ -30,6 +30,7 @@ export type CatalogSearchPullModel = {
 
 /** Stable inputs for attaching the shared search gesture to a catalog viewport. */
 export type CatalogSearchPullGestureOptions = {
+  readonly enabled: boolean;
   readonly gestureTestID?: string;
   readonly initialOffset: number;
   readonly onOpenSearch: () => void;
@@ -46,6 +47,7 @@ export function useCatalogSearchPullModel(): CatalogSearchPullModel | null {
 
 /** Watches catalog offset and opens search after the shared pull threshold. */
 export function useCatalogSearchPullGesture({
+  enabled,
   gestureTestID = "catalog-pull-to-search",
   initialOffset,
   onOpenSearch,
@@ -74,6 +76,7 @@ export function useCatalogSearchPullGesture({
   }, [initialOffset, offset, scope]);
   const pan = Gesture.Pan()
     .withTestId(gestureTestID)
+    .enabled(enabled)
     .minDistance(spacing.xl)
     .maxPointers(1)
     .activeOffsetY(spacing.xs)

@@ -1,6 +1,7 @@
 import { LayoutAnimationConfig } from "react-native-reanimated";
 import { useEvent } from "../../react/useEvent";
 import { AppSheet } from "../../ui/AppSheet";
+import { AppRouteSheet } from "../../ui/AppRouteSheet";
 import { SheetPageTransition } from "../../ui/sheetNavigation";
 import type { ScopedProjectPickerProps } from "./projectPickerContract";
 import { ProjectPickerFooter } from "./ProjectPickerFooter";
@@ -13,10 +14,12 @@ import { useProjectPickerSession, type ProjectPickerSession } from "./projectPic
 function ProjectPickerPage({
   onBack,
   props,
+  sheetScroll,
   state,
 }: {
   readonly onBack: () => void;
   readonly props: ScopedProjectPickerProps;
+  readonly sheetScroll: boolean;
   readonly state: ProjectPickerSession;
 }): React.JSX.Element {
   const { mode, navigationDirection } = state;
@@ -25,7 +28,7 @@ function ProjectPickerPage({
       <ProjectPickerHeader onBack={onBack} props={props} state={state} />
       <ProjectPickerSearch state={state} />
 
-      <ProjectPickerContent props={props} state={state} />
+      <ProjectPickerContent props={props} sheetScroll={sheetScroll} state={state} />
 
       <ProjectPickerFooter props={props} state={state} />
     </SheetPageTransition>
@@ -42,30 +45,28 @@ export function ProjectPickerSurface(props: ScopedProjectPickerProps): React.JSX
   );
 }
 
+/** Route-owned project picker; the Router modal is the only presentation lifecycle. */
+export function ProjectPickerRouteSurface(props: ScopedProjectPickerProps): React.JSX.Element {
+  const state = useProjectPickerSession(props);
+  const back = useProjectPickerBack(props, state);
+  return (
+    <LayoutAnimationConfig skipExiting>
+      <AppRouteSheet dismissLabel="Close project picker" onDismiss={props.onClose}>
+        <ProjectPickerPage onBack={back} props={props} sheetScroll={false} state={state} />
+      </AppRouteSheet>
+    </LayoutAnimationConfig>
+  );
+}
+
 function ProjectPickerSessionSheet(props: ScopedProjectPickerProps) {
   const state = useProjectPickerSession(props);
-  const { browseOnly = false, onClose, visible } = props;
-  const { mode, navigate, parentPath, showProjects, showServers } = state;
+  const { onClose, visible } = props;
   const changeOpen = useEvent((open: boolean) => {
     if (!open && visible && state.isCurrent()) {
       onClose();
     }
   });
-  const backFromDirectory = useEvent(() => {
-    if (mode === "directory") {
-      if (parentPath !== null) {
-        navigate(parentPath);
-      } else {
-        showServers();
-      }
-      return;
-    }
-    if (browseOnly) {
-      onClose();
-    } else {
-      showProjects();
-    }
-  });
+  const backFromDirectory = useProjectPickerBack(props, state);
 
   return (
     <AppSheet
@@ -76,14 +77,36 @@ function ProjectPickerSessionSheet(props: ScopedProjectPickerProps) {
         enableOverDrag: false,
         enablePanDownToClose: !props.busy && !state.adding,
         index: 0,
-        performanceSurface: mode === "projects" ? "projects" : "folders",
+        performanceSurface: state.mode === "projects" ? "projects" : "folders",
         snapPoints: ["62%", "92%"],
       }}
       isOpen={visible}
-      {...(mode !== "projects" ? { onDismissRequest: backFromDirectory } : {})}
+      {...(state.mode !== "projects" ? { onDismissRequest: backFromDirectory } : {})}
       onOpenChange={changeOpen}
     >
-      <ProjectPickerPage onBack={backFromDirectory} props={props} state={state} />
+      <ProjectPickerPage onBack={backFromDirectory} props={props} sheetScroll state={state} />
     </AppSheet>
   );
+}
+
+function useProjectPickerBack(
+  props: ScopedProjectPickerProps,
+  state: ProjectPickerSession,
+): () => void {
+  return useEvent(() => {
+    const { mode, navigate, parentPath, showProjects, showServers } = state;
+    if (mode === "directory") {
+      if (parentPath !== null) {
+        navigate(parentPath);
+      } else {
+        showServers();
+      }
+      return;
+    }
+    if (props.browseOnly === true) {
+      props.onClose();
+    } else {
+      showProjects();
+    }
+  });
 }

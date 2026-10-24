@@ -16,7 +16,14 @@ function renderDock(reviewUrl: string) {
       host="github.com"
       onOpenSubmit={jest.fn()}
       onSelectVerdict={jest.fn()}
-      result={{ kind: "published", left: 0, published: 2, reviewUrl, toAgent: 0, verdict: "Approve" }}
+      result={{
+        kind: "published",
+        left: 0,
+        published: 2,
+        reviewUrl,
+        toAgent: 0,
+        verdict: "Approve",
+      }}
       verdict={null}
       verdicts={[]}
     />,
@@ -31,7 +38,9 @@ beforeEach(() => {
 it("opens an https review page on the account host", () => {
   const view = renderDock("https://github.com/acme/app/pull/91#pullrequestreview-1");
   fireEvent.press(view.getByText("View on forge"));
-  expect(Linking.openURL).toHaveBeenCalledWith("https://github.com/acme/app/pull/91#pullrequestreview-1");
+  expect(Linking.openURL).toHaveBeenCalledWith(
+    "https://github.com/acme/app/pull/91#pullrequestreview-1",
+  );
 });
 
 const UNSAFE_URLS = [

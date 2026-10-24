@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { parseActionCatalog, type ActionDescriptor } from "../src/data/forgeActionCatalog";
-import { slotActions, type SlotLayout, type SlotTargets } from "../src/features/pullRequestDetail/actions/actionSlotting";
+import {
+  slotActions,
+  type SlotLayout,
+  type SlotTargets,
+} from "../src/features/pullRequestDetail/actions/actionSlotting";
 import { confirmationCopy } from "../src/features/pullRequestDetail/actions/confirmationCopy";
 import { effectiveConfirmation } from "../src/features/pullRequestDetail/actions/confirmationPolicy";
 import { action, overview91 } from "./fixtures/forgeWireFixtures";
@@ -13,7 +17,8 @@ function catalog(actions: readonly Record<string, unknown>[]): readonly ActionDe
 const phone: SlotLayout = { availableWidth: 1000, gap: 8, measure: () => 100, tablet: false };
 const tablet: SlotLayout = { ...phone, tablet: true };
 const noTargets: SlotTargets = { checkIds: new Set(), conflict: false, reviewThreadIds: new Set() };
-const ids = (actions: readonly ActionDescriptor[]): readonly string[] => actions.map((item) => item.actionId);
+const ids = (actions: readonly ActionDescriptor[]): readonly string[] =>
+  actions.map((item) => item.actionId);
 
 describe("action slotting", () => {
   const rowActions = catalog([
@@ -51,7 +56,9 @@ describe("action slotting", () => {
     expect(ids(slots.verdicts)).toEqual(["approve", "request", "comment"]);
     expect(ids(slots.merge)).toEqual(["merge"]);
     expect(slots.autoMerge?.actionId).toBe("auto");
-    expect([...ids(slots.primary), ...ids(slots.secondary), ...ids(slots.overflow)]).not.toContain("approve");
+    expect([...ids(slots.primary), ...ids(slots.secondary), ...ids(slots.overflow)]).not.toContain(
+      "approve",
+    );
   });
 
   it("puts an anchored action on its target, and in ⋯ when the target is missing", () => {
@@ -60,7 +67,11 @@ describe("action slotting", () => {
       action("rebase", { anchor: { kind: "conflict" }, kind: "rebase" }),
       action("reply", { anchor: { kind: "reviewThread", reviewThreadId: "rt" } }),
     ]);
-    const present = slotActions(anchored, { checkIds: new Set(["c1"]), conflict: true, reviewThreadIds: new Set(["rt"]) }, phone);
+    const present = slotActions(
+      anchored,
+      { checkIds: new Set(["c1"]), conflict: true, reviewThreadIds: new Set(["rt"]) },
+      phone,
+    );
     expect(ids(present.anchored.checks.get("c1") ?? [])).toEqual(["fix"]);
     expect(ids(present.anchored.conflict)).toEqual(["rebase"]);
     expect(ids(present.anchored.reviewThreads.get("rt") ?? [])).toEqual(["reply"]);
@@ -70,7 +81,11 @@ describe("action slotting", () => {
 
   it("places every action exactly once", () => {
     const actions = catalog(overview91.catalog.actions);
-    const slots = slotActions(actions, { checkIds: new Set(["c-android"]), conflict: false, reviewThreadIds: new Set() }, phone);
+    const slots = slotActions(
+      actions,
+      { checkIds: new Set(["c-android"]), conflict: false, reviewThreadIds: new Set() },
+      phone,
+    );
     const placed = [
       ...slots.primary,
       ...slots.secondary,
@@ -86,7 +101,10 @@ describe("action slotting", () => {
 
 describe("confirmation policy", () => {
   it("raises merge and close to destructive even when the plugin says none", () => {
-    const [merge, close] = catalog([action("m", { confirm: "none", kind: "merge" }), action("c", { confirm: "none", kind: "close" })]);
+    const [merge, close] = catalog([
+      action("m", { confirm: "none", kind: "merge" }),
+      action("c", { confirm: "none", kind: "close" }),
+    ]);
     expect(merge === undefined ? null : effectiveConfirmation(merge)).toBe("destructive");
     expect(close === undefined ? null : effectiveConfirmation(close)).toBe("destructive");
   });
@@ -97,11 +115,11 @@ describe("confirmation policy", () => {
       action("u", { kind: "updateBranch" }),
       action("e", { confirm: "destructive" }),
     ]);
-    expect([auto, update, extension].map((item) => (item === undefined ? null : effectiveConfirmation(item)))).toEqual([
-      "confirm",
-      "confirm",
-      "destructive",
-    ]);
+    expect(
+      [auto, update, extension].map((item) =>
+        item === undefined ? null : effectiveConfirmation(item),
+      ),
+    ).toEqual(["confirm", "confirm", "destructive"]);
   });
 
   it("names the forge host in every consequence", () => {

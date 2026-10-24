@@ -2,7 +2,6 @@ import { StyleSheet } from "react-native";
 
 import {
   colors,
-  controlSize,
   iconSize,
   layoutSize,
   radii,
@@ -12,7 +11,6 @@ import {
 } from "../../../theme";
 import { filterIconButtonDotLayout } from "../../../presentation/input/filterIconButtonLayout";
 import { catalogModeBarContentInset } from "../../../presentation/layouts/catalogModeBarGeometry";
-import { searchFieldLayout } from "../../../presentation/input/searchLayout";
 
 /** Stroke of the hollow dot used when checks are absent or unavailable. */
 const HOLLOW_DOT_STROKE = 1.5;
@@ -146,26 +144,8 @@ export const listStyles = StyleSheet.create({
     position: "relative",
     width: iconSize.inline,
   },
-  searchField: {
-    ...searchFieldLayout,
-    flex: 1,
-    height: controlSize.regular,
-    minWidth: 0,
-  },
-  searchInput: {
-    ...typeScale.body,
-    color: colors.text,
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: 0,
-  },
-  searchRow: {
-    alignItems: "center",
-    columnGap: spacing.xs,
-    flexDirection: "row",
-    paddingBottom: spacing.xs,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.xs,
+  searchOverlay: {
+    ...StyleSheet.absoluteFill,
   },
   section: {
     alignItems: "center",

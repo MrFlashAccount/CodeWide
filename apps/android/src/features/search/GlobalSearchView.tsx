@@ -1,15 +1,11 @@
-import { Ionicons } from "@expo/vector-icons";
 import { LegendList } from "@legendapp/list/react-native";
 import { lazy, Suspense } from "react";
 import { Pressable, View } from "react-native";
-import {
-  ThreadListHeaderAction,
-  ThreadListHeaderRow,
-} from "../../presentation/navigation/ThreadListHeader";
-import { colors, controlHitSlop, controlSize, iconSize, spacing } from "../../theme";
+import { SearchOverlayHeader } from "../../presentation/input/SearchOverlayHeader";
+import { ThreadListHeaderAction } from "../../presentation/navigation/ThreadListHeader";
+import { controlSize, spacing } from "../../theme";
 import { ContentMenu } from "../../ui/ContentMenu";
-import { InlineIcon } from "../../ui/InlineIcon";
-import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
+import { AppText as Text } from "../../ui/Typography";
 import { WaveText } from "../../ui/WaveText";
 import { styles } from "./GlobalSearchScreen.styles";
 import type { renderGlobalSearchViewInput } from "./GlobalSearchView.inputs";
@@ -22,41 +18,19 @@ const SearchCalendar = lazy(async () => import("./SearchCalendar"));
 export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
   return (
     <View style={styles.root} testID="sidebar-search">
-      <ThreadListHeaderRow testID="global-search-header-row">
-        <ThreadListHeaderAction
-          accessibilityLabel="Back to threads"
-          iconSize={iconSize.navigation}
-          name="arrow-back"
-          onPress={props.close}
-        />
-        <View style={styles.header} testID="search-top-input">
-          <View style={styles.searchBar} testID="expanded-thread-search-field">
-            <InlineIcon color={colors.textMuted} name="search" role="body" />
-            <TextInput
-              accessibilityLabel="Search all messages"
-              accessibilityRole="search"
-              autoFocus={props.autoFocus}
-              compact
-              onChangeText={props.setText}
-              onFocus={props.didFocus}
-              onSubmitEditing={props.search}
-              placeholder="Search messages"
-              returnKeyType="search"
-              style={styles.input}
-              value={props.text}
-            />
-            {props.text !== "" && (
-              <Pressable
-                accessibilityLabel="Clear search query"
-                accessibilityRole="button"
-                hitSlop={controlHitSlop.regular}
-                onPress={props.clear}
-                style={({ pressed }) => [styles.clearButton, pressed && styles.iconButtonPressed]}
-              >
-                <Ionicons color={colors.textMuted} name="close" size={iconSize.action} />
-              </Pressable>
-            )}
-          </View>
+      <SearchOverlayHeader
+        accessibilityLabel="Search all messages"
+        backAccessibilityLabel="Back to threads"
+        fieldTestID="expanded-thread-search-field"
+        focusOnMount={props.autoFocus}
+        onBack={props.close}
+        onChangeText={props.setText}
+        onFocus={props.didFocus}
+        onSubmit={props.search}
+        placeholder="Search messages"
+        rowTestID="global-search-header-row"
+        testID="search-top-input"
+        trailing={
           <ContentMenu
             align="end"
             onOpenChange={props.setFilters}
@@ -110,8 +84,9 @@ export function renderGlobalSearchView(props: renderGlobalSearchViewInput) {
               </Pressable>
             </View>
           </ContentMenu>
-        </View>
-      </ThreadListHeaderRow>
+        }
+        value={props.text}
+      />
       {props.calendar !== null && (
         <Suspense fallback={null}>
           <SearchCalendar

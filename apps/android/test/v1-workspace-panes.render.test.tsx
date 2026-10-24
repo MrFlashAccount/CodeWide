@@ -25,10 +25,23 @@ import { desktopThreadSidebarWidth } from "../src/presentation/layouts/windowLay
 import { radii } from "../src/theme";
 let mockDesktop = false;
 jest.mock("../src/routeComposition/CatalogModeBarHost", () => {
-  const { Text: NativeText } = jest.requireActual("react-native");
+  const { Pressable, Text: NativeText } = jest.requireActual("react-native");
   return {
-    CatalogModeBarHost: ({ mode }: { readonly mode: string }) => (
-      <NativeText testID="catalog-mode-bar-host">{mode}</NativeText>
+    CatalogModeBarHost: ({
+      mode,
+      onSelect,
+    }: {
+      readonly mode: "pullRequests" | "threads";
+      readonly onSelect: (mode: "pullRequests" | "threads") => void;
+    }) => (
+      <Pressable
+        onPress={() => {
+          onSelect(mode === "threads" ? "pullRequests" : "threads");
+        }}
+        testID="catalog-mode-bar-host"
+      >
+        <NativeText>{mode}</NativeText>
+      </Pressable>
     ),
   };
 });
@@ -75,6 +88,9 @@ function PullRequests() {
 function PullRequestDetail() {
   return <Text testID="pull-request-detail">Pull request detail</Text>;
 }
+function ProjectsOverlay() {
+  return <Text testID="projects-overlay">Projects</Text>;
+}
 function Catalog() {
   const selectedProject = useWorkspaceProjectSessionId();
   return (
@@ -93,8 +109,13 @@ function Workspace() {
       <Root.Screen name="(lists)" component={Catalog} />
       <Root.Screen name="pulls/index" component={PullRequests} />
       <Root.Screen
-        name="pulls/[connectionId]/[pullRequestKey]"
+        name="pulls/[connectionId]/[pullRequestKey]/index"
         component={PullRequestDetail}
+      />
+      <Root.Screen
+        name="projects/index"
+        component={ProjectsOverlay}
+        options={{ presentation: "transparentModal" }}
       />
       <Root.Screen name="thread" component={Thread} />
     </Root.Navigator>
@@ -170,7 +191,7 @@ it("keeps the wide catalog geometry while switching to the Pull requests route",
   expect(StyleSheet.flatten(floatingModeBar.props.style).width).toBe(
     desktopThreadSidebarWidth(1100) - catalogModeBarHorizontalInset * 2,
   );
-  expect(modeBar.props.children).toBe("threads");
+  expect(modeBar).toHaveTextContent("threads");
 
   act(() =>
     mockReference.dispatch({
@@ -183,7 +204,7 @@ it("keeps the wide catalog geometry while switching to the Pull requests route",
   expect(view.getByTestId("pull-requests-route")).toBeVisible();
   expect(view.getByTestId("pull-requests-header")).toBeVisible();
   expect(view.getByTestId("catalog-mode-bar-host")).toBe(modeBar);
-  expect(modeBar.props.children).toBe("pullRequests");
+  expect(modeBar).toHaveTextContent("pullRequests");
   expect(view.getByTestId("floating-catalog-mode-bar")).toBe(floatingModeBar);
   expect(StyleSheet.flatten(floatingModeBar.props.style).width).toBe(
     desktopThreadSidebarWidth(1100) - catalogModeBarHorizontalInset * 2,
@@ -232,7 +253,7 @@ it("keeps the Pull requests catalog beside a wide pull-request detail", () => {
       type: "PUSH",
       target: workspaceKey,
       payload: {
-        name: "pulls/[connectionId]/[pullRequestKey]",
+        name: "pulls/[connectionId]/[pullRequestKey]/index",
         params: { connectionId: "server", pullRequestKey: "pull-request" },
       },
     }),
@@ -241,7 +262,85 @@ it("keeps the Pull requests catalog beside a wide pull-request detail", () => {
   expect(view.getByTestId("pull-request-detail")).toBeVisible();
   expect(view.getByTestId("pull-requests-catalog-pane")).toBe(pullRequestsCatalog);
   expect(view.getByTestId("workspace-catalog-pane")).not.toHaveStyle({ display: "none" });
-  expect(view.getByTestId("catalog-mode-bar-host").props.children).toBe("pullRequests");
+  expect(view.getByTestId("catalog-mode-bar-host")).toHaveTextContent("pullRequests");
+  view.unmount();
+});
+
+it("resets a pull-request detail to the Threads root without retaining a PR route", () => {
+  mockDesktop = true;
+  const view = render(<Application />);
+  const workspaceKey = mockReference.getRootState().routes[0]?.state?.key;
+  act(() =>
+    mockReference.dispatch({
+      type: "REPLACE",
+      target: workspaceKey,
+      payload: { name: "pulls/index" },
+    }),
+  );
+  act(() =>
+    mockReference.dispatch({
+      type: "PUSH",
+      target: workspaceKey,
+      payload: {
+        name: "pulls/[connectionId]/[pullRequestKey]/index",
+        params: { connectionId: "server", pullRequestKey: "pull-request" },
+      },
+    }),
+  );
+  expect(view.getByTestId("pull-request-detail")).toBeVisible();
+
+  fireEvent.press(view.getByTestId("catalog-mode-bar-host"));
+
+  const workspace = mockReference.getRootState().routes[0]?.state;
+  expect(workspace?.routes).toHaveLength(1);
+  expect(workspace?.routes[0]?.name).toBe("(lists)");
+  expect(view.queryByTestId("pull-request-detail", { includeHiddenElements: true })).toBeNull();
+  expect(view.getByTestId("header")).toBeVisible();
+  view.unmount();
+});
+
+it("keeps Projects over the PR catalog without resurrecting a closed PR detail", () => {
+  mockDesktop = true;
+  const view = render(<Application />);
+  const workspaceKey = mockReference.getRootState().routes[0]?.state?.key;
+  act(() =>
+    mockReference.dispatch({
+      type: "REPLACE",
+      target: workspaceKey,
+      payload: { name: "pulls/index" },
+    }),
+  );
+  act(() =>
+    mockReference.dispatch({
+      type: "PUSH",
+      target: workspaceKey,
+      payload: {
+        name: "pulls/[connectionId]/[pullRequestKey]/index",
+        params: { connectionId: "server", pullRequestKey: "pull-request" },
+      },
+    }),
+  );
+  act(() => mockReference.goBack());
+  expect(view.queryByTestId("pull-request-detail", { includeHiddenElements: true })).toBeNull();
+
+  act(() =>
+    mockReference.dispatch({
+      type: "PUSH",
+      target: workspaceKey,
+      payload: { name: "projects/index" },
+    }),
+  );
+
+  expect(view.getByTestId("projects-overlay")).toBeVisible();
+  expect(view.getByTestId("pull-requests-catalog-pane")).toBeVisible();
+  expect(view.queryByTestId("pull-request-detail", { includeHiddenElements: true })).toBeNull();
+  expect(
+    view.queryByTestId("floating-catalog-mode-bar", { includeHiddenElements: true }),
+  ).toBeNull();
+
+  act(() => mockReference.goBack());
+  expect(view.getByTestId("pull-requests-route")).toBeVisible();
+  expect(view.getByTestId("catalog-mode-bar-host")).toHaveTextContent("pullRequests");
   view.unmount();
 });
 
