@@ -214,6 +214,33 @@ it("shows no prompt line when the Companion does not know the command", async ()
   expect(view.queryByTestId("command-output-command")).toBeNull();
 });
 
+it("collapses a long command to three lines and keeps its prompt on the first line", () => {
+  const longCommand = "pnpm --filter @codewide/android run a-command-that-wraps-across-four-lines";
+  const view = render(
+    <CommandOutputScreen
+      command={longCommand}
+      error={null}
+      loading={false}
+      onClose={jest.fn()}
+      output={{ headOmitted: false, text: "", totalChars: 0 }}
+      outputSource="long-command"
+      status="finished"
+      title="Command"
+    />,
+  );
+  const command = view.getByTestId("command-output-command");
+  const commandText = within(command).getByText(longCommand);
+  expect(command).toHaveStyle({ alignItems: "flex-start" });
+  expect(commandText.props.numberOfLines).toBe(3);
+
+  fireEvent(commandText, "textLayout", { nativeEvent: { lines: [{}, {}, {}, {}] } });
+  fireEvent.press(view.getByLabelText("Expand command"));
+  expect(within(command).getByText(longCommand).props.numberOfLines).toBeUndefined();
+
+  fireEvent.press(view.getByLabelText("Collapse command"));
+  expect(within(command).getByText(longCommand).props.numberOfLines).toBe(3);
+});
+
 it("shimmers only the command text while it is running and puts failure on that row", () => {
   const running = render(
     <CommandOutputScreen

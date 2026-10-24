@@ -51,12 +51,6 @@ const DELIVERY_OPTIONS = [
   ["passing", "Checks passing"],
   ["none", "No checks"],
 ] as const;
-const SORT_OPTIONS = [
-  { direction: "descending", field: "updated", label: "Recently updated" },
-  { direction: "ascending", field: "updated", label: "Least recently updated" },
-  { direction: "descending", field: "created", label: "Newest created" },
-  { direction: "ascending", field: "created", label: "Oldest created" },
-] as const;
 const FACETS: readonly {
   readonly detail: string;
   readonly icon: keyof typeof Ionicons.glyphMap;
@@ -98,13 +92,6 @@ const FACETS: readonly {
     icon: "pricetags-outline",
     label: "Metadata",
     value: "metadata",
-  },
-  { detail: "Updated or created", icon: "swap-vertical-outline", label: "Sort", value: "sort" },
-  {
-    detail: "Text and common qualifiers",
-    icon: "terminal-outline",
-    label: "Advanced query",
-    value: "advanced",
   },
 ];
 
@@ -206,9 +193,10 @@ function OpenFilterSheet({
   readonly wide: boolean;
 }): React.JSX.Element {
   const visibleFacet = wide ? (facet ?? "sources") : facet;
+  const activeCount = activePullRequestFilterCount(draft);
   return (
     <View style={styles.fill} testID="pull-request-filter-sheet">
-      <FilterHeader facet={wide ? null : facet} />
+      <FilterHeader count={activeCount} facet={wide ? null : facet} />
       <FilterSheetBody
         accounts={accounts}
         draft={draft}
@@ -217,7 +205,7 @@ function OpenFilterSheet({
         visibleFacet={visibleFacet}
         wide={wide}
       />
-      <FilterFooter count={activePullRequestFilterCount(draft)} />
+      <FilterFooter />
     </View>
   );
 }
@@ -283,15 +271,17 @@ function FacetPane({
 }
 
 function FilterHeader({
+  count,
   facet,
 }: {
+  readonly count: number;
   readonly facet: PullRequestFilterFacet | null;
 }): React.JSX.Element {
   const selected = FACETS.find((item) => item.value === facet);
   return (
     <Tray.Header style={styles.header}>
       <FilterHeaderIdentity facet={facet} title={selected?.label ?? "Filters"} />
-      <FilterHeaderActions />
+      <FilterHeaderActions count={count} />
     </Tray.Header>
   );
 }
@@ -327,13 +317,20 @@ function FilterHeaderBack({ visible }: { readonly visible: boolean }): React.JSX
   ) : null;
 }
 
-function FilterHeaderActions(): React.JSX.Element {
+function FilterHeaderActions({ count }: { readonly count: number }): React.JSX.Element {
   const reset = useEvent(() => {
     resetPullRequestFilterDraft();
   });
   return (
     <View style={styles.headerActions}>
-      <Pressable accessibilityRole="button" onPress={reset} style={styles.resetButton}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ disabled: count === 0 }}
+        disabled={count === 0}
+        onPress={reset}
+        style={[styles.resetButton, count === 0 && styles.resetButtonDisabled]}
+        testID="pull-request-reset-filters"
+      >
         <Text style={styles.resetText}>Reset</Text>
       </Pressable>
       <Tray.Close>
@@ -343,15 +340,12 @@ function FilterHeaderActions(): React.JSX.Element {
   );
 }
 
-function FilterFooter({ count }: { readonly count: number }): React.JSX.Element {
+function FilterFooter(): React.JSX.Element {
   const apply = useEvent(() => {
     applyPullRequestFilters();
   });
   return (
     <Tray.Footer style={styles.footer}>
-      <Text style={styles.footerSummary}>
-        {count === 0 ? "Default view" : `${String(count)} active`}
-      </Text>
       <Pressable accessibilityRole="button" onPress={apply} style={styles.applyButton}>
         <Text style={styles.applyText}>Apply filters</Text>
       </Pressable>
@@ -460,10 +454,6 @@ function FacetContent(props: {
       return <DeliveryFacet draft={props.draft} />;
     case "metadata":
       return <MetadataFacet draft={props.draft} />;
-    case "sort":
-      return <SortFacet draft={props.draft} />;
-    case "advanced":
-      return <AdvancedFacet draft={props.draft} />;
     default:
       return null;
   }
@@ -599,7 +589,7 @@ function StateFacet({ draft }: { readonly draft: PullRequestSearchFilter }): Rea
       onChange={(value, state) => {
         updatePullRequestFilterDraft((current) => ({
           ...current,
-          query: { ...current.query, states: nextValues(current.query.states, value, state) },
+          query: { ...current.query, states: nextStateValues(current.query.states, value, state) },
         }));
       }}
       options={STATE_OPTIONS}
@@ -647,57 +637,6 @@ function MetadataFacet({ draft }: { readonly draft: PullRequestSearchFilter }): 
           updateTextValues("headBranches", values);
         }}
         values={draft.query.headBranches}
-      />
-    </View>
-  );
-}
-
-function SortFacet({ draft }: { readonly draft: PullRequestSearchFilter }): React.JSX.Element {
-  return (
-    <View>
-      {SORT_OPTIONS.map((option) => (
-        <RadioOption
-          checked={
-            draft.query.sort.field === option.field &&
-            draft.query.sort.direction === option.direction
-          }
-          key={`${option.field}:${option.direction}`}
-          label={option.label}
-          onPress={() => {
-            updatePullRequestFilterDraft((current) => ({
-              ...current,
-              query: {
-                ...current.query,
-                sort: { direction: option.direction, field: option.field },
-              },
-            }));
-          }}
-        />
-      ))}
-    </View>
-  );
-}
-
-function AdvancedFacet({ draft }: { readonly draft: PullRequestSearchFilter }): React.JSX.Element {
-  const commit = useEvent((event: { readonly nativeEvent: { readonly text: string } }) => {
-    updatePullRequestFilterDraft((current) => ({
-      ...current,
-      query: { ...current.query, text: event.nativeEvent.text.trim() },
-    }));
-  });
-  return (
-    <View>
-      <FacetIntro text="Text and common qualifiers are passed with the structured filters. Provider-only qualifiers require a single compatible source." />
-      <TextInput
-        accessibilityLabel="Advanced pull request query"
-        autoCapitalize="none"
-        autoCorrect={false}
-        defaultValue={draft.query.text}
-        multiline
-        onEndEditing={commit}
-        placeholder="Search or type a qualifier"
-        placeholderTextColor={colors.textDim}
-        style={[styles.input, styles.advancedInput]}
       />
     </View>
   );
@@ -834,31 +773,6 @@ function TriStateOption({
   );
 }
 
-function RadioOption({
-  checked,
-  label,
-  onPress,
-}: {
-  readonly checked: boolean;
-  readonly label: string;
-  readonly onPress: () => void;
-}): React.JSX.Element {
-  const press = useEvent(() => {
-    onPress();
-  });
-  return (
-    <Pressable
-      accessibilityRole="radio"
-      accessibilityState={{ checked }}
-      onPress={press}
-      style={styles.optionRow}
-    >
-      <CheckBox checked={checked} />
-      <Text style={styles.optionTitle}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function CheckBox({ checked }: { readonly checked: boolean }): React.JSX.Element {
   return (
     <View style={[styles.checkBox, checked && styles.checkBoxSelected]}>
@@ -918,6 +832,19 @@ function nextValues<Value extends string>(
   return { exclude, include };
 }
 
+function nextStateValues(
+  values: PullRequestSearchFilter["query"]["states"],
+  value: PullRequestSearchFilter["query"]["states"]["include"][number],
+  state: "exclude" | "include" | "off",
+): PullRequestSearchFilter["query"]["states"] {
+  const onlyDefaultOpen =
+    values.exclude.length === 0 && values.include.length === 1 && values.include[0] === "open";
+  if (onlyDefaultOpen && value !== "open" && state === "include") {
+    return { exclude: [], include: [value] };
+  }
+  return nextValues(values, value, state);
+}
+
 function updateTextValues(
   field: "assignees" | "authors" | "baseBranches" | "headBranches" | "labels" | "reviewers",
   include: readonly string[],
@@ -967,12 +894,6 @@ function facetCount(filter: PullRequestSearchFilter, facet: PullRequestFilterFac
         valueCount(filter.query.baseBranches) +
         valueCount(filter.query.headBranches)
       );
-    case "sort":
-      return filter.query.sort.field === "updated" && filter.query.sort.direction === "descending"
-        ? 0
-        : 1;
-    case "advanced":
-      return filter.query.text.length === 0 ? 0 : 1;
     default:
       return 0;
   }

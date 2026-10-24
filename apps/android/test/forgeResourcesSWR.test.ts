@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { RpcClient } from "@codewide/sync-client";
 
 import { createForgeResources } from "../src/data/forgeResources";
 import { defaultPullRequestFilter } from "../src/features/pullRequests/pullRequestListModel";
@@ -70,5 +71,47 @@ describe("forge persisted stale-while-revalidate", () => {
     await restarted.restored;
 
     expect(restarted.lists.data(params)).toBeNull();
+  });
+
+  it("sends the complete selected filter to the search RPC", async () => {
+    const calls: { readonly method: string; readonly params: unknown }[] = [];
+    const session: RpcClient = {
+      connectionId: "server",
+      rpc: async <Result>(): Promise<Result> => Promise.reject(new Error("Unexpected direct RPC")),
+    };
+    const resources = createForgeResources({
+      getSession: () => session,
+      persister: createMemoryQueryPersister().persister,
+      reportDroppedAction: () => undefined,
+      rpcAfterAttach: async <Result>(_session, method, params): Promise<Result> => {
+        calls.push({ method, params });
+        // WHY: this transport fixture returns the wire-contract page consumed by the production parser.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+        return reviewRequestedPage as Result;
+      },
+    });
+    await resources.restored;
+    const base = defaultPullRequestFilter();
+    const filter = {
+      ...base,
+      query: {
+        ...base.query,
+        states: { exclude: [], include: ["merged"] as const },
+      },
+    };
+
+    await resources.lists.refresh({ connectionId: "server", filter });
+
+    expect(calls).toStrictEqual([
+      {
+        method: "companion/pullRequests/search",
+        params: {
+          accounts: [],
+          cursor: null,
+          providerIds: [],
+          query: filter.query,
+        },
+      },
+    ]);
   });
 });

@@ -7,7 +7,9 @@ import {
   openPullRequestFilters,
   pullRequestFilterSheetModel,
   pullRequestListModel,
-  selectPullRequestCategory,
+  resetPullRequestFilterDraft,
+  selectPullRequestSearchText,
+  selectPullRequestSort,
   updatePullRequestFilterDraft,
 } from "../src/features/pullRequests/pullRequestListModel";
 
@@ -19,24 +21,6 @@ afterEach(() => {
 });
 
 describe("pull-request filter draft", () => {
-  it("keeps cached filter snapshots stable while quick views switch forward and back", () => {
-    const reviewRequested = pullRequestListModel.peek();
-
-    selectPullRequestCategory("authored");
-    const authored = pullRequestListModel.peek();
-
-    expect(authored).not.toBe(reviewRequested);
-    expect(reviewRequested.query.category).toBe("reviewRequested");
-    expect(authored.query.category).toBe("authored");
-
-    selectPullRequestCategory("reviewRequested");
-    const selectedAgain = pullRequestListModel.peek();
-
-    expect(selectedAgain).not.toBe(authored);
-    expect(authored.query.category).toBe("authored");
-    expect(selectedAgain.query.category).toBe("reviewRequested");
-  });
-
   it("publishes all draft conditions atomically on Apply", () => {
     openPullRequestFilters();
     updatePullRequestFilterDraft((current) => ({
@@ -74,6 +58,27 @@ describe("pull-request filter draft", () => {
     expect(reopened.status).toBe("open");
     if (reopened.status === "open") {
       expect(reopened.draft).toStrictEqual(defaultPullRequestFilter());
+    }
+  });
+
+  it("resets only structured filters and preserves view, search and sort", () => {
+    selectPullRequestSearchText("is:team");
+    selectPullRequestSort({ direction: "ascending", field: "created" });
+    openPullRequestFilters();
+    updatePullRequestFilterDraft((current) => ({
+      ...current,
+      query: { ...current.query, checks: { exclude: [], include: ["failing"] } },
+    }));
+
+    resetPullRequestFilterDraft();
+
+    const state = pullRequestFilterSheetModel.peek();
+    expect(state.status).toBe("open");
+    if (state.status === "open") {
+      expect(activePullRequestFilterCount(state.draft)).toBe(0);
+      expect(state.draft.query.category).toBe("all");
+      expect(state.draft.query.text).toBe("is:team");
+      expect(state.draft.query.sort).toStrictEqual({ direction: "ascending", field: "created" });
     }
   });
 });

@@ -1,5 +1,6 @@
 import { LegendList } from "@legendapp/list/react-native";
-import { View } from "react-native";
+import { Animated, View } from "react-native";
+import { GestureDetector } from "react-native-gesture-handler";
 
 import type { AccountState, ForgeProvider, ProviderIcon } from "../../../data/forgeContract";
 import type {
@@ -7,6 +8,9 @@ import type {
   PullRequestRow as Row,
 } from "../../../data/forgePullRequestContract";
 import { remoteValue, type RemoteValue } from "../../../data/forgeRemoteValue";
+import { useCatalogSearchPullGesture } from "../../../presentation/input/catalogSearchPullModel";
+import { CatalogSearchPullProvider } from "../../../presentation/input/CatalogSearchPullProvider";
+import { CatalogSearchPullBackdrop } from "../../../presentation/input/CatalogSearchPullBackdrop";
 import { layoutSize } from "../../../theme";
 import type { PullRequestSearchFilter } from "../../../data/forgePullRequestSearch";
 import { listStyles as styles } from "./list.styles";
@@ -29,32 +33,43 @@ export function PullRequestList(props: {
   /** Provider mark of an account's plugin, from the accounts snapshot. */
   readonly iconFor: (pluginId: string) => ProviderIcon | null;
   readonly nowMs: number;
-  readonly onCategory: (category: PullRequestListPage["category"]) => void;
   readonly onEndReached: () => void;
   readonly onOpen: (row: Row) => void;
   readonly onOpenFilters: () => void;
+  readonly onOpenSearch: () => void;
   readonly onReconnect: (account: AccountState) => void;
   readonly onRetry: () => void;
   readonly onSearch: (text: string) => void;
+  readonly onSort: (sort: PullRequestSearchFilter["query"]["sort"]) => void;
   readonly pendingFilter: boolean;
   readonly providers: readonly ForgeProvider[];
   readonly state: RemoteValue<PullRequestListPage> | undefined;
 }): React.JSX.Element {
+  return (
+    <CatalogSearchPullProvider>
+      <PullRequestListSurface {...props} />
+    </CatalogSearchPullProvider>
+  );
+}
+
+function PullRequestListSurface(props: Parameters<typeof PullRequestList>[0]): React.JSX.Element {
   const { filter, state } = props;
   const page = remoteValue(state);
   const items = listItems(page);
   return (
     <View style={styles.fill} testID="pull-request-list">
       <PullRequestFilterBar
-        count={page === null ? undefined : items.filter((item) => item.kind === "row").length}
         filter={filter}
-        onCategory={props.onCategory}
         onOpenFilters={props.onOpenFilters}
+        onOpenSearch={props.onOpenSearch}
         onSearch={props.onSearch}
-        pending={props.pendingFilter}
+        onSort={props.onSort}
       />
       <ListNotice nowMs={props.nowMs} state={visibleNoticeState(state, props.pendingFilter)} />
-      <PullRequestRows items={items} page={page} props={props} />
+      <View style={styles.fill}>
+        <PullRequestRows items={items} page={page} props={props} />
+        <CatalogSearchPullBackdrop testID="pull-request-list-pull-backdrop" />
+      </View>
       <PullRequestFilterSheet
         accounts={props.accounts}
         providers={props.providers}
@@ -84,6 +99,12 @@ function PullRequestRows({
   readonly page: PullRequestListPage | null;
   readonly props: Parameters<typeof PullRequestList>[0];
 }): React.JSX.Element {
+  const pullSearch = useCatalogSearchPullGesture({
+    gestureTestID: "pull-request-list-pull-to-search",
+    initialOffset: 0,
+    onOpenSearch: props.onOpenSearch,
+    scope: "pull-requests",
+  });
   if (page === null) {
     return <ListSkeleton />;
   }
@@ -97,6 +118,7 @@ function PullRequestRows({
       ListEmptyComponent={<PullRequestEmptyState filter={props.filter} />}
       onEndReached={props.onEndReached}
       onEndReachedThreshold={0.4}
+      onScroll={pullSearch.onScroll}
       recycleItems
       renderItem={({ item }) => (
         <PullRequestListItemView
@@ -108,6 +130,12 @@ function PullRequestRows({
           onRetry={props.onRetry}
         />
       )}
+      renderScrollComponent={(scrollViewProps) => (
+        <GestureDetector gesture={pullSearch.gesture}>
+          <Animated.ScrollView {...scrollViewProps} />
+        </GestureDetector>
+      )}
+      scrollEventThrottle={16}
     />
   );
 }

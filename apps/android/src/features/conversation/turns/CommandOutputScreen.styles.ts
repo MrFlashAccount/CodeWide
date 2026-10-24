@@ -5,7 +5,7 @@ const DOT_SIZE = 8;
 
 export const styles = StyleSheet.create({
   command: {
-    alignItems: "center",
+    alignItems: "flex-start",
     backgroundColor: colors.surfaceRaised,
     borderRadius: radii.medium,
     flexDirection: "row",
@@ -14,6 +14,13 @@ export const styles = StyleSheet.create({
     marginTop: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
+  },
+  commandAction: {
+    alignItems: "center",
+    flexShrink: 0,
+    height: controlSize.compact,
+    justifyContent: "center",
+    width: controlSize.compact,
   },
   commandError: {
     alignItems: "center",

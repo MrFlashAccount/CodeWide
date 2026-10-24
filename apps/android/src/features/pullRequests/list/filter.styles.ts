@@ -3,6 +3,7 @@ import { StyleSheet } from "react-native";
 import {
   colors,
   controlSize,
+  disabledOpacity,
   radii,
   spacing,
   typeScale,
@@ -11,7 +12,6 @@ import {
 } from "../../../theme";
 import { APP_SHEET_MAX_WIDTH } from "../../../ui/appSheetGeometry";
 
-const ADVANCED_INPUT_HEIGHT = 120;
 const CHOICE_SIZE = 22;
 const FACET_ICON_SIZE = 34;
 const FACET_NAV_WIDTH = 230;
@@ -19,10 +19,6 @@ const FACET_ROW_HEIGHT = 58;
 const OPTION_ROW_HEIGHT = 54;
 
 export const filterStyles = StyleSheet.create({
-  advancedInput: {
-    minHeight: ADVANCED_INPUT_HEIGHT,
-    textAlignVertical: "top",
-  },
   applyButton: {
     alignItems: "center",
     backgroundColor: colors.primary,
@@ -124,11 +120,6 @@ export const filterStyles = StyleSheet.create({
     alignItems: "center",
     borderTopWidth: 0,
   },
-  footerSummary: {
-    ...typeScale.label,
-    color: colors.textMuted,
-    textAlign: "center",
-  },
   header: {
     alignItems: "center",
     minHeight: FACET_ROW_HEIGHT,
@@ -203,6 +194,9 @@ export const filterStyles = StyleSheet.create({
     justifyContent: "center",
     minHeight: controlSize.regular,
     paddingHorizontal: spacing.sm,
+  },
+  resetButtonDisabled: {
+    opacity: disabledOpacity,
   },
   resetText: {
     ...typeScale.body,

@@ -4,7 +4,7 @@ import { useDeferredValue, useState, useTransition } from "react";
 import { StyleSheet, View } from "react-native";
 
 import type { AccountState, ForgeProvider } from "../../data/forgeContract";
-import type { PullRequestCategory, PullRequestRow } from "../../data/forgePullRequestContract";
+import type { PullRequestRow } from "../../data/forgePullRequestContract";
 import { forgeQueryRemoteValue, useForgeQuery } from "../../data/forgeQueryResource";
 import { remoteValue } from "../../data/forgeRemoteValue";
 import type { ForgeResources } from "../../data/forgeResources";
@@ -17,11 +17,12 @@ import { AccountsPlaceholder } from "./onboarding/AccountsPlaceholder";
 import { OnboardingScreen } from "./onboarding/OnboardingScreen";
 import {
   forgeAccountsSheetOpen,
-  openPullRequestFilters,
   openForgeAccounts,
+  openPullRequestFilters,
+  openPullRequestSearch,
   pullRequestListModel,
-  selectPullRequestCategory,
   selectPullRequestSearchText,
+  selectPullRequestSort,
 } from "./pullRequestListModel";
 import type { PullRequestsWorkspaceCapabilities } from "./workspaceCapabilities";
 
@@ -131,14 +132,14 @@ function ConnectedList({
   const retry = useEvent((): void => {
     forge.lists.refresh(params).catch(() => undefined);
   });
-  const selectCategory = useEvent((category: PullRequestCategory): void => {
-    startFilterTransition(() => {
-      selectPullRequestCategory(category);
-    });
-  });
   const submitSearch = useEvent((text: string): void => {
     startFilterTransition(() => {
       selectPullRequestSearchText(text);
+    });
+  });
+  const selectSort = useEvent((sort: Parameters<typeof selectPullRequestSort>[0]): void => {
+    startFilterTransition(() => {
+      selectPullRequestSort(sort);
     });
   });
   return (
@@ -149,13 +150,14 @@ function ConnectedList({
         providers.find((provider) => provider.pluginId === pluginId)?.icon ?? null
       }
       nowMs={nowMs}
-      onCategory={selectCategory}
       onEndReached={loadMore}
       onOpen={onOpenPullRequest}
       onOpenFilters={openPullRequestFilters}
+      onOpenSearch={openPullRequestSearch}
       onReconnect={onReconnect}
       onRetry={retry}
       onSearch={submitSearch}
+      onSort={selectSort}
       pendingFilter={pendingFilter}
       providers={providers}
       state={state}

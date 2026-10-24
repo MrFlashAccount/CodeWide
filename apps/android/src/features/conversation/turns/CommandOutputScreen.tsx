@@ -1,7 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { setStringAsync } from "expo-clipboard";
 import { useRef, useState, type ReactElement, type RefObject } from "react";
-import { Pressable, View, type TextInput as NativeTextInput } from "react-native";
+import {
+  Pressable,
+  View,
+  type TextInput as NativeTextInput,
+  type TextLayoutEvent,
+} from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import { stripTerminalControlSequences } from "../../../rendering/native-code-block";
 import { colors, controlHitSlop, iconSize } from "../../../theme";
@@ -25,6 +30,9 @@ export type CommandOutputStatus =
 
 /** The prompt glyph before the command, on screen and in the whole copy. */
 const PROMPT = "❯";
+
+/** Long commands keep the terminal visible until the reader asks for the rest. */
+const COLLAPSED_COMMAND_LINES = 3;
 
 /** Terminal states whose command row needs the one semantic failure accent. */
 const FAILED_STATUS: ReadonlySet<CommandOutputStatus> = new Set(["declined", "failed", "lost"]);
@@ -136,6 +144,7 @@ export function CommandOutputScreen({
             command={command}
             error={error}
             failed={FAILED_STATUS.has(status)}
+            key={command}
             running={status === "running"}
           />
         )}
@@ -329,12 +338,46 @@ function CommandPromptLine({
   readonly running: boolean;
 }): ReactElement {
   const showsFailure = failed || error !== null;
+  const [canExpand, setCanExpand] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const updateLineCount = useEvent((event: TextLayoutEvent) => {
+    const nextCanExpand = event.nativeEvent.lines.length > COLLAPSED_COMMAND_LINES;
+    setCanExpand(nextCanExpand);
+    if (!nextCanExpand) {
+      setExpanded(false);
+    }
+  });
+  const toggleExpanded = useEvent(() => {
+    setExpanded((value) => !value);
+  });
   return (
     <View style={styles.command} testID="command-output-command">
       <Text style={styles.commandPrompt}>{PROMPT}</Text>
-      <Text shimmering={running} style={styles.commandText}>
+      <Text
+        ellipsizeMode="tail"
+        numberOfLines={expanded ? undefined : COLLAPSED_COMMAND_LINES}
+        onTextLayout={updateLineCount}
+        shimmering={running}
+        style={styles.commandText}
+      >
         {command}
       </Text>
+      {canExpand ? (
+        <Pressable
+          accessibilityLabel={expanded ? "Collapse command" : "Expand command"}
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          hitSlop={controlHitSlop.compact}
+          onPress={toggleExpanded}
+          style={styles.commandAction}
+        >
+          <Ionicons
+            color={colors.textMuted}
+            name={expanded ? "chevron-up" : "chevron-down"}
+            size={iconSize.action}
+          />
+        </Pressable>
+      ) : null}
       {showsFailure ? (
         <View
           accessibilityLabel={error ?? "Command failed"}

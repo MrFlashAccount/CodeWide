@@ -301,7 +301,13 @@ describe("pull request attention groups", () => {
 
 describe("pull request empty state", () => {
   it("treats an empty review inbox as completed work", () => {
-    expect(pullRequestEmptyStateCopy(defaultPullRequestFilter())).toEqual({
+    const filter = defaultPullRequestFilter();
+    expect(
+      pullRequestEmptyStateCopy({
+        ...filter,
+        query: { ...filter.query, category: "reviewRequested" },
+      }),
+    ).toEqual({
       description: "No pull requests are waiting for your review.",
       icon: "checkmark-done-outline",
       title: "All clear",

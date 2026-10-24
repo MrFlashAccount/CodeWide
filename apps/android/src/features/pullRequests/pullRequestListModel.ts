@@ -1,7 +1,7 @@
 /** Process-owned interaction model for the PR search header and filter tray. */
 import { observable } from "@legendapp/state";
 
-import type { PullRequestCategory, PullRequestListPage } from "../../data/forgePullRequestContract";
+import type { PullRequestListPage } from "../../data/forgePullRequestContract";
 import {
   emptySearchValues,
   type PullRequestSearchFilter,
@@ -15,9 +15,7 @@ export type PullRequestFilterFacet =
   | "review"
   | "state"
   | "delivery"
-  | "metadata"
-  | "sort"
-  | "advanced";
+  | "metadata";
 
 type FilterSheetState =
   | {
@@ -44,7 +42,7 @@ function defaultQuery(): PullRequestSearchQuery {
     assignees: emptySearchValues(),
     authors: emptySearchValues(),
     baseBranches: emptySearchValues(),
-    category: "reviewRequested",
+    category: "all",
     checks: emptySearchValues(),
     headBranches: emptySearchValues(),
     labels: emptySearchValues(),
@@ -57,13 +55,16 @@ function defaultQuery(): PullRequestSearchQuery {
   };
 }
 
-/** Default search is the review inbox: open PRs requesting the current user. */
+/** Default search is every open PR across the selected sources. */
 export function defaultPullRequestFilter(): PullRequestSearchFilter {
   return { accounts: [], providerIds: [], query: defaultQuery() };
 }
 
 /** Process-lifetime applied filter; returning to the tab preserves it. */
 export const pullRequestListModel = observable<PullRequestSearchFilter>(defaultPullRequestFilter());
+
+/** Search expansion and editable text are independent from applied list filters. */
+export const pullRequestSearchModel = observable({ draft: "", open: false });
 
 const storedFilterSheetState = observable<StoredFilterSheetState>({
   draft: null,
@@ -89,16 +90,41 @@ export function openForgeAccounts(): void {
   forgeAccountsSheetOpen.set(true);
 }
 
-/** Selects one quick view without changing the remaining applied filters. */
-export function selectPullRequestCategory(category: PullRequestCategory): void {
-  publishAppliedQuery((query) => (query.category === category ? query : { ...query, category }));
-}
-
 /** Applies the submitted free-text or qualifier query. */
 export function selectPullRequestSearchText(text: string): void {
   const normalized = text.trim();
   publishAppliedQuery((query) =>
     query.text === normalized ? query : { ...query, text: normalized },
+  );
+}
+
+/** Opens the shared catalog search surface from tap or pull. */
+export function openPullRequestSearch(): void {
+  pullRequestSearchModel.set({ draft: pullRequestListModel.peek().query.text, open: true });
+}
+
+/** Leaves the applied search intact. */
+export function closePullRequestSearch(): void {
+  const state = pullRequestSearchModel.peek();
+  if (state.open) {
+    pullRequestSearchModel.set({ ...state, open: false });
+  }
+}
+
+/** Updates only the retained search editor. */
+export function updatePullRequestSearchDraft(draft: string): void {
+  const state = pullRequestSearchModel.peek();
+  if (state.draft !== draft) {
+    pullRequestSearchModel.set({ ...state, draft });
+  }
+}
+
+/** Applies sorting independently from structured filters. */
+export function selectPullRequestSort(sort: PullRequestSearchQuery["sort"]): void {
+  publishAppliedQuery((query) =>
+    query.sort.field === sort.field && query.sort.direction === sort.direction
+      ? query
+      : { ...query, sort },
   );
 }
 
@@ -150,7 +176,7 @@ export function applyPullRequestFilters(): void {
 export function resetPullRequestFilterDraft(): void {
   const state = pullRequestFilterSheetModel.peek();
   if (state.status === "open") {
-    storedFilterSheetState.set({ ...state, draft: defaultPullRequestFilter() });
+    storedFilterSheetState.set({ ...state, draft: withoutStructuredFilters(state.draft) });
   }
 }
 
@@ -162,62 +188,6 @@ function projectFilterSheetState(state: StoredFilterSheetState): FilterSheetStat
     retained: state.draft === null ? null : { draft: state.draft, facet: state.facet },
     status: "closed",
   };
-}
-
-/** Removes one applied filter chip immediately. */
-export function clearAppliedPullRequestFilter(
-  field:
-    | keyof Pick<
-        PullRequestSearchQuery,
-        "authors" | "review" | "states" | "checks" | "repositories"
-      >
-    | "metadata"
-    | "people"
-    | "sources",
-): void {
-  if (field === "sources") {
-    const current = pullRequestListModel.peek();
-    if (current.accounts.length > 0 || current.providerIds.length > 0) {
-      pullRequestListModel.set({ ...current, accounts: [], providerIds: [] });
-    }
-    return;
-  }
-  if (field === "people") {
-    publishAppliedQuery((query) => ({
-      ...query,
-      assignees: emptySearchValues(),
-      authors: emptySearchValues(),
-      reviewers: emptySearchValues(),
-    }));
-  } else if (field === "metadata") {
-    publishAppliedQuery((query) => ({
-      ...query,
-      baseBranches: emptySearchValues(),
-      headBranches: emptySearchValues(),
-      labels: emptySearchValues(),
-    }));
-  } else {
-    switch (field) {
-      case "authors":
-        publishAppliedQuery((query) => ({ ...query, authors: emptySearchValues() }));
-        break;
-      case "review":
-        publishAppliedQuery((query) => ({ ...query, review: emptySearchValues() }));
-        break;
-      case "states":
-        publishAppliedQuery((query) => ({
-          ...query,
-          states: { exclude: [], include: ["open"] },
-        }));
-        break;
-      case "checks":
-        publishAppliedQuery((query) => ({ ...query, checks: emptySearchValues() }));
-        break;
-      case "repositories":
-        publishAppliedQuery((query) => ({ ...query, repositories: emptySearchValues() }));
-        break;
-    }
-  }
 }
 
 /**
@@ -235,7 +205,7 @@ function publishAppliedQuery(
   }
 }
 
-/** Number displayed on the filter button; quick view and default Open do not count. */
+/** Number displayed on the filter button; search, sort and default Open do not count. */
 export function activePullRequestFilterCount(filter: PullRequestSearchFilter): number {
   const query = filter.query;
   return [
@@ -246,8 +216,27 @@ export function activePullRequestFilterCount(filter: PullRequestSearchFilter): n
     !isDefaultState(query.states),
     hasValues(query.checks),
     hasValues(query.labels) || hasValues(query.baseBranches) || hasValues(query.headBranches),
-    query.sort.field !== "updated" || query.sort.direction !== "descending",
   ].filter(Boolean).length;
+}
+
+function withoutStructuredFilters(filter: PullRequestSearchFilter): PullRequestSearchFilter {
+  return {
+    accounts: [],
+    providerIds: [],
+    query: {
+      ...filter.query,
+      assignees: emptySearchValues(),
+      authors: emptySearchValues(),
+      baseBranches: emptySearchValues(),
+      checks: emptySearchValues(),
+      headBranches: emptySearchValues(),
+      labels: emptySearchValues(),
+      repositories: emptySearchValues(),
+      review: emptySearchValues(),
+      reviewers: emptySearchValues(),
+      states: { exclude: [], include: ["open"] },
+    },
+  };
 }
 
 function hasValues<Value>(values: SearchValues<Value>): boolean {

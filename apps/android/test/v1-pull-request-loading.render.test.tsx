@@ -1,6 +1,7 @@
-import { useSelector } from "@legendapp/state/react";
+import { LegendList } from "@legendapp/list/react-native";
 import { fireEvent, render } from "@testing-library/react-native";
-import { StyleSheet } from "react-native";
+import { Animated, StyleSheet } from "react-native";
+import { GestureDetector } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { parsePullRequestListPage } from "../src/data/forgePullRequestContract";
@@ -12,9 +13,10 @@ import { PullRequestList } from "../src/features/pullRequests/list/PullRequestLi
 import {
   defaultPullRequestFilter,
   dismissPullRequestFilters,
+  closePullRequestSearch,
   openPullRequestFilters,
   pullRequestListModel,
-  selectPullRequestCategory,
+  selectPullRequestFilterFacet,
 } from "../src/features/pullRequests/pullRequestListModel";
 import {
   connectedAccount,
@@ -34,57 +36,24 @@ jest.mock("../src/rendering/RichMarkdown", () => {
 afterEach(() => {
   pullRequestListModel.set(defaultPullRequestFilter());
   dismissPullRequestFilters();
+  closePullRequestSearch();
 });
 
-function ignore(): void {}
-
-function QuickViewHarness(): React.JSX.Element {
-  const filter = useSelector(() => pullRequestListModel.get());
-  return (
-    <PullRequestFilterBar
-      count={0}
-      filter={filter}
-      onCategory={selectPullRequestCategory}
-      onOpenFilters={ignore}
-      onSearch={ignore}
-      pending={false}
-    />
-  );
-}
-
-it("renders search, quick views and the filter entry point", () => {
+it("renders only search, sort and filters above the list", () => {
   const view = render(
     <PullRequestFilterBar
-      count={2}
       filter={defaultPullRequestFilter()}
-      onCategory={() => undefined}
       onOpenFilters={() => undefined}
+      onOpenSearch={() => undefined}
       onSearch={() => undefined}
-      pending
+      onSort={() => undefined}
     />,
   );
 
   expect(view.getByLabelText("Search pull requests")).toBeVisible();
   expect(view.getByRole("button", { name: "Filters" })).toBeVisible();
-  expect(
-    view.getByRole("tab", { name: /Needs your review/u }).props.accessibilityState,
-  ).toMatchObject({ busy: true, selected: true });
-  expect(view.getByRole("tab", { name: "All" })).toBeVisible();
-});
-
-it("switches quick views forward and back", () => {
-  pullRequestListModel.set(defaultPullRequestFilter());
-  const view = render(<QuickViewHarness />);
-
-  fireEvent.press(view.getByRole("tab", { name: "Mine" }));
-  expect(view.getByRole("tab", { name: /Mine/u }).props.accessibilityState).toMatchObject({
-    selected: true,
-  });
-
-  fireEvent.press(view.getByRole("tab", { name: "Needs your review" }));
-  expect(
-    view.getByRole("tab", { name: /Needs your review/u }).props.accessibilityState,
-  ).toMatchObject({ selected: true });
+  expect(view.queryByTestId("pull-request-quick-views")).toBeNull();
+  expect(view.queryByTestId("pull-request-active-filters")).toBeNull();
 });
 
 it("presents filters in a tray with a full-width primary action", () => {
@@ -105,11 +74,42 @@ it("presents filters in a tray with a full-width primary action", () => {
   );
 
   expect(view.getByRole("button", { name: "Close" })).toBeOnTheScreen();
+  expect(view.getByTestId("pull-request-reset-filters")).toHaveTextContent("Reset");
+  expect(view.getByTestId("pull-request-reset-filters").props.accessibilityState).toMatchObject({
+    disabled: true,
+  });
   expect(
     StyleSheet.flatten(view.getByRole("button", { name: "Apply filters" }).props.style),
   ).toMatchObject({
     alignItems: "center",
     width: "100%",
+  });
+});
+
+it("replaces the implicit Open state when a different state is selected", () => {
+  openPullRequestFilters();
+  selectPullRequestFilterFacet("state");
+  const view = render(
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { height: 800, width: 400, x: 0, y: 0 },
+        insets: { bottom: 0, left: 0, right: 0, top: 0 },
+      }}
+    >
+      <PullRequestFilterSheet
+        accounts={[connectedAccount]}
+        providers={[githubProvider]}
+        repositories={[]}
+      />
+    </SafeAreaProvider>,
+  );
+
+  fireEvent.press(view.getByRole("button", { name: "Merged: off" }));
+  fireEvent.press(view.getByRole("button", { name: "Apply filters" }));
+
+  expect(pullRequestListModel.peek().query.states).toStrictEqual({
+    exclude: [],
+    include: ["merged"],
   });
 });
 
@@ -122,7 +122,7 @@ it("renders a stable pull-request detail skeleton from the first route frame", (
   });
 });
 
-it("keeps the published rows visible while a category transition is pending", () => {
+it("keeps the published rows visible while a filter refresh is pending", () => {
   const page = parsePullRequestListPage(reviewRequestedPage);
   if (page === null) {
     throw new Error("The pull-request list fixture is invalid");
@@ -136,19 +136,17 @@ it("keeps the published rows visible while a category transition is pending", ()
     >
       <PullRequestList
         accounts={[connectedAccount]}
-        filter={{
-          ...defaultPullRequestFilter(),
-          query: { ...defaultPullRequestFilter().query, category: "authored" },
-        }}
+        filter={defaultPullRequestFilter()}
         iconFor={() => null}
         nowMs={0}
-        onCategory={() => undefined}
         onEndReached={() => undefined}
         onOpenFilters={() => undefined}
+        onOpenSearch={() => undefined}
         onOpen={() => undefined}
         onReconnect={() => undefined}
         onRetry={() => undefined}
         onSearch={() => undefined}
+        onSort={() => undefined}
         pendingFilter
         providers={[githubProvider]}
         state={{ refreshing: true, status: "ready", value: page }}
@@ -159,10 +157,16 @@ it("keeps the published rows visible while a category transition is pending", ()
   expect(view.getByText("Route forge auth errors to an auth-required state")).toBeVisible();
   expect(view.getByText("NEED ATTENTION")).toBeVisible();
   expect(view.queryByTestId("pull-request-list-skeleton")).toBeNull();
-  expect(view.getByRole("tab", { name: /Mine/u }).props.accessibilityState).toMatchObject({
-    busy: true,
-    selected: true,
-  });
+  expect(view.queryByTestId("pull-request-quick-views")).toBeNull();
+  expect(view.queryByTestId("pull-request-active-filters")).toBeNull();
+  const list = view.UNSAFE_getByType(LegendList);
+  const scrollView = list.props.renderScrollComponent?.({});
+  expect(scrollView?.type).toBe(GestureDetector);
+  expect(scrollView?.props.children.type).toBe(Animated.ScrollView);
+  expect(scrollView?.props.gesture.gestures[0].config.testId).toBe(
+    "pull-request-list-pull-to-search",
+  );
+  expect(view.getByTestId("pull-request-list-pull-backdrop")).toBeOnTheScreen();
 });
 
 it("sends the pull-request description through the shared rich Markdown renderer", () => {
