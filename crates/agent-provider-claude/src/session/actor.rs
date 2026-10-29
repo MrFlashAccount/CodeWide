@@ -27,7 +27,7 @@ use super::{
     handle::{Command, SessionStatus},
     ports::{SessionDeps, SessionOutput},
     query::Query,
-    task_reports::LiveTaskReports,
+    task_reports::{Launch, LiveTaskReports},
     turn::ActiveTurn,
 };
 use crate::{
@@ -235,6 +235,13 @@ impl Session {
             Command::BackgroundTask { task_id, reply } => {
                 let _ = reply.send(self.task_reports.state(&task_id));
             }
+            Command::BackgroundCommands { reply } => {
+                let _ = reply.send(
+                    self.query
+                        .is_some()
+                        .then(|| self.task_reports.launch_states()),
+                );
+            }
             Command::Dispose { reply } => {
                 self.dispose().await;
                 let _ = reply.send(());
@@ -303,7 +310,15 @@ impl Session {
     /// Emits events in order. When an item started or completed, the
     /// in-flight snapshot is persisted first, so a restart can finalize the
     /// turn with every item the client has already seen.
-    pub(super) async fn emit_all(&self, events: Vec<AgentEvent>) {
+    ///
+    /// A completed `command` item that launched a background task is
+    /// remembered with its turn, so a later report can republish it.
+    pub(super) async fn emit_all(&mut self, events: Vec<AgentEvent>) {
+        for event in &events {
+            if let AgentEvent::ItemCompleted { turn_id, item, .. } = event {
+                self.task_reports.launched(turn_id, item);
+            }
+        }
         if let Some(active) = &self.active
             && events.iter().any(|event| {
                 matches!(
@@ -319,12 +334,25 @@ impl Session {
         }
     }
 
+    /// Republishes background command items whose state changed: the same
+    /// item of the same turn, completed again with the new state.
+    pub(super) async fn republish_launches(&self, launches: Vec<Launch>) {
+        for launch in launches {
+            self.output(SessionOutput::Event(Box::new(AgentEvent::ItemCompleted {
+                app_thread_id: self.app_thread_id.clone(),
+                turn_id: launch.turn_id,
+                item: launch.item,
+            })))
+            .await;
+        }
+    }
+
     pub(super) async fn emit_thread_updated(&self) {
         self.output(SessionOutput::ThreadUpdated(self.app_thread_id.clone()))
             .await;
     }
 
-    pub(super) async fn resolve_request(&self, request_id: &str, reason: RequestResolution) {
+    pub(super) async fn resolve_request(&mut self, request_id: &str, reason: RequestResolution) {
         self.emit_all(vec![AgentEvent::RequestResolved {
             app_thread_id: self.app_thread_id.clone(),
             request_id: agent_core::model::NativeRequestId::Text(request_id.to_owned()),
@@ -418,7 +446,8 @@ impl Session {
             return;
         };
         self.generation += 1;
-        self.task_reports.forget();
+        // A closed `claude` keeps running while its background tasks do.
+        self.task_reports.forget(None);
         query.handle.close();
         self.released().await;
         info!(
@@ -446,7 +475,9 @@ impl Session {
             return;
         }
         self.generation += 1;
-        self.task_reports.forget();
+        // The process exited: the tasks it ran stopped with it.
+        let ended = self.task_reports.forget(Some(self.now_ms()));
+        self.republish_launches(ended).await;
         self.released().await;
         match &error {
             None => info!(app_thread_id = %self.app_thread_id, "claude session ended"),

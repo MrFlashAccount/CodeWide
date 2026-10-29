@@ -2,6 +2,8 @@ import { StyleSheet } from "react-native";
 
 import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
 
+const SECTION_LABEL_TRACKING = 0.6;
+
 /** Overview geometry (N-01/N-02): 16dp inset, 8dp between cards, 12dp card inset, lines ≥48dp. */
 export const overviewStyles = StyleSheet.create({
   banner: {
@@ -93,9 +95,12 @@ export const overviewStyles = StyleSheet.create({
     alignItems: "stretch",
     flexDirection: "column",
   },
+  // A quiet label, so the Markdown headings inside a section lead the hierarchy.
   sectionHeader: {
-    ...typeScale.heading,
-    color: colors.text,
+    ...typeScale.label,
+    color: colors.textDim,
+    letterSpacing: SECTION_LABEL_TRACKING,
+    textTransform: "uppercase",
   },
   // A card line whose header and body stack (activity items).
   stacked: {
@@ -117,6 +122,13 @@ export const overviewStyles = StyleSheet.create({
     ...typeScale.body,
     color: colors.text,
     fontWeight: typeWeight.medium,
+  },
+  // A switch row aligned to its container's inset, with no divider of its own.
+  toggleLine: {
+    alignItems: "center",
+    columnGap: spacing.xs,
+    flexDirection: "row",
+    minHeight: controlSize.touch,
   },
   wrapRow: {
     columnGap: spacing.xs,

@@ -10,7 +10,7 @@ use std::{
 
 use crate::agent::{
     client_wire::{execution, observe},
-    model::{PermissionProfileCatalog, ProviderId},
+    model::{AppThreadId, PermissionProfileCatalog, ProviderId},
     provider::{AgentProvider, ExecutionPolicy},
 };
 use serde_json::Value;
@@ -23,10 +23,13 @@ pub const READ_ONLY: &str = ":read-only";
 /// Bound of the observed-profile map; a full map starts over.
 const MAX_OBSERVED_THREADS: usize = 4_096;
 
-/// Effective profiles of threads, observed on the client wire. This covers a
-/// Codex thread whose configured sandbox has no named profile in
-/// `thread/read` but whose start, resume or settings event reports the policy
-/// it actually runs under.
+/// The backend authority for effective thread permissions.
+///
+/// Provider events and RPC results, including the internal `thread/resume`
+/// used for the Composer snapshot, update this one map. Admission resolves a
+/// cold entry from provider-owned durable state or the current thread
+/// projection and retains it here. Clients only receive a projection; they
+/// never supply authority.
 #[derive(Default)]
 pub struct ProfileObservations {
     profiles: Mutex<HashMap<(ProviderId, String), ObservedPermissions>>,
@@ -45,7 +48,11 @@ impl ProfileObservations {
         thread_id: &str,
         profile: &str,
         execution: Option<ExecutionPolicy>,
-    ) {
+    ) -> ObservedPermissions {
+        let observed = ObservedPermissions {
+            profile: profile.to_owned(),
+            execution,
+        };
         let mut profiles = self
             .profiles
             .lock()
@@ -54,13 +61,8 @@ impl ProfileObservations {
         if profiles.len() >= MAX_OBSERVED_THREADS && !profiles.contains_key(&key) {
             profiles.clear();
         }
-        profiles.insert(
-            key,
-            ObservedPermissions {
-                profile: profile.to_owned(),
-                execution,
-            },
-        );
+        profiles.insert(key, observed.clone());
+        observed
     }
 
     /// Records the policy applied when the host created a child. Later native
@@ -88,15 +90,19 @@ impl ProfileObservations {
     }
 
     /// Observes an RPC result.
-    pub fn observe_rpc_result(&self, provider: &ProviderId, method: &str, result: &Value) {
-        if let Some((thread_id, profile)) = observe::result_profile(method, result) {
-            self.record(
-                provider,
-                thread_id,
-                profile,
-                execution::result_policy(method, result),
-            );
-        }
+    pub(crate) fn observe_rpc_result(
+        &self,
+        provider: &ProviderId,
+        method: &str,
+        result: &Value,
+    ) -> Option<ObservedPermissions> {
+        let (thread_id, profile) = observe::result_profile(method, result)?;
+        Some(self.record(
+            provider,
+            thread_id,
+            profile,
+            execution::result_policy(method, result),
+        ))
     }
 
     /// Returns the most recently observed effective profile of `thread_id`.
@@ -121,6 +127,32 @@ impl ProfileObservations {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&(provider.clone(), thread_id.to_owned()))
             .cloned()
+    }
+
+    /// Resolves and retains the single backend authority used for child
+    /// admission. Live provider observations win, then provider-owned durable
+    /// state, then the provider's current thread projection. No client or
+    /// model input participates in this decision.
+    pub(crate) async fn resolve(
+        &self,
+        provider: &Arc<dyn AgentProvider>,
+        thread: &AppThreadId,
+        projected_profile: &str,
+    ) -> Option<ObservedPermissions> {
+        let provider_id = &provider.descriptor().id;
+        if let Some(observed) = self.snapshot(provider_id, thread.as_str()) {
+            return Some(observed);
+        }
+        if let Ok(Some(authority)) = provider.thread_execution_authority(thread).await {
+            return Some(self.record(
+                provider_id,
+                thread.as_str(),
+                &authority.permission_profile,
+                authority.policy,
+            ));
+        }
+        (!projected_profile.is_empty())
+            .then(|| self.record(provider_id, thread.as_str(), projected_profile, None))
     }
 
     /// The effective native execution policy observed with that profile.

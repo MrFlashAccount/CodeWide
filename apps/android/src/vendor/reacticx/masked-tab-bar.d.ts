@@ -26,6 +26,7 @@ export interface IMaskedTabBarRoot {
   readonly height?: number;
   readonly iconSize?: number;
   readonly onValueChange?: (value: string) => void;
+  readonly onSelectedValueActivate?: (value: string) => void;
   readonly padding?: number;
   readonly palette?: Partial<IMaskedTabBarPalette>;
   readonly radius?: number;

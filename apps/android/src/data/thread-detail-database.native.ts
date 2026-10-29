@@ -40,6 +40,7 @@ import {
   compactCompletedTurnForStorage,
   authoritativeTimelineRowId,
   materializeThreadDetail,
+  mergeBackgroundCommandStates,
   mergePendingTimelineOverlays,
   mergePendingTimelineEntry,
   normalizeConversationTurn,
@@ -818,7 +819,16 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     // A sealed turn is one immutable fact family: content, metadata and
     // ordinal must all come from the same commit. When reconciliation keeps
     // the previous sealed content, its existing metadata row stays untouched.
-    const metadata = content === previous ? null : projectedTurnMetadata(turn);
+    // Background command states are the exception: they live in the mutable
+    // metadata row, which every write reconciles with the states it carries,
+    // so a read repairs a sealed turn's chip after a lost live event.
+    const metadata = mergeBackgroundCommandStates({
+      authority: input.authority,
+      metadata: content === previous ? null : projectedTurnMetadata(turn),
+      stored:
+        source.get(turnMetaKey(input.connectionId, input.threadId, turn.id))?.turnMetadata ?? null,
+      turn,
+    });
     if (metadata !== null) {
       const row = turnMetaRow(
         input.connectionId,

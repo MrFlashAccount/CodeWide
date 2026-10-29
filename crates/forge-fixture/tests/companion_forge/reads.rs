@@ -39,14 +39,24 @@ async fn the_directory_lists_built_in_and_external_providers_with_sanitized_meth
         "no bundled binary: unavailable"
     );
     assert_eq!(
-        github["defaultHost"], "github.com",
-        "a built-in provider names its host without spawning"
+        (
+            &github["forgeName"],
+            &github["defaultHost"],
+            &github["icon"]
+        ),
+        (&json!("github"), &Value::Null, &Value::Null),
+        "a provider that never initialized has no declared identity"
     );
     let fixture = providers
         .iter()
         .find(|provider| provider["pluginId"] == "fixture")
         .expect("fixture provider");
-    assert_eq!(fixture["icon"]["glyph"]["path"], "M2 2L22 22Z");
+    assert_eq!(fixture["forgeName"], "Fixture Forge");
+    assert_eq!(
+        fixture["icon"],
+        json!({"kind": "glyph", "viewBox": "0 0 24 24", "path": "M2 2L22 22Z"}),
+        "the plugin's own glyph, validated by the companion"
+    );
     assert_eq!(fixture["defaultHost"], "forge.test");
     let paste = fixture["authMethods"]
         .as_array()
@@ -83,6 +93,11 @@ async fn the_list_and_atomic_overview_carry_keys_states_and_a_validated_catalog(
             .starts_with("fpr1.")
     );
     assert_eq!(page["repositories"], json!(["octo/repo"]));
+    assert_eq!(
+        row.get("reviewThreadId"),
+        Some(&Value::Null),
+        "a row without a canonical review chat says so explicitly"
+    );
     let key = row["pullRequest"].clone();
     let overview = harness
         .ok("companion/pullRequest/read", json!({"pullRequest": key}))
@@ -258,6 +273,23 @@ async fn activity_files_hunks_and_badges_answer_from_the_fixture_plugin() {
 }
 
 #[tokio::test]
+async fn a_files_page_with_a_path_less_file_is_refused() {
+    let mut fixture = base_fixture();
+    fixture["files"] = json!([{"path": "src/a.rs", "patch": PATCH}, {"path": "", "patch": PATCH}]);
+    let harness = Harness::start(&fixture);
+    harness.link().await;
+    let key = harness.pull_request().await;
+    let refused = harness
+        .call(
+            "companion/pullRequest/files/read",
+            json!({"pullRequest": key, "headRevision": "head-1", "cursor": null}),
+        )
+        .await
+        .expect_err("a file without a path");
+    assert_eq!(refused["code"], -32_603);
+}
+
+#[tokio::test]
 async fn a_disabled_provider_answers_locally_and_keeps_its_accounts() {
     let harness = Harness::start(&base_fixture());
     harness.link().await;
@@ -286,6 +318,155 @@ async fn a_disabled_provider_answers_locally_and_keeps_its_accounts() {
         .ok("companion/pullRequest/read", json!({"pullRequest": key}))
         .await;
     assert_eq!(overview["account"]["login"], "octocat");
+}
+
+fn provider_card<'a>(directory: &'a Value, plugin_id: &str) -> &'a Value {
+    directory["providers"]
+        .as_array()
+        .expect("providers")
+        .iter()
+        .find(|provider| provider["pluginId"] == plugin_id)
+        .expect("provider card")
+}
+
+fn install_external(harness: &Harness, id: &str, executable: &std::path::Path) {
+    companion_core::forge::registry::PluginRegistry::new(harness.root.join("forge-plugins.json"))
+        .install(companion_core::forge::registry::ExternalPlugin {
+            id: id.into(),
+            executable: executable.to_path_buf(),
+            args: vec!["--id".into(), id.into()],
+            priority: 5,
+        })
+        .expect("install");
+}
+
+#[tokio::test]
+async fn every_directory_read_reports_whether_a_registered_plugin_is_installed() {
+    let harness = Harness::start(&base_fixture());
+    let directory = harness.ok("companion/forge/accounts/read", json!({})).await;
+    assert_eq!(
+        provider_card(&directory, "fixture")["installation"],
+        json!({"state": "installed"})
+    );
+    let copy = harness.root.join("copied-plugin");
+    std::fs::copy(FIXTURE, &copy).expect("copy plugin");
+    install_external(&harness, "copied", &copy);
+    std::fs::remove_file(&copy).expect("remove plugin");
+    let missing = harness.ok("companion/forge/accounts/read", json!({})).await;
+    let card = provider_card(&missing, "copied");
+    assert_eq!(card["installation"]["state"], "missing");
+    assert!(
+        card["installation"]["reason"]
+            .as_str()
+            .is_some_and(|reason| !reason.is_empty())
+    );
+    assert_eq!(card["authMethods"], json!([]));
+    std::fs::copy(FIXTURE, &copy).expect("restore plugin");
+    let restored = harness.ok("companion/forge/accounts/read", json!({})).await;
+    assert_eq!(
+        provider_card(&restored, "copied")["installation"],
+        json!({"state": "installed"})
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_plugin_that_cannot_initialize_is_reported_as_failed() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let harness = Harness::start(&base_fixture());
+    let broken = harness.root.join("broken-plugin");
+    std::fs::write(&broken, "#!/bin/sh\nexit 3\n").expect("script");
+    std::fs::set_permissions(&broken, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    install_external(&harness, "broken", &broken);
+    let directory = harness.ok("companion/forge/accounts/read", json!({})).await;
+    let card = provider_card(&directory, "broken");
+    assert_eq!(card["installation"]["state"], "failed");
+    assert!(
+        card["installation"]["reason"]
+            .as_str()
+            .is_some_and(|reason| !reason.is_empty())
+    );
+    assert_eq!(
+        provider_card(&directory, "fixture")["installation"],
+        json!({"state": "installed"})
+    );
+}
+
+#[tokio::test]
+async fn an_excluded_account_leaves_the_catalog_and_keeps_its_link() {
+    let harness = Harness::start(&base_fixture());
+    let account = harness.link().await;
+    let key = harness.pull_request().await;
+    let excluded = harness
+        .ok(
+            "companion/forge/account/setEnabled",
+            json!({"account": account, "enabled": false}),
+        )
+        .await;
+    assert_eq!(excluded["account"]["account"], account.as_str());
+    assert_eq!(excluded["account"]["catalogEnabled"], false);
+    let list = harness
+        .ok(
+            "companion/pullRequests/list",
+            json!({"category": "reviewRequested", "repository": null, "cursor": null}),
+        )
+        .await;
+    assert_eq!(list["sections"], json!([]));
+    let search = harness
+        .ok(
+            "companion/pullRequests/search",
+            json!({"query": default_search_query(), "cursor": null}),
+        )
+        .await;
+    assert_eq!(search["sections"], json!([]));
+    let directory = harness.ok("companion/forge/accounts/read", json!({})).await;
+    assert_eq!(directory["accounts"][0]["account"], account.as_str());
+    assert_eq!(directory["accounts"][0]["catalogEnabled"], false);
+    assert_eq!(directory["accounts"][0]["state"], "connected");
+    let overview = harness
+        .ok("companion/pullRequest/read", json!({"pullRequest": key}))
+        .await;
+    assert_eq!(overview["account"]["login"], "octocat");
+    // A repeated sign-in of the same login keeps the user's choice.
+    harness.link().await;
+    let relinked = harness.ok("companion/forge/accounts/read", json!({})).await;
+    assert_eq!(relinked["accounts"][0]["catalogEnabled"], false);
+    harness
+        .ok(
+            "companion/forge/account/setEnabled",
+            json!({"account": account, "enabled": true}),
+        )
+        .await;
+    assert_eq!(harness.pull_request().await, key);
+}
+
+#[tokio::test]
+async fn toggling_an_unknown_account_is_not_found() {
+    let harness = Harness::start(&base_fixture());
+    let account = harness.link().await;
+    harness
+        .ok(
+            "companion/forge/account/disconnect",
+            json!({"account": account, "mode": "unlink", "confirmation": "none"}),
+        )
+        .await;
+    let missing = harness
+        .call(
+            "companion/forge/account/setEnabled",
+            json!({"account": account, "enabled": false}),
+        )
+        .await
+        .expect_err("unlinked");
+    assert_eq!(missing["code"], -32_088);
+    let malformed = harness
+        .call(
+            "companion/forge/account/setEnabled",
+            json!({"account": "not-an-account", "enabled": false}),
+        )
+        .await
+        .expect_err("malformed");
+    assert_eq!(malformed["code"], -32_602);
 }
 
 #[tokio::test]

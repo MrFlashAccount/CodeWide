@@ -313,12 +313,10 @@ impl ReviewService {
         request.source.validate()?;
         let source_key = request.source.storage_key();
         let drafts = self.drafts.list(&source_key)?;
+        // Without drafts nothing is re-anchored, so only the revision is
+        // read, never the catalog's file pages.
         let revision = if drafts.is_empty() {
-            self.sources
-                .catalog(&request.source)
-                .await
-                .map(|catalog| catalog.revision)
-                .ok()
+            self.sources.revision(&request.source).await.ok()
         } else {
             match self.catalog(&request.source).await {
                 Ok(catalog) => {
@@ -629,5 +627,61 @@ mod forward_tests {
         assert_ne!(first, forward_command_id("k", "thread-2", &[&a, &b]));
         assert_ne!(first, forward_command_id("k", "thread-1", &[&a]));
         assert_ne!(first, forward_command_id("k2", "thread-1", &[&a, &b]));
+    }
+
+    /// A pull-request-like source whose revision is cheap and whose catalog
+    /// counts its (expensive) reads.
+    struct CountingSource {
+        catalogs: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl source::DiffCatalogSource for CountingSource {
+        async fn catalog(&self, _source: &DiffSource) -> Result<DiffCatalog, ReviewError> {
+            self.catalogs
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(DiffCatalog {
+                revision: "head-2".into(),
+                files: Vec::new(),
+            })
+        }
+
+        async fn revision(&self, _source: &DiffSource) -> Result<String, ReviewError> {
+            Ok("head-2".into())
+        }
+
+        async fn describe(&self, _source: &DiffSource) -> String {
+            "a pull request".into()
+        }
+    }
+
+    #[tokio::test]
+    async fn drafts_read_without_drafts_reads_only_the_revision()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+        let (sender, _receiver) = tokio::sync::mpsc::channel(8);
+        let review = ReviewService::new(store, ReviewEvents::new(sender), None, None);
+        let counting = Arc::new(CountingSource {
+            catalogs: std::sync::atomic::AtomicUsize::new(0),
+        });
+        review
+            .sources()
+            .register(source::SourceKind::PullRequest, counting.clone());
+
+        let read = review
+            .handle(
+                "companion/review/drafts/read",
+                &json!({"source": {"kind": "pullRequest", "pullRequest": "fpr1.x"}}),
+            )
+            .await
+            .map_err(|error| format!("{error:?}"))?;
+        assert_eq!(read, json!({"revision": "head-2", "drafts": []}));
+        assert_eq!(
+            counting.catalogs.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "no file page is read to learn the head revision"
+        );
+        Ok(())
     }
 }

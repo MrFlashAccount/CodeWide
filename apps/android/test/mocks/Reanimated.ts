@@ -40,6 +40,9 @@ export class Keyframe {
   damping(_value: number): this {
     return this;
   }
+  dampingRatio(_value: number): this {
+    return this;
+  }
   stiffness(_value: number): this {
     return this;
   }
@@ -140,7 +143,12 @@ export function withTiming<Value>(
 }
 
 // Native animation timing is unavailable in Node; settle at the requested value.
-export function withSpring<Value>(value: Value, _configuration?: unknown): Value {
+export function withSpring<Value>(
+  value: Value,
+  _configuration?: unknown,
+  callback?: (finished: boolean) => void,
+): Value {
+  callback?.(true);
   return value;
 }
 

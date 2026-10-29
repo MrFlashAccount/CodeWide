@@ -1,46 +1,54 @@
 import type { ActionDescriptor } from "../../data/forgeActionCatalog";
-import type { ExtraMenuItem } from "./actions/OverflowActionsMenu";
+import type { ReviewThreadId } from "../../data/forgeConversationContract";
+import { ScenarioViewsContext } from "./actions/ScenarioViewsContext";
 import { OverviewTab } from "./overview/OverviewTab";
-import type { PullRequestScreenProps } from "./pullRequestScreenContract";
-import type { PullRequestScreenState } from "./pullRequestScreenModel";
+import type { ChangesView, PullRequestScreenState } from "./pullRequestScreenModel";
 import type { PullRequestScreenData } from "./usePullRequestScreen";
 
-/** Details reading surface; the canonical linked conversation is composed by the route. */
+/**
+ * Details reading surface; the canonical linked conversation is composed by the route. Every
+ * catalog action button below reads its live scenario run state from this pane.
+ */
 export function OverviewPane({
   data,
-  extra,
   nowMs,
-  onOpenReviewChat,
+  onAddressThread,
+  onOpenChanges,
   onRun,
-  props,
   state,
 }: {
   readonly data: PullRequestScreenData;
-  readonly extra: readonly ExtraMenuItem[];
   readonly nowMs: number;
-  readonly onOpenReviewChat: () => void;
+  readonly onAddressThread: (threadId: ReviewThreadId) => void;
+  readonly onOpenChanges: (view: ChangesView) => void;
   readonly onRun: (action: ActionDescriptor, input: boolean | string | null) => void;
-  readonly props: PullRequestScreenProps;
   readonly state: PullRequestScreenState;
 }): React.JSX.Element {
   return (
-    <OverviewTab
-      activity={data.activity.items}
-      describeThread={props.describeThread}
-      extraOverflow={extra}
-      host={data.overview.account.host}
-      listRow={data.listRow}
-      notice={state.notice}
-      nowMs={nowMs}
-      onActionRowWidth={data.setRowWidth}
-      onLoadMoreActivity={data.loadMoreActivity}
-      onOpenReviewChat={onOpenReviewChat}
-      onRun={onRun}
-      overview={data.overview}
-      pending={state.pending}
-      pendingToggles={state.pendingToggles}
-      slots={data.slots}
-      tablet={props.tablet}
-    />
+    <ScenarioViewsContext.Provider value={data.scenarioViews}>
+      <OverviewTab
+        activity={data.activity.items}
+        addressing={state.addressingThreads}
+        conversation={data.conversation}
+        draftCount={data.draftCount}
+        host={data.overview.account.host}
+        listRow={data.listRow}
+        notice={
+          state.notice ??
+          (data.scenarioFailure === null ? null : { kind: "agentFailed", ...data.scenarioFailure })
+        }
+        nowMs={nowMs}
+        onActionRowWidth={data.setRowWidth}
+        onAddressThread={onAddressThread}
+        onLoadMoreActivity={data.loadMoreActivity}
+        onOpenChanges={onOpenChanges}
+        onRun={onRun}
+        overview={data.overview}
+        pending={state.pending}
+        pendingToggles={state.pendingToggles}
+        slots={data.slots}
+        writes={data.writes}
+      />
+    </ScenarioViewsContext.Provider>
   );
 }

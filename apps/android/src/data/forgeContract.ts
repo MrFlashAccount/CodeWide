@@ -6,7 +6,7 @@
  * source, login and scopes. Opaque identifiers are branded once at this
  * boundary and are never parsed by Android.
  */
-import { sanitizeForgeGlyph, type ForgeGlyph } from "./forgeGlyph";
+import { providerIcon, type ProviderIcon } from "./forgeProviderIcon";
 import {
   decodeOrNull,
   flag,
@@ -75,9 +75,6 @@ function authFlowId(value: unknown, path: string): AuthFlowId {
   return nonEmptyText(value, path) as AuthFlowId;
 }
 
-/** Bundled brand key plus an optional sanitized plugin glyph. */
-export type ProviderIcon = { readonly glyph: ForgeGlyph | null; readonly iconKey: string };
-
 /** How a provider connects an account: link a host login, run a host login, paste a token, or follow host steps. */
 type AuthMethodKind = "hostLogin" | "instructions" | "linkExisting" | "pasteToken";
 /** `unlink` keeps the host login; `forgetToken` deletes a saved token; `logoutHost` signs the host tool out. */
@@ -108,9 +105,20 @@ export type ForgeProvider = {
   readonly defaultHost: string | null;
   readonly enabled: boolean;
   readonly forgeName: string;
-  readonly icon: ProviderIcon;
+  /** Plugin-supplied mark resolved by the Companion; `null` renders the neutral icon. */
+  readonly icon: ProviderIcon | null;
+  /** Whether the provider's plugin can serve now; `unknown` from a Companion that predates the report. */
+  readonly installation: ProviderInstallation;
   readonly pluginId: string;
 };
+
+/**
+ * Installation state of a registered provider, recomputed by the Companion on
+ * every accounts read. Only `installed` (or the older `unknown`) offers sign-in.
+ */
+type ProviderInstallation =
+  | { readonly state: "installed" | "unknown" }
+  | { readonly reason: string; readonly state: "failed" | "missing" };
 
 /**
  * A host-login flow. While awaiting the user it carries a transient one-time
@@ -134,6 +142,11 @@ export type AuthFlow = {
 
 type AccountIdentity = {
   readonly account: ForgeAccountKey;
+  /**
+   * Whether list and search reads include the account; `null` from a
+   * Companion that predates the switch, which always includes it.
+   */
+  readonly catalogEnabled: boolean | null;
   readonly credentialSource: "arcToken" | "environment" | "ghCli" | "savedToken";
   readonly host: string;
   readonly linkedAt: string;
@@ -156,12 +169,6 @@ export type ForgeAccountsSnapshot = {
   readonly flows: readonly AuthFlow[];
   readonly providers: readonly ForgeProvider[];
 };
-
-/** Decodes the provider icon; an unsafe glyph becomes `null` instead of failing the read. */
-export function providerIcon(value: unknown, path: string): ProviderIcon {
-  const icon = record(value, path);
-  return { glyph: sanitizeForgeGlyph(icon.glyph), iconKey: text(icon.iconKey, `${path}.iconKey`) };
-}
 
 function authMethod(value: unknown, path: string): AuthMethod {
   const method = record(value, path);
@@ -207,9 +214,21 @@ function forgeProvider(value: unknown, path: string): ForgeProvider {
     defaultHost: optionalText(provider.defaultHost, `${path}.defaultHost`),
     enabled: flag(provider.enabled, `${path}.enabled`),
     forgeName: text(provider.forgeName, `${path}.forgeName`),
-    icon: providerIcon(provider.icon, `${path}.icon`),
+    icon: providerIcon(provider.icon),
+    installation: providerInstallation(provider.installation, `${path}.installation`),
     pluginId: nonEmptyText(provider.pluginId, `${path}.pluginId`),
   };
+}
+
+function providerInstallation(value: unknown, path: string): ProviderInstallation {
+  if (value === undefined) {
+    return { state: "unknown" };
+  }
+  const installation = record(value, path);
+  const state = oneOf(installation.state, ["installed", "missing", "failed"], `${path}.state`);
+  return state === "installed"
+    ? { state }
+    : { reason: text(installation.reason, `${path}.reason`), state };
 }
 
 function authFlow(value: unknown, path: string): AuthFlow {
@@ -243,6 +262,10 @@ export function accountState(value: unknown, path: string): AccountState {
   const account = record(value, path);
   const identity: AccountIdentity = {
     account: forgeAccountKey(account.account, `${path}.account`),
+    catalogEnabled:
+      account.catalogEnabled === undefined
+        ? null
+        : flag(account.catalogEnabled, `${path}.catalogEnabled`),
     credentialSource: oneOf(
       account.credentialSource,
       ["savedToken", "environment", "ghCli", "arcToken"],
@@ -297,9 +320,9 @@ export function parseSubmitToken(value: unknown): AccountState | null {
   return decodeOrNull(() => accountState(record(value, "result").account, "account"));
 }
 
-/** Parses `companion/forge/provider/setEnabled`. */
-export function parseProviderResult(value: unknown): ForgeProvider | null {
-  return decodeOrNull(() => forgeProvider(record(value, "result").provider, "provider"));
+/** Parses `companion/forge/account/setEnabled`. */
+export function parseAccountResult(value: unknown): AccountState | null {
+  return decodeOrNull(() => accountState(record(value, "result").account, "account"));
 }
 
 /** Brands a PR key taken from a route parameter; `null` when it is not a non-empty string. */

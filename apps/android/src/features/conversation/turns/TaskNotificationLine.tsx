@@ -1,9 +1,8 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRecyclingState } from "@legendapp/list/react-native";
-import { createElement, useContext, useState } from "react";
+import { createElement, useContext, useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
-import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
 import { colors, iconSize } from "../../../theme";
 import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
 import { AnchoredMenuList, AnchoredMenuRow } from "../../../ui/AnchoredMenuList";
@@ -12,7 +11,9 @@ import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
 import { useLayoutWidth } from "../../../ui/useLayoutWidth";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "./AgentChip.styles";
+import { isBackgroundLaunch, type TaskLineEntry } from "./backgroundLaunches";
 import {
+  launchDetail,
   reportDetails,
   reportLineSummary,
   reportName,
@@ -22,18 +23,21 @@ import { BackgroundTaskContext, SubagentNavigationContext } from "./turnContexts
 
 /** The pill takes at most this share of the conversation's width. */
 const PILL_WIDTH_SHARE = 0.5;
+/** How often a running background command's elapsed time advances. */
+const ELAPSED_TICK_MS = 15_000;
 
 /**
- * Background task reports drawn outside a bubble as one short pill: the
- * reports that woke a turn, or those that arrived while it answered. A single
- * report's pill opens it directly (an agent's thread or a command's output);
- * several open a plain list centered on the pill. Each report's status is the
- * dot on its avatar.
+ * Background tasks drawn outside a bubble as one short pill: the reports that
+ * woke a turn or arrived while it answered, and the commands a turn started
+ * in the background (their state follows the command item live, from running
+ * to its end, with its time). A single entry's pill opens it directly (an
+ * agent's thread or a command's output); several open a plain list centered
+ * on the pill. Each entry's status is the dot on its avatar.
  */
 export function TaskNotificationLine({
   reports,
 }: {
-  readonly reports: readonly TaskNotificationReport[];
+  readonly reports: readonly TaskLineEntry[];
 }): React.JSX.Element | null {
   const layout = useLayoutWidth();
   if (reports.length === 0) {
@@ -70,7 +74,7 @@ function SingleReportPill({
   report,
 }: {
   readonly lineWidth: number;
-  readonly report: TaskNotificationReport;
+  readonly report: TaskLineEntry;
 }): React.JSX.Element {
   // The pill lives in a recycled list cell.
   const [opening, setOpening] = useRecyclingState<OpeningState>(NOT_OPENING);
@@ -99,7 +103,7 @@ function ReportListPill({
   reports,
 }: {
   readonly lineWidth: number;
-  readonly reports: readonly TaskNotificationReport[];
+  readonly reports: readonly TaskLineEntry[];
 }): React.JSX.Element {
   const [open, setOpen] = useRecyclingState(false);
   const menu = useAnchoredMenuSize();
@@ -149,12 +153,16 @@ function TaskNotificationPill({
   readonly maxWidth: number;
   readonly onPress: (() => void) | null;
   readonly open: boolean | null;
-  readonly reports: readonly TaskNotificationReport[];
+  readonly reports: readonly TaskLineEntry[];
 }): React.JSX.Element {
   const summary = reportLineSummary(reports);
+  const [only] = reports;
+  const now = useNow(reports.some((report) => report.status === "running"));
+  // A single background command shows its own state and time on the pill.
+  const detail = reports.length === 1 && only !== undefined ? launchDetail(only, now) : null;
   return (
     <Pressable
-      accessibilityLabel={`${summary.label} ${summary.phrase}`}
+      accessibilityLabel={`${summary.label} ${detail ?? summary.phrase}`}
       accessibilityRole="button"
       accessibilityState={open === null ? { busy: loading } : { expanded: open }}
       disabled={onPress === null}
@@ -171,6 +179,11 @@ function TaskNotificationPill({
       <Text ellipsizeMode="tail" numberOfLines={1} shimmering={loading} style={styles.label}>
         {summary.label}
       </Text>
+      {detail === null ? null : (
+        <Text numberOfLines={1} style={styles.phrase}>
+          {detail}
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -180,12 +193,13 @@ function ReportRow({
   report,
 }: {
   readonly onNavigate: () => void;
-  readonly report: TaskNotificationReport;
+  readonly report: TaskLineEntry;
 }): React.JSX.Element {
   // The list renders in the anchored popover, outside any recycled list cell.
   const [opening, setOpening] = useState<OpeningState>(NOT_OPENING);
   const target = useReportTarget(report, [opening, setOpening], onNavigate);
-  const details = reportDetails(report);
+  const now = useNow(isBackgroundLaunch(report) && report.status === "running");
+  const details = reportDetails(report, now);
   return (
     <AnchoredMenuRow
       accessibilityLabel={`${reportName(report)}, ${reportOutcome(report).phrase}, ${details}`}
@@ -232,7 +246,7 @@ function failedOpening(error: unknown): OpeningState {
  * (loaded on press); without either it opens nothing.
  */
 function useReportTarget(
-  report: TaskNotificationReport,
+  report: TaskLineEntry,
   [opening, setOpening]: readonly [OpeningState, (next: OpeningState) => void],
   onNavigate: () => void,
 ) {
@@ -288,4 +302,25 @@ function ReportRowText({
       </Text>
     </View>
   );
+}
+
+/**
+ * The wall clock, advancing every `ELAPSED_TICK_MS` while `ticking` (a
+ * running task's elapsed time on screen); a timer is the external system
+ * this effect follows.
+ */
+function useNow(ticking: boolean): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!ticking) {
+      return undefined;
+    }
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, ELAPSED_TICK_MS);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [ticking]);
+  return now;
 }

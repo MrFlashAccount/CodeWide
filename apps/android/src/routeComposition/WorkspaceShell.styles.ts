@@ -22,6 +22,9 @@ export const v1WorkspaceShellStyles = StyleSheet.create({
     flex: 1,
     overflow: "hidden",
   },
+  paneFrame: {
+    backgroundColor: colors.threadListSurface,
+  },
   root: {
     backgroundColor: colors.background,
     flex: 1,

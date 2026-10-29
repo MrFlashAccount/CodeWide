@@ -13,12 +13,12 @@ use super::{
     Caller, OrchestrationService, ToolError,
     journal::{AdmissionRecord, TaskBundle},
     task::{
-        AttemptId, AttemptState, CompletionDelivery, DeliveryId, DeliveryProgress, DeliveryState,
-        HostProvenance, OrchestrationTask, ParentDeliveryState, PublicTaskStatus, RecoveryAction,
-        TaskAttempt, TaskId, TaskSnapshot, TaskState, WaitMode, WorkspaceClaim, WorkspaceClaimId,
-        WorkspaceClaimState,
+        AttemptId, AttemptState, DeliveryId, HostProvenance, OrchestrationTask, PublicTaskStatus,
+        RecoveryAction, TaskAttempt, TaskId, TaskSnapshot, TaskState, WaitMode, WorkspaceClaim,
+        WorkspaceClaimId, WorkspaceClaimState,
     },
     tools::{DelegateRequest, SpawnRequest, WorkspaceRequest},
+    work_requests::{AckSource, WorkRequestId},
 };
 use crate::{
     agent::{
@@ -76,7 +76,8 @@ impl OrchestrationService {
             workspace_mode: plan.workspace_mode,
             state: TaskState::Admitted,
             authoritative_attempt_id: attempt_id.clone(),
-            delivery_id: delivery_id.clone(),
+            // The task's initial work request reuses this id.
+            delivery_id,
             provider: plan.wire.descriptor.id.clone(),
             model: plan.settings.model.clone(),
             name: request.name,
@@ -90,12 +91,6 @@ impl OrchestrationService {
             task_id: task_id.clone(),
             command_id: command_id.clone(),
             state: AttemptState::Admitted,
-        };
-        let delivery = CompletionDelivery {
-            delivery_id,
-            task_id: task_id.clone(),
-            progress: completion_progress(&identity, request.wait_mode),
-            dedupe_key: format!("task-completion:{}", task_id.as_str()),
         };
         let workspace = WorkspaceClaim {
             claim_id: workspace_claim_id,
@@ -115,7 +110,6 @@ impl OrchestrationService {
                 },
                 task,
                 attempt,
-                delivery,
                 workspace,
             })
             .await
@@ -163,7 +157,7 @@ impl OrchestrationService {
             model: request.model,
             name: request.name,
             permission_profile: request.permission_profile,
-            workspace: WorkspaceRequest::CompatibilitySpawn { cwd: request.cwd },
+            workspace: WorkspaceRequest::AgentSpawn { cwd: request.cwd },
         };
         // Older provider fixtures reused a call id across separate spawn
         // calls. Keep that compatibility surface separate from the strict
@@ -229,6 +223,69 @@ impl OrchestrationService {
     }
 
     pub(super) async fn cancel_task(
+        &self,
+        caller: &Caller,
+        task_id: &TaskId,
+    ) -> Result<TaskSnapshot, ToolError> {
+        let deadline = tokio::time::Instant::now() + super::agent_controls::CANCEL_ACK_WINDOW;
+        let snapshot = self.cancel_task_intent(caller, task_id).await?;
+        if snapshot.status != PublicTaskStatus::Cancelling && !snapshot.status.is_terminal() {
+            return Ok(snapshot);
+        }
+        // The cancel call takes the result itself (its snapshot carries the
+        // terminal state and text) when the end arrives in time, including
+        // while the intent was being recorded; otherwise it is pushed.
+        let request = self
+            .task_journal
+            .get(task_id)
+            .await
+            .map_err(ToolError::from)?
+            .request
+            .request_id;
+        if self
+            .await_settled(std::slice::from_ref(&request), deadline)
+            .await
+        {
+            self.task_journal
+                .acknowledge(
+                    vec![request],
+                    AckSource::Cancel,
+                    crate::turn_delivery::retract_notice_in_write,
+                )
+                .await
+                .map_err(ToolError::from)?;
+        }
+        self.task_snapshot(task_id).await
+    }
+
+    /// Waits until every request is settled or the deadline passes.
+    pub(super) async fn await_settled(
+        &self,
+        requests: &[WorkRequestId],
+        deadline: tokio::time::Instant,
+    ) -> bool {
+        let mut signals = self.task_signals.subscribe();
+        loop {
+            let mut settled = true;
+            for request in requests {
+                match self.task_journal.request(request).await {
+                    Ok(Some(request)) if !request.is_open() => {}
+                    _ => settled = false,
+                }
+            }
+            if settled {
+                return true;
+            }
+            if tokio::time::timeout_at(deadline, signals.recv())
+                .await
+                .is_err()
+            {
+                return false;
+            }
+        }
+    }
+
+    async fn cancel_task_intent(
         &self,
         caller: &Caller,
         task_id: &TaskId,
@@ -590,18 +647,25 @@ impl OrchestrationService {
             let Some(provider) = self.gateway.registry().get(&bundle.task.provider).cloned() else {
                 return Ok(());
             };
-            if let Err(error) = provider
-                .turn_interrupt(crate::agent::model::TurnInterruptParams {
+            match tokio::time::timeout(
+                super::agent_controls::INTERRUPT_TIMEOUT,
+                provider.turn_interrupt(crate::agent::model::TurnInterruptParams {
                     app_thread_id: child.clone(),
                     turn_id: Some(turn.clone()),
-                })
-                .await
+                }),
+            )
+            .await
             {
-                tracing::warn!(
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => tracing::warn!(
                     err = ?error,
                     task_id = %bundle.task.task_id.as_str(),
                     "delegated task cancellation recovery was not accepted"
-                );
+                ),
+                Err(_elapsed) => tracing::warn!(
+                    task_id = %bundle.task.task_id.as_str(),
+                    "delegated task cancellation recovery was not confirmed in time"
+                ),
             }
             return Ok(());
         }
@@ -652,17 +716,5 @@ pub(super) fn addressable_uncertain_snapshot(bundle: &TaskBundle) -> TaskSnapsho
         recovery: Some(RecoveryAction::WaitTask),
         final_message: None,
         cost: None,
-    }
-}
-
-fn completion_progress(identity: &CallIdentity, wait_mode: WaitMode) -> DeliveryProgress {
-    if identity.tool == "codewide_delegate_task" && wait_mode == WaitMode::Deferred {
-        DeliveryProgress::ParentTurn {
-            state: ParentDeliveryState::Pending,
-        }
-    } else {
-        DeliveryProgress::AwaitingResume {
-            state: DeliveryState::Pending,
-        }
     }
 }

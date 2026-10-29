@@ -16,17 +16,20 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use tracing::{info, warn};
 
+use agent_core::provider::{NativeSurface, StoredThreadState};
+
 use crate::{
     agent::{
         client_wire::gateway::{ClientWireGateway, default_model},
         model::{
-            AgentItem, AppThreadId, ItemsView, MessagePhase, SortDirection, ThreadSettings,
-            ThreadTurnsParams, TurnStatus,
+            AgentItem, AgentTurn, AppThreadId, ItemsView, MessagePhase, SortDirection,
+            ThreadSettings, ThreadTurnsParams, TurnStatus, thread_not_found_message,
         },
         permission_profiles,
     },
-    store::{IndexStore, OutboxPresentation},
+    store::{IndexStore, OutboxPresentation, OutboxState},
     turn_delivery::TurnDelivery,
+    unmaterialized_threads::{self, UnmaterializedThread},
 };
 
 /// How many recent turns are searched for a command's turn.
@@ -39,6 +42,36 @@ pub enum TurnOutcome {
     Completed(Option<String>),
     /// The turn failed or was interrupted.
     Ended(String),
+}
+
+/// Where one queued command stands, without any prompt or answer text.
+/// Times are Unix seconds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommandPhase {
+    /// The outbox still holds the command for its thread.
+    Queued,
+    /// Its turn is in progress (or delivered and not yet readable).
+    Running { started_at: i64 },
+    /// Its turn completed.
+    Completed { finished_at: i64 },
+    /// The outbox gave up on it, or its turn failed or was interrupted.
+    Failed {
+        finished_at: Option<i64>,
+        reason: String,
+    },
+    /// Neither the outbox nor the recent turns know it.
+    Unknown,
+}
+
+/// Whether a thread can take new work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThreadPresence {
+    /// The thread exists and is not archived.
+    Live,
+    /// The thread exists but the user archived it.
+    Archived,
+    /// No provider knows the thread.
+    Missing,
 }
 
 #[derive(Clone)]
@@ -113,6 +146,52 @@ impl AgentBridge {
         self.gateway.resolve_thread(thread_id, None).await.is_ok()
     }
 
+    /// Whether a thread can take new work. Archive state comes from the
+    /// stored catalog for providers with native thread storage and from the
+    /// provider's own thread read otherwise, as in the pin snapshot. A native
+    /// thread without stored history yet (no first turn) is live only while
+    /// its runtime still holds it; once neither does, it is missing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a short reason when the thread's state cannot be read;
+    /// callers must not treat that as a missing thread.
+    pub async fn thread_presence(&self, thread_id: &str) -> Result<ThreadPresence, String> {
+        let target = match self.gateway.resolve_thread(thread_id, None).await {
+            Ok(target) => target,
+            Err(failure) if failure.message == thread_not_found_message(thread_id) => {
+                return Ok(ThreadPresence::Missing);
+            }
+            Err(failure) => {
+                return Err(format!(
+                    "the thread could not be resolved: {}",
+                    failure.message
+                ));
+            }
+        };
+        if let Some(native) = target.native()
+            && let Some(store) = native.thread_store()
+        {
+            return match store.thread_state(target.thread_id.as_str()).await? {
+                StoredThreadState::Active => Ok(ThreadPresence::Live),
+                StoredThreadState::Archived => Ok(ThreadPresence::Archived),
+                StoredThreadState::Unrecorded => unrecorded_presence(native, thread_id).await,
+            };
+        }
+        let archived = target
+            .provider
+            .thread_read(&target.thread_id)
+            .await
+            .map_err(|error| format!("the thread could not be read: {error}"))?
+            .thread
+            .archived;
+        Ok(if archived {
+            ThreadPresence::Archived
+        } else {
+            ThreadPresence::Live
+        })
+    }
+
     /// Creates a thread on the primary provider in `cwd` with `profile`
     /// (`:read-only` or `:workspace`), announced like any new thread.
     ///
@@ -149,9 +228,71 @@ impl AgentBridge {
         Ok(thread.app_thread_id)
     }
 
-    /// The outcome of the turn that delivered `command_id`, `None` while it
-    /// has not finished (or not started).
-    pub async fn turn_outcome(&self, thread_id: &str, command_id: &str) -> Option<TurnOutcome> {
+    /// Where the command `command_id` queued on `thread_id` stands: the
+    /// outbox state while it holds the command, then the state of the turn
+    /// that delivered it. Carries no prompt or answer text; a failure reason
+    /// is the outbox or provider error, cut to 300 characters.
+    ///
+    /// # Errors
+    ///
+    /// Returns a short reason when the outbox cannot be read.
+    pub async fn command_phase(
+        &self,
+        thread_id: &str,
+        command_id: &str,
+    ) -> Result<CommandPhase, String> {
+        let command = self
+            .delivery
+            .command(command_id)
+            .await
+            .map_err(|error| format!("the agent queue could not be read: {error}"))?
+            .filter(|command| command.remote_thread_id == thread_id);
+        let delivered_at = match &command {
+            Some(command) => match command.state {
+                OutboxState::Queued | OutboxState::Uncertain => return Ok(CommandPhase::Queued),
+                OutboxState::Failed => {
+                    return Ok(CommandPhase::Failed {
+                        finished_at: i64::try_from(command.updated_at / 1000).ok(),
+                        reason: command.last_error.as_deref().map_or_else(
+                            || "the turn could not be delivered".to_owned(),
+                            |error| error.chars().take(300).collect(),
+                        ),
+                    });
+                }
+                OutboxState::Delivered => i64::try_from(command.updated_at / 1000).ok(),
+            },
+            None => None,
+        };
+        let Some(turn) = self.command_turn(thread_id, command_id).await else {
+            // A delivered turn may not be readable yet; a pruned receipt
+            // whose turn is out of the recent window is unknown.
+            return Ok(delivered_at.map_or(CommandPhase::Unknown, |started_at| {
+                CommandPhase::Running { started_at }
+            }));
+        };
+        Ok(match turn.status {
+            TurnStatus::InProgress => CommandPhase::Running {
+                started_at: turn.started_at,
+            },
+            TurnStatus::Completed => CommandPhase::Completed {
+                finished_at: turn.completed_at.unwrap_or(turn.started_at),
+            },
+            TurnStatus::Interrupted => CommandPhase::Failed {
+                finished_at: turn.completed_at,
+                reason: "the turn was interrupted".into(),
+            },
+            TurnStatus::Failed => CommandPhase::Failed {
+                finished_at: turn.completed_at,
+                reason: turn.error.map_or_else(
+                    || "the turn failed".to_owned(),
+                    |error| error.message.chars().take(300).collect(),
+                ),
+            },
+        })
+    }
+
+    /// The recent turn of `thread_id` whose user message is `command_id`.
+    async fn command_turn(&self, thread_id: &str, command_id: &str) -> Option<AgentTurn> {
         let target = self.gateway.resolve_thread(thread_id, None).await.ok()?;
         let turns = target
             .provider
@@ -164,11 +305,17 @@ impl AgentBridge {
             })
             .await
             .ok()?;
-        let turn = turns.turns.into_iter().find(|turn| {
+        turns.turns.into_iter().find(|turn| {
             turn.items.iter().any(|item| {
                 matches!(item, AgentItem::UserMessage { client_message_id: Some(id), .. } if id.as_str() == command_id)
             })
-        })?;
+        })
+    }
+
+    /// The outcome of the turn that delivered `command_id`, `None` while it
+    /// has not finished (or not started).
+    pub async fn turn_outcome(&self, thread_id: &str, command_id: &str) -> Option<TurnOutcome> {
+        let turn = self.command_turn(thread_id, command_id).await?;
         match turn.status {
             TurnStatus::InProgress => None,
             TurnStatus::Completed => {
@@ -201,5 +348,32 @@ impl AgentBridge {
             .flatten()
             .map(|metadata| metadata.cwd)
             .filter(|cwd| !cwd.is_empty())
+    }
+}
+
+/// The presence of a native thread its store has no history for: only the
+/// runtime that started it can still hold it.
+async fn unrecorded_presence(
+    native: &dyn NativeSurface,
+    thread_id: &str,
+) -> Result<ThreadPresence, String> {
+    let response = native
+        .request(unmaterialized_threads::read_request(
+            "agent-bridge-thread-presence",
+            thread_id,
+        ))
+        .await
+        .map_err(|error| format!("the thread could not be read: {error}"))?;
+    match unmaterialized_threads::classify_read(&response, thread_id)
+        .map_err(|message| format!("the thread could not be read: {message}"))?
+    {
+        UnmaterializedThread::Loaded(_) => Ok(ThreadPresence::Live),
+        UnmaterializedThread::Gone => {
+            info!(
+                app_thread_id = thread_id,
+                "thread has neither stored history nor a runtime"
+            );
+            Ok(ThreadPresence::Missing)
+        }
     }
 }

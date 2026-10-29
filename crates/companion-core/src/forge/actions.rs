@@ -332,6 +332,11 @@ pub enum RunKind {
     Action,
     Submit,
     Scenario,
+    /// `companion/pullRequest/comment/create`; `actionId` is `comment`.
+    Comment,
+    /// `companion/pullRequest/reviewThread/reply`; `actionId` is the
+    /// review thread id.
+    ReviewThreadReply,
 }
 
 /// One journal record. `result` is the stored client result of a success,

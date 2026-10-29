@@ -157,6 +157,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                       requestPrompt={
                         timelineRow.item.turn.status === "inProgress" ? requestPrompt : null
                       }
+                      trailingTasks={timelineRow.trailingTasks}
                       turn={timelineRow.item}
                       usage={usage}
                       {...(props.getTransferAccess === undefined

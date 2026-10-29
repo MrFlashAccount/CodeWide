@@ -99,6 +99,10 @@ pub struct NativeSessionCodewide {
 #[serde(rename_all = "camelCase")]
 pub struct NativeSubagent {
     pub agent_id: String,
+    /// The reasoning effort recorded on the answer `model` names (the
+    /// effective value, whatever set it); absent when it records none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     /// The model of the sub-agent's newest answer in its own transcript;
     /// absent when the transcript records none.
     #[serde(default, skip_serializing_if = "Option::is_none")]

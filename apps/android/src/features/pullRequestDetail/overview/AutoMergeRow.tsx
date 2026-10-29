@@ -32,7 +32,7 @@ export function AutoMergeRow({
   const disabledReason =
     action.availability.state === "disabled" ? action.availability.reason : undefined;
   return (
-    <View style={styles.cardLine}>
+    <View style={styles.toggleLine}>
       <View style={styles.lineBody}>
         <Text ref={label} style={styles.body}>
           {action.label}

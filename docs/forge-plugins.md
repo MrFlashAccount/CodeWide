@@ -25,6 +25,18 @@ forge name: it branches on capabilities and action descriptor kinds only.
   Each entry names an absolute executable, canonicalized at install time, as for VCS providers.
 - A disabled provider keeps its account links. Its methods answer a local `-32080` and its
   cards and list sections are hidden. Re-enabling restores it.
+- Each provider card of `companion/forge/accounts/read` carries `installation`, re-evaluated on
+  every read: `{ state: "installed" }`, `{ state: "missing", reason }` when the registered or
+  bundled executable does not exist, or `{ state: "failed", reason }` when it exists but could not
+  start, initialize or answer `auth.methods`. A disabled provider is not spawned, so it is
+  `installed` whenever its executable exists. The companion logs a missing executable once per
+  provider, with the plugin id only. Older clients ignore the field.
+- Each account link carries `catalogEnabled` (default `true`). The client switch
+  `companion/forge/account/setEnabled` `{ account, enabled }` → `{ account }` excludes or
+  re-includes one account in `companion/pullRequests/list` and `search` without calling the
+  plugin; the link, its derived state, its credential, direct reads of its pull requests, branch
+  detection and PR–thread linking stay.
+  A repeated sign-in of the same login keeps the choice.
 - Plugins are probed in priority order. For `forge.repository.resolve` the first claim wins and
   is terminal, as in [VCS provider selection](vcs-plugins.md#provider-selection).
 
@@ -79,13 +91,40 @@ Wire DTOs, capability ids, plugin error codes, framing and the conformance harne
 ```
 
 `stateDirectory` is the plugin's own directory under the companion state directory. The result
-contains the same `protocolVersion` plus `provider`, `forgeName`, `version` (the plugin build
-version; logged, and used to prove that a host update replaced the plugin), `icon` and the
-supported `capabilities`.
+contains the same `protocolVersion` plus `provider`, `forgeName` (the display name), `version`
+(the plugin build version; logged, and used to prove that a host update replaced the plugin) and
+the supported `capabilities`, and optionally the plugin's display identity:
 
-`icon` is a `ProviderIcon`: `{ iconKey, glyph }`. `iconKey` values `github`, `gitlab` and
-`arcanum` render bundled brand icons on Android; any other key renders the generic icon. `glyph`
-is optional and untrusted (see [Safety rules](#safety-rules)).
+- `defaultHost`: the host a new account starts on, shown while the provider is not started;
+- `providerIcon`: the provider's icon, exactly one of
+
+  ```json
+  { "kind": "glyph", "viewBox": "0 0 16 16", "path": "M8 0C3.58 0 …z" }
+  { "kind": "image", "mimeType": "image/png", "dataBase64": "iVBORw0KGgo…" }
+  { "kind": "file", "path": "icons/forge.svg" }
+  { "kind": "url", "url": "https://cdn.example/forge.png" }
+  ```
+
+  A `glyph` is one monochrome SVG path the client tints. An `image` is standard base64 of
+  `image/svg+xml`, `image/png` or `image/webp`, at most 64 KiB decoded. A `file` path is absolute
+  or relative to the plugin executable's directory; its extension (`.svg`, `.png`, `.webp`) names
+  the type. A `url` must be `https`.
+
+The companion knows no provider's name, host or icon itself, including the bundled GitHub plugin.
+It resolves the icon once per distinct declaration (plugin version, name, host and icon source):
+a file is read and a URL is fetched by the companion, never by a client, and every source becomes
+an inline `glyph` or `image`, or `null` (see [Safety rules](#safety-rules)). The resolved identity
+is stored, so a disabled or not yet started provider still shows what it last declared; a provider
+that never initialized shows its plugin id and no icon. An unknown or malformed `providerIcon` is no
+icon and does not fail `initialize`; the conformance harness reports it. Older companions ignore
+`defaultHost` and `providerIcon` and require the earlier `icon: { iconKey, glyph }` object, so a
+plugin that must also run under them sends that object as well; this companion ignores it.
+
+With `forge.conversation@1` the result may also carry `mediaHosts: string[]`: exact lowercase
+hosts, other than its accounts' hosts and their subdomains, whose media `forge.media.read` serves
+(the GitHub plugin declares the `*.githubusercontent.com` image hosts). It is optional and omitted
+when empty. The same hosts bound the direct URLs a conversation page may hand to a client
+(`Comment.media[].url`, `Author.avatarDirect`); see [forge-conversation.md](forge-conversation.md).
 
 ## Capabilities
 
@@ -93,7 +132,8 @@ Required: `forge.auth@1`, `forge.list@1`, `forge.read@1`, `forge.diff@1`, `forge
 `forge.review@1`.
 
 Optional: `forge.search@1`, `forge.checks@1`, `forge.viewed@1`, `forge.resolve@1`,
-`forge.scenarioContext@1`.
+`forge.scenarioContext@1`, `forge.conversation@1`, `forge.comments@1` (the last two are specified
+in [Pull request conversation](forge-conversation.md)).
 
 - Without `forge.search@1`, the provider remains available through `forge.list@1`. The companion
   projects a legacy-compatible query (category, zero or one repository, open state and default
@@ -134,6 +174,10 @@ known and takes only the remotes.
 | `forge.pullRequest.action.run` | `forge.actions@1` | `{ account, ref, actionId, headRevision, input, idempotencyKey }` → `{ message \| null }` |
 | `forge.pullRequest.review.submit` | `forge.review@1` | `{ account, ref, headRevision, verdictActionId, body \| null, comments: { draftId, path, side, startLine, endLine, body }[], idempotencyKey }` → `{ reviewUrl \| null, comments: { draftId, state: "published" \| "failed" \| "outdated", error \| null }[] }` |
 | `forge.pullRequest.viewed.set` | `forge.viewed@1` | `{ account, ref, headRevision, path, viewed }` → `{}` |
+| `forge.pullRequest.conversation` | `forge.conversation@1` | `{ account, ref, cursor \| null }` → `ConversationPage` (see [forge-conversation.md](forge-conversation.md)); comments may carry credential-free direct image URLs in `media`, which the companion keeps only on declared `mediaHosts` |
+| `forge.media.read` | `forge.conversation@1` | `{ account, url }` → `{ contentType, bytesBase64 }`, at most 10 MiB; a URL outside the account's forge and media hosts, or a redirect there, answers `-32602`; larger media answer `-32113` with `data.kind = "tooLarge"` |
+| `forge.pullRequest.comment.create` | `forge.comments@1` | `{ account, ref, body, idempotencyKey }` → `{ comment }` |
+| `forge.pullRequest.reviewThread.reply` | `forge.comments@1` | `{ account, ref, threadId, body, idempotencyKey }` → `{ comment }`; a thread of another pull request answers `-32115` |
 | `forge.pullRequest.scenarioContext` | `forge.scenarioContext@1` | `{ account, ref, scenario, checkId \| null }` → `{ conflicts, failingChecks: { checkId, name, logExcerpt }[], comments: { author, path \| null, line \| null, body }[] }`, at most 64 KiB |
 
 The shared shapes (`AuthMethod`, `CheckSummary`, `CheckItem`, `ActivityPage`, `ActionCatalog`,
@@ -210,8 +254,8 @@ link, and drops a method that is neither available nor carries an `unavailableRe
 ### Provider default host
 
 `auth.methods` returns `defaultHost`. The companion exposes it on each provider of
-`companion/forge/accounts/read` as `defaultHost: string | null` (`github.com` for the built-in
-GitHub provider; `null` only when an external plugin cannot be described yet). Android starts
+`companion/forge/accounts/read` as `defaultHost: string | null`: from `auth.methods` for a running
+provider, else the `defaultHost` the provider last declared in `initialize`, else `null`. Android starts
 auth with exactly this host and never derives one; while it is `null`, Connect is disabled.
 
 ### Auth flow
@@ -335,7 +379,12 @@ Each forge write has exactly one trigger, enforced in the companion:
 - review comments and the verdict: only `companion/pullRequest/review/submit`;
 - catalog actions: only `companion/pullRequest/action/run`, with confirmation at or above the
   effective level;
-- viewed marks: only `companion/pullRequest/viewed/set`.
+- viewed marks: only `companion/pullRequest/viewed/set`;
+- a conversation comment: only `companion/pullRequest/comment/create`;
+- a review thread reply: only `companion/pullRequest/reviewThread/reply`.
+
+The two conversation writes publish immediately and carry no `headRevision`; they are journaled
+and replayed exactly like a run.
 
 Every run and Submit carries `headRevision`; a plugin must return `-32112` instead of writing
 when the head moved. Every write carries an `idempotencyKey`. The companion journals the run
@@ -348,13 +397,17 @@ agent path starts an auth flow.
 
 Owned by the companion (`forge/limits.rs`):
 
-- plugin call timeout 30 s; `action.run` and `review.submit` 60 s;
+- plugin call timeout 30 s; `action.run`, `review.submit`, `comment.create` and
+  `reviewThread.reply` 60 s;
 - at most 4 concurrent plugin processes per companion;
 - list and overview reads are cached for 60 s; derived account states are re-verified after
   60 s;
 - list pages at most 50 rows per plugin call; file pages at most 100 files;
 - one patch at most 4 MiB;
-- scenario context at most 64 KiB, bounded by the plugin.
+- scenario context at most 64 KiB, bounded by the plugin;
+- conversation pages at most 500 entries and cursors at most 4 096 bytes; a comment or reply body
+  1..65 536 characters after trimming; `forge.media.read` at most 10 MiB; a focused scenario looks
+  its thread up in at most 20 conversation pages.
 
 ## Safety rules
 
@@ -362,12 +415,26 @@ Owned by the companion (`forge/limits.rs`):
   project types; ids are branded there once.
 - Third-party PR text (descriptions, comments, check logs) reaches an agent only as a separate
   fenced input marked untrusted, with its source and authors.
-- A plugin glyph is accepted only with `viewBox "0 0 24 24"` and one path string of at most
-  4 KiB of SVG path commands, digits, spaces, commas, dots and minus signs. Anything else is
-  dropped and the generic icon is used. Android renders it as one monochrome `Path`.
-- Bundled brand icons: GitHub uses the published GitHub mark under GitHub's logo guidelines.
-  The Arcanum asset may be added only after its usage terms are confirmed; until then Arcanum
-  uses the generic icon.
+- Provider icons reach clients only as `{ "kind": "glyph", viewBox, path }` or
+  `{ "kind": "image", mimeType, dataBase64 }`, or `null`. Each provider card of
+  `companion/forge/accounts/read` carries `icon`; `companion/pullRequestLinks/read` names each
+  badge's `pluginId` and sends every provider's icon once in `providerIcons`. Clients render
+  only this data and never branch on a provider id or name; `null` is a neutral icon.
+  - A glyph is accepted only with a `0 0 W H` view box (integer sides 1..1024) and one path of at
+    most 4 KiB that starts with a move and holds only SVG path commands, digits, spaces, commas,
+    dots and minus signs.
+  - Image bytes must be the declared type by content (PNG and WebP signatures, or an SVG document)
+    and at most 64 KiB. An SVG must be self-contained: no script, event handler, `foreignObject`,
+    `DOCTYPE` or entity, `javascript:`, `@import`, and no `href` or `url(...)` outside the document.
+  - A file must be a regular file of an allowed extension within the size cap.
+  - A URL must be `https` without credentials; redirects stay `https` (at most 3), the request
+    times out after 5 s, the `Content-Type` must be an allowed type matching the content, and the
+    body is cut one byte past the cap. The companion fetches it instead of the client so a device
+    never contacts a third-party host to draw an icon. A failed fetch shows no icon and is retried
+    after 10 minutes; a successful or invalid result is final for that declaration.
+  - Anything else is dropped to `null`.
+- The GitHub plugin declares the published GitHub mark under GitHub's logo guidelines. The Arcanum
+  plugin declares a neutral glyph until an Arcanum asset with confirmed usage terms exists.
 - Logs may contain opaque ids only: the `PullRequestKey` hash, `actionId`, `ActionRunId` and
   request ids. Never PR titles or bodies, comment, draft or guide text, remote URLs with
   credentials, tokens, one-time login codes, raw `gh` or `arc` output, or the params of
@@ -427,8 +494,10 @@ restores it.
 The macOS bundle has no CLI. External plugins are registered in the same `forge-plugins.json`
 format (above) in the companion state directory, `~/Library/Application Support/CodeWide/Companion/`.
 The LaunchAgent's `PATH` must contain any host tool the plugin needs (`gh`, `arc`); when a tool
-is not found, onboarding shows the install or `PATH` instructions. Providers are enabled or
-disabled from the Android Accounts sheet (`companion/forge/provider/setEnabled`).
+is not found, onboarding shows the install or `PATH` instructions. Android has no provider
+on/off control: it switches individual accounts only (`companion/forge/account/setEnabled`).
+`companion/forge/provider/setEnabled` remains the administrator's rollback, used by the Linux
+`forge provider` CLI.
 
 ## Conformance
 
@@ -436,7 +505,11 @@ disabled from the Android Accounts sheet (`companion/forge/provider/setEnabled`)
 capability of a plugin executable against recorded fixtures. On Linux it is exposed as
 `codewide-companion forge plugin check <executable>`. With `--account`, `--pull-request` and
 `--remote` it also exercises account-scoped reads and resolution; `--write-probes` sends write
-methods at a deliberately stale head, which a conformant plugin refuses without writing. An external plugin is documented as
+methods at a deliberately stale head, which a conformant plugin refuses without writing. With
+`forge.conversation@1` it reads the first conversation page, checks every thread's rules (at least
+one comment, positive lines with `startLine` before `line`, a non-empty anchored path, a positive
+iteration number) and requires a media read of a foreign host to answer `-32602`; with `forge.comments@1` and `--write-probes` it requires a reply
+to a thread that cannot exist to be refused (a comment create has no safe probe). An external plugin is documented as
 supported only after it passes the harness.
 
 ## Arcanum plugin guidance
@@ -455,11 +528,22 @@ today). The protocol does not change for it.
 - `HeadRevision` is the diff-set id.
 - Verdicts are a plugin-declared group; Block is marked `destructive`.
 - Partial review publication must be reported per comment.
-- Arc workspaces get no automatic PR links until the Arc VCS plugin declares `vcs.remotes@1`;
-  manual links work.
+- `forge.resolve@1`: `forge.repository.resolve` maps the Arc VCS plugin's `arc://arcadia` remote to
+  `arcanum.yandex.net` / `arc_vcs` (the repository of Arcanum pull request refs) and answers `-32004`
+  for every other remote. `forge.pullRequests.byBranch` answers the open pull requests whose head is
+  the `users/<login>/…` server branch; other branches have none.
 
 ## VCS dependency
 
 Branch detection uses an additive VCS capability, `vcs.remotes@1` (current branch, upstream and
-remote URLs), implemented by the bundled Git plugin. A VCS provider without it behaves exactly as
-before; see [VCS providers](vcs-plugins.md).
+remote URLs), implemented by the bundled Git plugin and by the external Arc plugin. Detection looks
+up the upstream (tracking) branch first, then the local branch when it differs. A VCS provider
+without it behaves exactly as before; see [VCS providers](vcs-plugins.md).
+
+## No provider fallbacks in the companion
+
+The companion is provider-neutral. Behaviour specific to one forge or VCS lives in that provider's
+plugin and reaches the companion only through declared capabilities. When a plugin lacks a
+capability, the companion degrades exactly as for every provider without it: it never runs a
+provider's CLI (`arc`, `gh`), branches on a provider id, or relaxes a rule for one provider. A
+missing capability is fixed in the plugin.

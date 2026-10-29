@@ -1,17 +1,15 @@
 import { StyleSheet } from "react-native";
 import { catalogModeBarContentInset } from "../../presentation/layouts/catalogModeBarGeometry";
-import { colors, typeScale, typeWeight } from "../../theme";
+import { colors } from "../../theme";
 
 export const styles = StyleSheet.create({
   floatingBarContent: {
     paddingBottom: catalogModeBarContentInset,
   },
+  // Layout only; `CatalogTitle` owns the typography shared by every catalog.
   serverTitle: {
-    color: colors.text,
     flex: 1,
     minWidth: 0,
-    ...typeScale.title,
-    fontWeight: typeWeight.semibold,
   },
   threadListContentSurface: {
     flex: 1,

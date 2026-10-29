@@ -1,8 +1,6 @@
-import type { RenderBlock } from "@codewide/renderers";
 import { act, fireEvent, render, within } from "@testing-library/react-native";
 import * as Clipboard from "expo-clipboard";
 import type { BackgroundTaskOutputPage } from "../src/data/backgroundTaskOutput";
-import { BackgroundTaskOutputButton } from "../src/features/conversation/protocol/BackgroundTaskOutputButton";
 import {
   ConversationRouteNavigationContext,
   type ConversationRouteNavigation,
@@ -278,43 +276,4 @@ it("shimmers only the command text while it is running and puts failure on that 
     .find((node) => node.props.children === COMMAND);
   expect(failedCommand?.props.shimmering).toBe(false);
   expect(failed.getByLabelText("Output reader failed")).toBeOnTheScreen();
-});
-
-it("opens a background Bash call's output from its command block", async () => {
-  const read = jest.fn(async () => page("building…", null));
-  const { navigation, opened } = navigationRecorder();
-  // WHY: the button reads only `raw` of the generated render block union.
-  const block = {
-    raw: { codewideBackgroundTaskId: "bd3cb8oli", type: "commandExecution" },
-  } as unknown as RenderBlock;
-  const view = render(
-    <ConversationRouteNavigationContext.Provider value={navigation}>
-      <BackgroundTaskOutputHost read={read}>
-        <BackgroundTaskOutputButton block={block} />
-      </BackgroundTaskOutputHost>
-    </ConversationRouteNavigationContext.Provider>,
-  );
-
-  await act(async () => {
-    fireEvent.press(view.getByTestId("background-task-output-open"));
-  });
-  expect(read).toHaveBeenCalledWith("bd3cb8oli", 0);
-  expect(opened[0]).toMatchObject({ name: "Background command", taskId: "bd3cb8oli" });
-});
-
-it("offers nothing to open where the thread cannot read task output", () => {
-  const { navigation } = navigationRecorder();
-  // WHY: the button reads only `raw` of the generated render block union.
-  const block = {
-    raw: { codewideBackgroundTaskId: "bd3cb8oli", type: "commandExecution" },
-  } as unknown as RenderBlock;
-  const view = render(
-    <ConversationRouteNavigationContext.Provider value={navigation}>
-      <BackgroundTaskOutputHost read={undefined}>
-        <BackgroundTaskOutputButton block={block} />
-      </BackgroundTaskOutputHost>
-    </ConversationRouteNavigationContext.Provider>,
-  );
-
-  expect(view.queryByTestId("background-task-output-open")).toBeNull();
 });

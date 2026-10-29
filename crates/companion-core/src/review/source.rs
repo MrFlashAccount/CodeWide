@@ -185,6 +185,18 @@ pub trait DiffCatalogSource: Send + Sync {
     /// Returns the source failure (a forge, VCS or resource error).
     async fn catalog(&self, source: &DiffSource) -> Result<DiffCatalog, ReviewError>;
 
+    /// The source's current revision without its hunks. A source whose
+    /// revision is cheaper than its catalog (a pull request's head revision
+    /// is in its overview, while the catalog pages every file) overrides
+    /// this; the default reads the catalog.
+    ///
+    /// # Errors
+    ///
+    /// Returns the source failure.
+    async fn revision(&self, source: &DiffSource) -> Result<String, ReviewError> {
+        self.catalog(source).await.map(|catalog| catalog.revision)
+    }
+
     /// A short identity of the source for agent inputs (no third-party
     /// prose such as titles or descriptions).
     async fn describe(&self, source: &DiffSource) -> String;
@@ -216,8 +228,21 @@ impl CatalogSources {
     /// Returns `-32084` when no source of that kind is registered, or the
     /// source failure.
     pub async fn catalog(&self, source: &DiffSource) -> Result<DiffCatalog, ReviewError> {
-        let provider = self
-            .sources
+        self.provider(source)?.catalog(source).await
+    }
+
+    /// The current revision of a source ([`DiffCatalogSource::revision`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns `-32084` when no source of that kind is registered, or the
+    /// source failure.
+    pub async fn revision(&self, source: &DiffSource) -> Result<String, ReviewError> {
+        self.provider(source)?.revision(source).await
+    }
+
+    fn provider(&self, source: &DiffSource) -> Result<Arc<dyn DiffCatalogSource>, ReviewError> {
+        self.sources
             .read()
             .ok()
             .and_then(|sources| sources.get(&source.kind()).cloned())
@@ -225,8 +250,7 @@ impl CatalogSources {
                 ReviewError::Unavailable(
                     "this diff source is not available on this companion".into(),
                 )
-            })?;
-        provider.catalog(source).await
+            })
     }
 
     /// A short identity of a source, or a generic one when its kind has no

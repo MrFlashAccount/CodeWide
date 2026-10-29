@@ -10,6 +10,7 @@ import {
 } from "./globalSupervisorChatAttachments";
 import type { GlobalSupervisorChatInspection } from "./globalSupervisorChatInspection";
 import { globalSupervisorLimitsV1 } from "./globalSupervisorLimitsV1";
+import { globalSupervisorToolName } from "./globalSupervisorToolNames";
 import type { GlobalSupervisorRequestAnswer } from "./globalSupervisorPendingRequest";
 import type {
   GlobalSupervisorActiveWorkSnapshot,
@@ -148,9 +149,9 @@ type ParsedToolCall =
         readonly cwd: string | null;
         readonly objective: string;
       };
-      readonly tool: "startTask";
+      readonly tool: "codewide_start_task";
     }
-  | { readonly arguments: Record<never, never>; readonly tool: "listActiveWork" }
+  | { readonly arguments: Record<never, never>; readonly tool: "codewide_list_active_work" }
   | {
       readonly arguments: {
         readonly connectionId: string | null;
@@ -158,26 +159,26 @@ type ParsedToolCall =
         readonly title: string | null;
         readonly topic: string | null;
       };
-      readonly tool: "findChat";
+      readonly tool: "codewide_find_chat";
     }
   | {
       readonly arguments: { readonly cursor: string | null };
-      readonly tool: "listChats";
+      readonly tool: "codewide_list_chats";
     }
   | {
       readonly arguments: {
         readonly cursor: string | null;
         readonly target: GlobalSupervisorQualifiedChatRef;
       };
-      readonly tool: "readChat";
+      readonly tool: "codewide_read_chat";
     }
   | {
       readonly arguments: { readonly target: GlobalSupervisorQualifiedChatRef };
-      readonly tool: "inspectChat";
+      readonly tool: "codewide_inspect_chat";
     }
   | {
       readonly arguments: { readonly target: GlobalSupervisorQualifiedChatRef };
-      readonly tool: "listChatAttachments";
+      readonly tool: "codewide_list_chat_attachments";
     }
   | {
       readonly arguments: {
@@ -185,11 +186,11 @@ type ParsedToolCall =
         readonly offset: number;
         readonly target: GlobalSupervisorQualifiedChatRef;
       };
-      readonly tool: "readChatAttachment";
+      readonly tool: "codewide_read_chat_attachment";
     }
   | {
       readonly arguments: { readonly target: GlobalSupervisorQualifiedChatRef };
-      readonly tool: "interruptChat";
+      readonly tool: "codewide_interrupt_chat";
     }
   | {
       readonly arguments: {
@@ -197,7 +198,7 @@ type ParsedToolCall =
         readonly eventId: string;
         readonly target: GlobalSupervisorQualifiedChatRef;
       };
-      readonly tool: "respondToRequest";
+      readonly tool: "codewide_respond_to_request";
     }
   | {
       readonly arguments: {
@@ -205,18 +206,18 @@ type ParsedToolCall =
         readonly mode: "active" | "muted" | "snoozed";
         readonly target: GlobalSupervisorQualifiedChatRef;
       };
-      readonly tool: "setSpokenAttention";
+      readonly tool: "codewide_set_spoken_attention";
     }
   | {
       readonly arguments: {
         readonly target: GlobalSupervisorQualifiedChatRef;
         readonly text: string;
       };
-      readonly tool: "sendText";
+      readonly tool: "codewide_send_text";
     }
   | {
       readonly arguments: { readonly target: GlobalSupervisorQualifiedChatRef };
-      readonly tool: "followChat" | "unfollowChat";
+      readonly tool: "codewide_follow_chat" | "codewide_unfollow_chat";
     };
 
 function hasClosedKeys(
@@ -249,7 +250,7 @@ function optionalNonEmptyString(value: unknown): string | null | undefined {
 
 function parseStartTaskCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-): Extract<ParsedToolCall, { readonly tool: "startTask" }> | null {
+): Extract<ParsedToolCall, { readonly tool: "codewide_start_task" }> | null {
   if (!hasClosedKeys(argumentsValue, ["connectionId", "objective"], ["cwd"])) {
     return null;
   }
@@ -258,16 +259,21 @@ function parseStartTaskCall(
   const objective = nonEmptyString(argumentsValue.objective);
   return connectionId === null || cwd === undefined || objective === null
     ? null
-    : { arguments: { connectionId, cwd, objective }, tool: "startTask" };
+    : { arguments: { connectionId, cwd, objective }, tool: "codewide_start_task" };
 }
 
 function parseListActiveWorkCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-): Extract<ParsedToolCall, { readonly tool: "listActiveWork" }> | null {
-  return hasClosedKeys(argumentsValue, []) ? { arguments: {}, tool: "listActiveWork" } : null;
+): Extract<ParsedToolCall, { readonly tool: "codewide_list_active_work" }> | null {
+  return hasClosedKeys(argumentsValue, [])
+    ? { arguments: {}, tool: "codewide_list_active_work" }
+    : null;
 }
 
-type FindChatArguments = Extract<ParsedToolCall, { readonly tool: "findChat" }>["arguments"];
+type FindChatArguments = Extract<
+  ParsedToolCall,
+  { readonly tool: "codewide_find_chat" }
+>["arguments"];
 
 function findChatArguments(value: Readonly<Record<string, unknown>>): FindChatArguments | null {
   const connectionId = optionalNonEmptyString(value.connectionId);
@@ -291,7 +297,7 @@ function hasFindChatQuery(value: FindChatArguments): boolean {
 
 function parseFindChatCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-): Extract<ParsedToolCall, { readonly tool: "findChat" }> | null {
+): Extract<ParsedToolCall, { readonly tool: "codewide_find_chat" }> | null {
   if (!hasClosedKeys(argumentsValue, [], ["connectionId", "project", "title", "topic"])) {
     return null;
   }
@@ -299,13 +305,16 @@ function parseFindChatCall(
   if (parsed === null || !hasFindChatQuery(parsed)) {
     return null;
   }
-  return { arguments: parsed, tool: "findChat" };
+  return { arguments: parsed, tool: "codewide_find_chat" };
 }
 
 function parseRelationCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-  tool: "followChat" | "unfollowChat",
-): Extract<ParsedToolCall, { readonly tool: "followChat" | "unfollowChat" }> | null {
+  tool: "codewide_follow_chat" | "codewide_unfollow_chat",
+): Extract<
+  ParsedToolCall,
+  { readonly tool: "codewide_follow_chat" | "codewide_unfollow_chat" }
+> | null {
   if (!hasClosedKeys(argumentsValue, ["connectionId", "threadId"])) {
     return null;
   }
@@ -315,17 +324,17 @@ function parseRelationCall(
 
 function parseListChatsCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-): Extract<ParsedToolCall, { readonly tool: "listChats" }> | null {
+): Extract<ParsedToolCall, { readonly tool: "codewide_list_chats" }> | null {
   if (!hasClosedKeys(argumentsValue, [], ["cursor"])) {
     return null;
   }
   const cursor = optionalCursor(argumentsValue.cursor);
-  return cursor === undefined ? null : { arguments: { cursor }, tool: "listChats" };
+  return cursor === undefined ? null : { arguments: { cursor }, tool: "codewide_list_chats" };
 }
 
 function parseReadChatCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-): Extract<ParsedToolCall, { readonly tool: "readChat" }> | null {
+): Extract<ParsedToolCall, { readonly tool: "codewide_read_chat" }> | null {
   if (!hasClosedKeys(argumentsValue, ["connectionId", "threadId"], ["cursor"])) {
     return null;
   }
@@ -333,23 +342,26 @@ function parseReadChatCall(
   const target = parseGlobalSupervisorQualifiedChatRef(argumentsValue);
   return cursor === undefined || target === null
     ? null
-    : { arguments: { cursor, target }, tool: "readChat" };
+    : { arguments: { cursor, target }, tool: "codewide_read_chat" };
 }
 
 function parseInspectChatCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-): Extract<ParsedToolCall, { readonly tool: "inspectChat" }> | null {
+): Extract<ParsedToolCall, { readonly tool: "codewide_inspect_chat" }> | null {
   if (!hasClosedKeys(argumentsValue, ["connectionId", "threadId"])) {
     return null;
   }
   const target = parseGlobalSupervisorQualifiedChatRef(argumentsValue);
-  return target === null ? null : { arguments: { target }, tool: "inspectChat" };
+  return target === null ? null : { arguments: { target }, tool: "codewide_inspect_chat" };
 }
 
 function parseTargetCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-  tool: "interruptChat" | "listChatAttachments",
-): Extract<ParsedToolCall, { readonly tool: "interruptChat" | "listChatAttachments" }> | null {
+  tool: "codewide_interrupt_chat" | "codewide_list_chat_attachments",
+): Extract<
+  ParsedToolCall,
+  { readonly tool: "codewide_interrupt_chat" | "codewide_list_chat_attachments" }
+> | null {
   if (!hasClosedKeys(argumentsValue, ["connectionId", "threadId"])) {
     return null;
   }
@@ -359,7 +371,7 @@ function parseTargetCall(
 
 function parseReadChatAttachmentCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-): Extract<ParsedToolCall, { readonly tool: "readChatAttachment" }> | null {
+): Extract<ParsedToolCall, { readonly tool: "codewide_read_chat_attachment" }> | null {
   if (!hasClosedKeys(argumentsValue, ["attachmentId", "connectionId", "threadId"], ["offset"])) {
     return null;
   }
@@ -374,7 +386,7 @@ function parseReadChatAttachmentCall(
   }
   return {
     arguments: { attachmentId: argumentsValue.attachmentId, offset, target },
-    tool: "readChatAttachment",
+    tool: "codewide_read_chat_attachment",
   };
 }
 
@@ -473,7 +485,7 @@ function parseRequestAnswer(value: unknown): GlobalSupervisorRequestAnswer | nul
 
 function parseRespondToRequestCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-): Extract<ParsedToolCall, { readonly tool: "respondToRequest" }> | null {
+): Extract<ParsedToolCall, { readonly tool: "codewide_respond_to_request" }> | null {
   if (!hasClosedKeys(argumentsValue, ["answer", "connectionId", "eventId", "threadId"])) {
     return null;
   }
@@ -482,12 +494,12 @@ function parseRespondToRequestCall(
   const answer = parseRequestAnswer(argumentsValue.answer);
   return target === null || eventId === null || answer === null
     ? null
-    : { arguments: { answer, eventId, target }, tool: "respondToRequest" };
+    : { arguments: { answer, eventId, target }, tool: "codewide_respond_to_request" };
 }
 
 function parseSetSpokenAttentionCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-): Extract<ParsedToolCall, { readonly tool: "setSpokenAttention" }> | null {
+): Extract<ParsedToolCall, { readonly tool: "codewide_set_spoken_attention" }> | null {
   if (!hasClosedKeys(argumentsValue, ["connectionId", "mode", "threadId"], ["durationMinutes"])) {
     return null;
   }
@@ -503,7 +515,7 @@ function parseSetSpokenAttentionCall(
   }
   return {
     arguments: { durationMinutes, mode, target },
-    tool: "setSpokenAttention",
+    tool: "codewide_set_spoken_attention",
   };
 }
 
@@ -537,7 +549,7 @@ function spokenAttentionDuration(
 
 function parseSendTextCall(
   argumentsValue: Readonly<Record<string, unknown>>,
-): Extract<ParsedToolCall, { readonly tool: "sendText" }> | null {
+): Extract<ParsedToolCall, { readonly tool: "codewide_send_text" }> | null {
   if (!hasClosedKeys(argumentsValue, ["connectionId", "text", "threadId"])) {
     return null;
   }
@@ -545,7 +557,7 @@ function parseSendTextCall(
   const text = nonEmptyString(argumentsValue.text);
   return target === null || text === null
     ? null
-    : { arguments: { target, text }, tool: "sendText" };
+    : { arguments: { target, text }, tool: "codewide_send_text" };
 }
 
 type ToolEnvelope = {
@@ -577,42 +589,51 @@ function parseToolEnvelope(value: unknown): ToolEnvelope | null {
   return argumentsValue === null ? null : { arguments: argumentsValue, tool: params.tool };
 }
 
+function unreachableToolName(_tool: never): never {
+  throw new Error("Global Supervisor tool name has no parser");
+}
+
 function parseToolCall(value: unknown): ParsedToolCall | null {
   const envelope = parseToolEnvelope(value);
   if (envelope === null) {
     return null;
   }
-  switch (envelope.tool) {
-    case "startTask":
+  // Legacy camelCase calls from threads created before the rename map here.
+  const tool = globalSupervisorToolName(envelope.tool);
+  if (tool === null) {
+    return null;
+  }
+  switch (tool) {
+    case "codewide_start_task":
       return parseStartTaskCall(envelope.arguments);
-    case "listActiveWork":
+    case "codewide_list_active_work":
       return parseListActiveWorkCall(envelope.arguments);
-    case "findChat":
+    case "codewide_find_chat":
       return parseFindChatCall(envelope.arguments);
-    case "followChat":
-      return parseRelationCall(envelope.arguments, "followChat");
-    case "inspectChat":
+    case "codewide_follow_chat":
+      return parseRelationCall(envelope.arguments, "codewide_follow_chat");
+    case "codewide_inspect_chat":
       return parseInspectChatCall(envelope.arguments);
-    case "interruptChat":
-      return parseTargetCall(envelope.arguments, "interruptChat");
-    case "listChatAttachments":
-      return parseTargetCall(envelope.arguments, "listChatAttachments");
-    case "listChats":
+    case "codewide_interrupt_chat":
+      return parseTargetCall(envelope.arguments, "codewide_interrupt_chat");
+    case "codewide_list_chat_attachments":
+      return parseTargetCall(envelope.arguments, "codewide_list_chat_attachments");
+    case "codewide_list_chats":
       return parseListChatsCall(envelope.arguments);
-    case "readChat":
+    case "codewide_read_chat":
       return parseReadChatCall(envelope.arguments);
-    case "readChatAttachment":
+    case "codewide_read_chat_attachment":
       return parseReadChatAttachmentCall(envelope.arguments);
-    case "sendText":
+    case "codewide_send_text":
       return parseSendTextCall(envelope.arguments);
-    case "respondToRequest":
+    case "codewide_respond_to_request":
       return parseRespondToRequestCall(envelope.arguments);
-    case "setSpokenAttention":
+    case "codewide_set_spoken_attention":
       return parseSetSpokenAttentionCall(envelope.arguments);
-    case "unfollowChat":
-      return parseRelationCall(envelope.arguments, "unfollowChat");
+    case "codewide_unfollow_chat":
+      return parseRelationCall(envelope.arguments, "codewide_unfollow_chat");
     default:
-      return null;
+      return unreachableToolName(tool);
   }
 }
 
@@ -689,7 +710,7 @@ async function executeToolCall(
 ): Promise<unknown> {
   const { capabilities, request, supervisor } = context;
   switch (call.tool) {
-    case "startTask": {
+    case "codewide_start_task": {
       const source = await capabilities.deriveWorkerCreationSource(request);
       const commandId = await capabilities.deriveTargetSendCommandId(request);
       return capabilities.startTask({
@@ -701,35 +722,35 @@ async function executeToolCall(
         supervisor,
       });
     }
-    case "listActiveWork":
+    case "codewide_list_active_work":
       return capabilities.listActiveWork(supervisor);
-    case "findChat":
+    case "codewide_find_chat":
       return capabilities.findChat(supervisor, call.arguments);
-    case "listChats":
+    case "codewide_list_chats":
       return capabilities.listChats(
         call.arguments.cursor,
         globalSupervisorLimitsV1.listChatsPageMaxEntries,
       );
-    case "inspectChat":
+    case "codewide_inspect_chat":
       return capabilities.inspectChat(call.arguments.target);
-    case "interruptChat":
+    case "codewide_interrupt_chat":
       return capabilities.interruptChat(call.arguments.target);
-    case "listChatAttachments":
+    case "codewide_list_chat_attachments":
       return capabilities.listChatAttachments(call.arguments.target);
-    case "readChat":
+    case "codewide_read_chat":
       return capabilities.readChat({
         cursor: call.arguments.cursor,
         limit: globalSupervisorLimitsV1.readChatPageMaxItems,
         maxBytes: globalSupervisorLimitsV1.readChatPageMaxBytes,
         target: call.arguments.target,
       });
-    case "readChatAttachment":
+    case "codewide_read_chat_attachment":
       return capabilities.readChatAttachment(call.arguments);
-    case "followChat":
+    case "codewide_follow_chat":
       capabilities.assertLiveTarget(call.arguments.target);
       await capabilities.followChat(supervisor, call.arguments.target);
       return { followed: true };
-    case "sendText": {
+    case "codewide_send_text": {
       capabilities.assertLiveTarget(call.arguments.target);
       const commandId = await capabilities.deriveTargetSendCommandId(request);
       return {
@@ -741,9 +762,9 @@ async function executeToolCall(
         }),
       };
     }
-    case "respondToRequest":
+    case "codewide_respond_to_request":
       return capabilities.respondToRequest(call.arguments);
-    case "setSpokenAttention": {
+    case "codewide_set_spoken_attention": {
       capabilities.assertLiveTarget(call.arguments.target);
       return capabilities.setSpokenAttention({
         durationMinutes: call.arguments.durationMinutes,
@@ -752,7 +773,7 @@ async function executeToolCall(
         target: call.arguments.target,
       });
     }
-    case "unfollowChat":
+    case "codewide_unfollow_chat":
       await capabilities.unfollowChat(supervisor, call.arguments.target);
       return { automaticObservation: true, followed: false };
     default:

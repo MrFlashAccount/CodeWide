@@ -13,7 +13,7 @@ import type {
   PullRequestTarget,
 } from "../workspaceCapabilities";
 import { submittableDraftIds } from "./dockCounts";
-import type { SubmitResult } from "./ReviewDock";
+import type { SubmitResult } from "./ReviewOutcome";
 
 const SUBMIT_INTENT = "submit";
 
@@ -71,7 +71,11 @@ export function useSubmitReview({
     if (failure.kind === "staleHead" || failure.kind === "outcomeUnknown") {
       onStale(failure.kind === "staleHead" ? "stale" : "outcomeUnknown");
     }
-    setResult({ kind: "failed", reason: failure.message, verdict: verdict.label });
+    setResult({
+      kind: "failed",
+      reason: failure.message,
+      verdict: verdict.label,
+    });
   });
   const submit = useEvent(
     async (verdict: ActionDescriptor, body: string | null, forwardBothToAgent: boolean) => {

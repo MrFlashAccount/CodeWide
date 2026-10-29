@@ -53,6 +53,13 @@ mod local_control;
 mod provider_status;
 mod terminal_update;
 
+// glibc and musl keep freed pages of short allocation peaks (startup indexing,
+// transcript reads) resident indefinitely. jemalloc's background threads
+// return dirty pages to the OS after its decay interval.
+#[cfg(target_os = "linux")]
+#[global_allocator]
+static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 /// Opens the companion index with the Codex rollout tables, as the server does.
 fn open_rollout_index(path: &Path) -> Result<RolloutStore, Box<dyn std::error::Error>> {
     let host = Arc::new(IndexStore::open_with(path, &[&ROLLOUT_INDEX_SCHEMA])?);
@@ -111,7 +118,10 @@ enum Command {
         /// Host rollout gate for admitting new durable delegated tasks.
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         delegate_task_enabled: bool,
-        /// The bundled forge plugin directory (default: the `libexec/` of the
+        /// Maximum agent nesting depth for new spawned or delegated agents.
+        #[arg(long, default_value_t = codewide_companion::agent::orchestration::DEFAULT_MAX_AGENT_DEPTH)]
+        max_agent_depth: usize,
+        /// The bundled forge and VCS plugin directory (default: the `libexec/` of the
         /// current installed generation).
         #[arg(long)]
         bundled_plugin_dir: Option<PathBuf>,
@@ -327,6 +337,10 @@ enum TelemetryCommand {
 
 #[derive(Debug, Args)]
 struct VcsOptions {
+    /// The bundled plugin directory that holds the built-in Git provider
+    /// (default: the `libexec/` of the current installed generation).
+    #[arg(long, global = true)]
+    bundled_plugin_dir: Option<PathBuf>,
     #[command(subcommand)]
     command: VcsCommand,
 }
@@ -377,7 +391,20 @@ enum VcsPluginCommand {
         #[arg(long)]
         registry: Option<PathBuf>,
     },
+    /// Removes an external provider; a built-in provider can only be disabled.
     Remove {
+        id: String,
+        #[arg(long)]
+        registry: Option<PathBuf>,
+    },
+    /// Re-enables every provider with this id, built-in or external.
+    Enable {
+        id: String,
+        #[arg(long)]
+        registry: Option<PathBuf>,
+    },
+    /// Disables every provider with this id, built-in or external.
+    Disable {
         id: String,
         #[arg(long)]
         registry: Option<PathBuf>,
@@ -478,12 +505,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             insecure_http,
             enable_mutations,
             delegate_task_enabled,
+            max_agent_depth,
             bundled_plugin_dir,
         } => {
             Box::pin(serve(ServeOptions {
-                bundled_plugin_dir: bundled_plugin_dir.unwrap_or_else(|| {
-                    codewide_companion::host_update::default_root().join("current/libexec")
-                }),
+                bundled_plugin_dir: bundled_plugin_dir.unwrap_or_else(default_bundled_plugin_dir),
                 listen,
                 control_endpoint: control_endpoint.unwrap_or_else(default_control_endpoint),
                 state_path: state,
@@ -496,6 +522,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 insecure_http,
                 enable_mutations,
                 delegate_task_enabled,
+                max_agent_depth,
             }))
             .await?;
         }
@@ -817,70 +844,112 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Command::Forge(options) => forge_cli::run(options).await?,
-        Command::Vcs(options) => match options.command {
-            VcsCommand::Changes {
-                workspace,
-                scope,
-                registry,
-            } => {
-                let service = VcsService::new(registry.unwrap_or_else(default_vcs_registry));
-                let scope = parse_vcs_scope(&scope)?;
-                let snapshot = service.changes(&workspace, scope).await?;
-                println!("{}", serde_json::to_string(&snapshot)?);
-            }
-            VcsCommand::Diff {
-                workspace,
-                path,
-                scope,
-                registry,
-            } => {
-                let service = VcsService::new(registry.unwrap_or_else(default_vcs_registry));
-                let scope = parse_vcs_scope(&scope)?;
-                let diff = service.diff(&workspace, &path, scope).await?;
-                println!("{}", serde_json::to_string(&diff)?);
-            }
-            VcsCommand::Plugin(options) => match options.command {
-                VcsPluginCommand::List { registry } => {
-                    let registry =
-                        PluginRegistry::new(registry.unwrap_or_else(default_vcs_registry));
-                    println!("{}", serde_json::to_string(&registry.list()?)?);
-                }
-                VcsPluginCommand::Install {
-                    id,
-                    executable,
-                    args,
-                    priority,
-                    enabled,
+        Command::Vcs(options) => {
+            let bundled_plugin_dir = Some(
+                options
+                    .bundled_plugin_dir
+                    .unwrap_or_else(default_bundled_plugin_dir),
+            );
+            let open_registry = |registry: Option<PathBuf>| {
+                PluginRegistry::new(
+                    registry.unwrap_or_else(default_vcs_registry),
+                    bundled_plugin_dir.clone(),
+                )
+            };
+            match options.command {
+                VcsCommand::Changes {
+                    workspace,
+                    scope,
                     registry,
                 } => {
-                    let registry =
-                        PluginRegistry::new(registry.unwrap_or_else(default_vcs_registry));
-                    registry.install(VcsPluginConfig {
+                    let service = VcsService::new(
+                        registry.unwrap_or_else(default_vcs_registry),
+                        bundled_plugin_dir.clone(),
+                    );
+                    let scope = parse_vcs_scope(&scope)?;
+                    let snapshot = service.changes(&workspace, scope).await?;
+                    println!("{}", serde_json::to_string(&snapshot)?);
+                }
+                VcsCommand::Diff {
+                    workspace,
+                    path,
+                    scope,
+                    registry,
+                } => {
+                    let service = VcsService::new(
+                        registry.unwrap_or_else(default_vcs_registry),
+                        bundled_plugin_dir.clone(),
+                    );
+                    let scope = parse_vcs_scope(&scope)?;
+                    let diff = service.diff(&workspace, &path, scope).await?;
+                    println!("{}", serde_json::to_string(&diff)?);
+                }
+                VcsCommand::Plugin(options) => match options.command {
+                    VcsPluginCommand::List { registry } => {
+                        println!(
+                            "{}",
+                            serde_json::to_string(&open_registry(registry).list()?)?
+                        );
+                    }
+                    VcsPluginCommand::Install {
                         id,
                         executable,
                         args,
-                        enabled,
                         priority,
-                    })?;
-                    println!(
-                        "{}",
-                        serde_json::json!({ "installed": true, "registry": registry.path() })
-                    );
-                }
-                VcsPluginCommand::Remove { id, registry } => {
-                    let registry =
-                        PluginRegistry::new(registry.unwrap_or_else(default_vcs_registry));
-                    println!(
-                        "{}",
-                        serde_json::json!({
-                            "removed": registry.remove(&id)?,
-                            "id": id,
-                            "registry": registry.path()
-                        })
-                    );
-                }
-            },
-        },
+                        enabled,
+                        registry,
+                    } => {
+                        let registry = open_registry(registry);
+                        registry.install(VcsPluginConfig {
+                            id,
+                            executable,
+                            args,
+                            enabled,
+                            priority,
+                        })?;
+                        println!(
+                            "{}",
+                            serde_json::json!({ "installed": true, "registry": registry.path() })
+                        );
+                    }
+                    VcsPluginCommand::Remove { id, registry } => {
+                        let registry = open_registry(registry);
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "removed": registry.remove(&id)?,
+                                "id": id,
+                                "registry": registry.path()
+                            })
+                        );
+                    }
+                    VcsPluginCommand::Enable { id, registry } => {
+                        let registry = open_registry(registry);
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "known": registry.set_enabled(&id, true)?,
+                                "id": id,
+                                "enabled": true,
+                                "registry": registry.path()
+                            })
+                        );
+                    }
+                    VcsPluginCommand::Disable { id, registry } => {
+                        let registry = open_registry(registry);
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "known": registry.set_enabled(&id, false)?,
+                                "id": id,
+                                "enabled": false,
+                                "registry": registry.path()
+                            })
+                        );
+                    }
+                },
+            }
+        }
     }
     Ok(())
 }
@@ -1205,6 +1274,7 @@ struct ServeOptions {
     insecure_http: bool,
     enable_mutations: bool,
     delegate_task_enabled: bool,
+    max_agent_depth: usize,
     bundled_plugin_dir: PathBuf,
 }
 
@@ -1381,7 +1451,10 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         .await?,
     );
     let projector = Arc::new(ContentProjector::new(content.clone()));
-    let vcs = Arc::new(VcsService::new(state_directory.join("vcs-plugins.json")));
+    let vcs = Arc::new(VcsService::new(
+        state_directory.join("vcs-plugins.json"),
+        Some(options.bundled_plugin_dir.clone()),
+    ));
     let resources = Arc::new(
         ResourceService::open(
             state_directory.join("resource-index.redb"),
@@ -1414,6 +1487,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let providers = registry.clone();
     let mut sync = SyncHub::with_registry(registry, store.clone(), options.enable_mutations)
         .with_delegate_task_enabled(options.delegate_task_enabled)
+        .with_max_agent_depth(options.max_agent_depth)
         .with_content_projector(projector)
         .with_dictation(dictation)
         .with_files(files.clone())
@@ -1425,6 +1499,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
             vcs.clone(),
             projects.clone(),
         ));
+    sync.route_forge_media(&media);
     if let Some(account_pool) = &account_pool {
         sync = sync.with_account_pool(account_pool);
     }
@@ -1657,6 +1732,12 @@ fn default_codex_home() -> PathBuf {
         },
         PathBuf::from,
     )
+}
+
+/// The running generation's `libexec/` through the stable `current` link, so
+/// every spawn resolves the active generation's bundled plugins.
+fn default_bundled_plugin_dir() -> PathBuf {
+    codewide_companion::host_update::default_root().join("current/libexec")
 }
 
 fn default_vcs_registry() -> PathBuf {

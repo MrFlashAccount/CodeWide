@@ -204,6 +204,34 @@ pub fn parse_thread_id(value: &str) -> Option<AppThreadId> {
     AppThreadId::parse(value)
 }
 
+/// A forge review thread id (`forge.pullRequest.conversation`'s
+/// `thread.id`), opaque and provider-issued. Distinct from the agent
+/// threads of `AppThreadId`, which share the word "thread". Branded only by
+/// [`ReviewThreadId::parse`], so it is never deserialized unchecked.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct ReviewThreadId(String);
+
+impl ReviewThreadId {
+    /// Brands a bounded id without control characters.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        valid_forge_id(value).then(|| Self(value.to_owned()))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A provider-issued opaque id (comment, review, event or thread): at most
+/// 256 bytes, no control characters.
+#[must_use]
+pub fn valid_forge_id(value: &str) -> bool {
+    valid_text(value, 256)
+}
+
 fn valid_text(value: &str, max: usize) -> bool {
     !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
 }

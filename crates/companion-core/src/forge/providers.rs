@@ -5,7 +5,11 @@
 //! `-32080`, while its account links (and the plugin's own secrets) stay so
 //! re-enabling restores it.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -28,11 +32,6 @@ pub struct ProviderEntry {
     pub priority: i32,
     /// `None` when the plugin binary is missing.
     pub spec: Option<PluginSpec>,
-    /// Display fallback before (or without) `initialize`.
-    pub forge_name: String,
-    pub icon_key: String,
-    /// The built-in provider's host, known without spawning it.
-    pub default_host: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -49,6 +48,9 @@ pub struct ProviderCatalog {
     store: Arc<IndexStore>,
     /// `<companion state>/forge-plugins`; each plugin gets a subdirectory.
     plugin_state_root: PathBuf,
+    /// Providers whose missing executable was already logged; an id leaves
+    /// the set once its executable exists again.
+    reported_missing: Arc<Mutex<HashSet<String>>>,
 }
 
 impl ProviderCatalog {
@@ -64,6 +66,7 @@ impl ProviderCatalog {
             registry,
             store,
             plugin_state_root,
+            reported_missing: Arc::default(),
         }
     }
 
@@ -92,9 +95,6 @@ impl ProviderCatalog {
                     args: Vec::new(),
                     state_directory: self.plugin_state_root.join(built_in.plugin_id),
                 }),
-                forge_name: built_in.forge_name.to_owned(),
-                icon_key: built_in.icon_key.to_owned(),
-                default_host: Some(built_in.default_host.to_owned()),
             });
         }
         let external = self.registry.list().unwrap_or_else(|error| {
@@ -111,12 +111,12 @@ impl ProviderCatalog {
                     args: plugin.args.clone(),
                     state_directory: self.plugin_state_root.join(&plugin.id),
                 }),
-                forge_name: plugin.id.clone(),
-                icon_key: "generic".into(),
-                default_host: None,
                 built_in: false,
                 plugin_id: plugin.id,
             });
+        }
+        for entry in &entries {
+            self.report_missing(&entry.plugin_id, entry.spec.is_none());
         }
         entries.sort_by(|left, right| {
             right
@@ -175,6 +175,18 @@ impl ProviderCatalog {
             value,
         }])?;
         self.entry(plugin_id)
+    }
+
+    /// Logs a missing executable once per provider, with its id only.
+    fn report_missing(&self, plugin_id: &str, missing: bool) {
+        let Ok(mut reported) = self.reported_missing.lock() else {
+            return;
+        };
+        if !missing {
+            reported.remove(plugin_id);
+        } else if reported.insert(plugin_id.to_owned()) {
+            tracing::warn!(plugin_id = %plugin_id, "forge provider executable is missing");
+        }
     }
 
     fn enabled(&self, plugin_id: &str) -> Result<bool, ForgeError> {

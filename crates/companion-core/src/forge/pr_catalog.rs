@@ -9,7 +9,7 @@ use async_trait::async_trait;
 
 use super::{
     ForgeContext,
-    ids::PullRequestKey,
+    ids::{HeadRevision, PullRequestKey},
     reads::{files_page, load_overview},
     wire::PatchWire,
 };
@@ -52,16 +52,25 @@ fn key_of(
         .ok_or_else(|| ReviewError::Invalid("unknown pullRequest key".into()))
 }
 
+/// The head revision of the cached overview, else of a freshly loaded one.
+async fn head_revision(
+    context: &ForgeContext,
+    key: &PullRequestKey,
+    identity: &super::ids::PullRequestIdentity,
+) -> Result<HeadRevision, ReviewError> {
+    let overview = match context.cache.overview(key) {
+        Some(overview) => overview,
+        None => load_overview(context, key, identity).await?,
+    };
+    Ok(overview.head_revision)
+}
+
 #[async_trait]
 impl DiffCatalogSource for PullRequestCatalog {
     async fn catalog(&self, source: &DiffSource) -> Result<DiffCatalog, ReviewError> {
         let context = self.context()?;
         let (key, identity) = key_of(source)?;
-        let overview = match context.cache.overview(&key) {
-            Some(overview) => overview,
-            None => load_overview(&context, &key, &identity).await?,
-        };
-        let head = overview.head_revision.clone();
+        let head = head_revision(&context, &key, &identity).await?;
         let mut files = Vec::new();
         let mut cursor = None;
         for _ in 0..MAX_PAGES {
@@ -86,6 +95,17 @@ impl DiffCatalogSource for PullRequestCatalog {
             revision: head.as_str().to_owned(),
             files,
         })
+    }
+
+    /// The head revision of the cached (else freshly loaded) overview,
+    /// without reading a file page.
+    async fn revision(&self, source: &DiffSource) -> Result<String, ReviewError> {
+        let context = self.context()?;
+        let (key, identity) = key_of(source)?;
+        Ok(head_revision(&context, &key, &identity)
+            .await?
+            .as_str()
+            .to_owned())
     }
 
     async fn describe(&self, source: &DiffSource) -> String {

@@ -50,7 +50,10 @@ export function SubmitReviewSheet(props: SubmitReviewSheetProps): React.JSX.Elem
   });
   return (
     <AppSheet
-      contentProps={{ dismissLabel: "Close submit review", enablePanDownToClose: !busy }}
+      contentProps={{
+        dismissLabel: "Close submit review",
+        enablePanDownToClose: !busy,
+      }}
       isOpen
       onOpenChange={(open) => {
         if (!open && !busy) {

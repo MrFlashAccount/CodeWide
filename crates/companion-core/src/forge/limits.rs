@@ -43,13 +43,34 @@ pub const DETECTION_DEBOUNCE: Duration = Duration::from_secs(30);
 /// Scenario context from a plugin, as fenced untrusted text.
 pub const MAX_SCENARIO_CONTEXT_BYTES: usize = forge_protocol::MAX_SCENARIO_CONTEXT_BYTES;
 
+/// Entries in one conversation page from a plugin; a larger page is refused.
+pub const MAX_CONVERSATION_ENTRIES: usize = 500;
+/// An opaque conversation cursor, from a client or a plugin.
+pub const MAX_CONVERSATION_CURSOR_BYTES: usize = 4_096;
+/// A review thread's file path.
+pub const MAX_THREAD_PATH_BYTES: usize = 4_096;
+/// The plain text of a conversation event.
+pub const MAX_EVENT_TEXT_CHARS: usize = 500;
+/// Direct media entries one comment keeps; later entries keep the
+/// `forge.media.read` path.
+pub const MAX_COMMENT_MEDIA: usize = 32;
+/// A comment media `source` or `url`, in bytes.
+pub const MAX_COMMENT_MEDIA_URL_BYTES: usize = 8_192;
+/// Conversation pages read to find one review thread for a scenario.
+pub const MAX_THREAD_LOOKUP_PAGES: usize = 20;
+/// A comment or reply body, in characters after trimming.
+pub const MAX_COMMENT_BODY_CHARS: usize = forge_protocol::MAX_COMMENT_BODY_CHARS;
+/// Media decoded from `forge.media.read`.
+pub const MAX_FORGE_MEDIA_BYTES: usize = forge_protocol::MAX_MEDIA_BYTES;
+
 /// The timeout of one plugin method.
 #[must_use]
 pub fn call_timeout(method: &str) -> Duration {
     match method {
-        methods::PULL_REQUEST_ACTION_RUN | methods::PULL_REQUEST_REVIEW_SUBMIT => {
-            PLUGIN_WRITE_TIMEOUT
-        }
+        methods::PULL_REQUEST_ACTION_RUN
+        | methods::PULL_REQUEST_REVIEW_SUBMIT
+        | methods::PULL_REQUEST_COMMENT_CREATE
+        | methods::PULL_REQUEST_REVIEW_THREAD_REPLY => PLUGIN_WRITE_TIMEOUT,
         _ => PLUGIN_CALL_TIMEOUT,
     }
 }

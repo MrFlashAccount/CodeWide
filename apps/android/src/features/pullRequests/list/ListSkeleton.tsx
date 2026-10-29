@@ -1,6 +1,7 @@
 import { StyleSheet, View } from "react-native";
 
-import { colors, layoutSize, radii, spacing } from "../../../theme";
+import { colors, radii, spacing } from "../../../theme";
+import { CATALOG_ROW_CELL_HEIGHT } from "../../../ui/CatalogRow.styles";
 
 const ROWS = ["first", "second", "third", "fourth"] as const;
 /** Placeholder bar heights match the title and meta line boxes they stand in for. */
@@ -34,7 +35,7 @@ const styles = StyleSheet.create({
   },
   row: {
     gap: spacing.xs,
-    height: layoutSize.row,
+    height: CATALOG_ROW_CELL_HEIGHT,
     justifyContent: "center",
     paddingHorizontal: spacing.md,
   },

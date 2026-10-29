@@ -22,7 +22,10 @@ export function CommentSheetHost({
   readonly destinations: PullRequestCommentDestinations;
   readonly host: string;
   readonly ownPullRequest: boolean;
-  readonly target: { readonly connectionId: string; readonly pullRequest: PullRequestKey };
+  readonly target: {
+    readonly connectionId: string;
+    readonly pullRequest: PullRequestKey;
+  };
 }): React.JSX.Element | null {
   const key = destinations.keyOf(target.connectionId, target.pullRequest);
   destinations.hydrate(target.connectionId, target.pullRequest);

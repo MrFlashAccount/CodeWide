@@ -45,7 +45,7 @@ pub enum MethodRoute {
 }
 
 /// Thread-scoped methods every provider supports through neutral operations.
-const CORE_THREAD_METHODS: [&str; 11] = [
+const CORE_THREAD_METHODS: [&str; 12] = [
     "thread/read",
     "thread/resume",
     "thread/turns/list",
@@ -56,6 +56,7 @@ const CORE_THREAD_METHODS: [&str; 11] = [
     "thread/delete",
     "thread/settings/update",
     "turn/start",
+    "turn/continue",
     "turn/interrupt",
 ];
 
@@ -400,6 +401,13 @@ mod tests {
         );
         assert_eq!(
             route("turn/start", &json!({"threadId": "t"})),
+            MethodRoute::Thread {
+                thread_id: "t".into(),
+                requires: None
+            }
+        );
+        assert_eq!(
+            route("turn/continue", &json!({"threadId": "t"})),
             MethodRoute::Thread {
                 thread_id: "t".into(),
                 requires: None

@@ -8,8 +8,16 @@ import { threadSummaryKey } from "../../data/thread-summary-projection";
 import { threadLiveActivity$ } from "../../data/threadLiveActivity";
 import { colors, iconSize } from "../../theme";
 import { ProviderIcon } from "../../ui/ProviderIcon";
-import { RunningThreadTitle, ThreadTitle } from "../../ui/ThreadTitle";
-import { AppText as Text } from "../../ui/Typography";
+import {
+  CatalogRowBody,
+  CatalogRowLeading,
+  type CatalogRowMarker,
+  CatalogRowSubtitle,
+  CatalogRowSubtitleLine,
+  CatalogRowTitle,
+  CatalogRowTitleLine,
+  CatalogRowTrailing,
+} from "../../ui/CatalogRow";
 import { ServerIcon } from "../connections/ServerIcon";
 import { styles } from "./ThreadRow.styles";
 import { ThreadPullRequestBadge } from "./ThreadPullRequestBadge";
@@ -25,20 +33,14 @@ export function ThreadRowContent({
   return (
     <>
       {selected && <View style={styles.selectionBar} />}
-      <View style={styles.threadText}>
-        <View style={styles.threadTitleLine}>
+      <CatalogRowBody>
+        <CatalogRowTitleLine>
           {server !== undefined && (
-            <View accessibilityLabel={`Server ${server.name}`} accessible>
+            <CatalogRowLeading accessibilityLabel={`Server ${server.name}`}>
               <ServerIcon color={colors.textMuted} iconId={server.iconId} metric="body" />
-            </View>
+            </CatalogRowLeading>
           )}
-          <View style={styles.threadTitleSlot}>
-            {thread.state === "running" ? (
-              <RunningThreadTitle value={thread.title} />
-            ) : (
-              <ThreadTitle running={false} value={thread.title} />
-            )}
-          </View>
+          <CatalogRowTitle running={thread.state === "running"} value={thread.title} />
           {thread.state === "failed" && (
             <View
               accessibilityLabel={`Thread ${thread.state}`}
@@ -48,51 +50,42 @@ export function ThreadRowContent({
               <Ionicons color={colors.red} name="alert-circle" size={iconSize.inline} />
             </View>
           )}
-          <View style={styles.threadMeta}>
-            {thread.needsAttention === true ? (
-              <View
-                accessibilityLabel="Требуется твоё внимание"
-                accessible
-                style={styles.threadAttentionIcon}
-              >
-                <Ionicons color={colors.text} name="hand-left-outline" size={iconSize.indicator} />
-              </View>
-            ) : (
-              thread.unread > 0 && (
-                <View style={styles.unreadSlot}>
-                  <View accessibilityLabel="Unread thread" accessible style={styles.unreadDot} />
-                </View>
-              )
-            )}
+          <CatalogRowTrailing
+            age={
+              thread.time ?? formatThreadRecency(thread.timestamp ?? 0, readDeviceTimePreferences())
+            }
+            ageTestID="thread-time"
+            markers={threadMarkers(thread)}
+          >
             <ThreadProviderSlot
               label={thread.agentBadge ?? null}
               provider={thread.agentProvider ?? null}
             />
-            <Text numberOfLines={1} style={styles.threadTime} testID="thread-time">
-              {thread.time ??
-                formatThreadRecency(thread.timestamp ?? 0, readDeviceTimePreferences())}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.threadPreviewLine}>
+          </CatalogRowTrailing>
+        </CatalogRowTitleLine>
+        <CatalogRowSubtitleLine>
           {thread.state === "running" ? (
             <RunningThreadPreview thread={thread} />
           ) : (
             <ThreadPreview preview={thread.preview} />
           )}
           <ThreadPullRequestBadge connectionId={thread.serverId} threadId={thread.id} />
-        </View>
-      </View>
+        </CatalogRowSubtitleLine>
+      </CatalogRowBody>
     </>
   );
 }
 
+/** A pending request outranks the unread mark; the unread mark returns once it clears. */
+function threadMarkers(thread: ThreadRowProps["thread"]): readonly CatalogRowMarker[] {
+  if (thread.needsAttention === true) {
+    return [{ kind: "attention", label: "Требуется твоё внимание" }];
+  }
+  return thread.unread > 0 ? [{ kind: "unread", label: "Unread thread" }] : [];
+}
+
 function ThreadPreview({ preview }: { readonly preview: string }): ReactElement {
-  return (
-    <Text numberOfLines={1} style={styles.threadPreview} testID="thread-preview">
-      {plainThreadPreview(preview)}
-    </Text>
-  );
+  return <CatalogRowSubtitle testID="thread-preview" text={plainThreadPreview(preview)} />;
 }
 
 /**
@@ -111,11 +104,7 @@ function RunningThreadPreview({
   if (label === null) {
     return <ThreadPreview preview={thread.preview} />;
   }
-  return (
-    <Text numberOfLines={1} style={styles.threadPreview} testID="thread-live-activity">
-      {label}
-    </Text>
-  );
+  return <CatalogRowSubtitle testID="thread-live-activity" text={label} />;
 }
 
 function ThreadProviderSlot({

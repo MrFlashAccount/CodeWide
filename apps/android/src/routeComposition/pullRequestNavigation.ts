@@ -1,15 +1,18 @@
 import { useRouter } from "expo-router";
 
 import type { PullRequestKey } from "../data/forgeContract";
+import type { ThreadId } from "../data/reviewContract";
 import { useEvent } from "../react/useEvent";
 import { threadSelectionKey } from "../services/threads/threadRouteParams";
 
 /**
  * Pull-request navigation intents. Opening a PR publishes the destination
  * immediately so its detail-pane skeleton owns loading feedback. The owning
- * workspace layout resets catalog roots; this hook never mutates that stack.
+ * Router owns the PR push and canonical compact-thread navigation; this hook
+ * never reconstructs, resets or mirrors either subtree.
  */
 export function usePullRequestNavigation(): {
+  readonly navigateToLinkedThread: (connectionId: string, threadId: ThreadId) => void;
   readonly openPullRequest: (connectionId: string, pullRequest: PullRequestKey) => void;
 } {
   const router = useRouter();
@@ -19,10 +22,16 @@ export function usePullRequestNavigation(): {
       pathname: "/pulls/[connectionId]/[pullRequestKey]",
     });
   });
-  return { openPullRequest };
+  const navigateToLinkedThread = useEvent((connectionId: string, threadId: ThreadId): void => {
+    router.navigate({
+      params: { connectionId, threadId },
+      pathname: "/threads/[connectionId]/[threadId]",
+    });
+  });
+  return { navigateToLinkedThread, openPullRequest };
 }
 
-/** Opens a linked thread from the PR screen through the existing thread navigation. */
+/** Produces the existing preparation key before compact canonical tab navigation. */
 export function linkedThreadSelectionKey(connectionId: string, threadId: string): string {
   return threadSelectionKey({ id: threadId, serverId: connectionId });
 }

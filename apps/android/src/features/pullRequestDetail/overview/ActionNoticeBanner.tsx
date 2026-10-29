@@ -6,8 +6,9 @@ import { overviewStyles as styles } from "./overview.styles";
 
 /**
  * What happened to the last write that did not go as asked: the head moved
- * (nothing written, actions refreshed), the outcome is unknown, or the forge
- * answered with a message. Refusals render next to their own control.
+ * (nothing written, actions refreshed), the outcome is unknown, the forge
+ * refused it with a reason, it answered with a message, or an agent scenario's
+ * run failed.
  */
 export function ActionNoticeBanner({
   host,
@@ -16,8 +17,26 @@ export function ActionNoticeBanner({
   readonly host: string;
   readonly notice: ActionNotice | null;
 }): React.JSX.Element | null {
-  if (notice === null || notice.kind === "refused") {
+  if (notice === null) {
     return null;
+  }
+  if (notice.kind === "refused") {
+    return (
+      <View accessibilityRole="alert" style={[styles.banner, styles.bannerError]}>
+        <Text style={styles.body}>{`✕ ${host} refused: ${notice.reason}`}</Text>
+      </View>
+    );
+  }
+  if (notice.kind === "agentFailed") {
+    return (
+      <View
+        accessibilityRole="alert"
+        style={[styles.banner, styles.bannerError]}
+        testID="pull-request-notice-agentFailed"
+      >
+        <Text style={styles.body}>{`✕ ${notice.label} failed: ${notice.reason}`}</Text>
+      </View>
+    );
   }
   if (notice.kind === "message") {
     return (

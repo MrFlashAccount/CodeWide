@@ -18,6 +18,8 @@ pub enum RejectionCode {
     PermissionDenied,
     WorkspaceUnavailable,
     ProviderUnavailable,
+    /// The new child would be nested deeper than the host's `maxAgentDepth`.
+    DepthLimitExceeded,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -59,7 +61,7 @@ pub fn workspace(
     let (mode, claim_state) = match request {
         WorkspaceRequest::Inherit { cwd }
         | WorkspaceRequest::SharedReadOnly { cwd }
-        | WorkspaceRequest::CompatibilitySpawn { cwd } => {
+        | WorkspaceRequest::AgentSpawn { cwd } => {
             let effective_cwd = cwd.as_deref().unwrap_or(parent_cwd);
             if effective_cwd.is_empty() {
                 return Err(AdmissionRejection::new(
@@ -111,4 +113,25 @@ pub fn permission_envelope(
         requested_profile: requested_profile.map(str::to_owned),
         translated_profile,
     }
+}
+
+/// Rejects a new child that would be nested deeper than `max_depth`. The
+/// caller is at `caller_depth` (a root thread is 0), so its child is one
+/// deeper.
+///
+/// # Errors
+/// Returns the clear tool rejection when the limit is exceeded.
+pub fn depth(caller_depth: usize, max_depth: usize) -> Result<(), AdmissionRejection> {
+    let child_depth = caller_depth.saturating_add(1);
+    if child_depth > max_depth {
+        return Err(AdmissionRejection::new(
+            RejectionCode::DepthLimitExceeded,
+            format!(
+                "agent depth limit reached: a new agent here would be at depth {child_depth}, \
+                 and this host allows at most {max_depth} (maxAgentDepth); \
+                 finish this work in the current thread or report back to the parent"
+            ),
+        ));
+    }
+    Ok(())
 }

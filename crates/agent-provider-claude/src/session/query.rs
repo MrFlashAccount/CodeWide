@@ -17,7 +17,7 @@ use tracing::warn;
 use crate::cli::{
     command::QueryOptions,
     process::{ClaudeProcess, ProcessError, ProcessEvent},
-    protocol::Priority,
+    protocol::{Author, Priority},
 };
 
 /// A request the session awaits off its loop.
@@ -31,6 +31,7 @@ pub struct Offer {
     /// The uuid Claude persists the message under.
     pub uuid: Option<String>,
     pub priority: Priority,
+    pub author: Author,
 }
 
 /// The query of one session.
@@ -211,6 +212,7 @@ async fn write_in_order(
                         &Value::Array(offer.content),
                         offer.uuid.as_deref(),
                         offer.priority,
+                        offer.author,
                     )
                     .await
             }

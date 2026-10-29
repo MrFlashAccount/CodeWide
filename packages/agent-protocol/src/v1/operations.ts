@@ -358,6 +358,16 @@ export interface OperationMap {
     readonly result: { readonly thread: AgentThread | null };
   };
   /**
+   * Starts a turn that resumes the thread's interrupted or failed last turn
+   * without a user message. The provider decides how its harness resumes;
+   * like `turn.start`, an active thread answers `busy`. Added within v1: a
+   * provider without it answers `-32601`.
+   */
+  readonly "turn.continue": {
+    readonly params: { readonly appThreadId: AppThreadId };
+    readonly result: TurnStartResult;
+  };
+  /**
    * Answers `{}` at once when the turn is active, already interrupted,
    * completed, or the thread is idle. Errors only for a foreign `turnId`
    * during an active turn or an unknown thread.
@@ -409,6 +419,7 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   "thread.compact",
   "thread.backgroundTask.read",
   "turn.start",
+  "turn.continue",
   "turn.steer",
   "turn.interrupt",
   "request.respond",

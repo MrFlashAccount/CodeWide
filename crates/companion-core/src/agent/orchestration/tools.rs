@@ -27,7 +27,7 @@ pub const MAX_WAIT: Duration = Duration::from_mins(5);
 #[must_use]
 pub fn specs() -> Vec<ClientToolSpec> {
     let mut specs = task_specs();
-    specs.extend(compatibility_specs());
+    specs.extend(agent_specs());
     specs
 }
 
@@ -39,7 +39,7 @@ fn task_specs() -> Vec<ClientToolSpec> {
     vec![
         ClientToolSpec {
             name: DELEGATE_TASK.into(),
-            description: "Delegate a task to a dedicated child thread. The host preserves the task across reconnects and restarts. Use deferred to continue immediately; completion is injected into this parent as a queued turn when it is idle. Use blocking to wait while this turn remains alive.".into(),
+            description: "Delegate a task to a dedicated child thread. The host preserves the task across reconnects and restarts. Use deferred to continue immediately: the result arrives automatically as a CodeWide notice that starts this thread's next turn once it is idle (never inside a running turn). Use blocking to wait while this turn remains alive; a result returned to you here is not delivered again.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -88,7 +88,7 @@ fn task_specs() -> Vec<ClientToolSpec> {
         },
         ClientToolSpec {
             name: WAIT_TASK.into(),
-            description: "Wait for one durable delegated task. Returns only that task's initial turn result and acknowledges fallback delivery when terminal.".into(),
+            description: "Wait for one durable delegated task. Returns only that task's initial turn result. A terminal result returned here is acknowledged: its automatic notice is not delivered (or is withdrawn while still queued).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -112,7 +112,7 @@ fn task_specs() -> Vec<ClientToolSpec> {
     ]
 }
 
-fn compatibility_specs() -> Vec<ClientToolSpec> {
+fn agent_specs() -> Vec<ClientToolSpec> {
     let agent_thread_id = json!({
         "type": "string",
         "description": "Thread id of an agent this thread started (from codewide_spawn_agent or codewide_list_agents)."
@@ -120,7 +120,7 @@ fn compatibility_specs() -> Vec<ClientToolSpec> {
     vec![
         ClientToolSpec {
             name: SPAWN_AGENT.into(),
-            description: "Start another agent in a new CodeWide thread, linked to this thread as a subagent, and give it a task. The new agent sees only `prompt` (not this conversation). Returns immediately; use codewide_wait_agent to collect its answer.".into(),
+            description: "Start another agent in a new CodeWide thread, linked to this thread as a subagent, and give it a task. The new agent sees only `prompt` (not this conversation). Returns immediately. Its result arrives automatically as a CodeWide notice that starts this thread's next turn once it is idle, so you do not need to poll; call codewide_wait_agent only when you must block on the answer now.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -137,7 +137,7 @@ fn compatibility_specs() -> Vec<ClientToolSpec> {
         },
         ClientToolSpec {
             name: WAIT_AGENT.into(),
-            description: "Wait until an agent of this thread finishes its current turn, or until the timeout. Returns its status and, when finished, its final message.".into(),
+            description: "Wait until an agent of this thread finishes its current turn, or until the timeout. Returns its status and, when finished, its final message. A finished result returned here is not delivered again as a notice.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -150,7 +150,7 @@ fn compatibility_specs() -> Vec<ClientToolSpec> {
         },
         ClientToolSpec {
             name: SEND_AGENT.into(),
-            description: "Send a follow-up message to an agent of this thread. mode \"queue\" (default) starts a new turn when the agent is idle and otherwise delivers the message after its current turn; \"steer\" adds it to the running turn.".into(),
+            description: "Send a follow-up message to an agent of this thread. mode \"queue\" (default) starts a new turn when the agent is idle and otherwise delivers the message after its current turn; that turn's result arrives automatically as its own notice. \"steer\" adds it to the running turn, whose single result covers it.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -164,7 +164,7 @@ fn compatibility_specs() -> Vec<ClientToolSpec> {
         },
         ClientToolSpec {
             name: CANCEL_AGENT.into(),
-            description: "Interrupt the running turn of an agent of this thread and drop its queued messages. Safe to repeat.".into(),
+            description: "Interrupt the running turn of an agent of this thread and drop its queued messages. Safe to repeat. If the agent stops within the interrupt timeout no notice follows; a later stop arrives as a `cancelled` notice.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {"agentThreadId": agent_thread_id},
@@ -196,9 +196,9 @@ pub enum WorkspaceRequest {
     IsolatedWrite {
         source_workspace: Option<String>,
     },
-    /// Internal compatibility arm; never decoded from `codewide_delegate_task`.
+    /// Internal direct-agent arm; never decoded from `codewide_delegate_task`.
     /// Admission uses the cwd directly with the parent permissions.
-    CompatibilitySpawn {
+    AgentSpawn {
         cwd: Option<String>,
     },
 }

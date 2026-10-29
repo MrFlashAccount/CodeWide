@@ -54,9 +54,10 @@ use agent_core::{
         ProviderRateLimits, ProviderThreadRef, RequestRespondParams, RpcError, RpcErrorData,
         SortDirection, StartWhileActiveMode, ThreadCreateParams, ThreadForkParams,
         ThreadListParams, ThreadListResult, ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult,
-        ThreadUpdateParams, ThreadUpdateResult, TurnInterruptParams, TurnStartParams,
-        TurnStartResult, TurnSteerParams, TurnSteerResult, background_task_not_found_message,
-        capability_unsupported_message, thread_not_found_message,
+        ThreadUpdateParams, ThreadUpdateResult, TurnContinueParams, TurnInterruptParams,
+        TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+        background_task_not_found_message, capability_unsupported_message,
+        thread_not_found_message,
         turns::{MAX_TURNS_PAGE, page_turns},
     },
     naming::{CatalogNames, ModelNaming},
@@ -390,6 +391,27 @@ impl ClaudeProvider {
             .await
             .map_err(|_| ProviderError::Disconnected("Claude thread service has stopped".into()))?;
         Ok(running)
+    }
+
+    /// Gives an indexed page the background command states the thread
+    /// service gives its own (`ThreadService::overlay_live_background_commands`).
+    /// Without the live session's knowledge the page keeps what history says.
+    async fn overlay_live_background_commands(
+        &self,
+        thread: &AppThreadId,
+        result: &mut ThreadTurnsResult,
+    ) {
+        let overlaid = match self.service().await {
+            Ok(service) => {
+                service
+                    .overlay_live_background_commands(thread, &mut result.turns)
+                    .await
+            }
+            Err(err) => Err(err),
+        };
+        if let Err(err) = overlaid {
+            warn!(thread_id = %thread, err = %err, "Claude live background commands are unavailable");
+        }
     }
 
     fn stamp_turns(&self, thread: &AppThreadId, result: &mut ThreadTurnsResult) {
@@ -795,7 +817,13 @@ impl AgentProvider for ClaudeProvider {
             .as_ref()
             .and_then(|storage| storage.turns(&params))
         {
-            Some(indexed) => indexed.map_err(ProviderError::Rejected)?,
+            Some(indexed) => {
+                let mut indexed = indexed.map_err(ProviderError::Rejected)?;
+                self.overlay_live_background_commands(&params.app_thread_id, &mut indexed)
+                    .await;
+                indexed
+            }
+            // The service adds the live background command states itself.
             None => self.service().await?.turns(params.clone(), false).await?.0,
         };
         self.stamp_turns(&params.app_thread_id, &mut result);
@@ -842,6 +870,13 @@ impl AgentProvider for ClaudeProvider {
 
     async fn turn_start(&self, params: TurnStartParams) -> Result<TurnStartResult, ProviderError> {
         self.service().await?.turn_start(params).await
+    }
+
+    async fn turn_continue(
+        &self,
+        params: TurnContinueParams,
+    ) -> Result<TurnStartResult, ProviderError> {
+        self.service().await?.turn_continue(params).await
     }
 
     /// Reads only `<a session of the thread>/tasks/<task id>.output` of a

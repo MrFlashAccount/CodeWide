@@ -5,47 +5,22 @@
 
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::{
-    VcsError, VcsScope, VcsService,
+    REMOTES_CAPABILITY, VcsError, VcsRemote, VcsRemotes, VcsScope, VcsService,
     plugin::{PROTOCOL_VERSION, PluginSession, validate_initialize_metadata},
 };
 
-pub const REMOTES_CAPABILITY: &str = "vcs.remotes@1";
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VcsRemote {
-    pub name: String,
-    /// Credentials are stripped by the provider.
-    pub url: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpstreamRef {
-    pub remote: String,
-    pub branch: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VcsRemotes {
-    pub capability: String,
-    pub provider: String,
-    /// `None` on a detached head.
-    pub branch: Option<String>,
-    pub upstream: Option<UpstreamRef>,
-    pub remotes: Vec<VcsRemote>,
-}
-
-impl VcsRemotes {
+/// Detection order of a workspace's remote URLs.
+pub trait OrderedRemotes {
     /// Remote URLs in detection order: the upstream's remote, then
     /// `upstream`, then `origin`, then the rest.
-    #[must_use]
-    pub fn ordered_urls(&self) -> Vec<String> {
+    fn ordered_urls(&self) -> Vec<String>;
+}
+
+impl OrderedRemotes for VcsRemotes {
+    fn ordered_urls(&self) -> Vec<String> {
         let rank = |remote: &VcsRemote| {
             if self
                 .upstream
@@ -135,6 +110,7 @@ impl VcsService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vcs::UpstreamRef;
 
     #[test]
     fn the_upstream_remote_is_probed_first() {

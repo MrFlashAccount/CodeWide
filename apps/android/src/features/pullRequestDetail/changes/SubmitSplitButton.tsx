@@ -1,14 +1,23 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
-import { colors, iconSize } from "../../../theme";
+import {
+  colors,
+  controlHitSlop,
+  controlSize,
+  iconSize,
+  radii,
+  spacing,
+  typeScale,
+  typeWeight,
+} from "../../../theme";
 import { ActionMenu } from "../../../ui/ActionMenu";
 import { AppText as Text } from "../../../ui/Typography";
-import { reviewDockStyles as styles } from "./ReviewDock.styles";
 
-/** `Submit · Approve | ▾`: opens the Submit sheet, or picks another plugin verdict. */
+/** Compact `Review · 2 | ▾` in the Changes toolbar: opens the Submit sheet, or picks another plugin verdict. */
 export function SubmitSplitButton({
+  accessibilityLabel,
   disabled,
   label,
   onOpenSubmit,
@@ -16,6 +25,7 @@ export function SubmitSplitButton({
   verdict,
   verdicts,
 }: {
+  readonly accessibilityLabel: string;
   readonly disabled: boolean;
   readonly label: string;
   readonly onOpenSubmit: () => void;
@@ -28,10 +38,11 @@ export function SubmitSplitButton({
   return (
     <View style={styles.split}>
       <Pressable
-        accessibilityLabel={label}
+        accessibilityLabel={accessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ disabled: unavailable }}
         disabled={unavailable}
+        hitSlop={controlHitSlop.compact}
         onPress={onOpenSubmit}
         style={[styles.main, !split && styles.mainSolo, unavailable && styles.disabled]}
         testID="review-dock-submit"
@@ -73,9 +84,58 @@ function VerdictMenu({
       }))}
       onSelect={onSelect}
     >
-      <Pressable accessibilityLabel="Verdict" accessibilityRole="button" style={styles.toggle}>
+      <Pressable
+        accessibilityLabel="Verdict"
+        accessibilityRole="button"
+        hitSlop={controlHitSlop.compact}
+        style={styles.toggle}
+      >
         <Ionicons color={colors.onPrimary} name="chevron-down" size={iconSize.inline} />
       </Pressable>
     </ActionMenu>
   );
 }
+
+/** Matches AppButton's disabled feedback. */
+const DISABLED_OPACITY = 0.5;
+
+const styles = StyleSheet.create({
+  danger: {
+    color: colors.error,
+  },
+  disabled: {
+    opacity: DISABLED_OPACITY,
+  },
+  main: {
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    borderBottomLeftRadius: radii.small,
+    borderTopLeftRadius: radii.small,
+    height: controlSize.compact,
+    justifyContent: "center",
+    paddingHorizontal: spacing.sm,
+  },
+  mainLabel: {
+    ...typeScale.label,
+    color: colors.onPrimary,
+    fontWeight: typeWeight.semibold,
+  },
+  mainSolo: {
+    borderBottomRightRadius: radii.small,
+    borderTopRightRadius: radii.small,
+  },
+  split: {
+    columnGap: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    flexShrink: 0,
+  },
+  toggle: {
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    borderBottomRightRadius: radii.small,
+    borderTopRightRadius: radii.small,
+    height: controlSize.compact,
+    justifyContent: "center",
+    width: controlSize.compact - spacing.xs,
+  },
+});

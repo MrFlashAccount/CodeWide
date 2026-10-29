@@ -3,7 +3,6 @@ import type {
   AuthStartResult,
   DisconnectMode,
   ForgeAccountKey,
-  ForgeProvider,
 } from "../../data/forgeContract";
 
 /** Connect-flow and account mutations of the Pull requests catalog for one connection. */
@@ -24,11 +23,15 @@ export type PullRequestsWorkspaceCapabilities = {
       readonly mode: DisconnectMode;
     },
   ) => Promise<void>;
-  readonly setProviderEnabled: (
+  /**
+   * Includes or excludes one linked account from list and search reads. The
+   * link and its credential stay; the accounts query is patched with the result.
+   */
+  readonly setAccountEnabled: (
     connectionId: string,
-    pluginId: string,
+    account: ForgeAccountKey,
     enabled: boolean,
-  ) => Promise<ForgeProvider>;
+  ) => Promise<AccountState>;
   /** Starts linkExisting, hostLogin or an instructions re-check for one provider method. */
   readonly startAuth: (
     connectionId: string,

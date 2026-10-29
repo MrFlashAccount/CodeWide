@@ -15,10 +15,14 @@ import { defaultPullRequestFilter } from "../../src/features/pullRequests/pullRe
 import {
   arcanumProvider,
   connectedAccount,
+  conversation91,
+  conversationComment,
   draftsSnapshot,
   expiredAccount,
   failedFlow,
+  FORGE_IMAGE_URL,
   filesPage,
+  githubConversationProvider,
   githubProvider,
   guideState,
   hostLoginFlow,
@@ -53,12 +57,48 @@ const erroredAccount = {
   state: "error",
 };
 
+/** The PR conversation frame: the GitHub plugin declares the conversation and comment writes. */
+const CONVERSATION_SCENARIO = "pr-conversation";
+
 /** Every linked account comes with its provider, so each section shows that provider's own mark. */
 const connectedSnapshot = {
   accounts: [connectedAccount, expiredAccount],
   flows: [],
-  providers: [githubProvider, arcanumProvider],
+  providers: [
+    scenario === CONVERSATION_SCENARIO ? githubConversationProvider : githubProvider,
+    arcanumProvider,
+  ],
 };
+
+/** A small inline picture stands in for the forge-hosted image: the preview has no media path. */
+const PREVIEW_IMAGE =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAYCAIAAAAzn+mLAAAAOklEQVR42mNQxwFMj1dgRbRWzzDqoFEHjTpoxDlooCzGpX7UQaMOGnXQyHPQaEk96qBRB406aIAdBAB4ikx9cV/qfwAAAABJRU5ErkJggg==";
+
+function conversationAnswer(): Answer {
+  return {
+    result: JSON.parse(JSON.stringify(conversation91).replace(FORGE_IMAGE_URL, PREVIEW_IMAGE)),
+  };
+}
+
+let previewCommentCount = 0;
+
+/** Acknowledges a conversation write with the comment the forge would return. */
+function commentAnswer(params: unknown): Answer {
+  previewCommentCount += 1;
+  const body =
+    typeof params === "object" && params !== null && "body" in params && typeof params.body === "string"
+      ? params.body
+      : "";
+  return {
+    result: {
+      comment: conversationComment(`preview-${String(previewCommentCount)}`, {
+        author: { avatarUrl: null, login: connectedAccount.login },
+        body,
+        createdAt: new Date().toISOString(),
+      }),
+    },
+  };
+}
 
 function accountsAnswer(): Answer {
   const snapshots: Readonly<Record<string, unknown>> = {
@@ -142,12 +182,16 @@ const submitOutcome = {
 };
 
 const threadLinks = {
+  providerIcons: {
+    [arcanumProvider.pluginId]: arcanumProvider.icon,
+    [githubProvider.pluginId]: githubProvider.icon,
+  },
   threads: [
     {
       pullRequests: [
         {
-          icon: githubProvider.icon,
           number: "91",
+          pluginId: githubProvider.pluginId,
           pullRequest: overview91.pullRequest,
           state: "open",
         },
@@ -157,12 +201,17 @@ const threadLinks = {
     {
       pullRequests: [
         {
-          icon: arcanumProvider.icon,
           number: "4120",
+          pluginId: arcanumProvider.pluginId,
           pullRequest: "fpr1.arcanum-4120",
           state: "open",
         },
-        { icon: githubProvider.icon, number: "88", pullRequest: "fpr1.github-88", state: "draft" },
+        {
+          number: "88",
+          pluginId: githubProvider.pluginId,
+          pullRequest: "fpr1.github-88",
+          state: "draft",
+        },
       ],
       threadId: "thread-arc-review",
     },
@@ -187,7 +236,7 @@ function submitAnswer(): Answer {
   return { result: submitOutcome };
 }
 
-function answer(method: string): Answer | null {
+function answer(method: string, params: unknown): Answer | null {
   const answers: Readonly<Record<string, () => Answer | null>> = {
     "companion/forge/accounts/read": accountsAnswer,
     // A host login that has not answered yet keeps the card in its connecting state.
@@ -195,9 +244,12 @@ function answer(method: string): Answer | null {
     "companion/pullRequest/action/run": () => ({
       error: new RpcResponseError(-32_082, "Head moved to 9d01aa3; nothing was written"),
     }),
+    "companion/pullRequest/comment/create": () => commentAnswer(params),
+    "companion/pullRequest/conversation/read": conversationAnswer,
     "companion/pullRequest/files/read": () => ({ result: filesPage }),
     "companion/pullRequest/read": () => ({ result: overviewFor(scenario) }),
     "companion/pullRequest/review/submit": submitAnswer,
+    "companion/pullRequest/reviewThread/reply": () => commentAnswer(params),
     "companion/pullRequestLinks/read": () => ({ result: threadLinks }),
     "companion/pullRequests/list": listAnswer,
     "companion/pullRequests/search": listAnswer,
@@ -219,10 +271,10 @@ const NEVER = new Promise<never>(() => undefined);
 
 async function fakeRpc<T>(_session: RpcClient, method: string, params: unknown): Promise<T> {
   await Promise.resolve();
-  if (/\/(run|submit|set|start)$/u.test(method)) {
+  if (/\/(create|reply|run|submit|set|start)$/u.test(method)) {
     window.previewWrites?.push(`${method} ${JSON.stringify(params)}`);
   }
-  const reply = answer(method);
+  const reply = answer(method, params);
   if (reply === null) {
     return NEVER;
   }

@@ -59,27 +59,81 @@ pub struct InitializeResult {
     pub protocol_version: u32,
     /// The plugin id; it must equal the id the companion registered.
     pub provider: String,
+    /// The provider's display name.
     pub forge_name: String,
     /// Plugin build version, logged and compared by update proofs.
     pub version: String,
-    pub icon: ProviderIcon,
+    /// The host a new account starts on, shown before `auth.methods` is
+    /// asked (for example while the provider is disabled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_host: Option<String>,
+    /// The provider's own icon. The companion resolves and validates it
+    /// before any client sees it; an icon that does not parse as a
+    /// [`PluginIcon`] is `None` here and the plugin still initializes.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_icon"
+    )]
+    pub provider_icon: Option<PluginIcon>,
     pub capabilities: Vec<String>,
+    /// With `forge.conversation@1`: exact lowercase hosts, other than its
+    /// accounts' own hosts and their subdomains, whose media
+    /// `forge.media.read` serves (GitHub's `*.githubusercontent.com` image
+    /// hosts, for example). The companion routes only these through the
+    /// plugin; the plugin still decides per account and URL.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media_hosts: Vec<String>,
 }
 
-/// A provider icon: a bundled brand icon key, and an optional monochrome
-/// glyph the companion sanitizes before any client sees it.
+/// The largest icon image, in decoded bytes, the companion accepts.
+pub const MAX_ICON_BYTES: usize = 64 * 1024;
+
+/// A provider icon as a plugin declares it. Exactly one source: an inline
+/// monochrome glyph, inline image bytes, a file next to (or anywhere on) the
+/// plugin host, or an `https` URL. The companion turns every source into an
+/// inline glyph or image, or drops it.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderIcon {
-    pub icon_key: String,
-    pub glyph: Option<IconGlyph>,
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum PluginIcon {
+    /// One SVG path in a `0 0 W H` view box, tinted by the client.
+    Glyph { view_box: String, path: String },
+    /// Inline image bytes, standard base64, at most [`MAX_ICON_BYTES`].
+    Image {
+        mime_type: IconMimeType,
+        data_base64: String,
+    },
+    /// An image file: absolute, or relative to the plugin executable's
+    /// directory. Its extension names the type.
+    File { path: PathBuf },
+    /// An `https` image URL, fetched once by the companion.
+    Url { url: String },
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct IconGlyph {
-    pub view_box: String,
-    pub path: String,
+/// Image types a provider icon may use.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+pub enum IconMimeType {
+    #[serde(rename = "image/svg+xml")]
+    Svg,
+    #[serde(rename = "image/png")]
+    Png,
+    #[serde(rename = "image/webp")]
+    Webp,
+}
+
+/// An unknown or malformed `providerIcon` is no icon, never a failed
+/// `initialize`.
+fn lenient_icon<'de, D>(deserializer: D) -> Result<Option<PluginIcon>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
@@ -843,6 +897,322 @@ pub struct ScenarioContext {
     pub comments: Vec<ScenarioComment>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationParams {
+    pub account: ForgeAccountRef,
+    #[serde(rename = "ref")]
+    pub pr_ref: ForgePrRef,
+    /// The opaque `nextCursor` of the previous page; `None` for the first.
+    pub cursor: Option<String>,
+}
+
+/// What kind of account wrote a conversation entry.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum AuthorKind {
+    User,
+    /// An automation account: a GitHub App, a robot user.
+    Bot,
+    /// An AI reviewer the forge identifies as one.
+    Ai,
+}
+
+/// The author of a conversation entry.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Author {
+    pub login: String,
+    pub kind: AuthorKind,
+    pub avatar_url: Option<String>,
+    /// The avatar is a public, unauthenticated URL the client may fetch
+    /// directly; otherwise it goes through `forge.media.read`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub avatar_direct: bool,
+}
+
+/// A directly loadable URL for one image the comment body references:
+/// a forge-signed, short-lived URL or a public one. It never carries the
+/// plugin's credential.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentMedia {
+    /// The image URL exactly as it appears in `body`; the client's stable
+    /// cache key.
+    pub source: String,
+    /// The URL the client fetches without credentials.
+    pub url: String,
+    /// RFC 3339; `None` when `url` does not expire.
+    pub expires_at: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum ReactionContent {
+    ThumbsUp,
+    ThumbsDown,
+    Laugh,
+    Hooray,
+    Confused,
+    Heart,
+    Rocket,
+    Eyes,
+}
+
+/// One reaction group; only groups with `count > 0` are sent.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Reaction {
+    pub content: ReactionContent,
+    pub count: u32,
+    pub viewer_reacted: bool,
+}
+
+/// One comment as authored. `body` is raw, untrusted Markdown that may embed
+/// HTML and forge-hosted image URLs.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Comment {
+    pub id: String,
+    pub author: Author,
+    pub created_at: String,
+    /// `None` when the comment was never edited.
+    pub updated_at: Option<String>,
+    pub body: String,
+    /// The web permalink.
+    pub url: Option<String>,
+    #[serde(default)]
+    pub reactions: Vec<Reaction>,
+    /// Directly loadable URLs for images in `body`; an image without an
+    /// entry keeps the `forge.media.read` path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<CommentMedia>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewVerdict {
+    Approved,
+    ChangesRequested,
+    /// No verdict: a body and/or inline threads only.
+    Commented,
+    Dismissed,
+    /// The reviewer blocked the merge.
+    MergeBlocked,
+    /// The reviewer lifted their own block.
+    MergeUnblocked,
+    /// The reviewer took back an earlier approval.
+    ApprovalWithdrawn,
+}
+
+/// Where a review thread is anchored.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ThreadAnchor {
+    /// The whole pull request.
+    PullRequest,
+    /// A file without a line, or one whose line no longer maps.
+    File { path: String },
+    /// Lines of a file on one side of the diff.
+    #[serde(rename_all = "camelCase")]
+    Line {
+        path: String,
+        /// The last line, 1-based.
+        line: u32,
+        /// The first line of a range, strictly before `line`; `None` for one line.
+        start_line: Option<u32>,
+        side: DiffSide,
+    },
+}
+
+impl ThreadAnchor {
+    /// The anchored file, if any.
+    #[must_use]
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            Self::PullRequest => None,
+            Self::File { path } | Self::Line { path, .. } => Some(path),
+        }
+    }
+}
+
+/// The lifecycle of an issue: a review remark that must be addressed.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum IssueState {
+    Open,
+    Resolved,
+    Dropped,
+}
+
+/// Whether, and how, a review thread is settled.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ThreadResolution {
+    /// The forge cannot resolve this thread.
+    None,
+    /// A resolvable discussion.
+    Conversation { resolved: bool },
+    /// A review remark with its own lifecycle.
+    #[serde(rename_all = "camelCase")]
+    Issue {
+        state: IssueState,
+        /// Who last changed the state, if known.
+        changed_by: Option<Author>,
+        /// RFC 3339; when the state last changed, if known.
+        changed_at: Option<String>,
+    },
+}
+
+/// The forge iteration (revision of the pull request) a thread was written on.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Iteration {
+    pub id: String,
+    /// Positive; grows with time.
+    pub number: u32,
+}
+
+/// A review thread; its id is the one
+/// `forge.pullRequest.reviewThread.reply` and scenarios accept.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThread {
+    pub id: String,
+    pub anchor: ThreadAnchor,
+    /// The anchored code changed since the thread started.
+    pub outdated: bool,
+    pub resolution: ThreadResolution,
+    /// The `review` entry this thread was published with.
+    pub review_id: Option<String>,
+    pub iteration: Option<Iteration>,
+    /// Oldest first, at least one.
+    pub comments: Vec<Comment>,
+    pub viewer_can_reply: bool,
+}
+
+/// What a timeline event is about.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum EventCategory {
+    /// New commits or a new iteration.
+    Push,
+    /// The pull request's own state: closed, reopened, merged, draft, ready.
+    State,
+    /// Checks and pipelines.
+    Ci,
+    Other,
+}
+
+/// One entry of a pull request conversation. A review's inline comments
+/// are in their `reviewThread` entries, never inside the `review` entry.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ConversationEntry {
+    Comment {
+        comment: Comment,
+    },
+    #[serde(rename_all = "camelCase")]
+    Review {
+        id: String,
+        author: Author,
+        created_at: String,
+        verdict: ReviewVerdict,
+        /// The review's own summary body, if any.
+        body: Option<Comment>,
+    },
+    ReviewThread {
+        thread: ReviewThread,
+    },
+    #[serde(rename_all = "camelCase")]
+    Event {
+        id: String,
+        author: Option<Author>,
+        created_at: String,
+        category: EventCategory,
+        /// Plain text, for example "merged main into this branch".
+        text: String,
+    },
+}
+
+impl ConversationEntry {
+    /// The order key: the entry's `createdAt`, a thread's first comment's.
+    #[must_use]
+    pub fn created_at(&self) -> &str {
+        match self {
+            Self::Comment { comment } => &comment.created_at,
+            Self::Review { created_at, .. } | Self::Event { created_at, .. } => created_at,
+            Self::ReviewThread { thread } => thread
+                .comments
+                .first()
+                .map_or("", |comment| comment.created_at.as_str()),
+        }
+    }
+}
+
+/// `forge.pullRequest.conversation`: entries oldest first.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationPage {
+    pub entries: Vec<ConversationEntry>,
+    pub next_cursor: Option<String>,
+    /// Whether an open issue prevents merging; `None` when the forge has
+    /// no such rule or cannot tell. Every page of one read carries the same
+    /// value.
+    pub open_issues_block_merge: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaReadParams {
+    pub account: ForgeAccountRef,
+    pub url: String,
+}
+
+/// `forge.media.read`: at most [`MAX_MEDIA_BYTES`] decoded bytes.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaReadResult {
+    pub content_type: String,
+    pub bytes_base64: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentCreateParams {
+    pub account: ForgeAccountRef,
+    #[serde(rename = "ref")]
+    pub pr_ref: ForgePrRef,
+    /// Markdown, 1..=[`MAX_COMMENT_BODY_CHARS`] characters after trimming.
+    pub body: String,
+    pub idempotency_key: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThreadReplyParams {
+    pub account: ForgeAccountRef,
+    #[serde(rename = "ref")]
+    pub pr_ref: ForgePrRef,
+    pub thread_id: String,
+    /// Markdown, 1..=[`MAX_COMMENT_BODY_CHARS`] characters after trimming.
+    pub body: String,
+    pub idempotency_key: String,
+}
+
+/// The result of both comment writes: the published comment.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentResult {
+    pub comment: Comment,
+}
+
+/// The largest media body `forge.media.read` returns; larger media are
+/// refused with an explicit error.
+pub const MAX_MEDIA_BYTES: usize = 10 * 1024 * 1024;
+/// The longest comment or reply body, in characters after trimming.
+pub const MAX_COMMENT_BODY_CHARS: usize = 65_536;
+
 /// The bound a plugin keeps `forge.pullRequest.scenarioContext` within.
 pub const MAX_SCENARIO_CONTEXT_BYTES: usize = 64 * 1024;
 /// The largest page `forge.pullRequests.list` may be asked for.
@@ -885,6 +1255,250 @@ mod tests {
         let category = serde_json::from_value::<PullRequestCategory>(wire.clone()).expect("parses");
         assert_eq!(category, PullRequestCategory::Involved);
         assert_eq!(serde_json::to_value(category).expect("encodes"), wire);
+    }
+
+    fn wire_comment(author_kind: &str) -> serde_json::Value {
+        json!({
+            "id": "IC_1",
+            "author": {"login": "octocat", "kind": author_kind, "avatarUrl": "https://avatars.githubusercontent.com/u/1"},
+            "createdAt": "2026-10-01T00:00:00Z", "updatedAt": "2026-10-02T00:00:00Z",
+            "body": "Looks **good** ![x](https://github.com/user-attachments/assets/1)",
+            "url": "https://github.com/o/r/pull/1#issuecomment-1",
+            "reactions": [{"content": "thumbsUp", "count": 3, "viewerReacted": true}]
+        })
+    }
+
+    fn wire_thread(
+        id: &str,
+        anchor: &serde_json::Value,
+        resolution: &serde_json::Value,
+    ) -> serde_json::Value {
+        json!({"kind": "reviewThread", "thread": {
+            "id": id, "anchor": anchor, "outdated": false, "resolution": resolution,
+            "reviewId": "PRR_1", "iteration": {"id": "it-3", "number": 3},
+            "comments": [wire_comment("user")], "viewerCanReply": true}})
+    }
+
+    fn round_trips<T: serde::de::DeserializeOwned + Serialize>(value: &serde_json::Value) -> T {
+        let parsed = serde_json::from_value::<T>(value.clone()).expect("parses");
+        assert_eq!(&serde_json::to_value(&parsed).expect("encodes"), value);
+        parsed
+    }
+
+    #[test]
+    fn conversation_entries_round_trip_with_their_discriminators() {
+        let page = json!({
+            "entries": [
+                {"kind": "comment", "comment": wire_comment("user")},
+                {"kind": "review", "id": "PRR_1", "author": {"login": "rev", "kind": "ai", "avatarUrl": null},
+                 "createdAt": "2026-10-01T01:00:00Z", "verdict": "changesRequested", "body": null},
+                wire_thread("PRRT_1", &json!({"kind": "line", "path": "src/a.rs", "line": 42, "startLine": 40, "side": "old"}),
+                    &json!({"kind": "conversation", "resolved": true})),
+                {"kind": "event", "id": "E_1", "author": null, "createdAt": "2026-10-01T02:00:00Z",
+                 "category": "push", "text": "merged main into this branch"}
+            ],
+            "nextCursor": "opaque",
+            "openIssuesBlockMerge": null
+        });
+        let parsed: ConversationPage = round_trips(&page);
+        assert!(matches!(
+            &parsed.entries[1],
+            ConversationEntry::Review {
+                verdict: ReviewVerdict::ChangesRequested,
+                body: None,
+                author: Author {
+                    kind: AuthorKind::Ai,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            &parsed.entries[2],
+            ConversationEntry::ReviewThread { thread } if thread.anchor == ThreadAnchor::Line {
+                path: "src/a.rs".into(), line: 42, start_line: Some(40), side: DiffSide::Old
+            } && thread.review_id.as_deref() == Some("PRR_1")
+                && thread.iteration == Some(Iteration { id: "it-3".into(), number: 3 })
+        ));
+        assert_eq!(parsed.entries[2].created_at(), "2026-10-01T00:00:00Z");
+        assert!(matches!(
+            &parsed.entries[3],
+            ConversationEntry::Event {
+                category: EventCategory::Push,
+                ..
+            }
+        ));
+        for (wire, content) in [
+            ("thumbsDown", ReactionContent::ThumbsDown),
+            ("hooray", ReactionContent::Hooray),
+            ("eyes", ReactionContent::Eyes),
+        ] {
+            assert_eq!(serde_json::to_value(content).expect("encodes"), json!(wire));
+        }
+        assert!(serde_json::from_value::<ConversationEntry>(json!({"kind": "reaction"})).is_err());
+        assert!(serde_json::from_value::<ReviewVerdict>(json!("blocked")).is_err());
+    }
+
+    #[test]
+    fn every_anchor_resolution_verdict_author_and_category_round_trips() {
+        let anchors = [
+            (json!({"kind": "pullRequest"}), None),
+            (
+                json!({"kind": "file", "path": "src/a.rs"}),
+                Some("src/a.rs"),
+            ),
+            (
+                json!({"kind": "line", "path": "src/b.rs", "line": 7, "startLine": null, "side": "new"}),
+                Some("src/b.rs"),
+            ),
+        ];
+        for (wire, path) in anchors {
+            assert_eq!(round_trips::<ThreadAnchor>(&wire).path(), path);
+        }
+        let closer = json!({"login": "arc-robot", "kind": "bot", "avatarUrl": null});
+        let resolutions = [
+            json!({"kind": "none"}),
+            json!({"kind": "conversation", "resolved": false}),
+            json!({"kind": "issue", "state": "open", "changedBy": null, "changedAt": null}),
+            json!({"kind": "issue", "state": "resolved", "changedBy": closer, "changedAt": "2026-10-03T00:00:00Z"}),
+            json!({"kind": "issue", "state": "dropped", "changedBy": closer, "changedAt": null}),
+        ];
+        for wire in &resolutions {
+            round_trips::<ThreadResolution>(wire);
+        }
+        assert_eq!(
+            round_trips::<ThreadResolution>(&resolutions[3]),
+            ThreadResolution::Issue {
+                state: IssueState::Resolved,
+                changed_by: Some(Author {
+                    login: "arc-robot".into(),
+                    kind: AuthorKind::Bot,
+                    avatar_url: None,
+                    avatar_direct: false,
+                }),
+                changed_at: Some("2026-10-03T00:00:00Z".into()),
+            }
+        );
+        for (wire, verdict) in [
+            ("approved", ReviewVerdict::Approved),
+            ("changesRequested", ReviewVerdict::ChangesRequested),
+            ("commented", ReviewVerdict::Commented),
+            ("dismissed", ReviewVerdict::Dismissed),
+            ("mergeBlocked", ReviewVerdict::MergeBlocked),
+            ("mergeUnblocked", ReviewVerdict::MergeUnblocked),
+            ("approvalWithdrawn", ReviewVerdict::ApprovalWithdrawn),
+        ] {
+            assert_eq!(round_trips::<ReviewVerdict>(&json!(wire)), verdict);
+        }
+        for (wire, kind) in [
+            ("user", AuthorKind::User),
+            ("bot", AuthorKind::Bot),
+            ("ai", AuthorKind::Ai),
+        ] {
+            assert_eq!(round_trips::<AuthorKind>(&json!(wire)), kind);
+        }
+        for (wire, category) in [
+            ("push", EventCategory::Push),
+            ("state", EventCategory::State),
+            ("ci", EventCategory::Ci),
+            ("other", EventCategory::Other),
+        ] {
+            assert_eq!(round_trips::<EventCategory>(&json!(wire)), category);
+        }
+        let issue_page = json!({
+            "entries": [wire_thread("t-1", &json!({"kind": "pullRequest"}),
+                &json!({"kind": "issue", "state": "open", "changedBy": null, "changedAt": null}))],
+            "nextCursor": null,
+            "openIssuesBlockMerge": true
+        });
+        assert_eq!(
+            round_trips::<ConversationPage>(&issue_page).open_issues_block_merge,
+            Some(true)
+        );
+        // An author without a kind, and the retired flat thread fields, are refused.
+        assert!(
+            serde_json::from_value::<Author>(json!({"login": "a", "avatarUrl": null})).is_err()
+        );
+        assert!(
+            serde_json::from_value::<ThreadAnchor>(json!({"kind": "line", "path": "a"})).is_err()
+        );
+        assert!(
+            serde_json::from_value::<ThreadResolution>(json!({"kind": "issue", "state": "closed"}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn comment_writes_and_media_reads_round_trip() {
+        let values = [
+            json!({"account": {"host": "github.com", "login": "octocat"},
+                   "ref": {"host": "github.com", "repository": "o/r", "number": "1"},
+                   "body": "Thanks", "idempotencyKey": "k-1"}),
+            json!({"account": {"host": "github.com", "login": "octocat"},
+                   "ref": {"host": "github.com", "repository": "o/r", "number": "1"},
+                   "threadId": "PRRT_1", "body": "Done", "idempotencyKey": "k-2"}),
+            json!({"account": {"host": "github.com", "login": "octocat"},
+                   "url": "https://github.com/user-attachments/assets/1"}),
+            json!({"contentType": "image/png", "bytesBase64": "iVBORw0KGgo="}),
+        ];
+        let create =
+            serde_json::from_value::<CommentCreateParams>(values[0].clone()).expect("create");
+        assert_eq!(serde_json::to_value(create).expect("encodes"), values[0]);
+        let reply =
+            serde_json::from_value::<ReviewThreadReplyParams>(values[1].clone()).expect("reply");
+        assert_eq!(serde_json::to_value(reply).expect("encodes"), values[1]);
+        let media = serde_json::from_value::<MediaReadParams>(values[2].clone()).expect("media");
+        assert_eq!(serde_json::to_value(media).expect("encodes"), values[2]);
+        let read = serde_json::from_value::<MediaReadResult>(values[3].clone()).expect("read");
+        assert_eq!(serde_json::to_value(read).expect("encodes"), values[3]);
+    }
+
+    #[test]
+    fn initialize_media_hosts_and_identity_are_optional() {
+        let info = json!({"protocolVersion": 1, "provider": "p", "forgeName": "P", "version": "1",
+                          "capabilities": []});
+        let parsed = serde_json::from_value::<InitializeResult>(info.clone()).expect("parses");
+        assert!(parsed.media_hosts.is_empty());
+        assert_eq!(parsed.default_host, None);
+        assert_eq!(parsed.provider_icon, None);
+        assert_eq!(serde_json::to_value(parsed).expect("encodes"), info);
+    }
+
+    #[test]
+    fn every_icon_variant_round_trips() {
+        let icons = [
+            json!({"kind": "glyph", "viewBox": "0 0 16 16", "path": "M0 0h16v16H0z"}),
+            json!({"kind": "image", "mimeType": "image/png", "dataBase64": "iVBORw0KGgo="}),
+            json!({"kind": "image", "mimeType": "image/svg+xml", "dataBase64": "PHN2Zy8+"}),
+            json!({"kind": "image", "mimeType": "image/webp", "dataBase64": "UklGRg=="}),
+            json!({"kind": "file", "path": "icons/forge.svg"}),
+            json!({"kind": "url", "url": "https://example.com/forge.png"}),
+        ];
+        for icon in icons {
+            let info = json!({"protocolVersion": 1, "provider": "p", "forgeName": "P",
+                              "version": "1", "defaultHost": "forge.example.com",
+                              "providerIcon": icon, "capabilities": []});
+            let parsed = serde_json::from_value::<InitializeResult>(info.clone()).expect("parses");
+            assert!(parsed.provider_icon.is_some(), "{icon} parses");
+            assert_eq!(serde_json::to_value(parsed).expect("encodes"), info);
+        }
+    }
+
+    #[test]
+    fn a_malformed_icon_is_no_icon_and_the_legacy_icon_is_ignored() {
+        for icon in [
+            json!({"kind": "image", "mimeType": "image/gif", "dataBase64": "R0lG"}),
+            json!({"kind": "glyph", "viewBox": "0 0 24 24"}),
+            json!({"kind": "url", "url": "https://x", "extra": 1}),
+            json!({"kind": "sprite"}),
+            json!("github"),
+        ] {
+            let info = json!({"protocolVersion": 1, "provider": "p", "forgeName": "P",
+                              "version": "1", "providerIcon": icon, "capabilities": [],
+                              "icon": {"iconKey": "p", "glyph": null}});
+            let parsed = serde_json::from_value::<InitializeResult>(info).expect("parses");
+            assert_eq!(parsed.provider_icon, None);
+        }
     }
 
     #[test]

@@ -16,7 +16,7 @@ import { fileDocument } from "./changesPresentation";
 
 const BYTES_PER_MEGABYTE = 1_048_576;
 /** Keeps a short diff usable when the drafts list below it is long. */
-const MIN_DIFF_HEIGHT = 240;
+const MIN_DIFF_HEIGHT = 160;
 
 /**
  * One PR file in the Pierre review editor, in recorded-patch mode. Drafts show

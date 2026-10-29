@@ -37,17 +37,14 @@ import { WorkspaceRouteComposition } from "../src/routeComposition/WorkspaceRout
 import { MountedV1Workspace } from "../app/(workspace)/_layout";
 import V1DrawingRoute from "../app/(workspace)/drawing/[sessionId]";
 import UnmatchedRoute from "../app/+not-found";
-import V1ListLayout from "../app/(workspace)/(lists)/_layout";
-import V1AllRoute from "../app/(workspace)/(lists)/index";
-import V1SearchRoute from "../app/(workspace)/search";
-import V1ProjectListRoute from "../app/(workspace)/(lists)/project/[sessionId]";
+import V1AllRoute from "../app/(workspace)/(tabs)/(threads)/(lists)/index";
+import V1ProjectListRoute from "../app/(workspace)/(tabs)/(threads)/(lists)/project/[sessionId]";
 import { projectListRouteSessions } from "../src/services/projects/projectListRouteSession";
 import { useWorkspaceListRouteResources } from "../src/routeComposition/workspaceListRouteResources";
-import V1DraftContentRoute from "../app/(workspace)/new/content/[sessionId]";
-import V1DraftModelRoute from "../app/(workspace)/new/controls/model";
-import V1AgentThreadRoute from "../app/(workspace)/threads/[connectionId]/[threadId]/agents/[agentThreadId]";
-import V1ThreadLayout from "../app/(workspace)/threads/[connectionId]/[threadId]/_layout";
-import V1ThreadRoute from "../app/(workspace)/threads/[connectionId]/[threadId]/index";
+import V1DraftContentRoute from "../app/(workspace)/(tabs)/(threads)/new/content/[sessionId]";
+import V1DraftModelRoute from "../app/(workspace)/(tabs)/(threads)/new/controls/model";
+import V1AgentThreadRoute from "../app/(workspace)/(tabs)/(threads)/threads/[connectionId]/[threadId]/agents/[agentThreadId]";
+import V1ThreadRoute from "../app/(workspace)/(tabs)/(threads)/threads/[connectionId]/[threadId]/index";
 import { useThreadRouteNavigation } from "../src/routeComposition/threadRouteNavigation";
 import {
   ensureV1NewThreadRoute,
@@ -55,7 +52,6 @@ import {
 } from "../src/routeComposition/WorkspaceRouteModel";
 import { recoverUnavailableRoute } from "../src/components/navigation/routeRecovery";
 import { workspaceRuntime } from "../src/data/workspace-runtime";
-import { useConversationRouteNavigation } from "../src/features/conversation/conversationRouteNavigation";
 import { createNewChatSubmission } from "../src/features/projects/newChatSubmission";
 import { radii } from "../src/theme";
 import {
@@ -85,17 +81,15 @@ import {
   clearMockRoutes,
   mockRouterHistory,
   registerMockRoute,
-  registerMockLayout,
   resetMockRouter,
   router,
-  setMockLocalSearchParams,
 } from "./mocks/ExpoRouter";
-
+import { registerThreadsRouteHarness } from "./mocks/registerThreadsRouteHarness";
+jest.mock("../src/routeComposition/CatalogModeBarHost", () => ({ CatalogModeBarHost: () => null }));
 const remote: ThreadNavigationReadCapability = {
   observeThread: async () => undefined,
   searchConversation: async () => ({ messages: [], newer: null, older: null, turns: [] }),
 };
-
 const testNotice = { show: jest.fn() };
 
 /** The catalog header title; the bottom mode bar also shows a "Threads" tab label. */
@@ -126,10 +120,7 @@ const threadSearchTarget = {
 
 beforeEach(() => {
   jest.mocked(useIsFocused).mockReturnValue(true);
-  registerMockLayout("lists", ["/", "/project/[sessionId]"], V1ListLayout);
-  registerMockRoute("/", V1AllRoute);
-  registerMockRoute("/search", V1SearchRoute);
-  registerMockRoute("/project/[sessionId]", V1ProjectListRoute);
+  registerThreadsRouteHarness();
 });
 
 afterEach(() => {
@@ -228,37 +219,6 @@ function BrowserLauncher(): React.JSX.Element {
     </Text>
   );
 }
-
-function AttachmentLauncher(): React.JSX.Element {
-  const navigation = useConversationRouteNavigation();
-  return <Text onPress={navigation.openAttachments}>Open attachments</Text>;
-}
-
-it("opens thread children for the current URL when the retained layout has stale local params", () => {
-  try {
-    const pathname = "/threads/[connectionId]/[threadId]";
-    registerMockRoute(pathname, AttachmentLauncher);
-    resetMockRouter({
-      params: { connectionId: "server", threadId: "current" },
-      pathname,
-    });
-    setMockLocalSearchParams({ connectionId: "server", threadId: "first" });
-
-    const view = render(<V1ThreadLayout />);
-    fireEvent.press(view.getByText("Open attachments"));
-
-    expect(mockRouterHistory().at(-1)).toEqual({
-      params: {
-        connectionId: "server",
-        sessionId: expect.stringMatching(/^attachments-/u),
-        threadId: "current",
-      },
-      pathname: "/threads/[connectionId]/[threadId]/attachments",
-    });
-    view.unmount();
-  } finally {
-  }
-});
 
 it("retains the route-owned draft across view remounts and closes it explicitly", () => {
   const service = new NewThreadService();
@@ -605,7 +565,10 @@ it("stretches the single-column workspace across compact phone landscape", () =>
   const list = view.getByTestId("v1-workspace-destination");
   const listStyle = StyleSheet.flatten(list.props.style);
 
-  expect(listStyle).toEqual(expect.objectContaining({ flex: 1 }));
+  // The single column spans the whole compact landscape window.
+  expect(listStyle).toEqual(
+    expect.objectContaining({ transform: [{ translateX: 0 }], width: 700 }),
+  );
   expect(listStyle).not.toHaveProperty("maxWidth");
   expect(catalogTitle(view)).toBeVisible();
 
@@ -619,7 +582,9 @@ it("stretches the single-column workspace across compact phone landscape", () =>
     view.getByTestId("v1-workspace-destination").props.style,
   );
 
-  expect(destinationStyle).toEqual(expect.objectContaining({ flex: 1 }));
+  expect(destinationStyle).toEqual(
+    expect.objectContaining({ transform: [{ translateX: 0 }], width: 700 }),
+  );
   expect(destinationStyle).not.toHaveProperty("maxWidth");
   expect(view.getByText("Server unavailable")).toBeVisible();
 

@@ -2,23 +2,20 @@ import { View } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import { CatalogActionButton } from "../actions/CatalogActionButton";
-import { OverflowActionsMenu, type ExtraMenuItem } from "../actions/OverflowActionsMenu";
 import type { ActionSlots } from "../actions/actionSlotting";
 import { overviewStyles as styles } from "./overview.styles";
 
-/** Header action row: slotted primaries, secondaries and the ⋯ overflow, on one line. */
+/** Header action row: slotted primaries and secondaries on one line; the rest go to the app bar ⋯. */
 export function ActionRow({
-  extra,
   onLayoutWidth,
   onRun,
   pending,
   slots,
 }: {
-  readonly extra: readonly ExtraMenuItem[];
   readonly onLayoutWidth: (width: number) => void;
   readonly onRun: (action: ActionDescriptor) => void;
   readonly pending: Readonly<Record<string, true>>;
-  readonly slots: Pick<ActionSlots, "overflow" | "primary" | "secondary">;
+  readonly slots: Pick<ActionSlots, "primary" | "secondary">;
 }): React.JSX.Element {
   return (
     <View
@@ -46,13 +43,6 @@ export function ActionRow({
           variant="secondary"
         />
       ))}
-      <View style={styles.fill} />
-      <OverflowActionsMenu
-        accessibilityLabel="More pull request actions"
-        actions={slots.overflow}
-        extra={extra}
-        onRun={onRun}
-      />
     </View>
   );
 }

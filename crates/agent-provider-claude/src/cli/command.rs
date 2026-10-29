@@ -117,7 +117,9 @@ pub struct QueryOptions {
     pub client_tools: bool,
 }
 
-const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+/// The reasoning efforts Claude Code accepts (`--effort`) and records on its
+/// answers (`runtime/recorded_model.rs`).
+pub(crate) const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// The probe runs with Claude's default permission mode, no settings files
 /// and only the MCP servers on its command line (none), as the Agent SDK

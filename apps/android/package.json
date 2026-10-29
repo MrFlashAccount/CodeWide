@@ -97,6 +97,7 @@
     "expo-updates": "~57.0.13",
     "expo-video": "~57.0.3",
     "mermaid": "11.16.1",
+    "pele": "1.12.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",
@@ -115,6 +116,7 @@
   },
   "devDependencies": {
     "@babel/plugin-transform-dynamic-import": "7.27.1",
+    "@babel/preset-typescript": "7.29.7",
     "@react-native/jest-preset": "0.86.2",
     "@sergeigarin/hygene": "github:MrFlashAccount/hygiene#828e4a23b913b010ac314964b32aa903870fa621",
     "@testing-library/react-native": "13.3.3",

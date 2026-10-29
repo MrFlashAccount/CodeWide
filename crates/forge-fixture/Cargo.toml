@@ -23,6 +23,7 @@ companion-core = { path = "../companion-core" }
 forge-protocol = { path = "../forge-protocol", features = ["conformance"] }
 tempfile = "3.21.0"
 tokio = { version = "1.47.1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "time", "sync"] }
+url = "2.5.7"
 
 [lints]
 workspace = true

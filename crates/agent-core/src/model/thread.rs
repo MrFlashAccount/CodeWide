@@ -253,6 +253,67 @@ impl TaskNotificationSource {
     }
 }
 
+/// What a provider knows of a background command's process (added within
+/// v1). An ended state always carries the Unix time in seconds it ended;
+/// `Completed` and `Failed` the exit code when the provider reports one.
+/// `Stopped`: killed or stopped before it finished, or ended with the
+/// process that ran it. `Unknown`: the provider cannot tell (kept for
+/// providers without live process evidence; clients render it as ended).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum BackgroundCommandState {
+    Running,
+    Completed {
+        ended_at: i64,
+        exit_code: Option<i64>,
+    },
+    Failed {
+        ended_at: i64,
+        exit_code: Option<i64>,
+    },
+    Stopped {
+        ended_at: i64,
+    },
+    Unknown,
+}
+
+impl BackgroundCommandState {
+    /// Whether the process ended (`Completed`, `Failed` or `Stopped`).
+    #[must_use]
+    pub const fn has_ended(&self) -> bool {
+        matches!(
+            self,
+            Self::Completed { .. } | Self::Failed { .. } | Self::Stopped { .. }
+        )
+    }
+
+    /// The state after learning `next`: an ended state is final, so it never
+    /// moves back to running or unknown, and a later report never replaces
+    /// the first end. Every other state takes `next`.
+    #[must_use]
+    pub const fn advanced(self, next: Self) -> Self {
+        if self.has_ended() { self } else { next }
+    }
+}
+
+/// The background task a command started: the provider's own task id, when
+/// it started (Unix seconds), the title the agent gave it, and what the
+/// provider knows of its state.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundCommand {
+    pub task_id: String,
+    pub started_at: i64,
+    /// The agent's short description of the command, when it gave one.
+    pub description: Option<String>,
+    #[serde(flatten)]
+    pub state: BackgroundCommandState,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FileChangeKind {
@@ -329,11 +390,11 @@ pub enum AgentItem {
         output: Option<String>,
         exit_code: Option<i64>,
         duration_ms: Option<i64>,
-        /// The provider's id of the background task the command started
+        /// The background task the command started and its current state
         /// (added within v1); absent for a command that ran in the
         /// foreground. `thread.backgroundTask.read` reads its output.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        background_task_id: Option<String>,
+        background: Option<BackgroundCommand>,
     },
     FileChange {
         item_id: ItemId,
@@ -670,7 +731,70 @@ pub struct PlanStep {
 mod tests {
     use serde_json::json;
 
-    use super::{AgentItem, AppThreadId, TaskNotificationSource};
+    use super::{
+        AgentItem, AppThreadId, BackgroundCommand, BackgroundCommandState, TaskNotificationSource,
+    };
+
+    #[test]
+    fn an_ended_background_command_never_runs_again_and_keeps_its_first_end() {
+        let completed = BackgroundCommandState::Completed {
+            ended_at: 10,
+            exit_code: Some(0),
+        };
+        let stopped = BackgroundCommandState::Stopped { ended_at: 11 };
+        assert_eq!(
+            BackgroundCommandState::Running.advanced(completed),
+            completed
+        );
+        assert_eq!(
+            BackgroundCommandState::Unknown.advanced(BackgroundCommandState::Running),
+            BackgroundCommandState::Running
+        );
+        assert_eq!(
+            completed.advanced(BackgroundCommandState::Running),
+            completed
+        );
+        assert_eq!(
+            completed.advanced(BackgroundCommandState::Unknown),
+            completed
+        );
+        assert_eq!(completed.advanced(stopped), completed);
+        assert!(!BackgroundCommandState::Unknown.has_ended());
+    }
+
+    #[test]
+    fn a_background_command_carries_an_end_only_once_it_ended() -> Result<(), serde_json::Error> {
+        let running = BackgroundCommand {
+            task_id: "b1".into(),
+            started_at: 1_760_000_100,
+            description: None,
+            state: BackgroundCommandState::Running,
+        };
+        assert_eq!(
+            serde_json::to_value(&running)?,
+            json!({"taskId": "b1", "startedAt": 1_760_000_100, "description": null, "status": "running"})
+        );
+        let failed = BackgroundCommand {
+            task_id: "b1".into(),
+            started_at: 1_760_000_100,
+            description: None,
+            state: BackgroundCommandState::Failed {
+                ended_at: 7,
+                exit_code: None,
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(&failed)?,
+            json!({"taskId": "b1", "startedAt": 1_760_000_100, "description": null, "status": "failed", "endedAt": 7, "exitCode": null})
+        );
+        assert!(
+            serde_json::from_value::<BackgroundCommand>(
+                json!({"taskId": "b1", "startedAt": 1, "description": null, "status": "stopped"})
+            )
+            .is_err()
+        );
+        Ok(())
+    }
 
     fn notification(kind: &str, agent_thread_id: &serde_json::Value) -> serde_json::Value {
         json!({

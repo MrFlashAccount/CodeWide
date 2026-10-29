@@ -52,6 +52,8 @@ const featurePublicModules = {
     "ReadOnlyComposerContext",
     "composerTypes",
     "composerWorkspaceCapabilities",
+    "input/ComposerMarkdownInput",
+    "ComposerPullRequestContextChip",
   ],
   projects: [
     "newChatSubmission",
@@ -141,6 +143,14 @@ const featurePublicModules = {
     "pullRequestListModel",
   ],
   pullRequestDetail: ["PullRequestScreen", "pullRequestScreenContract"],
+  messageContent: [
+    "messageContent",
+    "MessageAuthorName",
+    "MessageAvatar",
+    "MessageBody",
+    "MessageCard",
+    "MessageReplyInput",
+  ],
   changes: [
     "ChangesFeature",
     "changePresentation",
@@ -191,6 +201,7 @@ const featurePublicModules = {
     "threadConversationCapabilities",
     "forkTargets",
     "forkTargetPicker",
+    "threadHeaderContract",
   ],
   search: [
     "GlobalSearchScreen",
@@ -303,9 +314,29 @@ export default {
       to: { path: "^src/features/pullRequests/" },
     },
     {
+      name: "v1-message-content-is-forge-independent",
+      severity: "error",
+      comment:
+        "Message content imports only rendering, ui, theme, data content/image primitives and the composer's public Markdown input.",
+      from: { path: "^src/features/messageContent/" },
+      to: {
+        path: "^src/features/|^src/data/forge|^src/data/review",
+        pathNot:
+          "^src/features/messageContent/|^src/features/composer/input/ComposerMarkdownInput(?:[.](?:native|web))?[.]tsx?$",
+      },
+    },
+    {
+      name: "v1-composer-is-forge-independent",
+      severity: "error",
+      comment:
+        "The composer shows a route-supplied linked pull request capability; it never reads forge data or imports PR features.",
+      from: { path: "^src/features/composer/" },
+      to: { path: "^src/features/pullRequest|^src/data/forge|^src/data/pullRequest" },
+    },
+    {
       name: "v1-forge-icon-is-a-pure-render-primitive",
       severity: "error",
-      comment: "ForgeIcon holds no data: it renders an icon key and an already sanitized glyph.",
+      comment: "ForgeIcon holds no data: it renders an already validated plugin icon or the neutral icon.",
       from: { path: "^src/ui/ForgeIcon[.]tsx$" },
       to: { path: "^src/(?:data|features)/" },
     },

@@ -121,6 +121,7 @@ function createWorkspaceFeatures() {
     forge: forgeResources,
     reportDroppedAction: reportDroppedForgeAction,
     review: reviewResources,
+    transferAccess: transferAccess,
   });
   const reviewTarget = createReviewTargetAdapter({
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),

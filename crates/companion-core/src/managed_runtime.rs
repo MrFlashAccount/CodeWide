@@ -62,6 +62,8 @@ pub struct ManagedRuntimeConfig {
     pub enable_mutations: bool,
     /// Host-owned rollout gate for admitting new durable delegated tasks.
     pub delegate_task_enabled: bool,
+    /// Host-owned limit on agent nesting (`maxAgentDepth`, default 5).
+    pub max_agent_depth: usize,
     pub secret_storage_policy: SecretStoragePolicy,
     pub host_display_name: HostDisplayName,
     pub listen_address: SocketAddr,
@@ -85,6 +87,7 @@ impl ManagedRuntimeConfig {
             codex_home,
             enable_mutations: true,
             delegate_task_enabled: true,
+            max_agent_depth: crate::agent::orchestration::DEFAULT_MAX_AGENT_DEPTH,
             secret_storage_policy: SecretStoragePolicy::PlatformPreferred,
             host_display_name,
             listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8767)),
@@ -120,10 +123,18 @@ impl ManagedRuntimeConfig {
     }
 
     /// Sets the host-owned rollout gate for new `codewide_delegate_task`
-    /// admission without disabling recovery or compatibility tools.
+    /// admission without disabling recovery or direct agent controls.
     #[must_use]
     pub const fn with_delegate_task_enabled(mut self, enabled: bool) -> Self {
         self.delegate_task_enabled = enabled;
+        self
+    }
+
+    /// Sets the host-owned limit on agent nesting for new spawns and
+    /// delegated tasks.
+    #[must_use]
+    pub const fn with_max_agent_depth(mut self, depth: usize) -> Self {
+        self.max_agent_depth = depth;
         self
     }
 
@@ -257,6 +268,7 @@ impl ManagedRuntime {
         );
         let vcs = Arc::new(VcsService::new(
             config.state_directory.join("vcs-plugins.json"),
+            config.bundled_plugin_directory.clone(),
         ));
         let resources = Arc::new(
             ResourceService::open(
@@ -291,6 +303,7 @@ impl ManagedRuntime {
             config.enable_mutations,
         )
         .with_delegate_task_enabled(config.delegate_task_enabled)
+        .with_max_agent_depth(config.max_agent_depth)
         .with_content_projector(Arc::new(ContentProjector::new(content.clone())))
         .with_dictation(dictation)
         .with_files(files.clone())
@@ -302,6 +315,7 @@ impl ManagedRuntime {
             vcs.clone(),
             projects.clone(),
         ));
+        sync.route_forge_media(&media);
         if let Some(account_pool) = &account_pool {
             sync = sync.with_account_pool(account_pool);
         }

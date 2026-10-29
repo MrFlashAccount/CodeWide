@@ -113,6 +113,10 @@ pub(super) struct ServiceInner {
     /// Serializes the check-then-add of a new thread, so a repeated create,
     /// fork or adoption finds the first one.
     pub adding: tokio::sync::Mutex<()>,
+    /// When this companion first saw the process of a background task gone,
+    /// by thread and task id (Unix seconds): that task's stop time, the same
+    /// on every read.
+    pub background_losses: std::sync::Mutex<std::collections::HashMap<(String, String), i64>>,
 }
 
 /// A thread id resolved against the service's metadata and Claude's store.
@@ -213,6 +217,7 @@ impl ThreadService {
             clock: deps.clock,
             model_id_for: deps.model_id_for,
             adding: tokio::sync::Mutex::new(()),
+            background_losses: std::sync::Mutex::default(),
         });
         let stream = ServiceOutputs::new(&inner, session_outputs, notice_queue);
         Ok((Self { inner }, stream))

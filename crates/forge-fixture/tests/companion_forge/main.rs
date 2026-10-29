@@ -3,6 +3,7 @@
 #![allow(clippy::expect_used)]
 
 mod auth;
+mod conversation;
 mod hosts;
 mod reads;
 mod support;

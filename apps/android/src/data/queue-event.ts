@@ -21,6 +21,12 @@ export function parseHostQueueSnapshot(value: unknown): HostQueuedPrompt[] | nul
   const commands: HostQueuedPrompt[] = [];
   for (const entry of value) {
     const command = asRecord(entry);
+    if (command?.presentation === "notice") {
+      // A model-only notice (a child agent's result for its parent) is never
+      // user input: it has no queued or pending bubble, so it cannot affect
+      // the rest of the snapshot either.
+      continue;
+    }
     const params = asRecord(command?.params);
     if (
       command === null ||

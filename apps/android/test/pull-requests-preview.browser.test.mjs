@@ -155,7 +155,14 @@ async function assertControlsFit(page, width) {
 }
 
 for (const width of [320, 360, 1024]) {
-  for (const scenario of ["list", "onboarding", "onboarding-flow", "onboarding-failed", "pr"]) {
+  for (const scenario of [
+    "list",
+    "onboarding",
+    "onboarding-flow",
+    "onboarding-failed",
+    "pr",
+    "pr-conversation",
+  ]) {
     test(`${scenario} at ${width}dp renders without errors and keeps controls inside`, async () => {
       const { errors, page } = await open(scenario, width);
       try {

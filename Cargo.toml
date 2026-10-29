@@ -17,6 +17,7 @@ members = [
     "crates/forge-protocol",
     "crates/host-resolver",
     "crates/host-update",
+    "crates/vcs-git",
 ]
 exclude = ["openai-codex/codex-rs"]
 resolver = "2"

@@ -15,7 +15,9 @@ use rand::Rng;
 use serde_json::{Value, json};
 use tracing::warn;
 
+pub(crate) use crate::store::TurnReceiptObserver;
 use crate::store::turn_delivery_tables;
+pub(crate) use crate::store::turn_delivery_tables::NoticeCommandState;
 use crate::store::{
     IndexStore, OutboxClaimOutcome, OutboxClaimResolution, OutboxClaimResolutionOutcome,
     OutboxCommand, OutboxPresentation, OutboxState, StoreError,
@@ -54,8 +56,10 @@ pub(crate) fn reserve_initial_turn(
     )
 }
 
-/// Transfers a parent completion into the outbox in the caller's metadata
-/// transaction. The caller commits both ownership changes or neither.
+/// Transfers a parent completion notice into the outbox in the caller's
+/// metadata transaction. The caller commits both ownership changes or
+/// neither. The command is a hidden, model-only [`OutboxPresentation::Notice`]
+/// that waits for an idle parent and is never listed to a client.
 pub(crate) fn enqueue_completion_in_write(
     write: &redb::WriteTransaction,
     command_id: &str,
@@ -67,8 +71,44 @@ pub(crate) fn enqueue_completion_in_write(
         "clientUserMessageId": command_id,
         "input": [{"type": "text", "text": message, "text_elements": []}],
     });
-    turn_delivery_tables::put_queued_turn_in_write(write, command_id, parent_thread_id, params)?;
+    turn_delivery_tables::put_notice_turn_in_write(write, command_id, parent_thread_id, params)?;
     Ok(())
+}
+
+/// Reads a notice command's dispatch state in the caller's transaction.
+///
+/// # Errors
+/// Returns a store error when the row is unreadable.
+pub(crate) fn notice_state_in_write(
+    write: &redb::WriteTransaction,
+    command_id: &str,
+) -> Result<NoticeCommandState, StoreError> {
+    turn_delivery_tables::notice_state_in_write(write, command_id)
+}
+
+/// Not-yet-dispatched commands with an id prefix, as `(command id, thread
+/// id)`, read in the caller's transaction (one-time migrations).
+///
+/// # Errors
+/// Returns a store error when the outbox is unreadable.
+pub(crate) fn open_commands_in_write(
+    write: &redb::WriteTransaction,
+    prefix: &str,
+) -> Result<Vec<(String, String)>, StoreError> {
+    turn_delivery_tables::open_commands_in_write(write, prefix)
+}
+
+/// Removes a notice that has not been dispatched (still queued, or failed)
+/// in the caller's transaction. Returns `false` when it may have reached the
+/// provider.
+///
+/// # Errors
+/// Returns a store error when the row is unreadable or cannot be removed.
+pub(crate) fn retract_notice_in_write(
+    write: &redb::WriteTransaction,
+    command_id: &str,
+) -> Result<bool, StoreError> {
+    turn_delivery_tables::retract_notice_in_write(write, command_id)
 }
 
 pub(crate) enum ClaimResolution {
@@ -92,7 +132,7 @@ pub(crate) struct TurnDelivery {
 
 impl TurnDelivery {
     #[must_use]
-    pub(crate) const fn new(
+    pub(crate) fn new(
         store: Arc<IndexStore>,
         wakeup: Arc<tokio::sync::Notify>,
         local_events: tokio::sync::mpsc::Sender<Value>,
@@ -104,11 +144,18 @@ impl TurnDelivery {
         }
     }
 
+    /// Installs the prompt-free observer that runs inside every delivery
+    /// receipt transaction of this store. A restarted owner replaces it.
+    pub(crate) fn install_receipt_observer(&self, observer: Arc<dyn TurnReceiptObserver>) {
+        self.store.install_receipt_observer(observer);
+    }
+
     pub(crate) fn wake(&self) {
         self.wakeup.notify_one();
     }
 
-    /// Lists durable commands without exposing the storage owner.
+    /// Lists durable commands without exposing the storage owner, including
+    /// hidden notices. Internal owners only; clients use [`Self::client_list`].
     pub(crate) async fn list(
         &self,
         thread_id: Option<&str>,
@@ -118,6 +165,27 @@ impl TurnDelivery {
         tokio::task::spawn_blocking(move || store.outbox_list(thread_id.as_deref()))
             .await
             .map_err(|error| StoreError::CorruptedIndex(error.to_string()))?
+    }
+
+    /// The commands a client may see: every command except hidden notices.
+    pub(crate) async fn client_list(
+        &self,
+        thread_id: Option<&str>,
+    ) -> Result<Vec<OutboxCommand>, StoreError> {
+        let mut commands = self.list(thread_id).await?;
+        commands.retain(|command| command.presentation != OutboxPresentation::Notice);
+        Ok(commands)
+    }
+
+    /// One command a client may address; a hidden notice reads as absent.
+    pub(crate) async fn client_command(
+        &self,
+        command_id: &str,
+    ) -> Result<Option<OutboxCommand>, StoreError> {
+        Ok(self
+            .command(command_id)
+            .await?
+            .filter(|command| command.presentation != OutboxPresentation::Notice))
     }
 
     pub(crate) async fn put(
@@ -410,7 +478,7 @@ impl TurnDelivery {
     }
 
     pub(crate) async fn emit_changed(&self, thread_id: &str) {
-        let listed = self.list(Some(thread_id)).await;
+        let listed = self.client_list(Some(thread_id)).await;
         let Ok(data) = listed else {
             warn!(thread_id, "durable outbox notification read failed");
             return;
@@ -509,13 +577,17 @@ impl TurnDelivery {
     }
 
     /// Enqueues a follow-up through the same durable outbox as user turns.
-    /// Repeating `command_id` with the same payload is idempotent.
+    /// `record` is the caller's prompt-free coordination writer; it runs in
+    /// the transaction that inserts the command, so both commit or neither.
+    /// Repeating `command_id` with the same payload is idempotent (and
+    /// `record` must be idempotent too).
     pub(crate) async fn enqueue_followup(
         &self,
         command_id: &str,
         child_thread_id: &str,
         message: String,
         hold_until_idle: bool,
+        record: impl FnOnce(&redb::WriteTransaction) -> Result<(), StoreError> + Send + 'static,
     ) -> Result<OutboxCommand, StoreError> {
         let store = self.store.clone();
         let command_id = command_id.to_owned();
@@ -526,12 +598,12 @@ impl TurnDelivery {
             "input": [{"type": "text", "text": message, "text_elements": []}],
         });
         let command = tokio::task::spawn_blocking(move || {
-            let command = store.outbox_put_turn_start_with_presentation(
+            let command = store.outbox_put_turn_start_recorded(
                 &command_id,
                 &child_thread_id,
                 params,
-                None,
                 crate::store::OutboxPresentation::Delivery,
+                record,
             )?;
             if hold_until_idle {
                 let (command, _) = store.outbox_wait(
@@ -611,27 +683,31 @@ impl TurnDelivery {
         Ok(cancelled)
     }
 
-    /// Cancels every not-yet-dispatched durable follow-up of a child thread.
+    /// Cancels every not-yet-dispatched durable follow-up of a child thread
+    /// and returns the removed command ids. Hidden notices addressed to the
+    /// child (results of its own agents) are not follow-ups and stay.
     pub(crate) async fn cancel_queued_for_thread(
         &self,
         child_thread_id: &str,
-    ) -> Result<usize, StoreError> {
+    ) -> Result<Vec<String>, StoreError> {
         let store = self.store.clone();
         let child_thread_id = child_thread_id.to_owned();
         let notify_thread_id = child_thread_id.clone();
         let cancelled = tokio::task::spawn_blocking(move || {
             let commands = store.outbox_list(Some(&child_thread_id))?;
-            let mut cancelled = 0;
+            let mut cancelled = Vec::new();
             for command in commands {
-                if store.outbox_cancel(&command.command_id)? {
-                    cancelled += 1;
+                if command.presentation != OutboxPresentation::Notice
+                    && store.outbox_cancel(&command.command_id)?
+                {
+                    cancelled.push(command.command_id);
                 }
             }
-            Ok::<usize, StoreError>(cancelled)
+            Ok::<Vec<String>, StoreError>(cancelled)
         })
         .await
         .map_err(|error| StoreError::CorruptedIndex(error.to_string()))??;
-        if cancelled > 0 {
+        if !cancelled.is_empty() {
             self.emit_changed(&notify_thread_id).await;
         }
         Ok(cancelled)

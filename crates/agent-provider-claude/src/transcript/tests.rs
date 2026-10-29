@@ -538,6 +538,70 @@ fn drops_the_placeholder_claude_writes_for_an_interrupted_turn() {
     );
 }
 
+#[test]
+fn a_continue_resumes_the_interrupted_turn_as_a_turn_without_a_user_message() {
+    let at = |second: u32| format!("2026-10-01T10:00:{second:02}.000Z");
+    let user = |uuid: &str, second: u32, content: &str| {
+        json!({"type": "user", "uuid": uuid, "timestamp": at(second), "parent_tool_use_id": null,
+            "message": {"role": "user", "content": content}})
+    };
+    let assistant = |uuid: &str, second: u32, text: &str| {
+        json!({"type": "assistant", "uuid": uuid, "timestamp": at(second), "parent_tool_use_id": null,
+            "message": {"id": uuid, "model": "claude-opus-5-5", "role": "assistant", "content": [{"type": "text", "text": text}]}})
+    };
+    // Claude stores the adapter's resume prompt as a meta message, with a
+    // provenance line before it.
+    let resume = json!({"type": "user", "uuid": "0199a3c4-8000-7000-8000-00000000000c",
+        "timestamp": at(4), "parent_tool_use_id": null, "isMeta": true,
+        "message": {"role": "user", "content": [{"type": "text",
+            "text": "[MESSAGE FROM NON-USER SOURCE - NOT USER INPUT]\nContinue from where you left off."}]}});
+    let messages = [
+        user("p1", 1, "question"),
+        user("i1", 2, "[Request interrupted by user]"),
+        resume,
+        assistant("a1", 5, "The answer."),
+    ];
+    let continued = "0199a3c4-8000-7000-8000-00000000000c";
+    let record = TurnRecord {
+        anchors: vec![continued.to_owned()],
+        completed_at: None,
+        origin: TurnOrigin::User,
+        outcome: TurnOutcomeRecord::Completed,
+        prompts: vec![PromptRecord {
+            client_message_id: None,
+            role: PromptRole::First,
+            uuid: Some(continued.to_owned()),
+        }],
+        started_at: 1_791_542_404,
+        turn_id: continued.to_owned(),
+        usage: None,
+    };
+    for index in [Vec::new(), vec![record]] {
+        let turns = reconstruct_turns(&messages, &index, &context());
+        let shape = turns
+            .iter()
+            .map(|turn| (turn.origin, turn.status, types(turn)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            shape,
+            [
+                (
+                    TurnOrigin::User,
+                    TurnStatus::Interrupted,
+                    vec!["userMessage"]
+                ),
+                (
+                    TurnOrigin::User,
+                    TurnStatus::Completed,
+                    vec!["agentMessage"]
+                ),
+            ]
+        );
+        assert_eq!(turns[1].turn_id.as_str(), continued);
+        assert_eq!(user_texts(&turns), ["question"]);
+    }
+}
+
 fn fixture_subagent(name: &str, agent_id: &str) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
     fixture(name)?
         .get("subagents")

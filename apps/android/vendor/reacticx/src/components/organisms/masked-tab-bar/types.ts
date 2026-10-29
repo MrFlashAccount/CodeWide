@@ -31,6 +31,7 @@ interface IMaskedTabIconState {
 interface IMaskedTabBarContext {
   value: string;
   setValue: (value: string) => void;
+  onSelectedValueActivate?: (value: string) => void;
   registerTrigger: (
     value: string,
     box: IMaskedTabBox,
@@ -59,6 +60,7 @@ interface IMaskedTabBarRoot {
   readonly value?: string;
   readonly defaultValue?: string;
   readonly onValueChange?: (value: string) => void;
+  readonly onSelectedValueActivate?: (value: string) => void;
   readonly theme?: TMaskedTabBarTheme;
   readonly palette?: Partial<IMaskedTabBarPalette>;
   readonly height?: number;

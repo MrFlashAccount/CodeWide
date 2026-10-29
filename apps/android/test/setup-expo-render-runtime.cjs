@@ -43,7 +43,17 @@ globalThis.expo.modules.ExponentConstants = {
   manifest: null,
   sessionId: "render-test",
 };
+globalThis.expo.modules.ExpoLinking = {
+  addListener: () => ({ remove: () => undefined }),
+  clearInitialURL: () => undefined,
+  getLinkingURL: () => null,
+};
 globalThis.expo.modules.ExpoFetchModule = {};
+globalThis.expo.modules.ExpoFontLoader = {
+  getLoadedFonts: () => [],
+  isLoaded: () => false,
+  loadAsync: async () => undefined,
+};
 globalThis.expo.modules.ExpoAsset = {
   downloadAsync: async (url) => url,
 };

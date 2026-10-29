@@ -28,7 +28,13 @@ the pill position and width springs inside the gesture worklet before the
 controlled value callback reaches React. Route rendering may therefore occupy
 the JavaScript thread without delaying or stalling the already-running native
 selection animation; externally controlled value changes still reconcile
-through the upstream effect.
+through the upstream effect. It also exposes a separate
+`onSelectedValueActivate` callback for a successfully finalized pointer tap on
+the already selected trigger. Cancellation or failure restores the controlled
+selection without activation, and movement beyond tap slop on either axis
+remains a drag that cannot emit that callback. Drag release resolves from the
+pointer-owned target rather than the lagging spring position. `onValueChange`
+keeps its upstream change-only semantics.
 
 Source files:
 

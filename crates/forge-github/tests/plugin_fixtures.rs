@@ -23,7 +23,9 @@ use axum::{
     http::{HeaderMap, Method, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
-use forge_github::{GithubPlugin, PluginConfig, api::Endpoints, credentials::EnvTokens};
+use forge_github::{
+    GithubPlugin, PluginConfig, api::Endpoints, credentials::EnvTokens, media::MediaOrigins,
+};
 use forge_protocol::{Secret, read_frame, serve, write_frame};
 use serde_json::{Value, json};
 use tokio::io::{AsyncWriteExt as _, BufReader, DuplexStream};
@@ -51,6 +53,68 @@ struct FakeGithub {
     seen: Vec<(String, String)>,
     search_queries: Vec<String>,
     submitted_reviews: usize,
+    /// The credentialed web origin, the anonymous media host and a foreign
+    /// host, for redirects.
+    web_base: String,
+    media_base: String,
+    foreign_base: String,
+    /// `(media server path, had an Authorization header)` of every media hit.
+    media_hits: Vec<(String, bool)>,
+    foreign_hits: usize,
+    created_comments: Vec<String>,
+}
+
+/// A PNG signature followed by padding, `size` bytes long.
+fn png(size: usize) -> Vec<u8> {
+    let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    bytes.resize(size, 0);
+    bytes
+}
+
+/// An anonymous media host (`foreign = false`) or a host no account owns.
+async fn serve_media(state: Shared, foreign: bool) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let address = listener.local_addr().expect("address");
+    let router = Router::new().fallback(move |uri: Uri, headers: HeaderMap| {
+        let state = state.clone();
+        async move {
+            let mut state = state.lock().expect("state");
+            if foreign {
+                state.foreign_hits += 1;
+                return png(16).into_response();
+            }
+            state
+                .media_hits
+                .push((uri.path().to_owned(), headers.contains_key("authorization")));
+            let foreign_base = state.foreign_base.clone();
+            match uri.path() {
+                "/img.png" => ([("content-type", "image/png")], png(64)).into_response(),
+                "/huge.png" => png(11 * 1024 * 1024).into_response(),
+                "/away" => (
+                    StatusCode::FOUND,
+                    [("location", format!("{foreign_base}/img.png"))],
+                )
+                    .into_response(),
+                _ => StatusCode::NOT_FOUND.into_response(),
+            }
+        }
+    });
+    tokio::spawn(async move { axum::serve(listener, router).await });
+    format!("http://{address}")
+}
+
+fn graphql_comment(id: &str, body: &str) -> Value {
+    json!({"id": id, "author": {"login": "hubot", "avatarUrl": null}, "createdAt": "2026-10-02T00:00:00Z",
+           "lastEditedAt": null, "body": body, "url": null, "reactionGroups": []})
+}
+
+/// A thread comment published with the review `review_id`.
+fn review_comment(id: &str, body: &str, review_id: &str) -> Value {
+    let mut comment = graphql_comment(id, body);
+    comment["pullRequestReview"] = json!({"id": review_id});
+    comment
 }
 
 type Shared = Arc<Mutex<FakeGithub>>;
@@ -93,6 +157,9 @@ fn respond(
         )
             .into_response();
     };
+    if let Some(response) = conversation_rest(&mut state, method, uri, &login, body) {
+        return response;
+    }
     let json = |value: Value| axum::Json(value).into_response();
     match (method.as_str(), uri.path()) {
         ("GET", "/user") => {
@@ -107,7 +174,9 @@ fn respond(
         ("POST", "/graphql") => {
             let query: Value = serde_json::from_slice(body).expect("graphql body");
             let text = query["query"].as_str().unwrap_or_default();
-            if text.contains("search(") {
+            if let Some(response) = conversation_graphql(&mut state, &query) {
+                response
+            } else if text.contains("search(") {
                 state.search_queries.push(
                     query
                         .pointer("/variables/q")
@@ -152,6 +221,88 @@ fn respond(
         )
             .into_response(),
     }
+}
+
+/// The conversation GraphQL operations: a page, a thread's owner and a reply.
+fn conversation_graphql(state: &mut FakeGithub, query: &Value) -> Option<Response> {
+    let json = |value: Value| axum::Json(value).into_response();
+    let text = query["query"].as_str().unwrap_or_default();
+    let response = if text.contains("addPullRequestReviewThreadReply") {
+        let reply = query
+            .pointer("/variables/body")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        state.created_comments.push(reply.to_owned());
+        json(json!({"data": {"addPullRequestReviewThreadReply": {
+            "comment": graphql_comment("PRRC_new", reply)
+        }}}))
+    } else if text.contains("pullRequest { number repository") {
+        let number = if query.pointer("/variables/id") == Some(&json!("PRRT_1")) {
+            1
+        } else {
+            2
+        };
+        json(
+            json!({"data": {"node": {"__typename": "PullRequestReviewThread",
+                    "pullRequest": {"number": number, "repository": {"nameWithOwner": "octo/repo"}}}}}),
+        )
+    } else if text.contains("reviewThreads(") {
+        json(json!({"data": {"repository": {"pullRequest": {
+            "timelineItems": {"pageInfo": {"hasNextPage": false}, "edges": [
+                {"cursor": "t1", "node": {"__typename": "IssueComment", "id": "IC_1",
+                    "author": {"__typename": "Bot", "login": "ci-bot", "avatarUrl": null}, "createdAt": "2026-10-01T00:00:00Z",
+                    "lastEditedAt": null, "body": "Looks good", "url": null, "reactionGroups": []}}
+            ]},
+            "reviewThreads": {"pageInfo": {"hasNextPage": false}, "edges": [
+                {"cursor": "r1", "node": {"id": "PRRT_1", "path": "src/a.rs", "line": 3, "startLine": null,
+                    "diffSide": "RIGHT", "isResolved": false, "isOutdated": false, "viewerCanReply": true,
+                    "comments": {"pageInfo": {"hasNextPage": false, "endCursor": null},
+                        "nodes": [review_comment("PRRC_1", "Rename this", "PRR_1")]}}}
+            ]}
+        }}}}))
+    } else {
+        return None;
+    };
+    Some(response)
+}
+
+/// The conversation REST routes: a new comment and the media of the web
+/// origin.
+fn conversation_rest(
+    state: &mut FakeGithub,
+    method: &Method,
+    uri: &Uri,
+    login: &str,
+    body: &Bytes,
+) -> Option<Response> {
+    Some(match (method.as_str(), uri.path()) {
+        ("POST", "/repos/octo/repo/issues/1/comments") => {
+            let request: Value = serde_json::from_slice(body).expect("comment body");
+            let text = request["body"].as_str().unwrap_or_default().to_owned();
+            state.created_comments.push(text.clone());
+            (
+                StatusCode::CREATED,
+                axum::Json(json!({
+                    "id": 11, "node_id": "IC_new", "user": {"login": login, "avatar_url": null},
+                    "created_at": "2026-10-02T00:00:00Z", "updated_at": "2026-10-02T00:00:00Z",
+                    "body": text, "html_url": "https://github.com/octo/repo/pull/1#issuecomment-11"
+                })),
+            )
+                .into_response()
+        }
+        ("GET", "/user-attachments/assets/direct") => png(32).into_response(),
+        ("GET", "/user-attachments/assets/redirect") => (
+            StatusCode::FOUND,
+            [("location", format!("{}/img.png", state.media_base))],
+        )
+            .into_response(),
+        ("GET", "/user-attachments/assets/foreign") => (
+            StatusCode::FOUND,
+            [("location", format!("{}/img.png", state.foreign_base))],
+        )
+            .into_response(),
+        _ => return None,
+    })
 }
 
 /// A fake `gh` whose state lives in files of `dir`.
@@ -244,6 +395,15 @@ impl Harness {
         let public = serve_api("github.com", api.clone()).await;
         let enterprise = serve_api("ghe.example.com", api.clone()).await;
         let other = serve_api("other.example", api.clone()).await;
+        let media = serve_media(api.clone(), false).await;
+        let foreign = serve_media(api.clone(), true).await;
+        {
+            let mut state = api.lock().expect("state");
+            state.web_base.clone_from(&public);
+            state.media_base.clone_from(&media);
+            state.foreign_base = foreign;
+        }
+        let web_origin = public.clone();
         let gh = fake_gh(dir.path(), gh_version);
         let config = PluginConfig {
             gh_program: gh,
@@ -257,6 +417,16 @@ impl Harness {
                 Endpoints {
                     rest: base.clone(),
                     graphql: format!("{base}/graphql"),
+                }
+            }),
+            media: Arc::new(move |host: &str| {
+                if host == "github.com" {
+                    MediaOrigins {
+                        credentialed: vec![web_origin.clone()],
+                        anonymous: vec![media.clone()],
+                    }
+                } else {
+                    MediaOrigins::for_host(host)
                 }
             }),
             version: "9.9.9".into(),
@@ -287,6 +457,18 @@ impl Harness {
             .await;
         assert_eq!(initialized["result"]["provider"], "github");
         assert_eq!(initialized["result"]["version"], "9.9.9");
+        // The plugin declares its own identity: the GitHub mark and host.
+        assert_eq!(initialized["result"]["defaultHost"], "github.com");
+        assert_eq!(initialized["result"]["providerIcon"]["kind"], "glyph");
+        assert_eq!(
+            initialized["result"]["providerIcon"]["viewBox"],
+            "0 0 16 16"
+        );
+        assert!(
+            initialized["result"]["providerIcon"]["path"]
+                .as_str()
+                .is_some_and(|path| path.starts_with("M8 0C3.58"))
+        );
         harness
     }
 
@@ -813,4 +995,159 @@ async fn involved_search_scopes_the_real_plugin_request_to_the_account() {
         harness.api.lock().expect("state").search_queries,
         ["is:pr archived:false involves:\"hubot\" is:open draft:false sort:updated-desc"]
     );
+}
+
+async fn linked_hubot() -> Harness {
+    let mut harness = Harness::start(Some("2.96.0"), no_env(), Duration::from_mins(1)).await;
+    fs::write(harness.gh_state().join("logins"), "hubot\n").expect("logins");
+    fs::write(harness.gh_state().join("tokens/hubot"), GH_TOKEN).expect("token");
+    harness
+        .call(
+            "auth.start",
+            json!({"methodId": "gh-existing", "host": "github.com", "login": "hubot", "token": null}),
+        )
+        .await;
+    harness
+}
+
+fn pull_ref() -> Value {
+    json!({"host": "github.com", "repository": "octo/repo", "number": "1"})
+}
+
+#[tokio::test]
+async fn conversation_reads_and_comment_writes_reach_github() {
+    let mut harness = linked_hubot().await;
+    let page = harness
+        .call(
+            "forge.pullRequest.conversation",
+            json!({"account": account("hubot"), "ref": pull_ref(), "cursor": null}),
+        )
+        .await;
+    let entries = page["result"]["entries"].as_array().expect("entries");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["kind"], "comment");
+    assert_eq!(entries[0]["comment"]["author"]["kind"], "bot");
+    assert_eq!(
+        entries[1]["thread"],
+        json!({
+            "id": "PRRT_1",
+            "anchor": {"kind": "line", "path": "src/a.rs", "line": 3, "startLine": null, "side": "new"},
+            "outdated": false,
+            "resolution": {"kind": "conversation", "resolved": false},
+            "reviewId": "PRR_1",
+            "iteration": null,
+            "comments": [{"id": "PRRC_1", "author": {"login": "hubot", "kind": "user", "avatarUrl": null},
+                          "createdAt": "2026-10-02T00:00:00Z", "updatedAt": null, "body": "Rename this",
+                          "url": null, "reactions": []}],
+            "viewerCanReply": true
+        })
+    );
+    assert_eq!(page["result"]["nextCursor"], Value::Null);
+    assert_eq!(page["result"]["openIssuesBlockMerge"], Value::Null);
+
+    let created = harness
+        .call(
+            "forge.pullRequest.comment.create",
+            json!({"account": account("hubot"), "ref": pull_ref(), "body": "Thanks!", "idempotencyKey": "k1"}),
+        )
+        .await;
+    assert_eq!(created["result"]["comment"]["id"], "IC_new");
+    assert_eq!(created["result"]["comment"]["updatedAt"], Value::Null);
+    let replied = harness
+        .call(
+            "forge.pullRequest.reviewThread.reply",
+            json!({"account": account("hubot"), "ref": pull_ref(), "threadId": "PRRT_1", "body": "Done", "idempotencyKey": "k2"}),
+        )
+        .await;
+    assert_eq!(replied["result"]["comment"]["id"], "PRRC_new");
+    let elsewhere = harness
+        .call(
+            "forge.pullRequest.reviewThread.reply",
+            json!({"account": account("hubot"), "ref": pull_ref(), "threadId": "PRRT_other", "body": "Done", "idempotencyKey": "k3"}),
+        )
+        .await;
+    assert_eq!(elsewhere["error"]["code"], -32_115);
+    let empty = harness
+        .call(
+            "forge.pullRequest.comment.create",
+            json!({"account": account("hubot"), "ref": pull_ref(), "body": "  ", "idempotencyKey": "k4"}),
+        )
+        .await;
+    assert_eq!(empty["error"]["code"], -32_602);
+    assert_eq!(
+        harness.api.lock().expect("state").created_comments,
+        ["Thanks!", "Done"]
+    );
+    for frame in harness.close().await {
+        assert!(!frame.contains(GH_TOKEN), "token leaked: {frame}");
+    }
+}
+
+#[tokio::test]
+async fn media_reads_only_forge_hosts_and_never_follow_a_foreign_redirect() {
+    let mut harness = linked_hubot().await;
+    let (public, media, foreign) = {
+        let state = harness.api.lock().expect("state");
+        (
+            state.web_base.clone(),
+            state.media_base.clone(),
+            state.foreign_base.clone(),
+        )
+    };
+    let read = async |harness: &mut Harness, url: String| {
+        harness
+            .call(
+                "forge.media.read",
+                json!({"account": account("hubot"), "url": url}),
+            )
+            .await
+    };
+    let direct = read(
+        &mut harness,
+        format!("{public}/user-attachments/assets/direct"),
+    )
+    .await;
+    assert_eq!(
+        direct["result"]["bytesBase64"].as_str().map(str::len),
+        Some(44)
+    );
+    let redirected = read(
+        &mut harness,
+        format!("{public}/user-attachments/assets/redirect"),
+    )
+    .await;
+    assert_eq!(redirected["result"]["contentType"], "image/png");
+    let anonymous = read(&mut harness, format!("{media}/img.png")).await;
+    assert_eq!(anonymous["result"]["contentType"], "image/png");
+    let foreign_url = read(&mut harness, format!("{foreign}/img.png")).await;
+    assert_eq!(foreign_url["error"]["code"], -32_602);
+    let foreign_redirect = read(
+        &mut harness,
+        format!("{public}/user-attachments/assets/foreign"),
+    )
+    .await;
+    assert_eq!(foreign_redirect["error"]["code"], -32_602);
+    let indirect = read(&mut harness, format!("{media}/away")).await;
+    assert_eq!(indirect["error"]["code"], -32_602);
+    let huge = read(&mut harness, format!("{media}/huge.png")).await;
+    assert_eq!(huge["error"]["code"], -32_113);
+    assert_eq!(huge["error"]["data"]["kind"], "tooLarge");
+    {
+        let state = harness.api.lock().expect("state");
+        assert_eq!(state.foreign_hits, 0, "a foreign host is never requested");
+        assert!(
+            state.media_hits.iter().all(|(_, authorized)| !authorized),
+            "image hosts never receive the token"
+        );
+        assert!(
+            state
+                .seen
+                .iter()
+                .any(|(tag, token)| tag == "github.com" && token == GH_TOKEN),
+            "the web origin received the account token"
+        );
+    }
+    for frame in harness.close().await {
+        assert!(!frame.contains(GH_TOKEN), "token leaked: {frame}");
+    }
 }

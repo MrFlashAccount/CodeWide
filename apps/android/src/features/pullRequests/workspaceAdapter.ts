@@ -1,11 +1,6 @@
 import { randomUUID } from "expo-crypto";
 
-import {
-  parseAuthStart,
-  parseProviderResult,
-  parseSubmitToken,
-  type ForgeProvider,
-} from "../../data/forgeContract";
+import { parseAccountResult, parseAuthStart, parseSubmitToken } from "../../data/forgeContract";
 import { requireParsed, type ForgeResources } from "../../data/forgeResources";
 import type { WorkspaceSyncSession, createWorkspaceSession } from "../../data/workspace-session";
 import type { PullRequestsWorkspaceCapabilities } from "./workspaceCapabilities";
@@ -44,14 +39,22 @@ export function createPullRequestsWorkspaceAdapter({
         mode,
       });
     },
-    async setProviderEnabled(connectionId, pluginId, enabled) {
-      const provider: ForgeProvider = requireParsed(
-        parseProviderResult(
-          await call(connectionId, "companion/forge/provider/setEnabled", { enabled, pluginId }),
+    async setAccountEnabled(connectionId, account, enabled) {
+      const updated = requireParsed(
+        parseAccountResult(
+          await call(connectionId, "companion/forge/account/setEnabled", { account, enabled }),
         ),
-        "provider",
+        "account",
       );
-      return provider;
+      // The acknowledgement is authoritative for this one account; the
+      // Companion's accounts invalidation reconciles everything else.
+      forge.accounts.patch({ connectionId }, (snapshot) => ({
+        ...snapshot,
+        accounts: snapshot.accounts.map((candidate) =>
+          candidate.account === updated.account ? updated : candidate,
+        ),
+      }));
+      return updated;
     },
     async startAuth(connectionId, request) {
       const result = requireParsed(

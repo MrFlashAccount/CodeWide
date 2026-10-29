@@ -88,7 +88,10 @@ type MutableSlots = {
 
 /** Where an anchored action goes: a keyed target, the conflict banner, the row, or ⋯. */
 type AnchorTarget =
-  | { readonly key: string; readonly slot: "checks" | "files" | "reviewThreads" }
+  | {
+      readonly key: string;
+      readonly slot: "checks" | "files" | "reviewThreads";
+    }
   | { readonly slot: "conflict" | "overflow" | "row" };
 
 function anchorTarget(anchor: ActionAnchor, targets: SlotTargets): AnchorTarget {

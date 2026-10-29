@@ -15,6 +15,8 @@ export default {
     "babel-plugin-react-compiler",
     // babel.config.js selects this preset by module name while Knip's Babel plugin is disabled.
     "babel-preset-expo",
+    // Worklets Bundle Mode resolves this preset internally from the app package boundary.
+    "@babel/preset-typescript",
     // Gradle copies the selected grammar files directly from this package into native assets.
     "tm-grammars",
   ],

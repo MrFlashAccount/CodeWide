@@ -1,15 +1,40 @@
-import { StyleSheet, View } from "react-native";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
 
-import { colors, layoutSize, spacing, typeScale } from "../../theme";
-import { AppText as Text } from "../../ui/Typography";
+import { ThreadListHeaderAction } from "../../presentation/navigation/ThreadListHeader";
+import { colors, iconSize, layoutSize, spacing } from "../../theme";
+import { CatalogTitle } from "../../ui/CatalogTitle";
 
 /** Quiet catalog header of `/pulls`; route actions live in their owning surfaces. */
-export function PullRequestsHeader(): React.JSX.Element {
+export function PullRequestsHeader({
+  onManageProviders,
+  refreshing = false,
+}: {
+  readonly onManageProviders?: () => void;
+  readonly refreshing?: boolean;
+}): React.JSX.Element {
   return (
-    <View style={styles.header} testID="pull-requests-header">
-      <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
-        Pull requests
-      </Text>
+    <View
+      accessibilityState={{ busy: refreshing }}
+      style={styles.header}
+      testID="pull-requests-header"
+    >
+      <View style={styles.titleGroup}>
+        <CatalogTitle layout={styles.title}>Pull requests</CatalogTitle>
+        {refreshing ? (
+          <ActivityIndicator
+            color={colors.textMuted}
+            size={iconSize.inline}
+            testID="pull-requests-refresh-indicator"
+          />
+        ) : null}
+      </View>
+      {onManageProviders === undefined ? null : (
+        <ThreadListHeaderAction
+          accessibilityLabel="Add or manage pull request providers"
+          name="add"
+          onPress={onManageProviders}
+        />
+      )}
     </View>
   );
 }
@@ -22,8 +47,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
   title: {
-    ...typeScale.heading,
-    color: colors.text,
+    flexShrink: 1,
+  },
+  titleGroup: {
+    alignItems: "center",
+    columnGap: spacing.xs,
     flex: 1,
+    flexDirection: "row",
+    minWidth: 0,
   },
 });

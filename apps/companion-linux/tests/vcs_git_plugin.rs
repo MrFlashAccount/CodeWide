@@ -3,12 +3,22 @@
 use std::path::Path;
 
 use codewide_companion::vcs::{
-    VcsError, VcsPluginConfig, VcsScope, VcsService, WORKSPACE_CREATE_CAPABILITY,
+    OrderedRemotes as _, VcsError, VcsPluginConfig, VcsScope, VcsService,
+    WORKSPACE_CREATE_CAPABILITY,
 };
 use tokio::process::Command;
 
 fn git_plugin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_codewide-vcs-git"))
+}
+
+/// The built-in Git provider resolved from the bundled plugin directory that
+/// holds the test build of `codewide-vcs-git`; nothing registers it.
+fn git_service(registry: &Path) -> VcsService {
+    VcsService::new(
+        registry.to_path_buf(),
+        git_plugin().parent().map(Path::to_path_buf),
+    )
 }
 
 async fn git(root: &Path, arguments: &[&str]) {
@@ -54,17 +64,7 @@ async fn git_runs_only_through_the_json_rpc_registry() {
         .expect("changed file writes");
 
     let registry_path = state_directory.path().join("vcs-plugins.json");
-    let service = VcsService::new(registry_path);
-    service
-        .registry()
-        .install(VcsPluginConfig {
-            id: "git".into(),
-            executable: git_plugin(),
-            args: Vec::new(),
-            enabled: true,
-            priority: -1000,
-        })
-        .expect("Git plugin registers");
+    let service = git_service(&registry_path);
 
     let snapshot = service
         .changes(directory.path(), VcsScope::Unstaged)
@@ -118,7 +118,7 @@ async fn unavailable_provider_does_not_hide_git_and_errors_without_an_owner() {
 
     let arc_executable = state.path().join("arc-plugin");
     std::fs::write(&arc_executable, "#!/bin/sh\nexit 0\n").expect("Arc stub writes");
-    let service = VcsService::new(state.path().join("vcs-plugins.json"));
+    let service = git_service(&state.path().join("vcs-plugins.json"));
     service
         .registry()
         .install(VcsPluginConfig {
@@ -129,16 +129,6 @@ async fn unavailable_provider_does_not_hide_git_and_errors_without_an_owner() {
             priority: 100,
         })
         .expect("Arc stub registers");
-    service
-        .registry()
-        .install(VcsPluginConfig {
-            id: "git".into(),
-            executable: git_plugin(),
-            args: Vec::new(),
-            enabled: true,
-            priority: -1000,
-        })
-        .expect("Git plugin registers");
     std::fs::remove_file(&arc_executable).expect("Arc stub becomes unavailable");
 
     let snapshot = service
@@ -203,17 +193,7 @@ async fn git_workspace_creation_is_capability_gated_and_idempotent() {
     git(repository.path(), &["add", "."]).await;
     git(repository.path(), &["commit", "--quiet", "-m", "base"]).await;
 
-    let service = VcsService::new(state.path().join("vcs-plugins.json"));
-    service
-        .registry()
-        .install(VcsPluginConfig {
-            id: "git".into(),
-            executable: git_plugin(),
-            args: Vec::new(),
-            enabled: true,
-            priority: -1000,
-        })
-        .expect("Git plugin registers");
+    let service = git_service(&state.path().join("vcs-plugins.json"));
 
     let selected_cwd = repository.path().join("nested");
     let support = service
@@ -300,17 +280,7 @@ async fn assert_large_diff_pages(scope: VcsScope) {
         )
         .await;
     }
-    let service = VcsService::new(state.path().join("vcs-plugins.json"));
-    service
-        .registry()
-        .install(VcsPluginConfig {
-            id: "git".into(),
-            executable: git_plugin(),
-            args: Vec::new(),
-            enabled: true,
-            priority: -1000,
-        })
-        .expect("Git plugin registers");
+    let service = git_service(&state.path().join("vcs-plugins.json"));
 
     let first = service
         .diff_page(repository.path(), &path, scope, 0, 65_536)
@@ -373,17 +343,7 @@ async fn git_reports_branch_upstream_and_credential_free_remotes() {
     )
     .await;
 
-    let service = VcsService::new(state.path().join("vcs-plugins.json"));
-    service
-        .registry()
-        .install(VcsPluginConfig {
-            id: "git".into(),
-            executable: git_plugin(),
-            args: Vec::new(),
-            enabled: true,
-            priority: -1000,
-        })
-        .expect("Git plugin registers");
+    let service = git_service(&state.path().join("vcs-plugins.json"));
     let remotes = service
         .remotes(directory.path())
         .await

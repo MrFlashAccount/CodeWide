@@ -2,20 +2,21 @@ import { describe, expect, it, vi } from "vitest";
 
 import { parsePullRequestKeyParam, type PullRequestKey } from "../src/data/forgeContract";
 import { parseFilesPage } from "../src/data/forgeMutationContract";
-import { parseLinks, parsePullRequestListPage } from "../src/data/forgePullRequestContract";
+import {
+  parsePullRequestListPage,
+  parsePullRequestOverview,
+  type PullRequestOverview,
+} from "../src/data/forgePullRequestContract";
 import type { ForgeSnapshotCache } from "../src/data/forgeSnapshotCache.types";
 import { createPullRequestCommentDestinations } from "../src/data/pullRequestCommentDestinations";
 import { parseDrafts } from "../src/data/reviewDraftContract";
 import { parseGuideState } from "../src/data/reviewGuideContract";
 import { settledChecksLabel } from "../src/features/pullRequestDetail/overview/checkPresentation";
+import { checkOutcome, mergeBox } from "../src/features/pullRequestDetail/overview/mergeBox";
 import { defaultPullRequestFilter } from "../src/features/pullRequests/pullRequestListModel";
 import { pullRequestEmptyStateCopy } from "../src/features/pullRequests/list/pullRequestEmptyState";
 import { pullRequestListItems } from "../src/features/pullRequests/list/pullRequestListItems";
-import {
-  fileRowDetail,
-  hunkAt,
-  viewedLabel,
-} from "../src/features/pullRequestDetail/changes/changesPresentation";
+import { hunkAt, viewedLabel } from "../src/features/pullRequestDetail/changes/changesPresentation";
 import {
   dockCounts,
   submittableDraftIds,
@@ -24,7 +25,6 @@ import {
   publishedDetail,
   publishedTitle,
 } from "../src/features/pullRequestDetail/changes/submitResultCopy";
-import { defaultScenarioTarget } from "../src/features/pullRequestDetail/actions/scenarioTarget";
 import { safeProviderUrl } from "../src/data/forgeProviderUrl";
 import {
   defaultDestination,
@@ -37,6 +37,7 @@ import {
   filesPage,
   guideState,
   prDraft,
+  overview91,
   reviewRequestedPage,
 } from "./fixtures/forgeWireFixtures";
 
@@ -56,7 +57,7 @@ describe("provider URLs", () => {
 
 describe("Changes presentation", () => {
   const page = parseFilesPage(filesPage);
-  const [present, tooLarge, notProvided] = page?.files ?? [];
+  const [present, , notProvided] = page?.files ?? [];
 
   it("says where each viewed mark lives", () => {
     expect(present === undefined ? null : viewedLabel(present, "github.com")).toBe(
@@ -64,15 +65,6 @@ describe("Changes presentation", () => {
     );
     expect(notProvided === undefined ? null : viewedLabel(notProvided, "github.com")).toBe(
       "Viewed · this companion",
-    );
-  });
-
-  it("explains files without a patch in place", () => {
-    expect(tooLarge === undefined ? null : fileRowDetail(tooLarge, 0, "github.com")).toBe(
-      "new file · Too large to render",
-    );
-    expect(present === undefined ? null : fileRowDetail(present, 2, "github.com")).toBe(
-      "2 drafts · viewed on github.com",
     );
   });
 
@@ -162,34 +154,6 @@ describe("comment destination policy", () => {
   });
 });
 
-describe("scenario target", () => {
-  const links =
-    parseLinks({
-      links: [
-        { source: "branch", threadId: "thread-forge-auth" },
-        { source: "manual", threadId: "thread-review-91" },
-      ],
-    }) ?? [];
-  const [branch, manual] = links;
-
-  it("uses the single or the one branch-linked thread, asks otherwise, and starts a new one with none", () => {
-    expect(defaultScenarioTarget([])).toEqual({ kind: "newThread" });
-    expect(manual === undefined ? null : defaultScenarioTarget([manual])).toEqual({
-      kind: "thread",
-      threadId: manual?.threadId,
-    });
-    expect(defaultScenarioTarget(links)).toEqual({ kind: "thread", threadId: branch?.threadId });
-    expect(
-      manual === undefined
-        ? null
-        : defaultScenarioTarget([
-            manual,
-            { ...manual, threadId: links[0]?.threadId ?? manual.threadId },
-          ]),
-    ).toBeNull();
-  });
-});
-
 describe("guide walk", () => {
   it("resumes at the first stop that still needs the reviewer", () => {
     const state = parseGuideState(guideState);
@@ -223,6 +187,78 @@ describe("counters agree with their headers", () => {
     expect(settledChecksLabel([passed], { reason: "No token", state: "unavailable" })).toBe(
       "1 passed",
     );
+  });
+});
+
+describe("merge box", () => {
+  const parsed = parsePullRequestOverview(overview91, () => undefined);
+  if (parsed === null) {
+    throw new Error("The overview fixture is invalid");
+  }
+  const base: PullRequestOverview = parsed;
+  const counted = { failing: 0, passed: 3, pending: 0, state: "passing" } as const;
+
+  it("reports failing checks and conflicts, and never offers merge", () => {
+    const box = mergeBox({
+      ...base,
+      checks: { ...counted, failing: 2, passed: 1, state: "failing" },
+      merge: { reason: null, state: "conflicts" },
+    });
+    expect(box).toEqual({
+      checks: {
+        detail: "2 failing, 1 successful",
+        title: "Some checks were not successful",
+        tone: "danger",
+      },
+      kind: "open",
+      merge: {
+        detail: `Resolve the conflicts with ${base.baseBranch} before merging.`,
+        title: "This branch has conflicts",
+        tone: "warning",
+      },
+      mergeable: false,
+    });
+  });
+
+  it("prefers the forge's reason for a blocked merge", () => {
+    const box = mergeBox({
+      ...base,
+      checks: counted,
+      merge: { reason: "Merging is blocked by branch protection.", state: "blocked" },
+    });
+    expect(box).toMatchObject({
+      checks: { title: "All checks have passed", tone: "success" },
+      merge: { detail: "Merging is blocked by branch protection.", tone: "danger" },
+      mergeable: false,
+    });
+  });
+
+  it("offers merge only on an open PR the forge reports ready", () => {
+    const ready = { ...base, checks: counted, merge: { reason: null, state: "ready" } } as const;
+    expect(mergeBox(ready)).toMatchObject({ mergeable: true, merge: { tone: "success" } });
+    expect(mergeBox({ ...ready, state: "draft" })).toMatchObject({
+      merge: { title: "This pull request is still a draft" },
+      mergeable: false,
+    });
+  });
+
+  it("omits the checks row when the forge runs none", () => {
+    expect(mergeBox({ ...base, checks: { ...counted, passed: 0, state: "none" } })).toMatchObject({
+      checks: null,
+      kind: "open",
+    });
+  });
+
+  it.each(["merged", "closed"] as const)("shows no box once the PR is %s", (state) => {
+    expect(mergeBox({ ...base, state })).toEqual({ kind: "settled" });
+  });
+
+  it("describes each check by outcome and duration", () => {
+    const check = { checkId: "c", detailsUrl: null, durationSeconds: 252, name: "macos" } as const;
+    expect(checkOutcome({ ...check, state: "passed" })).toBe("Successful in 4m 12s");
+    expect(checkOutcome({ ...check, state: "failed" })).toBe("Failed after 4m 12s");
+    expect(checkOutcome({ ...check, state: "pending" })).toBe("In progress");
+    expect(checkOutcome({ ...check, durationSeconds: null, state: "passed" })).toBe("Successful");
   });
 });
 

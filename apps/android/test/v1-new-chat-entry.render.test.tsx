@@ -1,6 +1,6 @@
 import { render } from "@testing-library/react-native";
 import type { ReactNode } from "react";
-import V1NewThreadRoute from "../app/(workspace)/new";
+import V1NewThreadRoute from "../app/(workspace)/(tabs)/(threads)/new";
 import { newChatDefaultServer } from "../src/features/projects/newChatEntry";
 import { newThreadService } from "../src/services/threads/newThreadService";
 import type { ThreadListServer } from "../src/features/connections/connectionPresentation";

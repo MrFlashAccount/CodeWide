@@ -8,6 +8,8 @@
 //! - a wake message starts a provider turn, unless Claude queued it while a
 //!   turn ran (a notification delivered into the running turn); consecutive
 //!   wakes before the turn's first message start one turn;
+//! - Claude's resume prompt starts a user turn without a prompt, unless the
+//!   turn index knows it as a resent first offer inside the current turn;
 //! - an interrupt marker ends the current turn as interrupted; a turn that
 //!   only wakes opened ends at the marker (its id and fork end), so a wake
 //!   interrupted before any message stays a turn;
@@ -190,6 +192,13 @@ impl Segmenter<'_> {
             HistoryEntry::Wake {
                 queued, reports, ..
             } => self.wake(queued, reports),
+            HistoryEntry::Resume { .. } => {
+                if self.hints.continuations.contains(&uuid) {
+                    self.append(entry, TurnOrigin::User);
+                } else {
+                    self.start(TurnOrigin::User, Some(entry));
+                }
+            }
             HistoryEntry::Interrupt { .. } => self.interrupt(entry),
             HistoryEntry::Compaction { .. } | HistoryEntry::Frame { .. } => {
                 self.append(entry, TurnOrigin::Provider);

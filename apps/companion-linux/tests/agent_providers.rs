@@ -730,6 +730,8 @@ impl Harness {
     }
 }
 
+#[path = "agent_providers/background_commands.rs"]
+mod background_commands;
 #[path = "agent_providers/cross_provider.rs"]
 mod cross_provider;
 #[path = "agent_providers/live_provider.rs"]

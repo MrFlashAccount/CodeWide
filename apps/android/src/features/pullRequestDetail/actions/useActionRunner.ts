@@ -23,7 +23,11 @@ function failureNotice(action: ActionDescriptor, failure: ForgeFailure): ActionN
   if (failure.kind === "outcomeUnknown") {
     return { kind: "outcomeUnknown" };
   }
-  return { actionId: action.actionId, kind: "refused", reason: failure.message };
+  return {
+    actionId: action.actionId,
+    kind: "refused",
+    reason: failure.message,
+  };
 }
 
 /**

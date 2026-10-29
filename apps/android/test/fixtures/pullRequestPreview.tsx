@@ -15,7 +15,6 @@ import { PullRequestScreen } from "../../src/features/pullRequestDetail/PullRequ
 import { createPullRequestDetailWorkspaceAdapter } from "../../src/features/pullRequestDetail/workspaceAdapter";
 import { CatalogModeBar } from "../../src/features/pullRequests/CatalogModeBar";
 import { PullRequestsCatalog } from "../../src/features/pullRequests/PullRequestsFeature";
-import { PullRequestsHeader } from "../../src/features/pullRequests/PullRequestsHeader";
 import { ReviewInboxIllustration } from "../../src/features/pullRequests/onboarding/ReviewInboxIllustration";
 import { openForgeAccounts } from "../../src/features/pullRequests/pullRequestListModel";
 import { createPullRequestsWorkspaceAdapter } from "../../src/features/pullRequests/workspaceAdapter";
@@ -44,6 +43,8 @@ const detail = createPullRequestDetailWorkspaceAdapter({
   forge,
   reportDroppedAction: () => undefined,
   review,
+  // The preview has no companion media path; inline images need none.
+  transferAccess: async () => Promise.reject(new Error("The preview has no media access")),
 });
 const reviewTarget = createReviewTargetAdapter({
   ...authority,
@@ -71,11 +72,11 @@ function ModeBar(): React.JSX.Element {
 function Catalog(): React.JSX.Element {
   return (
     <View style={previewStyles.catalog}>
-      <PullRequestsHeader />
       <PullRequestsCatalog
         capabilities={pullRequests}
         connectionId="server"
         forge={forge}
+        isThreadUnread={() => false}
         onOpenPullRequest={() => undefined}
       />
       <ModeBar />
@@ -162,19 +163,26 @@ function Screen({ tablet }: { readonly tablet: boolean }): React.JSX.Element | n
         connectionId="server"
         describeThread={(threadId) => threads[threadId] ?? null}
         forge={forge}
+        isThreadUnread={() => false}
         navigation={{
           back: () => undefined,
-          beginChat: () => undefined,
           chatVisible: false,
-          closeChat: () => undefined,
+          deferReviewChatScenario: async () => Promise.resolve(null),
           openPullRequestFullscreen: () => undefined,
-          openTab: setTab,
+          openReviewChat: () => undefined,
+          closeChanges: () => {
+            setTab("overview");
+          },
+          openChanges: () => {
+            setTab("changes");
+          },
           openThread: () => undefined,
           pullRequestFullscreen: false,
         }}
         pullRequest={pullRequest}
         review={review}
         reviewCapabilities={reviewTarget}
+        initialChangesView="files"
         tab={tab}
         tablet={tablet}
       />

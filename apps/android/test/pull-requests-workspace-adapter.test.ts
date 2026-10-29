@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { parseForgeAccounts } from "../src/data/forgeContract";
 import { createForgeResources } from "../src/data/forgeResources";
 import type { WorkspaceSyncSession } from "../src/data/workspace-session";
 import { createPullRequestsWorkspaceAdapter } from "../src/features/pullRequests/workspaceAdapter";
 import {
   connectedAccount,
-  githubProvider,
   hostLoginFlow,
   onboardingAccounts,
 } from "./fixtures/forgeWireFixtures";
@@ -53,6 +53,7 @@ function adapterFixture({
       getSession: () => session,
       rpcAfterAttach,
     }),
+    forge,
     methods,
   };
 }
@@ -82,9 +83,6 @@ describe("pull requests workspace adapter", () => {
   it("settles acknowledged account mutations without a second accounts read", async () => {
     const { adapter, methods } = adapterFixture({
       response: (method) => {
-        if (method === "companion/forge/provider/setEnabled") {
-          return { provider: githubProvider };
-        }
         if (
           method === "companion/forge/auth/cancel" ||
           method === "companion/forge/account/disconnect"
@@ -103,15 +101,34 @@ describe("pull requests workspace adapter", () => {
         mode: "unlink",
       }),
     ).resolves.toBeUndefined();
-    await expect(adapter.setProviderEnabled("server", "github", true)).resolves.toMatchObject({
-      enabled: true,
-      pluginId: "github",
-    });
     expect(methods).toEqual([
       "companion/forge/auth/cancel",
       "companion/forge/account/disconnect",
-      "companion/forge/provider/setEnabled",
     ]);
+  });
+
+  it("patches the excluded account into the accounts query without another read", async () => {
+    const included = { ...connectedAccount, catalogEnabled: true };
+    const { adapter, forge, methods } = adapterFixture({
+      response: (method) => {
+        if (method === "companion/forge/account/setEnabled") {
+          return { account: { ...included, catalogEnabled: false } };
+        }
+        throw new Error(`Unexpected RPC: ${method}`);
+      },
+    });
+    const snapshot = parseForgeAccounts({ ...onboardingAccounts, accounts: [included] });
+    const account = snapshot?.accounts[0];
+    if (snapshot === null || account === undefined) {
+      throw new Error("The accounts fixture is invalid");
+    }
+    forge.accounts.publish({ connectionId: "server" }, snapshot);
+
+    await expect(adapter.setAccountEnabled("server", account.account, false)).resolves.toMatchObject({ account: connectedAccount.account, catalogEnabled: false });
+    expect(forge.accounts.data({ connectionId: "server" })?.accounts).toMatchObject([
+      { account: connectedAccount.account, catalogEnabled: false },
+    ]);
+    expect(methods).toEqual(["companion/forge/account/setEnabled"]);
   });
 
   it("returns a submitted account without an accounts read or token telemetry", async () => {

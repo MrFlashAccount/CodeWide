@@ -28,6 +28,8 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[path = "compatibility_tests.rs"]
 mod compatibility_tests;
+#[path = "history_reconcile_tests.rs"]
+mod history_reconcile_tests;
 #[path = "inheritance_tests.rs"]
 mod inheritance_tests;
 #[path = "notification_journal_tests.rs"]
@@ -162,14 +164,17 @@ async fn harness_at(
         gateway.clone(),
         store.clone(),
         pump_tx.clone(),
-        profiles,
+        profiles.clone(),
     );
     if start_pump {
         tokio::spawn(crate::turn_delivery::run_outbox_pump(
             crate::turn_delivery::PumpContext {
                 gateway: gateway.clone(),
                 turn_delivery: service.turn_delivery.clone(),
-                thread_view: crate::thread_view::ThreadViewService::new(gateway.clone()),
+                thread_view: crate::thread_view::ThreadViewService::new(
+                    gateway.clone(),
+                    profiles.clone(),
+                ),
                 files: Arc::new(std::sync::RwLock::new(None)),
                 workspaces,
                 fork,
@@ -586,6 +591,37 @@ async fn cancel_interrupts_the_running_turn_and_is_idempotent() -> TestResult {
         1,
         "an idle agent is not interrupted again"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_reports_an_unconfirmed_interrupt_instead_of_hanging() -> TestResult {
+    let harness = harness(":workspace").await?;
+    let (_, spawned) = call(
+        &harness.service,
+        "codex",
+        PARENT,
+        "codewide_spawn_agent",
+        json!({"prompt": "p", "provider": "claude"}),
+    )
+    .await;
+    let child = agent_id(&spawned)?;
+    harness.claude.hang_interrupts();
+    for _ in 0..2 {
+        let (success, answer) = call(
+            &harness.service,
+            "codex",
+            PARENT,
+            "codewide_cancel_agent",
+            json!({"agentThreadId": child.as_str()}),
+        )
+        .await;
+        assert!(!success, "an unconfirmed interrupt is an error: {answer}");
+        assert!(
+            answer.to_string().contains("not confirmed"),
+            "the error names the unconfirmed interrupt: {answer}"
+        );
+    }
     Ok(())
 }
 

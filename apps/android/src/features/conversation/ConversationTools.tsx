@@ -7,6 +7,7 @@ import { useAttachmentVisibility } from "../attachments/attachmentVisibility";
 import { useDocumentNavigation } from "../attachments/documentNavigation";
 import { useChangesFeature } from "../changes/ChangesFeature";
 import { ThreadResourceContextChips } from "../changes/ThreadResourceContextChips";
+import { ComposerPullRequestContextChip } from "../composer/ComposerPullRequestContextChip";
 import { useDrawingFeature } from "../drawing/DrawingFeature";
 import { ComposerPortContextChip } from "../ports/ComposerPortContextChip";
 import { useReviewFeature } from "../review/ReviewFeature";
@@ -138,8 +139,11 @@ export function useConversationTools(props: UseConversationToolsProps) {
   );
   const toolContextChips = (
     <>
-      {props.changesInputs.onLoadThreadResources !== undefined && (
+      {props.changesInputs.onLoadThreadResources === undefined ? (
+        <ComposerPullRequestContextChip />
+      ) : (
         <ThreadResourceContextChips
+          afterChanges={<ComposerPullRequestContextChip />}
           load={props.changesInputs.onLoadThreadResources}
           model={props.threadResourcesModel}
           onOpen={attachmentVisibilityBinding.openThreadResources}

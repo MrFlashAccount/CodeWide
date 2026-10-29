@@ -10,8 +10,8 @@
 //! `toolCall {namespace: null}` with their bare name. Pure.
 
 use agent_core::model::{
-    AgentItem, AppThreadId, CallStatus, ExecutionStatus, ItemId, McpToolResult, PlanStep,
-    PlanStepStatus, WebSearchAction,
+    AgentItem, AppThreadId, BackgroundCommand, BackgroundCommandState, CallStatus, ExecutionStatus,
+    ItemId, McpToolResult, PlanStep, PlanStepStatus, WebSearchAction,
 };
 use serde_json::Value;
 
@@ -217,7 +217,7 @@ pub fn start_item(call: &ToolCallInput, context: &ToolContext<'_>) -> Option<Age
             output: None,
             exit_code: None,
             duration_ms: None,
-            background_task_id: None,
+            background: None,
         });
     }
     if is_subagent_tool(&call.name) {
@@ -284,6 +284,8 @@ fn bash_output(result: &ToolResultBlock, tool_use_result: &Value) -> String {
 }
 
 /// How a started tool call ended.
+const MS_PER_SECOND: i64 = 1000;
+
 pub struct ToolOutcome<'a> {
     /// The thread the call ran in; names a spawned sub-agent's thread.
     pub app_thread_id: &'a AppThreadId,
@@ -291,6 +293,8 @@ pub struct ToolOutcome<'a> {
     /// `command` only once it completes.
     pub cwd: &'a str,
     pub duration_ms: i64,
+    /// When the call started (Unix milliseconds): a background task's start.
+    pub started_at_ms: i64,
     pub result: &'a ToolResultBlock,
     pub status: ExecutionStatus,
     /// The structured `toolUseResult`, when the record carried it.
@@ -389,8 +393,19 @@ pub fn complete_item(
             )),
             exit_code: completed.then_some(0),
             duration_ms: Some(outcome.duration_ms),
-            background_task_id: ShellTool::of(&call.name)
-                .and_then(|tool| tool.started_task_id(outcome.tool_use_result)),
+            // A launch is running until a report or the live session says
+            // otherwise (`super::background_commands`).
+            background: ShellTool::of(&call.name)
+                .and_then(|tool| tool.started_task_id(outcome.tool_use_result))
+                .map(|task_id| BackgroundCommand {
+                    task_id,
+                    started_at: outcome.started_at_ms.div_euclid(MS_PER_SECOND),
+                    description: str_of(&call.input, "description")
+                        .map(str::trim)
+                        .filter(|description| !description.is_empty())
+                        .map(ToOwned::to_owned),
+                    state: BackgroundCommandState::Running,
+                }),
         },
         AgentItem::FileChange {
             item_id,
@@ -505,7 +520,7 @@ fn with_execution_status(item: AgentItem, status: ExecutionStatus) -> AgentItem 
             output,
             exit_code,
             duration_ms,
-            background_task_id,
+            background,
             ..
         } => AgentItem::Command {
             item_id,
@@ -516,7 +531,7 @@ fn with_execution_status(item: AgentItem, status: ExecutionStatus) -> AgentItem 
             output,
             exit_code,
             duration_ms,
-            background_task_id,
+            background,
         },
         AgentItem::FileChange {
             item_id,
@@ -569,7 +584,7 @@ pub fn block_item_id(message_id: &str, block_index: usize) -> Option<ItemId> {
 
 #[cfg(test)]
 mod tests {
-    use agent_core::model::{AgentItem, AppThreadId, ExecutionStatus};
+    use agent_core::model::{AgentItem, AppThreadId, BackgroundCommandState, ExecutionStatus};
     use serde_json::{Value, json};
 
     use super::{
@@ -610,18 +625,20 @@ mod tests {
                 app_thread_id: &thread,
                 cwd: "/w",
                 duration_ms: 3,
+                started_at_ms: 1_760_000_100_000,
                 result: &result,
                 status: ExecutionStatus::Completed,
                 tool_use_result,
             },
         ) {
             AgentItem::Command {
-                background_task_id,
-                output,
-                ..
+                background, output, ..
             } => {
                 assert_eq!(output.as_deref(), Some(text));
-                Ok(background_task_id)
+                Ok(background.map(|background| {
+                    assert_eq!(background.state, BackgroundCommandState::Running);
+                    background.task_id
+                }))
             }
             _ => Err("not a command item"),
         }

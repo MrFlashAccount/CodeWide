@@ -4,11 +4,11 @@ use super::*;
 use crate::agent::orchestration::{
     journal::AdmissionRecord,
     task::{
-        AttemptId, AttemptState, CompletionDelivery, DeliveryId, DeliveryProgress, DeliveryState,
-        HostProvenance, OrchestrationTask, ParentDeliveryState, PermissionEnvelope,
+        AttemptId, AttemptState, DeliveryId, HostProvenance, OrchestrationTask, PermissionEnvelope,
         PublicTaskStatus, RecoveryAction, TaskAttempt, TaskId, TaskState, WaitMode, WorkspaceClaim,
         WorkspaceClaimId, WorkspaceClaimState, WorkspaceMode,
     },
+    work_requests::{AckSource, Delivery, RequestPhase},
 };
 
 pub(super) async fn task_call(
@@ -164,10 +164,24 @@ async fn durable_task_journal_does_not_persist_prompt_material() -> TestResult {
     let persisted = serde_json::to_string(&(
         bundle.task,
         bundle.attempt,
-        bundle.delivery,
+        bundle.request,
         bundle.workspace,
     ))?;
     assert!(!persisted.contains(secret_prompt));
+    // Every work request table holds coordination metadata only.
+    let read = redb::ReadableDatabase::begin_read(&*harness.store.database())?;
+    for table in [
+        crate::store::orchestration_tables::WORK_REQUESTS,
+        crate::store::orchestration_tables::NOTICES,
+    ] {
+        let table = read.open_table(table)?;
+        for entry in redb::ReadableTable::iter(&table)? {
+            let (_, value) = entry?;
+            let text = String::from_utf8_lossy(value.value()).into_owned();
+            assert!(!text.contains(secret_prompt));
+            assert!(!text.contains("\"input\""));
+        }
+    }
     Ok(())
 }
 
@@ -244,28 +258,24 @@ async fn wait_returns_the_initial_turn_result_and_acknowledges_delivery() -> Tes
     assert!(success);
     assert_eq!(result["status"], "succeeded");
     assert_eq!(result["finalMessage"], "done");
-    assert_eq!(
-        harness
-            .service
-            .task_journal
-            .get(&task_id)
-            .await?
-            .delivery
-            .progress,
-        DeliveryProgress::ParentTurn {
-            state: ParentDeliveryState::Acknowledged
+    let acknowledged = harness.service.task_journal.get(&task_id).await?.request;
+    assert!(matches!(
+        acknowledged.phase,
+        RequestPhase::Settled {
+            delivery: Delivery::Acknowledged {
+                by: AckSource::WaitTask
+            },
+            ..
         }
-    );
-    let unchanged = harness
-        .service
-        .task_journal
-        .observe_terminal(
-            &ProviderId::from_static("claude"),
-            child,
-            TurnId::from_static("claude-turn-1"),
-            crate::agent::client_wire::observe::TurnEnd::Interrupted,
-        )
-        .await?;
+    ));
+    let unchanged = test_support::terminal(
+        &harness.service.task_journal,
+        &ProviderId::from_static("claude"),
+        child,
+        "claude-turn-1",
+        crate::agent::client_wire::observe::TurnEnd::Interrupted,
+    )
+    .await?;
     assert!(unchanged.is_none());
     assert_eq!(
         harness.service.task_journal.get(&task_id).await?.task.state,
@@ -336,7 +346,12 @@ async fn reopened_service_reconciles_terminal_turns_without_live_events() -> Tes
     for (case, turn_status, expected) in [
         ("completed", TurnStatus::Completed, TaskState::Succeeded),
         ("failed", TurnStatus::Failed, TaskState::Failed),
-        ("interrupted", TurnStatus::Interrupted, TaskState::Cancelled),
+        // A user or system interrupt is not a parent cancel.
+        (
+            "interrupted",
+            TurnStatus::Interrupted,
+            TaskState::Interrupted,
+        ),
     ] {
         let harness = harness(":workspace").await?;
         let (success, delegated) = task_call(
@@ -413,10 +428,7 @@ async fn reopened_service_reconciles_terminal_turns_without_live_events() -> Tes
             expected,
             "{case}"
         );
-        assert!(matches!(
-            snapshot.status,
-            PublicTaskStatus::Succeeded | PublicTaskStatus::Failed | PublicTaskStatus::Cancelled
-        ));
+        assert!(snapshot.status.is_terminal());
     }
     Ok(())
 }
@@ -509,7 +521,7 @@ async fn cancel_task_records_intent_once_and_waits_for_provider_terminal() -> Te
 
 async fn claimed_turn_waiting_for_late_receipt(
     harness: &Harness,
-) -> Result<(TaskId, AppThreadId, TurnId), Box<dyn std::error::Error>> {
+) -> Result<(TaskId, AppThreadId, TurnId, String, u64), Box<dyn std::error::Error>> {
     let task_id = TaskId::new();
     let attempt_id = AttemptId::new();
     let delivery_id = DeliveryId::new();
@@ -539,7 +551,7 @@ async fn claimed_turn_waiting_for_late_receipt(
                 workspace_mode: WorkspaceMode::SharedReadOnly,
                 state: TaskState::Admitted,
                 authoritative_attempt_id: attempt_id.clone(),
-                delivery_id: delivery_id.clone(),
+                delivery_id,
                 provider: ProviderId::from_static("claude"),
                 model: "claude-default".into(),
                 name: None,
@@ -558,14 +570,6 @@ async fn claimed_turn_waiting_for_late_receipt(
                 task_id: task_id.clone(),
                 command_id: command_id.clone(),
                 state: AttemptState::Admitted,
-            },
-            delivery: CompletionDelivery {
-                delivery_id,
-                task_id: task_id.clone(),
-                progress: DeliveryProgress::AwaitingResume {
-                    state: DeliveryState::Pending,
-                },
-                dedupe_key: format!("task-completion:{}", task_id.as_str()),
             },
             workspace: WorkspaceClaim {
                 claim_id: workspace_claim_id,
@@ -590,17 +594,19 @@ async fn claimed_turn_waiting_for_late_receipt(
         .store
         .promote_orchestration_turn(&command_id, child.as_str(), None)?;
     harness.service.task_journal.turn_queued(&task_id).await?;
-    assert!(matches!(
-        harness.store.outbox_claim_dispatch(&command_id)?,
-        crate::store::OutboxClaimOutcome::Acquired { .. }
-    ));
-    Ok((task_id, child, provider_turn))
+    let crate::store::OutboxClaimOutcome::Acquired { token, .. } =
+        harness.store.outbox_claim_dispatch(&command_id)?
+    else {
+        return Err("dispatch claim was not acquired".into());
+    };
+    Ok((task_id, child, provider_turn, command_id, token))
 }
 
 #[tokio::test]
 async fn a_late_start_receipt_preserves_cancelling_and_interrupts_that_exact_turn() -> TestResult {
     let harness = harness_without_pump(":workspace").await?;
-    let (task_id, child, provider_turn) = claimed_turn_waiting_for_late_receipt(&harness).await?;
+    let (task_id, child, provider_turn, command_id, token) =
+        claimed_turn_waiting_for_late_receipt(&harness).await?;
     let cancelling = harness.service.task_journal.cancel_intent(&task_id).await?;
     harness
         .service
@@ -613,22 +619,32 @@ async fn a_late_start_receipt_preserves_cancelling_and_interrupts_that_exact_tur
     );
     assert!(harness.claude.interrupted().is_empty());
 
-    let started = harness
-        .service
-        .task_journal
-        .observe_started(
-            &ProviderId::from_static("claude"),
-            child.as_str(),
-            provider_turn.clone(),
-        )
-        .await?
-        .ok_or("late turn start was not matched")?;
-    assert_eq!(started.task.state, TaskState::Cancelling);
+    // The delivery receipt is the only binding path; the loop then stops the
+    // exact turn that started after the cancel.
     harness
         .service
-        .resume_cancellation(&started)
-        .await
-        .map_err(|error| std::io::Error::other(error.render()))?;
+        .turn_delivery
+        .resolve_claim(
+            child.as_str(),
+            &command_id,
+            token,
+            crate::turn_delivery::ClaimResolution::Delivered(Some(
+                provider_turn.as_str().to_owned(),
+            )),
+        )
+        .await;
+    let started = harness.service.task_journal.get(&task_id).await?;
+    assert_eq!(started.task.state, TaskState::Cancelling);
+    assert_eq!(
+        started.attempt.state.provider_turn_id(),
+        Some(&provider_turn)
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while harness.claude.interrupted().is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await?;
     assert_eq!(
         harness.claude.interrupted(),
         vec![crate::agent::model::TurnInterruptParams {
@@ -655,7 +671,7 @@ async fn provider_minted_create_crash_recovers_as_start_uncertain_without_retry(
         workspace_mode: WorkspaceMode::SharedReadOnly,
         state: TaskState::Admitted,
         authoritative_attempt_id: attempt_id.clone(),
-        delivery_id: delivery_id.clone(),
+        delivery_id,
         provider: ProviderId::from_static("codex"),
         model: "gpt-parent".into(),
         name: None,
@@ -688,14 +704,6 @@ async fn provider_minted_create_crash_recovers_as_start_uncertain_without_retry(
                 task_id: task_id.clone(),
                 command_id,
                 state: AttemptState::Admitted,
-            },
-            delivery: CompletionDelivery {
-                delivery_id,
-                task_id: task_id.clone(),
-                progress: DeliveryProgress::AwaitingResume {
-                    state: DeliveryState::Pending,
-                },
-                dedupe_key: format!("task-completion:{}", task_id.as_str()),
             },
             workspace: WorkspaceClaim {
                 claim_id: workspace_claim_id,

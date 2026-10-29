@@ -2,6 +2,8 @@ import type { Observable } from "@legendapp/state";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
+import type { ForgeProvider } from "../../data/forgeContract";
+import type { ProviderIcon } from "../../data/forgeProviderIcon";
 import type {
   ActivityPage,
   PullRequestOverview,
@@ -9,6 +11,7 @@ import type {
 } from "../../data/forgePullRequestContract";
 import { useLoadedListRow } from "../../data/forgeListPages";
 import type { OverviewParams } from "../../data/forgeOverview";
+import { useMinuteClock } from "../../data/minuteClock";
 import { forgeQueryRemoteValue, useForgeQuery } from "../../data/forgeQueryResource";
 import { remoteValue } from "../../data/forgeRemoteValue";
 import { notePullRequestAttentionDisplayed } from "../../data/pullRequestAttention";
@@ -16,9 +19,23 @@ import type { ThreadId } from "../../data/reviewContract";
 import { useConstant } from "../../react/useConstant";
 import { useEvent } from "../../react/useEvent";
 import { spacing } from "../../theme";
-import { measureActionLabel, OVERFLOW_BUTTON_WIDTH } from "./actions/actionMeasure";
+import { measureActionLabel } from "./actions/actionMeasure";
 import { slotActions, type ActionSlots } from "./actions/actionSlotting";
+import {
+  scenarioFailure,
+  scenarioViews,
+  withScenarioLabels,
+  type ScenarioViews,
+} from "./actions/scenarioRuns";
 import { dockCounts } from "./changes/dockCounts";
+import {
+  useConversationWrites,
+  type ConversationWrites,
+} from "./conversation/useConversationWrites";
+import {
+  usePullRequestConversation,
+  type PullRequestConversation,
+} from "./conversation/usePullRequestConversation";
 import type { PullRequestScreenProps } from "./pullRequestScreenContract";
 import {
   createPullRequestScreenModel,
@@ -28,7 +45,12 @@ import {
 /** Everything the PR screen renders from its resources and its own model. */
 export type PullRequestScreenData = {
   readonly activity: ActivityPage;
-  readonly agentThread: { readonly threadId: ThreadId; readonly title: string } | null;
+  readonly agentThread: {
+    readonly threadId: ThreadId;
+    readonly title: string;
+  } | null;
+  /** The conversation that replaces the activity list, or `unsupported`. */
+  readonly conversation: PullRequestConversation;
   readonly draftCount: number;
   /** The PR's row from a loaded list, for the review request and age; `null` on a cold deep link. */
   readonly listRow: PullRequestRow | null;
@@ -37,8 +59,18 @@ export type PullRequestScreenData = {
   readonly offline: boolean;
   readonly overview: PullRequestOverview;
   readonly params: OverviewParams;
+  /** The PR account's provider mark from the accounts snapshot; `null` until it loads. */
+  readonly providerIcon: ProviderIcon | null;
+  /** The first scenario whose run failed at the shown head, with the real reason. */
+  readonly scenarioFailure: {
+    readonly label: string;
+    readonly reason: string;
+  } | null;
+  /** The Companion's live run state of each scenario action at the shown head. */
+  readonly scenarioViews: ScenarioViews;
   readonly setRowWidth: (width: number) => void;
   readonly slots: ActionSlots;
+  readonly writes: ConversationWrites;
 };
 
 /**
@@ -52,7 +84,7 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
     connectionId: props.connectionId,
     pullRequest: props.pullRequest,
   };
-  const model = useConstant(createPullRequestScreenModel);
+  const model = useConstant(() => createPullRequestScreenModel(props.initialChangesView));
   const [rowWidth, setRowWidth] = useState(0);
   const { offline, overview } = useOverview(props, params);
   const attentionRevision =
@@ -71,7 +103,24 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
       .catch(() => undefined);
   }, [attentionRevision, props.capabilities, props.connectionId, props.pullRequest]);
   const { activity, loadMoreActivity } = useActivity(props, params, overview);
+  const provider = useProvider(props, overview.account.pluginId);
+  const conversation = usePullRequestConversation({
+    forge: props.forge,
+    params,
+    provider,
+  });
+  const writes = useConversationWrites({
+    capabilities: props.capabilities,
+    offline,
+    params,
+  });
   const agentLink = overview.reviewThread;
+  const scenarios = scenarioViews(
+    overview.catalog.actions,
+    remoteValue(useForgeQuery(props.forge.scenarios, params)),
+    overview.headRevision,
+  );
+  const labelled = withScenarioLabels(overview.catalog.actions, scenarios, useMinuteClock());
   return {
     activity,
     agentThread:
@@ -81,6 +130,7 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
             threadId: agentLink.threadId,
             title: props.describeThread(agentLink.threadId)?.title ?? "Linked thread",
           },
+    conversation,
     draftCount: useDraftCount(props),
     listRow: useLoadedListRow(props.forge.lists, props.connectionId, props.pullRequest),
     loadMoreActivity,
@@ -88,8 +138,16 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
     offline,
     overview,
     params,
+    providerIcon: provider?.icon ?? null,
+    scenarioFailure: scenarioFailure(overview.catalog.actions, scenarios),
+    scenarioViews: scenarios,
     setRowWidth,
-    slots: pullRequestSlots(overview, rowWidth, props.tablet),
+    slots: pullRequestSlots(labelled, overview, {
+      reviewThreadIds: visibleReviewThreadIds(overview, conversation),
+      rowWidth,
+      tablet: props.tablet,
+    }),
+    writes,
   };
 }
 
@@ -108,6 +166,16 @@ function useOverview(
   };
 }
 
+/** The provider of the PR's account; a cold deep link has no catalog behind it, so it reads the accounts resource. */
+function useProvider(props: PullRequestScreenProps, pluginId: string): ForgeProvider | null {
+  const accounts = useForgeQuery(props.forge.accounts, {
+    connectionId: props.connectionId,
+  });
+  return (
+    remoteValue(accounts)?.providers.find((candidate) => candidate.pluginId === pluginId) ?? null
+  );
+}
+
 function useDraftCount(props: PullRequestScreenProps): number {
   const params = {
     connectionId: props.connectionId,
@@ -121,7 +189,10 @@ function useActivity(
   props: PullRequestScreenProps,
   params: OverviewParams,
   overview: PullRequestOverview,
-): { readonly activity: ActivityPage; readonly loadMoreActivity: (() => void) | null } {
+): {
+  readonly activity: ActivityPage;
+  readonly loadMoreActivity: (() => void) | null;
+} {
   const state = useForgeQuery(props.forge.activity, params);
   const activity = remoteValue(state) ?? overview.activity;
   const loadMore = useEvent((): void => {
@@ -137,28 +208,50 @@ function useActivity(
   return { activity, loadMoreActivity: loadMore };
 }
 
-/** Slots the catalog for the measured action row and the anchors visible on this screen. */
-function pullRequestSlots(
+/** Review threads the Details tab shows: the conversation's when it replaces the activity list. */
+function visibleReviewThreadIds(
   overview: PullRequestOverview,
-  rowWidth: number,
-  tablet: boolean,
+  conversation: PullRequestConversation,
+): ReadonlySet<string> {
+  if (conversation.status === "ready") {
+    return new Set(
+      conversation.page.entries.flatMap((entry) =>
+        entry.kind === "reviewThread" ? [entry.thread.id] : [],
+      ),
+    );
+  }
+  return new Set(
+    overview.activity.items.flatMap((item) =>
+      item.reviewThreadId === null ? [] : [item.reviewThreadId],
+    ),
+  );
+}
+
+/**
+ * Slots the (live-labelled) catalog for the measured action row and the anchors visible on
+ * this screen.
+ */
+function pullRequestSlots(
+  actions: PullRequestOverview["catalog"]["actions"],
+  overview: PullRequestOverview,
+  layout: {
+    readonly reviewThreadIds: ReadonlySet<string>;
+    readonly rowWidth: number;
+    readonly tablet: boolean;
+  },
 ): ActionSlots {
   return slotActions(
-    overview.catalog.actions,
+    actions,
     {
       checkIds: new Set(overview.checkItems.map((item) => item.checkId)),
       conflict: overview.merge.state === "conflicts",
-      reviewThreadIds: new Set(
-        overview.activity.items.flatMap((item) =>
-          item.reviewThreadId === null ? [] : [item.reviewThreadId],
-        ),
-      ),
+      reviewThreadIds: layout.reviewThreadIds,
     },
     {
-      availableWidth: Math.max(0, rowWidth - OVERFLOW_BUTTON_WIDTH - spacing.xs),
+      availableWidth: layout.rowWidth,
       gap: spacing.xs,
       measure: measureActionLabel,
-      tablet,
+      tablet: layout.tablet,
     },
   );
 }

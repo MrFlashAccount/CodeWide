@@ -41,12 +41,13 @@ use crate::{
     indexer::NativeSessions,
     runtime::{
         open_elsewhere::{OpenElsewhere, SessionActivity},
-        recorded_model::last_recorded_model,
+        recorded_model::{last_recorded_effort, last_recorded_model},
         running_sessions::RunningProcess,
     },
     transcript::{
         agents::SubagentRuns,
         chain::active_branch,
+        entries::stored_task_reports_of_rows,
         json::{JsonRecord, str_of},
         reconstruct::{
             HistoryContext, reconstruct_subagent_turns, reconstruct_turns, record_transcript_runs,
@@ -324,7 +325,7 @@ fn read(
         records,
     );
     let transcripts = subagent_transcripts(&file);
-    let runs = session_runs(&messages, &transcripts);
+    let runs = session_runs(&rows, &messages, &transcripts);
     let turns = settle_subagent_items(turns, &runs);
     let orphaned = orphaned_agents(&transcripts, activity);
     let turns = match activity {
@@ -431,8 +432,18 @@ fn subagent_transcripts(session: &SessionFile) -> Vec<SubagentTranscript> {
 /// The sub-agent runs recorded anywhere in the session: a report reaches
 /// whichever conversation was there to take it, not always the one that
 /// spawned its agent, and any conversation may resume an agent.
-fn session_runs(messages: &[&JsonRecord], transcripts: &[SubagentTranscript]) -> SubagentRuns {
+fn session_runs(
+    rows: &[Value],
+    messages: &[&JsonRecord],
+    transcripts: &[SubagentTranscript],
+) -> SubagentRuns {
     let mut runs = SubagentRuns::default();
+    // The active branch omits reports stored before a compaction or on an
+    // abandoned branch, yet the sub-agent transcripts keep the spawning items
+    // those reports settle.
+    for (report, timestamp_ms) in stored_task_reports_of_rows(rows) {
+        runs.record(&report, timestamp_ms);
+    }
     record_transcript_runs(&mut runs, messages);
     for transcript in transcripts {
         let rows = transcript
@@ -445,8 +456,8 @@ fn session_runs(messages: &[&JsonRecord], transcripts: &[SubagentTranscript]) ->
     runs
 }
 
-/// Each sub-agent transcript as neutral turns with the model it last answered
-/// with; a sub-agent its spawning item
+/// Each sub-agent transcript as neutral turns with the model and effort it
+/// last answered with; a sub-agent its spawning item
 /// (in the main conversation or another sub-agent) reports `running` keeps
 /// its last turn in progress. A spawning item is running until a report
 /// anywhere in the session settles it, and again when a resume is the newest
@@ -484,6 +495,7 @@ fn native_subagents(
             agent_id: transcript.agent_id.clone(),
             // Stored sidecar rows name no `parent_tool_use_id`, so every
             // assistant row of the transcript is the sub-agent's own answer.
+            effort: last_recorded_effort(&transcript.rows).map(ToOwned::to_owned),
             model: last_recorded_model(&transcript.rows).map(ToOwned::to_owned),
             parent_agent_id: transcript.sidecar.parent_agent_id.clone(),
             parent_tool_use_id: transcript.sidecar.tool_use_id.clone(),

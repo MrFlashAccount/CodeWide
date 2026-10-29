@@ -57,6 +57,41 @@ pub enum OutboxPresentation {
     Delivery,
     #[default]
     Queue,
+    /// A system-originated, model-only command (a child-agent result notice).
+    /// It waits for an idle thread like `Queue` and is never listed to a
+    /// client or accepted from one.
+    Notice,
+}
+
+/// A definite delivery receipt: the provider accepted `command_id` as
+/// `turn_id` of `thread_id`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TurnReceipt<'a> {
+    /// The delivered command id.
+    pub command: &'a str,
+    /// The thread the command was delivered to.
+    pub thread: &'a str,
+    /// The provider turn that accepted it.
+    pub turn: &'a str,
+}
+
+/// A narrow, prompt-free hook run inside the transaction that records a
+/// delivery receipt, so a dependent owner commits with the receipt or not
+/// at all. It receives only stable identifiers.
+pub(crate) trait TurnReceiptObserver: Send + Sync {
+    /// # Errors
+    /// A storage failure aborts the receipt transaction.
+    fn delivered(
+        &self,
+        write: &redb::WriteTransaction,
+        receipt: TurnReceipt<'_>,
+    ) -> Result<(), StoreError>;
+
+    /// Runs after the transaction that called [`Self::delivered`] committed,
+    /// so the observer may publish what it recorded. Write transactions are
+    /// serialized, so the two calls of one receipt are never interleaved
+    /// with another receipt's.
+    fn committed(&self) {}
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -178,8 +213,13 @@ pub enum OutboxClaimResolutionOutcome {
     Stale(Option<OutboxCommand>),
 }
 
+type ReceiptObserverSlot = std::sync::RwLock<Option<Arc<dyn TurnReceiptObserver>>>;
+
 pub struct IndexStore {
     database: Arc<Database>,
+    /// The single owner-installed observer of delivery receipts; the newest
+    /// installation wins (a restarted owner takes over).
+    receipt_observer: ReceiptObserverSlot,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -254,7 +294,27 @@ impl IndexStore {
             turn_delivery_tables::create(&write)?;
         }
         write.commit()?;
-        Ok(Self { database })
+        Ok(Self {
+            database,
+            receipt_observer: std::sync::RwLock::new(None),
+        })
+    }
+
+    /// Installs the observer that runs inside every delivery-receipt
+    /// transaction (see [`TurnReceiptObserver`]). A later installation
+    /// replaces an earlier one.
+    pub(crate) fn install_receipt_observer(&self, observer: Arc<dyn TurnReceiptObserver>) {
+        *self
+            .receipt_observer
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(observer);
+    }
+
+    pub(crate) fn receipt_observer(&self) -> Option<Arc<dyn TurnReceiptObserver>> {
+        self.receipt_observer
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// The shared database handle on which provider adapters keep the
@@ -853,6 +913,7 @@ impl IndexStore {
         resolution: OutboxClaimResolution<'_>,
     ) -> Result<OutboxClaimResolutionOutcome, StoreError> {
         validate_outbox_id(command_id, "command id")?;
+        let observer = self.receipt_observer();
         let write = self.database.begin_write()?;
         let outcome = {
             let mut table = write.open_table(OUTBOX)?;
@@ -884,7 +945,11 @@ impl IndexStore {
                 }
                 OutboxClaimResolution::Busy => {
                     command.state = OutboxState::Queued;
-                    command.presentation = OutboxPresentation::Queue;
+                    // A busy provider turns a direct delivery into an explicit
+                    // queue entry; a hidden notice stays hidden.
+                    if command.presentation != OutboxPresentation::Notice {
+                        command.presentation = OutboxPresentation::Queue;
+                    }
                     command.last_error = None;
                     command.next_attempt_at = now;
                 }
@@ -910,7 +975,31 @@ impl IndexStore {
             table.insert(command_id, encoded.as_slice())?;
             OutboxClaimResolutionOutcome::Applied(command)
         };
+        let mut notify_after_commit = None;
+        if let (
+            Some(observer),
+            OutboxClaimResolutionOutcome::Applied(OutboxCommand {
+                state: OutboxState::Delivered,
+                delivered_turn_id: Some(turn_id),
+                remote_thread_id,
+                ..
+            }),
+        ) = (observer, &outcome)
+        {
+            observer.delivered(
+                &write,
+                TurnReceipt {
+                    command: command_id,
+                    thread: remote_thread_id,
+                    turn: turn_id,
+                },
+            )?;
+            notify_after_commit = Some(observer);
+        }
         write.commit()?;
+        if let Some(observer) = notify_after_commit {
+            observer.committed();
+        }
         Ok(outcome)
     }
 

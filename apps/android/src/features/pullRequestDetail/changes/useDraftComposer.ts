@@ -14,7 +14,11 @@ const CLOSED = { kind: "closed" } as const;
 /** Open comment sheet: a new draft at a line, or moving an outdated draft there. */
 type ComposerState =
   | { readonly kind: "closed" }
-  | { readonly kind: "new"; readonly preferAgent: boolean; readonly target: CommentSheetTarget };
+  | {
+      readonly kind: "new";
+      readonly preferAgent: boolean;
+      readonly target: CommentSheetTarget;
+    };
 
 /** Draft creation and re-anchoring intents of the Changes tab. */
 export type DraftComposer = {
@@ -125,5 +129,9 @@ function reinput(
   if (draft.destination === "pr") {
     return { ...base, destination: "pr" };
   }
-  return { ...base, destination: draft.destination, targetThreadId: draft.agent.targetThreadId };
+  return {
+    ...base,
+    destination: draft.destination,
+    targetThreadId: draft.agent.targetThreadId,
+  };
 }

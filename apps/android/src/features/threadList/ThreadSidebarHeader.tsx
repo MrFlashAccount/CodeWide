@@ -3,10 +3,10 @@ import {
   ThreadListHeaderAction,
   ThreadListHeaderRow,
 } from "../../presentation/navigation/ThreadListHeader";
-import { AppText as Text } from "../../ui/Typography";
 import { serverScopeIncludes } from "../../services/servers/serverScope";
 import { SidebarProjectHeader } from "../projects/SidebarProjectViews";
 import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
+import { CatalogTitle } from "../../ui/CatalogTitle";
 import { styles } from "./ThreadSidebar.styles";
 import type { ThreadSidebarProps } from "./ThreadSidebarContract";
 import { GlobalVoiceEntryAction } from "./GlobalVoiceEntryAction";
@@ -71,18 +71,13 @@ export function ThreadSidebarHeader({
             }
           />
         ) : mode === "archived" ? (
-          <Text
-            ellipsizeMode="tail"
-            numberOfLines={1}
-            style={styles.serverTitle}
-            testID="server-title"
-          >
+          <CatalogTitle layout={styles.serverTitle} testID="server-title">
             Archived threads
-          </Text>
+          </CatalogTitle>
         ) : (
-          <Text numberOfLines={1} style={styles.serverTitle} testID="server-title">
+          <CatalogTitle layout={styles.serverTitle} testID="server-title">
             Threads
-          </Text>
+          </CatalogTitle>
         )}
         <GlobalVoiceEntryAction {...globalVoice} />
         <ThreadFilterMenu

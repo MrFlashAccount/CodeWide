@@ -448,11 +448,21 @@ impl SyncHub {
     }
 
     /// Applies the host-owned rollout switch for new durable delegation.
-    /// Existing task wait/cancel and all compatibility tools remain enabled.
+    /// Existing task wait/cancel and all direct agent controls remain enabled.
     #[must_use]
     pub fn with_delegate_task_enabled(self, enabled: bool) -> Self {
         if let Some(orchestration) = &self.agents.orchestration {
             orchestration.set_delegate_task_enabled(enabled);
+        }
+        self
+    }
+
+    /// Applies the host-owned limit on agent nesting (`maxAgentDepth`) to new
+    /// `codewide_spawn_agent` and `codewide_delegate_task` admission.
+    #[must_use]
+    pub fn with_max_agent_depth(self, depth: usize) -> Self {
+        if let Some(orchestration) = &self.agents.orchestration {
+            orchestration.set_max_agent_depth(depth);
         }
         self
     }
@@ -483,7 +493,9 @@ impl SyncHub {
         let usage_pricing = registry.usage_pricing();
         let gateway = Arc::new(ClientWireGateway::new(registry, bindings.clone()));
         let registry = gateway.registry().clone();
-        let thread_view = ThreadViewService::new(gateway.clone());
+        let permission_profiles =
+            Arc::new(crate::agent::permission_profiles::ProfileObservations::default());
+        let thread_view = ThreadViewService::new(gateway.clone(), permission_profiles.clone());
         // The durable replay journal owns payload bytes. The live channel is
         // only a wake-up edge; tokio broadcast retains its full ring even
         // after every receiver has consumed an entry, so putting JSON Values
@@ -508,8 +520,6 @@ impl SyncHub {
         let usage_projector = Arc::new(std::sync::Mutex::new(
             crate::usage::LiveUsageProjector::new(store.clone(), usage_pricing),
         ));
-        let permission_profiles =
-            Arc::new(crate::agent::permission_profiles::ProfileObservations::default());
         // A passive shadow never executes requests, so it declares no tools
         // and answers no tool call.
         let agents = AgentComposition {
@@ -2313,14 +2323,20 @@ impl SyncHub {
         let Some(expected_turn_id) = params.get("expectedTurnId").and_then(Value::as_str) else {
             return send_rpc_error(socket, id, -32602, "expectedTurnId is required").await;
         };
-        let command = match self.turn_delivery.list(None).await.and_then(|commands| {
-            commands
-                .into_iter()
-                .find(|command| command.command_id == command_id)
-                .ok_or_else(|| {
-                    crate::store::StoreError::CorruptedIndex("queued command not found".into())
-                })
-        }) {
+        // A hidden child-result notice is not a client command: it is never
+        // steered into a running turn.
+        let command = match self
+            .turn_delivery
+            .client_list(None)
+            .await
+            .and_then(|commands| {
+                commands
+                    .into_iter()
+                    .find(|command| command.command_id == command_id)
+                    .ok_or_else(|| {
+                        crate::store::StoreError::CorruptedIndex("queued command not found".into())
+                    })
+            }) {
             Ok(command) if command.state == OutboxState::Queued => command,
             Ok(_) => {
                 return send_rpc_error(

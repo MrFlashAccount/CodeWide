@@ -19,7 +19,11 @@ const CHECK_BADGE_SIZE = 8;
 const EMPTY_COPY_MAX_WIDTH = 280;
 const EMPTY_MARK_SIZE = 64;
 
-/** PR list geometry: 64dp rows, 16dp inset, label-role section headers. */
+/**
+ * PR list geometry: account problem rows, label-role section headers, the
+ * provider mark and check dot. PR rows take their frame and typography from
+ * the shared catalog row.
+ */
 export const listStyles = StyleSheet.create({
   age: {
     ...typeScale.label,
@@ -99,24 +103,23 @@ export const listStyles = StyleSheet.create({
     flexGrow: 1,
     paddingBottom: catalogModeBarContentInset,
   },
+  // The linked-thread count in a row's subtitle line: link glyph and number.
+  linkedCount: {
+    alignItems: "center",
+    columnGap: spacing.optical,
+    flexDirection: "row",
+    flexShrink: 0,
+  },
   meta: {
     ...typeScale.label,
     color: colors.textMuted,
     flexShrink: 1,
-  },
-  metaRow: {
-    alignItems: "center",
-    columnGap: spacing.compact,
-    flexDirection: "row",
   },
   notice: {
     ...typeScale.label,
     color: colors.textMuted,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
-  },
-  pressed: {
-    backgroundColor: colors.surfaceHover,
   },
   problemError: {
     ...typeScale.title,
@@ -144,9 +147,6 @@ export const listStyles = StyleSheet.create({
     position: "relative",
     width: iconSize.inline,
   },
-  searchOverlay: {
-    ...StyleSheet.absoluteFill,
-  },
   section: {
     alignItems: "center",
     columnGap: spacing.xs,
@@ -165,15 +165,5 @@ export const listStyles = StyleSheet.create({
     ...typeScale.body,
     color: colors.text,
     flexShrink: 1,
-  },
-  // In a row title line the title takes the free width so the age sits on the trailing edge.
-  titleFill: {
-    flex: 1,
-    minWidth: 0,
-  },
-  titleRow: {
-    alignItems: "center",
-    columnGap: spacing.xs,
-    flexDirection: "row",
   },
 });

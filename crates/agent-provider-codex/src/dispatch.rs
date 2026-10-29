@@ -5,6 +5,13 @@
 //! companion reconnect can replace the App Server runtime while indexed
 //! history keeps the chat readable, so the mutation rehydrates that runtime
 //! (without returning history) before the one retry.
+//!
+//! A turn started on a thread this connection is not subscribed to (a thread
+//! the shared App Server still holds loaded after a companion restart) is
+//! accepted without that rejection, but its events go only to subscribed
+//! connections. `turn/start` therefore subscribes first, through the same
+//! history-free resume, unless the current connection generation already
+//! subscribed to the thread (`subscriptions`).
 
 use std::sync::Arc;
 
@@ -15,6 +22,7 @@ use agent_transport::UpstreamHandle;
 
 use crate::{
     account_pool::{AccountPoolError, AccountPoolService},
+    subscriptions::ThreadSubscriptions,
     transport_error,
 };
 
@@ -32,25 +40,63 @@ fn pool_error(error: AccountPoolError) -> DispatchError {
 pub(super) async fn turn_start_with_resume(
     upstream: &UpstreamHandle,
     account_pool: Option<&Arc<AccountPoolService>>,
+    subscriptions: &ThreadSubscriptions,
     request: Value,
 ) -> Result<Value, DispatchError> {
+    let thread_id = request
+        .pointer("/params/threadId")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    if let Some(thread_id) = &thread_id {
+        // A rejected subscription is not fatal: the turn start below reports
+        // the thread's real state (and resumes an unloaded thread itself).
+        ensure_subscribed(upstream, account_pool, subscriptions, thread_id).await?;
+    }
     let response = turn_start_once(upstream, account_pool, request.clone()).await?;
-    let Some(thread_id) = request.pointer("/params/threadId").and_then(Value::as_str) else {
+    let Some(thread_id) = thread_id else {
         return Ok(response);
     };
-    if !is_thread_not_found_response(&response, thread_id) {
+    if !is_thread_not_found_response(&response, &thread_id) {
         return Ok(response);
     }
-    let resumed = resume_thread_runtime(upstream, account_pool, thread_id).await?;
+    let generation = upstream.generation();
+    let resumed = resume_thread_runtime(upstream, account_pool, &thread_id).await?;
     if resumed.get("error").is_some() {
         return Ok(resumed);
     }
+    subscriptions.record(generation, &thread_id);
     turn_start_once(upstream, account_pool, request).await
+}
+
+/// Subscribes this connection to the thread's events with a history-free
+/// `thread/resume`, unless the current connection generation already did.
+/// Returns the App Server's answer to that resume, `None` when none was
+/// needed.
+///
+/// # Errors
+///
+/// Returns the transport or admission failure of the resume request.
+pub(super) async fn ensure_subscribed(
+    upstream: &UpstreamHandle,
+    account_pool: Option<&Arc<AccountPoolService>>,
+    subscriptions: &ThreadSubscriptions,
+    thread_id: &str,
+) -> Result<Option<Value>, DispatchError> {
+    let generation = upstream.generation();
+    if subscriptions.contains(generation, thread_id) {
+        return Ok(None);
+    }
+    let resumed = resume_thread_runtime(upstream, account_pool, thread_id).await?;
+    if resumed.get("error").is_none() {
+        subscriptions.record(generation, thread_id);
+    }
+    Ok(Some(resumed))
 }
 
 pub(super) async fn settings_update_with_resume(
     upstream: &UpstreamHandle,
     account_pool: Option<&Arc<AccountPoolService>>,
+    subscriptions: &ThreadSubscriptions,
     request: Value,
 ) -> Result<Value, DispatchError> {
     let response = upstream
@@ -66,10 +112,12 @@ pub(super) async fn settings_update_with_resume(
     // Settings require a loaded runtime even when indexed history is readable.
     // The exact thread-not-found rejection proves no settings were applied, so
     // resume without history and retry once, before Global Voice starts audio.
+    let generation = upstream.generation();
     let resumed = resume_thread_runtime(upstream, account_pool, thread_id).await?;
     if resumed.get("error").is_some() {
         return Ok(resumed);
     }
+    subscriptions.record(generation, thread_id);
     upstream
         .request(request)
         .await
@@ -79,6 +127,7 @@ pub(super) async fn settings_update_with_resume(
 pub(super) async fn realtime_start_with_resume(
     upstream: &UpstreamHandle,
     account_pool: Option<&Arc<AccountPoolService>>,
+    subscriptions: &ThreadSubscriptions,
     request: Value,
 ) -> Result<Value, DispatchError> {
     let response = upstream
@@ -97,6 +146,7 @@ pub(super) async fn realtime_start_with_resume(
     }
     // `thread/realtime/start` is rejected before a live session exists, so
     // rehydrating the indexed thread and retrying once cannot duplicate audio.
+    let generation = upstream.generation();
     let resumed = resume_thread_runtime(upstream, account_pool, &thread_id).await?;
     if resumed.get("error").is_some() {
         return Ok(if is_rollout_not_found_response(&resumed, &thread_id) {
@@ -105,6 +155,7 @@ pub(super) async fn realtime_start_with_resume(
             resumed
         });
     }
+    subscriptions.record(generation, &thread_id);
     let retried = upstream
         .request(request)
         .await

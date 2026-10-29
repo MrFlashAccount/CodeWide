@@ -24,6 +24,7 @@ import { ToolCallProtocolBlock } from "./ToolContent";
 import { UnknownProtocolBlock } from "./UnknownProtocolBlock";
 import { WebSearchProtocolBlock } from "./WebSearchProtocolBlock";
 import type { TransferAccess } from "../../../data/private-transfer";
+import { surfaceToneMessageStyle, useSurfaceTone } from "../../../ui/surfaceTone";
 
 export function ProtocolBlock({
   block,
@@ -35,10 +36,11 @@ export function ProtocolBlock({
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
 }) {
   const activeToolCall = useContext(ActiveToolCallContext);
+  const tone = useSurfaceTone();
   if (block.kind === "userMessage") {
     const content = Array.isArray(block.raw.content) ? block.raw.content : [];
     return (
-      <View style={styles.userBubble} testID="user-bubble">
+      <View style={[styles.userBubble, surfaceToneMessageStyle(tone)]} testID="user-bubble">
         <UserMessageContent
           content={content}
           projectedAttachments={block.raw.codewideAttachments}

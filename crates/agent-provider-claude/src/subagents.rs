@@ -56,6 +56,10 @@ pub struct IndexedSubagent {
     /// records none.
     #[serde(default)]
     pub model: Option<String>,
+    /// The reasoning effort recorded on that same answer; `None` when it
+    /// records none.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 struct Spawn<'a> {
@@ -121,6 +125,7 @@ pub fn index(read: &NativeSessionReadResult) -> Vec<IndexedSubagent> {
                     .is_some_and(|spawn| spawn.status == SubagentStatus::Running)
                     || last.is_some_and(|turn| turn.status == TurnStatus::InProgress),
                 model: subagent.model.clone(),
+                effort: subagent.effort.clone(),
             }
         })
         .collect()
@@ -197,9 +202,13 @@ impl ChildThread {
     /// permission mode, and its transcript records no mode of its own. Its
     /// model is the one its transcript last answered with (an agent
     /// definition may pin another model than the parent's), else the
-    /// parent's. Effort and service tier are not reported: the transcript
-    /// records neither and the adapter supports no service tier, so the
-    /// parent's values would be a guess.
+    /// parent's. Its effort is the one recorded on that answer: Claude Code
+    /// resolves it per sub-agent (an explicit `effort` of the spawning
+    /// `Agent` call, else the agent definition's, else the session's effort
+    /// for the agent's model, which a model without effort support drops and
+    /// an experiment may lower), so the parent's effort is never substituted
+    /// and an unrecorded one stays unknown. Service tier is not reported: the
+    /// adapter supports none.
     fn settings(&self) -> ThreadSettings {
         ThreadSettings {
             model: self
@@ -207,7 +216,7 @@ impl ChildThread {
                 .model
                 .clone()
                 .unwrap_or_else(|| self.parent_settings.model.clone()),
-            effort: None,
+            effort: self.subagent.effort.clone(),
             permission_profile: self.parent_settings.permission_profile.clone(),
             service_tier: None,
         }
@@ -310,6 +319,7 @@ mod tests {
             updated_at: Some(updated_at),
             running,
             model: None,
+            effort: None,
         };
         let working = [subagent("a1", true, 20)];
         assert!(listed_differently(&[], &working));
@@ -334,6 +344,7 @@ mod tests {
             updated_at: Some(20),
             running: true,
             model: model.map(Into::into),
+            effort: None,
         };
         assert!(!listed_differently(
             &[subagent(None)],
@@ -342,6 +353,14 @@ mod tests {
     }
 
     fn child(model: Option<&str>, parent_settings: ThreadSettings) -> ChildThread {
+        child_with_effort(model, None, parent_settings)
+    }
+
+    fn child_with_effort(
+        model: Option<&str>,
+        effort: Option<&str>,
+        parent_settings: ThreadSettings,
+    ) -> ChildThread {
         let parent = AppThreadId::from_static("5f0c2a1e-3b4d-4e6f-8a9b-0c1d2e3f4a5b");
         ChildThread {
             thread_id: child_thread_id(&parent, "a1").unwrap_or_else(|| parent.clone()),
@@ -357,6 +376,7 @@ mod tests {
                 updated_at: Some(20),
                 running: false,
                 model: model.map(Into::into),
+                effort: effort.map(Into::into),
             },
             turns: Vec::new(),
             parent_settings,
@@ -390,6 +410,32 @@ mod tests {
     }
 
     #[test]
+    fn a_child_reports_the_effort_its_transcript_recorded_not_its_parents() {
+        let provider = ProviderId::from_static("claude");
+        // `full_access_parent` runs at `high`; the sub-agent ran at `low`
+        // (an explicit `Agent` effort or its definition's).
+        let settings =
+            child_with_effort(Some("claude-opus-5-5"), Some("low"), full_access_parent())
+                .thread(&provider)
+                .settings;
+        assert_eq!(settings.effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn a_child_whose_transcript_records_no_effort_reports_none() {
+        let provider = ProviderId::from_static("claude");
+        let settings = child_with_effort(
+            Some("claude-haiku-4-5-20251001"),
+            None,
+            full_access_parent(),
+        )
+        .thread(&provider)
+        .settings;
+        assert_eq!(settings.model, "claude-haiku-4-5-20251001");
+        assert_eq!(settings.effort, None);
+    }
+
+    #[test]
     fn a_child_whose_transcript_records_no_model_reports_its_parents() {
         let provider = ProviderId::from_static("claude");
         let settings = child(None, full_access_parent()).thread(&provider).settings;
@@ -410,6 +456,7 @@ mod tests {
             updated_at: Some(20),
             running,
             model: None,
+            effort: None,
         };
         for running in [true, false] {
             let row = thread_metadata(&parent, "/repo", 1, &subagent(running));

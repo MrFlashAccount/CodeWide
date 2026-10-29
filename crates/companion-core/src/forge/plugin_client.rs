@@ -29,7 +29,7 @@ use tracing::info;
 use super::limits;
 
 /// Every capability this companion understands, sent in `initialize`.
-const KNOWN_CAPABILITIES: [&str; 11] = [
+const KNOWN_CAPABILITIES: [&str; 13] = [
     capability::AUTH,
     capability::LIST,
     capability::SEARCH,
@@ -41,6 +41,8 @@ const KNOWN_CAPABILITIES: [&str; 11] = [
     capability::VIEWED,
     capability::RESOLVE,
     capability::SCENARIO_CONTEXT,
+    capability::CONVERSATION,
+    capability::COMMENTS,
 ];
 
 /// How to start one plugin.
@@ -176,11 +178,10 @@ impl PluginSession {
                 provider: spec.plugin_id.clone(),
                 forge_name: String::new(),
                 version: String::new(),
-                icon: forge_protocol::ProviderIcon {
-                    icon_key: String::new(),
-                    glyph: None,
-                },
+                default_host: None,
+                provider_icon: None,
                 capabilities: Vec::new(),
+                media_hosts: Vec::new(),
             },
             poisoned: false,
             _permit: permit,

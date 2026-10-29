@@ -1,8 +1,9 @@
-//! Task-addressed wait, completion delivery, and public snapshot projection.
+//! Task-addressed wait, result acknowledgement, and public snapshot projection.
 //!
 //! The durable journal owns coordination state while provider history remains
 //! authoritative for final text and cost. Waiting is anchored to the calling
-//! turn and acknowledges the fallback completion delivery exactly once.
+//! turn; a terminal result it returns acknowledges the task's initial request
+//! (and retracts a notice that is still queued).
 
 use super::{
     Caller, OrchestrationService, ToolError,
@@ -11,12 +12,15 @@ use super::{
         PublicTaskStatus, RecoveryAction, TaskId, TaskSnapshot, TaskState, WorkspaceClaimState,
     },
     tools::TaskWaitRequest,
+    work_requests::{AckSource, WorkRequestId},
 };
 use crate::{
     agent::model::{
-        AgentItem, ItemsView, MessagePhase, SortDirection, ThreadTurnsParams, TurnId, TurnStatus,
+        AgentItem, AppThreadId, ItemsView, MessagePhase, ProviderId, SortDirection,
+        ThreadTurnsParams, TurnId, TurnStatus,
     },
     store::OutboxState,
+    turn_delivery::retract_notice_in_write,
 };
 
 pub(super) enum TerminalPayload {
@@ -80,12 +84,7 @@ impl OrchestrationService {
         let wait = async {
             loop {
                 let snapshot = self.task_snapshot(task_id).await?;
-                if matches!(
-                    snapshot.status,
-                    PublicTaskStatus::Succeeded
-                        | PublicTaskStatus::Failed
-                        | PublicTaskStatus::Cancelled
-                ) {
+                if snapshot.status.is_terminal() {
                     return Ok(snapshot);
                 }
                 tokio::select! {
@@ -103,12 +102,18 @@ impl OrchestrationService {
             Ok(result) => result,
             Err(_) => self.task_snapshot(task_id).await,
         }?;
-        if matches!(
-            snapshot.status,
-            PublicTaskStatus::Succeeded | PublicTaskStatus::Failed | PublicTaskStatus::Cancelled
-        ) {
+        if snapshot.status.is_terminal() {
+            let bundle = self
+                .task_journal
+                .get(task_id)
+                .await
+                .map_err(ToolError::from)?;
             self.task_journal
-                .acknowledge_delivery(task_id)
+                .acknowledge(
+                    vec![WorkRequestId::from_delivery(&bundle.task.delivery_id)],
+                    AckSource::WaitTask,
+                    retract_notice_in_write,
+                )
                 .await
                 .map_err(ToolError::from)?;
         }
@@ -121,7 +126,6 @@ impl OrchestrationService {
             .get(task_id)
             .await
             .map_err(ToolError::from)?;
-        let mut learned_provider_turn = false;
         if !bundle.task.state.is_terminal()
             && let Some(command) = self
                 .turn_delivery
@@ -129,28 +133,6 @@ impl OrchestrationService {
                 .await
                 .map_err(|error| ToolError::message(error.to_string()))?
         {
-            if let (Some(turn_id), Some(child)) = (
-                command.delivered_turn_id.as_deref().and_then(TurnId::parse),
-                bundle.attempt.state.child_thread_id().cloned(),
-            ) {
-                self.tracker
-                    .authorize(child.as_str(), bundle.task.provider.clone());
-                self.tracker.register(
-                    child.as_str(),
-                    super::coordinator::watch::ChildState::Running {
-                        turn_id: Some(turn_id.as_str().to_owned()),
-                    },
-                );
-                if let Some(updated) = self
-                    .task_journal
-                    .observe_started(&bundle.task.provider, child.as_str(), turn_id)
-                    .await
-                    .map_err(ToolError::from)?
-                {
-                    learned_provider_turn = bundle.attempt.state.provider_turn_id().is_none();
-                    bundle = updated;
-                }
-            }
             match command.state {
                 OutboxState::Uncertain if !command.has_in_flight_claim() => {
                     bundle = self
@@ -169,14 +151,6 @@ impl OrchestrationService {
                 OutboxState::Queued | OutboxState::Delivered | OutboxState::Uncertain => {}
             }
         }
-        if bundle.task.state == TaskState::Cancelling && learned_provider_turn {
-            self.resume_cancellation(&bundle).await?;
-            bundle = self
-                .task_journal
-                .get(task_id)
-                .await
-                .map_err(ToolError::from)?;
-        }
         if let Some(reconciled) = self.reconcile_authoritative_turn(&bundle).await? {
             bundle = reconciled;
         }
@@ -190,6 +164,7 @@ impl OrchestrationService {
             TaskState::Cancelling => PublicTaskStatus::Cancelling,
             TaskState::Succeeded => PublicTaskStatus::Succeeded,
             TaskState::Failed => PublicTaskStatus::Failed,
+            TaskState::Interrupted => PublicTaskStatus::Interrupted,
             TaskState::Cancelled => PublicTaskStatus::Cancelled,
             TaskState::Admitted
             | TaskState::PreparingWorkspace
@@ -233,8 +208,21 @@ impl OrchestrationService {
                 cost: None,
             });
         };
-        let Some(provider) = self.gateway.registry().get(&bundle.task.provider) else {
-            return Ok(TerminalPayload::Unavailable);
+        Ok(self
+            .turn_payload(&bundle.task.provider, child, turn_id)
+            .await)
+    }
+
+    /// The final text and cost of one terminal provider turn, read from
+    /// authoritative history.
+    pub(super) async fn turn_payload(
+        &self,
+        provider: &ProviderId,
+        child: &AppThreadId,
+        turn_id: &TurnId,
+    ) -> TerminalPayload {
+        let Some(provider) = self.gateway.registry().get(provider) else {
+            return TerminalPayload::Unavailable;
         };
         let turns = match provider
             .thread_turns(ThreadTurnsParams {
@@ -250,10 +238,10 @@ impl OrchestrationService {
             Err(error) => {
                 tracing::warn!(
                     err = ?error,
-                    task_id = %bundle.task.task_id.as_str(),
-                    "terminal delegated result payload is temporarily unreadable"
+                    child_thread_id = %child,
+                    "terminal child result payload is temporarily unreadable"
                 );
-                return Ok(TerminalPayload::Unavailable);
+                return TerminalPayload::Unavailable;
             }
         };
         let Some(turn) = turns
@@ -261,10 +249,10 @@ impl OrchestrationService {
             .into_iter()
             .find(|turn| &turn.turn_id == turn_id)
         else {
-            return Ok(TerminalPayload::Unavailable);
+            return TerminalPayload::Unavailable;
         };
         if turn.status == TurnStatus::InProgress {
-            return Ok(TerminalPayload::Unavailable);
+            return TerminalPayload::Unavailable;
         }
         let mut final_answer = None;
         let mut commentary = None;
@@ -280,7 +268,7 @@ impl OrchestrationService {
             .or(commentary)
             .or_else(|| turn.error.map(|error| error.message));
         let cost = turn.usage.and_then(|usage| usage.cost);
-        Ok(TerminalPayload::Ready { message, cost })
+        TerminalPayload::Ready { message, cost }
     }
 
     pub(super) fn signal_tasks(&self) {

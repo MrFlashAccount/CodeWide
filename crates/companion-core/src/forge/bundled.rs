@@ -10,14 +10,13 @@
 
 use std::path::{Path, PathBuf};
 
-/// A provider compiled into the companion's provider list.
+/// A provider compiled into the companion's provider list: only which
+/// plugin is bundled and where it sorts. Its display name, default host and
+/// icon are the plugin's own `initialize` declaration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BuiltIn {
     pub plugin_id: &'static str,
     pub binary: &'static str,
-    pub forge_name: &'static str,
-    pub icon_key: &'static str,
-    pub default_host: &'static str,
     pub priority: i32,
 }
 
@@ -26,9 +25,6 @@ pub struct BuiltIn {
 pub const BUILT_INS: [BuiltIn; 1] = [BuiltIn {
     plugin_id: "github",
     binary: "codewide-forge-github",
-    forge_name: "GitHub",
-    icon_key: "github",
-    default_host: "github.com",
     priority: 100,
 }];
 

@@ -180,27 +180,72 @@ export function parseSubmitOutcome(value: unknown): SubmitOutcome | null {
   });
 }
 
-/** Parses `companion/pullRequest/scenario/start`. */
-export function parseScenarioStart(
-  value: unknown,
-): { readonly created: boolean; readonly threadId: ThreadId } | null {
-  return parseThreadCreation(value);
+/**
+ * A local checkout the Companion suggests for a new PR review chat. `path` is admitted by
+ * construction (a project root or a known thread directory).
+ */
+export type ReviewChatWorkspaceCandidate = {
+  readonly path: string;
+  readonly reason: "pullRequestBranch" | "repository";
+};
+
+/**
+ * No live review chat exists and the client chooses its directory. Candidates are ranked; the
+ * first is the default, and an empty list offers none.
+ */
+type ReviewChatNeedsWorkspace = {
+  readonly candidates: readonly ReviewChatWorkspaceCandidate[];
+  readonly kind: "needsWorkspace";
+};
+
+/** `chat/ensure` with `workspace`: the canonical thread, or the choice it needs first. */
+export type ReviewChatOpening =
+  | ReviewChatNeedsWorkspace
+  | { readonly created: boolean; readonly kind: "ready"; readonly threadId: ThreadId };
+
+/** `scenario/start` with a `workspace` target: the started thread, or the choice it needs first. */
+export type ScenarioStartOutcome =
+  | ReviewChatNeedsWorkspace
+  | { readonly created: boolean; readonly kind: "started"; readonly threadId: ThreadId };
+
+function needsWorkspace(result: Readonly<Record<string, unknown>>): ReviewChatNeedsWorkspace {
+  return {
+    candidates: list(result.candidates, "candidates", (entry, path) => {
+      const candidate = record(entry, path);
+      return {
+        path: nonEmptyText(candidate.path, `${path}.path`),
+        reason: oneOf(candidate.reason, ["pullRequestBranch", "repository"], `${path}.reason`),
+      };
+    }),
+    kind: "needsWorkspace",
+  };
 }
 
-/** Parses the canonical, message-free PR conversation returned by `chat/ensure`. */
-export function parseReviewChatEnsure(
-  value: unknown,
-): { readonly created: boolean; readonly threadId: ThreadId } | null {
-  return parseThreadCreation(value);
-}
-
-function parseThreadCreation(
-  value: unknown,
-): { readonly created: boolean; readonly threadId: ThreadId } | null {
+/** Parses `companion/pullRequest/scenario/start` sent with a `workspace` target. */
+export function parseScenarioStart(value: unknown): ScenarioStartOutcome | null {
   return decodeOrNull(() => {
     const result = record(value, "result");
+    if (oneOf(result.kind, ["started", "needsWorkspace"], "kind") === "needsWorkspace") {
+      return needsWorkspace(result);
+    }
     return {
       created: flag(result.created, "created"),
+      kind: "started",
+      threadId: threadId(result.threadId, "threadId"),
+    };
+  });
+}
+
+/** Parses the canonical, message-free PR conversation returned by `chat/ensure` with `workspace`. */
+export function parseReviewChatEnsure(value: unknown): ReviewChatOpening | null {
+  return decodeOrNull(() => {
+    const result = record(value, "result");
+    if (oneOf(result.kind, ["ready", "needsWorkspace"], "kind") === "needsWorkspace") {
+      return needsWorkspace(result);
+    }
+    return {
+      created: flag(result.created, "created"),
+      kind: "ready",
       threadId: threadId(result.threadId, "threadId"),
     };
   });

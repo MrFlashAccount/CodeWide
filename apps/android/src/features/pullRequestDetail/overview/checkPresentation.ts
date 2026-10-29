@@ -1,23 +1,21 @@
 import type { CheckItem, CheckSummary } from "../../../data/forgePullRequestContract";
+import { colors } from "../../../theme";
 
-/** A summary the forge could count; an unavailable one is shown by its badge and reason. */
-type CountedChecks = Exclude<CheckSummary, { readonly state: "unavailable" }>;
-
-/** `1 failing · 6 passed`. */
-export function checksSummaryLine(summary: CountedChecks): string {
-  if (summary.state === "none") {
-    return "No checks";
-  }
-  const parts: string[] = [];
-  if (summary.failing > 0) {
-    parts.push(`${String(summary.failing)} failing`);
-  }
-  if (summary.pending > 0) {
-    parts.push(`${String(summary.pending)} pending`);
-  }
-  parts.push(`${String(summary.passed)} passed`);
-  return parts.join(" · ");
-}
+/** Icon and semantic color of one check's state; the check name always accompanies it. */
+export const CHECK_STATE_GLYPHS = {
+  cancelled: {
+    color: colors.textMuted,
+    icon: "remove-circle-outline",
+    label: "cancelled",
+  },
+  failed: { color: colors.error, icon: "close", label: "failed" },
+  passed: { color: colors.success, icon: "checkmark", label: "passed" },
+  pending: { color: colors.warning, icon: "ellipse-outline", label: "pending" },
+  skipped: { color: colors.textMuted, icon: "remove", label: "skipped" },
+} as const satisfies Record<
+  CheckItem["state"],
+  { readonly color: string; readonly icon: string; readonly label: string }
+>;
 
 /**
  * Label of the collapsed passed/skipped row. The forge's summary may count more

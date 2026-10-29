@@ -258,11 +258,47 @@ describe("background task output", () => {
     result: { taskId: "b1", command: null, status, text: "", nextOffset: null, sizeBytes: 0 },
   });
 
-  it("keeps backgroundTaskId optional on a command item", () => {
+  it("keeps the background marker optional on a command item", () => {
     expect(checkMessage(command({}))).toEqual([]);
-    expect(checkMessage(command({ backgroundTaskId: "bd3cb8oli" }))).toEqual([]);
-    expect(checkMessage(command({ backgroundTaskId: 7 }))).toEqual([
-      "$.params.item.backgroundTaskId: expected string",
+    expect(
+      checkMessage(
+        command({
+          background: {
+            description: "Run the tests",
+            startedAt: 1,
+            status: "running",
+            taskId: "bd3cb8oli",
+          },
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      checkMessage(
+        command({ background: { description: null, startedAt: 1, status: "running", taskId: 7 } }),
+      ),
+    ).toEqual(["$.params.item.background.taskId: expected string"]);
+  });
+
+  it("allows an end time and exit code only on the states that ended", () => {
+    const background = (state: Record<string, unknown>): string[] =>
+      checkMessage(
+        command({ background: { description: null, startedAt: 1, taskId: "b1", ...state } }),
+      );
+    expect(background({ endedAt: 2, exitCode: 0, status: "completed" })).toEqual([]);
+    expect(background({ endedAt: 2, exitCode: null, status: "failed" })).toEqual([]);
+    expect(background({ endedAt: 2, status: "stopped" })).toEqual([]);
+    expect(background({ status: "unknown" })).toEqual([]);
+    expect(background({ exitCode: 0, status: "completed" })).toEqual([
+      "$.params.item.background.endedAt: missing",
+    ]);
+    expect(background({ endedAt: 2, status: "running" })).toEqual([
+      "$.params.item.background.endedAt: undeclared field",
+    ]);
+    expect(background({ endedAt: 2, exitCode: 1, status: "stopped" })).toEqual([
+      "$.params.item.background.exitCode: undeclared field",
+    ]);
+    expect(background({ status: "killed" })).toEqual([
+      "$.params.item.background.status: unknown variant killed",
     ]);
   });
 

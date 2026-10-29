@@ -118,7 +118,7 @@ impl StoppedShellCommand<'_> {
             output: Some(super::tools::keep_tail(self.stopped.message, output_limit)),
             exit_code: None,
             duration_ms: Some(self.duration_ms),
-            background_task_id: None,
+            background: None,
         }
     }
 }

@@ -8,8 +8,11 @@
 //! exactly one trigger, enforced here: review comments and verdicts only
 //! through `companion/pullRequest/review/submit`, catalog actions only
 //! through `companion/pullRequest/action/run` with sufficient
-//! confirmation, viewed marks only through `companion/pullRequest/viewed/set`.
-//! See `CONTEXT.md` and `docs/forge-plugins.md`.
+//! confirmation, viewed marks only through `companion/pullRequest/viewed/set`,
+//! conversation comments only through `companion/pullRequest/comment/create`
+//! and review thread replies only through
+//! `companion/pullRequest/reviewThread/reply`.
+//! See `CONTEXT.md`, `docs/forge-plugins.md` and `docs/forge-conversation.md`.
 
 pub mod accounts;
 pub mod action_run;
@@ -18,18 +21,26 @@ pub mod attention;
 pub mod auth;
 pub mod bundled;
 pub mod cache;
+pub mod chat_workspace;
+pub mod comments;
+pub mod conversation;
+pub mod declarations;
 pub mod detection;
 pub mod directory;
 pub mod errors;
+pub mod icons;
+pub mod identity;
 pub mod ids;
 pub mod limits;
 pub mod links;
+pub mod media;
 pub mod plugin_client;
 pub mod pr_catalog;
 pub mod providers;
 pub mod reads;
 pub mod registry;
 pub mod review_chat;
+pub mod scenario_runs;
 pub mod scenarios;
 pub mod submit;
 pub mod tools;
@@ -48,7 +59,10 @@ use self::{
     auth::AuthFlows,
     bundled::BundledPlugins,
     cache::ForgeCache,
+    declarations::Declarations,
     errors::ForgeError,
+    icons::HttpsIconFetcher,
+    identity::ProviderIdentities,
     ids::{PullRequestIdentity, PullRequestKey},
     links::Links,
     plugin_client::{PluginSession, ProcessLimiter},
@@ -115,12 +129,23 @@ impl ForgeEvents {
         self.send(json!({"scope": "pullRequest", "pullRequest": key}))
             .await;
     }
+
+    /// Only the pull request's scenario states changed (a run's turn
+    /// started or ended); no plugin read is stale.
+    pub async fn scenarios(&self, key: &PullRequestKey) {
+        self.send(json!({"scope": "scenarios", "pullRequest": key}))
+            .await;
+    }
 }
 
 /// Everything the forge flows share.
 pub struct ForgeContext {
     pub providers: ProviderCatalog,
     pub limiter: ProcessLimiter,
+    /// Each provider's last `initialize` declaration.
+    pub declarations: Declarations,
+    /// Each provider's last declared display identity with its resolved icon.
+    pub identities: ProviderIdentities,
     pub accounts: Accounts,
     pub attention: AttentionStore,
     pub links: Links,
@@ -130,6 +155,7 @@ pub struct ForgeContext {
     pub flows: AuthFlows,
     pub review: Arc<ReviewService>,
     pub review_chats: review_chat::ReviewChats,
+    pub scenario_runs: scenario_runs::ScenarioRuns,
     pub agents: Option<crate::agent_bridge::AgentBridge>,
     pub workspaces: Option<Arc<crate::workspaces::WorkspaceAdmission>>,
     pub vcs: Option<Arc<crate::vcs::VcsService>>,
@@ -145,9 +171,12 @@ impl ForgeContext {
     /// or the mapped start failure.
     pub async fn session(&self, plugin_id: &str) -> Result<PluginSession, ForgeError> {
         let spec = self.providers.spec(plugin_id)?;
-        PluginSession::open(&spec, &self.limiter)
+        let session = PluginSession::open(&spec, &self.limiter)
             .await
-            .map_err(|error| ForgeError::from_plugin(plugin_id, None, error))
+            .map_err(|error| ForgeError::from_plugin(plugin_id, None, error))?;
+        self.declarations.record(plugin_id, session.info());
+        self.identities.record(&spec, session.info()).await;
+        Ok(session)
     }
 
     /// The account that reads a pull request: the one that listed it, else
@@ -240,6 +269,11 @@ impl ForgeService {
         let context = Arc::new(ForgeContext {
             providers,
             limiter: ProcessLimiter::default(),
+            declarations: Declarations::default(),
+            identities: ProviderIdentities::new(
+                deps.store.clone(),
+                Arc::new(HttpsIconFetcher::default()),
+            ),
             accounts: Accounts::new(deps.store.clone()),
             attention: AttentionStore::new(deps.store.clone()),
             links: Links::new(deps.store.clone()),
@@ -248,6 +282,7 @@ impl ForgeService {
             events: deps.events,
             flows: AuthFlows::default(),
             review: deps.review,
+            scenario_runs: scenario_runs::ScenarioRuns::new(deps.store.clone()),
             review_chats: review_chat::ReviewChats::new(deps.store),
             agents: deps.agents,
             workspaces: deps.workspaces,
@@ -291,6 +326,8 @@ impl ForgeService {
                 | "companion/pullRequests/search"
                 | "companion/pullRequest/read"
                 | "companion/pullRequest/activity/read"
+                | "companion/pullRequest/conversation/read"
+                | "companion/pullRequest/scenarios/read"
                 | "companion/pullRequest/files/read"
                 | "companion/review/hunks/read"
                 | "companion/review/drafts/read"
@@ -312,10 +349,16 @@ impl ForgeService {
             "companion/forge/auth/cancel" => auth::cancel(context, params).await,
             "companion/forge/auth/submitToken" => auth::submit_token(context, params).await,
             "companion/forge/account/disconnect" => auth::disconnect(context, params).await,
+            "companion/forge/account/setEnabled" => {
+                directory::set_account_enabled(context, params).await
+            }
             "companion/pullRequests/list" => reads::list(context, params).await,
             "companion/pullRequests/search" => reads::search(context, params).await,
             "companion/pullRequest/read" => reads::overview(context, params).await,
             "companion/pullRequest/activity/read" => reads::activity(context, params).await,
+            "companion/pullRequest/conversation/read" => conversation::read(context, params).await,
+            "companion/pullRequest/comment/create" => comments::create(context, params).await,
+            "companion/pullRequest/reviewThread/reply" => comments::reply(context, params).await,
             "companion/pullRequest/files/read" => reads::files(context, params).await,
             "companion/pullRequest/action/run" => action_run::run(context, params).await,
             "companion/pullRequest/review/submit" => submit::submit(context, params).await,
@@ -325,6 +368,7 @@ impl ForgeService {
             "companion/pullRequest/links/set" => scenarios::links_set(context, params).await,
             "companion/pullRequest/chat/ensure" => review_chat::ensure(context, params).await,
             "companion/pullRequest/scenario/start" => scenarios::start(context, params).await,
+            "companion/pullRequest/scenarios/read" => scenario_runs::read(context, params).await,
             _ => Err(ForgeError::invalid(format!(
                 "unknown forge method {method}"
             ))),
@@ -373,9 +417,17 @@ impl ForgeService {
         .await
     }
 
-    /// Observes a client-wire event for branch detection.
+    /// Routes one media URL of the companion media path: forge-hosted media
+    /// of a connected account are read through its plugin.
+    pub async fn route_media(&self, url: &url::Url) -> media::MediaRoute {
+        media::route(&self.context, url).await
+    }
+
+    /// Observes a client-wire event for branch detection and scenario
+    /// state changes.
     pub fn observe_event(self: &Arc<Self>, payload: &Value) {
         detection::observe(&self.context, payload);
+        scenario_runs::observe(&self.context, payload);
     }
 }
 

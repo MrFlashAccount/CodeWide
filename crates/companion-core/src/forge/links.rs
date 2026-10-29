@@ -222,12 +222,69 @@ impl Links {
     }
 }
 
+/// Orders one thread's links for its badges and composer chip: the pull
+/// request whose canonical review chat is this thread first, then the most
+/// recently linked. Ties keep storage (pull request key) order.
+#[must_use]
+pub fn by_relevance(
+    mut links: Vec<&LinkRecord>,
+    is_review_chat: impl Fn(&LinkRecord) -> bool,
+) -> Vec<&LinkRecord> {
+    links.sort_by_cached_key(|link| {
+        (
+            std::cmp::Reverse(is_review_chat(link)),
+            std::cmp::Reverse(link.linked_at.clone()),
+        )
+    });
+    links
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
     use forge_protocol::ForgePrRef;
 
     use super::*;
+
+    fn record(number: &str, linked_at: &str) -> LinkRecord {
+        LinkRecord {
+            version: LINK_VERSION,
+            pull_request: PullRequestKey::issue(
+                "github",
+                &ForgePrRef {
+                    host: "github.com".into(),
+                    repository: "o/r".into(),
+                    number: number.into(),
+                },
+            ),
+            thread_id: "thread-1".into(),
+            source: LinkSource::Branch,
+            linked_at: linked_at.into(),
+            plugin_id: "github".into(),
+            number: number.into(),
+            last_state: None,
+        }
+    }
+
+    #[test]
+    fn the_review_chat_link_leads_then_the_most_recent() {
+        let older = record("1", "2026-01-01T00:00:00Z");
+        let newer = record("2", "2026-02-01T00:00:00Z");
+        let review = record("3", "2025-01-01T00:00:00Z");
+        let numbers = |ordered: Vec<&LinkRecord>| -> Vec<String> {
+            ordered.iter().map(|link| link.number.clone()).collect()
+        };
+        assert_eq!(
+            numbers(by_relevance(vec![&older, &newer, &review], |link| {
+                link.number == "3"
+            })),
+            ["3", "2", "1"]
+        );
+        assert_eq!(
+            numbers(by_relevance(vec![&older, &newer, &review], |_| false)),
+            ["2", "1", "3"]
+        );
+    }
 
     #[test]
     fn a_tombstone_blocks_branch_relinking_but_not_an_explicit_link() {

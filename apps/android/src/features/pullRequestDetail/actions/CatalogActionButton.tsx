@@ -1,5 +1,12 @@
 import { useRef, useState } from "react";
-import { Pressable, StyleSheet, View, type Text as NativeText } from "react-native";
+import {
+  Pressable,
+  StyleSheet,
+  View,
+  type StyleProp,
+  type Text as NativeText,
+  type ViewStyle,
+} from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import {
@@ -13,6 +20,8 @@ import {
 } from "../../../theme";
 import { TextShimmer } from "../../../ui/TextShimmer";
 import { AppText as Text } from "../../../ui/Typography";
+import type { ScenarioView } from "./scenarioRuns";
+import { useScenarioView } from "./ScenarioViewsContext";
 
 /** Matches AppButton's disabled and pressed feedback. */
 const DISABLED_OPACITY = 0.5;
@@ -25,13 +34,17 @@ const FOCUS_RING_INSET = -(FOCUS_RING_WIDTH + FOCUS_RING_OFFSET);
 /**
  * Visual weight of a slotted action. `quiet` keeps an enabled action runnable but
  * drops its emphasis, for example Merge while the merge state is blocked.
+ * `raised` is the compact geometry on a raised surface such as a sheet or a
+ * tinted banner, where the secondary fill would vanish into the background.
  */
-export type CatalogActionVariant = "compact" | "primary" | "quiet" | "secondary";
+export type CatalogActionVariant = "compact" | "primary" | "quiet" | "raised" | "secondary";
 
 /**
- * One catalog action. A pending run keeps its label and shimmers in place; a
- * disabled action keeps its reason as the accessibility hint. Compact buttons
- * are 32dp with hit slop up to a 48dp target.
+ * One catalog action. A pending run keeps its label, shimmers in place and is
+ * disabled until the companion answers. An agent scenario whose run is queued or
+ * running shimmers its live label (`Reviewing…`) and starts nothing new: its tap
+ * opens the run's chat. A disabled action keeps its reason as the accessibility
+ * hint. Compact buttons are 32dp with hit slop up to a 48dp target.
  */
 export function CatalogActionButton({
   action,
@@ -50,16 +63,21 @@ export function CatalogActionButton({
   const [focused, setFocused] = useState(false);
   const shown = label ?? action.label;
   const disabled = action.availability.state === "disabled" || pending;
+  const scenario = useScenarioView(action.actionId);
+  const running = scenario.kind === "active";
+  const busy = pending || running;
   return (
     <Pressable
       accessibilityHint={
-        action.availability.state === "disabled" ? action.availability.reason : undefined
+        action.availability.state === "disabled"
+          ? action.availability.reason
+          : SCENARIO_HINTS[scenario.kind]
       }
       accessibilityLabel={shown}
       accessibilityRole="button"
-      accessibilityState={{ busy: pending, disabled }}
+      accessibilityState={{ busy, disabled }}
       disabled={disabled}
-      hitSlop={variant === "compact" ? controlHitSlop.compact : undefined}
+      hitSlop={VARIANT_HIT_SLOP[variant]}
       onBlur={() => {
         setFocused(false);
       }}
@@ -71,9 +89,7 @@ export function CatalogActionButton({
       }}
       style={({ pressed }) => [
         styles.base,
-        variant === "primary" ? styles.primary : styles.secondary,
-        variant === "compact" && styles.compact,
-        variant === "quiet" && styles.quiet,
+        VARIANT_SURFACES[variant],
         action.availability.state === "disabled" && styles.disabled,
         pressed && styles.pressed,
       ]}
@@ -90,7 +106,7 @@ export function CatalogActionButton({
       >
         {shown}
       </Text>
-      <TextShimmer shimmering={pending} target={text} />
+      <TextShimmer shimmering={busy} target={text} />
       {focused ? <View pointerEvents="none" style={styles.focusRing} /> : null}
     </Pressable>
   );
@@ -141,10 +157,38 @@ const styles = StyleSheet.create({
   },
   quiet: {
     backgroundColor: "transparent",
-    borderColor: colors.border,
+    borderColor: colors.textDim,
     borderWidth: 1,
+  },
+  raised: {
+    backgroundColor: colors.menuHighlight,
   },
   secondary: {
     backgroundColor: colors.surfaceContainerHigh,
   },
 });
+
+/** What a tap does beyond the label, by the action's live scenario state. */
+const SCENARIO_HINTS: Readonly<Record<ScenarioView["kind"], string | undefined>> = {
+  active: "Opens the running agent chat",
+  done: "Runs it again",
+  failed: undefined,
+  idle: undefined,
+};
+
+/** Compact geometry extends its touch target to 48dp. */
+const VARIANT_HIT_SLOP: Readonly<Record<CatalogActionVariant, number | undefined>> = {
+  compact: controlHitSlop.compact,
+  primary: undefined,
+  quiet: undefined,
+  raised: controlHitSlop.compact,
+  secondary: undefined,
+};
+
+const VARIANT_SURFACES: Readonly<Record<CatalogActionVariant, StyleProp<ViewStyle>>> = {
+  compact: [styles.secondary, styles.compact],
+  primary: styles.primary,
+  quiet: [styles.secondary, styles.quiet],
+  raised: [styles.compact, styles.raised],
+  secondary: styles.secondary,
+};

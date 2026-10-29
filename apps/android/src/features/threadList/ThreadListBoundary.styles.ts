@@ -1,10 +1,10 @@
 import { StyleSheet } from "react-native";
 import { colors, radii, spacing, typeScale } from "../../theme";
+import { CATALOG_ROW_CELL_HEIGHT } from "../../ui/CatalogRow.styles";
 import { threadListLayout } from "../../ui/thread-list-layout";
 
 const THREAD_LIST_SKELETON_PREVIEW_HEIGHT = 10;
 const THREAD_LIST_SKELETON_TITLE_HEIGHT = 14;
-const THREAD_LIST_ROW_VERTICAL_MARGIN_COUNT = 2;
 
 export const styles = StyleSheet.create({
   threadListEmpty: {
@@ -29,9 +29,7 @@ export const styles = StyleSheet.create({
   },
   threadListSkeletonRow: {
     gap: spacing.xs,
-    height:
-      threadListLayout.rowContentHeight +
-      threadListLayout.rowVerticalMargin * THREAD_LIST_ROW_VERTICAL_MARGIN_COUNT,
+    height: CATALOG_ROW_CELL_HEIGHT,
     justifyContent: "center",
     marginHorizontal: threadListLayout.edgeInset,
   },

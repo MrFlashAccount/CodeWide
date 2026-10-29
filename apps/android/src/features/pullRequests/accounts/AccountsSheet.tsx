@@ -6,21 +6,22 @@ import type {
   ForgeAccountsSnapshot,
   ForgeProvider,
 } from "../../../data/forgeContract";
-import { ProductText } from "../../../presentation/text/ProductText";
 import { useEvent } from "../../../react/useEvent";
 import { useAppDialog } from "../../../ui/AppDialog";
 import { AppSheet, AppSheetScrollView } from "../../../ui/AppSheet";
-import { onboardingStyles as styles } from "../onboarding/onboarding.styles";
+import { AppText } from "../../../ui/AppText";
+import { ProviderSignInSheet } from "../onboarding/ProviderSignInSheet";
 import type { PullRequestsWorkspaceCapabilities } from "../workspaceCapabilities";
-import { AccountRow } from "./AccountRow";
+import type { AccountMenuAction } from "./AccountRow";
+import { accountsSheetStyles as styles } from "./AccountsSheet.styles";
 import { ProviderSection } from "./ProviderSection";
 
 /**
- * Accounts and providers of one connection: linked accounts with their
- * credential source and scopes, disconnect modes, the optional checks
- * credential, provider enable switches, and a connect card per provider.
- * `logoutHost` affects every tool using that host login, so it runs only
- * after a destructive confirmation.
+ * Accounts of one connection, grouped by provider like the account pool: each
+ * account has its catalog switch and an overflow menu (Check again, removal);
+ * each provider has one Add account row that opens its sign-in sheet.
+ * `logoutHost` affects every tool using that host login, so it runs only after
+ * a destructive confirmation.
  */
 export function AccountsSheet({
   capabilities,
@@ -35,7 +36,7 @@ export function AccountsSheet({
 }): React.JSX.Element {
   const dialog = useAppDialog();
   const [busy, setBusy] = useState(false);
-  const [checking, setChecking] = useState<string | null>(null);
+  const [signInPluginId, setSignInPluginId] = useState<string | null>(null);
   const run = useEvent((operation: () => Promise<unknown>): void => {
     setBusy(true);
     operation()
@@ -78,54 +79,86 @@ export function AccountsSheet({
       ],
     );
   });
-  const checkAgain = useEvent((account: AccountState): void => {
-    setChecking(account.account);
-    run(async () =>
-      capabilities.checkAgain(connectionId).finally(() => {
-        setChecking(null);
-      }),
-    );
+  const menuAction = useEvent((account: AccountState, action: AccountMenuAction): void => {
+    if (action.kind === "checkAgain") {
+      run(async () => capabilities.checkAgain(connectionId));
+      return;
+    }
+    disconnect(account, action.mode);
   });
-  const setEnabled = useEvent((provider: ForgeProvider, enabled: boolean): void => {
-    run(async () => capabilities.setProviderEnabled(connectionId, provider.pluginId, enabled));
+  const addAccount = useEvent((provider: ForgeProvider): void => {
+    setSignInPluginId(provider.pluginId);
   });
+  const signInProvider =
+    snapshot.providers.find((provider) => provider.pluginId === signInPluginId) ?? null;
   return (
-    <AppSheet
-      contentProps={{ dismissLabel: "Close accounts", enablePanDownToClose: !busy }}
-      isOpen
-      onOpenChange={(next) => {
-        if (!next) {
-          onDismiss();
-        }
-      }}
-    >
-      <AppSheetScrollView contentContainerStyle={styles.sheetList} testID="forge-accounts-sheet">
-        <ProductText accessibilityRole="header" style={styles.title}>
-          Forge accounts
-        </ProductText>
-        {snapshot.accounts.map((account) => (
-          <AccountRow
-            account={account}
-            busy={busy}
-            checking={checking === account.account}
-            key={account.account}
-            onCheckAgain={checkAgain}
-            onDisconnect={disconnect}
-            provider={snapshot.providers.find((provider) => provider.pluginId === account.pluginId)}
-          />
-        ))}
-        {snapshot.providers.map((provider) => (
-          <ProviderSection
-            busy={busy}
-            capabilities={capabilities}
-            connectionId={connectionId}
-            key={provider.pluginId}
-            onSetEnabled={setEnabled}
-            provider={provider}
-            snapshot={snapshot}
-          />
-        ))}
-      </AppSheetScrollView>
-    </AppSheet>
+    <>
+      <AppSheet
+        contentProps={{ dismissLabel: "Close accounts", enablePanDownToClose: !busy }}
+        isOpen
+        onOpenChange={(next) => {
+          if (!next) {
+            onDismiss();
+          }
+        }}
+      >
+        <ProviderSections
+          busy={busy}
+          capabilities={capabilities}
+          connectionId={connectionId}
+          onAddAccount={addAccount}
+          onMenuAction={menuAction}
+          snapshot={snapshot}
+        />
+      </AppSheet>
+      {signInProvider === null ? null : (
+        <ProviderSignInSheet
+          capabilities={capabilities}
+          connectionId={connectionId}
+          key={signInProvider.pluginId}
+          onDismiss={() => {
+            setSignInPluginId(null);
+          }}
+          provider={signInProvider}
+          snapshot={snapshot}
+        />
+      )}
+    </>
+  );
+}
+
+function ProviderSections({
+  busy,
+  capabilities,
+  connectionId,
+  onAddAccount,
+  onMenuAction,
+  snapshot,
+}: {
+  readonly busy: boolean;
+  readonly capabilities: PullRequestsWorkspaceCapabilities;
+  readonly connectionId: string;
+  readonly onAddAccount: (provider: ForgeProvider) => void;
+  readonly onMenuAction: (account: AccountState, action: AccountMenuAction) => void;
+  readonly snapshot: ForgeAccountsSnapshot;
+}): React.JSX.Element {
+  return (
+    <AppSheetScrollView contentContainerStyle={styles.content} testID="forge-accounts-sheet">
+      <AppText accessibilityRole="header" style={styles.title}>
+        Pull request accounts
+      </AppText>
+      {snapshot.providers.map((provider) => (
+        <ProviderSection
+          busy={busy}
+          capabilities={capabilities}
+          connectionId={connectionId}
+          key={provider.pluginId}
+          onAddAccount={onAddAccount}
+          onMenuAction={onMenuAction}
+          provider={provider}
+          snapshot={snapshot}
+        />
+      ))}
+    </AppSheetScrollView>
   );
 }

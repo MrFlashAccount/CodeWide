@@ -13,15 +13,14 @@ import {
   accountState,
   forgeAccountKey,
   headRevision,
-  providerIcon,
   pullRequestKey,
   type AccountState,
   type AttentionRevision,
   type ForgeAccountKey,
   type HeadRevision,
-  type ProviderIcon,
   type PullRequestKey,
 } from "./forgeContract";
+import { providerIcon, type ProviderIcon } from "./forgeProviderIcon";
 import {
   count,
   decodeOrNull,
@@ -36,6 +35,7 @@ import {
   textList,
 } from "./forgeWire";
 import { threadId, type ThreadId } from "./reviewContract";
+import { unknownRecord } from "./unknownRecord";
 
 const PULL_REQUEST_CATEGORIES = [
   "involved",
@@ -107,6 +107,8 @@ export type PullRequestRow = {
   readonly pullRequest: PullRequestKey;
   readonly repository: string;
   readonly reviewRequestedFromMe: boolean;
+  /** The canonical review chat; `null` before one exists or from an older Companion. */
+  readonly reviewThreadId: ThreadId | null;
   readonly state: PullRequestState;
   readonly title: string;
   readonly updatedAt: string;
@@ -251,6 +253,10 @@ function row(value: unknown, path: string): PullRequestRow {
     pullRequest: pullRequestKey(entry.pullRequest, `${path}.pullRequest`),
     repository: nonEmptyText(entry.repository, `${path}.repository`),
     reviewRequestedFromMe: flag(entry.reviewRequestedFromMe, `${path}.reviewRequestedFromMe`),
+    reviewThreadId:
+      entry.reviewThreadId === null || entry.reviewThreadId === undefined
+        ? null
+        : threadId(entry.reviewThreadId, `${path}.reviewThreadId`),
     state: oneOf(entry.state, STATES, `${path}.state`),
     title: text(entry.title, `${path}.title`),
     updatedAt: text(entry.updatedAt, `${path}.updatedAt`),
@@ -368,7 +374,8 @@ export function parseLinks(value: unknown): readonly LinkedThread[] | null {
 
 /** One PR badge of a thread row. */
 export type PullRequestBadge = {
-  readonly icon: ProviderIcon;
+  /** The badge provider's icon, shared by every badge of that provider; `null` is the neutral icon. */
+  readonly icon: ProviderIcon | null;
   readonly number: string;
   readonly pullRequest: PullRequestKey;
   readonly state: PullRequestState;
@@ -379,15 +386,17 @@ export function parsePullRequestLinks(
   value: unknown,
 ): Readonly<Record<string, readonly PullRequestBadge[]>> | null {
   return decodeOrNull(() => {
+    const links = record(value, "result");
+    const icons = providerIcons(links.providerIcons);
     const result: Record<string, readonly PullRequestBadge[]> = {};
-    for (const entry of list(record(value, "result").threads, "threads", record)) {
+    for (const entry of list(links.threads, "threads", record)) {
       result[threadId(entry.threadId, "threads.threadId")] = list(
         entry.pullRequests,
         "threads.pullRequests",
         (item, path) => {
           const badge = record(item, path);
           return {
-            icon: providerIcon(badge.icon, `${path}.icon`),
+            icon: typeof badge.pluginId === "string" ? (icons.get(badge.pluginId) ?? null) : null,
             number: nonEmptyText(badge.number, `${path}.number`),
             pullRequest: pullRequestKey(badge.pullRequest, `${path}.pullRequest`),
             state: oneOf(badge.state, STATES, `${path}.state`),
@@ -397,4 +406,19 @@ export function parsePullRequestLinks(
     }
     return result;
   });
+}
+
+/**
+ * Decodes the per-provider icons of a links read once, so every badge of a
+ * provider shares one icon. An older Companion sends none; a bad entry is `null`.
+ */
+function providerIcons(value: unknown): ReadonlyMap<string, ProviderIcon | null> {
+  const icons = new Map<string, ProviderIcon | null>();
+  const entries = unknownRecord(value);
+  if (entries !== null) {
+    for (const [pluginId, icon] of Object.entries(entries)) {
+      icons.set(pluginId, providerIcon(icon));
+    }
+  }
+  return icons;
 }

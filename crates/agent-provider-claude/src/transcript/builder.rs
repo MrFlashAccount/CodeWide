@@ -693,6 +693,7 @@ impl TurnBuilder {
                     app_thread_id: &self.context.app_thread_id,
                     cwd: &self.context.cwd,
                     duration_ms,
+                    started_at_ms: call.started_at_ms,
                     result,
                     status,
                     tool_use_result: &frame.tool_use_result,

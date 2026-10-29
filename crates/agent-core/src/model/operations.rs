@@ -512,6 +512,14 @@ pub struct TurnStartParams {
     pub client_tools: Option<Vec<ClientToolSpec>>,
 }
 
+/// `turn.continue`: resume the thread's interrupted or failed last turn
+/// without a user message; the provider decides how its harness resumes.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnContinueParams {
+    pub app_thread_id: AppThreadId,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
@@ -641,6 +649,8 @@ pub enum OperationCall {
     ThreadBackgroundTaskRead(BackgroundTaskReadParams),
     #[serde(rename = "turn.start")]
     TurnStart(TurnStartParams),
+    #[serde(rename = "turn.continue")]
+    TurnContinue(TurnContinueParams),
     #[serde(rename = "turn.steer")]
     TurnSteer(TurnSteerParams),
     #[serde(rename = "turn.interrupt")]

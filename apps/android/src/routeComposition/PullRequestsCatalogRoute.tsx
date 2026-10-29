@@ -4,6 +4,7 @@ import { StyleSheet, View } from "react-native";
 import { forgeResources } from "../data/forgeRuntime";
 import type { PullRequestRow } from "../data/forgePullRequestContract";
 import { remoteValue } from "../data/forgeRemoteValue";
+import { threadUnreadReader, type UnreadThreadIndex } from "../data/project-unread-model";
 import { useForgeQuery } from "../data/forgeQueryResource";
 import { hasLinkedAccount } from "../features/pullRequests/accounts/accountPresentation";
 import { PullRequestSelectionPlaceholder } from "../features/pullRequests/PullRequestSelectionPlaceholder";
@@ -20,10 +21,10 @@ import { usePullRequestNavigation } from "./pullRequestNavigation";
 
 const PREVIEW_PANE_PADDING = 48;
 
-/** Pull requests content projected into the workspace-owned catalog pane. */
-export function PullRequestsCatalogPane(): React.JSX.Element {
+/** Real `/pulls` catalog descriptor rendered by the Pull requests subtree layout. */
+export function PullRequestsCatalogRoute(): React.JSX.Element {
   const router = useRouter();
-  const { list } = useWorkspaceRouteResources();
+  const { list, runtime } = useWorkspaceRouteResources();
   const navigation = usePullRequestNavigation();
   const connectionId = pullRequestCatalogConnection(list.serverScope, list.servers);
   const openPairing = useEvent((): void => {
@@ -36,18 +37,18 @@ export function PullRequestsCatalogPane(): React.JSX.Element {
   });
   return (
     <View style={styles.catalogSurface} testID="pull-requests-catalog-pane">
-      <PullRequestsHeader />
       <PullRequestsCatalogContent
         connectionId={connectionId}
         onOpenPullRequest={openPullRequest}
         onPair={openPairing}
+        unreadThreads={runtime.threadSummaries?.projectUnread ?? null}
       />
     </View>
   );
 }
 
-/** `/pulls` detail content; the workspace shell owns the adjacent catalog and its geometry. */
-export function PullRequestsCatalogRoute(): React.JSX.Element | null {
+/** Empty wide destination shown beside the real `/pulls` catalog descriptor. */
+export function PullRequestsPreviewRoute(): React.JSX.Element | null {
   const { desktop, list } = useWorkspaceRouteResources();
   const connectionId = pullRequestCatalogConnection(list.serverScope, list.servers);
   if (!desktop || connectionId === null) {
@@ -77,20 +78,26 @@ function PullRequestsCatalogContent({
   connectionId,
   onOpenPullRequest,
   onPair,
+  unreadThreads,
 }: {
   readonly connectionId: string | null;
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
   readonly onPair: () => void;
+  readonly unreadThreads: UnreadThreadIndex | null;
 }): React.JSX.Element {
   return (
     <View style={styles.content} testID="pull-requests-catalog">
       {connectionId === null ? (
-        <NoServerWelcome onConnect={onPair} />
+        <>
+          <PullRequestsHeader />
+          <NoServerWelcome onConnect={onPair} />
+        </>
       ) : (
         <PullRequestsCatalog
           capabilities={workspaceFeatures.pullRequests}
           connectionId={connectionId}
           forge={forgeResources}
+          isThreadUnread={threadUnreadReader(unreadThreads, connectionId)}
           onOpenPullRequest={onOpenPullRequest}
         />
       )}

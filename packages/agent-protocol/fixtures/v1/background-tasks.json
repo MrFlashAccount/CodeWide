@@ -1,5 +1,5 @@
 {
-  "description": "background task output: a command item names the background task it started, thread.backgroundTask.read pages its output while it runs, and a task the thread never started is a typed error",
+  "description": "background task output: a command item names the background task it started and its state, the provider republishes the same item when that state changes, thread.backgroundTask.read pages its output while it runs, and a task the thread never started is a typed error",
   "messages": [
     {
       "respondsTo": null,
@@ -18,7 +18,95 @@
             "output": "Command running in background with ID: bd3cb8oli.",
             "exitCode": 0,
             "durationMs": 41,
-            "backgroundTaskId": "bd3cb8oli"
+            "background": { "taskId": "bd3cb8oli", "startedAt": 1760000100, "description": "Run the tests", "status": "running" }
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-7a8e-7b2c-9d1e-000000000201",
+          "item": {
+            "type": "command",
+            "itemId": "toolu_01Rs6JNNf5SqHRxpq5DeJHrW",
+            "command": "npm test",
+            "cwd": "/home/dev/project",
+            "status": "completed",
+            "output": "Command running in background with ID: bd3cb8oli.",
+            "exitCode": 0,
+            "durationMs": 41,
+            "background": { "taskId": "bd3cb8oli", "startedAt": 1760000100, "description": "Run the tests", "status": "completed", "endedAt": 1760000200, "exitCode": 0 }
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-7a8e-7b2c-9d1e-000000000201",
+          "item": {
+            "type": "command",
+            "itemId": "toolu_01Rs6JNNf5SqHRxpq5DeJHrX",
+            "command": "npm test",
+            "cwd": "/home/dev/project",
+            "status": "completed",
+            "output": "Command running in background with ID: bd3cb8oli.",
+            "exitCode": 0,
+            "durationMs": 41,
+            "background": { "taskId": "bfailed01", "startedAt": 1760000100, "description": null, "status": "failed", "endedAt": 1760000201, "exitCode": null }
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-7a8e-7b2c-9d1e-000000000201",
+          "item": {
+            "type": "command",
+            "itemId": "toolu_01Rs6JNNf5SqHRxpq5DeJHrY",
+            "command": "npm test",
+            "cwd": "/home/dev/project",
+            "status": "completed",
+            "output": "Command running in background with ID: bd3cb8oli.",
+            "exitCode": 0,
+            "durationMs": 41,
+            "background": { "taskId": "bstopped1", "startedAt": 1760000100, "description": null, "status": "stopped", "endedAt": 1760000202 }
+          }
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
+        "method": "event",
+        "params": {
+          "type": "item.completed",
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e",
+          "turnId": "0199a3c4-7a8e-7b2c-9d1e-000000000201",
+          "item": {
+            "type": "command",
+            "itemId": "toolu_01Rs6JNNf5SqHRxpq5DeJHrZ",
+            "command": "npm test",
+            "cwd": "/home/dev/project",
+            "status": "completed",
+            "output": "Command running in background with ID: bd3cb8oli.",
+            "exitCode": 0,
+            "durationMs": 41,
+            "background": { "taskId": "bunknown1", "startedAt": 1760000100, "description": null, "status": "unknown" }
           }
         }
       }

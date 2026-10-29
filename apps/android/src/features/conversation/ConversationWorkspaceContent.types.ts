@@ -1,5 +1,4 @@
 import type { NewChatProjectPickerBinding } from "../projects/NewChatProjectPicker";
-import type { ReactNode } from "react";
 import type { RenderBlock } from "@codewide/renderers";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { FileTransferController } from "../../data/file-transfer-controller";
@@ -17,6 +16,8 @@ import type { useActiveThreadActions, useThreadMutationActions } from "../turnAc
 import type { ConversationDetailSnapshot } from "./conversationCapabilities";
 import type { createConversationScopeBindings } from "./conversationScopeBindings";
 import type { ConversationWorkspaceFeatures } from "./conversationWorkspaceFeatures";
+import type { DraftAdmission } from "./ConversationWorkspace.types";
+import type { ConversationHostPresentation } from "./header/ConversationHeaderContract";
 
 /** Inputs owned by this composition boundary; concrete state owners remain separate. */
 export type RenderConversationWorkspaceContentProps = {
@@ -39,13 +40,14 @@ export type RenderConversationWorkspaceContentProps = {
   closeActiveConversation: () => void;
   conversationActions: ReturnType<typeof createConversationScopeBindings>;
   desktop: boolean;
+  /** Who admits the draft's first message; `null` outside a draft. */
+  draftAdmission: DraftAdmission | null;
   features: Pick<
     ConversationWorkspaceFeatures,
     "composer" | "conversation" | "accounts" | "agents" | "requests"
   >;
   fileTransferController: FileTransferController | null;
   forkCurrentThread: ReturnType<typeof useActiveThreadActions>["forkCurrentThread"];
-  headerActions: ReactNode;
   loadTurnChanges: ReturnType<typeof useTurnChangesLoader>["loadTurnChanges"];
   markActiveThreadRead: ReturnType<typeof useActiveThreadActions>["markActiveThreadRead"];
   native: boolean;
@@ -56,6 +58,7 @@ export type RenderConversationWorkspaceContentProps = {
   onManageProjects: () => void;
   onOpenBrowser: (title: string, url: string) => void;
   openActiveLoopbackLink: ReturnType<typeof useLoopbackNavigation>;
+  presentation: ConversationHostPresentation;
   readActiveDirectory: ReturnType<typeof useActiveProjectSelection>["readActiveDirectory"];
   runtime: Pick<WorkspaceRuntimeSnapshot, "threadDetails" | "resources" | "accountRateLimits">;
   servers: ThreadListServer[];

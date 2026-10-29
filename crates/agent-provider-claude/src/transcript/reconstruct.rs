@@ -26,6 +26,7 @@ use agent_core::model::{
 
 use super::{
     agents::{SubagentItem, SubagentRuns, is_send_message_tool, resumed_agent_id, with_status},
+    background_commands::{BackgroundCommandRuns, settle_background_commands},
     builder::{TurnBuilder, TurnBuilderContext, UserMessage},
     entries::{HistoryEntry, history_entries},
     frames::{AssistantBlock, ClaudeFrame},
@@ -235,7 +236,9 @@ impl SegmentReplay {
                     uuid: Some(uuid.clone()),
                 });
             }
-            HistoryEntry::Interrupt { .. } | HistoryEntry::Wake { .. } => {}
+            HistoryEntry::Interrupt { .. }
+            | HistoryEntry::Resume { .. }
+            | HistoryEntry::Wake { .. } => {}
         }
     }
 
@@ -331,6 +334,26 @@ fn with_subagent_runs(turns: Vec<AgentTurn>, entries: &[HistoryEntry]) -> Vec<Ag
     let mut runs = SubagentRuns::default();
     record_runs(&mut runs, entries);
     settle_subagent_items(turns, &runs)
+}
+
+/// Background command items carry the state the stored final report of
+/// their task settles (a background task finishes after the turn that
+/// launched it), else `unknown`; see `background_commands`.
+fn with_background_command_runs(turns: Vec<AgentTurn>, entries: &[HistoryEntry]) -> Vec<AgentTurn> {
+    let mut runs = BackgroundCommandRuns::default();
+    for entry in entries {
+        if let HistoryEntry::Wake {
+            reports,
+            timestamp_ms,
+            ..
+        } = entry
+        {
+            for report in reports {
+                runs.record(report, *timestamp_ms);
+            }
+        }
+    }
+    settle_background_commands(turns, &runs)
 }
 
 fn record_runs(runs: &mut SubagentRuns, entries: &[HistoryEntry]) {
@@ -505,7 +528,7 @@ pub fn reconstruct_turns(
         .iter()
         .map(|segment| replay_segment(segment, records, context))
         .collect();
-    with_subagent_runs(turns, &entries)
+    with_background_command_runs(with_subagent_runs(turns, &entries), &entries)
 }
 
 /// Where one rebuilt turn ends in the stored messages.
@@ -573,7 +596,7 @@ pub fn reconstruct_subagent_turns(
     } else {
         with_cut_off_last_turn_interrupted(turns)
     };
-    with_subagent_runs(turns, &entries)
+    with_background_command_runs(with_subagent_runs(turns, &entries), &entries)
 }
 
 /// A sub-agent that no longer runs answers its spawner with a final message

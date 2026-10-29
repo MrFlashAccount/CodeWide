@@ -40,6 +40,19 @@ async fn the_fixture_external_plugin_passes_conformance() {
             .iter()
             .any(|check| check.name == "forge.pullRequest.action.run stale head")
     );
+    for conversation_check in [
+        "forge.pullRequest.conversation",
+        "forge.media.read foreign host",
+        "forge.pullRequest.reviewThread.reply missing thread",
+    ] {
+        assert!(
+            report
+                .checks
+                .iter()
+                .any(|check| check.name == conversation_check),
+            "{conversation_check} ran"
+        );
+    }
 }
 
 #[tokio::test]
@@ -132,6 +145,7 @@ async fn branch_detection_links_open_pull_requests_and_respects_tombstones() {
     let harness_dir = tempfile::tempdir().expect("dir");
     let vcs = Arc::new(companion_core::vcs::VcsService::new(
         harness_dir.path().join("vcs-plugins.json"),
+        None,
     ));
     vcs.registry()
         .install(companion_core::vcs::VcsPluginConfig {

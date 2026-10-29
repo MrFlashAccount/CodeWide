@@ -350,7 +350,12 @@ async fn reconcile_outbox_command(context: &PumpContext, command: OutboxCommand)
         }
         return;
     }
-    if command.presentation == OutboxPresentation::Queue {
+    // A hidden notice obeys the same rule as an explicit queue entry: it
+    // starts the next turn of an idle thread and is never injected.
+    if matches!(
+        command.presentation,
+        OutboxPresentation::Queue | OutboxPresentation::Notice
+    ) {
         match context
             .thread_view
             .activity(&command.remote_thread_id)

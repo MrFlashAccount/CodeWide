@@ -29,7 +29,10 @@ export function PullRequestGuide({
   resources,
   source,
 }: {
-  readonly agentThread: { readonly threadId: ThreadId; readonly title: string } | null;
+  readonly agentThread: {
+    readonly threadId: ThreadId;
+    readonly title: string;
+  } | null;
   readonly capabilities: ReviewTargetCapabilities;
   readonly connectionId: string;
   readonly describeThread: (threadId: ThreadId) => string;

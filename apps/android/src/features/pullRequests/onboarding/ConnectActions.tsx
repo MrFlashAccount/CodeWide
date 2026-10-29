@@ -18,39 +18,6 @@ export type ConnectHandlers = {
   readonly startingKey: string | null;
 };
 
-/** The card's one prominent action; host steps render as their own panel with Check again. */
-export function PrimaryConnect({
-  action,
-  handlers,
-}: {
-  readonly action: ConnectAction;
-  readonly handlers: ConnectHandlers;
-}): React.JSX.Element {
-  if (action.kind === "instructions") {
-    return (
-      <InstructionsPanel
-        checking={handlers.checking}
-        method={action.method}
-        onCheckAgain={handlers.onCheckAgain}
-      />
-    );
-  }
-  return (
-    <AppButton
-      accessibilityHint={action.method.detail}
-      isDisabled={handlers.busy}
-      onPress={() => {
-        handlers.onAction(action);
-      }}
-      pending={handlers.startingKey === connectActionKey(action)}
-      style={styles.primaryButton}
-      variant="primary"
-    >
-      {action.kind === "link" ? `Link @${action.login}` : action.method.label}
-    </AppButton>
-  );
-}
-
 /**
  * Every other way to connect: a quiet label, then outline buttons from the
  * card's left edge, so a wrapped option lines up with the first one.
@@ -97,26 +64,6 @@ export function OtherWays({
           onCheckAgain={handlers.onCheckAgain}
         />
       )}
-    </View>
-  );
-}
-
-/** Methods the host cannot offer right now, each with its reason. */
-export function UnavailableMethods({
-  methods,
-}: {
-  readonly methods: readonly AuthMethod[];
-}): React.JSX.Element | null {
-  if (methods.length === 0) {
-    return null;
-  }
-  return (
-    <View style={styles.section}>
-      {methods.map((method) => (
-        <ProductText key={method.methodId} style={styles.body} tone="dim">
-          {`${method.label}: ${method.unavailableReason ?? "Unavailable on this host"}`}
-        </ProductText>
-      ))}
     </View>
   );
 }

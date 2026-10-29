@@ -1,20 +1,21 @@
 import { LegendList } from "@legendapp/list/react-native";
-import { useSelector } from "@legendapp/state/react";
 import { Animated, View } from "react-native";
 import { GestureDetector } from "react-native-gesture-handler";
 
-import type { AccountState, ForgeProvider, ProviderIcon } from "../../../data/forgeContract";
+import type { AccountState } from "../../../data/forgeContract";
+import type { ProviderIcon } from "../../../data/forgeProviderIcon";
 import type {
   PullRequestListPage,
   PullRequestRow as Row,
 } from "../../../data/forgePullRequestContract";
 import { remoteValue, type RemoteValue } from "../../../data/forgeRemoteValue";
+import type { ThreadUnreadReader } from "../../../data/project-unread-model";
 import { useCatalogSearchPullGesture } from "../../../presentation/input/catalogSearchPullModel";
 import { CatalogSearchPullProvider } from "../../../presentation/input/CatalogSearchPullProvider";
 import { CatalogSearchPullBackdrop } from "../../../presentation/input/CatalogSearchPullBackdrop";
 import { SearchOverlayMotion } from "../../../presentation/input/SearchOverlayMotionView";
 import { useSearchOverlayMotion } from "../../../presentation/input/searchOverlayMotion";
-import { layoutSize } from "../../../theme";
+import { CATALOG_ROW_CELL_HEIGHT } from "../../../ui/CatalogRow.styles";
 import type { PullRequestSearchFilter } from "../../../data/forgePullRequestSearch";
 import { listStyles as styles } from "./list.styles";
 import { ListSkeleton } from "./ListSkeleton";
@@ -23,12 +24,7 @@ import { PullRequestEmptyState } from "./PullRequestEmptyState";
 import { pullRequestListItems } from "./pullRequestListItems";
 import { PullRequestListItemView } from "./PullRequestListItemView";
 import { PullRequestFilterBar, PullRequestSearchHeader } from "./PullRequestFilterBar";
-import { PullRequestFilterSheet } from "./PullRequestFilterSheet";
-import {
-  activePullRequestFilterCount,
-  closePullRequestSearch,
-  pullRequestSearchModel,
-} from "../pullRequestListModel";
+import { activePullRequestFilterCount, closePullRequestSearch } from "../pullRequestListModel";
 
 /**
  * PR list for one connection: filter chips, account sections and rows. The
@@ -36,10 +32,11 @@ import {
  * is unreachable the stored snapshot is shown with its age (Q3).
  */
 export function PullRequestList(props: {
-  readonly accounts: readonly AccountState[];
   readonly filter: PullRequestSearchFilter;
   /** Provider mark of an account's plugin, from the accounts snapshot. */
   readonly iconFor: (pluginId: string) => ProviderIcon | null;
+  /** Unread state of the connection's chats, for the agent-reply marker. */
+  readonly isThreadUnread: ThreadUnreadReader;
   readonly nowMs: number;
   readonly onEndReached: () => void;
   readonly onOpen: (row: Row) => void;
@@ -50,7 +47,6 @@ export function PullRequestList(props: {
   readonly onSearch: (text: string) => void;
   readonly onSort: (sort: PullRequestSearchFilter["query"]["sort"]) => void;
   readonly pendingFilter: boolean;
-  readonly providers: readonly ForgeProvider[];
   readonly state: RemoteValue<PullRequestListPage> | undefined;
 }): React.JSX.Element {
   return (
@@ -61,42 +57,26 @@ export function PullRequestList(props: {
 }
 
 function PullRequestListSurface(props: Parameters<typeof PullRequestList>[0]): React.JSX.Element {
-  const search = useSelector(() => pullRequestSearchModel.get());
   const page = remoteValue(props.state);
   const items = listItems(page);
   return (
     <View style={styles.fill} testID="pull-request-list">
-      <PullRequestCatalogSurface hidden={search.open} items={items} page={page} props={props} />
-      {search.open ? (
-        <PullRequestSearchSurface draft={search.draft} items={items} page={page} props={props} />
-      ) : null}
-      <PullRequestFilterSheet
-        accounts={props.accounts}
-        providers={props.providers}
-        repositories={page?.repositories ?? []}
-      />
+      <PullRequestCatalogSurface items={items} page={page} props={props} />
     </View>
   );
 }
 
 function PullRequestCatalogSurface({
-  hidden,
   items,
   page,
   props,
 }: {
-  readonly hidden: boolean;
   readonly items: ReturnType<typeof pullRequestListItems>;
   readonly page: PullRequestListPage | null;
   readonly props: Parameters<typeof PullRequestList>[0];
 }): React.JSX.Element {
   return (
-    <View
-      accessibilityElementsHidden={hidden}
-      importantForAccessibility={hidden ? "no-hide-descendants" : "auto"}
-      pointerEvents={hidden ? "none" : "auto"}
-      style={styles.fill}
-    >
+    <View style={styles.fill}>
       <PullRequestFilterBar
         filter={props.filter}
         onOpenFilters={props.onOpenFilters}
@@ -129,30 +109,26 @@ function PullRequestCatalogRows({
   );
 }
 
-function PullRequestSearchSurface({
+/** Search projection of the same retained PR resource, mounted by the catalog overlay owner. */
+export function PullRequestSearchSurface({
   draft,
-  items,
-  page,
   props,
 }: {
   readonly draft: string;
-  readonly items: ReturnType<typeof pullRequestListItems>;
-  readonly page: PullRequestListPage | null;
   readonly props: Parameters<typeof PullRequestList>[0];
 }): React.JSX.Element {
   const overlay = useSearchOverlayMotion(closePullRequestSearch);
+  const page = remoteValue(props.state);
   return (
-    <View style={styles.searchOverlay}>
-      <SearchOverlayMotion onBackdropPress={overlay.close} progress={overlay.progress}>
-        <PullRequestSearchPanel
-          close={overlay.close}
-          draft={draft}
-          items={items}
-          page={page}
-          props={props}
-        />
-      </SearchOverlayMotion>
-    </View>
+    <SearchOverlayMotion onBackdropPress={overlay.close} progress={overlay.progress}>
+      <PullRequestSearchPanel
+        close={overlay.close}
+        draft={draft}
+        items={listItems(page)}
+        page={page}
+        props={props}
+      />
+    </SearchOverlayMotion>
   );
 }
 
@@ -223,7 +199,7 @@ function PullRequestRows({
     <LegendList
       contentContainerStyle={styles.floatingBarContent}
       data={items}
-      estimatedItemSize={layoutSize.row}
+      estimatedItemSize={CATALOG_ROW_CELL_HEIGHT}
       getItemType={(item) => item.kind}
       keyExtractor={(item) => item.key}
       ListEmptyComponent={<PullRequestEmptyState filter={props.filter} />}
@@ -234,6 +210,7 @@ function PullRequestRows({
       renderItem={({ item }) => (
         <PullRequestListItemView
           iconFor={props.iconFor}
+          isThreadUnread={props.isThreadUnread}
           item={item}
           nowMs={props.nowMs}
           onOpen={props.onOpen}

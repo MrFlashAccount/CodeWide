@@ -1,99 +1,187 @@
+import { useState } from "react";
 import { View } from "react-native";
 
-import type { AccountState, DisconnectMode, ForgeProvider } from "../../../data/forgeContract";
-import { AppButton } from "../../../presentation/controls/AppButton";
+import type { AccountState, ForgeProvider } from "../../../data/forgeContract";
 import { ProductText } from "../../../presentation/text/ProductText";
-import { ForgeIcon } from "../../../ui/ForgeIcon";
-import { onboardingStyles as styles } from "../onboarding/onboarding.styles";
-import {
-  accountCredentialLine,
-  accountStateLabel,
-  DISCONNECT_LABELS,
-  disconnectModes,
-} from "./accountPresentation";
+import { useEvent } from "../../../react/useEvent";
+import { colors } from "../../../theme";
+import { ActionMenu, type ActionMenuItem } from "../../../ui/ActionMenu";
+import { AppListRow } from "../../../ui/AppListRow";
+import { AppListRowMenuTrigger } from "../../../ui/AppListRowMenuTrigger";
+import { listRowHeight, type AppListRowProps } from "../../../ui/AppListRow.types";
+import { AppSwitch } from "../../../ui/AppSwitch";
+import type { PullRequestsWorkspaceCapabilities } from "../workspaceCapabilities";
+import { accountDescription, DISCONNECT_LABELS, disconnectModes } from "./accountPresentation";
+import { accountsSheetStyles as styles } from "./AccountsSheet.styles";
 
-/** Header and reason lines may wrap once so host and login stay readable. */
-const ACCOUNT_TEXT_LINES = 2;
+const STATUS_DOT_SIZE = 10;
+const CHECK_AGAIN = "checkAgain";
+
+/** One account action chosen from the row's overflow menu. */
+export type AccountMenuAction =
+  | { readonly kind: "checkAgain" }
+  | { readonly kind: "disconnect"; readonly mode: ReturnType<typeof disconnectModes>[number] };
 
 /**
- * One linked account: state, credential source and scopes, its next step when
- * broken (Check again re-reads the host credential), and its disconnect modes
- * as equal-width actions.
+ * One linked account: login, credential or problem, a switch that includes it
+ * in the pull request catalog, and removal behind the overflow menu. While the
+ * switch waits for the Companion it shows the requested value and the login
+ * shimmers; a refusal restores the authoritative value and shows the reason.
  */
 export function AccountRow({
   account,
   busy,
-  checking,
-  onCheckAgain,
-  onDisconnect,
+  capabilities,
+  connectionId,
+  onMenuAction,
+  position,
   provider,
 }: {
   readonly account: AccountState;
+  /** Another account operation of the sheet is running. */
   readonly busy: boolean;
-  /** This account's Check again is waiting for the companion. */
-  readonly checking: boolean;
-  readonly onCheckAgain: (account: AccountState) => void;
-  readonly onDisconnect: (account: AccountState, mode: DisconnectMode) => void;
-  readonly provider: ForgeProvider | undefined;
+  readonly capabilities: PullRequestsWorkspaceCapabilities;
+  readonly connectionId: string;
+  readonly onMenuAction: (account: AccountState, action: AccountMenuAction) => void;
+  readonly position: NonNullable<AppListRowProps["position"]>;
+  readonly provider: ForgeProvider;
 }): React.JSX.Element {
+  const catalog = useAccountCatalogSwitch({ account, capabilities, connectionId });
+  const modes = disconnectModes(account, provider);
+  const actions: ActionMenuItem[] = [
+    ...(account.state === "connected"
+      ? []
+      : [{ icon: "refresh-outline" as const, id: CHECK_AGAIN, label: "Check again" }]),
+    ...modes.map((mode) => ({
+      destructive: true,
+      icon: mode === "logoutHost" ? ("log-out-outline" as const) : ("trash-outline" as const),
+      id: mode,
+      label: DISCONNECT_LABELS[mode],
+    })),
+  ];
+  const selectAction = useEvent((id: string): void => {
+    if (id === CHECK_AGAIN) {
+      onMenuAction(account, { kind: "checkAgain" });
+      return;
+    }
+    const mode = modes.find((candidate) => candidate === id);
+    if (mode !== undefined) {
+      onMenuAction(account, { kind: "disconnect", mode });
+    }
+  });
+  const included = catalog.value ?? true;
   return (
-    <View style={styles.card} testID={`forge-account-${account.login}`}>
-      <View style={styles.header}>
-        {provider === undefined ? null : (
-          <ForgeIcon glyph={provider.icon.glyph} iconKey={provider.icon.iconKey} />
-        )}
-        <ProductText numberOfLines={ACCOUNT_TEXT_LINES} style={styles.title}>
-          {`${account.host} · @${account.login}`}
-        </ProductText>
-      </View>
-      <ProductText
-        style={styles.body}
-        tone={
-          account.state === "connected"
-            ? "success"
-            : account.state === "expired"
-              ? "warning"
-              : "danger"
+    <View testID={`forge-account-${account.login}`}>
+      <AppListRow
+        accessibilityLabel={`@${account.login}, ${accountDescription(account)}`}
+        description={accountDescription(account)}
+        fixedHeight={listRowHeight.double}
+        position={position}
+        shimmering={catalog.pending}
+        title={`@${account.login}`}
+        titleIndicator={{
+          color: included ? statusColor(account) : colors.textDim,
+          size: STATUS_DOT_SIZE,
+          testID: `forge-account-status-${account.login}`,
+        }}
+        trailing={
+          <AccountRowTrailing
+            actions={actions}
+            busy={busy}
+            catalog={catalog}
+            login={account.login}
+            onSelect={selectAction}
+          />
         }
-      >
-        {accountStateLabel(account)}
-      </ProductText>
-      <ProductText style={styles.body}>{accountCredentialLine(account)}</ProductText>
-      {account.state === "connected" ? null : (
-        <ProductText style={styles.body}>
-          {account.state === "expired" ? account.hint : account.reason}
+      />
+      {catalog.error === null ? null : (
+        <ProductText accessibilityLiveRegion="polite" style={styles.rowError}>
+          {catalog.error}
         </ProductText>
       )}
-      {account.state === "connected" ? null : (
-        <AppButton
-          isDisabled={busy}
-          onPress={() => {
-            onCheckAgain(account);
-          }}
-          pending={checking}
-          size="sm"
-          style={styles.primaryButton}
-          variant="secondary"
-        >
-          Check again
-        </AppButton>
-      )}
-      <View style={styles.equalActions}>
-        {disconnectModes(account, provider).map((mode) => (
-          <AppButton
-            isDisabled={busy}
-            key={mode}
-            onPress={() => {
-              onDisconnect(account, mode);
-            }}
-            size="sm"
-            style={styles.equalAction}
-            variant={mode === "logoutHost" ? "outline" : "secondary"}
-          >
-            {DISCONNECT_LABELS[mode]}
-          </AppButton>
-        ))}
-      </View>
     </View>
   );
+}
+
+function AccountRowTrailing({
+  actions,
+  busy,
+  catalog,
+  login,
+  onSelect,
+}: {
+  readonly actions: readonly ActionMenuItem[];
+  readonly busy: boolean;
+  readonly catalog: CatalogSwitch;
+  readonly login: string;
+  readonly onSelect: (id: string) => void;
+}): React.JSX.Element {
+  const menuLabel = `Actions for @${login}`;
+  return (
+    <View style={styles.rowTrailing}>
+      {catalog.value === null ? null : (
+        <AppSwitch
+          accessibilityHint="Includes this account in Pull requests"
+          accessibilityLabel={`Show pull requests from @${login}`}
+          disabled={busy || catalog.pending}
+          onValueChange={catalog.toggle}
+          value={catalog.value}
+        />
+      )}
+      <ActionMenu accessibilityLabel={menuLabel} actions={actions} onSelect={onSelect}>
+        <AppListRowMenuTrigger accessibilityLabel={menuLabel} />
+      </ActionMenu>
+    </View>
+  );
+}
+
+function statusColor(account: AccountState): string {
+  if (account.state === "connected") {
+    return colors.green;
+  }
+  return account.state === "expired" ? colors.amber : colors.red;
+}
+
+type CatalogSwitch = {
+  readonly error: string | null;
+  readonly pending: boolean;
+  readonly toggle: (enabled: boolean) => void;
+  /** Requested value while pending, else the Companion's; `null` when it has no switch. */
+  readonly value: boolean | null;
+};
+
+/** Pending and failure of one account's catalog switch; the value itself stays Companion-owned. */
+function useAccountCatalogSwitch({
+  account,
+  capabilities,
+  connectionId,
+}: {
+  readonly account: AccountState;
+  readonly capabilities: PullRequestsWorkspaceCapabilities;
+  readonly connectionId: string;
+}): CatalogSwitch {
+  const [requested, setRequested] = useState<boolean | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const toggle = useEvent((enabled: boolean): void => {
+    if (requested !== null) {
+      return;
+    }
+    setRequested(enabled);
+    setFailure(null);
+    capabilities.setAccountEnabled(connectionId, account.account, enabled).then(
+      () => {
+        setRequested(null);
+      },
+      (error: unknown) => {
+        setRequested(null);
+        setFailure(error instanceof Error ? error.message : "Could not update the account");
+      },
+    );
+  });
+  return {
+    error: failure,
+    pending: requested !== null,
+    toggle,
+    value: requested ?? account.catalogEnabled,
+  };
 }

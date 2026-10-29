@@ -3,9 +3,9 @@ import { StyleSheet, View } from "react-native";
 
 import { pullRequestLinkResources } from "../../data/forgeRuntime";
 import { pullRequestBadgeKey } from "../../data/pullRequestLinkResources";
-import { colors, iconSize, spacing, typeScale } from "../../theme";
+import { iconSize, spacing } from "../../theme";
 import { ForgeIcon } from "../../ui/ForgeIcon";
-import { AppText as Text } from "../../ui/Typography";
+import { CatalogRowMetaText } from "../../ui/CatalogRow";
 
 /**
  * PR badge of a thread row: the provider icon and number of its first linked
@@ -34,10 +34,10 @@ export function ThreadPullRequestBadge({
       style={styles.badge}
       testID="thread-pull-request-badge"
     >
-      <ForgeIcon glyph={first.icon.glyph} iconKey={first.icon.iconKey} size={iconSize.indicator} />
-      <Text numberOfLines={1} style={styles.label}>
+      <ForgeIcon icon={first.icon} size={iconSize.indicator} />
+      <CatalogRowMetaText>
         {rest.length === 0 ? `#${first.number}` : `#${first.number} +${String(rest.length)}`}
-      </Text>
+      </CatalogRowMetaText>
     </View>
   );
 }
@@ -48,10 +48,5 @@ const styles = StyleSheet.create({
     columnGap: spacing.optical,
     flexDirection: "row",
     flexShrink: 0,
-  },
-  label: {
-    ...typeScale.label,
-    color: colors.textMuted,
-    fontVariant: ["tabular-nums"],
   },
 });

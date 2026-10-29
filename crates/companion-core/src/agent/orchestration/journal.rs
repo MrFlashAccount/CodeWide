@@ -2,23 +2,28 @@
 //!
 //! Records contain coordination metadata and references only. The initial
 //! prompt is held by the turn-delivery reservation table and later moved to
-//! the existing outbox; final text remains in provider history.
+//! the existing outbox; final text remains in provider history. Child work
+//! requests (`requests`) are the unit of result delivery; a task's initial
+//! request commits with every task transition that settles it.
+
+mod backfill;
+mod requests;
 
 use std::{sync::Arc, time::SystemTime};
 
 use redb::{ReadableDatabase, ReadableTable};
 use serde::{Deserialize, Serialize};
 
-use super::task::{
-    CompletionDelivery, DeliveryProgress, OrchestrationTask, ParentDeliveryState, TaskAttempt,
-    TaskEvent, TaskEventKind, TaskId, TaskState, TaskTransition, WaitMode, WorkspaceClaim,
-    WorkspaceClaimState,
+pub(super) use self::requests::{HandoffOutcome, ReceiptBinding};
+use super::{
+    task::{
+        OrchestrationTask, TaskAttempt, TaskEvent, TaskEventKind, TaskId, TaskState,
+        TaskTransition, WorkspaceClaim, WorkspaceClaimState,
+    },
+    work_requests::{ChildWorkRequest, NeverStartedReason, RequestOrigin, WorkRequestId},
 };
 use crate::{
-    agent::{
-        client_wire::observe::TurnEnd,
-        model::{AppThreadId, ProviderId, TurnId},
-    },
+    agent::model::AppThreadId,
     store::{IndexStore, StoreError, orchestration_tables},
     turn_delivery::{InitialTurnReservation, reserve_initial_turn},
 };
@@ -37,6 +42,9 @@ pub enum JournalError {
     CallConflict,
     #[error("task transition is invalid: {0}")]
     InvalidTransition(String),
+    #[cfg(test)]
+    #[error("injected journal failure")]
+    Injected,
 }
 
 macro_rules! redb_error {
@@ -58,7 +66,9 @@ redb_error!(redb::CommitError);
 pub struct TaskBundle {
     pub task: OrchestrationTask,
     pub attempt: TaskAttempt,
-    pub delivery: CompletionDelivery,
+    /// The task's initial child work request (its id is the task's
+    /// `deliveryId`).
+    pub request: ChildWorkRequest,
     pub workspace: WorkspaceClaim,
 }
 
@@ -69,7 +79,6 @@ pub struct AdmissionRecord {
     pub(crate) initial_turn: InitialTurnReservation,
     pub task: OrchestrationTask,
     pub attempt: TaskAttempt,
-    pub delivery: CompletionDelivery,
     pub workspace: WorkspaceClaim,
 }
 
@@ -89,12 +98,26 @@ struct CallRecord {
 #[derive(Clone)]
 pub struct TaskJournal {
     store: Arc<IndexStore>,
+    /// Test fault injection for the terminal settlement write.
+    #[cfg(test)]
+    fail_next_settle: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TaskJournal {
     #[must_use]
-    pub const fn new(store: Arc<IndexStore>) -> Self {
-        Self { store }
+    pub fn new(store: Arc<IndexStore>) -> Self {
+        Self {
+            store,
+            #[cfg(test)]
+            fail_next_settle: Arc::default(),
+        }
+    }
+
+    /// Makes the next terminal settlement write fail once (tests only).
+    #[cfg(test)]
+    pub(super) fn fail_next_settle(&self) {
+        self.fail_next_settle
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     async fn blocking<T: Send + 'static>(
@@ -158,10 +181,18 @@ impl TaskJournal {
                             record.attempt.attempt_id.as_str(),
                             serde_json::to_vec(&record.attempt)?.as_slice(),
                         )?;
-                        write.open_table(orchestration_tables::DELIVERIES)?.insert(
-                            record.delivery.delivery_id.as_str(),
-                            serde_json::to_vec(&record.delivery)?.as_slice(),
-                        )?;
+                        let request = ChildWorkRequest::queued(
+                            WorkRequestId::from_delivery(&record.task.delivery_id),
+                            record.task.parent_thread_id.clone(),
+                            None,
+                            record.task.provider.clone(),
+                            record.attempt.command_id.clone(),
+                            RequestOrigin::TaskInitial {
+                                task_id: record.task.task_id.clone(),
+                            },
+                            record.task.created_at_ms,
+                        );
+                        requests::insert_new(&write, &request)?;
                         write
                             .open_table(orchestration_tables::WORKSPACE_CLAIMS)?
                             .insert(
@@ -214,65 +245,6 @@ impl TaskJournal {
         .await
     }
 
-    /// Returns terminal deferred completions not yet handed to the outbox.
-    pub(super) async fn pending_completions(&self) -> Result<Vec<TaskId>, JournalError> {
-        self.blocking(|store| {
-            let read = store.database().begin_read()?;
-            let deliveries = read.open_table(orchestration_tables::DELIVERIES)?;
-            let mut tasks = Vec::new();
-            for entry in deliveries.iter()? {
-                let (_, encoded) = entry?;
-                let delivery: CompletionDelivery = serde_json::from_slice(encoded.value())?;
-                if delivery.progress
-                    == (DeliveryProgress::ParentTurn {
-                        state: ParentDeliveryState::AwaitingResume,
-                    })
-                {
-                    tasks.push(delivery.task_id);
-                }
-            }
-            Ok(tasks)
-        })
-        .await
-    }
-
-    /// Atomically hands completion ownership to the prompt-bearing outbox.
-    /// The callback is owned by turn delivery; the journal sees no message.
-    pub(super) async fn enqueue_completion(
-        &self,
-        task_id: &TaskId,
-        enqueue: impl FnOnce(&redb::WriteTransaction, &str, &str) -> Result<(), StoreError>
-        + Send
-        + 'static,
-    ) -> Result<bool, JournalError> {
-        let task_id = task_id.clone();
-        self.blocking(move |store| {
-            let write = store.database().begin_write()?;
-            let mut bundle = read_bundle_from_write(&write, &task_id)?;
-            if !bundle.task.state.is_terminal()
-                || bundle.task.wait_mode != WaitMode::Deferred
-                || bundle.delivery.progress
-                    != (DeliveryProgress::ParentTurn {
-                        state: ParentDeliveryState::AwaitingResume,
-                    })
-            {
-                return Ok(false);
-            }
-            enqueue(
-                &write,
-                &bundle.delivery.dedupe_key,
-                bundle.task.parent_thread_id.as_str(),
-            )?;
-            bundle.delivery.progress = DeliveryProgress::ParentTurn {
-                state: ParentDeliveryState::Enqueued,
-            };
-            write_bundle(&write, &bundle)?;
-            write.commit()?;
-            Ok(true)
-        })
-        .await
-    }
-
     /// Records the isolated workspace selected for a task.
     ///
     /// # Errors
@@ -288,7 +260,7 @@ impl TaskJournal {
         let task_id = task_id.clone();
         let source_workspace = source_workspace.to_owned();
         let effective_cwd = effective_cwd.to_owned();
-        self.mutate(task_id, move |task, _attempt, _delivery, workspace| {
+        self.mutate(task_id, move |task, _attempt, _request, workspace| {
             if task.state.is_terminal() || task.state == TaskState::Cancelling {
                 return Ok(None);
             }
@@ -311,7 +283,7 @@ impl TaskJournal {
     /// transition cannot be committed.
     pub async fn preparing_workspace(&self, task_id: &TaskId) -> Result<TaskBundle, JournalError> {
         let task_id = task_id.clone();
-        self.mutate(task_id, |task, _attempt, _delivery, _workspace| {
+        self.mutate(task_id, |task, _attempt, _request, _workspace| {
             task.transition(TaskTransition::PrepareWorkspace)
                 .map_err(JournalError::InvalidTransition)?;
             Ok(None)
@@ -331,7 +303,7 @@ impl TaskJournal {
         child_thread_id: AppThreadId,
     ) -> Result<TaskBundle, JournalError> {
         let task_id = task_id.clone();
-        self.mutate(task_id, move |task, attempt, _delivery, _workspace| {
+        self.mutate(task_id, move |task, attempt, _request, _workspace| {
             attempt
                 .plan_child(child_thread_id)
                 .map_err(JournalError::InvalidTransition)?;
@@ -353,7 +325,7 @@ impl TaskJournal {
         task_id: &TaskId,
     ) -> Result<TaskBundle, JournalError> {
         let task_id = task_id.clone();
-        self.mutate(task_id, |task, attempt, _delivery, _workspace| {
+        self.mutate(task_id, |task, attempt, _request, _workspace| {
             attempt
                 .begin_provider_create()
                 .map_err(JournalError::InvalidTransition)?;
@@ -392,7 +364,7 @@ impl TaskJournal {
     /// transition cannot be committed.
     pub async fn turn_queued(&self, task_id: &TaskId) -> Result<TaskBundle, JournalError> {
         let task_id = task_id.clone();
-        self.mutate(task_id, |task, _attempt, _delivery, _workspace| {
+        self.mutate(task_id, |task, _attempt, _request, _workspace| {
             if matches!(task.state, TaskState::Running | TaskState::Cancelling) {
                 return Ok(None);
             }
@@ -411,7 +383,7 @@ impl TaskJournal {
     /// transition cannot be committed.
     pub async fn mark_start_uncertain(&self, task_id: &TaskId) -> Result<TaskBundle, JournalError> {
         let task_id = task_id.clone();
-        self.mutate(task_id, |task, attempt, _delivery, _workspace| {
+        self.mutate(task_id, |task, attempt, _request, _workspace| {
             if task.state.is_terminal() || task.state == TaskState::Cancelling {
                 return Ok(None);
             }
@@ -425,110 +397,6 @@ impl TaskJournal {
         .await
     }
 
-    /// Applies a provider turn-start receipt to the indexed task, if any.
-    ///
-    /// # Errors
-    ///
-    /// Returns a journal error when indexed records are invalid or the durable
-    /// transition cannot be committed.
-    pub async fn observe_started(
-        &self,
-        provider: &ProviderId,
-        child_thread_id: &str,
-        provider_turn_id: TurnId,
-    ) -> Result<Option<TaskBundle>, JournalError> {
-        let Some(task_id) = self.task_for_child(child_thread_id).await? else {
-            return Ok(None);
-        };
-        if self.get(&task_id).await?.task.provider != *provider {
-            return Ok(None);
-        }
-        let child_thread_id = AppThreadId::parse(child_thread_id).ok_or_else(|| {
-            JournalError::InvalidTransition("child index contains an invalid thread id".into())
-        })?;
-        let bundle = self
-            .mutate(task_id, move |task, attempt, _delivery, _workspace| {
-                if task.state.is_terminal() {
-                    return Ok(None);
-                }
-                let changed = attempt
-                    .observe_started(child_thread_id, provider_turn_id)
-                    .map_err(JournalError::InvalidTransition)?;
-                if !changed {
-                    return Ok(None);
-                }
-                task.transition(TaskTransition::TurnStarted)
-                    .map_err(JournalError::InvalidTransition)?;
-                Ok(Some(TaskEventKind::TurnStarted))
-            })
-            .await?;
-        Ok(Some(bundle))
-    }
-
-    /// Applies the first matching provider terminal receipt atomically.
-    ///
-    /// # Errors
-    ///
-    /// Returns a journal error when indexed records are invalid or the durable
-    /// terminal transition cannot be committed.
-    pub async fn observe_terminal(
-        &self,
-        provider: &ProviderId,
-        child_thread_id: &str,
-        provider_turn_id: TurnId,
-        end: TurnEnd,
-    ) -> Result<Option<TaskBundle>, JournalError> {
-        let Some(task_id) = self.task_for_child(child_thread_id).await? else {
-            return Ok(None);
-        };
-        if self.get(&task_id).await?.task.provider != *provider {
-            return Ok(None);
-        }
-        let child_thread_id = AppThreadId::parse(child_thread_id).ok_or_else(|| {
-            JournalError::InvalidTransition("child index contains an invalid thread id".into())
-        })?;
-        let read_id = task_id.clone();
-        let changed = self
-            .blocking(move |store| {
-                let write = store.database().begin_write()?;
-                let mut bundle = read_bundle_from_write(&write, &task_id)?;
-                if bundle.task.state.is_terminal() {
-                    write.commit()?;
-                    return Ok(false);
-                }
-                if !bundle
-                    .attempt
-                    .observe_terminal(child_thread_id, provider_turn_id)
-                    .map_err(JournalError::InvalidTransition)?
-                {
-                    write.commit()?;
-                    return Ok(false);
-                }
-                let transition = match end {
-                    TurnEnd::Completed => TaskTransition::Succeeded,
-                    TurnEnd::Failed => TaskTransition::Failed,
-                    TurnEnd::Interrupted => TaskTransition::Cancelled,
-                };
-                bundle
-                    .task
-                    .transition(transition)
-                    .map_err(JournalError::InvalidTransition)?;
-                bundle.delivery.progress = bundle.delivery.progress.terminal();
-                bundle.task.updated_at_ms = unix_time_ms();
-                write_bundle(&write, &bundle)?;
-                append_next_event(&write, &task_id, TaskEventKind::AttemptTerminal)?;
-                append_next_event(&write, &task_id, TaskEventKind::TaskTerminal)?;
-                write.commit()?;
-                Ok(true)
-            })
-            .await?;
-        if changed {
-            Ok(Some(self.get(&read_id).await?))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Records a definite post-admission task failure.
     ///
     /// # Errors
@@ -538,13 +406,13 @@ impl TaskJournal {
     pub async fn fail_task(&self, task_id: &TaskId) -> Result<TaskBundle, JournalError> {
         let task_id = task_id.clone();
         let bundle = self
-            .mutate(task_id, |task, _attempt, delivery, _workspace| {
+            .mutate(task_id, |task, _attempt, request, _workspace| {
                 if task.state.is_terminal() {
                     return Ok(None);
                 }
                 task.transition(TaskTransition::Failed)
                     .map_err(JournalError::InvalidTransition)?;
-                delivery.progress = delivery.progress.terminal();
+                requests::settle_failed_task(request, unix_time_ms());
                 Ok(Some(TaskEventKind::TaskTerminal))
             })
             .await?;
@@ -556,7 +424,7 @@ impl TaskJournal {
     /// # Errors
     /// Returns a journal error when the durable transition cannot be committed.
     pub async fn fail_workspace(&self, task_id: &TaskId) -> Result<TaskBundle, JournalError> {
-        self.mutate(task_id.clone(), |task, _attempt, delivery, workspace| {
+        self.mutate(task_id.clone(), |task, _attempt, request, workspace| {
             if task.state.is_terminal() {
                 return Ok(None);
             }
@@ -569,7 +437,7 @@ impl TaskJournal {
             };
             task.transition(TaskTransition::Failed)
                 .map_err(JournalError::InvalidTransition)?;
-            delivery.progress = delivery.progress.terminal();
+            requests::settle_failed_task(request, unix_time_ms());
             Ok(Some(TaskEventKind::TaskTerminal))
         }).await
     }
@@ -582,14 +450,16 @@ impl TaskJournal {
     /// transition cannot be committed.
     pub async fn cancel_intent(&self, task_id: &TaskId) -> Result<TaskBundle, JournalError> {
         let task_id = task_id.clone();
-        self.mutate(task_id, |task, _attempt, delivery, _workspace| {
+        self.mutate(task_id, |task, _attempt, request, _workspace| {
             if task.state.is_terminal() {
                 return Ok(None);
             }
             task.transition(TaskTransition::CancelRequested)
                 .map_err(JournalError::InvalidTransition)?;
             if task.state == TaskState::Cancelled {
-                delivery.progress = delivery.progress.terminal();
+                request.settle_never_started(NeverStartedReason::CancelledByParent, unix_time_ms());
+            } else {
+                request.request_cancel();
             }
             Ok(Some(TaskEventKind::CancelRequested))
         })
@@ -607,11 +477,11 @@ impl TaskJournal {
         task_id: &TaskId,
     ) -> Result<TaskBundle, JournalError> {
         let task_id = task_id.clone();
-        self.mutate(task_id, |task, attempt, delivery, _workspace| {
+        self.mutate(task_id, |task, attempt, request, _workspace| {
             if task.state == TaskState::Cancelling && attempt.state.provider_turn_id().is_none() {
                 task.transition(TaskTransition::CancelledBeforeStart)
                     .map_err(JournalError::InvalidTransition)?;
-                delivery.progress = delivery.progress.terminal();
+                request.settle_never_started(NeverStartedReason::CancelledByParent, unix_time_ms());
                 return Ok(Some(TaskEventKind::TaskTerminal));
             }
             Ok(None)
@@ -619,46 +489,16 @@ impl TaskJournal {
         .await
     }
 
-    /// Acknowledges terminal fallback delivery after a task-addressed read.
-    ///
-    /// # Errors
-    ///
-    /// Returns a journal error when the task is absent or the durable
-    /// transition cannot be committed.
-    pub async fn acknowledge_delivery(&self, task_id: &TaskId) -> Result<TaskBundle, JournalError> {
-        let task_id = task_id.clone();
-        self.mutate(task_id, |task, _attempt, delivery, _workspace| {
-            if task.state.is_terminal() {
-                delivery.progress = delivery.progress.acknowledge();
-            }
-            Ok(None)
-        })
-        .await
-    }
-
-    pub(super) async fn get_for_child(
-        &self,
-        child: &str,
-    ) -> Result<Option<TaskBundle>, JournalError> {
-        let Some(task_id) = self.task_for_child(child).await? else {
-            return Ok(None);
-        };
-        self.get(&task_id).await.map(Some)
-    }
-
-    async fn task_for_child(&self, child: &str) -> Result<Option<TaskId>, JournalError> {
+    /// The task that owns a child thread (tests of the one-child invariant).
+    #[cfg(test)]
+    pub(super) async fn task_for_child(&self, child: &str) -> Result<Option<TaskId>, JournalError> {
         let child = child.to_owned();
         self.blocking(move |store| {
             let read = store.database().begin_read()?;
             let table = read.open_table(orchestration_tables::TASKS_BY_CHILD)?;
-            table
+            Ok(table
                 .get(child.as_str())?
-                .map(|value| {
-                    TaskId::parse(value.value()).ok_or_else(|| {
-                        JournalError::InvalidTransition("child task index is empty".into())
-                    })
-                })
-                .transpose()
+                .and_then(|value| TaskId::parse(value.value())))
         })
         .await
     }
@@ -669,7 +509,7 @@ impl TaskJournal {
         change: impl FnOnce(
             &mut OrchestrationTask,
             &mut TaskAttempt,
-            &mut CompletionDelivery,
+            &mut ChildWorkRequest,
             &mut WorkspaceClaim,
         ) -> Result<Option<TaskEventKind>, JournalError>
         + Send
@@ -682,7 +522,7 @@ impl TaskJournal {
             let event = change(
                 &mut bundle.task,
                 &mut bundle.attempt,
-                &mut bundle.delivery,
+                &mut bundle.request,
                 &mut bundle.workspace,
             )?;
             bundle.task.updated_at_ms = unix_time_ms();
@@ -732,6 +572,10 @@ impl TaskJournal {
                 .attempt
                 .bind_child(child_thread_id.clone())
                 .map_err(JournalError::InvalidTransition)?;
+            bundle
+                .request
+                .attach_child(&child_thread_id)
+                .map_err(|error| JournalError::InvalidTransition(error.to_string()))?;
             bundle.task.updated_at_ms = unix_time_ms();
             write_bundle(&write, &bundle)?;
             if existing_task_id.is_none() {
@@ -764,12 +608,12 @@ fn read_bundle(store: &IndexStore, task_id: &TaskId) -> Result<TaskBundle, Journ
         .ok_or_else(|| {
             JournalError::InvalidTransition("authoritative attempt is missing".into())
         })?;
-    let deliveries = read.open_table(orchestration_tables::DELIVERIES)?;
-    let delivery: CompletionDelivery = deliveries
+    let requests = read.open_table(orchestration_tables::WORK_REQUESTS)?;
+    let request: ChildWorkRequest = requests
         .get(task.delivery_id.as_str())?
         .map(|encoded| serde_json::from_slice(encoded.value()))
         .transpose()?
-        .ok_or_else(|| JournalError::InvalidTransition("completion delivery is missing".into()))?;
+        .ok_or_else(|| JournalError::InvalidTransition("initial work request is missing".into()))?;
     let claims = read.open_table(orchestration_tables::WORKSPACE_CLAIMS)?;
     let workspace: WorkspaceClaim = claims
         .get(task.workspace_claim_id.as_str())?
@@ -779,7 +623,7 @@ fn read_bundle(store: &IndexStore, task_id: &TaskId) -> Result<TaskBundle, Journ
     Ok(TaskBundle {
         task,
         attempt,
-        delivery,
+        request,
         workspace,
     })
 }
@@ -804,13 +648,11 @@ fn read_bundle_from_write(
             JournalError::InvalidTransition("authoritative attempt is missing".into())
         })?;
     drop(attempts);
-    let deliveries = write.open_table(orchestration_tables::DELIVERIES)?;
-    let delivery: CompletionDelivery = deliveries
-        .get(task.delivery_id.as_str())?
-        .map(|encoded| serde_json::from_slice(encoded.value()))
-        .transpose()?
-        .ok_or_else(|| JournalError::InvalidTransition("completion delivery is missing".into()))?;
-    drop(deliveries);
+    let request =
+        requests::read_from_write(write, &WorkRequestId::from_delivery(&task.delivery_id))?
+            .ok_or_else(|| {
+                JournalError::InvalidTransition("initial work request is missing".into())
+            })?;
     let claims = write.open_table(orchestration_tables::WORKSPACE_CLAIMS)?;
     let workspace: WorkspaceClaim = claims
         .get(task.workspace_claim_id.as_str())?
@@ -820,7 +662,7 @@ fn read_bundle_from_write(
     Ok(TaskBundle {
         task,
         attempt,
-        delivery,
+        request,
         workspace,
     })
 }
@@ -834,10 +676,7 @@ fn write_bundle(write: &redb::WriteTransaction, bundle: &TaskBundle) -> Result<(
         bundle.attempt.attempt_id.as_str(),
         serde_json::to_vec(&bundle.attempt)?.as_slice(),
     )?;
-    write.open_table(orchestration_tables::DELIVERIES)?.insert(
-        bundle.delivery.delivery_id.as_str(),
-        serde_json::to_vec(&bundle.delivery)?.as_slice(),
-    )?;
+    requests::put(write, &bundle.request)?;
     write
         .open_table(orchestration_tables::WORKSPACE_CLAIMS)?
         .insert(

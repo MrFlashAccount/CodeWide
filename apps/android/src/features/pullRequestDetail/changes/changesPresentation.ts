@@ -1,6 +1,6 @@
 /**
  * Pure projections of a PR files page for the Changes tab: recorded-patch
- * editor documents, viewed counts, per-file draft counts and hunk lookup.
+ * editor documents, viewed counts and labels, draft comments and hunk lookup.
  */
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
 import type { Hunk, HunkId } from "../../../data/reviewContract";
@@ -18,14 +18,6 @@ const PATCH_KINDS: Readonly<Record<PullRequestFile["status"], CodeReviewPatch["k
   modified: "update",
   removed: "delete",
   renamed: "update",
-};
-
-const PATCH_STATE_NOTES: Readonly<
-  Record<Exclude<PullRequestFile["patch"]["state"], "present">, string>
-> = {
-  binary: "Binary file",
-  notProvided: "No patch",
-  tooLarge: "Too large to render",
 };
 
 /** Recorded-patch document (`source: ""`) of one file; files without a patch get no document. */
@@ -52,30 +44,6 @@ export function viewedLabel(file: PullRequestFile, host: string): string {
   return file.viewed.source === "forge" ? `Viewed · ${host}` : "Viewed · this companion";
 }
 
-function changeNote(file: PullRequestFile): string | null {
-  if (file.status === "added") {
-    return "new file";
-  }
-  return file.status === "renamed" && file.previousPath !== null
-    ? `renamed from ${file.previousPath}`
-    : null;
-}
-
-/** Second line of a file row: drafts, change kind, patch state and the viewed source. */
-export function fileRowDetail(file: PullRequestFile, draftCount: number, host: string): string {
-  const parts = [
-    draftCount === 0 ? null : `${String(draftCount)} ${draftCount === 1 ? "draft" : "drafts"}`,
-    changeNote(file),
-    file.patch.state === "present" ? null : PATCH_STATE_NOTES[file.patch.state],
-    file.viewed.viewed
-      ? file.viewed.source === "forge"
-        ? `viewed on ${host}`
-        : "viewed on this companion"
-      : null,
-  ];
-  return parts.filter((part) => part !== null).join(" · ");
-}
-
 /** The hunk containing a line on one side, for a draft anchor. */
 export function hunkAt(file: PullRequestFile, line: number, side: "new" | "old"): Hunk | null {
   if (file.patch.state !== "present") {
@@ -97,7 +65,10 @@ export function hunkLocations(
   const locations = new Map<HunkId, { readonly line: number; readonly path: string }>();
   for (const file of files) {
     for (const hunk of file.patch.state === "present" ? file.patch.hunks : []) {
-      locations.set(hunk.id, { line: Math.max(1, hunk.newStart), path: file.path });
+      locations.set(hunk.id, {
+        line: Math.max(1, hunk.newStart),
+        path: file.path,
+      });
     }
   }
   return locations;

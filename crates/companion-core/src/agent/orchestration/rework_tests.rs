@@ -7,11 +7,11 @@ use crate::{
         orchestration::{
             journal::AdmissionRecord,
             task::{
-                AttemptId, AttemptState, CompletionDelivery, DeliveryId, DeliveryProgress,
-                DeliveryState, HostProvenance, OrchestrationTask, ParentDeliveryState,
+                AttemptId, AttemptState, DeliveryId, HostProvenance, OrchestrationTask,
                 PermissionEnvelope, PublicTaskStatus, TaskAttempt, TaskId, TaskState, WaitMode,
                 WorkspaceClaim, WorkspaceClaimId, WorkspaceClaimState, WorkspaceMode,
             },
+            work_requests::RequestPhase,
         },
     },
     store::{OutboxClaimOutcome, OutboxClaimResolution},
@@ -50,7 +50,7 @@ pub(super) fn admission(
             workspace_mode: WorkspaceMode::SharedReadOnly,
             state: TaskState::Admitted,
             authoritative_attempt_id: attempt_id.clone(),
-            delivery_id: delivery_id.clone(),
+            delivery_id,
             provider: ProviderId::from_static("claude"),
             model: "claude-default".into(),
             name: None,
@@ -72,14 +72,6 @@ pub(super) fn admission(
                 child_thread_id: child.clone(),
             },
         },
-        delivery: CompletionDelivery {
-            delivery_id,
-            task_id: task_id.clone(),
-            progress: DeliveryProgress::AwaitingResume {
-                state: DeliveryState::Pending,
-            },
-            dedupe_key: format!("task-completion:{}", task_id.as_str()),
-        },
         workspace: WorkspaceClaim {
             claim_id: workspace_claim_id,
             mode: WorkspaceMode::SharedReadOnly,
@@ -91,7 +83,7 @@ pub(super) fn admission(
     (record, command_id)
 }
 
-fn restart(harness: &Harness) -> Arc<OrchestrationService> {
+pub(super) fn restart(harness: &Harness) -> Arc<OrchestrationService> {
     let (journal, _journal_rx) = tokio::sync::mpsc::channel(1);
     OrchestrationService::with_turn_delivery(
         harness.gateway.clone(),
@@ -126,7 +118,10 @@ fn start_outbox_pump(harness: &Harness) {
                 wakeup.clone(),
                 events,
             ),
-            thread_view: crate::thread_view::ThreadViewService::new(harness.gateway.clone()),
+            thread_view: crate::thread_view::ThreadViewService::new(
+                harness.gateway.clone(),
+                Arc::new(ProfileObservations::default()),
+            ),
             files: Arc::new(std::sync::RwLock::new(None)),
             workspaces,
             fork,
@@ -207,11 +202,9 @@ async fn one_child_thread_cannot_be_bound_to_two_tasks() -> TestResult {
         harness
             .service
             .task_journal
-            .get_for_child(child.as_str())
+            .task_for_child(child.as_str())
             .await?
-            .ok_or("indexed task")?
-            .task
-            .task_id,
+            .ok_or("indexed task")?,
         first_task
     );
     assert_eq!(
@@ -428,69 +421,32 @@ async fn a_terminal_event_waits_for_the_matching_persisted_start_receipt() -> Te
     let harness = harness(":workspace").await?;
     let task_id = TaskId::new();
     let child = AppThreadId::from_static("late-receipt-child");
-    let (record, _) = admission(&task_id, &child, "late-receipt");
+    let claude = ProviderId::from_static("claude");
+    let (record, command_id) = admission(&task_id, &child, "late-receipt");
     harness.service.task_journal.admit(record).await?;
     harness
         .service
         .task_journal
         .bind_child(&task_id, child.clone())
         .await?;
+    let journal = &harness.service.task_journal;
+    let completed = crate::agent::client_wire::observe::TurnEnd::Completed;
     assert!(
-        harness
-            .service
-            .task_journal
-            .observe_terminal(
-                &ProviderId::from_static("claude"),
-                child.as_str(),
-                TurnId::from_static("wrong-turn"),
-                crate::agent::client_wire::observe::TurnEnd::Completed,
-            )
+        test_support::terminal(journal, &claude, child.as_str(), "wrong-turn", completed)
             .await?
             .is_none()
     );
+    assert!(!journal.get(&task_id).await?.task.state.is_terminal());
+    test_support::receipt(journal, &command_id, child.as_str(), "right-turn").await?;
     assert!(
-        !harness
-            .service
-            .task_journal
-            .get(&task_id)
-            .await?
-            .task
-            .state
-            .is_terminal()
-    );
-    harness
-        .service
-        .task_journal
-        .observe_started(
-            &ProviderId::from_static("claude"),
-            child.as_str(),
-            TurnId::from_static("right-turn"),
-        )
-        .await?;
-    assert!(
-        harness
-            .service
-            .task_journal
-            .observe_terminal(
-                &ProviderId::from_static("claude"),
-                child.as_str(),
-                TurnId::from_static("wrong-turn"),
-                crate::agent::client_wire::observe::TurnEnd::Completed,
-            )
+        test_support::terminal(journal, &claude, child.as_str(), "wrong-turn", completed)
             .await?
             .is_none()
     );
-    let terminal = harness
-        .service
-        .task_journal
-        .observe_terminal(
-            &ProviderId::from_static("claude"),
-            child.as_str(),
-            TurnId::from_static("right-turn"),
-            crate::agent::client_wire::observe::TurnEnd::Completed,
-        )
-        .await?
-        .ok_or("matching terminal event")?;
+    let terminal =
+        test_support::terminal(journal, &claude, child.as_str(), "right-turn", completed)
+            .await?
+            .ok_or("matching terminal event")?;
     assert_eq!(terminal.task.state, TaskState::Succeeded);
     Ok(())
 }
@@ -502,19 +458,20 @@ async fn recovery_error_after_receipt_preserves_turn_binding_and_terminalizes() 
     let child = AppThreadId::from_static("recovery-error-child");
     let provider = ProviderId::from_static("claude");
     let provider_turn = TurnId::from_static("recovery-error-turn");
-    let (record, _) = admission(&task_id, &child, "recovery-error-after-receipt");
+    let (record, command_id) = admission(&task_id, &child, "recovery-error-after-receipt");
     harness.service.task_journal.admit(record).await?;
     harness
         .service
         .task_journal
         .bind_child(&task_id, child.clone())
         .await?;
-    harness
-        .service
-        .task_journal
-        .observe_started(&provider, child.as_str(), provider_turn.clone())
-        .await?
-        .ok_or("start receipt was not applied")?;
+    test_support::receipt(
+        &harness.service.task_journal,
+        &command_id,
+        child.as_str(),
+        provider_turn.as_str(),
+    )
+    .await?;
 
     let preserved = harness
         .service
@@ -527,17 +484,15 @@ async fn recovery_error_after_receipt_preserves_turn_binding_and_terminalizes() 
         Some(&provider_turn)
     );
 
-    let terminal = harness
-        .service
-        .task_journal
-        .observe_terminal(
-            &provider,
-            child.as_str(),
-            provider_turn.clone(),
-            crate::agent::client_wire::observe::TurnEnd::Completed,
-        )
-        .await?
-        .ok_or("terminal fact was not applied")?;
+    let terminal = test_support::terminal(
+        &harness.service.task_journal,
+        &provider,
+        child.as_str(),
+        provider_turn.as_str(),
+        crate::agent::client_wire::observe::TurnEnd::Completed,
+    )
+    .await?
+    .ok_or("terminal fact was not applied")?;
     assert_eq!(terminal.task.state, TaskState::Succeeded);
     assert_eq!(
         terminal.attempt.state.provider_turn_id(),
@@ -615,12 +570,7 @@ async fn a_foreign_provider_cannot_end_wait_delivery_queue_or_tracker_state() ->
     assert!(!wait.is_finished());
     let bundle = harness.service.task_journal.get(&task_id).await?;
     assert_eq!(bundle.task.state, TaskState::Running);
-    assert_eq!(
-        bundle.delivery.progress,
-        DeliveryProgress::ParentTurn {
-            state: ParentDeliveryState::Pending
-        }
-    );
+    assert!(matches!(bundle.request.phase, RequestPhase::Running { .. }));
     assert!(
         harness
             .service

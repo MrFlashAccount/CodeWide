@@ -22,7 +22,7 @@ import Animated, {
   useSharedValue,
   withSpring as withSpring2
 } from "react-native-reanimated";
-import { scheduleOnRN as scheduleOnRN2 } from "react-native-worklets";
+import { scheduleOnRN } from "react-native-worklets";
 
 // vendor/reacticx/src/components/organisms/masked-tab-bar/const.ts
 var DEFAULT_HEIGHT = 52;
@@ -80,12 +80,10 @@ function useMaskedTabLayer() {
 
 // vendor/reacticx/src/components/organisms/masked-tab-bar/motion.ts
 import { withSpring } from "react-native-reanimated";
-import { scheduleOnRN } from "react-native-worklets";
-function startPillSelectionOnUI(target, pillX, pillWidth, selectValue) {
+function startPillMotionOnUI(target, pillX, pillWidth) {
   "worklet";
   pillX.value = withSpring(target.x, PILL_SPRING);
   pillWidth.value = withSpring(target.width, PILL_SPRING);
-  scheduleOnRN(selectValue, target.value);
 }
 
 // vendor/reacticx/src/utils/create-compound-component/index.ts
@@ -100,6 +98,7 @@ function clampValue(value, min, max) {
   "worklet";
   return Math.min(Math.max(value, min), max);
 }
+var SELECTED_TAP_MAX_TRANSLATION = 8;
 function boxAtX(list, x) {
   "worklet";
   for (let i = 0; i < list.length; i += 1) {
@@ -107,6 +106,14 @@ function boxAtX(list, x) {
     if (x >= box.x && x <= box.x + box.width) {
       return box.disabled ? null : box;
     }
+  }
+  return null;
+}
+function boxForValue(list, value) {
+  "worklet";
+  for (let i = 0; i < list.length; i += 1) {
+    const box = list[i];
+    if (box.value === value) return box;
   }
   return null;
 }
@@ -130,6 +137,7 @@ var MaskedTabBarRoot = ({
   value: valueProp,
   defaultValue,
   onValueChange,
+  onSelectedValueActivate,
   theme = "light",
   palette: paletteProp,
   height = DEFAULT_HEIGHT,
@@ -203,6 +211,7 @@ var MaskedTabBarRoot = ({
     () => ({
       value,
       setValue,
+      onSelectedValueActivate,
       registerTrigger,
       boxes,
       listWidth,
@@ -224,6 +233,7 @@ var MaskedTabBarRoot = ({
     [
       value,
       setValue,
+      onSelectedValueActivate,
       registerTrigger,
       boxes,
       listWidth,
@@ -276,7 +286,9 @@ var MaskedTabBarList = ({
     radius,
     padding,
     gap,
-    draggable
+    draggable,
+    value,
+    onSelectedValueActivate
   } = useMaskedTabBar("MaskedTabBar.List");
   const boxesValue = useSharedValue([]);
   useEffect(() => {
@@ -289,6 +301,8 @@ var MaskedTabBarList = ({
   const grabOffset = useSharedValue(0);
   const dragTarget = useSharedValue(0);
   const dragVelocity = useSharedValue(0);
+  const dragged = useSharedValue(false);
+  const pendingValue = useSharedValue("");
   const hoveredValue = useSharedValue("");
   const listWidthValue = useSharedValue(0);
   useEffect(() => {
@@ -312,12 +326,14 @@ var MaskedTabBarList = ({
   useAnimatedReaction(
     () => grabbed.value,
     (isGrabbed, wasGrabbed) => {
-      if (isGrabbed !== wasGrabbed) scheduleOnRN2(setFollowActive, isGrabbed);
+      if (isGrabbed !== wasGrabbed) scheduleOnRN(setFollowActive, isGrabbed);
     }
   );
   const gesture = useMemo(
     () => Gesture.Pan().minDistance(0).shouldCancelWhenOutside(false).onBegin((e) => {
       press.value = withSpring2(1, PRESS_SPRING);
+      dragged.value = false;
+      pendingValue.value = "";
       hoveredValue.value = "";
       const inside = e.x >= pillX.value && e.x <= pillX.value + pillWidth.value;
       grabbed.value = draggable && inside;
@@ -329,9 +345,14 @@ var MaskedTabBarList = ({
     }).onStart((e) => {
       if (grabbed.value) return;
       const tapped = boxAtX(boxesValue.value, e.x);
-      if (tapped) startPillSelectionOnUI(tapped, pillX, pillWidth, setValue);
+      if (!tapped) return;
+      pendingValue.value = tapped.value;
+      startPillMotionOnUI(tapped, pillX, pillWidth);
     }).onUpdate((e) => {
       if (!grabbed.value) return;
+      if (Math.abs(e.translationX) > SELECTED_TAP_MAX_TRANSLATION || Math.abs(e.translationY) > SELECTED_TAP_MAX_TRANSLATION) {
+        dragged.value = true;
+      }
       dragTarget.value = clampValue(
         e.x + grabOffset.value,
         0,
@@ -345,13 +366,38 @@ var MaskedTabBarList = ({
         hoveredValue.value = over.value;
         pillWidth.value = withSpring2(over.width, PILL_SPRING);
       }
-    }).onFinalize(() => {
+    }).onFinalize((_event, success) => {
       press.value = withSpring2(0, PRESS_SPRING);
-      if (!grabbed.value) return;
+      const wasGrabbed = grabbed.value;
+      const selectedTap = !dragged.value;
       grabbed.value = false;
+      dragged.value = false;
+      hoveredValue.value = "";
+      dragVelocity.value = 0;
+      if (!success) {
+        pendingValue.value = "";
+        const selected = boxForValue(boxesValue.value, value);
+        if (selected) {
+          pillX.value = withSpring2(selected.x, PILL_SPRING);
+          pillWidth.value = withSpring2(selected.width, PILL_SPRING);
+        }
+        return;
+      }
+      if (!wasGrabbed) {
+        const nextValue = pendingValue.value;
+        pendingValue.value = "";
+        if (nextValue === "") return;
+        if (nextValue === value && onSelectedValueActivate) {
+          scheduleOnRN(onSelectedValueActivate, nextValue);
+        } else {
+          scheduleOnRN(setValue, nextValue);
+        }
+        return;
+      }
+      pendingValue.value = "";
       const box = nearestBox(
         boxesValue.value,
-        pillX.value + pillWidth.value / 2
+        dragTarget.value + pillWidth.value / 2
       );
       if (!box) return;
       pillX.value = withSpring2(box.x, {
@@ -359,8 +405,10 @@ var MaskedTabBarList = ({
         velocity: dragVelocity.value
       });
       pillWidth.value = withSpring2(box.width, PILL_SPRING);
-      dragVelocity.value = 0;
-      scheduleOnRN2(setValue, box.value);
+      if (selectedTap && box.value === value && onSelectedValueActivate) {
+        scheduleOnRN(onSelectedValueActivate, box.value);
+      }
+      scheduleOnRN(setValue, box.value);
     }),
     [
       boxesValue,
@@ -369,12 +417,16 @@ var MaskedTabBarList = ({
       grabOffset,
       dragTarget,
       dragVelocity,
+      dragged,
+      pendingValue,
       hoveredValue,
       pillX,
       pillWidth,
       press,
       setValue,
-      draggable
+      draggable,
+      value,
+      onSelectedValueActivate
     ]
   );
   const clipStyle = useAnimatedStyle(

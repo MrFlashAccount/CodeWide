@@ -21,7 +21,11 @@ use crate::{
         registry::ProviderRegistry,
     },
     agent_bridge::AgentBridge,
-    forge::{ForgeConfig, ForgeDeps, ForgeEvents, ForgeService},
+    forge::{
+        ForgeConfig, ForgeDeps, ForgeEvents, ForgeService,
+        media::{MediaFailure, MediaRoute},
+    },
+    media::{MediaError, MediaProxyService, PrivateMedia, PrivateMediaSource},
     projects::ProjectService,
     review::{
         ReviewEvents, ReviewService,
@@ -67,6 +71,28 @@ impl ForgeHostConfig {
 pub(super) struct ForgeServices {
     pub(super) forge: Arc<ForgeService>,
     pub(super) review: Arc<ReviewService>,
+}
+
+/// The media path's view of the forge: owned URLs become bytes or a media
+/// error; the forge's own failure kinds stay inside the forge.
+struct ForgeMediaSource {
+    forge: Arc<ForgeService>,
+}
+
+#[async_trait]
+impl PrivateMediaSource for ForgeMediaSource {
+    async fn fetch(&self, url: &url::Url) -> PrivateMedia {
+        match self.forge.route_media(url).await {
+            MediaRoute::Anonymous => PrivateMedia::NotOwned,
+            MediaRoute::Read(bytes) => PrivateMedia::Fetched(bytes),
+            MediaRoute::Failed(MediaFailure::TooLarge) => {
+                PrivateMedia::Failed(MediaError::TooLarge)
+            }
+            MediaRoute::Failed(MediaFailure::Unavailable) => {
+                PrivateMedia::Failed(MediaError::Upstream)
+            }
+        }
+    }
 }
 
 /// Session resources by thread, routed like the hub's own resource reads.
@@ -149,6 +175,15 @@ impl SyncHub {
             Err(poisoned) => *poisoned.into_inner() = Some(ForgeServices { forge, review }),
         }
         self
+    }
+
+    /// Routes forge-hosted images of the media path through the installed
+    /// forge service (`forge.media.read` of a connected account); without
+    /// a forge service every URL keeps the anonymous fetch.
+    pub fn route_forge_media(&self, media: &MediaProxyService) {
+        if let Some(forge) = self.forge() {
+            media.set_private_source(Arc::new(ForgeMediaSource { forge }));
+        }
     }
 
     /// The forge service, when installed (admin routes use it).

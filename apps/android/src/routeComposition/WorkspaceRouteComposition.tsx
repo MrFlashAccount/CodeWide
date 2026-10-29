@@ -1,5 +1,5 @@
 import { useSelector } from "@legendapp/state/react";
-import { createElement, useEffect, useState, useSyncExternalStore } from "react";
+import { createElement, useEffect, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { newChatDefaultServer } from "../features/projects/newChatEntry";
@@ -52,7 +52,6 @@ import {
   threadRouteSessionOwner,
   workspaceRouteSessionOwner,
 } from "../services/threads/threadRouteParams";
-import { routeSessionSnapshot, subscribeRouteSessions } from "../services/routeSessionPolicy";
 import type { WorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { useEvent } from "../react/useEvent";
 import { useAppNotice } from "../ui/useAppNotice";
@@ -61,6 +60,7 @@ import { WorkspaceListRouteShell } from "./WorkspaceListRoute";
 import { ensureV1NewThreadRoute, useWorkspaceRouteModel } from "./WorkspaceRouteModel";
 import { workspaceCapabilities } from "./workspaceCapabilities";
 import { useAdaptiveSearchRoute } from "./useAdaptiveSearchRoute";
+import { useWorkspaceSearchSessionRetention } from "./useWorkspaceSearchSessionRetention";
 
 const SEARCH_REMOTE = {
   searchMessages: features.search.searchMessages.bind(features.search),
@@ -179,18 +179,6 @@ function sidebarSearchContent({
         });
 }
 
-function useSearchSessionRetention(sessionId: string | null): void {
-  useSyncExternalStore(subscribeRouteSessions, routeSessionSnapshot, routeSessionSnapshot);
-  useEffect(() => {
-    if (sessionId === null) {
-      return undefined;
-    }
-    // Search can briefly leave the active route while a selected result is pushed.
-    // Explicit close, workspace teardown, and idle expiry own its retirement.
-    return searchRouteSessions.retain(sessionId, workspaceRouteSessionOwner);
-  }, [sessionId]);
-}
-
 /** Composes the mounted V1 route resources, list chrome, and active destination slot. */
 export function WorkspaceRouteComposition(): React.JSX.Element {
   const [terminalsVisible, setTerminalsVisible] = useState(false);
@@ -199,6 +187,7 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
   );
   const windowLayout = useWindowLayout();
   const route = useWorkspaceRouteModel(windowLayout.desktop, desktopSearchSessionId);
+  useWorkspaceSearchSessionRetention();
   const searchEntry =
     route.globalSearchSessionId === null
       ? null
@@ -433,7 +422,6 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     searchEntry,
     startRemote: startSearchVoiceTranscription,
   });
-  useSearchSessionRetention(searchEntry?.id ?? null);
   const sidebarSearch = sidebarSearchContent({
     closeGlobalSearch,
     resources,

@@ -23,9 +23,14 @@ export function ProjectPickerContent({
   readonly sheetScroll?: boolean;
   state: ProjectPickerSession;
 }): React.JSX.Element {
-  const { busy, current, onAddProject, onManageProjects, onSelect } = props;
+  const { busy, confirmation, onAddProject, onManageProjects, onSelect } = props;
+  const current = confirmation === undefined ? props.current : state.selected;
   const dialog = useAppDialog();
   const selectProject = useEvent((destination: ProjectDestination): void => {
+    if (confirmation !== undefined) {
+      state.select(destination);
+      return;
+    }
     onSelect(destination).catch((error: unknown) => {
       if (!state.isCurrent()) {
         return;
@@ -101,12 +106,16 @@ export function ProjectPickerContent({
               );
             }
             const canPin =
-              !item.pinned && onAddProject !== undefined && onManageProjects === undefined;
+              !item.pinned &&
+              onAddProject !== undefined &&
+              onManageProjects === undefined &&
+              confirmation === undefined;
             return (
               <ProjectChoiceRow
                 busy={busy || pinningPath !== null}
                 choice={item.choice}
                 current={current}
+                note={item.note}
                 onPin={canPin ? () => void pinProject(item.choice) : undefined}
                 onSelect={selectProject}
                 pinned={item.pinned}

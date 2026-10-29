@@ -27,6 +27,7 @@ use super::{
     links::LinkRecord,
     params,
     plugin_client::PluginSession,
+    review_chat::ReviewChats,
     scenarios,
     wire::{
         FileWire, FilesPageWire, ListPageWire, ListSectionWire, LocalCheckoutWire, OverviewWire,
@@ -82,9 +83,10 @@ pub async fn list(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeErr
             .links_of(&entry.plugin_id)?
             .into_iter()
             .filter(|link| {
-                cursors
-                    .as_ref()
-                    .is_none_or(|cursors| cursors.contains_key(link.key.as_str()))
+                link.catalog_enabled
+                    && cursors
+                        .as_ref()
+                        .is_none_or(|cursors| cursors.contains_key(link.key.as_str()))
             })
             .collect();
         if links.is_empty() {
@@ -180,8 +182,9 @@ pub async fn search(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeE
             .links_of(&entry.plugin_id)?
             .into_iter()
             .filter(|link| {
-                (request.accounts.is_empty()
-                    || request.accounts.iter().any(|key| key == link.key.as_str()))
+                link.catalog_enabled
+                    && (request.accounts.is_empty()
+                        || request.accounts.iter().any(|key| key == link.key.as_str()))
                     && cursors
                         .as_ref()
                         .is_none_or(|cursors| cursors.contains_key(link.key.as_str()))
@@ -415,6 +418,7 @@ fn append_listed(
                 .get(&pull_request)
                 .copied()
                 .unwrap_or((0, false));
+            let review_thread_id = listed_review_thread(&context.review_chats, &pull_request);
             batch.repositories.insert(row.repository.clone());
             Ok(PullRequestRowWire {
                 pull_request,
@@ -428,6 +432,7 @@ fn append_listed(
                 checks: row.checks,
                 local_checkout: local,
                 linked_thread_count: count,
+                review_thread_id,
                 updated_at: row.updated_at,
                 web_url: super::wire::page_on_host(row.web_url, &link.host),
                 attention,
@@ -447,6 +452,19 @@ fn empty_section(context: &ForgeContext, link: &AccountLink) -> ListSectionWire 
         account: context.accounts.wire(link),
         supported_categories: Vec::new(),
         rows: Vec::new(),
+    }
+}
+
+/// The canonical review chat a list row carries. The row only decorates
+/// itself with that chat's unread state, so an unreadable record degrades to
+/// no chat instead of failing every section of the list.
+fn listed_review_thread(chats: &ReviewChats, key: &PullRequestKey) -> Option<String> {
+    match chats.get(key) {
+        Ok(thread) => thread.map(|thread| thread.as_str().to_owned()),
+        Err(error) => {
+            tracing::warn!(kind = error.log_kind(), "listed review chat read failed");
+            None
+        }
     }
 }
 
@@ -766,6 +784,14 @@ pub async fn files_page(
         context.review.viewed().marks(&source, head.as_str())?
     };
     let mut files = listed.files;
+    // A file without a path cannot be listed, anchored or marked viewed; a
+    // page carrying one is a plugin contract violation, not a partial page.
+    if files.iter().any(|file| file.path.is_empty()) {
+        tracing::warn!(pull_request = %key.log_hash(), "forge plugin returned a file without a path");
+        return Err(ForgeError::internal(
+            "the plugin returned a file without a path",
+        ));
+    }
     if files.len() > limits::FILES_PAGE_MAX {
         tracing::warn!(pull_request = %key.log_hash(), "forge plugin returned an oversized files page");
         files.truncate(limits::FILES_PAGE_MAX);
@@ -884,7 +910,68 @@ pub async fn set_viewed(context: &ForgeContext, raw: &Value) -> Result<Value, Fo
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
+    use std::sync::Arc;
+
+    use forge_protocol::ForgePrRef;
+
     use super::*;
+    use crate::{
+        agent::model::AppThreadId,
+        store::{IndexStore, forge_tables::FORGE_PR_REVIEW_THREADS, kv::KvOp},
+    };
+
+    fn pull_request(number: &str) -> PullRequestKey {
+        PullRequestKey::issue(
+            "github",
+            &ForgePrRef {
+                host: "github.com".into(),
+                repository: "acme/widget".into(),
+                number: number.into(),
+            },
+        )
+    }
+
+    #[test]
+    fn a_listed_row_carries_only_the_canonical_review_chat() -> Result<(), ForgeError> {
+        let directory = tempfile::tempdir().expect("temporary store");
+        let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+        let chats = ReviewChats::new(store.clone());
+        let key = pull_request("42");
+        let other = pull_request("43");
+        let related = AppThreadId::from_static("thread-related");
+        assert_eq!(listed_review_thread(&chats, &key), None);
+
+        // Assignment needs live agents; seed the durable record it stores.
+        store.kv_apply(vec![KvOp::Put {
+            table: FORGE_PR_REVIEW_THREADS,
+            key: key.as_str().to_owned(),
+            value: related.as_str().as_bytes().to_vec(),
+        }])?;
+        assert_eq!(
+            listed_review_thread(&chats, &key).as_deref(),
+            Some("thread-related")
+        );
+        assert_eq!(
+            listed_review_thread(&chats, &other),
+            None,
+            "another pull request has no canonical chat"
+        );
+
+        store.kv_apply(vec![KvOp::Put {
+            table: FORGE_PR_REVIEW_THREADS,
+            key: other.as_str().to_owned(),
+            value: vec![0xff, 0xfe],
+        }])?;
+        assert_eq!(
+            listed_review_thread(&chats, &other),
+            None,
+            "an unreadable record degrades to no chat"
+        );
+
+        chats.clear_if(&key, &related)?;
+        assert_eq!(listed_review_thread(&chats, &key), None);
+        Ok(())
+    }
 
     #[test]
     fn list_cursors_are_opaque_and_span_accounts() {

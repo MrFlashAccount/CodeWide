@@ -103,6 +103,7 @@ function timelineSurface(turn: TurnItem) {
             key={row.key}
             parts={row.parts}
             placement={row.placement}
+            trailingTasks={row.trailingTasks}
             presentation={projectTurnPresentation(row.item, null, false, false)}
             requestPrompt={null}
             turn={row.item}

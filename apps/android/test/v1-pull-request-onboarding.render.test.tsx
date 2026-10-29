@@ -15,9 +15,15 @@ import {
   type AuthStartResult,
   type ForgeAccountsSnapshot,
 } from "../src/data/forgeContract";
+import { parsePullRequestListPage } from "../src/data/forgePullRequestContract";
 import { createForgeResources } from "../src/data/forgeResources";
 import { PullRequestsCatalog } from "../src/features/pullRequests/PullRequestsFeature";
 import { OnboardingScreen } from "../src/features/pullRequests/onboarding/OnboardingScreen";
+import {
+  defaultPullRequestFilter,
+  forgeAccountsSheetOpen,
+  pullRequestListModel,
+} from "../src/features/pullRequests/pullRequestListModel";
 import type { PullRequestsWorkspaceCapabilities } from "../src/features/pullRequests/workspaceCapabilities";
 import { Tray } from "../src/vendor/reacticx/tray";
 import { shouldMountTrayView } from "../vendor/reacticx/src/components/organisms/tray/helper";
@@ -26,6 +32,7 @@ import {
   githubProvider,
   hostLoginFlow,
   onboardingAccounts,
+  reviewRequestedPage,
 } from "./fixtures/forgeWireFixtures";
 import { createMemoryQueryPersister } from "./fixtures/queryPersister";
 
@@ -49,6 +56,15 @@ const CONNECTED_SNAPSHOT = requiredSnapshot({
   accounts: [connectedAccount],
   providers: [githubProvider],
 });
+const CONNECTED_MULTIPLE_PROVIDERS = requiredSnapshot({
+  ...onboardingAccounts,
+  accounts: [connectedAccount],
+});
+
+afterEach(() => {
+  forgeAccountsSheetOpen.set(false);
+  pullRequestListModel.set(defaultPullRequestFilter());
+});
 
 if (CONNECTED_ACCOUNT === undefined) {
   throw new Error("The connected account fixture is invalid");
@@ -62,17 +78,12 @@ function requiredSnapshot(value: unknown): ForgeAccountsSnapshot {
   return snapshot;
 }
 
-function capabilities(snapshot: ForgeAccountsSnapshot): PullRequestsWorkspaceCapabilities {
+function capabilities(_snapshot: ForgeAccountsSnapshot): PullRequestsWorkspaceCapabilities {
   return {
     cancelAuth: () => Promise.resolve(),
     checkAgain: () => Promise.resolve(),
     disconnect: () => Promise.resolve(),
-    setProviderEnabled: (_connectionId, pluginId) => {
-      const provider = snapshot.providers.find((candidate) => candidate.pluginId === pluginId);
-      return provider === undefined
-        ? Promise.reject(new Error(`Unknown provider: ${pluginId}`))
-        : Promise.resolve(provider);
-    },
+    setAccountEnabled: () => Promise.reject(new Error("Not used by this render test")),
     startAuth: () => Promise.reject(new Error("Not used by this render test")),
     submitToken: () => Promise.reject(new Error("Not used by this render test")),
   };
@@ -129,6 +140,50 @@ it("keeps provider choices behind one welcome action", () => {
   expect(
     StyleSheet.flatten(view.getByTestId("provider-tray-header-copy-step-1").props.style),
   ).toMatchObject({ alignItems: "baseline", flexDirection: "row" });
+});
+
+it("opens provider management from a connected review inbox", async () => {
+  const forge = forgeResources();
+  const filter = defaultPullRequestFilter();
+  const page = parsePullRequestListPage(reviewRequestedPage);
+  if (page === null) {
+    throw new Error("The pull-request fixture is invalid");
+  }
+  pullRequestListModel.set(filter);
+  forge.accounts.publish({ connectionId: "server" }, CONNECTED_MULTIPLE_PROVIDERS);
+  forge.lists.publish({ connectionId: "server", filter }, page);
+  const view = render(
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { height: 800, width: 400, x: 0, y: 0 },
+        insets: { bottom: 0, left: 0, right: 0, top: 0 },
+      }}
+    >
+      <PullRequestsCatalog
+        capabilities={capabilities(CONNECTED_MULTIPLE_PROVIDERS)}
+        connectionId="server"
+        forge={forge}
+        isThreadUnread={() => false}
+        onOpenPullRequest={() => undefined}
+      />
+    </SafeAreaProvider>,
+  );
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  fireEvent.press(view.getByRole("button", { name: "Add or manage pull request providers" }));
+
+  expect(view.getByTestId("forge-accounts-sheet")).toBeOnTheScreen();
+  expect(view.getByText("Pull request accounts")).toBeOnTheScreen();
+  expect(view.getByTestId("forge-provider-group-github")).toBeOnTheScreen();
+  expect(view.getByTestId("forge-provider-group-arcanum")).toBeOnTheScreen();
+
+  act(() => {
+    forgeAccountsSheetOpen.set(false);
+  });
+  expect(view.queryByTestId("forge-accounts-sheet")).toBeNull();
+  view.unmount();
 });
 
 it("mounts an incoming tray view before passive effects can update retention", () => {
@@ -305,6 +360,7 @@ it("recovers the host-login code when the mutation reply is lost but accounts re
         capabilities={workspaceCapabilities}
         connectionId={connectionId}
         forge={forge}
+        isThreadUnread={() => false}
         onOpenPullRequest={() => undefined}
       />
     </SafeAreaProvider>,
@@ -343,6 +399,7 @@ it("keeps the terminal success visible after the authoritative account snapshot 
         capabilities={workspaceCapabilities}
         connectionId="server"
         forge={forge}
+        isThreadUnread={() => false}
         onOpenPullRequest={() => undefined}
       />
     </SafeAreaProvider>,

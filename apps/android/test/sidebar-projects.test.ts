@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ProjectUnreadModel, projectScopeKey } from "../src/data/project-unread-model";
+import {
+  ProjectUnreadModel,
+  projectScopeKey,
+  threadUnreadReader,
+} from "../src/data/project-unread-model";
 import { sidebarProjects } from "../src/features/projects/sidebarProjects";
 import { sidebarRows } from "../src/features/threadList/sidebarRows";
 import {
@@ -179,6 +183,20 @@ describe("project unread membership", () => {
     expect(model.projects$.peek()).toHaveLength(1);
     model.publish([{ type: "update", value: summary("another") }]);
     expect(model.projects$.peek()).toEqual([]);
+    model.close();
+  });
+
+  it("answers per chat and connection until that chat is read", async () => {
+    const model = new ProjectUnreadModel();
+    await model.resource(async () => [summary("review-chat", { unread: 1 })]);
+    const server = threadUnreadReader(model, "server");
+    expect(server("review-chat")).toBe(true);
+    expect(threadUnreadReader(model, "another-server")("review-chat")).toBe(false);
+    expect(threadUnreadReader(null, "server")("review-chat")).toBe(false);
+    model.publish([{ type: "insert", value: summary("archived", { archived: true, unread: 1 }) }]);
+    expect(server("archived")).toBe(false);
+    model.publish([{ type: "update", value: summary("review-chat") }]);
+    expect(server("review-chat")).toBe(false);
     model.close();
   });
 

@@ -49,6 +49,16 @@ test "$(readlink "$install_root/current")" = "generations/$bundle_digest"
 test -d "$install_root/generations/$bundle_digest"
 test "$("$install_root/current/bin/codewide-companion" --version)" = "codewide-companion $version"
 test -x "$install_root/current/libexec/codewide-vcs-git"
+# Git is built in: it resolves from the bundled directory and is never
+# registered as a generation path.
+vcs_plugins=$(XDG_STATE_HOME="$test_home/.local/state" \
+  "$install_root/current/bin/codewide-companion" vcs plugin list \
+  --bundled-plugin-dir "$install_root/current/libexec")
+printf '%s' "$vcs_plugins" | grep -F '"source":"bundled","id":"git","executable":"' >/dev/null
+if grep -Fqs 'codewide-vcs-git' "$test_home/.local/state/codewide/companion/vcs-plugins.json"; then
+  printf '%s\n' 'installer registered the built-in Git provider by path' >&2
+  exit 1
+fi
 test -x "$install_root/current/libexec/codewide-forge-github"
 test -x "$install_root/current/libexec/codewide-companion-memory-watch"
 grep -F '"artifactDigest":"'"$bundle_digest"'"' \

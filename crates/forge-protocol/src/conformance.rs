@@ -26,10 +26,11 @@ use tokio::{
 };
 
 use crate::{
-    AuthMethodKind, AuthMethodsResult, AuthVerifyResult, ChecksResult, FilesResult,
-    ForgeAccountRef, ForgePrRef, InitializeResult, ListResult, PROTOCOL_VERSION,
-    PullRequestCategory, PullRequestOverview, RawActionCatalog, ResolveResult, ScenarioContext,
-    capability, code, methods, read_frame, write_frame,
+    AuthMethodKind, AuthMethodsResult, AuthVerifyResult, ChecksResult, ConversationEntry,
+    ConversationPage, FilesResult, ForgeAccountRef, ForgePrRef, InitializeResult, ListResult,
+    PROTOCOL_VERSION, PluginIcon, PullRequestCategory, PullRequestOverview, RawActionCatalog,
+    ResolveResult, ReviewThread, ScenarioContext, ThreadAnchor, capability, code, methods,
+    read_frame, write_frame,
 };
 
 const CALL_TIMEOUT: Duration = Duration::from_mins(1);
@@ -247,14 +248,23 @@ async fn initialize(
                 "capabilities": [
                     capability::AUTH, capability::LIST, capability::READ, capability::DIFF,
                     capability::ACTIONS, capability::REVIEW, capability::CHECKS, capability::VIEWED,
-                    capability::RESOLVE, capability::SCENARIO_CONTEXT
+                    capability::RESOLVE, capability::SCENARIO_CONTEXT, capability::CONVERSATION,
+                    capability::COMMENTS
                 ],
                 "stateDirectory": state,
             }),
         )
         .await;
-    let result = expect::<InitializeResult>(methods::INITIALIZE, answer, &[]).and_then(|info| {
-        let info = info.ok_or("initialize failed")?;
+    let result = expect::<Value>(methods::INITIALIZE, answer, &[]).and_then(|raw| {
+        let raw = raw.ok_or("initialize failed")?;
+        // `InitializeResult` reads a malformed icon as none; the harness
+        // holds a plugin to the exact `PluginIcon` shape.
+        if let Some(icon) = raw.get("providerIcon").filter(|icon| !icon.is_null()) {
+            serde_json::from_value::<PluginIcon>(icon.clone())
+                .map_err(|error| format!("initialize: invalid providerIcon: {error}"))?;
+        }
+        let info = serde_json::from_value::<InitializeResult>(raw)
+            .map_err(|error| format!("initialize: invalid result shape: {error}"))?;
         if info.protocol_version != PROTOCOL_VERSION {
             return Err(format!("protocol version {}", info.protocol_version));
         }
@@ -381,6 +391,11 @@ async fn check_reads(
         }),
     );
     check_pull_request(session, declared, fixtures, account, report).await;
+    if let Some(pr) = &fixtures.pull_request
+        && declared.iter().any(|cap| cap == capability::CONVERSATION)
+    {
+        check_conversation(session, account, pr, report).await;
+    }
 }
 
 async fn check_pull_request(
@@ -488,6 +503,87 @@ async fn check_pull_request(
     );
 }
 
+/// `forge.conversation@1`: a well-formed first page, and a media read of a
+/// foreign host refused without fetching it.
+async fn check_conversation(
+    session: &mut Session,
+    account: &ForgeAccountRef,
+    pr: &ForgePrRef,
+    report: &mut Report,
+) {
+    let page = session
+        .call(
+            methods::PULL_REQUEST_CONVERSATION,
+            &json!({"account": account, "ref": pr, "cursor": null}),
+        )
+        .await;
+    report.record(
+        methods::PULL_REQUEST_CONVERSATION,
+        expect::<ConversationPage>(methods::PULL_REQUEST_CONVERSATION, page, &[]).and_then(
+            |page| {
+                let page = page.ok_or("conversation failed")?;
+                for entry in &page.entries {
+                    if let ConversationEntry::ReviewThread { thread } = entry {
+                        conversation_thread_rules(thread)?;
+                    }
+                }
+                Ok(format!("{} entries", page.entries.len()))
+            },
+        ),
+    );
+    let foreign = session
+        .call(
+            methods::MEDIA_READ,
+            &json!({"account": account, "url": "https://example.invalid/conformance.png"}),
+        )
+        .await;
+    report.record(
+        "forge.media.read foreign host",
+        match foreign {
+            Ok(Answer::Error(code::INVALID_PARAMS)) => Ok("refused".into()),
+            Ok(_) => Err("a foreign media host must answer -32602".into()),
+            Err(error) => Err(error),
+        },
+    );
+}
+
+/// The `ReviewThread` rules serde cannot express: at least one comment,
+/// positive lines with `startLine` strictly before `line`, a positive
+/// iteration number and a non-empty anchored path.
+fn conversation_thread_rules(thread: &ReviewThread) -> Result<(), String> {
+    if thread.comments.is_empty() {
+        return Err(format!("review thread {} has no comments", thread.id));
+    }
+    let anchor_valid = match &thread.anchor {
+        ThreadAnchor::PullRequest => true,
+        ThreadAnchor::File { path } => !path.is_empty(),
+        ThreadAnchor::Line {
+            path,
+            line,
+            start_line,
+            ..
+        } => {
+            !path.is_empty()
+                && *line > 0
+                && start_line.is_none_or(|start| start > 0 && start < *line)
+        }
+    };
+    if !anchor_valid {
+        return Err(format!("review thread {} has an invalid anchor", thread.id));
+    }
+    if thread
+        .iteration
+        .as_ref()
+        .is_some_and(|iteration| iteration.number == 0 || iteration.id.is_empty())
+    {
+        return Err(format!(
+            "review thread {} has an invalid iteration",
+            thread.id
+        ));
+    }
+    Ok(())
+}
+
 async fn check_resolve(
     session: &mut Session,
     declared: &[String],
@@ -576,6 +672,28 @@ async fn check_writes(
     for (name, outcome) in results {
         report.record(&name, outcome);
     }
+    if declared.iter().any(|cap| cap == capability::COMMENTS) {
+        // A reply to a thread that cannot exist writes nothing; a comment
+        // create has no safe probe, because it publishes immediately.
+        let answer = session
+            .call(
+                methods::PULL_REQUEST_REVIEW_THREAD_REPLY,
+                &json!({"account": account, "ref": pr, "threadId": "codewide-conformance-missing-thread",
+                        "body": "conformance", "idempotencyKey": "conformance-reply"}),
+            )
+            .await;
+        report.record(
+            "forge.pullRequest.reviewThread.reply missing thread",
+            match answer {
+                Ok(Answer::Error(
+                    code::NOT_FOUND | code::INVALID_PARAMS | code::FORGE_REJECTED,
+                )) => Ok("refused".into()),
+                Ok(Answer::Error(code)) => Err(format!("unexpected error code {code}")),
+                Ok(Answer::Result(_)) => Err("replied to a thread that does not exist".into()),
+                Err(error) => Err(error),
+            },
+        );
+    }
     if declared
         .iter()
         .any(|cap| cap == capability::SCENARIO_CONTEXT)
@@ -598,5 +716,50 @@ async fn check_writes(
                     Ok(format!("{size} bytes"))
                 }),
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn thread(anchor: &Value, iteration: &Value) -> ReviewThread {
+        serde_json::from_value(json!({
+            "id": "t-1", "anchor": anchor, "outdated": false,
+            "resolution": {"kind": "none"}, "reviewId": null, "iteration": iteration,
+            "comments": [{"id": "c", "author": {"login": "a", "kind": "user", "avatarUrl": null},
+                          "createdAt": "2026-10-01T00:00:00Z", "updatedAt": null, "body": "x",
+                          "url": null, "reactions": []}],
+            "viewerCanReply": false
+        }))
+        .expect("thread")
+    }
+
+    #[test]
+    fn thread_rules_refuse_impossible_lines_and_iterations() {
+        let line = |line: u32, start: Option<u32>| json!({"kind": "line", "path": "a.rs", "line": line, "startLine": start, "side": "new"});
+        for valid in [
+            thread(&json!({"kind": "pullRequest"}), &Value::Null),
+            thread(
+                &json!({"kind": "file", "path": "a.rs"}),
+                &json!({"id": "i", "number": 1}),
+            ),
+            thread(&line(4, Some(2)), &Value::Null),
+            thread(&line(4, None), &Value::Null),
+        ] {
+            assert!(conversation_thread_rules(&valid).is_ok());
+        }
+        for invalid in [
+            thread(&json!({"kind": "file", "path": ""}), &Value::Null),
+            thread(&line(0, None), &Value::Null),
+            thread(&line(4, Some(4)), &Value::Null),
+            thread(&line(4, Some(0)), &Value::Null),
+            thread(&line(4, None), &json!({"id": "i", "number": 0})),
+        ] {
+            assert!(conversation_thread_rules(&invalid).is_err());
+        }
     }
 }

@@ -12,7 +12,10 @@ import type { PullRequestDetailWorkspaceCapabilities } from "../workspaceCapabil
 
 /** Everything the Changes tab needs from its screen. */
 export type PullRequestChangesProps = {
-  readonly agentThread: { readonly threadId: ThreadId; readonly title: string } | null;
+  readonly agentThread: {
+    readonly threadId: ThreadId;
+    readonly title: string;
+  } | null;
   readonly capabilities: PullRequestDetailWorkspaceCapabilities;
   /** Last comment destination per PR on this device. */
   readonly commentDestinations: PullRequestCommentDestinations;
@@ -28,6 +31,8 @@ export type PullRequestChangesProps = {
   readonly onStale: (kind: "outcomeUnknown" | "stale") => void;
   readonly overview: PullRequestOverview;
   readonly ownPullRequest: boolean;
+  /** The PR app bar titled with this route's `section` and carrying `trailing` controls. */
+  readonly renderAppBar: (section: string, trailing: React.ReactNode) => React.JSX.Element;
   readonly review: Pick<ReviewResources, "drafts" | "guide">;
   readonly reviewCapabilities: ReviewTargetCapabilities;
   readonly tablet: boolean;

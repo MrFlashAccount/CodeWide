@@ -1,7 +1,8 @@
 /**
  * The single owner of forge Promise identity and request deduplication:
- * accounts (availability), list pages, the atomic PR overview, file and
- * activity pages, plus the invalidation subscription.
+ * accounts (availability), list pages, the atomic PR overview, file,
+ * activity and conversation pages, the PR's agent scenario states, plus the
+ * invalidation subscription.
  *
  * `preloadOverview` primes the same cached Promise the PR screen reads with
  * Suspense when a caller has intent early enough. Mutations live with their
@@ -14,6 +15,7 @@ import type { RpcClient } from "@codewide/sync-client";
 
 import { ForgeContractViolation } from "./forgeErrors";
 import { parseForgeAccounts, type ForgeAccountsSnapshot } from "./forgeContract";
+import { parseConversationPage, type ConversationPage } from "./forgeConversationContract";
 import { forgeInvalidationBus } from "./forgeInvalidationBus";
 import {
   createForgeMutationQueue,
@@ -33,6 +35,7 @@ import {
   type PullRequestOverview,
 } from "./forgePullRequestContract";
 import { parseFilesPage, type PullRequestFilesPage } from "./forgeMutationContract";
+import { parsePullRequestScenarios, type PullRequestScenarios } from "./forgeScenarioContract";
 import type { createWorkspaceSession } from "./workspace-session";
 
 /** Session access shared by every forge read. */
@@ -50,12 +53,16 @@ type FilesParams = OverviewParams & { readonly headRevision: string };
 export type ForgeResources = {
   readonly accounts: ForgeQueryResource<{ readonly connectionId: string }, ForgeAccountsSnapshot>;
   readonly activity: ForgeQueryResource<OverviewParams, ActivityPage>;
+  /** The PR conversation of a plugin declaring `forge.conversation@1`. */
+  readonly conversation: ForgeQueryResource<OverviewParams, ConversationPage>;
   readonly files: ForgeQueryResource<FilesParams, PullRequestFilesPage>;
   readonly lists: ForgeQueryResource<ListParams, PullRequestListPage>;
   /** Resolves once an accounts snapshot exists (read now if none); never rejects. */
   readonly loadAccounts: (connectionId: string) => Promise<void>;
   /** Appends the next activity page, if any. */
   readonly loadMoreActivity: (params: OverviewParams) => Promise<void>;
+  /** Appends the next conversation page, if any. */
+  readonly loadMoreConversation: (params: OverviewParams) => Promise<void>;
   /** Appends the next files page, if any. */
   readonly loadMoreFiles: (params: FilesParams) => Promise<void>;
   /** Appends the next list page, if any. */
@@ -66,6 +73,8 @@ export type ForgeResources = {
   readonly queryClient: QueryClient;
   /** Resolves after TanStack has restored the persisted Forge/review cache. */
   readonly restored: Promise<void>;
+  /** Live agent scenario states of one PR, from Companion state only (no forge call). */
+  readonly scenarios: ForgeQueryResource<OverviewParams, PullRequestScenarios>;
 };
 
 /** Requires a parsed value, turning a contract mismatch into a typed failure. */
@@ -195,6 +204,34 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
     keyOf: (params) => ["forge", "activity", params.connectionId, params.pullRequest],
     load: async (params) => readActivity(params, null),
   });
+  const readConversation = async (params: OverviewParams, cursor: string | null) =>
+    requireParsed(
+      parseConversationPage(
+        await call(params.connectionId, "companion/pullRequest/conversation/read", {
+          cursor,
+          pullRequest: params.pullRequest,
+        }),
+      ),
+      "conversation page",
+    );
+  const conversation = createForgeQueryResource<OverviewParams, ConversationPage>({
+    client: queryClient,
+    keyOf: (params) => ["forge", "conversation", params.connectionId, params.pullRequest],
+    load: async (params) => readConversation(params, null),
+  });
+  const scenarios = createForgeQueryResource<OverviewParams, PullRequestScenarios>({
+    client: queryClient,
+    keyOf: (params) => ["forge", "scenarios", params.connectionId, params.pullRequest],
+    load: async (params) =>
+      requireParsed(
+        parsePullRequestScenarios(
+          await call(params.connectionId, "companion/pullRequest/scenarios/read", {
+            pullRequest: params.pullRequest,
+          }),
+        ),
+        "pull request scenarios",
+      ),
+  });
   forgeInvalidationBus.subscribe((connectionId, invalidation) => {
     if (invalidation.scope === "accounts") {
       queryClient
@@ -207,7 +244,14 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
       queryClient
         .invalidateQueries({ queryKey: ["forge", "lists", connectionId] })
         .catch(() => undefined);
+    } else if (invalidation.scope === "scenarios") {
+      scenarios
+        .invalidate({ connectionId, pullRequest: invalidation.pullRequest })
+        .catch(() => undefined);
     } else if (invalidation.scope === "pullRequest") {
+      scenarios
+        .invalidate({ connectionId, pullRequest: invalidation.pullRequest })
+        .catch(() => undefined);
       queryClient
         .invalidateQueries({
           queryKey: ["forge", "overview", connectionId, invalidation.pullRequest],
@@ -220,6 +264,11 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
         .catch(() => undefined);
       queryClient
         .invalidateQueries({
+          queryKey: ["forge", "conversation", connectionId, invalidation.pullRequest],
+        })
+        .catch(() => undefined);
+      queryClient
+        .invalidateQueries({
           queryKey: ["forge", "files", connectionId, invalidation.pullRequest],
         })
         .catch(() => undefined);
@@ -228,6 +277,7 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
   return {
     accounts,
     activity,
+    conversation,
     files,
     lists,
     loadAccounts: async (connectionId) => {
@@ -243,9 +293,22 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
         }),
         readNext: async (cursor) => readActivity(params, cursor),
       }),
+    loadMoreConversation: async (params) =>
+      appendPage(conversation, params, {
+        // Every page of one read carries the same merge rule; the first page's stands.
+        merge: (current, next) => ({
+          entries: [...current.entries, ...next.entries],
+          nextCursor: next.nextCursor,
+          openIssuesBlockMerge: current.openIssuesBlockMerge,
+        }),
+        readNext: async (cursor) => readConversation(params, cursor),
+      }),
     loadMoreFiles: async (params) =>
       appendPage(files, params, {
-        merge: (current, next) => ({ ...next, files: [...current.files, ...next.files] }),
+        merge: (current, next) => ({
+          ...next,
+          files: [...current.files, ...next.files],
+        }),
         readNext: async (cursor) => readFiles(params, cursor),
       }),
     loadMoreList: async (params) =>
@@ -258,5 +321,6 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
     preloadOverview: overviews.preload,
     queryClient,
     restored,
+    scenarios,
   };
 }

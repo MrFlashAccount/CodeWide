@@ -20,6 +20,10 @@ pub const PULL_REQUEST_ACTION_RUN: &str = "forge.pullRequest.action.run";
 pub const PULL_REQUEST_REVIEW_SUBMIT: &str = "forge.pullRequest.review.submit";
 pub const PULL_REQUEST_VIEWED_SET: &str = "forge.pullRequest.viewed.set";
 pub const PULL_REQUEST_SCENARIO_CONTEXT: &str = "forge.pullRequest.scenarioContext";
+pub const PULL_REQUEST_CONVERSATION: &str = "forge.pullRequest.conversation";
+pub const MEDIA_READ: &str = "forge.media.read";
+pub const PULL_REQUEST_COMMENT_CREATE: &str = "forge.pullRequest.comment.create";
+pub const PULL_REQUEST_REVIEW_THREAD_REPLY: &str = "forge.pullRequest.reviewThread.reply";
 
 /// The capability a method requires, `None` for `initialize`.
 #[must_use]
@@ -37,6 +41,8 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         PULL_REQUEST_REVIEW_SUBMIT => capability::REVIEW,
         PULL_REQUEST_VIEWED_SET => capability::VIEWED,
         PULL_REQUEST_SCENARIO_CONTEXT => capability::SCENARIO_CONTEXT,
+        PULL_REQUEST_CONVERSATION | MEDIA_READ => capability::CONVERSATION,
+        PULL_REQUEST_COMMENT_CREATE | PULL_REQUEST_REVIEW_THREAD_REPLY => capability::COMMENTS,
         _ => return None,
     })
 }

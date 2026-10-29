@@ -1,8 +1,8 @@
 //! Account links and derived account states.
 //!
 //! The companion keeps only the link — key, provider, host, login, linked
-//! time and the last credential source and scopes the plugin reported —
-//! never a token. States are derived, never stored: `connected` after the
+//! time, whether the account feeds the pull request catalog, and the last
+//! credential source and scopes the plugin reported — never a token. States are derived, never stored: `connected` after the
 //! plugin's last `auth.verify` succeeded, `expired` after it reported
 //! `authRequired`, `error` after any other failure.
 
@@ -36,6 +36,14 @@ pub struct AccountLink {
     pub linked_at: String,
     pub credential_source: Option<CredentialSource>,
     pub scopes: Option<Vec<String>>,
+    /// Whether list and search reads include this account. A link stored
+    /// before the flag existed is included.
+    #[serde(default = "catalog_enabled_by_default")]
+    pub catalog_enabled: bool,
+}
+
+const fn catalog_enabled_by_default() -> bool {
+    true
 }
 
 impl AccountLink {
@@ -56,6 +64,7 @@ impl AccountLink {
             linked_at: now_rfc3339(),
             credential_source,
             scopes,
+            catalog_enabled: true,
         }
     }
 
@@ -133,7 +142,10 @@ impl Accounts {
             .and_then(|value| serde_json::from_slice(&value).ok()))
     }
 
-    /// Stores (or refreshes) a link and marks it connected.
+    /// Stores (or refreshes) a link and marks it connected. The first link
+    /// time and the user's catalog choice of an existing link are kept, so a
+    /// re-verification or a repeated sign-in never re-includes an account the
+    /// user excluded.
     ///
     /// # Errors
     ///
@@ -142,15 +154,40 @@ impl Accounts {
         let mut stored = link.clone();
         if let Some(existing) = self.link(&link.key)? {
             stored.linked_at = existing.linked_at;
+            stored.catalog_enabled = existing.catalog_enabled;
         }
+        self.put(&stored)?;
+        self.observe(&link.key, AccountCondition::Connected);
+        Ok(())
+    }
+
+    /// Includes or excludes one linked account from list and search reads.
+    /// The link, its derived state and any plugin credential are unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NotFound` for an unknown account or a storage failure.
+    pub fn set_catalog_enabled(
+        &self,
+        key: &ForgeAccountKey,
+        enabled: bool,
+    ) -> Result<AccountLink, ForgeError> {
+        let mut link = self.link(key)?.ok_or(ForgeError::NotFound)?;
+        if link.catalog_enabled != enabled {
+            link.catalog_enabled = enabled;
+            self.put(&link)?;
+        }
+        Ok(link)
+    }
+
+    fn put(&self, link: &AccountLink) -> Result<(), ForgeError> {
         let value =
-            serde_json::to_vec(&stored).map_err(|error| ForgeError::internal(error.to_string()))?;
+            serde_json::to_vec(link).map_err(|error| ForgeError::internal(error.to_string()))?;
         self.store.kv_apply(vec![KvOp::Put {
             table: FORGE_ACCOUNTS,
             key: link.key.as_str().to_owned(),
             value,
         }])?;
-        self.observe(&link.key, AccountCondition::Connected);
         Ok(())
     }
 
@@ -241,6 +278,29 @@ pub fn state_wire(link: &AccountLink, condition: AccountCondition) -> AccountSta
             .credential_source
             .unwrap_or(CredentialSource::Environment),
         scopes: link.scopes.clone(),
+        catalog_enabled: link.catalog_enabled,
         condition,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AccountLink;
+
+    #[test]
+    fn a_link_stored_before_the_catalog_flag_stays_in_the_catalog() -> serde_json::Result<()> {
+        let stored = serde_json::json!({
+            "version": 1,
+            "key": AccountLink::new("github", "github.com", "octocat", None, None).key,
+            "pluginId": "github",
+            "host": "github.com",
+            "login": "octocat",
+            "linkedAt": "2026-10-20T08:00:00Z",
+            "credentialSource": null,
+            "scopes": null,
+        });
+        let link: AccountLink = serde_json::from_value(stored)?;
+        assert!(link.catalog_enabled);
+        Ok(())
     }
 }

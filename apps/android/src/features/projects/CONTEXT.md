@@ -8,6 +8,10 @@ Public entrypoints are ProjectDirectoryPicker, ProjectPickerSheet and its input 
 
 Workspace selection and sheet state survive ordinary chat changes. Each picker retains its open/reset behavior, stable home/directory resource keys and errors; directory loads happen through the existing render resource. Project sections retain pinned/recent/other order and expansion. Pending management changes remain owned by that mounted sheet. New chat opens a local draft and counter identity; remote creation still belongs to first submission. Changing an existing empty thread checks both turns and queued messages, selects the replacement before deleting the old thread, and preserves failures.
 
+A hosted draft (`DraftAdmission` kind `hosted`, used by a PR review chat) reuses the same draft surface and inline project control, but its host binds the picker in explicit-choice mode, admits the first message and offers no server default: the control reads "Choose a project to start" (shimmering while the host finds a suggestion), workspace modes are hidden and Send stays disabled until a project is chosen.
+
+Explicit-choice mode (`confirmation` on the picker input) serves a destination that must be confirmed before it is used, such as a PR review chat: rows select instead of committing, suggestions with their reason lead in a Suggested section and are not repeated below, no server default or Pin is offered, the footer action commits the selection and stays disabled until one exists, and Use this folder commits at once.
+
 Composer picker state uses the existing conversation-scope reset and activation owner. A completed change cannot close or clear a replacement activation's picker. Lower workspace support, catalog and directory capabilities retain the same qualified keys and completion behavior.
 
 M2 evidence includes project routing/order/catalog/workspace tests, management render tests, stale project-completion render coverage and the V1 gate. Native folder selection, actual new-chat submission and device back-navigation smoke remain explicitly pending.

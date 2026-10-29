@@ -55,6 +55,11 @@ pub mod capability {
     pub const RESOLVE: &str = "forge.resolve@1";
     /// Optional: `forge.pullRequest.scenarioContext`.
     pub const SCENARIO_CONTEXT: &str = "forge.scenarioContext@1";
+    /// Optional: `forge.pullRequest.conversation` and `forge.media.read`.
+    pub const CONVERSATION: &str = "forge.conversation@1";
+    /// Optional: `forge.pullRequest.comment.create` and
+    /// `forge.pullRequest.reviewThread.reply`, both published immediately.
+    pub const COMMENTS: &str = "forge.comments@1";
 
     /// Capabilities every forge plugin must declare.
     pub const REQUIRED: [&str; 6] = [AUTH, LIST, READ, DIFF, ACTIONS, REVIEW];

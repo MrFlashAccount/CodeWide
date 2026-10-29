@@ -1,5 +1,5 @@
-//! The provider and account directory: `companion/forge/accounts/read` and
-//! `companion/forge/provider/setEnabled`.
+//! The provider and account directory: `companion/forge/accounts/read`,
+//! `companion/forge/provider/setEnabled` and `companion/forge/account/setEnabled`.
 //!
 //! Account states are derived here from `auth.verify`; a provider that
 //! cannot start degrades only its own card and accounts.
@@ -17,12 +17,14 @@ use super::{
     ForgeContext,
     accounts::AccountLink,
     errors::ForgeError,
+    identity::ProviderIdentity,
+    ids::ForgeAccountKey,
     params,
     plugin_client::PluginSession,
     providers::ProviderEntry,
     wire::{
         AccountCondition, ChecksCredentialState, ChecksCredentialWire, ForgeProviderWire,
-        ProviderIconWire, sanitize_methods,
+        ProviderInstallationWire, sanitize_methods,
     },
 };
 
@@ -49,8 +51,9 @@ pub async fn read(context: &ForgeContext) -> Result<Value, ForgeError> {
     }))
 }
 
-/// One provider card. Spawns an enabled provider to read its methods and to
-/// re-verify its accounts whose state is not fresh.
+/// One provider card. Spawns an enabled, installed provider to read its
+/// methods and to re-verify its accounts whose state is not fresh; the card
+/// carries why a provider cannot serve.
 ///
 /// # Errors
 ///
@@ -59,21 +62,34 @@ pub async fn provider_wire(
     context: &ForgeContext,
     entry: &ProviderEntry,
 ) -> Result<ForgeProviderWire, ForgeError> {
-    let offline = || ForgeProviderWire {
-        plugin_id: entry.plugin_id.clone(),
-        forge_name: entry.forge_name.clone(),
-        icon: ProviderIconWire::key_only(&entry.icon_key),
-        built_in: entry.built_in,
-        enabled: entry.enabled,
-        capabilities: Vec::new(),
-        auth_methods: Vec::new(),
-        default_host: entry.default_host.clone(),
-        checks_credential: ChecksCredentialWire {
-            state: ChecksCredentialState::NotApplicable,
-        },
+    let offline = |installation: ProviderInstallationWire| {
+        // The identity the provider last declared; it is not started here.
+        let identity = context
+            .identities
+            .get(&entry.plugin_id)
+            .unwrap_or_else(|| ProviderIdentity::undeclared(&entry.plugin_id));
+        ForgeProviderWire {
+            plugin_id: entry.plugin_id.clone(),
+            forge_name: identity.display_name,
+            icon: identity.icon,
+            built_in: entry.built_in,
+            enabled: entry.enabled,
+            capabilities: Vec::new(),
+            auth_methods: Vec::new(),
+            default_host: identity.default_host,
+            checks_credential: ChecksCredentialWire {
+                state: ChecksCredentialState::NotApplicable,
+            },
+            installation,
+        }
     };
-    if !entry.enabled || entry.spec.is_none() {
-        return Ok(offline());
+    if entry.spec.is_none() {
+        return Ok(offline(ProviderInstallationWire::Missing {
+            reason: MISSING_PLUGIN.into(),
+        }));
+    }
+    if !entry.enabled {
+        return Ok(offline(ProviderInstallationWire::Installed));
     }
     let links = context.accounts.links_of(&entry.plugin_id)?;
     let mut session = match context.session(&entry.plugin_id).await {
@@ -82,12 +98,26 @@ pub async fn provider_wire(
             for link in &links {
                 context.accounts.observe_error(&link.key, &error);
             }
-            return Ok(offline());
+            return Ok(offline(failed_installation(&error)));
         }
     };
     let wire = describe(context, &mut session, entry, &links).await;
     session.shutdown().await;
-    Ok(wire.unwrap_or_else(|_| offline()))
+    Ok(wire.unwrap_or_else(|error| offline(failed_installation(&error))))
+}
+
+const MISSING_PLUGIN: &str = "The provider's plugin is not installed on the companion host";
+
+/// The short, already bounded reason a provider could not be described.
+fn failed_installation(error: &ForgeError) -> ProviderInstallationWire {
+    let reason = match error {
+        ForgeError::ProviderUnavailable { reason, .. }
+        | ForgeError::ForgeRejected { reason }
+        | ForgeError::CapabilityUnavailable { reason }
+        | ForgeError::Internal(reason) => reason.clone(),
+        _ => "The forge plugin could not be described".into(),
+    };
+    ProviderInstallationWire::Failed { reason }
 }
 
 async fn describe(
@@ -147,14 +177,15 @@ async fn describe(
         ChecksCredentialState::NotApplicable
     };
     let info = session.info();
+    // Recorded when this session initialized.
+    let identity = context
+        .identities
+        .get(&entry.plugin_id)
+        .unwrap_or_else(|| ProviderIdentity::undeclared(&entry.plugin_id));
     Ok(ForgeProviderWire {
         plugin_id: entry.plugin_id.clone(),
-        forge_name: if info.forge_name.is_empty() {
-            entry.forge_name.clone()
-        } else {
-            info.forge_name.chars().take(64).collect()
-        },
-        icon: ProviderIconWire::sanitize(&info.icon),
+        forge_name: identity.display_name,
+        icon: identity.icon,
         built_in: entry.built_in,
         enabled: entry.enabled,
         capabilities: info.capabilities.clone(),
@@ -163,6 +194,7 @@ async fn describe(
         checks_credential: ChecksCredentialWire {
             state: checks_credential,
         },
+        installation: ProviderInstallationWire::Installed,
     })
 }
 
@@ -248,4 +280,33 @@ pub async fn set_enabled(context: &ForgeContext, raw: &Value) -> Result<Value, F
     context.events.list().await;
     tracing::info!(plugin_id = %request.plugin_id, enabled = request.enabled, "forge provider toggled");
     Ok(json!({"provider": provider_wire(context, &entry).await?}))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SetAccountEnabledParams {
+    account: String,
+    enabled: bool,
+}
+
+/// `companion/forge/account/setEnabled`: includes or excludes one linked
+/// account from list and search reads. The link, its derived state and the
+/// plugin's credential are kept; no plugin is called.
+///
+/// # Errors
+///
+/// Returns invalid params for a malformed account, `NotFound` for an unknown
+/// account or a storage failure.
+pub async fn set_account_enabled(context: &ForgeContext, raw: &Value) -> Result<Value, ForgeError> {
+    let request: SetAccountEnabledParams = params(raw)?;
+    let (key, _) = ForgeAccountKey::parse(&request.account)
+        .ok_or_else(|| ForgeError::invalid("invalid account"))?;
+    let link = context
+        .accounts
+        .set_catalog_enabled(&key, request.enabled)?;
+    context.cache.invalidate_all();
+    context.events.accounts().await;
+    context.events.list().await;
+    tracing::info!(plugin_id = %link.plugin_id, enabled = request.enabled, "forge account catalog toggled");
+    Ok(json!({"account": context.accounts.wire(&link)}))
 }

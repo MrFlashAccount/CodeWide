@@ -8,13 +8,16 @@
 //! channel (Codex `dynamicTools` / `item/tool/call`, Claude `clientTools` /
 //! `tool.call`). A spawned agent is a new app thread on the chosen provider,
 //! linked to the calling thread (`children`), started with the prompt only;
-//! its status comes from the coordinator's compatibility live watch
-//! and its permission profile never exceeds the caller's (`profiles`). See
-//! `docs/agent-providers.md#orchestration-tools`.
+//! its status comes from the coordinator's live watch
+//! and its permission profile never exceeds the caller's (`profiles`). Every
+//! spawn, delegated task and queued follow-up is one child work request
+//! (`work_requests`) whose settled result is pushed to the parent as a
+//! hidden notice (`notifications`) unless a wait or cancel took it. See
+//! `docs/agent-providers.md#agent-delegation-tools`.
 
 pub mod admission;
+mod agent_controls;
 pub mod children;
-mod compatibility;
 mod coordinator;
 mod delivery;
 pub mod journal;
@@ -25,16 +28,21 @@ pub mod profiles;
 mod runtime;
 pub mod task;
 pub mod tools;
+pub mod work_requests;
 
 #[cfg(test)]
 mod tests;
+
+/// Default host limit on agent nesting: a root thread is depth 0, its
+/// children depth 1.
+pub const DEFAULT_MAX_AGENT_DEPTH: usize = 5;
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::{Value, json};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use self::{
     admission::AdmissionRejection,
@@ -46,7 +54,10 @@ use self::{
 use crate::{
     agent::{
         client_wire::gateway::ClientWireGateway,
-        model::{AppThreadId, ClientToolSpec, ProviderId, ToolCallParams, ToolCallResult, TurnId},
+        model::{
+            AppThreadId, ClientToolSpec, ProviderId, ThreadStatus, ToolCallParams, ToolCallResult,
+            TurnId,
+        },
         permission_profiles::ProfileObservations,
         provider::{AgentProvider, ClientToolHost},
     },
@@ -117,7 +128,7 @@ struct Caller {
 pub struct OrchestrationService {
     gateway: Arc<ClientWireGateway>,
     links: ChildLinks,
-    tracker: ChildTracker,
+    tracker: Arc<ChildTracker>,
     task_journal: TaskJournal,
     turn_delivery: TurnDelivery,
     profiles: Arc<ProfileObservations>,
@@ -133,6 +144,8 @@ pub struct OrchestrationService {
     recovery_gate: tokio::sync::Mutex<()>,
     task_drives: std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     delegate_task_enabled: std::sync::atomic::AtomicBool,
+    max_agent_depth: std::sync::atomic::AtomicUsize,
+    delivery: Arc<notifications::DeliveryLoop>,
 }
 
 impl OrchestrationService {
@@ -174,10 +187,27 @@ impl OrchestrationService {
             Vec::new()
         });
         let task_journal = TaskJournal::new(store.clone());
+        match TaskJournal::backfill_v1(store, crate::turn_delivery::open_commands_in_write) {
+            Ok(report) if !report.skipped => info!(
+                tasks = report.tasks,
+                followups = report.followups,
+                "work_requests_backfill_v1 migrated legacy deliveries"
+            ),
+            Ok(_) => {}
+            Err(err) => {
+                error!(err = ?err, "work_requests_backfill_v1 failed; it retries on the next start");
+            }
+        }
+        let tracker = Arc::new(ChildTracker::with_known(known));
+        let delivery = Arc::new(notifications::DeliveryLoop::default());
+        turn_delivery.install_receipt_observer(Arc::new(notifications::ReceiptBinder {
+            delivery: delivery.clone(),
+            tracker: tracker.clone(),
+        }));
         let service = Arc::new(Self {
             gateway,
             links,
-            tracker: ChildTracker::with_known(known),
+            tracker,
             task_journal,
             turn_delivery,
             profiles,
@@ -189,14 +219,23 @@ impl OrchestrationService {
             recovery_gate: tokio::sync::Mutex::new(()),
             task_drives: std::sync::Mutex::new(std::collections::HashMap::new()),
             delegate_task_enabled: std::sync::atomic::AtomicBool::new(true),
+            max_agent_depth: std::sync::atomic::AtomicUsize::new(DEFAULT_MAX_AGENT_DEPTH),
+            delivery,
         });
         service.start_recovery();
-        service.start_completion_delivery();
+        service.start_delivery_loop();
         service
     }
 
+    /// Host limit on agent nesting for new `spawn_agent` and
+    /// `delegate_task` admission. Existing agents are unaffected.
+    pub(crate) fn set_max_agent_depth(&self, depth: usize) {
+        self.max_agent_depth
+            .store(depth, std::sync::atomic::Ordering::Release);
+    }
+
     /// Host rollout gate for new task-addressed delegation admission. The
-    /// compatibility tools and recovery tools remain available while closed.
+    /// agent controls and recovery tools remain available while closed.
     pub(crate) fn set_delegate_task_enabled(&self, enabled: bool) {
         self.delegate_task_enabled
             .store(enabled, std::sync::atomic::Ordering::Release);
@@ -225,15 +264,20 @@ impl OrchestrationService {
 
     /// `companion/threadSubagents/read` rows of the agents a thread spawned
     /// (with their own agents), in the indexed-subagent shape the client
-    /// reads (`IndexedThreadMetadata`).
+    /// reads (`IndexedThreadMetadata`). Each row carries `running` from the
+    /// agent's current turn state, so an explicit idle clears a stale active
+    /// row on the device; it is omitted only when that state is unknown.
     ///
     /// # Errors
     /// Returns the store failure.
     pub async fn subagent_rows(&self, root: &str) -> Result<Vec<Value>, LinkError> {
         let links = self.links.descendants(root).await?;
+        let running =
+            futures_util::future::join_all(links.iter().map(|link| self.child_running(link))).await;
         Ok(links
             .iter()
-            .map(|link| {
+            .zip(running)
+            .map(|(link, running)| {
                 let model_provider = self.gateway.registry().get(&link.provider).map_or_else(
                     || link.provider.as_str().to_owned(),
                     |provider| provider.descriptor().model_provider,
@@ -254,9 +298,29 @@ impl OrchestrationService {
                 if let Some(task_id) = &link.task_id {
                     row["taskId"] = Value::String(task_id.clone());
                 }
+                if let Some(running) = running {
+                    row["running"] = Value::Bool(running);
+                }
                 row
             })
             .collect())
+    }
+
+    /// Whether a linked agent runs a turn now: the tracked turn state, else
+    /// its provider's current thread status. `None` when neither is readable.
+    async fn child_running(&self, link: &children::ChildLink) -> Option<bool> {
+        if let Some(state) = self.tracker.state(&link.child_thread_id) {
+            return Some(state.is_running());
+        }
+        let child = AppThreadId::parse(&link.child_thread_id)?;
+        let provider = self.gateway.registry().get(&link.provider)?;
+        match provider.thread_read(&child).await {
+            Ok(read) => Some(read.thread.status == ThreadStatus::Active),
+            Err(error) => {
+                debug!(err = ?error, child_thread_id = %child, "agent status is unreadable for its subagent row");
+                None
+            }
+        }
     }
 
     async fn dispatch(

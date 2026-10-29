@@ -9,103 +9,40 @@ use std::sync::Arc;
 use super::{
     OrchestrationService, ToolError,
     children::ChildLink,
-    coordinator::watch::ChildState,
     journal::TaskBundle,
     task::{TaskState, WorkspaceMode},
 };
 use crate::agent::{
-    client_wire::{gateway::RpcFailure, observe::TurnEnd},
-    model::{
-        AppThreadId, ItemsView, SortDirection, ThreadSettings, ThreadTurnsParams, TurnId,
-        TurnStatus,
-    },
+    client_wire::gateway::RpcFailure,
+    model::{AppThreadId, ThreadSettings},
     provider::AgentProvider,
 };
 
 impl OrchestrationService {
-    /// Reconciles one persisted provider turn against authoritative provider
-    /// history. Startup recovery and task reads both use this path so a
-    /// missed live terminal event cannot strand a task in running.
+    /// Reconciles a task's initial request against authoritative provider
+    /// history (one read of its child). Task reads use this path so a missed
+    /// live terminal event cannot strand a task in running.
     pub(super) async fn reconcile_authoritative_turn(
         &self,
         bundle: &TaskBundle,
     ) -> Result<Option<TaskBundle>, ToolError> {
-        let (Some(child), Some(turn_id)) = (
-            bundle.attempt.state.child_thread_id(),
-            bundle.attempt.state.provider_turn_id(),
-        ) else {
-            return Ok(None);
-        };
-        let Some(provider) = self.gateway.registry().get(&bundle.task.provider) else {
-            return Ok(None);
-        };
-        let turns = match provider
-            .thread_turns(ThreadTurnsParams {
-                app_thread_id: child.clone(),
-                cursor: None,
-                limit: 100,
-                sort_direction: SortDirection::Desc,
-                items_view: ItemsView::NotLoaded,
-            })
-            .await
+        if !bundle.task.state.is_terminal()
+            && bundle.request.is_open()
+            && bundle.request.turn_id().is_some()
+            && let Some(child) = &bundle.request.child_thread_id
         {
-            Ok(turns) => turns,
-            Err(error) => {
-                tracing::warn!(
-                    err = ?error,
-                    task_id = %bundle.task.task_id.as_str(),
-                    "authoritative delegated turn is temporarily unreadable"
-                );
-                return Ok(None);
-            }
-        };
-        let Some(turn) = turns
-            .turns
-            .into_iter()
-            .find(|turn| &turn.turn_id == turn_id)
-        else {
-            return Ok(None);
-        };
-        let end = match turn.status {
-            TurnStatus::InProgress => return Ok(None),
-            TurnStatus::Completed => TurnEnd::Completed,
-            TurnStatus::Failed => TurnEnd::Failed,
-            TurnStatus::Interrupted => TurnEnd::Interrupted,
-        };
-        let terminal = self
+            self.reconcile_child(child, std::slice::from_ref(&bundle.request))
+                .await;
+        }
+        // Another observer or the delivery loop can win the terminal
+        // transition after this caller read `bundle`. Return the durable
+        // winner instead of projecting a stale running state.
+        let current = self
             .task_journal
-            .observe_terminal(&bundle.task.provider, child.as_str(), turn_id.clone(), end)
+            .get(&bundle.task.task_id)
             .await
             .map_err(ToolError::from)?;
-        if terminal.is_some() {
-            self.tracker
-                .authorize(child.as_str(), bundle.task.provider.clone());
-            self.tracker.register(
-                child.as_str(),
-                ChildState::Settled {
-                    end,
-                    turn_id: Some(turn_id.as_str().to_owned()),
-                    final_message: None,
-                },
-            );
-            let released = self
-                .turn_delivery
-                .release_queued_for_thread(child.as_str())
-                .await
-                .map_err(|error| ToolError::message(error.to_string()))?;
-            if released.is_some() {
-                self.tracker.queued_after(child.as_str(), turn_id.as_str());
-            }
-            if self.turn_ends.receiver_count() > 0 {
-                let _ = self.turn_ends.send((
-                    bundle.task.provider.clone(),
-                    child.as_str().to_owned(),
-                    turn_id.as_str().to_owned(),
-                ));
-            }
-            self.signal_tasks();
-        }
-        Ok(terminal)
+        Ok(current.task.state.is_terminal().then_some(current))
     }
 
     pub(super) async fn create_task_child(
@@ -195,7 +132,7 @@ impl OrchestrationService {
     ) -> Result<(), ToolError> {
         let workspace_request_id = (bundle.task.workspace_mode == WorkspaceMode::IsolatedWrite)
             .then(|| bundle.workspace.claim_id.as_str());
-        let command = match self
+        if let Err(error) = self
             .turn_delivery
             .bind_initial_turn(
                 &bundle.attempt.command_id,
@@ -204,57 +141,35 @@ impl OrchestrationService {
             )
             .await
         {
-            Ok(command) => command,
-            Err(error) => {
-                let current = self
-                    .task_journal
-                    .get(&bundle.task.task_id)
-                    .await
-                    .map_err(ToolError::from)?;
-                if matches!(
-                    current.task.state,
-                    TaskState::Cancelling | TaskState::Cancelled
-                ) {
-                    self.resume_cancellation(&current).await?;
-                    return Ok(());
-                }
-                return Err(ToolError::message(error.to_string()));
-            }
-        };
-        let mut current = self
-            .task_journal
-            .get(&bundle.task.task_id)
-            .await
-            .map_err(ToolError::from)?;
-        if current.task.state == TaskState::Cancelling {
-            if let Some(turn_id) = command.delivered_turn_id.as_deref().and_then(TurnId::parse) {
-                current = self
-                    .task_journal
-                    .observe_started(&bundle.task.provider, child.as_str(), turn_id)
-                    .await
-                    .map_err(ToolError::from)?
-                    .unwrap_or(current);
-            }
-            self.resume_cancellation(&current).await?;
-            return Ok(());
-        }
-        self.task_journal
-            .turn_queued(&bundle.task.task_id)
-            .await
-            .map_err(ToolError::from)?;
-        if let Some(turn_id) = command.delivered_turn_id.as_deref().and_then(TurnId::parse) {
-            let _ = self
+            let current = self
                 .task_journal
-                .observe_started(&bundle.task.provider, child.as_str(), turn_id)
+                .get(&bundle.task.task_id)
                 .await
                 .map_err(ToolError::from)?;
+            if matches!(
+                current.task.state,
+                TaskState::Cancelling | TaskState::Cancelled
+            ) {
+                self.resume_cancellation(&current).await?;
+                return Ok(());
+            }
+            return Err(ToolError::message(error.to_string()));
         }
         let current = self
             .task_journal
             .get(&bundle.task.task_id)
             .await
             .map_err(ToolError::from)?;
-        let _ = self.reconcile_authoritative_turn(&current).await?;
+        if current.task.state == TaskState::Cancelling {
+            self.resume_cancellation(&current).await?;
+            return Ok(());
+        }
+        // The provider turn is learned only from this command's delivery
+        // receipt, which binds the request inside the receipt transaction.
+        self.task_journal
+            .turn_queued(&bundle.task.task_id)
+            .await
+            .map_err(ToolError::from)?;
         self.signal_tasks();
         Ok(())
     }

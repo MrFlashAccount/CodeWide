@@ -19,6 +19,7 @@ describe("session-only performance experiments", () => {
     expect(performanceExperimentEnabled("plainTextMarkdown")).toBe(true);
     expect(performanceExperimentEnabled("disableTextShimmer")).toBe(false);
     expect(performanceExperimentEnabled("hideThreadLists")).toBe(false);
+    expect(performanceExperimentEnabled("peleDiagramRenderer")).toBe(false);
     expect(performanceExperimentEnabled("skipMarkdownLayout")).toBe(false);
     expect(performanceExperimentEnabled("reduceCustomMotion")).toBe(false);
   });

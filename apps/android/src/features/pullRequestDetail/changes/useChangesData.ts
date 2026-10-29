@@ -8,11 +8,16 @@ import type { DraftComment } from "../../../data/reviewDraftContract";
 import { useEvent } from "../../../react/useEvent";
 import { useAppDialog } from "../../../ui/AppDialog";
 import type { PullRequestChangesProps } from "./changesContract";
+import { firstPageFailure, type FilesFailure } from "./filesFailure";
 import type { PullRequestTarget } from "../workspaceCapabilities";
 
 /** Files, drafts, the selected file and the viewed toggle of the Changes tab. */
 export type ChangesData = {
   readonly drafts: readonly DraftComment[];
+  /** Why the first files page could not be read; `null` while it loads or once shown. */
+  readonly filesFailure: FilesFailure | null;
+  /** The user's file tree choice; `null` follows the form factor. */
+  readonly filesPanelOpen: boolean | null;
   readonly page: PullRequestFilesPage | null;
   readonly selected: PullRequestFile | null;
   readonly source: {
@@ -27,8 +32,10 @@ export type ChangesData = {
 
 /**
  * Demands the files page of the current head and the PR's drafts (both
- * progressive) and owns the viewed toggle. A viewed change is an explicit
- * forge write with its own pending state; a failure keeps the previous mark.
+ * progressive) and owns the viewed toggle. A failed first files page is
+ * reported with a retry instead of an endless loading state. A viewed change
+ * is an explicit forge write with its own pending state; a failure keeps the
+ * previous mark.
  */
 export function useChangesData(props: PullRequestChangesProps): ChangesData {
   const { connectionId, forge, model, overview, review } = props;
@@ -38,13 +45,20 @@ export function useChangesData(props: PullRequestChangesProps): ChangesData {
     headRevision: overview.headRevision,
     pullRequest: overview.pullRequest,
   };
-  const source = { kind: "pullRequest" as const, pullRequest: overview.pullRequest };
+  const source = {
+    kind: "pullRequest" as const,
+    pullRequest: overview.pullRequest,
+  };
   const files = useForgeQuery(forge.files, target);
   const drafts = useForgeQuery(review.drafts, { connectionId, source });
   const view = useSelector(() => model.changesView.get());
   const selectedPath = useSelector(() => model.selectedPath.get());
+  const filesPanelOpen = useSelector(() => model.filesPanelOpen.get());
   const [viewedPending, setViewedPending] = useState<ReadonlySet<string>>(new Set());
   const page = remoteValue(files);
+  const retryFiles = useEvent((): void => {
+    forge.files.refresh(target).catch(() => undefined);
+  });
   const toggleViewed = useEvent((file: PullRequestFile): void => {
     setViewedPending((current) => new Set([...current, file.path]));
     props.capabilities
@@ -58,6 +72,8 @@ export function useChangesData(props: PullRequestChangesProps): ChangesData {
   });
   return {
     drafts: remoteValue(drafts)?.drafts ?? [],
+    filesFailure: firstPageFailure(files, retryFiles),
+    filesPanelOpen,
     page,
     selected: page?.files.find((file) => file.path === selectedPath) ?? page?.files[0] ?? null,
     source,

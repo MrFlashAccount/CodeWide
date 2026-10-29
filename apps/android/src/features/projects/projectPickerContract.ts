@@ -39,11 +39,29 @@ export type ProjectPickerChoice = {
   readonly server: ProjectPickerServer;
 };
 
+/** A directory offered for an explicit choice, with the reason its row shows. */
+type ProjectSuggestion = {
+  readonly destination: { readonly connectionId: string; readonly cwd: string };
+  readonly reason: string;
+};
+
+/**
+ * Explicit-choice mode: a row selects instead of committing, the footer action commits the
+ * selection, suggestions lead the list and no server default is offered. `current` is the
+ * initial selection; without one the action stays disabled until the user chooses. A folder
+ * chosen through Use this folder commits at once.
+ */
+export type ProjectPickerConfirmation = {
+  readonly actionLabel: string;
+  readonly suggestions: readonly ProjectSuggestion[];
+};
+
 /** Internal selection contract shared by single-server and aggregate picker entrypoints. */
 export type ScopedProjectPickerProps = {
   readonly browseOnly?: boolean;
   readonly busy: boolean;
   readonly choices: readonly ProjectPickerChoice[];
+  readonly confirmation?: ProjectPickerConfirmation;
   readonly current: ProjectDestination | null;
   readonly error: string | null;
   readonly initialConnectionId: string | null;

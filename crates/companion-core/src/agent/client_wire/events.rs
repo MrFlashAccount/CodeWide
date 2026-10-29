@@ -26,6 +26,28 @@ pub const MULTI_SELECT_NOTE: &str =
 
 const MAX_TRACKED_THREADS: usize = 8_192;
 
+/// The `turn/completed` notification of a turn whose end only provider
+/// history proved (its live end never reached the companion). It has the
+/// shape of a live end: no items (`itemsView: "notLoaded"`) and no recorded
+/// usage, which the thread's own usage events carry.
+#[must_use]
+pub fn history_turn_completed(
+    app_thread_id: &AppThreadId,
+    turn: &crate::agent::model::AgentTurn,
+) -> Value {
+    let mut projected = items::turn(turn, crate::agent::model::ItemsView::NotLoaded);
+    if let Some(fields) = projected.as_object_mut() {
+        fields.remove("codewide");
+    }
+    json!({
+        "method": "turn/completed",
+        "params": {
+            "threadId": app_thread_id.as_str(),
+            "turn": projected,
+        }
+    })
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct ThreadSnapshot {
     status: ThreadStatus,

@@ -15,6 +15,8 @@ export type ForgeInvalidation =
   | { readonly scope: "accounts" }
   | { readonly scope: "list" }
   | { readonly pullRequest: PullRequestKey; readonly scope: "pullRequest" }
+  /** Only the PR's agent scenario states changed; no forge read is stale. */
+  | { readonly pullRequest: PullRequestKey; readonly scope: "scenarios" }
   | { readonly scope: "review"; readonly source: DiffSource };
 
 type Listener = (connectionId: string, invalidation: ForgeInvalidation) => void;
@@ -33,8 +35,8 @@ function parse(method: unknown, params: unknown): ForgeInvalidation | null {
   }
   return decodeOrNull((): ForgeInvalidation => {
     const value = record(params, "params");
-    const scope = oneOf(value.scope, ["accounts", "list", "pullRequest"], "scope");
-    return scope === "pullRequest"
+    const scope = oneOf(value.scope, ["accounts", "list", "pullRequest", "scenarios"], "scope");
+    return scope === "pullRequest" || scope === "scenarios"
       ? { pullRequest: pullRequestKey(value.pullRequest, "pullRequest"), scope }
       : { scope };
   });

@@ -47,7 +47,7 @@ import {
   useMaskedTabBar,
   useMaskedTabLayer,
 } from "./context";
-import { startPillSelectionOnUI } from "./motion";
+import { startPillMotionOnUI } from "./motion";
 import type {
   IMaskedTabBarContext,
   IMaskedTabBarIcon,
@@ -66,6 +66,8 @@ function clampValue(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+const SELECTED_TAP_MAX_TRANSLATION = 8;
+
 function boxAtX(
   list: IMaskedTabBoxEntry[],
   x: number,
@@ -76,6 +78,18 @@ function boxAtX(
     if (x >= box.x && x <= box.x + box.width) {
       return box.disabled ? null : box;
     }
+  }
+  return null;
+}
+
+function boxForValue(
+  list: IMaskedTabBoxEntry[],
+  value: string,
+): IMaskedTabBoxEntry | null {
+  "worklet";
+  for (let i = 0; i < list.length; i += 1) {
+    const box = list[i];
+    if (box.value === value) return box;
   }
   return null;
 }
@@ -106,6 +120,7 @@ const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
   value: valueProp,
   defaultValue,
   onValueChange,
+  onSelectedValueActivate,
   theme = "light",
   palette: paletteProp,
   height = DEFAULT_HEIGHT,
@@ -199,6 +214,7 @@ const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
     () => ({
       value,
       setValue,
+      onSelectedValueActivate,
       registerTrigger,
       boxes,
       listWidth,
@@ -220,6 +236,7 @@ const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
     [
       value,
       setValue,
+      onSelectedValueActivate,
       registerTrigger,
       boxes,
       listWidth,
@@ -278,6 +295,8 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
     padding,
     gap,
     draggable,
+    value,
+    onSelectedValueActivate,
   } = useMaskedTabBar("MaskedTabBar.List");
 
   const boxesValue = useSharedValue<IMaskedTabBoxEntry[]>([]);
@@ -292,6 +311,8 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
   const grabOffset = useSharedValue<number>(0);
   const dragTarget = useSharedValue<number>(0);
   const dragVelocity = useSharedValue<number>(0);
+  const dragged = useSharedValue<boolean>(false);
+  const pendingValue = useSharedValue<string>("");
   const hoveredValue = useSharedValue<string>("");
   const listWidthValue = useSharedValue<number>(0);
 
@@ -333,6 +354,8 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
         .shouldCancelWhenOutside(false)
         .onBegin((e) => {
           press.value = withSpring(1, PRESS_SPRING);
+          dragged.value = false;
+          pendingValue.value = "";
           hoveredValue.value = "";
 
           const inside =
@@ -347,10 +370,19 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
         .onStart((e) => {
           if (grabbed.value) return;
           const tapped = boxAtX(boxesValue.value, e.x);
-          if (tapped) startPillSelectionOnUI(tapped, pillX, pillWidth, setValue);
+          if (!tapped) return;
+          pendingValue.value = tapped.value;
+          startPillMotionOnUI(tapped, pillX, pillWidth);
         })
         .onUpdate((e) => {
           if (!grabbed.value) return;
+
+          if (
+            Math.abs(e.translationX) > SELECTED_TAP_MAX_TRANSLATION ||
+            Math.abs(e.translationY) > SELECTED_TAP_MAX_TRANSLATION
+          ) {
+            dragged.value = true;
+          }
 
           dragTarget.value = clampValue(
             e.x + grabOffset.value,
@@ -366,14 +398,41 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
             pillWidth.value = withSpring(over.width, PILL_SPRING);
           }
         })
-        .onFinalize(() => {
+        .onFinalize((_event, success) => {
           press.value = withSpring(0, PRESS_SPRING);
-          if (!grabbed.value) return;
+          const wasGrabbed = grabbed.value;
+          const selectedTap = !dragged.value;
           grabbed.value = false;
+          dragged.value = false;
+          hoveredValue.value = "";
+          dragVelocity.value = 0;
+
+          if (!success) {
+            pendingValue.value = "";
+            const selected = boxForValue(boxesValue.value, value);
+            if (selected) {
+              pillX.value = withSpring(selected.x, PILL_SPRING);
+              pillWidth.value = withSpring(selected.width, PILL_SPRING);
+            }
+            return;
+          }
+
+          if (!wasGrabbed) {
+            const nextValue = pendingValue.value;
+            pendingValue.value = "";
+            if (nextValue === "") return;
+            if (nextValue === value && onSelectedValueActivate) {
+              scheduleOnRN(onSelectedValueActivate, nextValue);
+            } else {
+              scheduleOnRN(setValue, nextValue);
+            }
+            return;
+          }
+          pendingValue.value = "";
 
           const box = nearestBox(
             boxesValue.value,
-            pillX.value + pillWidth.value / 2,
+            dragTarget.value + pillWidth.value / 2,
           );
           if (!box) return;
 
@@ -382,7 +441,9 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
             velocity: dragVelocity.value,
           });
           pillWidth.value = withSpring(box.width, PILL_SPRING);
-          dragVelocity.value = 0;
+          if (selectedTap && box.value === value && onSelectedValueActivate) {
+            scheduleOnRN(onSelectedValueActivate, box.value);
+          }
           scheduleOnRN(setValue, box.value);
         }),
     [
@@ -392,12 +453,16 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
       grabOffset,
       dragTarget,
       dragVelocity,
+      dragged,
+      pendingValue,
       hoveredValue,
       pillX,
       pillWidth,
       press,
       setValue,
       draggable,
+      value,
+      onSelectedValueActivate,
     ],
   );
 

@@ -14,10 +14,14 @@ pub mod actions;
 pub mod api;
 pub mod auth;
 pub mod checks;
+pub mod comment_media;
+pub mod comments;
+pub mod conversation;
 pub mod credentials;
 pub mod files;
 pub mod gh;
 pub mod login_flow;
+pub mod media;
 pub mod pull;
 pub mod pulls;
 pub mod repo;
@@ -29,10 +33,11 @@ use std::{path::PathBuf, sync::Arc};
 
 use forge_protocol::{
     ActivityParams, AuthDisconnectParams, AuthMethodsParams, AuthStartParams, AuthVerifyParams,
-    ByBranchParams, ChecksParams, FilesParams, ForgeAccountRef, ForgePlugin, IconGlyph,
-    InitializeParams, InitializeResult, ListParams, PROTOCOL_VERSION, PluginError, ProviderIcon,
-    PullRequestParams, ResolveParams, ResolveResult, ReviewSubmitParams, ScenarioContextParams,
-    ViewedSetParams, capability, code, methods,
+    ByBranchParams, ChecksParams, CommentCreateParams, ConversationParams, FilesParams,
+    ForgeAccountRef, ForgePlugin, InitializeParams, InitializeResult, ListParams, MediaReadParams,
+    PROTOCOL_VERSION, PluginError, PluginIcon, PullRequestParams, ResolveParams, ResolveResult,
+    ReviewSubmitParams, ReviewThreadReplyParams, ScenarioContextParams, ViewedSetParams,
+    capability, code, methods,
     plugin::{from_params, to_result},
 };
 use serde_json::{Value, json};
@@ -43,6 +48,7 @@ use crate::{
     credentials::{Credentials, EndpointResolver, EnvTokens},
     gh::GhCli,
     login_flow::HostLoginFlow,
+    media::{MediaOrigins, MediaResolver},
     repo::{PullTarget, parse_remote},
     secrets::SecretStore,
 };
@@ -56,6 +62,8 @@ pub struct PluginConfig {
     pub gh_program: PathBuf,
     pub env: EnvTokens,
     pub endpoints: EndpointResolver,
+    /// The media origins `forge.media.read` may fetch for a host.
+    pub media: MediaResolver,
     /// The build version reported by `initialize`.
     pub version: String,
     /// How long a `hostLogin` flow may wait for the user.
@@ -71,6 +79,7 @@ impl PluginConfig {
             gh_program: PathBuf::from("gh"),
             env: EnvTokens::from_process(),
             endpoints: Arc::new(Endpoints::for_host),
+            media: Arc::new(MediaOrigins::for_host),
             version: version.to_owned(),
             flow_lifetime: login_flow::DEFAULT_FLOW_LIFETIME,
         }
@@ -79,6 +88,7 @@ impl PluginConfig {
 
 pub struct GithubPlugin {
     credentials: Credentials,
+    media: MediaResolver,
     version: String,
     flow_lifetime: std::time::Duration,
     initialized: bool,
@@ -94,6 +104,7 @@ impl GithubPlugin {
                 GhCli::new(config.gh_program),
                 config.endpoints,
             ),
+            media: config.media,
             version: config.version,
             flow_lifetime: config.flow_lifetime,
             initialized: false,
@@ -121,10 +132,8 @@ impl GithubPlugin {
             provider: PLUGIN_ID.into(),
             forge_name: "GitHub".into(),
             version: self.version.clone(),
-            icon: ProviderIcon {
-                icon_key: "github".into(),
-                glyph: None::<IconGlyph>,
-            },
+            default_host: Some(DEFAULT_HOST.into()),
+            provider_icon: Some(github_mark()),
             capabilities: vec![
                 capability::AUTH.into(),
                 capability::LIST.into(),
@@ -137,7 +146,13 @@ impl GithubPlugin {
                 capability::VIEWED.into(),
                 capability::RESOLVE.into(),
                 capability::SCENARIO_CONTEXT.into(),
+                capability::CONVERSATION.into(),
+                capability::COMMENTS.into(),
             ],
+            media_hosts: media::GITHUB_MEDIA_HOSTS
+                .iter()
+                .map(|&host| host.to_owned())
+                .collect(),
         })
     }
 
@@ -261,6 +276,10 @@ impl GithubPlugin {
                 let params: ResolveParams = from_params(params)?;
                 resolve(&params.remotes)
             }
+            methods::MEDIA_READ => {
+                let params: MediaReadParams = from_params(params)?;
+                self.media_read(&params).await
+            }
             _ => self.dispatch_pull(method, params).await,
         }
     }
@@ -343,11 +362,56 @@ impl GithubPlugin {
                         .await?,
                 )
             }
+            _ => self.dispatch_conversation(method, params).await,
+        }
+    }
+
+    /// `forge.conversation@1` reads and `forge.comments@1` writes.
+    async fn dispatch_conversation(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, PluginError> {
+        match method {
+            methods::PULL_REQUEST_CONVERSATION => {
+                let params: ConversationParams = from_params(params)?;
+                let (api, target) = self.pull_request(&params.account, &params.pr_ref).await?;
+                to_result(
+                    &conversation::conversation(&api, &target, params.cursor.as_deref()).await?,
+                )
+            }
+            methods::PULL_REQUEST_COMMENT_CREATE => {
+                let params: CommentCreateParams = from_params(params)?;
+                let (api, target) = self.pull_request(&params.account, &params.pr_ref).await?;
+                to_result(&comments::create(&api, &target, &params.body).await?)
+            }
+            methods::PULL_REQUEST_REVIEW_THREAD_REPLY => {
+                let params: ReviewThreadReplyParams = from_params(params)?;
+                let (api, target) = self.pull_request(&params.account, &params.pr_ref).await?;
+                to_result(&comments::reply(&api, &target, &params.thread_id, &params.body).await?)
+            }
             _ => Err(PluginError::new(
                 code::METHOD_NOT_FOUND,
                 format!("method not found: {method}"),
             )),
         }
+    }
+}
+
+impl GithubPlugin {
+    /// `forge.media.read`: the URL is checked against the account host's
+    /// media origins before any credential is resolved, and the token is
+    /// resolved only for a credentialed origin.
+    async fn media_read(&mut self, params: &MediaReadParams) -> Result<Value, PluginError> {
+        let host = auth::canonical_host(&params.account.host)?;
+        let origins = (self.media)(&host);
+        let (url, credentialed) = media::admit(&origins, &params.url)?;
+        let api = if credentialed {
+            Some(self.api_for(&params.account).await?)
+        } else {
+            None
+        };
+        to_result(&media::read(&origins, api.as_ref(), url).await?)
     }
 }
 
@@ -403,3 +467,14 @@ pub async fn run_stdio(config: PluginConfig) -> Result<(), forge_protocol::Frame
     let mut writer = tokio::io::stdout();
     forge_protocol::serve(&mut plugin, &mut reader, &mut writer).await
 }
+
+/// The GitHub mark (Octicons `mark-github`), shown only to identify the
+/// forge, as GitHub's logo guidelines allow.
+fn github_mark() -> PluginIcon {
+    PluginIcon::Glyph {
+        view_box: "0 0 16 16".into(),
+        path: GITHUB_MARK_PATH.into(),
+    }
+}
+
+const GITHUB_MARK_PATH: &str = "M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z";

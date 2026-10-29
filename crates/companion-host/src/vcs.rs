@@ -12,6 +12,7 @@ pub const INSPECT_CAPABILITY: &str = "vcs.inspect@1";
 pub const DIFF_CAPABILITY: &str = "vcs.diff@2";
 pub const DIFF_PAGE_CAPABILITY: &str = "vcs.diffPage@1";
 pub const WORKSPACE_CREATE_CAPABILITY: &str = "workspace.create@1";
+pub const REMOTES_CAPABILITY: &str = "vcs.remotes@1";
 
 #[derive(Debug, thiserror::Error)]
 pub enum VcsError {
@@ -151,6 +152,57 @@ pub struct VcsDiffPage {
     pub revision: String,
     pub total_bytes: usize,
     pub next_offset: usize,
+}
+
+/// `workspace.inspect` result: a provider that can create an isolated
+/// workspace for the repository at `repository_root`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSupport {
+    pub capability: String,
+    pub provider: String,
+    pub display_name: String,
+    pub repository_root: PathBuf,
+}
+
+/// `workspace.create` result (and its `workspace.progress` payload).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCreateResult {
+    pub capability: String,
+    pub provider: String,
+    pub repository_root: PathBuf,
+    pub cwd: PathBuf,
+    pub created: bool,
+}
+
+/// One named remote of a `vcs.remotes@1` result.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VcsRemote {
+    pub name: String,
+    /// Credentials are stripped by the provider.
+    pub url: String,
+}
+
+/// The server branch a local branch tracks, under one of the remotes.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpstreamRef {
+    pub remote: String,
+    pub branch: String,
+}
+
+/// `vcs.remotes@1` result: the current branch, its upstream and the remotes.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VcsRemotes {
+    pub capability: String,
+    pub provider: String,
+    /// `None` on a detached head.
+    pub branch: Option<String>,
+    pub upstream: Option<UpstreamRef>,
+    pub remotes: Vec<VcsRemote>,
 }
 
 /// Reads a workspace's changes through the VCS provider that owns it.

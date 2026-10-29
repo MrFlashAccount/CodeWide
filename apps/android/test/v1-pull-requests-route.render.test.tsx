@@ -1,8 +1,8 @@
 import { StyleSheet } from "react-native";
 import { render } from "@testing-library/react-native";
 import {
-  PullRequestsCatalogPane,
   PullRequestsCatalogRoute,
+  PullRequestsPreviewRoute,
 } from "../src/routeComposition/PullRequestsCatalogRoute";
 
 let mockDesktop = true;
@@ -29,14 +29,11 @@ jest.mock("../src/features/pullRequests/PullRequestsFeature", () => {
   const { Text: NativeText } = jest.requireActual("react-native");
   return {
     PullRequestsCatalog: () => (
-      <NativeText testID="pull-requests-catalog-content">Catalog</NativeText>
+      <>
+        <NativeText testID="pull-requests-header">Pull requests</NativeText>
+        <NativeText testID="pull-requests-catalog-content">Catalog</NativeText>
+      </>
     ),
-  };
-});
-jest.mock("../src/features/pullRequests/PullRequestsHeader", () => {
-  const { Text: NativeText } = jest.requireActual("react-native");
-  return {
-    PullRequestsHeader: () => <NativeText testID="pull-requests-header">Pull requests</NativeText>,
   };
 });
 jest.mock("../src/features/pullRequests/onboarding/ReviewInboxIllustration", () => {
@@ -62,6 +59,7 @@ jest.mock("../src/services/workspace/workspaceRouteResources", () => ({
   useWorkspaceRouteResources: () => ({
     desktop: mockDesktop,
     list: { serverScope: null, servers: [] },
+    runtime: { threadSummaries: null },
   }),
 }));
 
@@ -76,7 +74,7 @@ beforeEach(() => {
 
 it("projects the Pull requests catalog without owning workspace split geometry", () => {
   mockDesktop = true;
-  const view = render(<PullRequestsCatalogPane />);
+  const view = render(<PullRequestsCatalogRoute />);
 
   expect(view.getByTestId("pull-requests-catalog-pane")).toBeVisible();
   expect(view.getByTestId("pull-requests-header")).toBeVisible();
@@ -88,7 +86,7 @@ it("projects the Pull requests catalog without owning workspace split geometry",
 });
 
 it("keeps the decorative review illustration only in onboarding", () => {
-  const view = render(<PullRequestsCatalogRoute />);
+  const view = render(<PullRequestsPreviewRoute />);
 
   expect(view.getByTestId("pull-requests-preview-pane")).toBeVisible();
   expect(view.getByTestId("review-inbox-illustration")).toBeVisible();
@@ -101,7 +99,7 @@ it("asks for a pull request after a provider account is linked", () => {
     flows: [],
     providers: [{ enabled: true, pluginId: "github" }],
   };
-  const view = render(<PullRequestsCatalogRoute />);
+  const view = render(<PullRequestsPreviewRoute />);
 
   expect(view.getByTestId("pull-request-selection-placeholder")).toBeVisible();
   expect(view.getByText("Select a pull request")).toBeVisible();
@@ -110,7 +108,7 @@ it("asks for a pull request after a provider account is linked", () => {
 
 it("omits the decorative preview on compact viewports", () => {
   mockDesktop = false;
-  const view = render(<PullRequestsCatalogRoute />);
+  const view = render(<PullRequestsPreviewRoute />);
 
   expect(view.queryByTestId("pull-requests-preview-pane")).toBeNull();
 });

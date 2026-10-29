@@ -3,19 +3,21 @@ import { createContext, type ReactNode, useContext, useSyncExternalStore } from 
 export type PerformanceExperimentId =
   | "disableTextShimmer"
   | "hideThreadLists"
+  | "peleDiagramRenderer"
   | "plainTextMarkdown"
   | "skipMarkdownLayout"
   | "reduceCustomMotion";
 
 export type PerformanceExperimentSnapshot = Readonly<Record<PerformanceExperimentId, boolean>>;
 
-const DEFAULT_SNAPSHOT: PerformanceExperimentSnapshot = Object.freeze({
+const DEFAULT_SNAPSHOT: PerformanceExperimentSnapshot = {
   disableTextShimmer: false,
   hideThreadLists: false,
+  peleDiagramRenderer: false,
   plainTextMarkdown: false,
   reduceCustomMotion: false,
   skipMarkdownLayout: false,
-});
+};
 
 let snapshot = DEFAULT_SNAPSHOT;
 const listeners = new Set<() => void>();
@@ -40,7 +42,7 @@ export function setPerformanceExperiment(id: PerformanceExperimentId, enabled: b
   if (snapshot[id] === enabled) {
     return;
   }
-  snapshot = Object.freeze({ ...snapshot, [id]: enabled });
+  snapshot = { ...snapshot, [id]: enabled };
   listeners.forEach((listener) => {
     listener();
   });

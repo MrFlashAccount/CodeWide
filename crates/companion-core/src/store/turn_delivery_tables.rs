@@ -90,6 +90,7 @@ impl IndexStore {
         turn_id: &str,
     ) -> Result<Option<OutboxCommand>, StoreError> {
         super::validate_outbox_id(command_id, "command id")?;
+        let observer = self.receipt_observer();
         super::validate_outbox_id(turn_id, "turn id")?;
         let write = self.database.begin_write()?;
         let reconciled = {
@@ -110,7 +111,24 @@ impl IndexStore {
             table.insert(command_id, encoded.as_slice())?;
             Some(command)
         };
+        let mut notify_after_commit = None;
+        if let (Some(observer), Some(command)) = (observer, &reconciled)
+            && command.state == OutboxState::Delivered
+        {
+            observer.delivered(
+                &write,
+                super::TurnReceipt {
+                    command: command_id,
+                    thread: &command.remote_thread_id,
+                    turn: turn_id,
+                },
+            )?;
+            notify_after_commit = Some(observer);
+        }
         write.commit()?;
+        if let Some(observer) = notify_after_commit {
+            observer.committed();
+        }
         Ok(reconciled)
     }
 
@@ -208,8 +226,9 @@ impl IndexStore {
     }
 }
 
-/// Stores an idle-only turn inside its caller's metadata transaction.
-pub(crate) fn put_queued_turn_in_write(
+/// Stores a hidden, idle-only notice turn inside its caller's metadata
+/// transaction.
+pub(crate) fn put_notice_turn_in_write(
     write: &redb::WriteTransaction,
     command_id: &str,
     thread_id: &str,
@@ -222,10 +241,117 @@ pub(crate) fn put_queued_turn_in_write(
         params,
         OutboxPutMetadata {
             created_at: None,
-            presentation: OutboxPresentation::Queue,
+            presentation: OutboxPresentation::Notice,
             workspace_request_id: None,
         },
     )
+}
+
+/// Dispatch state of one notice command as its batching owner needs it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NoticeCommandState {
+    /// No row: pruned after delivery, or removed.
+    Missing,
+    /// Not yet claimed for dispatch.
+    Queued,
+    /// Claimed or delivered: it may have reached the provider.
+    Dispatched,
+    /// Definitely rejected; it will never be dispatched.
+    Failed,
+}
+
+fn read_command(
+    write: &redb::WriteTransaction,
+    command_id: &str,
+) -> Result<Option<OutboxCommand>, StoreError> {
+    let table = write.open_table(super::OUTBOX)?;
+    table
+        .get(command_id)?
+        .map(|encoded| serde_json::from_slice(encoded.value()).map_err(StoreError::from))
+        .transpose()
+}
+
+pub(crate) fn notice_state_in_write(
+    write: &redb::WriteTransaction,
+    command_id: &str,
+) -> Result<NoticeCommandState, StoreError> {
+    Ok(match read_command(write, command_id)? {
+        None => NoticeCommandState::Missing,
+        Some(command) if command.has_in_flight_claim() => NoticeCommandState::Dispatched,
+        Some(command) => match command.state {
+            OutboxState::Queued => NoticeCommandState::Queued,
+            OutboxState::Failed => NoticeCommandState::Failed,
+            OutboxState::Uncertain | OutboxState::Delivered => NoticeCommandState::Dispatched,
+        },
+    })
+}
+
+pub(crate) fn retract_notice_in_write(
+    write: &redb::WriteTransaction,
+    command_id: &str,
+) -> Result<bool, StoreError> {
+    if !matches!(
+        notice_state_in_write(write, command_id)?,
+        NoticeCommandState::Queued | NoticeCommandState::Failed
+    ) {
+        return Ok(false);
+    }
+    write.open_table(super::OUTBOX)?.remove(command_id)?;
+    Ok(true)
+}
+
+/// Not-yet-dispatched (`queued` or `uncertain`) commands whose id starts
+/// with `prefix`, as `(command id, thread id)`; no params are returned.
+pub(crate) fn open_commands_in_write(
+    write: &redb::WriteTransaction,
+    prefix: &str,
+) -> Result<Vec<(String, String)>, StoreError> {
+    let table = write.open_table(super::OUTBOX)?;
+    let mut commands = Vec::new();
+    for entry in table.iter()? {
+        let (key, value) = entry?;
+        if !key.value().starts_with(prefix) {
+            continue;
+        }
+        let command: OutboxCommand = serde_json::from_slice(value.value())?;
+        if matches!(command.state, OutboxState::Queued | OutboxState::Uncertain) {
+            commands.push((command.command_id, command.remote_thread_id));
+        }
+    }
+    Ok(commands)
+}
+
+impl IndexStore {
+    /// Inserts a durable turn command and runs the caller's prompt-free
+    /// coordination writer in the same transaction.
+    ///
+    /// # Errors
+    /// Returns the same errors as an ordinary insert, or the writer's error;
+    /// either rolls both back.
+    pub(crate) fn outbox_put_turn_start_recorded(
+        &self,
+        command_id: &str,
+        remote_thread_id: &str,
+        params: Value,
+        presentation: OutboxPresentation,
+        record: impl FnOnce(&WriteTransaction) -> Result<(), StoreError>,
+    ) -> Result<OutboxCommand, StoreError> {
+        let write = self.database.begin_write()?;
+        let command = put_turn_start_in_write(
+            &write,
+            command_id,
+            remote_thread_id,
+            params,
+            OutboxPutMetadata {
+                created_at: None,
+                presentation,
+                workspace_request_id: None,
+            },
+        )?;
+        record(&write)?;
+        write.commit()?;
+        Ok(command)
+    }
 }
 
 pub(super) fn put_turn_start_in_write(

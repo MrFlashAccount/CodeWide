@@ -6,6 +6,7 @@ use crate::agent::orchestration::{
     task::{WorkspaceClaimState, WorkspaceMode},
     tools::WorkspaceRequest,
 };
+use crate::agent::provider::ThreadExecutionAuthority;
 
 #[tokio::test]
 async fn omitted_profile_on_a_workspace_parent_is_inherited() -> TestResult {
@@ -53,6 +54,66 @@ async fn an_observed_writable_parent_profile_is_inherited_by_legacy_spawn() -> T
 }
 
 #[tokio::test]
+async fn a_provider_owned_parent_authority_survives_missing_thread_projection() -> TestResult {
+    let harness = harness("").await?;
+    harness.codex.set_execution_authority(
+        PARENT,
+        ThreadExecutionAuthority {
+            permission_profile: ":danger-full-access".into(),
+            policy: None,
+        },
+    );
+    let (success, spawned) = call(
+        &harness.service,
+        "codex",
+        PARENT,
+        "codewide_spawn_agent",
+        json!({"prompt": "p", "provider": "claude"}),
+    )
+    .await;
+    assert!(success, "{spawned}");
+    assert_eq!(
+        harness.claude.created()[0].settings.permission_profile,
+        ":danger-full-access"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn genuinely_unknown_parent_authority_fails_closed_except_for_an_explicit_downgrade()
+-> TestResult {
+    let harness = harness("").await?;
+    for arguments in [
+        json!({"prompt": "p", "provider": "claude"}),
+        json!({"prompt": "p", "provider": "claude", "permissionProfile": ":workspace"}),
+    ] {
+        let (success, rejected) = call(
+            &harness.service,
+            "codex",
+            PARENT,
+            "codewide_spawn_agent",
+            arguments,
+        )
+        .await;
+        assert!(!success, "{rejected}");
+    }
+    let (success, spawned) = call(
+        &harness.service,
+        "codex",
+        PARENT,
+        "codewide_spawn_agent",
+        json!({"prompt": "p", "provider": "claude", "permissionProfile": ":read-only"}),
+    )
+    .await;
+    assert!(success, "{spawned}");
+    assert_eq!(
+        harness.claude.created()[0].settings.permission_profile,
+        ":read-only"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_requested_writable_profile_needs_no_workspace_service() -> TestResult {
     let harness = harness(":workspace").await?;
     let (success, rejected) = call(
@@ -74,7 +135,7 @@ async fn a_requested_writable_profile_needs_no_workspace_service() -> TestResult
 #[test]
 fn alternate_absolute_cwd_is_used_directly_with_inherited_or_explicit_permissions() -> TestResult {
     let read_only = admission::workspace(
-        &WorkspaceRequest::CompatibilitySpawn {
+        &WorkspaceRequest::AgentSpawn {
             cwd: Some("/alternate".into()),
         },
         "/repo",
@@ -92,7 +153,7 @@ fn alternate_absolute_cwd_is_used_directly_with_inherited_or_explicit_permission
     );
 
     let writable = admission::workspace(
-        &WorkspaceRequest::CompatibilitySpawn {
+        &WorkspaceRequest::AgentSpawn {
             cwd: Some("/alternate".into()),
         },
         "/repo",

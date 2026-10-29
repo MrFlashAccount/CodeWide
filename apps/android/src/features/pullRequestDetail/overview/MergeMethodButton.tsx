@@ -1,17 +1,33 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, View } from "react-native";
+import { useRef } from "react";
+import { Pressable, StyleSheet, View, type Text as NativeText, type TextStyle } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
-import { colors, iconSize } from "../../../theme";
+import {
+  colors,
+  controlSize,
+  disabledOpacity,
+  iconSize,
+  radii,
+  spacing,
+  typeScale,
+  typeWeight,
+} from "../../../theme";
 import { ActionMenu } from "../../../ui/ActionMenu";
-import { CatalogActionButton } from "../actions/CatalogActionButton";
-import { mergeCardStyles } from "./MergeCard.styles";
+import { TextShimmer } from "../../../ui/TextShimmer";
+import { AppText as Text } from "../../../ui/Typography";
 import type { MergeOption } from "./mergeOptions";
 
+const PRESSED_OPACITY = 0.72;
+/** The segment divider on a filled button: a hint of the label color, not a second outline. */
+const FILLED_DIVIDER_OPACITY = 0.24;
+
 /**
- * Split button: run the selected method, or pick another behind ▾. While the
- * merge state is blocked or in conflict it stays runnable (the forge decides)
- * but quiet, so the card never reads "blocked, but press here".
+ * Split button: one outlined or filled control whose main segment runs the
+ * selected method and whose ▾ segment picks another, separated by a hairline.
+ * While the PR is not mergeable it stays runnable (the forge decides) but
+ * outlined, so the box never reads "blocked, but press here". A pending run
+ * keeps its label and shimmers in place.
  */
 export function MergeMethodButton({
   action,
@@ -30,29 +46,76 @@ export function MergeMethodButton({
   readonly pending: boolean;
   readonly selected: MergeOption | null;
 }): React.JSX.Element {
+  const unavailable = action.availability.state === "disabled";
+  const tone = muted ? QUIET : FILLED;
   return (
-    <View style={mergeCardStyles.split}>
-      <CatalogActionButton
+    <View style={[styles.split, tone.surface, unavailable && styles.unavailable]}>
+      <MainSegment
         action={action}
         label={selected?.label ?? action.label}
+        labelStyle={tone.label}
         onPress={() => {
           onRun(action, selected?.value ?? null);
         }}
         pending={pending}
-        variant={muted ? "quiet" : "secondary"}
       />
       {options.length > 1 ? (
-        <MethodMenu onSelect={onSelectMethod} options={options} selected={selected} />
+        <>
+          <View style={[styles.divider, tone.divider]} />
+          <MethodMenu
+            color={tone.iconColor}
+            onSelect={onSelectMethod}
+            options={options}
+            selected={selected}
+          />
+        </>
       ) : null}
     </View>
   );
 }
 
+function MainSegment({
+  action,
+  label,
+  labelStyle,
+  onPress,
+  pending,
+}: {
+  readonly action: ActionDescriptor;
+  readonly label: string;
+  readonly labelStyle: TextStyle;
+  readonly onPress: () => void;
+  readonly pending: boolean;
+}): React.JSX.Element {
+  const text = useRef<NativeText>(null);
+  const reason = action.availability.state === "disabled" ? action.availability.reason : undefined;
+  const disabled = reason !== undefined || pending;
+  return (
+    <Pressable
+      accessibilityHint={reason}
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ busy: pending, disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [styles.main, pressed && styles.pressed]}
+      testID={`catalog-action-${action.actionId}`}
+    >
+      <Text numberOfLines={1} ref={text} style={[styles.label, labelStyle]}>
+        {label}
+      </Text>
+      <TextShimmer shimmering={pending} target={text} />
+    </Pressable>
+  );
+}
+
 function MethodMenu({
+  color,
   onSelect,
   options,
   selected,
 }: {
+  readonly color: string;
   readonly onSelect: (value: string) => void;
   readonly options: readonly MergeOption[];
   readonly selected: MergeOption | null;
@@ -70,10 +133,84 @@ function MethodMenu({
       <Pressable
         accessibilityLabel="Merge method"
         accessibilityRole="button"
-        style={mergeCardStyles.splitToggle}
+        style={({ pressed }) => [styles.toggle, pressed && styles.pressed]}
       >
-        <Ionicons color={colors.text} name="chevron-down" size={iconSize.inline} />
+        <Ionicons color={color} name="chevron-down" size={iconSize.inline} />
       </Pressable>
     </ActionMenu>
   );
 }
+
+const styles = StyleSheet.create({
+  divider: {
+    alignSelf: "stretch",
+    marginVertical: spacing.xs,
+    width: StyleSheet.hairlineWidth,
+  },
+  dividerFilled: {
+    backgroundColor: colors.onPrimary,
+    opacity: FILLED_DIVIDER_OPACITY,
+  },
+  dividerQuiet: {
+    backgroundColor: colors.border,
+  },
+  filled: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  label: {
+    ...typeScale.body,
+    fontWeight: typeWeight.medium,
+  },
+  labelFilled: {
+    color: colors.onPrimary,
+  },
+  labelQuiet: {
+    color: colors.textMuted,
+  },
+  main: {
+    alignItems: "center",
+    flex: 1,
+    height: controlSize.regular,
+    justifyContent: "center",
+    minWidth: 0,
+    paddingHorizontal: spacing.md,
+  },
+  pressed: {
+    opacity: PRESSED_OPACITY,
+  },
+  quiet: {
+    backgroundColor: "transparent",
+    borderColor: colors.border,
+  },
+  split: {
+    alignItems: "center",
+    borderRadius: radii.medium,
+    borderWidth: 1,
+    flexDirection: "row",
+    overflow: "hidden",
+  },
+  toggle: {
+    alignItems: "center",
+    height: controlSize.regular,
+    justifyContent: "center",
+    width: controlSize.touch,
+  },
+  unavailable: {
+    opacity: disabledOpacity,
+  },
+});
+
+const FILLED = {
+  divider: styles.dividerFilled,
+  iconColor: colors.onPrimary,
+  label: styles.labelFilled,
+  surface: styles.filled,
+} as const;
+
+const QUIET = {
+  divider: styles.dividerQuiet,
+  iconColor: colors.textMuted,
+  label: styles.labelQuiet,
+  surface: styles.quiet,
+} as const;

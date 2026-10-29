@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
-import type { ReactNode } from "react";
 
+import type { PullRequestKey } from "../data/forgeContract";
 import { workspaceRuntime } from "../data/workspace-runtime";
 import type { ThreadId } from "../data/reviewContract";
 import { ActiveWorkspaceConversation } from "../features/conversation/ConversationWorkspace";
@@ -14,39 +14,50 @@ import {
 } from "../services/threads/threadRouteParams";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { useEvent } from "../react/useEvent";
+import { LinkedPullRequestChipProvider } from "./LinkedPullRequestChipProvider";
 import { useThreadRouteNavigation } from "./threadRouteNavigation";
+import type { WorkspacePaneChrome } from "./workspacePanes";
 
-/** Mounts the canonical conversation surface for the PR-linked thread. */
+/** The review chat is always declared closable; outside a pane nothing can close it. */
+function ignoreClose(): void {}
+
+/**
+ * Mounts the canonical conversation surface for the PR-linked thread in pane presentation: the
+ * pane's close replaces the back arrow and its declared actions join the one thread menu. The
+ * route's own pull request stays on screen in every arrangement of this route (split, PR
+ * fullscreen, chat fullscreen), so the composer's linked-PR chip excludes it.
+ */
 export function PullRequestConversationPane({
+  chrome,
   connectionId,
-  headerActions,
-  onClose,
+  pullRequest,
   threadId,
 }: {
+  readonly chrome: WorkspacePaneChrome;
   readonly connectionId: string;
-  readonly headerActions?: ReactNode;
-  readonly onClose: () => void;
+  readonly pullRequest: PullRequestKey;
   readonly threadId: ThreadId;
 }): React.JSX.Element | null {
   const parsed = v1ThreadRouteParams({ connectionId, threadId });
   return parsed.status === "invalid" ? null : (
-    <ValidPullRequestConversation
-      headerActions={headerActions}
-      onClose={onClose}
-      thread={parsed.value}
-    />
+    <LinkedPullRequestChipProvider
+      connectionId={connectionId}
+      threadId={threadId}
+      visiblePullRequest={pullRequest}
+    >
+      <ValidPullRequestConversation chrome={chrome} thread={parsed.value} />
+    </LinkedPullRequestChipProvider>
   );
 }
 
 function ValidPullRequestConversation({
-  headerActions,
-  onClose,
+  chrome,
   thread,
 }: {
-  readonly headerActions?: ReactNode;
-  readonly onClose: () => void;
+  readonly chrome: WorkspacePaneChrome;
   readonly thread: V1ThreadRouteParams;
 }): React.JSX.Element {
+  const onClose = chrome.close ?? ignoreClose;
   const router = useRouter();
   const resources = useWorkspaceRouteResources();
   const navigation = useThreadRouteNavigation(router, thread);
@@ -67,10 +78,14 @@ function ValidPullRequestConversation({
         <ActiveWorkspaceConversation
           connections={resources.connections}
           desktop={false}
-          destination={{ connectionId, kind: "thread", searchWindow: null, threadId }}
+          destination={{
+            connectionId,
+            kind: "thread",
+            searchWindow: null,
+            threadId,
+          }}
           features={features}
           fileTransferController={workspaceRuntime.fileTransferController}
-          headerActions={headerActions}
           loadedThreadSummaries={resources.list.loadedThreadSummaries}
           native={workspaceRuntime.native}
           onChangeDraftProject={() => undefined}
@@ -89,6 +104,11 @@ function ValidPullRequestConversation({
             resources.list.listState.setThreadListMode("active");
           }}
           pendingRequests={resources.pendingRequests}
+          presentation={{
+            closeLabel: "Close review chat",
+            kind: "pane",
+            menuItems: chrome.menuItems,
+          }}
           runtime={resources.runtime}
           scopedThreads={resources.list.scopedThreads}
           servers={resources.list.servers}

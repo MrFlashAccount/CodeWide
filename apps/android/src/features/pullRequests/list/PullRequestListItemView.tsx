@@ -1,5 +1,7 @@
-import type { AccountState, ProviderIcon } from "../../../data/forgeContract";
+import type { AccountState } from "../../../data/forgeContract";
+import type { ProviderIcon } from "../../../data/forgeProviderIcon";
 import type { PullRequestRow as Row } from "../../../data/forgePullRequestContract";
+import type { ThreadUnreadReader } from "../../../data/project-unread-model";
 import { AccountProblemRow } from "./AccountProblemRow";
 import { AttentionSectionHeader } from "./AttentionSectionHeader";
 import type { PullRequestListItem } from "./pullRequestListItems";
@@ -8,6 +10,7 @@ import { PullRequestRow } from "./PullRequestRow";
 /** Renders one virtualized list item by its kind. */
 export function PullRequestListItemView({
   iconFor,
+  isThreadUnread,
   item,
   nowMs,
   onOpen,
@@ -15,6 +18,7 @@ export function PullRequestListItemView({
   onRetry,
 }: {
   readonly iconFor: (pluginId: string) => ProviderIcon | null;
+  readonly isThreadUnread: ThreadUnreadReader;
   readonly item: PullRequestListItem;
   readonly nowMs: number;
   readonly onOpen: (row: Row) => void;
@@ -30,6 +34,7 @@ export function PullRequestListItemView({
   return (
     <PullRequestRow
       icon={iconFor(item.account.pluginId)}
+      isThreadUnread={isThreadUnread}
       nowMs={nowMs}
       onPress={onOpen}
       row={item.row}

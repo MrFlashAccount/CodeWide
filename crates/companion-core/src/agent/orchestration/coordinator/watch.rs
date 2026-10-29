@@ -202,6 +202,90 @@ impl ChildTracker {
             .map(|entry| entry.state.subscribe())
     }
 
+    /// Whether a `wait_agent` currently waits on this child.
+    #[must_use]
+    pub fn has_waiters(&self, child: &str) -> bool {
+        self.tracked()
+            .get(child)
+            .is_some_and(|entry| entry.state.receiver_count() > 0)
+    }
+
+    /// The linked agents whose tracked turn is running, with their provider.
+    #[must_use]
+    pub fn running(&self) -> Vec<(String, ProviderId)> {
+        let owners = self
+            .owners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        self.tracked()
+            .iter()
+            .filter(|(_, entry)| entry.state.borrow().is_running())
+            .filter_map(|(child, _)| {
+                owners
+                    .get(child)
+                    .map(|provider| (child.clone(), provider.clone()))
+            })
+            .collect()
+    }
+
+    /// Whether this process already observed the end of the agent's turn.
+    #[must_use]
+    pub fn has_ended(&self, child: &str, turn_id: &str) -> bool {
+        self.tracked()
+            .get(child)
+            .is_some_and(|entry| entry.ended_turns.iter().any(|ended| ended == turn_id))
+    }
+
+    /// Settles the agent to the newest turn its provider history shows ended,
+    /// when no live end arrived: the transition a live `turn/completed` would
+    /// have made. `settled` is that turn's terminal state. Returns whether the
+    /// tracked state changed: `false` when this turn's end was already
+    /// observed, or the tracker follows another turn the history does not
+    /// show ended (`ended_in_history` lists the ended turn ids it shows).
+    /// `untracked` decides whether an agent this process never tracked is
+    /// registered.
+    pub fn settle_from_history(
+        &self,
+        child: &str,
+        settled: ChildState,
+        ended_in_history: &[&str],
+        untracked: bool,
+    ) -> bool {
+        let ChildState::Settled {
+            turn_id: Some(turn_id),
+            ..
+        } = &settled
+        else {
+            return false;
+        };
+        let mut tracked = self.tracked();
+        let Some(entry) = tracked.get_mut(child) else {
+            if untracked {
+                tracked.insert(child.to_owned(), Tracked::new(settled));
+            }
+            return untracked;
+        };
+        if entry.ended_turns.iter().any(|ended| ended == turn_id) {
+            return false;
+        }
+        let follows_ended = match &*entry.state.borrow() {
+            ChildState::Running { turn_id: None } | ChildState::Settled { .. } => true,
+            ChildState::Running {
+                turn_id: Some(running),
+            } => running == turn_id || ended_in_history.contains(&running.as_str()),
+        };
+        if !follows_ended {
+            return false;
+        }
+        entry.remember_ended(turn_id);
+        if entry.messages.turn_id == *turn_id {
+            entry.messages = TurnMessages::default();
+        }
+        entry.state.send_replace(settled);
+        true
+    }
+
     /// Records the turn a start request reported, unless that turn already
     /// ended (its events can overtake the response).
     pub fn started(&self, child: &str, turn_id: &str) {

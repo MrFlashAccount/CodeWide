@@ -59,6 +59,10 @@ export function confirmationCopy(
       : action.label;
   const known = KNOWN_COPY[action.kind];
   return known === undefined
-    ? { confirmLabel: action.label, consequence: `Runs on ${host}.`, title: `${action.label}?` }
+    ? {
+        confirmLabel: action.label,
+        consequence: `Runs on ${host}.`,
+        title: `${action.label}?`,
+      }
     : known({ action, host, method });
 }

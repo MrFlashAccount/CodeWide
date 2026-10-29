@@ -115,12 +115,7 @@ function TrayAccountAction({
   return (
     <View style={styles.trayAccountRow}>
       <View style={styles.trayAccountIcon}>
-        <ForgeIcon
-          color={colors.text}
-          glyph={provider.icon.glyph}
-          iconKey={provider.icon.iconKey}
-          size={iconSize.navigation}
-        />
+        <ForgeIcon color={colors.text} icon={provider.icon} size={iconSize.navigation} />
       </View>
       <View style={styles.providerIdentity}>
         <ProductText numberOfLines={1} style={styles.providerTitle}>

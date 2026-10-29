@@ -196,7 +196,9 @@ GitHub forge plugin ships inside the app as
   contains no `codewide-companion` CLI helper;
 - `companion-swift-ffi` passes `Contents/Helpers` as the bundled plugin
   directory in the runtime config, and the core resolves `bundled:github`
-  there at every spawn;
+  there at every spawn; the built-in VCS provider `bundled:git` resolves
+  against the same directory, but the app does not ship `codewide-vcs-git`,
+  so it is listed as unavailable on macOS;
 - a Sparkle update replaces the helper with the bundle; `update-e2e.sh` proves
   that the helper's reported version changes with the update.
 

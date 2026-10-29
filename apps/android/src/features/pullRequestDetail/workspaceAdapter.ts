@@ -1,5 +1,11 @@
 import { randomUUID } from "expo-crypto";
 
+import {
+  parseConversationWrite,
+  type ConversationComment,
+  type ConversationPage,
+  type ReviewThreadId,
+} from "../../data/forgeConversationContract";
 import { requireParsed, type ForgeResources } from "../../data/forgeResources";
 import {
   parseActionRun,
@@ -8,21 +14,19 @@ import {
   parseScenarioStart,
   parseSubmitOutcome,
   parseViewedSet,
+  type ReviewChatOpening,
 } from "../../data/forgeMutationContract";
 import { parseLinks } from "../../data/forgePullRequestContract";
-import type { ThreadId } from "../../data/reviewContract";
+import type { TransferAccess } from "../../data/private-transfer";
 import type { ReviewResources } from "../../data/reviewResources";
 import type { PullRequestDetailWorkspaceCapabilities } from "./workspaceCapabilities";
 
-const reviewChatRequests = new Map<
-  string,
-  Promise<{ readonly created: boolean; readonly threadId: ThreadId }>
->();
+const reviewChatRequests = new Map<string, Promise<ReviewChatOpening>>();
 
 async function settleReviewChatRequest(
   key: string,
-  request: Promise<{ readonly created: boolean; readonly threadId: ThreadId }>,
-): Promise<{ readonly created: boolean; readonly threadId: ThreadId }> {
+  request: Promise<ReviewChatOpening>,
+): Promise<ReviewChatOpening> {
   return request.finally(() => {
     if (reviewChatRequests.get(key) === request) {
       reviewChatRequests.delete(key);
@@ -30,19 +34,78 @@ async function settleReviewChatRequest(
   });
 }
 
+/** Appends an acknowledged top-level comment when the loaded page already reaches the newest entry. */
+function appendComment(page: ConversationPage, comment: ConversationComment): ConversationPage {
+  if (page.nextCursor !== null) {
+    return page;
+  }
+  return { ...page, entries: [...page.entries, { comment, kind: "comment" }] };
+}
+
+/** Appends an acknowledged reply to its thread; other entries keep their identity. */
+function appendReply(
+  page: ConversationPage,
+  threadId: ReviewThreadId,
+  reply: ConversationComment,
+): ConversationPage {
+  return {
+    ...page,
+    entries: page.entries.map((entry) =>
+      entry.kind === "reviewThread" && entry.thread.id === threadId
+        ? {
+            kind: "reviewThread",
+            thread: {
+              ...entry.thread,
+              comments: [...entry.thread.comments, reply],
+            },
+          }
+        : entry,
+    ),
+  };
+}
+
 /** Binds PR screen mutations and publishes their acknowledged results to the read models. */
 export function createPullRequestDetailWorkspaceAdapter({
   forge,
   reportDroppedAction,
   review,
+  transferAccess,
 }: {
-  readonly forge: Pick<ForgeResources, "files" | "mutations" | "overviews">;
+  readonly forge: Pick<ForgeResources, "conversation" | "files" | "mutations" | "overviews">;
   readonly reportDroppedAction: (actionId: string) => void;
   readonly review: Pick<ReviewResources, "drafts">;
+  readonly transferAccess: (connectionId: string, forceRefresh: boolean) => Promise<TransferAccess>;
 }): PullRequestDetailWorkspaceCapabilities {
   return {
-    async ensureReviewChat(target) {
-      const key = `${target.connectionId}\u0000${target.pullRequest}`;
+    async createComment(target, request) {
+      const comment = requireParsed(
+        await forge.mutations.execute(
+          {
+            connectionId: target.connectionId,
+            method: "companion/pullRequest/comment/create",
+            operationId: request.idempotencyKey,
+            params: {
+              body: request.body,
+              idempotencyKey: request.idempotencyKey,
+              pullRequest: target.pullRequest,
+            },
+            scope: `${target.connectionId}:pull-request:${target.pullRequest}`,
+          },
+          parseConversationWrite,
+        ),
+        "comment",
+      );
+      // Shown at once; the settled mutation also invalidates the page for the forge's own order.
+      forge.conversation.patch(target, (page) => appendComment(page, comment));
+      return comment;
+    },
+    async ensureReviewChat(target, workspace) {
+      // Concurrent opens with the same choice share one request; another choice is its own.
+      const key = [
+        target.connectionId,
+        target.pullRequest,
+        workspace.kind === "path" ? workspace.path : "",
+      ].join("\u0000");
       const running = reviewChatRequests.get(key);
       if (running !== undefined) {
         return running;
@@ -53,7 +116,7 @@ export function createPullRequestDetailWorkspaceAdapter({
             connectionId: target.connectionId,
             method: "companion/pullRequest/chat/ensure",
             operationId: randomUUID(),
-            params: { pullRequest: target.pullRequest },
+            params: { pullRequest: target.pullRequest, workspace },
             scope: `${target.connectionId}:pull-request:${target.pullRequest}`,
           },
           parseReviewChatEnsure,
@@ -80,6 +143,28 @@ export function createPullRequestDetailWorkspaceAdapter({
         "attention marker",
       );
     },
+    async replyToReviewThread(target, request) {
+      const reply = requireParsed(
+        await forge.mutations.execute(
+          {
+            connectionId: target.connectionId,
+            method: "companion/pullRequest/reviewThread/reply",
+            operationId: request.idempotencyKey,
+            params: {
+              body: request.body,
+              idempotencyKey: request.idempotencyKey,
+              pullRequest: target.pullRequest,
+              threadId: request.threadId,
+            },
+            scope: `${target.connectionId}:pull-request:${target.pullRequest}`,
+          },
+          parseConversationWrite,
+        ),
+        "reply",
+      );
+      forge.conversation.patch(target, (page) => appendReply(page, request.threadId, reply));
+      return reply;
+    },
     async runAction(target, request) {
       const result = requireParsed(
         await forge.mutations.execute(
@@ -101,7 +186,10 @@ export function createPullRequestDetailWorkspaceAdapter({
         ),
         "action result",
       );
-      forge.overviews.patch(target, (overview) => ({ ...overview, catalog: result.catalog }));
+      forge.overviews.patch(target, (overview) => ({
+        ...overview,
+        catalog: result.catalog,
+      }));
       // The overview re-read publishes into its own state and never rejects.
       forge.overviews.refresh(target).catch(() => undefined);
       return result;
@@ -152,7 +240,10 @@ export function createPullRequestDetailWorkspaceAdapter({
           ...current,
           files: current.files.map((file) =>
             file.path === mark.path
-              ? { ...file, viewed: { source: mark.source, viewed: mark.viewed } }
+              ? {
+                  ...file,
+                  viewed: { source: mark.source, viewed: mark.viewed },
+                }
               : file,
           ),
         });
@@ -171,6 +262,11 @@ export function createPullRequestDetailWorkspaceAdapter({
               headRevision: target.headRevision,
               idempotencyKey: request.idempotencyKey,
               pullRequest: target.pullRequest,
+              // WHY: the companion denies unknown fields, so a whole-PR start keeps the
+              // payload an older companion accepts; only a focused start names the thread.
+              ...(request.reviewThreadId === null
+                ? {}
+                : { reviewThreadId: request.reviewThreadId }),
               scenario: request.scenario,
               target: request.target,
               text: request.text,
@@ -214,6 +310,9 @@ export function createPullRequestDetailWorkspaceAdapter({
           })
           .catch(() => undefined);
       }
+    },
+    async transferAccess(connectionId, forceRefresh) {
+      return transferAccess(connectionId, forceRefresh);
     },
   };
 }

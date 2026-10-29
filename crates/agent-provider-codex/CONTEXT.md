@@ -9,6 +9,7 @@ The in-process `AgentProvider` implementation for Codex and the Codex-owned stor
 Adapter:
 
 - `execution.rs` — converts a frozen inherited execution policy to native thread-start sandbox/config and approval fields; named profiles keep their configuration.
+- `execution_authority.rs` — reads the newest valid `thread_settings_applied` record from the canonical rollout as the durable execution authority for a pre-existing Codex thread. It is the fallback when this Companion never observed the thread's live settings and App Server `thread/read` omits `activePermissionProfile`; ambiguous managed settings remain unknown.
 
 - `lib.rs` — `CodexProvider`, the `AgentProvider` implementation over `UpstreamHandle`, the account pool and the Codex storage modules; exposes the `codex.native` `NativeSurface` and the `OpenAI` price table (`usage_pricing`); stamps neutral turns and items with `provenance {provider: "codex", nativeThreadId}` (phase 1: the app thread id).
 - `storage.rs` — `CodexStorage`, the only bridge from the sync hub to the Codex storage modules: it implements `NativeThreadStore`, `NativeMessageSearch` and `NativeThreadResources` over `history_service` (rollout catalog and history), message search and `resources`, keeping the error messages and codes the hub forwarded before.
@@ -16,7 +17,8 @@ Adapter:
 - `active_compactions.rs` — context compactions running in a thread's active turn, followed from the App Server's `item/started` / `item/completed` / `turn/completed`. The App Server's active-turn snapshot lists a compaction only once it completes, so the adapter adds the running one (`codewideLifecyclePhase: "started"`) to the `thread/turns/list` pages it serves, until the compaction or its turn ends; a client's sync during a compaction keeps showing it.
 - `client_tools.rs` — the installed client tools as `dynamicTools` on `thread/start`, and `item/tool/call` requests for them answered here (with their `serverRequest/resolved`) instead of reaching the client.
 - `mapping.rs` — pure App Server values → neutral model and neutral params → App Server params (`thread.list` asks for all source kinds, state-DB only).
-- `dispatch.rs` — thread-mutation dispatch with account admission and one safe resume-retry.
+- `dispatch.rs` — thread-mutation dispatch with account admission and one safe resume-retry; a `turn/start` on a thread the current connection is not subscribed to subscribes first with the same history-free resume.
+- `subscriptions.rs` — the threads the current App Server connection generation subscribed to (`thread/start`, `thread/resume`, `thread/fork` results and the adapter's own history-free resumes). The App Server delivers a thread's events only to subscribed connections; a new generation forgets them. `turn/start`, `turn/steer` and `AgentProvider::thread_observe` subscribe a thread that is not in it.
 - `host.rs` — Codex services the companion host wires in at startup: the catalog metadata warmup (`spawn_catalog_warmup`) and `RolloutThreadMetadata`, the `ThreadMetadataSource` for threads the host index does not know yet.
 
 Codex-owned storage:
@@ -43,6 +45,10 @@ AccountPool runs only inside this adapter's `turn.start` and `thread.update(sett
 - As the only `threads.externalDiscovery` provider on a Codex + Claude host, it receives unbound thread ids provisionally; the companion writes the `discovered` binding only after this adapter accepts the call. `thread.owns` (a `thread/read` probe) is used only when several providers declare discovery. It is also the backfill source (see [thread bindings](../../docs/agent-providers.md#thread-bindings)).
 - `turns.startWhileActive: nativeJoin` — the App Server itself joins an active turn; the adapter reports `started` with that turn id, so Codex client-wire behavior is unchanged.
 - Codex mints its own thread ids; the binding takes the returned id.
+
+## Background commands (not mapped)
+
+TODO: Codex `commandExecution` items carry no neutral `background` marker yet (`mapping.rs` sets `None`), so the client shows no background chip for Codex. Evidence: the App Server notifies no exit of a unified-exec process (`process/exited` is only for client `process/spawn`), and the item's own fields (`processId`, `source`, `status`, `exitCode`) do not say that the exec call returned while the process continues; rollouts write the item only on completion, always with an exit code. The live sources are `thread/backgroundTerminals/list` (`ThreadBackgroundTerminal {itemId, processId, …}`, which names the launching item) and, inferred from another client and not verified against this App Server, a command item still `inProgress` at `turn/completed` whose `item/completed` arrives after the turn. Mapping it needs that behavior confirmed on the pinned runtime and a CodeWide marker added to the native passthrough (`thread/turns/list` pages and late `item/*` events) without changing the golden replay; after a restart, a launch absent from the live list is `unknown`.
 
 ## `codex.native` surface
 

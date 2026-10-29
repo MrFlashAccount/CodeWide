@@ -160,8 +160,8 @@ if [ -e "$state_root" ] && [ -d "$previous_state_root" ] && [ ! -L "$previous_st
   exit 1
 fi
 mkdir -p "$state_root"
-"$install_root/current/bin/codewide-companion" vcs plugin install \
-  --id git --executable "$install_root/current/libexec/codewide-vcs-git" --priority=-1000 >/dev/null
+# Git is a built-in VCS provider: the companion resolves bundled:git against
+# current/libexec at every spawn, so nothing is registered here.
 
 [ "$activate" -eq 1 ] || exit 0
 systemctl --user enable codewide-companion.service

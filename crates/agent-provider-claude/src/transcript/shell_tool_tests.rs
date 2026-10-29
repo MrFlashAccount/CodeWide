@@ -60,6 +60,7 @@ fn completed(
             app_thread_id: &thread,
             cwd: "/w",
             duration_ms: 4,
+            started_at_ms: 1_760_000_100_000,
             result: &result,
             status: if is_error {
                 ExecutionStatus::Failed
@@ -112,7 +113,7 @@ fn a_monitor_call_is_a_command_naming_the_task_it_started() -> TestResult {
         cwd,
         status,
         output,
-        background_task_id,
+        background,
         ..
     } = item
     else {
@@ -122,7 +123,16 @@ fn a_monitor_call_is_a_command_naming_the_task_it_started() -> TestResult {
     assert_eq!(cwd, "/w");
     assert_eq!(status, ExecutionStatus::Completed);
     assert_eq!(output.as_deref(), Some(MONITOR_RESULT_TEXT));
-    assert_eq!(background_task_id.as_deref(), Some("b1htjkjev"));
+    // A launch runs until a report or the live session says otherwise.
+    assert_eq!(
+        background,
+        Some(agent_core::model::BackgroundCommand {
+            task_id: "b1htjkjev".into(),
+            started_at: 1_760_000_100,
+            description: Some("Background monitor test".into()),
+            state: agent_core::model::BackgroundCommandState::Running,
+        })
+    );
     Ok(())
 }
 
@@ -138,7 +148,7 @@ fn a_monitor_result_without_a_valid_task_id_names_no_task() -> TestResult {
         assert!(matches!(
             completed(&call, MONITOR_RESULT_TEXT, false, &structured)?,
             AgentItem::Command {
-                background_task_id: None,
+                background: None,
                 ..
             }
         ));
@@ -163,7 +173,7 @@ fn stopping_a_shell_task_completes_as_the_stopped_command() -> TestResult {
         status,
         output,
         exit_code,
-        background_task_id,
+        background,
         ..
     } = item
     else {
@@ -177,7 +187,7 @@ fn stopping_a_shell_task_completes_as_the_stopped_command() -> TestResult {
     // The stopped command's exit code is unknown, and the stop did not
     // start the task, so the item does not claim it.
     assert_eq!(exit_code, None);
-    assert_eq!(background_task_id, None);
+    assert_eq!(background, None);
     Ok(())
 }
 

@@ -139,6 +139,7 @@ function timelineSurface(turns: readonly TurnItem[]) {
             key={row.key}
             parts={row.parts}
             placement={row.placement}
+            trailingTasks={row.trailingTasks}
             presentation={projectTurnPresentation(row.item, null, false, false)}
             requestPrompt={null}
             turn={row.item}
@@ -396,4 +397,64 @@ it("folds a running turn's current tool calls into one row showing only the runn
   expect(current.queryAllByText(/printf done/u)).toHaveLength(0);
   // The progress text before the tool calls stays visible.
   expect(view.getAllByText("Rendered Markdown block").length).toBeGreaterThan(0);
+});
+
+it("draws an interrupted child agent's result notice as a quiet line, not a user bubble", () => {
+  const woken = completedTurn("interrupted", [
+    {
+      agentThreadId: "child-1",
+      delivery: "wake",
+      durationMs: null,
+      id: "m1",
+      kind: "agent",
+      name: "Review",
+      requestId: "r1",
+      result: null,
+      status: "interrupted",
+      taskId: "t1",
+      toolUses: null,
+      turnId: "turn-1",
+      type: "codewideTaskNotification",
+    },
+    answer("interrupted-answer", "The review was interrupted."),
+  ]);
+  const view = render(timelineSurface([woken]));
+  layOut(view, "task-notification-line-row", 600);
+
+  expect(view.getByTestId("task-notification-line")).toBeOnTheScreen();
+  expect(view.getByLabelText("Review was interrupted")).toBeOnTheScreen();
+  expect(view.queryByTestId("user-bubble")).toBeNull();
+});
+
+it("draws a batched result notice as one line counting each child agent", () => {
+  const woken = completedTurn("batched", [
+    {
+      agentThreadId: null,
+      delivery: "wake",
+      durationMs: null,
+      id: "m2",
+      kind: "agent",
+      name: "2 agent results",
+      reports: [
+        { agentThreadId: "child-1", id: "m2:0", name: "Review", requestId: "r1", status: "completed", taskId: "t1", turnId: "turn-1" },
+        { agentThreadId: "child-2", id: "m2:1", name: "Tests", requestId: "r2", status: "failed", taskId: "r2", turnId: "turn-9" },
+      ],
+      requestId: null,
+      result: null,
+      status: "failed",
+      taskId: "t1",
+      toolUses: null,
+      turnId: null,
+      type: "codewideTaskNotification",
+    },
+    answer("batched-answer", "One passed, one failed."),
+  ]);
+  const view = render(timelineSurface([woken]));
+  layOut(view, "task-notification-line-row", 600);
+
+  expect(view.getAllByTestId("task-notification-line")).toHaveLength(1);
+  expect(view.getByText("2 agents")).toBeOnTheScreen();
+  expect(view.getByLabelText("2 agents some failed")).toBeOnTheScreen();
+  expect(view.queryByText("2 agent results")).toBeNull();
+  expect(view.queryByTestId("user-bubble")).toBeNull();
 });

@@ -4,9 +4,9 @@
 
 use forge_protocol::{
     ActivityPage, AuthMethod, CheckItem, CheckSummary, CredentialSource, DiffStats, FileStatus,
-    MergeStatus, ProviderIcon, PullRequestCategory, PullRequestState, Truncation,
+    IconMimeType, MergeStatus, PullRequestCategory, PullRequestState, Truncation,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
@@ -15,64 +15,24 @@ use super::{
 };
 use crate::review::hunks::Hunk;
 
-const MAX_GLYPH_PATH_BYTES: usize = 4 * 1024;
-const GLYPH_VIEW_BOX: &str = "0 0 24 24";
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GlyphWire {
-    pub view_box: &'static str,
-    pub path: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderIconWire {
-    pub icon_key: String,
-    pub glyph: Option<GlyphWire>,
-}
-
-impl ProviderIconWire {
-    /// Accepts a plugin icon: the key is kept as an opaque string (Android
-    /// maps known keys to bundled icons) and the glyph survives only as one
-    /// `0 0 24 24` path of SVG path commands and numbers, at most 4 KiB.
-    #[must_use]
-    pub fn sanitize(icon: &ProviderIcon) -> Self {
-        let icon_key = if icon.icon_key.len() <= 32
-            && !icon.icon_key.is_empty()
-            && icon
-                .icon_key
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        {
-            icon.icon_key.clone()
-        } else {
-            "generic".into()
-        };
-        let glyph = icon.glyph.as_ref().and_then(|glyph| {
-            (glyph.view_box == GLYPH_VIEW_BOX
-                && !glyph.path.is_empty()
-                && glyph.path.len() <= MAX_GLYPH_PATH_BYTES
-                && glyph.path.bytes().all(|byte| {
-                    byte.is_ascii_digit()
-                        || matches!(byte, b' ' | b',' | b'.' | b'-')
-                        || b"MmLlHhVvCcSsQqTtAaZz".contains(&byte)
-                }))
-            .then(|| GlyphWire {
-                view_box: GLYPH_VIEW_BOX,
-                path: glyph.path.clone(),
-            })
-        });
-        Self { icon_key, glyph }
-    }
-
-    #[must_use]
-    pub fn key_only(icon_key: &str) -> Self {
-        Self {
-            icon_key: icon_key.to_owned(),
-            glyph: None,
-        }
-    }
+/// A provider icon as clients render it, already validated by
+/// [`super::icons`]: a monochrome glyph the client tints, or image bytes it
+/// draws as they are. A provider without a usable icon sends `null`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ProviderIconWire {
+    Glyph {
+        view_box: String,
+        path: String,
+    },
+    Image {
+        mime_type: IconMimeType,
+        data_base64: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -94,7 +54,7 @@ pub struct ChecksCredentialWire {
 pub struct ForgeProviderWire {
     pub plugin_id: String,
     pub forge_name: String,
-    pub icon: ProviderIconWire,
+    pub icon: Option<ProviderIconWire>,
     pub built_in: bool,
     pub enabled: bool,
     pub capabilities: Vec<String>,
@@ -103,6 +63,26 @@ pub struct ForgeProviderWire {
     /// provider that cannot be started (disabled or not installed).
     pub default_host: Option<String>,
     pub checks_credential: ChecksCredentialWire,
+    /// Whether the plugin can serve this provider now, re-evaluated on every
+    /// directory read.
+    pub installation: ProviderInstallationWire,
+}
+
+/// Installation state of one registered provider. `installed` means the
+/// executable exists and, for an enabled provider, answered `initialize` and
+/// `auth.methods`; a disabled provider is not spawned to prove it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "state")]
+pub enum ProviderInstallationWire {
+    Installed,
+    /// The registered executable (or the bundled binary) does not exist.
+    Missing {
+        reason: String,
+    },
+    /// The executable exists but could not start or describe itself.
+    Failed {
+        reason: String,
+    },
 }
 
 /// Keeps only token pages that are `https` on the method's host, and drops
@@ -198,6 +178,8 @@ pub struct AccountStateWire {
     pub linked_at: String,
     pub credential_source: CredentialSource,
     pub scopes: Option<Vec<String>>,
+    /// Whether list and search reads include the account.
+    pub catalog_enabled: bool,
     #[serde(flatten)]
     pub condition: AccountCondition,
 }
@@ -216,6 +198,9 @@ pub struct PullRequestRowWire {
     pub checks: CheckSummary,
     pub local_checkout: bool,
     pub linked_thread_count: usize,
+    /// The canonical review chat, so a row can show its unread state; `None`
+    /// until one is assigned.
+    pub review_thread_id: Option<String>,
     pub updated_at: String,
     pub web_url: String,
     pub attention: AttentionWire,
@@ -357,47 +342,7 @@ pub fn rfc3339(moment: time::OffsetDateTime) -> String {
 
 #[cfg(test)]
 mod tests {
-    use forge_protocol::IconGlyph;
-
     use super::*;
-
-    #[test]
-    fn glyphs_survive_only_as_plain_path_data() {
-        let icon = |view_box: &str, path: &str| ProviderIcon {
-            icon_key: "arcanum".into(),
-            glyph: Some(IconGlyph {
-                view_box: view_box.into(),
-                path: path.into(),
-            }),
-        };
-        assert!(
-            ProviderIconWire::sanitize(&icon("0 0 24 24", "M2 2L22 22Z"))
-                .glyph
-                .is_some()
-        );
-        for (view_box, path) in [
-            ("0 0 48 48", "M2 2Z"),
-            ("0 0 24 24", "<script>"),
-            ("0 0 24 24", "M2 2 url(#x)"),
-        ] {
-            assert!(
-                ProviderIconWire::sanitize(&icon(view_box, path))
-                    .glyph
-                    .is_none()
-            );
-        }
-        let long = "M1 1".repeat(2_000);
-        assert!(
-            ProviderIconWire::sanitize(&icon("0 0 24 24", &long))
-                .glyph
-                .is_none()
-        );
-        let weird_key = ProviderIcon {
-            icon_key: "<svg>".into(),
-            glyph: None,
-        };
-        assert_eq!(ProviderIconWire::sanitize(&weird_key).icon_key, "generic");
-    }
 
     #[test]
     fn token_pages_must_be_https_on_the_provider_host() {

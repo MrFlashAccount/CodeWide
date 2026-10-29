@@ -35,12 +35,19 @@ export function CatalogModeBar({
       onSelect(nextMode);
     }
   });
+  const activateSelectedMode = useEvent((value: string) => {
+    const selectedMode = parseCatalogMode(value);
+    if (selectedMode === mode) {
+      onSelect(selectedMode);
+    }
+  });
   const pullRequestsLabel = "Pull requests";
 
   return (
     <View accessibilityRole="tablist" style={styles.shell} testID="catalog-mode-bar">
       <CatalogMaskedTabs
         mode={mode}
+        onSelectedValueActivate={activateSelectedMode}
         onValueChange={selectMode}
         pullRequestsLabel={pullRequestsLabel}
       />
@@ -51,10 +58,12 @@ export function CatalogModeBar({
 
 function CatalogMaskedTabs({
   mode,
+  onSelectedValueActivate,
   onValueChange,
   pullRequestsLabel,
 }: {
   readonly mode: CatalogMode;
+  readonly onSelectedValueActivate: (value: string) => void;
   readonly onValueChange: (value: string) => void;
   readonly pullRequestsLabel: string;
 }): React.JSX.Element {
@@ -63,6 +72,7 @@ function CatalogMaskedTabs({
       <MaskedTabBar
         fontSize={typeScale.label.fontSize}
         height={catalogModeBarHeight}
+        onSelectedValueActivate={onSelectedValueActivate}
         onValueChange={onValueChange}
         palette={MASKED_TAB_PALETTE}
         radius={99}
@@ -165,9 +175,7 @@ function AccessibleTab({
   readonly selected: boolean;
 }): React.JSX.Element {
   const activate = useEvent(() => {
-    if (!selected) {
-      onSelect(mode);
-    }
+    onSelect(mode);
   });
   const handleAccessibilityAction = useEvent((event: AccessibilityActionEvent) => {
     if (event.nativeEvent.actionName === "activate") {

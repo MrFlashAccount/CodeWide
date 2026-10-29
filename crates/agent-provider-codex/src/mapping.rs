@@ -198,7 +198,9 @@ pub fn item(item: &Value) -> Option<AgentItem> {
             output: opt_string(item, "aggregatedOutput"),
             exit_code: int_field(item, "exitCode"),
             duration_ms: int_field(item, "durationMs"),
-            background_task_id: None,
+            // TODO(background-commands): Codex items carry no background
+            // marker; see "Background commands" in this crate's CONTEXT.md.
+            background: None,
         },
         "fileChange" => AgentItem::FileChange {
             provenance: None,

@@ -2,20 +2,15 @@ import { fireEvent, render } from "@testing-library/react-native";
 import { Linking } from "react-native";
 
 import { openOnForge } from "../src/features/pullRequestDetail/actions/openOnForge";
-import { ReviewDock } from "../src/features/pullRequestDetail/changes/ReviewDock";
+import { ReviewOutcome } from "../src/features/pullRequestDetail/changes/ReviewOutcome";
 
-// A review URL comes from the provider plugin; the dock opens it only as an
-// https page on the account's host and otherwise shows no button at all.
-const counts = { agentOnly: 0, bothPending: 0, toPr: 0, total: 0 };
+// A review URL comes from the provider plugin; the Submit outcome opens it only
+// as an https page on the account's host and otherwise shows no link at all.
 
 function renderDock(reviewUrl: string) {
   return render(
-    <ReviewDock
-      counts={counts}
-      disabled={false}
+    <ReviewOutcome
       host="github.com"
-      onOpenSubmit={jest.fn()}
-      onSelectVerdict={jest.fn()}
       result={{
         kind: "published",
         left: 0,
@@ -24,8 +19,6 @@ function renderDock(reviewUrl: string) {
         toAgent: 0,
         verdict: "Approve",
       }}
-      verdict={null}
-      verdicts={[]}
     />,
   );
 }

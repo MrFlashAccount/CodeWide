@@ -72,7 +72,7 @@ async function seedWorkingAgent() {
   return database;
 }
 
-function agentRow(running: boolean) {
+function agentRow(running: boolean | undefined) {
   return {
     agentNickname: "Explore", agentRole: null, archived: false, cliVersion: "claude", createdAt: 1,
     cwd: "/repo", id: "root:agent:a1", modelProvider: "anthropic", parentThreadId: "root",
@@ -144,6 +144,26 @@ describe("thread sync subagent snapshot", () => {
       expect((await database.get("server", "root:agent:a1"))?.status.type).toBe("idle");
       expect((await database.get("server", "root"))?.activeSubagents).toBe(false);
     });
+    expect(refreshSubagents).not.toHaveBeenCalled();
+    database.close();
+  });
+
+  it("keeps a working agent whose snapshot row does not know whether it runs", async () => {
+    const database = await seedWorkingAgent();
+    const { refreshSubagents, sync } = syncRuntime(
+      database,
+      syncAnswer({ threads: [agentRow(undefined)] }),
+    );
+
+    await sync.readThread("server", "root", undefined, true);
+
+    // An unknown state maps to `notLoaded`, which never replaces a live `active`;
+    // only an explicit `running: false` (the previous case) settles the agent.
+    await vi.waitFor(async () => {
+      expect((await database.get("server", "root:agent:a1"))?.updatedAt).toBe(2);
+    });
+    expect((await database.get("server", "root:agent:a1"))?.status.type).toBe("active");
+    expect((await database.get("server", "root"))?.activeSubagents).toBe(true);
     expect(refreshSubagents).not.toHaveBeenCalled();
     database.close();
   });

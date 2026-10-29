@@ -31,6 +31,7 @@ impl OrchestrationService {
         caller: &Caller,
         request: &DelegateRequest,
     ) -> Result<DelegatePlan, ToolError> {
+        let root_thread_id = self.admit_depth(&caller.thread).await?;
         let parent = caller
             .provider
             .thread_read(&caller.thread)
@@ -51,12 +52,10 @@ impl OrchestrationService {
             })?,
             None => caller.provider.clone(),
         };
-        if !matches!(
-            &request.workspace,
-            WorkspaceRequest::CompatibilitySpawn { .. }
-        ) && !target
-            .capabilities()
-            .supports(Capability::OrchestrationTools)
+        if !matches!(&request.workspace, WorkspaceRequest::AgentSpawn { .. })
+            && !target
+                .capabilities()
+                .supports(Capability::OrchestrationTools)
         {
             return Err(ToolError::admission(AdmissionRejection::new(
                 RejectionCode::CapabilityUnavailable,
@@ -77,11 +76,9 @@ impl OrchestrationService {
                 ))
             })?,
         };
-        let inherited = self.inherited_permissions(
-            caller,
-            &parent.settings.permission_profile,
-            request.permission_profile.as_deref(),
-        );
+        let inherited = self
+            .inherited_permissions(caller, &parent.settings.permission_profile, request)
+            .await?;
         let parent_profile = inherited
             .as_ref()
             .map(|permissions| permissions.profile.as_str());
@@ -126,26 +123,24 @@ impl OrchestrationService {
             workspace_mode: workspace.mode,
             claim_state: workspace.claim_state,
             permission,
-            root_thread_id: self.root_thread(&caller.thread).await?,
+            root_thread_id,
         })
     }
 
-    fn inherited_permissions(
+    async fn inherited_permissions(
         &self,
         caller: &Caller,
         fallback: &str,
-        requested: Option<&str>,
-    ) -> Option<crate::agent::permission_profiles::ObservedPermissions> {
-        use crate::agent::permission_profiles::ObservedPermissions;
-        let mut permissions = self
+        request: &DelegateRequest,
+    ) -> Result<Option<crate::agent::permission_profiles::ObservedPermissions>, ToolError> {
+        let requested = request.permission_profile.as_deref();
+        let Some(mut permissions) = self
             .profiles
-            .snapshot(&caller.provider.descriptor().id, caller.thread.as_str())
-            .or_else(|| {
-                (!fallback.is_empty()).then(|| ObservedPermissions {
-                    profile: fallback.to_owned(),
-                    execution: None,
-                })
-            })?;
+            .resolve(&caller.provider, &caller.thread, fallback)
+            .await
+        else {
+            return Ok(None);
+        };
         // Only native settings report an authoritative OS sandbox. Projected
         // settings from other adapters are UI compatibility values.
         if !caller
@@ -156,11 +151,27 @@ impl OrchestrationService {
         {
             permissions.execution = None;
         }
-        Some(permissions)
+        Ok(Some(permissions))
     }
 
-    async fn root_thread(&self, thread: &AppThreadId) -> Result<AppThreadId, ToolError> {
+    /// Checks the host nesting limit before any provider read or write and
+    /// returns the caller's root thread.
+    async fn admit_depth(&self, caller: &AppThreadId) -> Result<AppThreadId, ToolError> {
+        let (root_thread_id, caller_depth) = self.lineage(caller).await?;
+        admission::depth(
+            caller_depth,
+            self.max_agent_depth
+                .load(std::sync::atomic::Ordering::Acquire),
+        )
+        .map_err(ToolError::admission)?;
+        Ok(root_thread_id)
+    }
+
+    /// The root of `thread`'s agent tree and `thread`'s depth in it (a root
+    /// is depth 0), walked through the durable parent links.
+    async fn lineage(&self, thread: &AppThreadId) -> Result<(AppThreadId, usize), ToolError> {
         let mut root = thread.clone();
+        let mut depth = 0_usize;
         let mut seen = std::collections::HashSet::from([root.as_str().to_owned()]);
         while let Some(parent) = self
             .links
@@ -175,8 +186,9 @@ impl OrchestrationService {
                 break;
             };
             root = parent;
+            depth = depth.saturating_add(1);
         }
-        Ok(root)
+        Ok((root, depth))
     }
 }
 

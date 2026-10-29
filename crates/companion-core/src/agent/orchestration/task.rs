@@ -1,9 +1,10 @@
 //! Durable orchestration task domain types.
 //!
 //! Tasks describe the caller-visible lifecycle. Attempts describe the one
-//! provider execution selected by the task, while completion delivery is a
-//! separate state machine. Keeping the three discriminated unions separate
-//! prevents a failed notification from rewriting an already terminal task.
+//! provider execution selected by the task, while result delivery belongs to
+//! the task's initial child work request (`work_requests`). Keeping the
+//! discriminated unions separate prevents a failed notification from
+//! rewriting an already terminal task.
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -46,7 +47,7 @@ durable_id!(AttemptId);
 durable_id!(DeliveryId);
 durable_id!(WorkspaceClaimId);
 
-fn random_uuid_v4() -> String {
+pub(super) fn random_uuid_v4() -> String {
     let mut bytes: [u8; 16] = rand::rng().random();
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
@@ -61,7 +62,7 @@ fn random_uuid_v4() -> String {
     )
 }
 
-fn is_uuid_v4(value: &str) -> bool {
+pub(super) fn is_uuid_v4(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 36
         && bytes[8] == b'-'
@@ -103,13 +104,19 @@ pub enum TaskState {
     Cancelling,
     Succeeded,
     Failed,
+    /// A user or system interrupt ended the authoritative turn without a
+    /// parent cancel request.
+    Interrupted,
     Cancelled,
 }
 
 impl TaskState {
     #[must_use]
     pub const fn is_terminal(self) -> bool {
-        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::Interrupted | Self::Cancelled
+        )
     }
 }
 
@@ -125,6 +132,7 @@ pub enum TaskTransition {
     CancelledBeforeStart,
     Succeeded,
     Failed,
+    Interrupted,
     Cancelled,
 }
 
@@ -297,7 +305,11 @@ impl OrchestrationTask {
                 TaskState::Admitted | TaskState::PreparingWorkspace,
                 TaskTransition::CancelRequested,
             )
-            | (TaskState::Cancelling, TaskTransition::CancelledBeforeStart)
+            // A parent cancel owns an interrupt that ends a cancelling task.
+            | (
+                TaskState::Cancelling,
+                TaskTransition::CancelledBeforeStart | TaskTransition::Interrupted,
+            )
             | (
                 TaskState::Starting
                 | TaskState::ReconcilingStart
@@ -321,6 +333,10 @@ impl OrchestrationTask {
                 | TaskState::Cancelling,
                 TaskTransition::Failed,
             ) => TaskState::Failed,
+            (
+                TaskState::Starting | TaskState::ReconcilingStart | TaskState::Running,
+                TaskTransition::Interrupted,
+            ) => TaskState::Interrupted,
             (state, transition) => {
                 return Err(format!(
                     "cannot apply {transition:?} while task is {state:?}"
@@ -500,8 +516,9 @@ pub enum ParentDeliveryState {
     Acknowledged,
 }
 
-/// The route determines which delivery states are valid. In particular, a
-/// fallback-only delivery cannot claim ownership has moved to the turn outbox.
+/// Legacy (pre-work-request) delivery route, decoded only by
+/// `work_requests_backfill_v1`. The route determines which delivery states
+/// are valid: a fallback-only delivery cannot claim outbox ownership.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "route", rename_all = "camelCase")]
 pub enum DeliveryProgress {
@@ -509,40 +526,8 @@ pub enum DeliveryProgress {
     ParentTurn { state: ParentDeliveryState },
 }
 
-impl DeliveryProgress {
-    pub(super) const fn terminal(self) -> Self {
-        match self {
-            Self::AwaitingResume {
-                state: DeliveryState::Pending,
-            } => Self::AwaitingResume {
-                state: DeliveryState::AwaitingResume,
-            },
-            Self::ParentTurn {
-                state: ParentDeliveryState::Pending,
-            } => Self::ParentTurn {
-                state: ParentDeliveryState::AwaitingResume,
-            },
-            progress => progress,
-        }
-    }
-
-    pub(super) const fn acknowledge(self) -> Self {
-        match self {
-            Self::AwaitingResume {
-                state: DeliveryState::AwaitingResume,
-            } => Self::AwaitingResume {
-                state: DeliveryState::Acknowledged,
-            },
-            Self::ParentTurn {
-                state: ParentDeliveryState::AwaitingResume | ParentDeliveryState::Enqueued,
-            } => Self::ParentTurn {
-                state: ParentDeliveryState::Acknowledged,
-            },
-            progress => progress,
-        }
-    }
-}
-
+/// Legacy per-task completion delivery, replaced by the task's initial child
+/// work request. Kept only so persisted records decode for the migration.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionDelivery {
@@ -601,7 +586,18 @@ pub enum PublicTaskStatus {
     Cancelling,
     Succeeded,
     Failed,
+    Interrupted,
     Cancelled,
+}
+
+impl PublicTaskStatus {
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::Interrupted | Self::Cancelled
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

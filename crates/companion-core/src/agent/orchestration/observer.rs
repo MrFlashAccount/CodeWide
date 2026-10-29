@@ -1,15 +1,16 @@
 //! Authenticated provider lifecycle observation for delegated work.
 //!
 //! Provider ownership is checked against durable bindings before any wait,
-//! queue, task, or compatibility-tracker side effect. Task children add the
-//! stronger requirement that lifecycle events match the attempt's persisted
-//! provider turn.
+//! queue, request or tracker side effect. A request is bound to its turn only
+//! by its command's delivery receipt (`journal::requests`); live events here
+//! only end turns (`settle_turn`), release queued follow-ups and feed the
+//! in-memory tracker.
 
 use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::{OrchestrationService, task::TaskState};
+use super::OrchestrationService;
 use crate::agent::{
     client_wire::observe::{TurnFact, turn_fact},
     model::{AppThreadId, ProviderId, TurnId},
@@ -19,76 +20,41 @@ impl OrchestrationService {
     /// Observes one client-wire payload from an authenticated provider.
     pub fn observe_event(self: &Arc<Self>, provider: &ProviderId, payload: &Value) {
         self.profiles.observe_event(provider, payload);
-        if let Some(fact) = turn_fact(payload) {
-            let thread_id = match &fact {
-                TurnFact::Started { thread_id, .. }
-                | TurnFact::AgentMessage { thread_id, .. }
-                | TurnFact::Ended { thread_id, .. } => *thread_id,
+        let Some(fact) = turn_fact(payload) else {
+            return;
+        };
+        let thread_id = match &fact {
+            TurnFact::Started { thread_id, .. }
+            | TurnFact::AgentMessage { thread_id, .. }
+            | TurnFact::Ended { thread_id, .. } => *thread_id,
+        };
+        let live_applied = self.tracker.provider_matches(thread_id, provider)
+            && match &fact {
+                TurnFact::Started { .. } => true,
+                TurnFact::AgentMessage { turn_id, .. } | TurnFact::Ended { turn_id, .. } => {
+                    self.tracker.accepts_turn(thread_id, turn_id)
+                }
             };
-            let live_applied = self.tracker.provider_matches(thread_id, provider)
-                && match &fact {
-                    TurnFact::Started { .. } => true,
-                    TurnFact::AgentMessage { turn_id, .. } | TurnFact::Ended { turn_id, .. } => {
-                        self.tracker.accepts_turn(thread_id, turn_id)
-                    }
-                };
-            if live_applied {
-                let _ = self.tracker.observe(payload);
-                if let TurnFact::Ended { turn_id, .. } = fact
-                    && self.turn_ends.receiver_count() > 0
-                {
-                    let _ = self.turn_ends.send((
-                        provider.clone(),
-                        thread_id.to_owned(),
-                        turn_id.to_owned(),
-                    ));
-                }
+        if live_applied {
+            let _ = self.tracker.observe(payload);
+            if let TurnFact::Ended { turn_id, .. } = fact
+                && self.turn_ends.receiver_count() > 0
+            {
+                let _ = self.turn_ends.send((
+                    provider.clone(),
+                    thread_id.to_owned(),
+                    turn_id.to_owned(),
+                ));
             }
-            let service = self.clone();
-            let provider = provider.clone();
-            let payload = payload.clone();
-            tokio::spawn(async move {
-                service
-                    .observe_turn_event(provider, payload, live_applied)
-                    .await;
-            });
         }
-        if payload.get("method").and_then(Value::as_str) == Some("companion/queue/changed") {
-            if let Some(commands) = payload.pointer("/params/data").and_then(Value::as_array) {
-                for command in commands {
-                    let Some(child) = command.get("remoteThreadId").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    let Some(turn_id) = command.get("deliveredTurnId").and_then(Value::as_str)
-                    else {
-                        continue;
-                    };
-                    let service = self.clone();
-                    let provider = provider.clone();
-                    let child = child.to_owned();
-                    let turn_id = turn_id.to_owned();
-                    tokio::spawn(async move {
-                        if service.provider_owns_thread(&provider, &child).await {
-                            if let Some(turn_id) = TurnId::parse(&turn_id) {
-                                let _ = service
-                                    .task_journal
-                                    .observe_started(&provider, &child, turn_id)
-                                    .await;
-                            }
-                            service.tracker.authorize(&child, provider);
-                            service.tracker.register_if_absent(
-                                &child,
-                                super::coordinator::watch::ChildState::Running {
-                                    turn_id: Some(turn_id.clone()),
-                                },
-                            );
-                            service.tracker.started(&child, &turn_id);
-                        }
-                    });
-                }
-            }
-            self.signal_tasks();
-        }
+        let service = self.clone();
+        let provider = provider.clone();
+        let payload = payload.clone();
+        tokio::spawn(async move {
+            service
+                .observe_turn_event(provider, payload, live_applied)
+                .await;
+        });
     }
 
     async fn observe_turn_event(
@@ -105,92 +71,34 @@ impl OrchestrationService {
             | TurnFact::AgentMessage { thread_id, .. }
             | TurnFact::Ended { thread_id, .. } => *thread_id,
         };
-        if !live_applied && !self.provider_owns_thread(&provider, thread_id).await {
+        let Some(thread) = AppThreadId::parse(thread_id) else {
             return;
-        }
-        let task = self
-            .task_journal
-            .get_for_child(thread_id)
-            .await
-            .ok()
-            .flatten();
-        let accepted = match &fact {
-            TurnFact::Started { turn_id, .. } => {
-                let Some(turn_id) = TurnId::parse(turn_id) else {
-                    return;
-                };
-                if task.as_ref().is_some_and(|bundle| {
-                    !bundle.task.state.is_terminal()
-                        || bundle.attempt.state.provider_turn_id() == Some(&turn_id)
-                }) {
-                    match self
-                        .task_journal
-                        .observe_started(&provider, thread_id, turn_id)
-                        .await
-                    {
-                        Ok(Some(bundle)) => {
-                            if bundle.task.state == TaskState::Cancelling {
-                                let _ = self.resume_cancellation(&bundle).await;
-                            }
-                            true
-                        }
-                        Ok(None) | Err(_) => false,
-                    }
-                } else {
-                    true
-                }
-            }
-            TurnFact::AgentMessage { turn_id, .. } => task.as_ref().is_none_or(|bundle| {
-                bundle.task.state.is_terminal()
-                    && bundle
-                        .attempt
-                        .state
-                        .provider_turn_id()
-                        .is_some_and(|known| known.as_str() != *turn_id)
-                    || bundle
-                        .attempt
-                        .state
-                        .provider_turn_id()
-                        .is_some_and(|known| known.as_str() == *turn_id)
-            }),
-            TurnFact::Ended { turn_id, end, .. } => {
-                let Some(turn_id) = TurnId::parse(turn_id) else {
-                    return;
-                };
-                if task.as_ref().is_some_and(|bundle| {
-                    !bundle.task.state.is_terminal()
-                        || bundle.attempt.state.provider_turn_id() == Some(&turn_id)
-                }) {
-                    self.task_journal
-                        .observe_terminal(&provider, thread_id, turn_id, *end)
-                        .await
-                        .ok()
-                        .flatten()
-                        .is_some()
-                } else {
-                    true
-                }
-            }
         };
-        if !accepted {
+        if !live_applied && !self.provider_owns_thread(&provider, thread_id).await {
             return;
         }
         if !live_applied {
             self.tracker.authorize(thread_id, provider.clone());
             let _ = self.tracker.observe(&payload);
         }
-        if let TurnFact::Ended { turn_id, .. } = fact {
-            if !live_applied && self.turn_ends.receiver_count() > 0 {
-                let _ = self
-                    .turn_ends
-                    .send((provider, thread_id.to_owned(), turn_id.to_owned()));
-            }
-            let released = self
-                .turn_delivery
-                .release_queued_for_thread(thread_id)
-                .await;
-            if matches!(released, Ok(Some(_))) {
-                self.tracker.queued_after(thread_id, turn_id);
+        match fact {
+            TurnFact::Started { .. } => self.delivery.reset(&thread),
+            TurnFact::AgentMessage { .. } => {}
+            TurnFact::Ended { turn_id, end, .. } => {
+                if !live_applied && self.turn_ends.receiver_count() > 0 {
+                    let _ = self.turn_ends.send((
+                        provider.clone(),
+                        thread_id.to_owned(),
+                        turn_id.to_owned(),
+                    ));
+                }
+                if let Some(turn_id) = TurnId::parse(turn_id) {
+                    // Queued follow-ups belong to the authenticated owner's
+                    // thread, whatever request or task the ended turn served.
+                    self.release_queued(&thread, &turn_id).await;
+                    self.settle_turn(&provider, &thread, &turn_id, end, true)
+                        .await;
+                }
             }
         }
         self.signal_tasks();

@@ -18,7 +18,7 @@ class Codewide < Formula
     inreplace service_file,
               "%h/.local/lib/codewide/codewide-companion",
               opt_bin/"codewide-companion"
-    # Homebrew's libexec is the bundled forge plugin directory.
+    # Homebrew's libexec is the bundled plugin directory (forge and VCS).
     inreplace service_file,
               "--enable-mutations",
               "--enable-mutations --bundled-plugin-dir #{opt_libexec}"
@@ -27,10 +27,11 @@ class Codewide < Formula
 
   def caveats
     <<~EOS
-      Before starting the service, initialize state and the bundled Git provider:
+      Before starting the service, initialize state:
         codewide-companion create-token
         codewide-companion migrate-state
-        codewide-companion vcs plugin install --id git --executable #{opt_libexec}/codewide-vcs-git --priority=-1000
+
+      Git is built in: the service resolves it from #{opt_libexec}.
 
       The service also requires the Codex app-server control socket documented by CodeWide.
       Then start it with:

@@ -1,4 +1,4 @@
-import { controlSize, spacing } from "../../../theme";
+import { spacing } from "../../../theme";
 
 // Average advance of the 14sp medium label face; the row reserves whole buttons, never partial ones.
 const AVERAGE_LABEL_ADVANCE = 7.6;
@@ -12,6 +12,3 @@ const PADDED_SIDES = 2;
 export function measureActionLabel(label: string): number {
   return Math.ceil(label.length * AVERAGE_LABEL_ADVANCE) + spacing.md * PADDED_SIDES;
 }
-
-/** Room the ⋯ button keeps at the end of the action row. */
-export const OVERFLOW_BUTTON_WIDTH = controlSize.touch;

@@ -5,8 +5,9 @@ import { AppText as Text } from "../../../ui/Typography";
 import { listStyles as styles } from "./list.styles";
 
 /**
- * One status line above the list: offline with the snapshot's age (Q3), or the
- * companion's reason when a refresh failed. Nothing while the data is current.
+ * One failure line above the list: offline with the snapshot's age (Q3), or
+ * the companion's reason when a refresh failed. Refresh progress lives in the
+ * stable search-icon slot so it never moves the published rows.
  */
 export function ListNotice({
   nowMs,
@@ -15,18 +16,6 @@ export function ListNotice({
   readonly nowMs: number;
   readonly state: RemoteValue<PullRequestListPage> | undefined;
 }): React.JSX.Element | null {
-  if (state?.status === "ready" && state.refreshing) {
-    return (
-      <Text
-        accessibilityLiveRegion="polite"
-        shimmering
-        style={styles.notice}
-        testID="pull-request-list-notice"
-      >
-        {`Last updated ${ageAgo(state.value.fetchedAt, nowMs)}`}
-      </Text>
-    );
-  }
   if (state?.status !== "failed") {
     return null;
   }

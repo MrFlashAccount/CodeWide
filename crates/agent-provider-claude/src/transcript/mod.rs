@@ -10,6 +10,8 @@
 //! - `task_reports`, `task_notifications` — background task reports (stored
 //!   `<task-notification>` messages, live `task_notification` frames) →
 //!   neutral `taskNotification` items.
+//! - `background_commands` — the state of the background commands a thread
+//!   launched, from stored reports and the live session.
 //! - `result` — the `result` frame → turn outcome.
 //! - `builder` — `TurnBuilder`: one neutral turn from frames, with the
 //!   ordering invariants of the protocol.
@@ -18,6 +20,7 @@
 //!   builder, and the companion's turn index.
 
 pub mod agents;
+pub mod background_commands;
 pub mod builder;
 pub mod chain;
 pub mod client_tools;

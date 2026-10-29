@@ -1,5 +1,5 @@
-//! In-memory forge data: list pages and overviews with a freshness window,
-//! and which account last listed each pull request. Forge content is never
+//! In-memory forge data: list pages, overviews and conversation pages with a
+//! freshness window, and which account last listed each pull request. Forge content is never
 //! written to disk by the companion.
 
 use std::{
@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 
-use forge_protocol::{PullRequestCategory, PullRequestSearchQuery};
+use forge_protocol::{ConversationPage, PullRequestCategory, PullRequestSearchQuery};
 
 use super::{
     ids::{ForgeAccountKey, PullRequestKey},
@@ -30,6 +30,7 @@ pub struct ListKey {
 struct Entries {
     lists: HashMap<ListKey, (Instant, ListPageWire)>,
     overviews: HashMap<PullRequestKey, (Instant, OverviewWire)>,
+    conversations: HashMap<(PullRequestKey, Option<String>), (Instant, ConversationPage)>,
     listed_by: HashMap<PullRequestKey, ForgeAccountKey>,
     attention_revisions: HashMap<PullRequestKey, String>,
 }
@@ -97,6 +98,33 @@ impl ForgeCache {
         }
     }
 
+    /// A fresh conversation page by pull request and cursor.
+    #[must_use]
+    pub fn conversation(
+        &self,
+        key: &PullRequestKey,
+        cursor: Option<&str>,
+    ) -> Option<ConversationPage> {
+        let entries = self.entries.lock().ok()?;
+        let (at, page) = entries
+            .conversations
+            .get(&(key.clone(), cursor.map(str::to_owned)))?;
+        (at.elapsed() < limits::READ_FRESHNESS).then(|| page.clone())
+    }
+
+    pub fn put_conversation(
+        &self,
+        key: &PullRequestKey,
+        cursor: Option<String>,
+        page: &ConversationPage,
+    ) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries
+                .conversations
+                .insert((key.clone(), cursor), (Instant::now(), page.clone()));
+        }
+    }
+
     #[must_use]
     pub fn listed_by(&self, key: &PullRequestKey) -> Option<ForgeAccountKey> {
         self.entries.lock().ok()?.listed_by.get(key).cloned()
@@ -120,11 +148,14 @@ impl ForgeCache {
         }
     }
 
-    /// Drops the overview of one pull request and every list page, so the
-    /// next read refetches after a write.
+    /// Drops the overview and conversation pages of one pull request and
+    /// every list page, so the next read refetches after a write.
     pub fn invalidate_pull_request(&self, key: &PullRequestKey) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.overviews.remove(key);
+            entries
+                .conversations
+                .retain(|(pull_request, _), _| pull_request != key);
             entries.lists.clear();
         }
     }
@@ -132,6 +163,7 @@ impl ForgeCache {
     pub fn invalidate_all(&self) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.overviews.clear();
+            entries.conversations.clear();
             entries.lists.clear();
         }
     }

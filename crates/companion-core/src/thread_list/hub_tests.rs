@@ -192,7 +192,10 @@ async fn an_unknown_thread_is_read_once_and_pushed_with_its_buffered_events() {
     );
     let mut read = row("far");
     read["status"] = json!({"type": "notLoaded"});
-    assert!(!rows.complete_materialization("far", 9, Ok(Some(read)), NOW));
+    assert_eq!(
+        rows.complete_materialization("far", 9, Ok(RowRead::Row(read)), NOW),
+        AfterRead::Done
+    );
     let batch = frames(&subscription).await;
     let pushed = &batch[0]["rows"][0];
     assert_eq!(pushed["id"], "far");
@@ -202,22 +205,191 @@ async fn an_unknown_thread_is_read_once_and_pushed_with_its_buffered_events() {
     assert_eq!(pushed[ROW_FIELD]["cursor"], 11);
 }
 
+fn turn_started(id: &str) -> Value {
+    attach_thread_patch(json!({"method": "turn/started", "params": {
+        "threadId": id, "turn": {"id": "turn", "items": []}
+    }}))
+}
+
+fn turn_completed(id: &str) -> Value {
+    attach_thread_patch(json!({"method": "turn/completed", "params": {
+        "threadId": id, "turn": {"id": "turn", "items": [], "status": "completed"}
+    }}))
+}
+
 #[tokio::test]
-async fn a_failed_read_counts_and_is_not_retried_until_a_page_names_the_thread() {
+async fn a_failed_read_does_not_park_the_thread_and_its_next_turn_end_lists_it() {
     let rows = ThreadListRows::default();
-    let started = attach_thread_patch(json!({"method": "turn/started", "params": {
-        "threadId": "far", "turn": {"id": "turn", "items": []}
-    }}));
-    assert_eq!(apply(&rows, std::slice::from_ref(&started), 1), ["far"]);
-    assert!(!rows.complete_materialization("far", 0, Err("offline".into()), NOW));
+    let subscription = rows.subscribe(true);
+    assert_eq!(apply(&rows, &[delta("far", "partial")], 1), ["far"]);
+    assert_eq!(
+        rows.complete_materialization("far", 0, Err("offline".into()), NOW),
+        AfterRead::RetryAfter {
+            attempt: 1,
+            delay: FIRST_RETRY_DELAY
+        }
+    );
     assert_eq!(rows.materialization_failures(), 1);
-    assert!(apply(&rows, std::slice::from_ref(&started), 2).is_empty());
+    assert_eq!(
+        rows.ignored_count(),
+        0,
+        "a failure is not a confirmed absence"
+    );
+    // The next update reads the row again without waiting for the timer.
+    assert_eq!(apply(&rows, &[delta("far", " answer")], 2), ["far"]);
+    assert!(
+        !rows.retry_materialization("far", 1),
+        "the timed retry yields to the read in flight"
+    );
+    assert!(apply(&rows, &[turn_completed("far")], 3).is_empty());
+    let mut read = row("far");
+    read["status"] = json!({"type": "active", "activeFlags": []});
+    read["preview"] = json!("stored");
+    assert_eq!(
+        rows.complete_materialization("far", 1, Ok(RowRead::Row(read)), NOW),
+        AfterRead::Done
+    );
+    let batch = frames(&subscription).await;
+    let pushed = &batch[0]["rows"][0];
+    assert_eq!(pushed["id"], "far");
+    assert_eq!(pushed["status"]["type"], "idle", "the turn end applied");
+    assert_eq!(pushed["preview"], "partial answer");
+    assert_eq!(pushed[ROW_FIELD]["cursor"], 3);
+    assert!(
+        !rows.retry_materialization("far", 1),
+        "a listed thread needs no retry"
+    );
+}
+
+#[test]
+fn failed_reads_back_off_and_stop_timed_retries_at_the_bound() {
+    let rows = ThreadListRows::default();
+    let mut delays = Vec::new();
+    assert_eq!(apply(&rows, &[delta("far", "x")], 1), ["far"]);
+    let mut next = rows.complete_materialization("far", 0, Err("offline".into()), NOW);
+    while let AfterRead::RetryAfter { attempt, delay } = next {
+        delays.push(delay);
+        assert!(rows.retry_materialization("far", attempt));
+        assert!(
+            !rows.retry_materialization("far", attempt),
+            "one read in flight"
+        );
+        next = rows.complete_materialization("far", 0, Err("offline".into()), NOW);
+    }
+    assert_eq!(next, AfterRead::Done);
+    assert_eq!(delays.len(), MAX_READ_RETRIES as usize);
+    assert!(delays.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert_eq!(delays.last().copied(), Some(MAX_RETRY_DELAY));
+    // Out of timed retries, the thread still reads on its next update.
+    assert_eq!(apply(&rows, &[delta("far", "y")], 2), ["far"]);
+}
+
+#[test]
+fn an_empty_read_ignores_the_thread_until_its_next_lifecycle_event() {
+    let rows = ThreadListRows::default();
+    assert_eq!(apply(&rows, &[turn_started("hidden")], 1), ["hidden"]);
+    assert_eq!(
+        rows.complete_materialization(
+            "hidden",
+            0,
+            Ok(RowRead::Absent(AbsentReason::CatalogHidden)),
+            NOW
+        ),
+        AfterRead::Done
+    );
+    assert_eq!(rows.ignored_count(), 1);
+    assert!(
+        apply(&rows, &[delta("hidden", "more")], 2).is_empty(),
+        "streaming of an ignored thread reads nothing"
+    );
+    assert_eq!(
+        apply(&rows, &[turn_completed("hidden")], 3),
+        ["hidden"],
+        "a turn end checks the thread again"
+    );
+}
+
+#[tokio::test]
+async fn an_empty_read_followed_by_a_turn_start_materializes_the_row() {
+    let rows = ThreadListRows::default();
+    let subscription = rows.subscribe(true);
+    assert_eq!(apply(&rows, &[delta("far", "x")], 1), ["far"]);
+    assert_eq!(
+        rows.complete_materialization("far", 0, Ok(RowRead::Absent(AbsentReason::Missing)), NOW),
+        AfterRead::Done
+    );
+    assert_eq!(apply(&rows, &[turn_started("far")], 2), ["far"]);
+    assert_eq!(
+        rows.complete_materialization("far", 1, Ok(RowRead::Row(row("far"))), NOW),
+        AfterRead::Done
+    );
+    assert_eq!(rows.ignored_count(), 0);
+    let batch = frames(&subscription).await;
+    assert_eq!(ids(&batch[0]), ["far"]);
+    assert_eq!(batch[0]["rows"][0]["status"]["type"], "active");
+}
+
+#[tokio::test]
+async fn a_page_naming_a_failed_thread_seeds_it() {
+    let rows = ThreadListRows::default();
+    assert_eq!(apply(&rows, &[turn_started("far")], 1), ["far"]);
+    assert!(matches!(
+        rows.complete_materialization("far", 0, Err("offline".into()), NOW),
+        AfterRead::RetryAfter { attempt: 1, .. }
+    ));
     let mut page = vec![row("far")];
     rows.observe_page(&mut page, 2, false);
     assert!(
-        apply(&rows, &[started], 3).is_empty(),
+        apply(&rows, &[turn_started("far")], 3).is_empty(),
         "the page seeded the row"
     );
+    assert!(!rows.retry_materialization("far", 1));
+}
+
+/// A row port that fails a fixed number of times, then answers a row.
+struct FlakyReader {
+    failures: std::sync::atomic::AtomicU32,
+    reads: std::sync::atomic::AtomicU32,
+}
+
+#[async_trait::async_trait]
+impl materialize::RowReader for FlakyReader {
+    async fn journal_head(&self) -> Result<u64, String> {
+        Ok(0)
+    }
+
+    async fn read_row(&self, thread_id: &str) -> Result<RowRead, String> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        if self
+            .failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err("thread/read failed with code -32600".into());
+        }
+        let mut read = row(thread_id);
+        read["status"] = json!({"type": "active", "activeFlags": []});
+        Ok(RowRead::Row(read))
+    }
+}
+
+#[tokio::test]
+async fn the_materializer_retries_a_failed_read_after_its_backoff() {
+    let rows = ThreadListRows::default();
+    let subscription = rows.subscribe(true);
+    let reader = Arc::new(FlakyReader {
+        failures: std::sync::atomic::AtomicU32::new(1),
+        reads: std::sync::atomic::AtomicU32::new(0),
+    });
+    let materializer = materialize::Materializer::new(rows.clone(), reader.clone());
+    materializer.spawn(apply(&rows, &[turn_started("far")], 1));
+    let batch = frames(&subscription).await;
+    assert_eq!(ids(&batch[0]), ["far"]);
+    assert_eq!(batch[0]["rows"][0]["status"]["type"], "active");
+    assert_eq!(reader.reads.load(Ordering::SeqCst), 2);
+    assert_eq!(rows.materialization_failures(), 1);
 }
 
 #[test]

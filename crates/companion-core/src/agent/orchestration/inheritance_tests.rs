@@ -105,7 +105,7 @@ fn explicit_isolation_alone_requires_a_workspace_provider() -> TestResult {
     for request in [
         WorkspaceRequest::Inherit { cwd: None },
         WorkspaceRequest::SharedReadOnly { cwd: None },
-        WorkspaceRequest::CompatibilitySpawn { cwd: None },
+        WorkspaceRequest::AgentSpawn { cwd: None },
     ] {
         let admission = admission::workspace(&request, "/non-git", Some(":full-access"), None)
             .map_err(|error| error.message)?;
@@ -165,6 +165,7 @@ async fn workspace_failures_have_durable_diagnostics_without_claiming_uncertaint
         Some(Arc::new(crate::workspaces::WorkspaceService::new(
             Arc::new(crate::vcs::VcsService::new(
                 operations.path().join("plugins.json"),
+                None,
             )),
             operations.path().join("workspaces"),
         )));

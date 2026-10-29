@@ -738,6 +738,7 @@ mod tests {
         }
         read.subagents.push(agent_core::model::NativeSubagent {
             agent_id: "a0001".into(),
+            effort: None,
             model: None,
             parent_agent_id: None,
             parent_tool_use_id: None,

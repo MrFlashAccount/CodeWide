@@ -16,6 +16,8 @@ import type { RenderConversationWorkspaceContentProps } from "./ConversationWork
  */
 export function renderConversationWorkspaceContent(props: RenderConversationWorkspaceContentProps) {
   const listedThread = props.visibleConversationThread;
+  // A hosted draft requires an explicit project and offers no workspace modes.
+  const hostedDraft = props.draftAdmission?.kind === "hosted" ? props.draftAdmission : null;
   const remoteThread = props.snapshot.remoteThread;
   const gated = threadAgentActions(
     remoteThread,
@@ -134,14 +136,23 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         newChatPicker: props.newChatPicker,
         onAddProject: props.addActiveProject,
         onChangeProject: props.changeEmptyThreadProject,
-        onChangeWorkspaceMode: (workspaceMode) => {
-          if (props.newChatDraft !== null) {
-            props.onChangeDraftWorkspaceMode(props.newChatDraft.id, workspaceMode);
-          }
-        },
+        onChangeWorkspaceMode:
+          hostedDraft !== null
+            ? undefined
+            : (workspaceMode) => {
+                if (props.newChatDraft !== null) {
+                  props.onChangeDraftWorkspaceMode(props.newChatDraft.id, workspaceMode);
+                }
+              },
         onManageProjects: props.onManageProjects,
         onReadDirectory: props.readActiveDirectory,
         projectLoadError: props.activeProjectError,
+        projectRequirement:
+          hostedDraft === null || props.newChatDraft?.cwd !== null
+            ? "none"
+            : hostedDraft.suggesting
+              ? "suggesting"
+              : "required",
         projects: props.activeProjects,
         workspaceMode: props.newChatDraft?.workspaceMode ?? "current",
         workspaceSupport: props.activeWorkspaceSupport,
@@ -186,11 +197,16 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       surface={{
         compact: !props.desktop,
         cwd: props.snapshot.cwd ?? "/workspace",
+        draftNotice: hostedDraft?.notice ?? null,
         firstUnreadAgentTurnId: props.snapshot.firstUnreadAgentTurnId ?? null,
-        headerActions: props.headerActions,
         newChat: props.newChatDraft !== null,
-        onBack: props.desktop ? undefined : props.closeActiveConversation,
+        // A pane closes itself from its header wherever it is placed.
+        onBack:
+          props.desktop && props.presentation.kind === "screen"
+            ? undefined
+            : props.closeActiveConversation,
         onViewedLatest: props.markActiveThreadRead,
+        presentation: props.presentation,
         // A thread another process holds opens read-only until it lets go; a
         // sub-agent, driven by its parent agent, is always read-only.
         readOnly: threadRefusesDirectInput(remoteThread),

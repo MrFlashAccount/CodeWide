@@ -1,13 +1,13 @@
-//! Turn operations (`turn.start`, `thread.compact`, `turn.steer`,
-//! `turn.interrupt`, `request.respond`). A turn runs only in a listed
+//! Turn operations (`turn.start`, `turn.continue`, `thread.compact`,
+//! `turn.steer`, `turn.interrupt`, `request.respond`). A turn runs only in a listed
 //! thread with a working directory whose session no other `claude` process
 //! holds; a discovered session is adopted on its first turn.
 //! `turn.interrupt` answers in every state.
 
 use agent_core::{
     model::{
-        AppThreadId, EXPECTED_TURN_NOT_ACTIVE, RequestRespondParams, TurnId, TurnInterruptParams,
-        TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+        AppThreadId, EXPECTED_TURN_NOT_ACTIVE, RequestRespondParams, TurnContinueParams, TurnId,
+        TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
     },
     provider::ProviderError,
 };
@@ -104,6 +104,23 @@ impl ThreadService {
             .await
             .map_err(|err| session_gone(&err))?
             .map_err(|err| internal("turn.start", &err))
+    }
+
+    /// `turn.continue`: a user turn resuming the last one without a user
+    /// message, or `busy` with the active turn.
+    ///
+    /// # Errors
+    /// As [`Self::turn_start`].
+    pub async fn turn_continue(
+        &self,
+        params: TurnContinueParams,
+    ) -> Result<TurnStartResult, ProviderError> {
+        let handle = self.inner.turn_entry(params.app_thread_id.as_str()).await?;
+        handle
+            .start_turn(TurnRequest::Continue)
+            .await
+            .map_err(|err| session_gone(&err))?
+            .map_err(|err| internal("turn.continue", &err))
     }
 
     /// `thread.compact`: Claude's `/compact` as a provider turn.

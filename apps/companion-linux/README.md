@@ -100,7 +100,8 @@ curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/instal
 The same release asset feeds the `codewide-companion` formula in
 `MrFlashAccount/homebrew-codewide`. The curl installer owns user-systemd
 activation and rollback; the Homebrew formula uses `brew services` and prints
-the required one-time state and Git-provider initialization commands.
+the required one-time state initialization commands; Git is a built-in
+provider resolved from the formula's `libexec`.
 
 Managed installations use immutable directories under
 `~/.local/lib/codewide/generations/`. The stable systemd unit executes only

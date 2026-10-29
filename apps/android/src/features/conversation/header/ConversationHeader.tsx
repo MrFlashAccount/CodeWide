@@ -10,13 +10,20 @@ import { AppText as Text } from "../../../ui/Typography";
 import { ContextRing } from "../../accounts/UsageMenu";
 import { WorkspaceAccountUsageMenu } from "../../accounts/WorkspaceAccountUsageMenu";
 import { ThreadHeaderMenu } from "../../turnActions/ThreadActions";
+import type { ThreadHeaderHostItem } from "../../turnActions/threadHeaderContract";
 import { ThreadForkSheet } from "../../turnActions/ThreadForkSheet";
 import {
   ConversationBackendRefreshWarning,
   ConversationHistorySubtitle,
 } from "../ConversationHistoryStatus";
 import { styles } from "./ConversationHeader.styles";
-import type { ConversationHeaderProps } from "./ConversationHeaderContract";
+import type {
+  ConversationHeaderProps,
+  ConversationHostPresentation,
+} from "./ConversationHeaderContract";
+
+const SCREEN: ConversationHostPresentation = { kind: "screen" };
+const NO_HOST_ITEMS: readonly ThreadHeaderHostItem[] = [];
 
 export function ConversationHeader({
   accountRateLimitsDatabase,
@@ -33,7 +40,6 @@ export function ConversationHeader({
   forkPicker,
   historyActivityModel,
   historyActivityResourceId,
-  hostActions,
   identitySubtitle = null,
   newChat,
   onArchive,
@@ -45,6 +51,7 @@ export function ConversationHeader({
   onUnarchive,
   openThreadRename,
   pinned,
+  presentation = SCREEN,
   providerLimits = null,
   readOnly,
   remoteThread,
@@ -56,9 +63,15 @@ export function ConversationHeader({
   threadSearchVisible,
 }: ConversationHeaderProps) {
   const openElsewhere = threadOpenElsewhere(remoteThread);
+  const pane = presentation.kind === "pane" ? presentation : null;
+  const hostItems = pane?.menuItems ?? NO_HOST_ITEMS;
+  // Every existing thread has its menu. A sub-agent's mutating actions show disabled; a thread
+  // another app holds keeps its own narrower rule (only session actions are off).
+  const threadMenu = !newChat;
   return (
     <View style={styles.conversationHeader} testID="conversation-header">
-      {compact && (
+      {/* A pane closes from its trailing edge instead of navigating back. */}
+      {compact && pane === null && (
         <Pressable accessibilityLabel="Back to threads" onPress={onBack} style={styles.headerIcon}>
           <Ionicons color={colors.text} name="arrow-back" size={iconSize.navigation} />
         </Pressable>
@@ -101,7 +114,6 @@ export function ConversationHeader({
           </Text>
         )}
       </View>
-      {hostActions}
       {!newChat && (
         <Pressable
           accessibilityLabel="Search in thread"
@@ -152,8 +164,7 @@ export function ConversationHeader({
           </Pressable>
         </WorkspaceAccountUsageMenu>
       )}
-      {/* A thread another app holds keeps its menu; other read-only threads (sub-agents) have none. */}
-      {(!readOnly || openElsewhere) && !newChat && (
+      {threadMenu && (
         <ThreadHeaderMenu
           archived={archived}
           key={thread.id}
@@ -175,7 +186,19 @@ export function ConversationHeader({
           {...(forkOffer === undefined ? {} : { forkOffer })}
           {...(forkPicker === undefined ? {} : { forkPicker })}
           {...(deleteThread === undefined || openElsewhere ? {} : { onDelete: deleteThread })}
+          hostItems={hostItems}
+          readOnly={readOnly && !openElsewhere}
         />
+      )}
+      {pane !== null && (
+        <Pressable
+          accessibilityLabel={pane.closeLabel}
+          accessibilityRole="button"
+          onPress={onBack}
+          style={styles.headerIcon}
+        >
+          <Ionicons color={colors.text} name="close" size={iconSize.action} />
+        </Pressable>
       )}
       {/* Outside the menu gate: a message's "Fork" opens the sheet in a read-only thread too. */}
       {onFork !== undefined && forkPicker !== undefined && (

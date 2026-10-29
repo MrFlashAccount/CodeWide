@@ -82,12 +82,15 @@ fn companion_service_has_no_broad_temporary_preview_root() {
 }
 
 #[test]
-fn default_distribution_installs_and_registers_git_plugin() {
+fn default_distribution_installs_the_built_in_git_plugin() {
     assert!(INSTALL_SCRIPT.contains("target/release/codewide-vcs-git"));
-    assert!(INSTALL_SCRIPT.contains("vcs plugin install"));
-    assert!(INSTALL_SCRIPT.contains("--id git"));
-    assert!(INSTALL_SCRIPT.contains("--priority=-1000"));
+    assert!(INSTALL_SCRIPT.contains("\"$staging/libexec/codewide-vcs-git\""));
+    assert!(
+        !INSTALL_SCRIPT.contains("vcs plugin install"),
+        "Git is built in and is never registered as a generation path"
+    );
     assert!(VERIFY_SCRIPT.contains("current/libexec/codewide-vcs-git"));
+    assert!(VERIFY_SCRIPT.contains(r#""source":"bundled","id":"git","executable":""#));
 }
 
 #[test]

@@ -439,7 +439,10 @@ function SourcesFacet({
   readonly repositories: readonly string[];
 }): React.JSX.Element {
   const enabled = providers.filter((provider) => provider.enabled);
-  const connected = accounts.filter((account) => account.state === "connected");
+  // An account excluded from the catalog is hidden everywhere in it, including here.
+  const connected = accounts.filter(
+    (account) => account.state === "connected" && account.catalogEnabled !== false,
+  );
   const selectedProviders = new Set(draft.providerIds);
   const selectedAccounts = new Set(draft.accounts);
   return (
@@ -690,9 +693,7 @@ function SourceOption({
       style={styles.optionRow}
     >
       <CheckBox checked={checked} />
-      {icon === undefined ? null : (
-        <ForgeIcon glyph={icon.icon.glyph} iconKey={icon.icon.iconKey} size={iconSize.action} />
-      )}
+      {icon === undefined ? null : <ForgeIcon icon={icon.icon} size={iconSize.action} />}
       <View style={styles.facetBody}>
         <Text numberOfLines={1} style={styles.optionTitle}>
           {label}

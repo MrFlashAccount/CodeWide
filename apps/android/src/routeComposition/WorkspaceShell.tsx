@@ -1,5 +1,4 @@
 import { Stack } from "expo-router";
-import { WorkspacePaneLayout, WorkspaceScreenLayout } from "./WorkspacePaneLayout";
 import { View } from "react-native";
 
 import { workspaceRuntime } from "../data/workspace-runtime";
@@ -19,10 +18,8 @@ import {
   v1BrowserScreenOptions,
   v1CatalogRootScreenOptions,
   v1DesktopRouteScreenOptions,
-  v1ListScreenOptions,
   v1MobileRouteScreenOptions,
   v1RouteScreenOptions,
-  v1RouteSheetScreenOptions,
   v1SheetScreenOptions,
   v1WorkspaceShellStyles as styles,
 } from "./WorkspaceShell.styles";
@@ -88,14 +85,10 @@ function renderBrowserHome(
   return <BrowserHomePorts connectionId={connectionId} onNavigate={onNavigate} />;
 }
 
-function V1WorkspaceDestinations(props: WorkspaceShellProps): React.JSX.Element {
-  return <V1WorkspaceDestinationStack desktop={props.resources.desktop} />;
-}
-
 function V1WorkspaceScenes(props: WorkspaceShellProps): React.JSX.Element {
   return (
     <View collapsable={false} style={styles.scenes} testID="workspace-scenes">
-      <V1WorkspaceDestinations {...props} />
+      <V1WorkspaceDestinationStack desktop={props.resources.desktop} />
     </View>
   );
 }
@@ -111,35 +104,13 @@ function V1WorkspaceDestinationStack({
     : desktop
       ? v1DesktopRouteScreenOptions
       : v1MobileRouteScreenOptions;
-  const routeSheetScreenOptions = reducedMotion ? v1SheetScreenOptions : v1RouteSheetScreenOptions;
   return (
-    <Stack
-      layout={renderWorkspacePaneLayout}
-      screenLayout={renderWorkspaceScreenLayout}
-      screenOptions={routeScreenOptions}
-    >
-      <Stack.Screen name="(lists)" options={v1ListScreenOptions} />
-      <Stack.Screen name="pulls/index" options={v1CatalogRootScreenOptions} />
+    <Stack screenOptions={routeScreenOptions}>
+      <Stack.Screen name="(tabs)" options={v1CatalogRootScreenOptions} />
       <Stack.Screen name="browser/[sessionId]" options={v1BrowserScreenOptions} />
       <Stack.Screen name="drawing/[sessionId]" options={v1FullscreenScreenOptions} />
-      <Stack.Screen name="projects/add/[connectionId]" options={routeSheetScreenOptions} />
-      <Stack.Screen name="projects/add/index" options={routeSheetScreenOptions} />
-      <Stack.Screen name="projects/index" options={routeSheetScreenOptions} />
-      <Stack.Screen name="search" options={v1SheetScreenOptions} />
       <Stack.Screen name="settings/index" options={v1SheetScreenOptions} />
       <Stack.Screen name="settings/servers/new/index" options={v1SheetScreenOptions} />
     </Stack>
   );
-}
-
-// Layout callbacks are invoked by navigation; compiled components need their own React boundary.
-function renderWorkspacePaneLayout(
-  props: Parameters<typeof WorkspacePaneLayout>[0],
-): React.JSX.Element {
-  return <WorkspacePaneLayout {...props} />;
-}
-function renderWorkspaceScreenLayout(
-  props: Parameters<typeof WorkspaceScreenLayout>[0],
-): React.JSX.Element {
-  return <WorkspaceScreenLayout {...props} />;
 }

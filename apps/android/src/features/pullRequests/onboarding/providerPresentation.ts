@@ -1,14 +1,10 @@
 /**
- * Presentation policy of provider cards. Known `iconKey`s get a native
- * explanation; every other provider is described by its plugin label and
- * detail. Behavior never branches on the plugin id or forge name.
+ * Presentation policy of provider cards. Every provider gets the same
+ * explanation built from its declared forge name; method labels and details
+ * come from the plugin. Behavior never branches on the plugin id, forge name
+ * or icon.
  */
 import type { AuthFlow, AuthMethod, ForgeProvider } from "../../../data/forgeContract";
-
-const EXPLANATIONS: Readonly<Record<string, string>> = {
-  // Scopes and method details belong to each method's own line, not the card summary.
-  github: "Review GitHub pull requests with the companion host's login. Tokens stay on the host.",
-};
 
 /** Order a card offers its methods in: one-tap links first, host steps last. */
 const METHOD_ORDER: readonly AuthMethod["kind"][] = [
@@ -18,13 +14,9 @@ const METHOD_ORDER: readonly AuthMethod["kind"][] = [
   "instructions",
 ];
 
-/** One-paragraph explanation shown under the provider name. */
+/** One-paragraph explanation shown under the provider name; scopes and steps belong to each method. */
 export function providerExplanation(provider: ForgeProvider): string {
-  const known = Object.hasOwn(EXPLANATIONS, provider.icon.iconKey)
-    ? EXPLANATIONS[provider.icon.iconKey]
-    : undefined;
-  // Unknown providers say what they give; the connect step stays in the method itself.
-  return known ?? `Review ${provider.forgeName} pull requests through the companion host.`;
+  return `Review ${provider.forgeName} pull requests with the companion host's login. Tokens stay on the host.`;
 }
 
 /** Account-purpose methods in the order the card offers them. */

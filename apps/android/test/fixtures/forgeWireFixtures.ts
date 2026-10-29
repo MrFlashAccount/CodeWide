@@ -4,7 +4,11 @@
  * They model what a conforming companion sends; tests and rendered previews share them.
  */
 
-const GITHUB_ICON = { glyph: null, iconKey: "github" };
+/** A plugin-supplied full-colour image icon: a 1x1 PNG, standard base64. */
+export const GITHUB_ICON_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+const GITHUB_ICON = { dataBase64: GITHUB_ICON_PNG, kind: "image", mimeType: "image/png" };
 
 /** A GitHub provider with the three account methods and a checks-free credential. */
 export const githubProvider = {
@@ -88,7 +92,7 @@ export const githubProvider = {
 /** A plugin-declared monochrome glyph (an open "A"), drawn as one path. */
 export const ARCANUM_GLYPH = "M12 3L21 20H17.4L12 9.6L6.6 20H3Z";
 
-/** An external provider whose plugin glyph is sanitized and whose checks need a second credential. */
+/** An external provider with a monochrome plugin glyph whose checks need a second credential. */
 export const arcanumProvider = {
   authMethods: [
     {
@@ -119,7 +123,7 @@ export const arcanumProvider = {
   defaultHost: "a.yandex-team.ru",
   enabled: true,
   forgeName: "Arcanum",
-  icon: { glyph: { path: ARCANUM_GLYPH, viewBox: "0 0 24 24" }, iconKey: "arcanum" },
+  icon: { kind: "glyph", path: ARCANUM_GLYPH, viewBox: "0 0 24 24" },
   pluginId: "arcanum",
 };
 
@@ -194,6 +198,7 @@ export function listRow(
     pullRequest: `fpr1.github-${number}`,
     repository: "MrFlashAccount/CodeWide",
     reviewRequestedFromMe: true,
+    reviewThreadId: null,
     state: "open",
     title: `Pull request ${number}`,
     updatedAt: "2026-10-21T09:00:00Z",
@@ -528,4 +533,276 @@ export const guideState = {
     { state: "accepted", stopId: "s1" },
     { state: "changed", stopId: "s2" },
   ],
+};
+
+/** Capabilities a plugin declares for the PR conversation and its writes. */
+export const CONVERSATION_CAPABILITIES = ["forge.conversation@1", "forge.comments@1"] as const;
+
+/** The GitHub provider of a plugin that also declares the conversation and comment writes. */
+export const githubConversationProvider = {
+  ...githubProvider,
+  capabilities: [...githubProvider.capabilities, ...CONVERSATION_CAPABILITIES],
+};
+
+const DANA = {
+  avatarUrl: "https://avatars.githubusercontent.com/u/1001?v=4",
+  kind: "user",
+  login: "dana-r",
+};
+const MIKHAIL = { avatarUrl: null, kind: "user", login: "mikhail-p" };
+const VIEWER = {
+  avatarUrl: "https://avatars.githubusercontent.com/u/1003?v=4",
+  kind: "user",
+  login: "sergeigarin",
+};
+
+/** A forge-hosted image in a comment body; the companion fetches it through `forge.media.read`. */
+export const FORGE_IMAGE_URL =
+  "https://github.com/user-attachments/assets/5f4e1a2b-0000-4000-8000-00000000c0de";
+
+/** One wire comment; `overrides` replaces any field. */
+export function conversationComment(
+  id: string,
+  overrides: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    author: MIKHAIL,
+    body: "",
+    createdAt: "2026-10-21T09:00:00Z",
+    id,
+    reactions: [],
+    updatedAt: null,
+    url: `https://github.com/acme/codewide/pull/91#discussion_${id}`,
+    ...overrides,
+  };
+}
+
+/**
+ * The #91 conversation, oldest first: a comment with an image and Mermaid, a
+ * review with a body, an open thread with three comments and reactions, a
+ * resolved outdated thread and a timeline event.
+ */
+export const conversation91 = {
+  entries: [
+    {
+      comment: conversationComment("c-1", {
+        author: DANA,
+        body: [
+          "Here is the token-expiry flow after this change:",
+          "",
+          "```mermaid",
+          "sequenceDiagram",
+          "  Android->>Companion: pullRequest/read",
+          "  Companion->>Plugin: forge.pullRequest.read",
+          "  Plugin-->>Companion: AuthRequired",
+          "  Companion-->>Android: -32081",
+          "```",
+          "",
+          `![Expired token banner](${FORGE_IMAGE_URL})`,
+        ].join("\n"),
+        createdAt: "2026-10-21T08:40:00Z",
+        reactions: [{ content: "rocket", count: 2, viewerReacted: false }],
+      }),
+      kind: "comment",
+    },
+    {
+      author: MIKHAIL,
+      body: conversationComment("r-1-body", {
+        body: "Two small things inline; the mapping itself looks right.",
+        createdAt: "2026-10-21T09:05:00Z",
+      }),
+      createdAt: "2026-10-21T09:05:00Z",
+      id: "r-1",
+      kind: "review",
+      verdict: "changesRequested",
+    },
+    {
+      kind: "reviewThread",
+      thread: {
+        comments: [
+          conversationComment("c-2", {
+            body: "stderr is discarded here, so an expired token surfaces as a timeout.",
+            createdAt: "2026-10-21T09:10:00Z",
+            reactions: [
+              { content: "thumbsUp", count: 3, viewerReacted: true },
+              { content: "eyes", count: 1, viewerReacted: false },
+            ],
+          }),
+          conversationComment("c-3", {
+            author: DANA,
+            body: "Good catch. Should `AuthRequired` carry the host's hint?",
+            createdAt: "2026-10-21T09:20:00Z",
+            updatedAt: "2026-10-21T09:22:00Z",
+          }),
+          conversationComment("c-4", {
+            author: VIEWER,
+            body: "Yes, keep the hint; the Accounts sheet already shows it.",
+            createdAt: "2026-10-21T09:31:00Z",
+            reactions: [{ content: "heart", count: 1, viewerReacted: false }],
+          }),
+        ],
+        anchor: {
+          kind: "line",
+          line: 214,
+          path: "crates/companion-core/src/vcs/plugin.rs",
+          side: "new",
+          startLine: null,
+        },
+        id: "rt-1",
+        iteration: null,
+        outdated: false,
+        resolution: { kind: "conversation", resolved: false },
+        reviewId: "r-1",
+        viewerCanReply: true,
+      },
+    },
+    {
+      kind: "reviewThread",
+      thread: {
+        comments: [
+          conversationComment("c-5", {
+            body: "Nit: this timeout constant moved to `forge/limits.rs`.",
+            createdAt: "2026-10-21T09:12:00Z",
+          }),
+        ],
+        anchor: { kind: "file", path: "crates/companion-core/src/forge/reads.rs" },
+        id: "rt-2",
+        iteration: null,
+        outdated: true,
+        resolution: { kind: "conversation", resolved: true },
+        reviewId: null,
+        viewerCanReply: true,
+      },
+    },
+    {
+      author: DANA,
+      category: "push",
+      createdAt: "2026-10-21T10:02:00Z",
+      id: "e-1",
+      kind: "event",
+      text: "merged main into this branch",
+    },
+  ],
+  nextCursor: null,
+  openIssuesBlockMerge: null,
+};
+
+const ARC_ROBOT = { avatarUrl: null, kind: "bot", login: "arc-robot" };
+const AI_REVIEWER = { avatarUrl: null, kind: "ai", login: "code-assistant" };
+const OLGA = { avatarUrl: null, kind: "user", login: "olga.v" };
+
+/** An Arcanum-shaped issue thread: no avatars, an issue lifecycle and an iteration. */
+function issueThread(
+  id: string,
+  overrides: Record<string, unknown>,
+  comments: readonly Record<string, unknown>[],
+): Record<string, unknown> {
+  return {
+    kind: "reviewThread",
+    thread: {
+      anchor: { kind: "pullRequest" },
+      comments,
+      id,
+      iteration: { id: "it-3", number: 3 },
+      outdated: false,
+      resolution: { changedAt: null, changedBy: null, kind: "issue", state: "open" },
+      reviewId: null,
+      viewerCanReply: true,
+      ...overrides,
+    },
+  };
+}
+
+function arcEvent(id: string, createdAt: string, text: string): Record<string, unknown> {
+  return { author: OLGA, category: "push", createdAt, id, kind: "event", text };
+}
+
+/**
+ * An Arcanum-shaped conversation: no avatars anywhere, three iterations
+ * uploaded in a row, a merge-blocking verdict without text, issues that block
+ * merging (open on a line and on the whole PR, resolved by a robot, dropped on
+ * an older iteration), an AI reviewer and two nearby comments of one author.
+ */
+export const conversationArcanum = {
+  entries: [
+    arcEvent("ev-1", "2026-10-20T08:00:00Z", "uploaded iteration 1"),
+    arcEvent("ev-2", "2026-10-20T09:00:00Z", "uploaded iteration 2"),
+    arcEvent("ev-3", "2026-10-20T10:00:00Z", "uploaded iteration 3"),
+    issueThread(
+      "is-dropped",
+      {
+        anchor: { kind: "file", path: "disk/volga/old.py" },
+        iteration: { id: "it-1", number: 1 },
+        outdated: true,
+        resolution: {
+          changedAt: "2026-10-20T10:30:00Z",
+          changedBy: OLGA,
+          kind: "issue",
+          state: "dropped",
+        },
+      },
+      [conversationComment("ic-1", { author: AI_REVIEWER, body: "Unused import.", createdAt: "2026-10-20T10:20:00Z" })],
+    ),
+    issueThread(
+      "is-open-line",
+      {
+        anchor: { kind: "line", line: 12, path: "disk/volga/api.py", side: "new", startLine: 10 },
+        reviewId: "rv-block",
+      },
+      [
+        conversationComment("ic-2", {
+          author: AI_REVIEWER,
+          body: "## Race\n\nThe lock is released before the write completes.",
+          createdAt: "2026-10-20T10:40:00Z",
+        }),
+      ],
+    ),
+    {
+      author: AI_REVIEWER,
+      body: null,
+      createdAt: "2026-10-20T10:45:00Z",
+      id: "rv-block",
+      kind: "review",
+      verdict: "mergeBlocked",
+    },
+    issueThread("is-open-pr", { viewerCanReply: false }, [
+      conversationComment("ic-3", {
+        author: ARC_ROBOT,
+        body: "Release notes are missing.",
+        createdAt: "2026-10-20T11:00:00Z",
+      }),
+    ]),
+    {
+      comment: conversationComment("ac-1", { author: OLGA, body: "Fixing both now.", createdAt: "2026-10-20T11:10:00Z" }),
+      kind: "comment",
+    },
+    {
+      comment: conversationComment("ac-2", { author: OLGA, body: "Pushed.", createdAt: "2026-10-20T11:13:00Z" }),
+      kind: "comment",
+    },
+    issueThread(
+      "is-resolved",
+      {
+        anchor: { kind: "file", path: "disk/volga/config.yaml" },
+        iteration: { id: "it-2", number: 2 },
+        resolution: {
+          changedAt: "2026-10-20T11:20:00Z",
+          changedBy: ARC_ROBOT,
+          kind: "issue",
+          state: "resolved",
+        },
+      },
+      [conversationComment("ic-4", { author: OLGA, body: "Bump the quota.", createdAt: "2026-10-20T11:15:00Z" })],
+    ),
+    {
+      author: AI_REVIEWER,
+      body: null,
+      createdAt: "2026-10-20T11:30:00Z",
+      id: "rv-approve",
+      kind: "review",
+      verdict: "approvalWithdrawn",
+    },
+  ],
+  nextCursor: null,
+  openIssuesBlockMerge: true,
 };

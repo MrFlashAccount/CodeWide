@@ -815,6 +815,33 @@ async fn a_nested_background_agent_settles_on_a_report_in_any_transcript()
     Ok(())
 }
 
+#[tokio::test]
+async fn a_report_off_the_active_branch_still_settles_its_nested_agent()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write_nested_store(root.path())?;
+    // A rewound prompt makes the branch that holds the second inner agent's
+    // report (`w1`) an abandoned one, as a compaction does for older rows.
+    let (projects, _) = fixture_paths(root.path());
+    let main = projects.join("-work").join(format!("{SESSION}.jsonl"));
+    let rewound = [
+        user("p2", Some("r1"), 20, &json!("Start over")),
+        assistant("a4", "p2", 21, &json!([{"type": "text", "text": "Again."}])),
+    ];
+    let mut stored = std::fs::read_to_string(&main)?;
+    stored.extend(rewound.iter().map(row));
+    std::fs::write(&main, stored)?;
+
+    let read = sessions(root.path()).read(SESSION).await?;
+    let running = crate::subagents::index(&read)
+        .into_iter()
+        .filter(|subagent| subagent.running)
+        .map(|subagent| subagent.agent_id)
+        .collect::<Vec<_>>();
+    assert_eq!(running, ["outer1"], "a settled nested agent is not running");
+    Ok(())
+}
+
 fn wake(uuid: &str, parent: &str, second: u32, agent: &str, tool_use: &str) -> Value {
     let mut wake = user(uuid, Some(parent), second, &json!(report(agent, tool_use)));
     wake["origin"] = json!({"kind": "task-notification"});

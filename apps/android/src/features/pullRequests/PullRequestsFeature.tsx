@@ -1,26 +1,31 @@
 import { useSelector } from "@legendapp/state/react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useDeferredValue, useState, useTransition } from "react";
+import { useDeferredValue, useState, useTransition, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
 import type { AccountState, ForgeProvider } from "../../data/forgeContract";
-import type { PullRequestRow } from "../../data/forgePullRequestContract";
+import type { PullRequestListPage, PullRequestRow } from "../../data/forgePullRequestContract";
 import { forgeQueryRemoteValue, useForgeQuery } from "../../data/forgeQueryResource";
-import { remoteValue } from "../../data/forgeRemoteValue";
+import { remoteValue, type RemoteValue } from "../../data/forgeRemoteValue";
 import type { ForgeResources } from "../../data/forgeResources";
+import type { ThreadUnreadReader } from "../../data/project-unread-model";
+import { CatalogSearchOverlayHost } from "../../presentation/layouts/CatalogSearchOverlayHost";
 import { hasLinkedAccount } from "./accounts/accountPresentation";
 import { useMinuteClock } from "../../data/minuteClock";
 import { useEvent } from "../../react/useEvent";
 import { AccountsSheet } from "./accounts/AccountsSheet";
-import { PullRequestList } from "./list/PullRequestList";
+import { PullRequestFilterSheet } from "./list/PullRequestFilterSheet";
+import { PullRequestList, PullRequestSearchSurface } from "./list/PullRequestList";
 import { AccountsPlaceholder } from "./onboarding/AccountsPlaceholder";
 import { OnboardingScreen } from "./onboarding/OnboardingScreen";
+import { PullRequestsHeader } from "./PullRequestsHeader";
 import {
   forgeAccountsSheetOpen,
   openForgeAccounts,
   openPullRequestFilters,
   openPullRequestSearch,
   pullRequestListModel,
+  pullRequestSearchModel,
   selectPullRequestSearchText,
   selectPullRequestSort,
 } from "./pullRequestListModel";
@@ -35,11 +40,14 @@ export function PullRequestsCatalog({
   capabilities,
   connectionId,
   forge,
+  isThreadUnread,
   onOpenPullRequest,
 }: {
   readonly capabilities: PullRequestsWorkspaceCapabilities;
   readonly connectionId: string;
   readonly forge: ForgeResources;
+  /** Unread state of this connection's chats, owned by the thread catalog. */
+  readonly isThreadUnread: ThreadUnreadReader;
   /** Navigation intent: reveals the PR destination immediately. */
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
 }): React.JSX.Element {
@@ -49,15 +57,24 @@ export function PullRequestsCatalog({
   const snapshot = remoteValue(state);
   const handleTrayOpenChange = useEvent((open: boolean): void => {
     setOpenOnboardingConnection(open ? connectionId : null);
+    if (open) {
+      revalidateProviders(forge, connectionId);
+    }
+  });
+  const reconnect = useEvent((): void => {
+    revalidateProviders(forge, connectionId);
+    openForgeAccounts();
   });
   if (snapshot === null) {
     return (
-      <AccountsPlaceholder
-        onRetry={() => {
-          forge.accounts.refresh({ connectionId }).catch(() => undefined);
-        }}
-        state={state}
-      />
+      <CatalogFrame>
+        <AccountsPlaceholder
+          onRetry={() => {
+            forge.accounts.refresh({ connectionId }).catch(() => undefined);
+          }}
+          state={state}
+        />
+      </CatalogFrame>
     );
   }
   const linked = hasLinkedAccount(snapshot);
@@ -65,20 +82,23 @@ export function PullRequestsCatalog({
   return (
     <View style={styles.fill}>
       {!linked || onboardingOpen ? (
-        <OnboardingScreen
-          capabilities={capabilities}
-          connectionId={connectionId}
-          onTrayOpenChange={handleTrayOpenChange}
-          snapshot={snapshot}
-        />
+        <CatalogFrame>
+          <OnboardingScreen
+            capabilities={capabilities}
+            connectionId={connectionId}
+            onTrayOpenChange={handleTrayOpenChange}
+            snapshot={snapshot}
+          />
+        </CatalogFrame>
       ) : null}
       {linked && !onboardingOpen ? (
         <ConnectedList
           accounts={snapshot.accounts}
           connectionId={connectionId}
           forge={forge}
+          isThreadUnread={isThreadUnread}
           onOpenPullRequest={onOpenPullRequest}
-          onReconnect={openForgeAccounts}
+          onReconnect={reconnect}
           providers={snapshot.providers}
         />
       ) : null}
@@ -100,6 +120,7 @@ function ConnectedList({
   accounts,
   connectionId,
   forge,
+  isThreadUnread,
   onOpenPullRequest,
   onReconnect,
   providers,
@@ -107,11 +128,14 @@ function ConnectedList({
   readonly accounts: readonly AccountState[];
   readonly connectionId: string;
   readonly forge: ForgeResources;
+  readonly isThreadUnread: ThreadUnreadReader;
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
   readonly onReconnect: (account: AccountState) => void;
   readonly providers: readonly ForgeProvider[];
 }): React.JSX.Element {
   const filter = useSelector(() => pullRequestListModel.get());
+  const searchOpen = useSelector(() => pullRequestSearchModel.open.get());
+  const searchDraft = useSelector(() => pullRequestSearchModel.draft.get());
   const deferredFilter = useDeferredValue(filter);
   const [, startFilterTransition] = useTransition();
   const nowMs = useMinuteClock();
@@ -132,6 +156,10 @@ function ConnectedList({
   const retry = useEvent((): void => {
     forge.lists.refresh(params).catch(() => undefined);
   });
+  const manageProviders = useEvent((): void => {
+    revalidateProviders(forge, connectionId);
+    openForgeAccounts();
+  });
   const submitSearch = useEvent((text: string): void => {
     startFilterTransition(() => {
       selectPullRequestSearchText(text);
@@ -142,26 +170,68 @@ function ConnectedList({
       selectPullRequestSort(sort);
     });
   });
+  const listProps: Parameters<typeof PullRequestList>[0] = {
+    filter,
+    iconFor: (pluginId) =>
+      providers.find((provider) => provider.pluginId === pluginId)?.icon ?? null,
+    isThreadUnread,
+    nowMs,
+    onEndReached: loadMore,
+    onOpen: onOpenPullRequest,
+    onOpenFilters: openPullRequestFilters,
+    onOpenSearch: openPullRequestSearch,
+    onReconnect,
+    onRetry: retry,
+    onSearch: submitSearch,
+    onSort: selectSort,
+    pendingFilter,
+    state,
+  };
+  const page = remoteValue(state);
+  const refreshing = publishedListIsRefreshing(state, pendingFilter, page);
   return (
-    <PullRequestList
-      accounts={accounts}
-      filter={filter}
-      iconFor={(pluginId) =>
-        providers.find((provider) => provider.pluginId === pluginId)?.icon ?? null
-      }
-      nowMs={nowMs}
-      onEndReached={loadMore}
-      onOpen={onOpenPullRequest}
-      onOpenFilters={openPullRequestFilters}
-      onOpenSearch={openPullRequestSearch}
-      onReconnect={onReconnect}
-      onRetry={retry}
-      onSearch={submitSearch}
-      onSort={selectSort}
-      pendingFilter={pendingFilter}
-      providers={providers}
-      state={state}
-    />
+    <View style={styles.fill}>
+      <CatalogSearchOverlayHost
+        overlay={
+          searchOpen ? <PullRequestSearchSurface draft={searchDraft} props={listProps} /> : null
+        }
+        testID="pull-request-search-host"
+      >
+        <PullRequestsHeader onManageProviders={manageProviders} refreshing={refreshing} />
+        <PullRequestList {...listProps} />
+      </CatalogSearchOverlayHost>
+      <PullRequestFilterSheet
+        accounts={accounts}
+        providers={providers}
+        repositories={page?.repositories ?? []}
+      />
+    </View>
+  );
+}
+
+/**
+ * Opening provider management revalidates the accounts snapshot in place, so
+ * a plugin installed or removed on the host shows its current state without
+ * hiding the published list while the read runs.
+ */
+function revalidateProviders(forge: ForgeResources, connectionId: string): void {
+  forge.accounts.refresh({ connectionId }).catch(() => undefined);
+}
+
+function publishedListIsRefreshing(
+  state: RemoteValue<PullRequestListPage>,
+  pendingFilter: boolean,
+  page: PullRequestListPage | null,
+): boolean {
+  return page !== null && (pendingFilter || (state.status === "ready" && state.refreshing));
+}
+
+function CatalogFrame({ children }: { readonly children: ReactNode }): React.JSX.Element {
+  return (
+    <View style={styles.fill}>
+      <PullRequestsHeader />
+      {children}
+    </View>
   );
 }
 

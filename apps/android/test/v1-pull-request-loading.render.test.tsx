@@ -5,18 +5,22 @@ import { GestureDetector } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { parsePullRequestListPage } from "../src/data/forgePullRequestContract";
+import { parseForgeAccounts } from "../src/data/forgeContract";
+import { createForgeResources } from "../src/data/forgeResources";
 import { PullRequestScreenSkeleton } from "../src/features/pullRequestDetail/PullRequestScreenSkeleton";
 import { ActivitySection } from "../src/features/pullRequestDetail/overview/ActivitySection";
 import { DescriptionSection } from "../src/features/pullRequestDetail/overview/DescriptionSection";
 import { PullRequestFilterBar } from "../src/features/pullRequests/list/PullRequestFilterBar";
 import { PullRequestFilterSheet } from "../src/features/pullRequests/list/PullRequestFilterSheet";
 import { PullRequestList } from "../src/features/pullRequests/list/PullRequestList";
+import { PullRequestsCatalog } from "../src/features/pullRequests/PullRequestsFeature";
+import { PullRequestsHeader } from "../src/features/pullRequests/PullRequestsHeader";
+import type { PullRequestsWorkspaceCapabilities } from "../src/features/pullRequests/workspaceCapabilities";
 import {
   defaultPullRequestFilter,
   dismissPullRequestFilters,
   closePullRequestSearch,
   openPullRequestFilters,
-  openPullRequestSearch,
   pullRequestFilterSheetModel,
   pullRequestListModel,
 } from "../src/features/pullRequests/pullRequestListModel";
@@ -27,6 +31,7 @@ import {
 } from "./fixtures/forgeWireFixtures";
 import { setKeyboardHeightForTest } from "./mocks/KeyboardController";
 import { Tray } from "../src/vendor/reacticx/tray";
+import { createMemoryQueryPersister } from "./fixtures/queryPersister";
 
 jest.mock("../src/rendering/RichMarkdown", () => {
   const { Text } = jest.requireActual("react-native");
@@ -65,9 +70,34 @@ it("renders only search, sort and filters above the list", () => {
 
 it("opens pull-request search in the shared overlay without the sort action", () => {
   const page = parsePullRequestListPage(reviewRequestedPage);
-  if (page === null) {
-    throw new Error("The pull-request list fixture is invalid");
+  const accounts = parseForgeAccounts({
+    accounts: [connectedAccount],
+    flows: [],
+    providers: [githubProvider],
+  });
+  if (page === null || accounts === null) {
+    throw new Error("The pull-request fixture is invalid");
   }
+  const forge = createForgeResources({
+    getSession: () => undefined,
+    persister: createMemoryQueryPersister().persister,
+    reportDroppedAction: () => undefined,
+    rpcAfterAttach: async <Result,>(): Promise<Result> => {
+      throw new Error("Unexpected forge read");
+    },
+  });
+  const filter = defaultPullRequestFilter();
+  pullRequestListModel.set(filter);
+  forge.accounts.publish({ connectionId: "server" }, accounts);
+  forge.lists.publish({ connectionId: "server", filter }, page);
+  const capabilities: PullRequestsWorkspaceCapabilities = {
+    cancelAuth: () => Promise.resolve(),
+    checkAgain: () => Promise.resolve(),
+    disconnect: () => Promise.resolve(),
+    setAccountEnabled: () => Promise.reject(new Error("Not used by this render test")),
+    startAuth: () => Promise.reject(new Error("Not used by this render test")),
+    submitToken: () => Promise.reject(new Error("Not used by this render test")),
+  };
   const view = render(
     <SafeAreaProvider
       initialMetrics={{
@@ -75,22 +105,12 @@ it("opens pull-request search in the shared overlay without the sort action", ()
         insets: { bottom: 0, left: 0, right: 0, top: 0 },
       }}
     >
-      <PullRequestList
-        accounts={[connectedAccount]}
-        filter={defaultPullRequestFilter()}
-        iconFor={() => null}
-        nowMs={0}
-        onEndReached={() => undefined}
-        onOpen={() => undefined}
-        onOpenFilters={() => undefined}
-        onOpenSearch={openPullRequestSearch}
-        onReconnect={() => undefined}
-        onRetry={() => undefined}
-        onSearch={() => undefined}
-        onSort={() => undefined}
-        pendingFilter={false}
-        providers={[githubProvider]}
-        state={{ refreshing: false, status: "ready", value: page }}
+      <PullRequestsCatalog
+        capabilities={capabilities}
+        connectionId="server"
+        forge={forge}
+        isThreadUnread={() => false}
+        onOpenPullRequest={() => undefined}
       />
     </SafeAreaProvider>,
   );
@@ -98,6 +118,8 @@ it("opens pull-request search in the shared overlay without the sort action", ()
   fireEvent.press(view.getByLabelText("Search pull requests"));
 
   expect(view.getByTestId("pull-request-search-overlay")).toBeOnTheScreen();
+  expect(view.getByTestId("pull-request-search-host")).toBeOnTheScreen();
+  expect(view.queryByTestId("pull-requests-header")).toBeNull();
   expect(view.getByLabelText("Back to pull requests")).toBeOnTheScreen();
   expect(view.getByTestId("pull-request-search-input")).toBeOnTheScreen();
   expect(view.queryByLabelText("Sort pull requests")).toBeNull();
@@ -105,6 +127,9 @@ it("opens pull-request search in the shared overlay without the sort action", ()
     within(view.getByTestId("pull-request-search-overlay")).getByRole("button", {
       name: "Filters",
     }),
+  ).toBeOnTheScreen();
+  expect(
+    view.getByTestId("pull-requests-header", { includeHiddenElements: true }),
   ).toBeOnTheScreen();
 });
 
@@ -193,6 +218,46 @@ it("navigates into a filter facet through the Tray view stack", () => {
     exclude: [],
     include: ["merged"],
   });
+});
+
+it("offers only catalog accounts as filter sources", () => {
+  Dimensions.set({ window: { ...originalWindow, height: 800, width: 400 } });
+  const snapshot = parseForgeAccounts({
+    accounts: [
+      { ...connectedAccount, catalogEnabled: true },
+      {
+        ...connectedAccount,
+        account: "github:github.com:excluded",
+        catalogEnabled: false,
+        login: "excluded",
+      },
+    ],
+    flows: [],
+    providers: [githubProvider],
+  });
+  if (snapshot === null) {
+    throw new Error("The accounts fixture is invalid");
+  }
+  openPullRequestFilters();
+  const view = render(
+    <SafeAreaProvider
+      initialMetrics={{
+        frame: { height: 800, width: 400, x: 0, y: 0 },
+        insets: { bottom: 0, left: 0, right: 0, top: 0 },
+      }}
+    >
+      <PullRequestFilterSheet
+        accounts={snapshot.accounts}
+        providers={snapshot.providers}
+        repositories={[]}
+      />
+    </SafeAreaProvider>,
+  );
+
+  fireEvent.press(view.getByRole("button", { name: /Sources/u }));
+
+  expect(view.getByText(`${connectedAccount.login} · ${connectedAccount.host}`)).toBeOnTheScreen();
+  expect(view.queryByText("excluded · github.com")).toBeNull();
 });
 
 it("keeps filter facets in the Tray view stack on fold width", () => {
@@ -290,6 +355,16 @@ it("renders a stable pull-request detail skeleton from the first route frame", (
   });
 });
 
+it("renders stale-while-revalidate progress to the right of the catalog title", () => {
+  const view = render(<PullRequestsHeader refreshing />);
+
+  expect(view.getByTestId("pull-requests-refresh-indicator")).toBeVisible();
+  expect(view.getByRole("header", { name: "Pull requests" })).toBeVisible();
+  expect(view.getByTestId("pull-requests-header").props.accessibilityState).toStrictEqual({
+    busy: true,
+  });
+});
+
 it("keeps the published rows visible while a filter refresh is pending", () => {
   const page = parsePullRequestListPage(reviewRequestedPage);
   if (page === null) {
@@ -303,9 +378,9 @@ it("keeps the published rows visible while a filter refresh is pending", () => {
       }}
     >
       <PullRequestList
-        accounts={[connectedAccount]}
         filter={defaultPullRequestFilter()}
         iconFor={() => null}
+        isThreadUnread={() => false}
         nowMs={0}
         onEndReached={() => undefined}
         onOpenFilters={() => undefined}
@@ -316,7 +391,6 @@ it("keeps the published rows visible while a filter refresh is pending", () => {
         onSearch={() => undefined}
         onSort={() => undefined}
         pendingFilter
-        providers={[githubProvider]}
         state={{ refreshing: true, status: "ready", value: page }}
       />
     </SafeAreaProvider>,
@@ -324,6 +398,7 @@ it("keeps the published rows visible while a filter refresh is pending", () => {
 
   expect(view.getByText("Route forge auth errors to an auth-required state")).toBeVisible();
   expect(view.getByText("NEED ATTENTION")).toBeVisible();
+  expect(view.queryByTestId("pull-request-list-notice")).toBeNull();
   expect(view.queryByTestId("pull-request-list-skeleton")).toBeNull();
   expect(view.queryByTestId("pull-request-quick-views")).toBeNull();
   expect(view.queryByTestId("pull-request-active-filters")).toBeNull();

@@ -9,6 +9,7 @@ import { UsageMenu } from "../src/features/accounts/UsageMenu";
 import { WorkspaceAccountUsageMenu } from "../src/features/accounts/WorkspaceAccountUsageMenu";
 import { AgentProviderMarks } from "../src/features/connections/AgentProviderMarks";
 import { ConversationHeader } from "../src/features/conversation/header/ConversationHeader";
+import { AppNoticeProvider } from "../src/ui/AppNotice";
 import { ContentMenu } from "../src/ui/ContentMenu";
 import { getAppDialogRequest, invokeAppDialogAction, resetAppDialog } from "./mocks/AppDialog";
 
@@ -76,6 +77,8 @@ it("keeps the context ring of a Claude thread without Codex account rows", () =>
       threadChatModel={null}
       threadSearchVisible={false}
     />,
+    // A read-only thread keeps its thread menu, whose Copy session ID reports through notices.
+    { wrapper: AppNoticeProvider },
   );
   expect(view.getByLabelText("Context usage")).toBeOnTheScreen();
   expect(view.getByTestId("conversation-identity-subtitle")).toHaveTextContent(

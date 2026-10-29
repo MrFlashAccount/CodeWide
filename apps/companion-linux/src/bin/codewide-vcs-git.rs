@@ -3,13 +3,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use codewide_companion::vcs::{
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use vcs_git::{
     CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, GitProvider, INSPECT_CAPABILITY,
     REMOTES_CAPABILITY, VcsError, VcsFile, VcsScope, VcsSnapshot, WORKSPACE_CREATE_CAPABILITY,
     WorkspaceCreateResult, WorkspaceSupport,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 const PROTOCOL_VERSION: u32 = 1;
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;

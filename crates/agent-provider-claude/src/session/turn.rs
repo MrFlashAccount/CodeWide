@@ -12,6 +12,9 @@
 //!   Open requests are resolved before `turn.completed`.
 //! - A provider-started turn (background task wake) is a separate turn with
 //!   origin `provider` and no user message.
+//! - `turn.continue` resumes the interrupted or failed last turn as Claude
+//!   resumes one itself: a user turn without a user message, whose first
+//!   offer is Claude's resume prompt as an adapter (meta) message.
 //! - A background task report delivered to this conversation
 //!   (`task_reports.rs`) becomes a `taskNotification` item: while a turn
 //!   runs, a `midTurn` item at once (a `wake` item while a provider turn has
@@ -37,7 +40,7 @@ use super::{
     query::Offer,
 };
 use crate::{
-    cli::protocol::Priority,
+    cli::protocol::{Author, Priority},
     live::{
         prompt::{history_prefix, prompt_content},
         usage::{
@@ -49,6 +52,7 @@ use crate::{
     state::thread_state::{PromptRecord, PromptRole, TurnOutcomeRecord, TurnRecord},
     transcript::{
         builder::{LiveUsage, TurnBuilder, TurnBuilderContext, UserMessage},
+        entries::RESUME_PROMPT,
         frames::{ClaudeFrame, ResultFrame, StreamEvent, classify_frame},
         result::{TurnOutcome, is_interruption, is_lost_session, turn_outcome},
         task_reports::TaskReport,
@@ -61,7 +65,7 @@ pub(super) struct ActiveTurn {
     pub anchors: Vec<String>,
     pub builder: TurnBuilder,
     /// The first offer, kept to resend after a lost session.
-    pub first_offer: Option<Vec<Value>>,
+    pub first_offer: Option<FirstOffer>,
     /// Whether the first persisted frame's uuid is among the anchors.
     pub frame_anchored: bool,
     pub interrupt_requested: bool,
@@ -80,13 +84,22 @@ pub(super) struct ActiveTurn {
     pub usage: Option<UsageDelta>,
 }
 
-/// A user turn or the `/compact` turn.
+/// A user turn, the turn resuming the last one, or the `/compact` turn.
 pub enum TurnRequest {
     User {
         client_message_id: Option<ClientMessageId>,
         input: Vec<UserContent>,
     },
+    Continue,
     Compact,
+}
+
+/// The message that starts a turn, as offered to Claude.
+#[derive(Clone)]
+pub(super) struct FirstOffer {
+    /// Messages API content blocks.
+    content: Vec<Value>,
+    author: Author,
 }
 
 /// A steer's message.
@@ -100,7 +113,7 @@ pub const EXPECTED_TURN_NOT_ACTIVE: &str = "expected turn is not active";
 const INVALID_UUID: &str = "the session's uuid generator produced an invalid id";
 
 struct TurnStart {
-    first_offer: Option<Vec<Value>>,
+    first_offer: Option<FirstOffer>,
     origin: TurnOrigin,
     /// How the turn delivers the task reports that arrived while idle when
     /// it begins; `None`: they keep waiting (`/compact` delivers them after
@@ -150,7 +163,8 @@ fn outcome_record(outcome: &TurnOutcome) -> TurnOutcomeRecord {
 }
 
 impl Session {
-    /// Starts a user turn (or the `/compact` turn). Never steers.
+    /// Starts a user turn (the resuming turn, or the `/compact` turn). Never
+    /// steers.
     pub(super) async fn start_turn(
         &mut self,
         request: TurnRequest,
@@ -169,8 +183,20 @@ impl Session {
         };
         let (first_offer, origin, client_message_id, user_message) = match request {
             TurnRequest::Compact => (
-                vec![json!({"type": "text", "text": "/compact"})],
+                FirstOffer {
+                    content: vec![json!({"type": "text", "text": "/compact"})],
+                    author: Author::Person,
+                },
                 TurnOrigin::Provider,
+                None,
+                None,
+            ),
+            TurnRequest::Continue => (
+                FirstOffer {
+                    content: vec![json!({"type": "text", "text": RESUME_PROMPT})],
+                    author: Author::Adapter,
+                },
+                TurnOrigin::User,
                 None,
                 None,
             ),
@@ -178,17 +204,20 @@ impl Session {
                 client_message_id,
                 input,
             } => (
-                prompt_content(&input),
+                FirstOffer {
+                    content: prompt_content(&input),
+                    author: Author::Person,
+                },
                 TurnOrigin::User,
                 client_message_id.clone(),
                 Some((client_message_id, input)),
             ),
         };
+        let resumes = first_offer.author == Author::Adapter;
         self.begin_turn(TurnStart {
             first_offer: Some(first_offer.clone()),
             origin,
-            waiting_reports: user_message
-                .is_some()
+            waiting_reports: (user_message.is_some() || resumes)
                 .then_some(TaskNotificationDelivery::MidTurn),
             prompts: vec![PromptRecord {
                 client_message_id: client_message_id.map(ClientMessageId::into_string),
@@ -201,9 +230,10 @@ impl Session {
         .await;
         match self.ensure_query() {
             Some(query) => query.offer(Offer {
-                content: first_offer,
+                content: first_offer.content,
                 uuid: Some(offer_uuid),
                 priority: Priority::Queued,
+                author: first_offer.author,
             }),
             None => {
                 self.finish_turn(TurnOutcome::Failed(TurnError {
@@ -347,6 +377,7 @@ impl Session {
             content: prompt_content(&message.input),
             uuid: Some(uuid),
             priority: Priority::Now,
+            author: Author::Person,
         });
         Ok(turn_id)
     }
@@ -454,6 +485,11 @@ impl Session {
     /// Claude's own output for the wake does.
     async fn on_task_report(&mut self, frame: &ClaudeFrame, report: &TaskReport) {
         self.task_reports.received(report);
+        // The launching item shows the end at once, delivered or waiting.
+        let now = self.now_ms();
+        if let Some(launch) = self.task_reports.settle(report, now) {
+            self.republish_launches(vec![launch]).await;
+        }
         let delivered = self.task_reports.delivered(report, |tool_use_id| {
             self.active
                 .as_ref()
@@ -709,9 +745,9 @@ impl Session {
         };
         let content = match history_prefix(lines) {
             Some(prefix) => std::iter::once(json!({"type": "text", "text": prefix}))
-                .chain(first_offer)
+                .chain(first_offer.content)
                 .collect(),
-            None => first_offer,
+            None => first_offer.content,
         };
         active.prompts.push(PromptRecord {
             client_message_id: None,
@@ -725,6 +761,7 @@ impl Session {
                 content,
                 uuid: Some(uuid),
                 priority: Priority::Queued,
+                author: first_offer.author,
             });
         }
     }

@@ -6,9 +6,12 @@
 //! Path: the workspace's VCS provider answers `vcs.remotes@1`; forge
 //! plugins are probed in priority order with `forge.repository.resolve`
 //! (the first claim wins and is terminal); the claiming plugin answers
-//! `forge.pullRequests.byBranch` (open pull requests only); each pair gets a
-//! `branch` link unless a tombstone exists. A detached head links nothing,
-//! and a provider without `vcs.remotes@1` behaves exactly as before.
+//! `forge.pullRequests.byBranch` (open pull requests only) for the
+//! checkout's upstream (tracking) branch, then its local branch when that
+//! differs; each pair gets a `branch` link unless a tombstone exists. A pull
+//! request's head branch is a server branch, which a checkout may track under
+//! a local name of its own. A detached head links nothing, and a provider
+//! without `vcs.remotes@1` behaves exactly as before.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -17,7 +20,7 @@ use std::{
 };
 
 use forge_protocol::{
-    ByBranchParams, ByBranchResult, ResolveParams, ResolveResult, capability, methods,
+    ByBranchParams, ByBranchResult, ForgePrRef, ResolveParams, ResolveResult, capability, methods,
 };
 use serde_json::Value;
 use tracing::{debug, info};
@@ -30,6 +33,7 @@ use super::{
     plugin_client::PluginSession,
     wire::{AccountCondition, LinkSource},
 };
+use crate::vcs::{OrderedRemotes as _, VcsRemotes};
 
 /// Workspaces with a scheduled detection and the threads that asked.
 #[derive(Default)]
@@ -103,9 +107,10 @@ pub async fn detect<S: std::hash::BuildHasher>(
             return;
         }
     };
-    let Some(branch) = remotes.branch.clone() else {
+    let branches = head_branches(&remotes);
+    if branches.is_empty() {
         return;
-    };
+    }
     let urls = remotes.ordered_urls();
     if urls.is_empty() {
         return;
@@ -126,7 +131,7 @@ pub async fn detect<S: std::hash::BuildHasher>(
             session,
             &entry.plugin_id,
             &resolved,
-            &branch,
+            &branches,
             threads,
         )
         .await;
@@ -172,14 +177,31 @@ async fn claim(
     }
 }
 
-/// Links every thread to the open pull requests of `branch`; returns the
+/// The branches a pull request of this checkout may name as its head: the
+/// upstream branch, then the local branch when it differs. Empty on a
+/// detached head.
+fn head_branches(remotes: &VcsRemotes) -> Vec<String> {
+    let Some(local) = &remotes.branch else {
+        return Vec::new();
+    };
+    let mut branches = Vec::with_capacity(2);
+    if let Some(upstream) = &remotes.upstream {
+        branches.push(upstream.branch.clone());
+    }
+    if !branches.contains(local) {
+        branches.push(local.clone());
+    }
+    branches
+}
+
+/// Links every thread to the open pull requests of `branches`; returns the
 /// pull requests that gained a link.
 async fn link_branch<S: std::hash::BuildHasher>(
     context: &ForgeContext,
     mut session: PluginSession,
     plugin_id: &str,
     resolved: &ResolveResult,
-    branch: &str,
+    branches: &[String],
     threads: &HashSet<String, S>,
 ) -> Vec<PullRequestKey> {
     let account = context.accounts.links_of(plugin_id).ok().and_then(|links| {
@@ -197,23 +219,25 @@ async fn link_branch<S: std::hash::BuildHasher>(
         session.shutdown().await;
         return Vec::new();
     };
-    let refs: Result<ByBranchResult, _> = session
-        .call(
-            methods::PULL_REQUESTS_BY_BRANCH,
-            &ByBranchParams {
-                account: account.account_ref(),
-                repository: resolved.repository.clone(),
-                branch: branch.to_owned(),
-            },
-        )
-        .await;
+    let mut refs: Vec<ForgePrRef> = Vec::new();
+    for branch in branches {
+        let found: Result<ByBranchResult, _> = session
+            .call(
+                methods::PULL_REQUESTS_BY_BRANCH,
+                &ByBranchParams {
+                    account: account.account_ref(),
+                    repository: resolved.repository.clone(),
+                    branch: branch.clone(),
+                },
+            )
+            .await;
+        if let Ok(found) = found {
+            refs.extend(found.refs);
+        }
+    }
     session.shutdown().await;
-    let Ok(refs) = refs else {
-        return Vec::new();
-    };
     let mut changed = Vec::new();
     for pr_ref in refs
-        .refs
         .iter()
         .filter(|pr_ref| pr_ref.host.eq_ignore_ascii_case(&resolved.host))
     {
@@ -230,4 +254,44 @@ async fn link_branch<S: std::hash::BuildHasher>(
         }
     }
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vcs::{REMOTES_CAPABILITY, UpstreamRef};
+
+    fn remotes(branch: Option<&str>, upstream: Option<&str>) -> VcsRemotes {
+        VcsRemotes {
+            capability: REMOTES_CAPABILITY.into(),
+            provider: "fixture".into(),
+            branch: branch.map(Into::into),
+            upstream: upstream.map(|branch| UpstreamRef {
+                remote: "origin".into(),
+                branch: branch.into(),
+            }),
+            remotes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_tracked_server_branch_is_looked_up_before_the_local_name() {
+        assert_eq!(
+            head_branches(&remotes(Some("pr-1-rebase"), Some("users/me/fix"))),
+            vec!["users/me/fix".to_owned(), "pr-1-rebase".to_owned()]
+        );
+        assert_eq!(
+            head_branches(&remotes(Some("fix"), Some("fix"))),
+            vec!["fix".to_owned()],
+            "one lookup when the names agree"
+        );
+        assert_eq!(
+            head_branches(&remotes(Some("fix"), None)),
+            vec!["fix".to_owned()]
+        );
+        assert!(
+            head_branches(&remotes(None, Some("fix"))).is_empty(),
+            "a detached head links nothing"
+        );
+    }
 }

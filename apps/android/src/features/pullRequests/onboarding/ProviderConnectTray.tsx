@@ -1,14 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
 import { Pressable, View } from "react-native";
 
 import type { ForgeAccountsSnapshot, ForgeProvider } from "../../../data/forgeContract";
 import { ProductText } from "../../../presentation/text/ProductText";
 import { useEvent } from "../../../react/useEvent";
 import { colors, iconSize } from "../../../theme";
-import { useAppDialog } from "../../../ui/AppDialog";
-import { AppText } from "../../../ui/AppText";
 import { ForgeIcon } from "../../../ui/ForgeIcon";
+import { providerInstalled } from "../accounts/accountPresentation";
 import { Tray, useTray, type ITrayPalette } from "../../../vendor/reacticx/tray";
 import type { PullRequestsWorkspaceCapabilities } from "../workspaceCapabilities";
 import { onboardingStyles as styles } from "./onboarding.styles";
@@ -37,7 +35,6 @@ export function ProviderConnectTray({
   readonly onOpenChange: (open: boolean) => void;
   readonly snapshot: ForgeAccountsSnapshot;
 }): React.JSX.Element {
-  const enabled = snapshot.providers.filter((provider) => provider.enabled);
   const handleOpenChange = useEvent((open: boolean): void => {
     onOpenChange(open);
   });
@@ -55,12 +52,8 @@ export function ProviderConnectTray({
         </ProductText>
       </Tray.Trigger>
       <Tray.Content style={styles.traySurface}>
-        <ProviderListView
-          capabilities={capabilities}
-          connectionId={connectionId}
-          snapshot={snapshot}
-        />
-        {enabled.map((provider) => (
+        <ProviderListView snapshot={snapshot} />
+        {snapshot.providers.map((provider) => (
           <ProviderJourneyViews
             capabilities={capabilities}
             connectionId={connectionId}
@@ -75,12 +68,8 @@ export function ProviderConnectTray({
 }
 
 function ProviderListView({
-  capabilities,
-  connectionId,
   snapshot,
 }: {
-  readonly capabilities: PullRequestsWorkspaceCapabilities;
-  readonly connectionId: string;
   readonly snapshot: ForgeAccountsSnapshot;
 }): React.JSX.Element {
   return (
@@ -94,12 +83,7 @@ function ProviderListView({
           Choose where CodeWide should look for pull requests.
         </ProductText>
         {snapshot.providers.map((provider) => (
-          <ProviderRow
-            capabilities={capabilities}
-            connectionId={connectionId}
-            key={provider.pluginId}
-            provider={provider}
-          />
+          <ProviderRow key={provider.pluginId} provider={provider} />
         ))}
         {snapshot.providers.length === 0 ? (
           <ProductText style={styles.body}>
@@ -112,52 +96,30 @@ function ProviderListView({
   );
 }
 
-function ProviderRow({
-  capabilities,
-  connectionId,
-  provider,
-}: {
-  readonly capabilities: PullRequestsWorkspaceCapabilities;
-  readonly connectionId: string;
-  readonly provider: ForgeProvider;
-}): React.JSX.Element {
-  const dialog = useAppDialog();
-  const [enabling, setEnabling] = useState(false);
+/** One provider: opens its methods, or says why its plugin cannot serve sign-in. */
+function ProviderRow({ provider }: { readonly provider: ForgeProvider }): React.JSX.Element {
   const tray = useTray();
+  const unavailable = !providerInstalled(provider);
   const onPress = useEvent((): void => {
-    if (provider.enabled) {
+    if (!unavailable) {
       tray.setView(providerMethodsView(provider.pluginId));
-      return;
     }
-    if (enabling) {
-      return;
-    }
-    setEnabling(true);
-    capabilities.setProviderEnabled(connectionId, provider.pluginId, true).then(
-      () => {
-        setEnabling(false);
-      },
-      (error: unknown) => {
-        setEnabling(false);
-        dialog.error(`Could not enable ${provider.forgeName}`, error);
-      },
-    );
   });
   return (
     <Pressable
-      accessibilityHint={provider.enabled ? "Show connection methods" : "Enable this provider"}
+      accessibilityHint={unavailable ? undefined : "Show connection methods"}
       accessibilityLabel={provider.forgeName}
       accessibilityRole="button"
-      disabled={enabling}
+      accessibilityState={{ disabled: unavailable }}
+      disabled={unavailable}
       onPress={onPress}
       style={styles.providerRow}
       testID={`forge-provider-row-${provider.pluginId}`}
     >
       <View style={styles.providerRowIcon}>
         <ForgeIcon
-          color={provider.enabled ? colors.text : colors.textMuted}
-          glyph={provider.icon.glyph}
-          iconKey={provider.icon.iconKey}
+          color={unavailable ? colors.textMuted : colors.text}
+          icon={provider.icon}
           size={iconSize.navigation}
         />
       </View>
@@ -165,18 +127,30 @@ function ProviderRow({
         <ProductText numberOfLines={1} style={styles.providerTitle} weight="semibold">
           {provider.forgeName}
         </ProductText>
-        <ProductText numberOfLines={1} style={styles.providerCaption}>
-          {provider.defaultHost ?? "Host unavailable"}
-        </ProductText>
+        <ProviderRowCaption provider={provider} />
       </View>
-      <View style={styles.providerRowTrailing}>
-        {provider.enabled ? null : (
-          <AppText shimmering={enabling} style={styles.providerCaption}>
-            Enable
-          </AppText>
-        )}
+      {unavailable ? null : (
         <Ionicons color={colors.textMuted} name="chevron-forward" size={iconSize.inline} />
-      </View>
+      )}
     </Pressable>
+  );
+}
+
+const UNAVAILABLE_CAPTION_LINES = 2;
+
+/** The provider's host, or why its plugin cannot serve sign-in. */
+function ProviderRowCaption({ provider }: { readonly provider: ForgeProvider }): React.JSX.Element {
+  const installation = provider.installation;
+  if (installation.state === "missing" || installation.state === "failed") {
+    return (
+      <ProductText numberOfLines={UNAVAILABLE_CAPTION_LINES} style={styles.providerCaption}>
+        {`${installation.state === "missing" ? "Plugin not installed" : "Plugin unavailable"} · ${installation.reason}`}
+      </ProductText>
+    );
+  }
+  return (
+    <ProductText numberOfLines={1} style={styles.providerCaption}>
+      {provider.defaultHost ?? "Host unavailable"}
+    </ProductText>
   );
 }

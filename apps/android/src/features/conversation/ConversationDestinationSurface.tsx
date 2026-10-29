@@ -8,7 +8,11 @@ import type { useActiveConversationScope } from "./activeConversationScope";
 import { ConversationDestination } from "./ConversationDestination";
 import type { ConversationDestinationProps } from "./ConversationDetail";
 import type { createConversationScopeBindings } from "./conversationScopeBindings";
-import type { ActiveWorkspaceConversationProps } from "./ConversationWorkspace.types";
+import type {
+  ActiveWorkspaceConversationProps,
+  DraftAdmission,
+} from "./ConversationWorkspace.types";
+import type { ConversationHostPresentation } from "./header/ConversationHeaderContract";
 import { renderConversationWorkspaceContent } from "./ConversationWorkspaceContent";
 
 /** Presents the selected destination under local recovery while its data publishes progressively. */
@@ -31,10 +35,10 @@ export function renderConversationDestinationSurface(props: {
   conversationActions: ReturnType<typeof createConversationScopeBindings>;
   desktop: ActiveWorkspaceConversationProps["desktop"];
   destination: ActiveWorkspaceConversationProps["destination"];
+  draftAdmission: DraftAdmission | null;
   features: ActiveWorkspaceConversationProps["features"];
   fileTransferController: ActiveWorkspaceConversationProps["fileTransferController"];
   forkCurrentThread: ReturnType<typeof useActiveThreadActions>["forkCurrentThread"];
-  headerActions: ActiveWorkspaceConversationProps["headerActions"];
   loadTurnChanges: ReturnType<typeof useTurnChangesLoader>["loadTurnChanges"];
   markActiveThreadRead: ReturnType<typeof useActiveThreadActions>["markActiveThreadRead"];
   native: ActiveWorkspaceConversationProps["native"];
@@ -44,6 +48,7 @@ export function renderConversationDestinationSurface(props: {
   onManageProjects: ActiveWorkspaceConversationProps["onManageProjects"];
   onOpenBrowser: ActiveWorkspaceConversationProps["onOpenBrowser"];
   openActiveLoopbackLink: ReturnType<typeof useLoopbackNavigation>;
+  presentation: ConversationHostPresentation;
   readActiveDirectory: ReturnType<typeof useActiveProjectSelection>["readActiveDirectory"];
   runtime: ActiveWorkspaceConversationProps["runtime"];
   scope: ReturnType<typeof useActiveConversationScope>;
@@ -81,10 +86,10 @@ export function renderConversationDestinationSurface(props: {
               closeActiveConversation: props.scope.closeActiveConversation,
               conversationActions: props.conversationActions,
               desktop: props.desktop,
+              draftAdmission: props.draftAdmission,
               features: props.features,
               fileTransferController: props.fileTransferController,
               forkCurrentThread: props.forkCurrentThread,
-              headerActions: props.headerActions,
               loadTurnChanges: props.loadTurnChanges,
               markActiveThreadRead: props.markActiveThreadRead,
               native: props.native,
@@ -95,6 +100,7 @@ export function renderConversationDestinationSurface(props: {
               onManageProjects: props.onManageProjects,
               onOpenBrowser: props.onOpenBrowser,
               openActiveLoopbackLink: props.openActiveLoopbackLink,
+              presentation: props.presentation,
               readActiveDirectory: props.readActiveDirectory,
               runtime: props.runtime,
               servers: props.servers,

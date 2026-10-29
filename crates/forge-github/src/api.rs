@@ -186,6 +186,12 @@ impl Api {
         }
     }
 
+    /// Adds this session's token to a media request for the account's own
+    /// web origin; [`crate::media`] decides which hops may carry it.
+    pub fn authorize_media(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request.bearer_auth(self.token.expose())
+    }
+
     fn authorized(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         request
             .bearer_auth(self.token.expose())

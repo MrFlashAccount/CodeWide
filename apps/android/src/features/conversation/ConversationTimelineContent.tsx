@@ -32,8 +32,10 @@ export function createConversationTimelineContent(props: CreateConversationTimel
           historyActivityModel={props.historyActivityModel}
           historyActivityResourceId={props.historyActivityResourceId}
           newChat={props.timelineRead.newChat}
+          notice={props.draftNotice}
           onChangeWorkspaceMode={props.projectsInputs.onChangeWorkspaceMode}
           openProjectPicker={props.composerProjectSelectionBinding.openProjectPicker}
+          projectRequirement={props.projectsInputs.projectRequirement}
           server={draftServer}
           threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
           workspaceMode={props.workspaceMode}

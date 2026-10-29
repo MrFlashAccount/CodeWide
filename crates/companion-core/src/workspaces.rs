@@ -403,8 +403,9 @@ fn unix_time_ms() -> u64 {
 }
 
 /// Workspace admission for threads the companion creates on a client's
-/// behalf (`companion/review/guide/request` and
-/// `companion/pullRequest/scenario/start` with `newThread`).
+/// behalf (`companion/review/guide/request`, and the canonical review chat
+/// that `companion/pullRequest/chat/ensure` or
+/// `companion/pullRequest/scenario/start` creates).
 ///
 /// A workspace is admitted only when its canonical path exactly equals a
 /// project root or the `cwd` of a thread in the companion thread index. No
@@ -469,6 +470,26 @@ impl WorkspaceAdmission {
         }
     }
 
+    /// Every project root, most recently used first; each is admitted.
+    pub async fn project_roots(&self) -> Vec<String> {
+        self.projects.project_roots().await
+    }
+
+    /// Up to `limit` distinct indexed thread working directories, most
+    /// recently updated first; each is admitted by definition. An unreadable
+    /// index yields none.
+    pub async fn recent_thread_cwds(&self, limit: usize) -> Vec<String> {
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            store.recent_thread_cwds(limit).unwrap_or_else(|error| {
+                tracing::warn!(err = %error, "thread working directories are unreadable");
+                Vec::new()
+            })
+        })
+        .await
+        .unwrap_or_default()
+    }
+
     /// The indexed working directory of a thread; admitted by definition.
     #[must_use]
     pub fn thread_cwd(&self, thread_id: &str) -> Option<String> {
@@ -516,7 +537,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let service = WorkspaceService::new(
-            Arc::new(VcsService::new(directory.path().join("plugins.json"))),
+            Arc::new(VcsService::new(directory.path().join("plugins.json"), None)),
             directory.path().join("workspaces"),
         );
         let workspace = WorkspaceCreateResult {
@@ -549,7 +570,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let service = WorkspaceService::new(
-            Arc::new(VcsService::new(directory.path().join("plugins.json"))),
+            Arc::new(VcsService::new(directory.path().join("plugins.json"), None)),
             directory.path().join("workspaces"),
         );
         service

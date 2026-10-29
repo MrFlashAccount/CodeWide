@@ -3,6 +3,8 @@ import { unknownRecord } from "./unknownRecord";
 /** Forge/review writes whose exact payload may be persisted and replayed. */
 const DURABLE_FORGE_METHODS = [
   "companion/pullRequest/action/run",
+  "companion/pullRequest/comment/create",
+  "companion/pullRequest/reviewThread/reply",
   "companion/pullRequest/links/set",
   "companion/pullRequest/review/submit",
   "companion/pullRequest/scenario/start",

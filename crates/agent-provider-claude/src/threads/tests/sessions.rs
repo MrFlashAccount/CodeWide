@@ -8,7 +8,7 @@ use std::sync::Arc;
 use agent_core::{
     model::{
         AgentItem, ExecutionStatus, ThreadChange, ThreadCreateParams, ThreadUpdateParams,
-        TurnErrorKind, TurnStartParams, TurnStartResult, TurnStatus,
+        TurnContinueParams, TurnErrorKind, TurnStartParams, TurnStartResult, TurnStatus,
     },
     provider::ProviderError,
 };
@@ -17,9 +17,12 @@ use serde_json::json;
 use super::{
     OTHER_THREAD, Options, THREAD, TestResult, create_thread, frames, harness, id, settings,
     settle, start, text,
-    threads::{rejected_code, update},
+    threads::{rejected_code, turns_params, update},
 };
-use crate::cli::command::SessionIdentity;
+use crate::{
+    cli::{command::SessionIdentity, protocol::Author},
+    transcript::entries::RESUME_PROMPT,
+};
 
 #[tokio::test]
 async fn rejects_an_unknown_permission_profile() -> TestResult {
@@ -101,6 +104,63 @@ async fn answers_busy_with_the_active_turn_instead_of_steering() -> TestResult {
     let compact = harness.service.compact(&id(THREAD)?).await;
     assert!(
         matches!(compact, Err(ProviderError::Rejected(error)) if error.message == "thread has an active turn")
+    );
+    harness.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn continues_with_claudes_resume_prompt_as_a_turn_without_a_user_message() -> TestResult {
+    let harness = harness(Options::default())?;
+    create_thread(&harness.service, THREAD).await?;
+    start(&harness.service, THREAD, "first").await?;
+    let query = harness.runtime.query(0)?;
+    query.push(frames::init()).await;
+    query.push(frames::text("m1", "partial")).await;
+    harness
+        .service
+        .turn_interrupt(agent_core::model::TurnInterruptParams {
+            app_thread_id: id(THREAD)?,
+            turn_id: None,
+        })
+        .await?;
+    query.push(frames::result()).await;
+    settle().await;
+    let continued = match harness
+        .service
+        .turn_continue(TurnContinueParams {
+            app_thread_id: id(THREAD)?,
+        })
+        .await?
+    {
+        TurnStartResult::Started { turn_id } => turn_id,
+        TurnStartResult::Busy { .. } => return Err("the thread was busy".into()),
+    };
+    let query = harness.runtime.queries().pop().ok_or("no query")?;
+    let offer = query
+        .offers
+        .lock()
+        .map_err(|_| "offers poisoned")?
+        .last()
+        .cloned()
+        .ok_or("nothing offered")?;
+    assert_eq!(offer.author, Author::Adapter);
+    assert_eq!(
+        offer.content,
+        [json!({"type": "text", "text": RESUME_PROMPT})]
+    );
+    assert_eq!(offer.uuid.as_deref(), Some(continued.as_str()));
+    query.push(frames::text("m2", "the rest")).await;
+    query.push(frames::result()).await;
+    settle().await;
+    let (turns, _) = harness.service.turns(turns_params(THREAD)?, false).await?;
+    let last = turns.turns.last().ok_or("no turns")?;
+    assert_eq!(last.turn_id, continued);
+    assert!(
+        !last
+            .items
+            .iter()
+            .any(|item| matches!(item, AgentItem::UserMessage { .. }))
     );
     harness.close().await;
     Ok(())

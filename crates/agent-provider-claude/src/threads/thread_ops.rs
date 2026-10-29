@@ -304,8 +304,9 @@ impl ThreadService {
         Ok(rows)
     }
 
-    /// `thread.turns`: the stored history with the in-flight turn, paged;
-    /// `fenced` adds the stream position after every event before the read.
+    /// `thread.turns`: the stored history with the in-flight turn and what
+    /// the live session knows of its background commands, paged; `fenced`
+    /// adds the stream position after every event before the read.
     ///
     /// # Errors
     /// `-32600` for an unknown thread, `-32602` for an invalid cursor.
@@ -329,10 +330,10 @@ impl ThreadService {
                     .map_err(|err| session_gone(&err))?;
                 let source = HistorySource::Thread(Arc::clone(&state));
                 let stored = stored_turns(inner.projects_root.clone(), source).await?;
-                (
-                    crate::native::with_active_turn(stored, active, &state.turns),
-                    fence,
-                )
+                let mut turns = crate::native::with_active_turn(stored, active, &state.turns);
+                self.overlay_live_background_commands(&params.app_thread_id, &mut turns)
+                    .await?;
+                (turns, fence)
             }
             Listed::Discovered(session) => {
                 let source = HistorySource::Session {

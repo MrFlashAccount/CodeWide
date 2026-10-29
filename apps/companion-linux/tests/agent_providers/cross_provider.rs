@@ -8,6 +8,15 @@ const CODEX_PARENT: &str = "01a12092-346f-7d32-8dc8-ef1150dced2e";
 fn parent_answer(request: &Value) -> Value {
     let parent = request["params"]["threadId"] == CODEX_PARENT;
     match request["method"].as_str() {
+        Some("thread/resume") if parent => json!({"result": {
+            "thread": {
+                "id": CODEX_PARENT, "cwd": "/work", "model": "gpt-5.5", "preview": "",
+                "createdAt": 1, "updatedAt": 1, "status": {"type": "idle"}
+            },
+            "model": "gpt-5.5", "reasoningEffort": null, "serviceTier": null,
+            "activePermissionProfile": null, "approvalPolicy": "never",
+            "sandbox": {"type": "dangerFullAccess"}
+        }}),
         Some("thread/read") if parent => json!({"result": {"thread": {
             "id": CODEX_PARENT, "cwd": "/work", "model": "gpt-5.5", "preview": "",
             "createdAt": 1, "updatedAt": 1, "status": {"type": "idle"}}}}),
@@ -68,21 +77,20 @@ async fn a_codex_model_spawns_an_agent_on_another_provider_shown_as_a_subagent()
             .any(|tool| tool["name"] == "codewide_spawn_agent")
     );
 
-    // The parent is an already-existing Codex thread. Its effective profile is
-    // learned from the same settings event a real App Server publishes before
-    // a model can delegate with inherited permissions.
-    harness
-        .pushed
-        .send(json!({"method": "thread/settings/updated", "params": {
-            "threadId": CODEX_PARENT,
-            "threadSettings": {
-                "activePermissionProfile": {"id": ":workspace", "extends": null}
-            }
-        }}))
+    // The Composer's chip and child admission consume the same backend
+    // authority. This sync learns full access from the provider's effective
+    // sandbox even though `thread/read` above has no named profile.
+    let synced = harness
+        .rpc(
+            "sync-parent",
+            "companion/thread/sync",
+            json!({"threadId": CODEX_PARENT, "limit": 36}),
+        )
         .await?;
-    let _ = harness
-        .event_where(|payload| payload["method"] == "thread/settings/updated")
-        .await?;
+    assert_eq!(
+        synced["result"]["executionSettings"]["permissions"],
+        ":danger-full-access"
+    );
 
     harness
         .pushed
@@ -115,6 +123,14 @@ async fn a_codex_model_spawns_an_agent_on_another_provider_shown_as_a_subagent()
         .to_owned();
     assert_eq!(spawned["provider"], FAKE);
     assert_eq!(spawned["status"], "running");
+    let child_thread = harness
+        .fake
+        .thread(&AppThreadId::parse(&child).ok_or("invalid child id")?)
+        .ok_or("child thread was not created")?;
+    assert_eq!(
+        child_thread.settings.permission_profile,
+        ":danger-full-access"
+    );
     let started = harness
         .fake
         .started
