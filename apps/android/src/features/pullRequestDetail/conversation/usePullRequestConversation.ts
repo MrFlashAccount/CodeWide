@@ -14,6 +14,8 @@ import { conversationImageSources, type ConversationImageOwner } from "./convers
 const CONVERSATION_CAPABILITY = "forge.conversation@1";
 /** Plugin capability that adds top-level comments and thread replies. */
 const COMMENTS_CAPABILITY = "forge.comments@1";
+/** Plugin capability that adds resolving and unresolving review conversations. */
+const RESOLVE_CAPABILITY = "forge.conversation.resolve@1";
 
 /**
  * What the Details tab shows in place of the activity list. `unsupported`
@@ -35,6 +37,8 @@ export type PullRequestConversation =
       readonly images: DirectImageSources;
       readonly loadMore: (() => void) | null;
       readonly page: ConversationPage;
+      /** `forge.conversation.resolve@1` is declared, so conversations can be resolved. */
+      readonly resolveEnabled: boolean;
       readonly status: "ready";
     };
 
@@ -85,6 +89,7 @@ export function usePullRequestConversation({
       refresh: refreshImages,
     },
     loadMore,
+    resolveEnabled: capabilities.includes(RESOLVE_CAPABILITY),
     retry,
   });
 }
@@ -96,6 +101,7 @@ function conversationView(
     readonly commentsEnabled: boolean;
     readonly images: ConversationImageOwner;
     readonly loadMore: () => void;
+    readonly resolveEnabled: boolean;
     readonly retry: () => void;
   },
 ): PullRequestConversation {
@@ -106,6 +112,7 @@ function conversationView(
       images: conversationImageSources(page, intents.images),
       loadMore: page.nextCursor === null ? null : intents.loadMore,
       page,
+      resolveEnabled: intents.resolveEnabled,
       status: "ready",
     };
   }

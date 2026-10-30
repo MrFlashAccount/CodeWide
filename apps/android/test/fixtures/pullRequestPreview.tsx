@@ -76,7 +76,6 @@ function Catalog(): React.JSX.Element {
         capabilities={pullRequests}
         connectionId="server"
         forge={forge}
-        isThreadUnread={() => false}
         onOpenPullRequest={() => undefined}
       />
       <ModeBar />

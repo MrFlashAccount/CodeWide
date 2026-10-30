@@ -163,7 +163,6 @@ it("opens provider management from a connected review inbox", async () => {
         capabilities={capabilities(CONNECTED_MULTIPLE_PROVIDERS)}
         connectionId="server"
         forge={forge}
-        isThreadUnread={() => false}
         onOpenPullRequest={() => undefined}
       />
     </SafeAreaProvider>,
@@ -360,7 +359,6 @@ it("recovers the host-login code when the mutation reply is lost but accounts re
         capabilities={workspaceCapabilities}
         connectionId={connectionId}
         forge={forge}
-        isThreadUnread={() => false}
         onOpenPullRequest={() => undefined}
       />
     </SafeAreaProvider>,
@@ -399,7 +397,6 @@ it("keeps the terminal success visible after the authoritative account snapshot 
         capabilities={workspaceCapabilities}
         connectionId="server"
         forge={forge}
-        isThreadUnread={() => false}
         onOpenPullRequest={() => undefined}
       />
     </SafeAreaProvider>,

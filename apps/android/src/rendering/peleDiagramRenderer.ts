@@ -51,38 +51,6 @@ export type PeleDiagramRenderResult =
       readonly status: "error";
     };
 
-/** Pure renderer contract shared by the worker runtime and Node fixture tests. */
-export function renderPeleDiagramSvg(source: string, sourceLimit: number): PeleDiagramRenderResult {
-  "worklet";
-  if (source.length > sourceLimit) {
-    return { message: "Diagram is too large to render safely", status: "error" };
-  }
-  try {
-    const rendered = render(source, {
-      fontFamily: "sans-serif",
-      fontFamilyMono: "monospace",
-      images: false,
-      limit: sourceLimit,
-      links: false,
-      maxEdges: MAX_PELE_EDGES,
-      outputLimit: MAX_PELE_OUTPUT_CHARS,
-      responsive: false,
-    });
-    const svg = makeReactNativeSvg(rendered.svg);
-    if (
-      !Number.isFinite(rendered.width) ||
-      !Number.isFinite(rendered.height) ||
-      rendered.width <= 0 ||
-      rendered.height <= 0
-    ) {
-      return { message: "Diagram renderer returned invalid geometry", status: "error" };
-    }
-    return { height: rendered.height, status: "ready", svg, width: rendered.width };
-  } catch (error) {
-    return { message: peleErrorMessage(error), status: "error" };
-  }
-}
-
 function makeReactNativeSvg(source: string): string {
   "worklet";
   let svg = source.replaceAll(/var\(--[^,)]+,([^)]+)\)/g, "$1");
@@ -126,4 +94,36 @@ function peleErrorMessage(cause: unknown): string {
     return `Could not parse Mermaid diagram${location}`;
   }
   return "Could not render Mermaid diagram";
+}
+
+/** Pure renderer contract shared by the worker runtime and Node fixture tests. */
+export function renderPeleDiagramSvg(source: string, sourceLimit: number): PeleDiagramRenderResult {
+  "worklet";
+  if (source.length > sourceLimit) {
+    return { message: "Diagram is too large to render safely", status: "error" };
+  }
+  try {
+    const rendered = render(source, {
+      fontFamily: "sans-serif",
+      fontFamilyMono: "monospace",
+      images: false,
+      limit: sourceLimit,
+      links: false,
+      maxEdges: MAX_PELE_EDGES,
+      outputLimit: MAX_PELE_OUTPUT_CHARS,
+      responsive: false,
+    });
+    const svg = makeReactNativeSvg(rendered.svg);
+    if (
+      !Number.isFinite(rendered.width) ||
+      !Number.isFinite(rendered.height) ||
+      rendered.width <= 0 ||
+      rendered.height <= 0
+    ) {
+      return { message: "Diagram renderer returned invalid geometry", status: "error" };
+    }
+    return { height: rendered.height, status: "ready", svg, width: rendered.width };
+  } catch (error) {
+    return { message: peleErrorMessage(error), status: "error" };
+  }
 }

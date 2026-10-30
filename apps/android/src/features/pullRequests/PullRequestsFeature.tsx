@@ -8,7 +8,6 @@ import type { PullRequestListPage, PullRequestRow } from "../../data/forgePullRe
 import { forgeQueryRemoteValue, useForgeQuery } from "../../data/forgeQueryResource";
 import { remoteValue, type RemoteValue } from "../../data/forgeRemoteValue";
 import type { ForgeResources } from "../../data/forgeResources";
-import type { ThreadUnreadReader } from "../../data/project-unread-model";
 import { CatalogSearchOverlayHost } from "../../presentation/layouts/CatalogSearchOverlayHost";
 import { hasLinkedAccount } from "./accounts/accountPresentation";
 import { useMinuteClock } from "../../data/minuteClock";
@@ -40,14 +39,11 @@ export function PullRequestsCatalog({
   capabilities,
   connectionId,
   forge,
-  isThreadUnread,
   onOpenPullRequest,
 }: {
   readonly capabilities: PullRequestsWorkspaceCapabilities;
   readonly connectionId: string;
   readonly forge: ForgeResources;
-  /** Unread state of this connection's chats, owned by the thread catalog. */
-  readonly isThreadUnread: ThreadUnreadReader;
   /** Navigation intent: reveals the PR destination immediately. */
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
 }): React.JSX.Element {
@@ -96,7 +92,6 @@ export function PullRequestsCatalog({
           accounts={snapshot.accounts}
           connectionId={connectionId}
           forge={forge}
-          isThreadUnread={isThreadUnread}
           onOpenPullRequest={onOpenPullRequest}
           onReconnect={reconnect}
           providers={snapshot.providers}
@@ -120,7 +115,6 @@ function ConnectedList({
   accounts,
   connectionId,
   forge,
-  isThreadUnread,
   onOpenPullRequest,
   onReconnect,
   providers,
@@ -128,7 +122,6 @@ function ConnectedList({
   readonly accounts: readonly AccountState[];
   readonly connectionId: string;
   readonly forge: ForgeResources;
-  readonly isThreadUnread: ThreadUnreadReader;
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
   readonly onReconnect: (account: AccountState) => void;
   readonly providers: readonly ForgeProvider[];
@@ -174,7 +167,6 @@ function ConnectedList({
     filter,
     iconFor: (pluginId) =>
       providers.find((provider) => provider.pluginId === pluginId)?.icon ?? null,
-    isThreadUnread,
     nowMs,
     onEndReached: loadMore,
     onOpen: onOpenPullRequest,

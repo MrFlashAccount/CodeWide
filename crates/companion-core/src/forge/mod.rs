@@ -10,8 +10,9 @@
 //! through `companion/pullRequest/action/run` with sufficient
 //! confirmation, viewed marks only through `companion/pullRequest/viewed/set`,
 //! conversation comments only through `companion/pullRequest/comment/create`
-//! and review thread replies only through
-//! `companion/pullRequest/reviewThread/reply`.
+//! review thread replies only through
+//! `companion/pullRequest/reviewThread/reply` and conversation resolution
+//! only through `companion/pullRequest/reviewThread/resolve`.
 //! See `CONTEXT.md`, `docs/forge-plugins.md` and `docs/forge-conversation.md`.
 
 pub mod accounts;
@@ -44,6 +45,7 @@ pub mod review_chat;
 pub mod scenario_runs;
 pub mod scenarios;
 pub mod submit;
+pub mod thread_resolution;
 pub mod tools;
 pub mod wire;
 
@@ -361,6 +363,9 @@ impl ForgeService {
             "companion/pullRequest/conversation/read" => conversation::read(context, params).await,
             "companion/pullRequest/comment/create" => comments::create(context, params).await,
             "companion/pullRequest/reviewThread/reply" => comments::reply(context, params).await,
+            "companion/pullRequest/reviewThread/resolve" => {
+                thread_resolution::resolve(context, params).await
+            }
             "companion/pullRequest/files/read" => reads::files(context, params).await,
             "companion/pullRequest/fileContent/read" => file_content::read(context, params).await,
             "companion/pullRequest/action/run" => action_run::run(context, params).await,

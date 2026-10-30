@@ -15,12 +15,9 @@ const MARKER_SLOT_HEIGHT = 18;
 /**
  * State marker on the trailing edge of a catalog row's title line. Attention
  * outranks unread; the caller decides which ones apply and names each for
- * screen readers. `agentReply` marks an unread reply in a chat the row links
- * to, in the unread colour but with a chat glyph, so it never reads as the
- * row's own `unread` dot.
+ * screen readers.
  */
 export type CatalogRowMarker =
-  | { readonly kind: "agentReply"; readonly label: string }
   | { readonly kind: "attention"; readonly label: string }
   | { readonly kind: "unread"; readonly label: string };
 
@@ -185,11 +182,7 @@ function Marker({ marker }: { readonly marker: CatalogRowMarker }): React.JSX.El
   }
   return (
     <View accessibilityLabel={marker.label} accessible style={styles.iconMarker}>
-      {marker.kind === "attention" ? (
-        <Ionicons color={colors.text} name="hand-left-outline" size={iconSize.indicator} />
-      ) : (
-        <Ionicons color={colors.primary} name="chatbubble" size={iconSize.indicator} />
-      )}
+      <Ionicons color={colors.text} name="hand-left-outline" size={iconSize.indicator} />
     </View>
   );
 }

@@ -8,8 +8,8 @@ import { threadId } from "../src/data/reviewContract";
 import { connectedAccount, listRow } from "./fixtures/forgeWireFixtures";
 import { summary } from "./fixtures/thread-summary";
 
-// Sergey's contract: an unread agent reply in a PR's canonical review chat is visible from the PR
-// list and on the PR's chat button, independently of forge activity, and clears once read.
+// Sergey's contract: an unread agent reply in a PR's canonical review chat is shown only on the PR
+// screen's explicit chat button and clears once read; the PR list row never marks it.
 
 const SEEN = { revision: "b".repeat(64), state: "seen" };
 
@@ -39,12 +39,11 @@ async function unreadIndex(...unreadThreads: readonly string[]): Promise<Project
   return model;
 }
 
-function renderRow(overrides: Record<string, unknown>, model: ProjectUnreadModel) {
+function renderRow(overrides: Record<string, unknown>) {
   const row = parsedRow(overrides);
   const view = render(
     <PullRequestRow
       icon={null}
-      isThreadUnread={threadUnreadReader(model, "server")}
       nowMs={Date.parse(row.updatedAt)}
       onPress={() => undefined}
       row={row}
@@ -53,43 +52,15 @@ function renderRow(overrides: Record<string, unknown>, model: ProjectUnreadModel
   return within(view.getByTestId(`pull-request-row-${row.number}`));
 }
 
-it("marks a PR row whose canonical review chat has an unread agent reply until it is read", async () => {
-  const model = await unreadIndex("review-chat");
-  const row = renderRow({ attention: SEEN, reviewThreadId: "review-chat" }, model);
+it("keeps the linked review chat's unread state off the PR row; only forge activity marks it", () => {
+  const seen = renderRow({ attention: SEEN, reviewThreadId: "review-chat" });
 
-  expect(row.getByLabelText("Agent replied")).toBeOnTheScreen();
-  expect(row.queryByLabelText("New activity")).toBeNull();
+  expect(seen.queryByLabelText("Agent replied")).toBeNull();
+  expect(seen.queryByLabelText("New activity")).toBeNull();
 
-  act(() => {
-    model.publish([{ type: "update", value: summary("review-chat") }]);
-  });
-  expect(row.queryByLabelText("Agent replied")).toBeNull();
-  model.close();
-});
-
-it("shows the agent reply and new forge activity as independent markers", async () => {
-  const model = await unreadIndex();
-  const row = renderRow({ reviewThreadId: "review-chat" }, model);
-
-  expect(row.getByLabelText("New activity")).toBeOnTheScreen();
-  expect(row.queryByLabelText("Agent replied")).toBeNull();
-
-  act(() => {
-    model.publish([{ type: "update", value: summary("review-chat", { unread: 1 }) }]);
-  });
-  expect(row.getByLabelText("New activity")).toBeOnTheScreen();
-  expect(row.getByLabelText("Agent replied")).toBeOnTheScreen();
-  act(() => {
-    model.close();
-  });
-});
-
-it("shows no agent reply marker for a PR without a canonical review chat", async () => {
-  const model = await unreadIndex("unrelated-chat");
-  const row = renderRow({ attention: SEEN, reviewThreadId: null }, model);
-
-  expect(row.queryByLabelText("Agent replied")).toBeNull();
-  model.close();
+  const fresh = renderRow({ reviewThreadId: "review-chat" });
+  expect(fresh.getByLabelText("New activity")).toBeOnTheScreen();
+  expect(fresh.queryByLabelText("Agent replied")).toBeNull();
 });
 
 it("treats a row from an older Companion as having no canonical review chat", () => {

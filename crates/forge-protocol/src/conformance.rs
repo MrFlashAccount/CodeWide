@@ -249,7 +249,7 @@ async fn initialize(
                     capability::AUTH, capability::LIST, capability::READ, capability::DIFF,
                     capability::ACTIONS, capability::REVIEW, capability::CHECKS, capability::VIEWED,
                     capability::RESOLVE, capability::SCENARIO_CONTEXT, capability::CONVERSATION,
-                    capability::COMMENTS, capability::FILE_CONTENT
+                    capability::COMMENTS, capability::RESOLVE_CONVERSATION, capability::FILE_CONTENT
                 ],
                 "stateDirectory": state,
             }),
@@ -658,8 +658,19 @@ async fn check_conversation(
                 .chain(older.iter().flat_map(|older| &older.entries))
                 .collect();
             for entry in &entries {
-                if let ConversationEntry::ReviewThread { thread } = entry {
-                    conversation_thread_rules(thread)?;
+                match entry {
+                    ConversationEntry::ReviewThread { thread } => {
+                        conversation_thread_rules(thread)?;
+                    }
+                    ConversationEntry::Event {
+                        id,
+                        category,
+                        commits: Some(commits),
+                        ..
+                    } => commits
+                        .rules(*category)
+                        .map_err(|rule| format!("event {id}: {rule}"))?,
+                    _ => {}
                 }
             }
             let times: Vec<&str> = entries.iter().map(|entry| entry.created_at()).collect();
@@ -693,7 +704,8 @@ async fn check_conversation(
 
 /// The `ReviewThread` rules serde cannot express: at least one comment,
 /// comments oldest first, positive lines with `startLine` strictly before
-/// `line`, a positive iteration number and a non-empty anchored path.
+/// `line`, a positive iteration number, a non-empty anchored path and an
+/// excerpt that keeps [`crate::CodeExcerpt::rules`].
 fn conversation_thread_rules(thread: &ReviewThread) -> Result<(), String> {
     if thread.comments.is_empty() {
         return Err(format!("review thread {} has no comments", thread.id));
@@ -734,6 +746,11 @@ fn conversation_thread_rules(thread: &ReviewThread) -> Result<(), String> {
             "review thread {} has an invalid iteration",
             thread.id
         ));
+    }
+    if let Some(excerpt) = &thread.excerpt {
+        excerpt
+            .rules(&thread.anchor)
+            .map_err(|rule| format!("review thread {}: {rule}", thread.id))?;
     }
     Ok(())
 }
@@ -869,6 +886,50 @@ async fn check_resolve(
     }
 }
 
+/// Thread writes probed with a thread that cannot exist: they must be
+/// refused and write nothing. A comment create has no safe probe, because it
+/// publishes immediately.
+async fn check_missing_thread_writes(
+    session: &mut Session,
+    declared: &[String],
+    account: &ForgeAccountRef,
+    pr: &ForgePrRef,
+    report: &mut Report,
+) {
+    let thread = "codewide-conformance-missing-thread";
+    let probes = [
+        (
+            capability::COMMENTS,
+            methods::PULL_REQUEST_REVIEW_THREAD_REPLY,
+            json!({"account": account, "ref": pr, "threadId": thread,
+                   "body": "conformance", "idempotencyKey": "conformance-reply"}),
+        ),
+        (
+            capability::RESOLVE_CONVERSATION,
+            methods::PULL_REQUEST_REVIEW_THREAD_RESOLVE,
+            json!({"account": account, "ref": pr, "threadId": thread,
+                   "resolved": true, "idempotencyKey": "conformance-resolve"}),
+        ),
+    ];
+    for (required, method, params) in probes {
+        if !declared.iter().any(|cap| cap == required) {
+            continue;
+        }
+        let answer = session.call(method, &params).await;
+        report.record(
+            &format!("{method} missing thread"),
+            match answer {
+                Ok(Answer::Error(
+                    code::NOT_FOUND | code::INVALID_PARAMS | code::FORGE_REJECTED,
+                )) => Ok("refused".into()),
+                Ok(Answer::Error(code)) => Err(format!("unexpected error code {code}")),
+                Ok(Answer::Result(_)) => Err("wrote to a thread that does not exist".into()),
+                Err(error) => Err(error),
+            },
+        );
+    }
+}
+
 async fn check_writes(
     session: &mut Session,
     declared: &[String],
@@ -918,28 +979,7 @@ async fn check_writes(
     for (name, outcome) in results {
         report.record(&name, outcome);
     }
-    if declared.iter().any(|cap| cap == capability::COMMENTS) {
-        // A reply to a thread that cannot exist writes nothing; a comment
-        // create has no safe probe, because it publishes immediately.
-        let answer = session
-            .call(
-                methods::PULL_REQUEST_REVIEW_THREAD_REPLY,
-                &json!({"account": account, "ref": pr, "threadId": "codewide-conformance-missing-thread",
-                        "body": "conformance", "idempotencyKey": "conformance-reply"}),
-            )
-            .await;
-        report.record(
-            "forge.pullRequest.reviewThread.reply missing thread",
-            match answer {
-                Ok(Answer::Error(
-                    code::NOT_FOUND | code::INVALID_PARAMS | code::FORGE_REJECTED,
-                )) => Ok("refused".into()),
-                Ok(Answer::Error(code)) => Err(format!("unexpected error code {code}")),
-                Ok(Answer::Result(_)) => Err("replied to a thread that does not exist".into()),
-                Err(error) => Err(error),
-            },
-        );
-    }
+    check_missing_thread_writes(session, declared, account, pr, report).await;
     if declared
         .iter()
         .any(|cap| cap == capability::SCENARIO_CONTEXT)
@@ -1074,5 +1114,28 @@ mod tests {
         ] {
             assert!(conversation_thread_rules(&invalid).is_err());
         }
+    }
+
+    #[test]
+    fn thread_rules_hold_an_excerpt_to_its_anchor() {
+        let mut anchored = thread(
+            &json!({"kind": "line", "path": "a.rs", "line": 4, "startLine": null, "side": "new"}),
+            &Value::Null,
+        );
+        anchored.excerpt = Some(
+            serde_json::from_value(json!({"lines": [
+                {"kind": "removed", "oldLine": 3, "text": "old"},
+                {"kind": "added", "newLine": 4, "text": "new"}
+            ]}))
+            .expect("excerpt"),
+        );
+        assert!(conversation_thread_rules(&anchored).is_ok());
+        anchored.anchor = ThreadAnchor::Line {
+            path: "a.rs".into(),
+            line: 5,
+            start_line: None,
+            side: crate::DiffSide::New,
+        };
+        assert!(conversation_thread_rules(&anchored).is_err());
     }
 }

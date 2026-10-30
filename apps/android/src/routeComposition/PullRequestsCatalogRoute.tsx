@@ -4,7 +4,6 @@ import { StyleSheet, View } from "react-native";
 import { forgeResources } from "../data/forgeRuntime";
 import type { PullRequestRow } from "../data/forgePullRequestContract";
 import { remoteValue } from "../data/forgeRemoteValue";
-import { threadUnreadReader, type UnreadThreadIndex } from "../data/project-unread-model";
 import { useForgeQuery } from "../data/forgeQueryResource";
 import { hasLinkedAccount } from "../features/pullRequests/accounts/accountPresentation";
 import { PullRequestSelectionPlaceholder } from "../features/pullRequests/PullRequestSelectionPlaceholder";
@@ -24,7 +23,7 @@ const PREVIEW_PANE_PADDING = 48;
 /** Real `/pulls` catalog descriptor rendered by the Pull requests subtree layout. */
 export function PullRequestsCatalogRoute(): React.JSX.Element {
   const router = useRouter();
-  const { list, runtime } = useWorkspaceRouteResources();
+  const { list } = useWorkspaceRouteResources();
   const navigation = usePullRequestNavigation();
   const connectionId = pullRequestCatalogConnection(list.serverScope, list.servers);
   const openPairing = useEvent((): void => {
@@ -41,7 +40,6 @@ export function PullRequestsCatalogRoute(): React.JSX.Element {
         connectionId={connectionId}
         onOpenPullRequest={openPullRequest}
         onPair={openPairing}
-        unreadThreads={runtime.threadSummaries?.projectUnread ?? null}
       />
     </View>
   );
@@ -78,12 +76,10 @@ function PullRequestsCatalogContent({
   connectionId,
   onOpenPullRequest,
   onPair,
-  unreadThreads,
 }: {
   readonly connectionId: string | null;
   readonly onOpenPullRequest: (row: PullRequestRow) => void;
   readonly onPair: () => void;
-  readonly unreadThreads: UnreadThreadIndex | null;
 }): React.JSX.Element {
   return (
     <View style={styles.content} testID="pull-requests-catalog">
@@ -97,7 +93,6 @@ function PullRequestsCatalogContent({
           capabilities={workspaceFeatures.pullRequests}
           connectionId={connectionId}
           forge={forgeResources}
-          isThreadUnread={threadUnreadReader(unreadThreads, connectionId)}
           onOpenPullRequest={onOpenPullRequest}
         />
       )}

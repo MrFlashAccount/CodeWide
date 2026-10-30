@@ -60,30 +60,14 @@ pub async fn reply(
     body: &str,
 ) -> Result<CommentResult, PluginError> {
     require_body(body)?;
-    if thread_id.is_empty()
-        || thread_id.chars().count() > MAX_THREAD_ID_CHARS
-        || !thread_id.bytes().all(|byte| byte.is_ascii_graphic())
-    {
-        return Err(PluginError::invalid_params("invalid threadId"));
-    }
+    require_thread_id(thread_id)?;
     let owner = api
         .graphql(
             "query($id: ID!) { node(id: $id) { __typename ... on PullRequestReviewThread { pullRequest { number repository { nameWithOwner } } } } }",
             json!({ "id": thread_id }),
         )
         .await?;
-    let pull = owner.pointer("/node/pullRequest");
-    let belongs = pull
-        .and_then(|pull| pull.get("number"))
-        .and_then(Value::as_u64)
-        == Some(target.number)
-        && pull
-            .and_then(|pull| pull.pointer("/repository/nameWithOwner"))
-            .and_then(Value::as_str)
-            .is_some_and(|name| name.eq_ignore_ascii_case(&target.repo.full()));
-    if !belongs {
-        return Err(PluginError::new(code::NOT_FOUND, "Not found on GitHub"));
-    }
+    require_thread_of(owner.get("node"), target)?;
     let replied = api
         .graphql(REPLY_MUTATION, json!({ "id": thread_id, "body": body }))
         .await?;
@@ -92,6 +76,40 @@ pub async fn reply(
         .and_then(|node| conversation::comment(node, MediaScope::PRIVATE))
         .map(|comment| CommentResult { comment })
         .ok_or_else(|| PluginError::internal("GitHub returned no comment"))
+}
+
+/// A GraphQL node id: 1..=256 printable ASCII characters.
+pub(crate) fn require_thread_id(thread_id: &str) -> Result<(), PluginError> {
+    if thread_id.is_empty()
+        || thread_id.chars().count() > MAX_THREAD_ID_CHARS
+        || !thread_id.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        return Err(PluginError::invalid_params("invalid threadId"));
+    }
+    Ok(())
+}
+
+/// A thread `node` read with `pullRequest { number repository { nameWithOwner } }`
+/// belongs to the addressed pull request; any other thread, or no thread,
+/// is not found.
+pub(crate) fn require_thread_of(
+    node: Option<&Value>,
+    target: &PullTarget,
+) -> Result<(), PluginError> {
+    let pull = node.and_then(|node| node.get("pullRequest"));
+    let belongs = pull
+        .and_then(|pull| pull.get("number"))
+        .and_then(Value::as_u64)
+        == Some(target.number)
+        && pull
+            .and_then(|pull| pull.pointer("/repository/nameWithOwner"))
+            .and_then(Value::as_str)
+            .is_some_and(|name| name.eq_ignore_ascii_case(&target.repo.full()));
+    if belongs {
+        Ok(())
+    } else {
+        Err(PluginError::new(code::NOT_FOUND, "Not found on GitHub"))
+    }
 }
 
 fn require_body(body: &str) -> Result<(), PluginError> {

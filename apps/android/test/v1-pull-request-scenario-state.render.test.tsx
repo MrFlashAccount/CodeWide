@@ -1,21 +1,8 @@
 import { useSelector } from "@legendapp/state/react";
-import {
-  act,
-  fireEvent,
-  render,
-  renderHook,
-  screen,
-  waitFor,
-} from "@testing-library/react-native";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react-native";
 
-import {
-  parseActionCatalog,
-  type ActionDescriptor,
-} from "../src/data/forgeActionCatalog";
-import {
-  headRevision,
-  parsePullRequestKeyParam,
-} from "../src/data/forgeContract";
+import { parseActionCatalog, type ActionDescriptor } from "../src/data/forgeActionCatalog";
+import { headRevision, parsePullRequestKeyParam } from "../src/data/forgeContract";
 import { parsePullRequestScenarios } from "../src/data/forgeScenarioContract";
 import { threadId, type ThreadId } from "../src/data/reviewContract";
 import { CatalogActionButton } from "../src/features/pullRequestDetail/actions/CatalogActionButton";
@@ -91,9 +78,7 @@ function action(actionId: string): ActionDescriptor {
 /** Views from one `scenarios/read` result naming only the review slot. */
 function reviewViews(state: Record<string, unknown>): ScenarioViews {
   const parsed = parsePullRequestScenarios({
-    scenarios: [
-      { checkId: null, reviewThreadId: null, scenario: "reviewPr", state },
-    ],
+    scenarios: [{ checkId: null, reviewThreadId: null, scenario: "reviewPr", state }],
   });
   if (parsed === null) {
     throw new Error("the scenarios fixture must parse");
@@ -110,13 +95,13 @@ function reviewLabel(views: ScenarioViews): string | undefined {
 type Start = PullRequestDetailWorkspaceCapabilities["startScenario"];
 
 function renderActions(startScenario: Start, views: ScenarioViews) {
-  const refused = async () =>
-    Promise.reject(new Error("not part of this test"));
+  const refused = async () => Promise.reject(new Error("not part of this test"));
   const capabilities: PullRequestDetailWorkspaceCapabilities = {
     createComment: refused,
     ensureReviewChat: refused,
     markAttentionSeen: refused,
     replyToReviewThread: refused,
+    resolveReviewThread: refused,
     runAction: refused,
     setLink: refused,
     setViewed: refused,
@@ -134,8 +119,7 @@ function renderActions(startScenario: Start, views: ScenarioViews) {
     usePullRequestActions({
       capabilities,
       model,
-      onChooseWorkspace: async () =>
-        Promise.reject(new Error("a live chat needs no choice")),
+      onChooseWorkspace: async () => Promise.reject(new Error("a live chat needs no choice")),
       onOpenThread,
       onRefresh: () => undefined,
       scenarioViews: views,
@@ -312,9 +296,7 @@ it("shimmers and disables the tapped button at once and sends one request for a 
   await waitFor(() => {
     expect(model.pending.get()).toEqual({});
   });
-  expect(
-    screen.getByTestId(`catalog-action-${REVIEW}`).props.accessibilityState,
-  ).toEqual({
+  expect(screen.getByTestId(`catalog-action-${REVIEW}`).props.accessibilityState).toEqual({
     busy: false,
     disabled: false,
   });

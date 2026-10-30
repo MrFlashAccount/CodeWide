@@ -1,7 +1,7 @@
 /**
  * Validated client view of a pull request's conversation
  * (`companion/pullRequest/conversation/read`) and of the two conversation
- * writes (`comment/create`, `reviewThread/reply`). Bodies are untrusted forge
+ * writes (`comment/create`, `reviewThread/reply`, `reviewThread/resolve`). Bodies are untrusted forge
  * Markdown: they reach only the safe renderer and are never logged.
  *
  * Comment and thread ids are both opaque provider strings; they are branded
@@ -125,7 +125,12 @@ export type IssueState = (typeof ISSUE_STATES)[number];
 /** Whether, and how, a review thread is settled. */
 type ThreadResolution =
   | { readonly kind: "none" }
-  | { readonly kind: "conversation"; readonly resolved: boolean }
+  | {
+      readonly kind: "conversation";
+      readonly resolved: boolean;
+      /** The viewer may flip `resolved`: resolve while unresolved, unresolve while resolved. */
+      readonly viewerCanToggle: boolean;
+    }
   | {
       readonly changedAt: string | null;
       /** Who last changed the state, if the forge knows. */
@@ -137,10 +142,28 @@ type ThreadResolution =
 /** The forge iteration (revision of the pull request) a thread was written on. */
 type ConversationIteration = { readonly id: string; readonly number: number };
 
+/** One line of a thread's code excerpt, numbered on the side(s) of the diff it belongs to. */
+export type ExcerptLine =
+  | {
+      readonly kind: "context";
+      readonly newLine: number;
+      readonly oldLine: number;
+      readonly text: string;
+    }
+  | { readonly kind: "added"; readonly newLine: number; readonly text: string }
+  | { readonly kind: "removed"; readonly oldLine: number; readonly text: string };
+
+/** The diff lines around a thread's anchor, top to bottom; the last line is the anchored one. */
+export type CodeExcerpt = {
+  readonly lines: readonly [ExcerptLine, ...ExcerptLine[]];
+};
+
 /** A review thread with its comments oldest first. */
 export type ConversationReviewThread = {
   readonly anchor: ThreadAnchor;
   readonly comments: readonly [ConversationComment, ...ConversationComment[]];
+  /** The code the thread is about, when the forge knows it. */
+  readonly excerpt: CodeExcerpt | null;
   readonly id: ReviewThreadId;
   readonly iteration: ConversationIteration | null;
   /** The anchored code changed since the thread started. */
@@ -154,6 +177,24 @@ export type ConversationReviewThread = {
 const EVENT_CATEGORIES = ["push", "state", "ci", "other"] as const;
 /** What a timeline event is about. */
 export type EventCategory = (typeof EVENT_CATEGORIES)[number];
+
+/** One commit of a push event. */
+export type EventCommit = {
+  readonly authorLogin: string | null;
+  /** The full commit id. */
+  readonly sha: string;
+  /** The forge's abbreviated id, if it sends one. */
+  readonly shortSha: string | null;
+  /** The first line of the commit message. */
+  readonly title: string;
+};
+
+/** The commits of one push: the first ones, oldest first, and how many the push had in all. */
+export type EventCommits = {
+  readonly items: readonly [EventCommit, ...EventCommit[]];
+  /** At least `items.length`. */
+  readonly total: number;
+};
 
 /** One conversation entry, ordered by its own creation time. */
 export type ConversationEntry =
@@ -171,6 +212,8 @@ export type ConversationEntry =
   | {
       readonly author: ConversationAuthor | null;
       readonly category: EventCategory;
+      /** The commits of a push event; `null` for every other event. */
+      readonly commits: EventCommits | null;
       readonly createdAt: string;
       readonly id: string;
       readonly kind: "event";
@@ -255,7 +298,14 @@ function resolution(value: unknown, path: string): ThreadResolution {
     return { kind };
   }
   if (kind === "conversation") {
-    return { kind, resolved: flag(entry.resolved, `${path}.resolved`) };
+    return {
+      kind,
+      resolved: flag(entry.resolved, `${path}.resolved`),
+      viewerCanToggle:
+        entry.viewerCanToggle === undefined
+          ? false
+          : flag(entry.viewerCanToggle, `${path}.viewerCanToggle`),
+    };
   }
   return {
     changedAt: optionalText(entry.changedAt, `${path}.changedAt`),
@@ -335,11 +385,49 @@ function threadComments(
   return [first, ...rest];
 }
 
+/** The most lines an excerpt carries. */
+const MAX_EXCERPT_LINES = 8;
+
+function excerptLine(value: unknown, path: string): ExcerptLine {
+  const entry = record(value, path);
+  const kind = oneOf(entry.kind, ["context", "added", "removed"], `${path}.kind`);
+  const lineText = text(entry.text, `${path}.text`);
+  if (lineText.includes("\n") || lineText.includes("\r")) {
+    throw new ForgeWireError(`${path}.text`);
+  }
+  if (kind === "added") {
+    return { kind, newLine: positive(entry.newLine, `${path}.newLine`), text: lineText };
+  }
+  if (kind === "removed") {
+    return { kind, oldLine: positive(entry.oldLine, `${path}.oldLine`), text: lineText };
+  }
+  return {
+    kind,
+    newLine: positive(entry.newLine, `${path}.newLine`),
+    oldLine: positive(entry.oldLine, `${path}.oldLine`),
+    text: lineText,
+  };
+}
+
+/** Decodes the optional excerpt: absent or `null` is none; 1 to 8 lines otherwise. */
+function excerpt(value: unknown, path: string): CodeExcerpt | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const entry = record(value, path);
+  const [first, ...rest] = list(entry.lines, `${path}.lines`, excerptLine);
+  if (first === undefined || rest.length + 1 > MAX_EXCERPT_LINES) {
+    throw new ForgeWireError(`${path}.lines`);
+  }
+  return { lines: [first, ...rest] };
+}
+
 function reviewThread(value: unknown, path: string): ConversationReviewThread {
   const entry = record(value, path);
   return {
     anchor: anchor(entry.anchor, `${path}.anchor`),
     comments: threadComments(entry.comments, `${path}.comments`),
+    excerpt: excerpt(entry.excerpt, `${path}.excerpt`),
     id: reviewThreadId(entry.id, `${path}.id`),
     iteration: iteration(entry.iteration, `${path}.iteration`),
     outdated: flag(entry.outdated, `${path}.outdated`),
@@ -361,10 +449,42 @@ function review(entry: Record<string, unknown>, path: string): ConversationEntry
   };
 }
 
+/** The most commits one push event lists. */
+const MAX_EVENT_COMMITS = 20;
+
+function optionalField(value: unknown, path: string): string | null {
+  return value === undefined ? null : optionalText(value, path);
+}
+
+function eventCommit(value: unknown, path: string): EventCommit {
+  const entry = record(value, path);
+  return {
+    authorLogin: optionalField(entry.authorLogin, `${path}.authorLogin`),
+    sha: nonEmptyText(entry.sha, `${path}.sha`),
+    shortSha: optionalField(entry.shortSha, `${path}.shortSha`),
+    title: text(entry.title, `${path}.title`),
+  };
+}
+
+/** Decodes a push's commits: absent or `null` is none; 1 to 20 items and a total at least as large. */
+function eventCommits(value: unknown, path: string): EventCommits | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const entry = record(value, path);
+  const [first, ...rest] = list(entry.items, `${path}.items`, eventCommit);
+  const total = count(entry.total, `${path}.total`);
+  if (first === undefined || rest.length + 1 > MAX_EVENT_COMMITS || total < rest.length + 1) {
+    throw new ForgeWireError(`${path}.items`);
+  }
+  return { items: [first, ...rest], total };
+}
+
 function timelineEvent(entry: Record<string, unknown>, path: string): ConversationEntry {
   return {
     author: entry.author === null ? null : author(entry.author, `${path}.author`),
     category: oneOf(entry.category, EVENT_CATEGORIES, `${path}.category`),
+    commits: eventCommits(entry.commits, `${path}.commits`),
     createdAt: nonEmptyText(entry.createdAt, `${path}.createdAt`),
     id: nonEmptyText(entry.id, `${path}.id`),
     kind: "event",
@@ -405,4 +525,21 @@ export function parseConversationPage(value: unknown): ConversationPage | null {
 /** Parses the acknowledged `{ comment }` of `comment/create` and `reviewThread/reply`. */
 export function parseConversationWrite(value: unknown): ConversationComment | null {
   return decodeOrNull(() => comment(record(value, "result").comment, "comment"));
+}
+
+/** A thread's conversation resolution after `reviewThread/resolve`. */
+export type ThreadResolveResult = {
+  readonly resolved: boolean;
+  readonly viewerCanToggle: boolean;
+};
+
+/** Parses the acknowledged `{ resolved, viewerCanToggle }` of `reviewThread/resolve`. */
+export function parseThreadResolveWrite(value: unknown): ThreadResolveResult | null {
+  return decodeOrNull(() => {
+    const result = record(value, "result");
+    return {
+      resolved: flag(result.resolved, "resolved"),
+      viewerCanToggle: flag(result.viewerCanToggle, "viewerCanToggle"),
+    };
+  });
 }

@@ -85,7 +85,6 @@ function renderPullRequestRow() {
     view: render(
       <PullRequestRow
         icon={null}
-        isThreadUnread={() => false}
         nowMs={Date.parse(row.updatedAt) + 60_000}
         onPress={() => undefined}
         row={row}

@@ -4,7 +4,6 @@ import { Pressable, View } from "react-native";
 
 import type { ProviderIcon } from "../../../data/forgeProviderIcon";
 import type { PullRequestRow as Row } from "../../../data/forgePullRequestContract";
-import type { ThreadUnreadReader } from "../../../data/project-unread-model";
 import { displayedPullRequestAttention } from "../../../data/pullRequestAttention";
 import { useEvent } from "../../../react/useEvent";
 import { colors, iconSize } from "../../../theme";
@@ -40,9 +39,10 @@ const DOT_STYLES = {
 } as const;
 
 /** An undisplayed Companion attention revision uses the catalog's unread marker. */
-const NEW_ACTIVITY: CatalogRowMarker = { kind: "unread", label: "New activity" };
-/** An unread canonical review chat: the agent replied since the chat was last read. */
-const AGENT_REPLIED: CatalogRowMarker = { kind: "agentReply", label: "Agent replied" };
+const NEW_ACTIVITY_MARKERS: readonly CatalogRowMarker[] = [
+  { kind: "unread", label: "New activity" },
+];
+const NO_MARKERS: readonly CatalogRowMarker[] = [];
 
 /**
  * One PR in one read (Q1): check glyph, title, repo/number/author/you, at most
@@ -51,14 +51,11 @@ const AGENT_REPLIED: CatalogRowMarker = { kind: "agentReply", label: "Agent repl
  */
 export function PullRequestRow({
   icon,
-  isThreadUnread,
   nowMs,
   onPress,
   row,
 }: {
   readonly icon: ProviderIcon | null;
-  /** Unread state of the catalog's chats, read inside the row's selector. */
-  readonly isThreadUnread: ThreadUnreadReader;
   readonly nowMs: number;
   readonly onPress: (row: Row) => void;
   readonly row: Row;
@@ -70,8 +67,6 @@ export function PullRequestRow({
       attentionRevision !== null &&
       displayedPullRequestAttention[row.pullRequest]?.get() === attentionRevision,
   );
-  const reviewThreadId = row.reviewThreadId;
-  const agentReplied = useSelector(() => reviewThreadId !== null && isThreadUnread(reviewThreadId));
   const handlePress = useEvent((): void => {
     onPress(row);
   });
@@ -91,21 +86,13 @@ export function PullRequestRow({
           age={compactAge(row.updatedAt, nowMs)}
           glyph={glyph}
           icon={icon}
-          markers={rowMarkers(row.attention.state === "new" && !displayed, agentReplied)}
+          markers={row.attention.state === "new" && !displayed ? NEW_ACTIVITY_MARKERS : NO_MARKERS}
           title={row.title}
         />
         <SubtitleLine row={row} />
       </CatalogRowBody>
     </Pressable>
   );
-}
-
-/** Forge activity and an agent reply are independent; both may show at once. */
-function rowMarkers(newActivity: boolean, agentReplied: boolean): readonly CatalogRowMarker[] {
-  if (newActivity) {
-    return agentReplied ? [AGENT_REPLIED, NEW_ACTIVITY] : [NEW_ACTIVITY];
-  }
-  return agentReplied ? [AGENT_REPLIED] : [];
 }
 
 function TitleLine({

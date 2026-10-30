@@ -1,6 +1,10 @@
 import type { ConfirmLevel } from "../../data/forgeActionCatalog";
 import type { AttentionRevision, HeadRevision, PullRequestKey } from "../../data/forgeContract";
-import type { ConversationComment, ReviewThreadId } from "../../data/forgeConversationContract";
+import type {
+  ConversationComment,
+  ReviewThreadId,
+  ThreadResolveResult,
+} from "../../data/forgeConversationContract";
 import type {
   ActionRunResult,
   ReviewChatOpening,
@@ -70,6 +74,15 @@ export type PullRequestDetailWorkspaceCapabilities = {
       readonly threadId: ReviewThreadId;
     },
   ) => Promise<ConversationComment>;
+  /** Resolves or unresolves one review conversation immediately (`forge.conversation.resolve@1`). */
+  readonly resolveReviewThread: (
+    target: Omit<PullRequestTarget, "headRevision">,
+    request: {
+      readonly idempotencyKey: string;
+      readonly resolved: boolean;
+      readonly threadId: ReviewThreadId;
+    },
+  ) => Promise<ThreadResolveResult>;
   readonly runAction: (
     target: PullRequestTarget,
     request: {

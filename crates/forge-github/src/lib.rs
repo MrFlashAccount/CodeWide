@@ -20,13 +20,16 @@ pub mod comments;
 pub mod content;
 pub mod conversation;
 pub mod credentials;
+pub mod excerpt;
 pub mod files;
 pub mod gh;
 pub mod login_flow;
 pub mod media;
 pub mod pull;
 pub mod pulls;
+pub mod pushes;
 pub mod repo;
+pub mod resolution;
 pub mod review;
 pub mod scenario;
 pub mod secrets;
@@ -38,8 +41,8 @@ use forge_protocol::{
     ByBranchParams, ChecksParams, CommentCreateParams, ConversationParams, FileContentParams,
     FilesParams, ForgeAccountRef, ForgePlugin, InitializeParams, InitializeResult, ListParams,
     MediaReadParams, PROTOCOL_VERSION, PluginError, PluginIcon, PullRequestParams, ResolveParams,
-    ResolveResult, ReviewSubmitParams, ReviewThreadReplyParams, ScenarioContextParams,
-    ViewedSetParams, capability, code, methods,
+    ResolveResult, ReviewSubmitParams, ReviewThreadReplyParams, ReviewThreadResolveParams,
+    ScenarioContextParams, ViewedSetParams, capability, code, methods,
     plugin::{from_params, to_result},
 };
 use serde_json::{Value, json};
@@ -150,6 +153,7 @@ impl GithubPlugin {
                 capability::SCENARIO_CONTEXT.into(),
                 capability::CONVERSATION.into(),
                 capability::COMMENTS.into(),
+                capability::RESOLVE_CONVERSATION.into(),
                 capability::FILE_CONTENT.into(),
             ],
             media_hosts: media::GITHUB_MEDIA_HOSTS
@@ -377,7 +381,8 @@ impl GithubPlugin {
         }
     }
 
-    /// `forge.conversation@1` reads and `forge.comments@1` writes.
+    /// `forge.conversation@1` reads, `forge.comments@1` writes and
+    /// `forge.conversation.resolve@1`.
     async fn dispatch_conversation(
         &mut self,
         method: &str,
@@ -400,6 +405,13 @@ impl GithubPlugin {
                 let params: ReviewThreadReplyParams = from_params(params)?;
                 let (api, target) = self.pull_request(&params.account, &params.pr_ref).await?;
                 to_result(&comments::reply(&api, &target, &params.thread_id, &params.body).await?)
+            }
+            methods::PULL_REQUEST_REVIEW_THREAD_RESOLVE => {
+                let params: ReviewThreadResolveParams = from_params(params)?;
+                let (api, target) = self.pull_request(&params.account, &params.pr_ref).await?;
+                to_result(
+                    &resolution::resolve(&api, &target, &params.thread_id, params.resolved).await?,
+                )
             }
             _ => Err(PluginError::new(
                 code::METHOD_NOT_FOUND,

@@ -9,7 +9,6 @@ import type {
   PullRequestRow as Row,
 } from "../../../data/forgePullRequestContract";
 import { remoteValue, type RemoteValue } from "../../../data/forgeRemoteValue";
-import type { ThreadUnreadReader } from "../../../data/project-unread-model";
 import { useCatalogSearchPullGesture } from "../../../presentation/input/catalogSearchPullModel";
 import { CatalogSearchPullProvider } from "../../../presentation/input/CatalogSearchPullProvider";
 import { CatalogSearchPullBackdrop } from "../../../presentation/input/CatalogSearchPullBackdrop";
@@ -35,8 +34,6 @@ export function PullRequestList(props: {
   readonly filter: PullRequestSearchFilter;
   /** Provider mark of an account's plugin, from the accounts snapshot. */
   readonly iconFor: (pluginId: string) => ProviderIcon | null;
-  /** Unread state of the connection's chats, for the agent-reply marker. */
-  readonly isThreadUnread: ThreadUnreadReader;
   readonly nowMs: number;
   readonly onEndReached: () => void;
   readonly onOpen: (row: Row) => void;
@@ -210,7 +207,6 @@ function PullRequestRows({
       renderItem={({ item }) => (
         <PullRequestListItemView
           iconFor={props.iconFor}
-          isThreadUnread={props.isThreadUnread}
           item={item}
           nowMs={props.nowMs}
           onOpen={props.onOpen}

@@ -11,14 +11,21 @@ import { createIdempotencyKeys } from "../actions/idempotencyKeys";
 import { alertOfflineWrite } from "../actions/offlineRefusal";
 import type { PullRequestDetailWorkspaceCapabilities } from "../workspaceCapabilities";
 
-/** The two conversation writes, bound to one mounted PR screen. */
+/** How a resolve or unresolve ended: the forge's resolution, a local refusal or the real failure. */
+export type ThreadResolveOutcome =
+  | { readonly message: string; readonly status: "failed" }
+  | { readonly status: "refused" }
+  | { readonly resolved: boolean; readonly status: "settled" };
+
+/** The conversation writes, bound to one mounted PR screen. */
 export type ConversationWrites = {
   readonly comment: (markdown: string) => Promise<MessageSendResult>;
   readonly reply: (threadId: ReviewThreadId, markdown: string) => Promise<MessageSendResult>;
+  readonly resolve: (threadId: ReviewThreadId, resolved: boolean) => Promise<ThreadResolveOutcome>;
 };
 
 /**
- * Publishes a top-level comment or a thread reply immediately, as on the forge.
+ * Publishes a top-level comment, a thread reply or a conversation resolution immediately, as on the forge.
  * Offline, the write is refused locally with the shared dialog and nothing is
  * queued. Each intent keeps its idempotency key only across a transport
  * failure; any companion answer, `outcomeUnknown` included, retires it. The
@@ -32,30 +39,41 @@ export function useConversationWrites({
 }: {
   readonly capabilities: Pick<
     PullRequestDetailWorkspaceCapabilities,
-    "createComment" | "replyToReviewThread"
+    "createComment" | "replyToReviewThread" | "resolveReviewThread"
   >;
   readonly offline: boolean;
   readonly params: OverviewParams;
 }): ConversationWrites {
   const dialog = useAppDialog();
   const keys = useConstant(() => createIdempotencyKeys(randomUUID));
-  const write = async (
+  const run = async <Value>(
     intent: string,
-    publish: (idempotencyKey: string) => Promise<unknown>,
-  ): Promise<MessageSendResult> => {
+    publish: (idempotencyKey: string) => Promise<Value>,
+  ): Promise<
+    | { readonly message: string; readonly status: "failed" }
+    | { readonly status: "refused" }
+    | { readonly status: "done"; readonly value: Value }
+  > => {
     if (offline) {
       alertOfflineWrite(dialog);
       return { status: "refused" };
     }
     try {
-      await publish(keys.keyFor(intent));
+      const value = await publish(keys.keyFor(intent));
       keys.settle(intent, null);
-      return { status: "sent" };
+      return { status: "done", value };
     } catch (error) {
       const failure = classifyForgeError(error);
       keys.settle(intent, failure);
       return { message: failure.message, status: "failed" };
     }
+  };
+  const write = async (
+    intent: string,
+    publish: (idempotencyKey: string) => Promise<unknown>,
+  ): Promise<MessageSendResult> => {
+    const outcome = await run(intent, publish);
+    return outcome.status === "done" ? { status: "sent" } : outcome;
   };
   const comment = useEvent(async (markdown: string) =>
     write(`comment\u0000${markdown}`, async (idempotencyKey) =>
@@ -71,5 +89,17 @@ export function useConversationWrites({
       }),
     ),
   );
-  return { comment, reply };
+  const resolve = useEvent(
+    async (threadId: ReviewThreadId, resolved: boolean): Promise<ThreadResolveOutcome> => {
+      const outcome = await run(
+        `resolve:${threadId}\u0000${String(resolved)}`,
+        async (idempotencyKey) =>
+          capabilities.resolveReviewThread(params, { idempotencyKey, resolved, threadId }),
+      );
+      return outcome.status === "done"
+        ? { resolved: outcome.value.resolved, status: "settled" }
+        : outcome;
+    },
+  );
+  return { comment, reply, resolve };
 }

@@ -8,18 +8,24 @@ import type {
   PullRequestOverview,
   PullRequestRow,
 } from "../../../data/forgePullRequestContract";
-import { spacing } from "../../../theme";
+import { useConstant } from "../../../react/useConstant";
+import { controlSize, spacing } from "../../../theme";
 import type { ActionSlots } from "../actions/actionSlotting";
 import { ConversationSection } from "../conversation/ConversationSection";
-import type { RevealTarget } from "../conversation/discussionNavigator";
+import { projectDiscussion, type Discussion } from "../conversation/discussionModel";
+import {
+  createDiscussionNavigator,
+  type DiscussionNavigator,
+} from "../conversation/discussionNavigator";
 import type { ConversationWrites } from "../conversation/useConversationWrites";
 import type { PullRequestConversation } from "../conversation/usePullRequestConversation";
 import type { ActionNotice, ChangesView } from "../pullRequestScreenModel";
+import { SectionBand } from "../sections/SectionBand";
+import { StatusSection } from "../sections/StatusSection";
 import { ActionNoticeBanner } from "./ActionNoticeBanner";
 import { ActionRow } from "./ActionRow";
 import { ActivitySection } from "./ActivitySection";
 import { DescriptionSection } from "./DescriptionSection";
-import { MergeBox } from "./MergeBox";
 import { ReviewLinks } from "./ReviewLinks";
 import { StatusHeader } from "./StatusHeader";
 
@@ -54,34 +60,77 @@ export type OverviewTabProps = {
 const READING_MAX_WIDTH = 760;
 
 /**
- * Details is one reading column at every width: status and actions, the
- * collapsed merge readiness line (details in its sheet), then the description
- * and the conversation (or, without `forge.conversation@1`, the activity list).
+ * Details is one reading column at every width: the PR's status and actions,
+ * the description, then full-width banded sections: Changes (Files changed
+ * and the review guide), Status (issues, reviews, checks and the merge
+ * state) and the Conversation (or, without `forge.conversation@1`, the
+ * activity list). The page owns the conversation's projection and the
+ * thread navigator, so the Issues row can reveal a thread below it.
  */
 export function OverviewTab(props: OverviewTabProps): React.JSX.Element {
   const scroll = useRef<ScrollView>(null);
   const content = useRef<View>(null);
+  const navigator = useConstant(() =>
+    createDiscussionNavigator({ content, contentOffset: PAGE_TOP, scroll }),
+  );
+  const discussion =
+    props.conversation.status === "ready" ? projectDiscussion(props.conversation.page) : null;
   return (
     <ScrollView contentContainerStyle={styles.content} ref={scroll} testID="pull-request-overview">
       <View ref={content} style={styles.page}>
         <WorkHeader {...props} />
-        <DescriptionSection description={props.overview.description} />
-        <Activity {...props} revealTarget={{ content, contentOffset: PAGE_INSET, scroll }} />
+        <Description description={props.overview.description} />
+        <ChangesSection {...props} />
+        <StatusSection
+          addressing={props.addressing}
+          discussion={discussion}
+          host={props.host}
+          nowMs={props.nowMs}
+          onAddressThread={props.onAddressThread}
+          onReveal={navigator.reveal}
+          onRun={props.onRun}
+          overview={props.overview}
+          pending={props.pending}
+          pendingToggles={props.pendingToggles}
+          slots={props.slots}
+        />
+        <Activity {...props} discussion={discussion} navigator={navigator} />
       </View>
     </ScrollView>
   );
 }
 
-/** Status, the review entries, the action row, its notices and the merge readiness line. */
-function WorkHeader(props: OverviewTabProps): React.JSX.Element {
+/** The description under the header, inset like it; nothing when the PR has none. */
+function Description({ description }: { readonly description: string }): React.JSX.Element | null {
+  if (description.trim().length === 0) {
+    return null;
+  }
   return (
-    <View style={styles.header}>
-      <StatusHeader listRow={props.listRow} nowMs={props.nowMs} overview={props.overview} />
+    <View style={[styles.inset, styles.lead]}>
+      <DescriptionSection description={description} />
+    </View>
+  );
+}
+
+/** The Changes band and its rows into Files changed and the review guide. */
+function ChangesSection(props: OverviewTabProps): React.JSX.Element {
+  return (
+    <View>
+      <SectionBand testID="pull-request-changes-band" title="Changes" />
       <ReviewLinks
         draftCount={props.draftCount}
         onOpen={props.onOpenChanges}
         stats={props.overview.stats}
       />
+    </View>
+  );
+}
+
+/** Status, the action row and its notices. */
+function WorkHeader(props: OverviewTabProps): React.JSX.Element {
+  return (
+    <View style={[styles.inset, styles.header, styles.lead]}>
+      <StatusHeader listRow={props.listRow} nowMs={props.nowMs} overview={props.overview} />
       <ActionRow
         onLayoutWidth={props.onActionRowWidth}
         onRun={(action) => {
@@ -91,20 +140,15 @@ function WorkHeader(props: OverviewTabProps): React.JSX.Element {
         slots={props.slots}
       />
       <ActionNoticeBanner host={props.host} notice={props.notice} />
-      <MergeBox
-        host={props.host}
-        onRun={props.onRun}
-        overview={props.overview}
-        pending={props.pending}
-        pendingToggles={props.pendingToggles}
-        slots={props.slots}
-      />
     </View>
   );
 }
 
 function Activity(
-  props: OverviewTabProps & { readonly revealTarget: RevealTarget },
+  props: OverviewTabProps & {
+    readonly discussion: Discussion | null;
+    readonly navigator: DiscussionNavigator;
+  },
 ): React.JSX.Element {
   const runAnchored = (action: ActionDescriptor): void => {
     props.onRun(action, null);
@@ -115,41 +159,59 @@ function Activity(
         addressing={props.addressing}
         anchored={props.slots.anchored.reviewThreads}
         conversation={props.conversation}
+        discussion={props.discussion}
+        navigator={props.navigator}
         nowMs={props.nowMs}
         onAddressThread={props.onAddressThread}
         onRun={runAnchored}
         pending={props.pending}
-        revealTarget={props.revealTarget}
         writes={props.writes}
       />
     );
   }
   return (
-    <ActivitySection
-      anchored={props.slots.anchored.reviewThreads}
-      items={props.activity}
-      nowMs={props.nowMs}
-      onLoadMore={props.onLoadMoreActivity}
-      onRun={runAnchored}
-      pending={props.pending}
-    />
+    <View style={[styles.inset, styles.activity]}>
+      <ActivitySection
+        anchored={props.slots.anchored.reviewThreads}
+        items={props.activity}
+        nowMs={props.nowMs}
+        onLoadMore={props.onLoadMoreActivity}
+        onRun={runAnchored}
+        pending={props.pending}
+      />
+    </View>
   );
 }
 
-/** The page's inset inside the scroll view; a revealed thread is measured from the page. */
-const PAGE_INSET = spacing.md;
+/** Where the page starts inside the scroll view; a revealed thread is measured from the page. */
+const PAGE_TOP = spacing.md;
+
+/**
+ * Space below the last entry for the floating Comment and linked-chat buttons
+ * (48dp, 24dp above the edge) and a step of air, so nothing stays covered.
+ */
+const FLOATING_ACTIONS_CLEARANCE = spacing.lg + controlSize.touch + spacing.md;
 
 const styles = StyleSheet.create({
+  activity: {
+    paddingTop: spacing.lg,
+  },
   content: {
-    padding: PAGE_INSET,
-    paddingBottom: spacing.xl + spacing.lg,
+    paddingBottom: FLOATING_ACTIONS_CLEARANCE,
+    paddingTop: PAGE_TOP,
   },
   header: {
     gap: spacing.sm,
   },
+  inset: {
+    paddingHorizontal: spacing.md,
+  },
+  // Space under the lead content; the banded sections below sit flush on each other.
+  lead: {
+    paddingBottom: spacing.lg,
+  },
   page: {
     alignSelf: "center",
-    gap: spacing.lg,
     maxWidth: READING_MAX_WIDTH,
     width: "100%",
   },

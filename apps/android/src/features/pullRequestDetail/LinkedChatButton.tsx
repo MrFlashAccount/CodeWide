@@ -4,10 +4,11 @@ import { Pressable, StyleSheet, View } from "react-native";
 
 import type { ThreadUnreadReader } from "../../data/project-unread-model";
 import type { ThreadId } from "../../data/reviewContract";
-import { colors, controlSize, iconSize, radii, spacing } from "../../theme";
+import { colors, controlSize, iconSize, radii } from "../../theme";
 
 /**
  * Opens the PR's canonical ordinary conversation; the route owns its panel.
+ * The screen places it among its floating actions.
  * A dot marks agent replies the user has not read in that chat yet.
  */
 export function LinkedChatButton({
@@ -50,11 +51,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.primary,
     borderRadius: radii.pill,
-    bottom: spacing.lg,
     height: controlSize.touch,
     justifyContent: "center",
-    position: "absolute",
-    right: spacing.md,
     width: controlSize.touch,
   },
   chatButtonMuted: {

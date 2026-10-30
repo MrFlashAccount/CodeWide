@@ -2,9 +2,11 @@ import { randomUUID } from "expo-crypto";
 
 import {
   parseConversationWrite,
+  parseThreadResolveWrite,
   type ConversationComment,
   type ConversationPage,
   type ReviewThreadId,
+  type ThreadResolveResult,
 } from "../../data/forgeConversationContract";
 import { requireParsed, type ForgeResources } from "../../data/forgeResources";
 import {
@@ -60,6 +62,32 @@ function appendReply(
             thread: {
               ...entry.thread,
               comments: [...entry.thread.comments, reply],
+            },
+          }
+        : entry,
+    ),
+  };
+}
+
+/** Sets an acknowledged conversation resolution on its thread; other entries keep their identity. */
+function setResolution(
+  page: ConversationPage,
+  threadId: ReviewThreadId,
+  result: ThreadResolveResult,
+): ConversationPage {
+  return {
+    ...page,
+    entries: page.entries.map((entry) =>
+      entry.kind === "reviewThread" && entry.thread.id === threadId
+        ? {
+            kind: "reviewThread",
+            thread: {
+              ...entry.thread,
+              resolution: {
+                kind: "conversation",
+                resolved: result.resolved,
+                viewerCanToggle: result.viewerCanToggle,
+              },
             },
           }
         : entry,
@@ -167,6 +195,29 @@ export function createPullRequestDetailWorkspaceAdapter({
       );
       forge.conversation.patch(target, (page) => appendReply(page, request.threadId, reply));
       return reply;
+    },
+    async resolveReviewThread(target, request) {
+      const result = requireParsed(
+        await forge.mutations.execute(
+          {
+            connectionId: target.connectionId,
+            method: "companion/pullRequest/reviewThread/resolve",
+            operationId: request.idempotencyKey,
+            params: {
+              idempotencyKey: request.idempotencyKey,
+              pullRequest: target.pullRequest,
+              resolved: request.resolved,
+              threadId: request.threadId,
+            },
+            scope: `${target.connectionId}:pull-request:${target.pullRequest}`,
+          },
+          parseThreadResolveWrite,
+        ),
+        "resolution",
+      );
+      // Shown at once; the settled mutation also invalidates the page for the forge's own state.
+      forge.conversation.patch(target, (page) => setResolution(page, request.threadId, result));
+      return result;
     },
     async runAction(target, request) {
       const result = requireParsed(

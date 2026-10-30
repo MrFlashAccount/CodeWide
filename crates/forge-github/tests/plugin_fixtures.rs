@@ -53,6 +53,9 @@ struct FakeGithub {
     seen: Vec<(String, String)>,
     search_queries: Vec<String>,
     submitted_reviews: usize,
+    /// `PRRT_1`'s resolution, and every resolve mutation GitHub received.
+    thread_resolved: bool,
+    resolve_mutations: Vec<String>,
     /// The credentialed web origin, the anonymous media host and a foreign
     /// host, for redirects.
     web_base: String,
@@ -232,7 +235,15 @@ fn respond(
 fn conversation_graphql(state: &mut FakeGithub, query: &Value) -> Option<Response> {
     let json = |value: Value| axum::Json(value).into_response();
     let text = query["query"].as_str().unwrap_or_default();
-    let response = if text.contains("addPullRequestReviewThreadReply") {
+    let thread_state = |resolved: bool| json!({"isResolved": resolved, "viewerCanResolve": !resolved, "viewerCanUnresolve": resolved});
+    let response = if let Some(mutation) = ["unresolveReviewThread", "resolveReviewThread"]
+        .into_iter()
+        .find(|mutation| text.contains(&format!("{mutation}(")))
+    {
+        state.resolve_mutations.push(mutation.to_owned());
+        state.thread_resolved = mutation == "resolveReviewThread";
+        json(json!({"data": {mutation: {"thread": thread_state(state.thread_resolved)}}}))
+    } else if text.contains("addPullRequestReviewThreadReply") {
         let reply = query
             .pointer("/variables/body")
             .and_then(Value::as_str)
@@ -247,10 +258,14 @@ fn conversation_graphql(state: &mut FakeGithub, query: &Value) -> Option<Respons
         } else {
             2
         };
-        json(
-            json!({"data": {"node": {"__typename": "PullRequestReviewThread",
-                    "pullRequest": {"number": number, "repository": {"nameWithOwner": "octo/repo"}}}}}),
-        )
+        let mut node = json!({"__typename": "PullRequestReviewThread",
+            "pullRequest": {"number": number, "repository": {"nameWithOwner": "octo/repo"}}});
+        if let (Some(node), Value::Object(fields)) =
+            (node.as_object_mut(), thread_state(state.thread_resolved))
+        {
+            node.extend(fields);
+        }
+        json(json!({"data": {"node": node}}))
     } else if text.contains("reviewThreads(") {
         json(json!({"data": {"repository": {"pullRequest": {
             "timelineItems": {"pageInfo": {"hasPreviousPage": false}, "edges": [
@@ -261,6 +276,8 @@ fn conversation_graphql(state: &mut FakeGithub, query: &Value) -> Option<Respons
             "reviewThreads": {"pageInfo": {"hasPreviousPage": false}, "edges": [
                 {"cursor": "r1", "node": {"id": "PRRT_1", "path": "src/a.rs", "line": 3, "startLine": null,
                     "diffSide": "RIGHT", "isResolved": false, "isOutdated": false, "viewerCanReply": true,
+                    "viewerCanResolve": true, "viewerCanUnresolve": false,
+                    "opening": {"nodes": [{"diffHunk": "@@ -1,2 +1,3 @@\n fn a() {}\n+fn b() {}\n fn c() {}"}]},
                     "comments": {"pageInfo": {"hasNextPage": false, "endCursor": null},
                         "nodes": [review_comment("PRRC_1", "Rename this", "PRR_1")]}}}
             ]}
@@ -1084,13 +1101,18 @@ async fn conversation_reads_and_comment_writes_reach_github() {
             "id": "PRRT_1",
             "anchor": {"kind": "line", "path": "src/a.rs", "line": 3, "startLine": null, "side": "new"},
             "outdated": false,
-            "resolution": {"kind": "conversation", "resolved": false},
+            "resolution": {"kind": "conversation", "resolved": false, "viewerCanToggle": true},
             "reviewId": "PRR_1",
             "iteration": null,
             "comments": [{"id": "PRRC_1", "author": {"login": "hubot", "kind": "user", "avatarUrl": null},
                           "createdAt": "2026-10-02T00:00:00Z", "updatedAt": null, "body": "Rename this",
                           "url": null, "reactions": []}],
-            "viewerCanReply": true
+            "viewerCanReply": true,
+            "excerpt": {"lines": [
+                {"kind": "context", "oldLine": 1, "newLine": 1, "text": "fn a() {}"},
+                {"kind": "added", "newLine": 2, "text": "fn b() {}"},
+                {"kind": "context", "oldLine": 2, "newLine": 3, "text": "fn c() {}"}
+            ]}
         })
     );
     assert_eq!(page["result"]["nextCursor"], Value::Null);
@@ -1142,6 +1164,52 @@ async fn conversation_reads_and_comment_writes_reach_github() {
     assert_eq!(
         harness.api.lock().expect("state").created_comments,
         ["Thanks!", "Done"]
+    );
+
+    for frame in harness.close().await {
+        assert!(!frame.contains(GH_TOKEN), "token leaked: {frame}");
+    }
+}
+
+#[tokio::test]
+async fn conversations_resolve_through_github_only_when_the_state_changes() {
+    let mut harness = linked_hubot().await;
+    let resolve = |thread: &str, resolved: bool, key: &str| json!({"account": account("hubot"), "ref": pull_ref(), "threadId": thread, "resolved": resolved, "idempotencyKey": key});
+    let resolved = harness
+        .call(
+            "forge.pullRequest.reviewThread.resolve",
+            resolve("PRRT_1", true, "k5"),
+        )
+        .await;
+    assert_eq!(
+        resolved["result"],
+        json!({"resolved": true, "viewerCanToggle": true})
+    );
+    let again = harness
+        .call(
+            "forge.pullRequest.reviewThread.resolve",
+            resolve("PRRT_1", true, "k6"),
+        )
+        .await;
+    assert_eq!(again["result"]["resolved"], true);
+    let reopened = harness
+        .call(
+            "forge.pullRequest.reviewThread.resolve",
+            resolve("PRRT_1", false, "k7"),
+        )
+        .await;
+    assert_eq!(reopened["result"]["resolved"], false);
+    let foreign = harness
+        .call(
+            "forge.pullRequest.reviewThread.resolve",
+            resolve("PRRT_other", true, "k8"),
+        )
+        .await;
+    assert_eq!(foreign["error"]["code"], -32_115);
+    assert_eq!(
+        harness.api.lock().expect("state").resolve_mutations,
+        ["resolveReviewThread", "unresolveReviewThread"],
+        "a thread already resolved and a foreign thread are not written"
     );
     for frame in harness.close().await {
         assert!(!frame.contains(GH_TOKEN), "token leaked: {frame}");

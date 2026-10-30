@@ -3,17 +3,19 @@ import { StyleSheet, View } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type { PullRequestOverview } from "../../../data/forgePullRequestContract";
-import { colors, radii, spacing } from "../../../theme";
+import { spacing } from "../../../theme";
 import { CatalogActionButton } from "../actions/CatalogActionButton";
 import type { ActionSlots } from "../actions/actionSlotting";
+import { StatusRow } from "../sections/StatusRow";
+import { STATUS_TEXT_INSET } from "../sections/statusLayout";
 import { AutoMergeRow } from "./AutoMergeRow";
-import { ChecksSheet } from "./ChecksSheet";
-import { mergeBox, type MergeBox as MergeBoxModel } from "./mergeBox";
-import { MergeBoxRow } from "./MergeBoxRow";
+import { mergeBox } from "./mergeBox";
 import { MergeMethodButton } from "./MergeMethodButton";
 import { mergeOptions, type MergeOption } from "./mergeOptions";
 
 type MergeBoxProps = {
+  /** Draws the inset hairline that separates the merge state from the Status row above. */
+  readonly divided: boolean;
   readonly host: string;
   readonly onRun: (action: ActionDescriptor, input: boolean | string | null) => void;
   readonly overview: PullRequestOverview;
@@ -22,94 +24,55 @@ type MergeBoxProps = {
   readonly slots: Pick<ActionSlots, "anchored" | "autoMerge" | "merge">;
 };
 
-type OpenBox = Extract<MergeBoxModel, { readonly kind: "open" }>;
-
 /**
- * The PR's merge box: checks (their details in a sheet), the merge state with
- * the actions anchored to a conflict, then the merge method and auto-merge.
- * Owns the chosen merge method and the checks sheet's visibility. A merged or
- * closed PR renders nothing.
+ * The last rows of the Status section for an open or draft PR: the merge
+ * state (with the actions anchored to a conflict below its reason), then the
+ * merge method button and auto-merge. Checks have their own Status row. Owns
+ * the chosen merge method. A merged or closed PR renders nothing.
  */
 export function MergeBox(props: MergeBoxProps): React.JSX.Element | null {
   const box = mergeBox(props.overview);
   if (box.kind === "settled") {
     return null;
   }
+  const conflict =
+    props.overview.merge.state === "conflicts" && props.slots.anchored.conflict.length > 0 ? (
+      <ConflictActions {...props} />
+    ) : undefined;
   return (
-    <View style={styles.box} testID="pull-request-merge-box">
-      <ChecksRow {...props} box={box} />
-      <MergeStateRow {...props} box={box} />
+    <View testID="pull-request-merge-box">
+      <StatusRow
+        detail={box.merge.detail}
+        detailTone="muted"
+        disclosure={{ kind: "fixed" }}
+        divided={props.divided}
+        testID="pull-request-merge-box-state"
+        title={box.merge.title}
+        tone={box.merge.tone}
+      >
+        {conflict}
+      </StatusRow>
       <MergeControls {...props} mergeable={box.mergeable} />
     </View>
   );
 }
 
-function ChecksRow({ box, ...props }: MergeBoxProps & { readonly box: OpenBox }) {
-  const [open, setOpen] = useState(false);
-  if (box.checks === null) {
-    return null;
-  }
-  const listed = props.overview.checkItems.length > 0;
+/** The catalog actions anchored to a merge conflict, below its reason. */
+function ConflictActions(props: MergeBoxProps): React.JSX.Element {
   return (
-    <>
-      <MergeBoxRow
-        first
-        onPress={
-          listed
-            ? () => {
-                setOpen(true);
-              }
-            : null
-        }
-        row={box.checks}
-        testID="pull-request-merge-box-checks"
-      />
-      {open ? (
-        <ChecksSheet
-          actionsFor={(checkId) => props.slots.anchored.checks.get(checkId) ?? []}
-          checks={props.overview.checkItems}
-          host={props.host}
-          onDismiss={() => {
-            setOpen(false);
+    <View style={styles.actions}>
+      {props.slots.anchored.conflict.map((action) => (
+        <CatalogActionButton
+          action={action}
+          key={action.actionId}
+          onPress={(selected) => {
+            props.onRun(selected, null);
           }}
-          onRun={(action) => {
-            props.onRun(action, null);
-          }}
-          pending={props.pending}
-          summary={box.checks.detail}
+          pending={props.pending[action.actionId] === true}
+          variant="compact"
         />
-      ) : null}
-    </>
-  );
-}
-
-function MergeStateRow({ box, ...props }: MergeBoxProps & { readonly box: OpenBox }) {
-  const conflictActions =
-    props.overview.merge.state === "conflicts" ? props.slots.anchored.conflict : [];
-  return (
-    <MergeBoxRow
-      actions={
-        conflictActions.length === 0 ? null : (
-          <View style={styles.actions}>
-            {conflictActions.map((action) => (
-              <CatalogActionButton
-                action={action}
-                key={action.actionId}
-                onPress={(selected) => {
-                  props.onRun(selected, null);
-                }}
-                pending={props.pending[action.actionId] === true}
-                variant="compact"
-              />
-            ))}
-          </View>
-        )
-      }
-      first={box.checks === null}
-      onPress={null}
-      row={box.merge}
-      testID="pull-request-merge-box-state"
-    />
+      ))}
+    </View>
   );
 }
 
@@ -202,19 +165,13 @@ const styles = StyleSheet.create({
     columnGap: spacing.xs,
     flexDirection: "row",
     flexWrap: "wrap",
-    paddingTop: spacing.xs,
     rowGap: spacing.xs,
   },
-  box: {
-    borderColor: colors.border,
-    borderRadius: radii.medium,
-    borderWidth: 1,
-    overflow: "hidden",
-  },
+  // Aligned with the Status rows' text, under the merge state it acts on.
   controls: {
-    borderTopColor: colors.border,
-    borderTopWidth: StyleSheet.hairlineWidth,
     gap: spacing.xs,
-    padding: spacing.sm,
+    paddingBottom: spacing.sm,
+    paddingLeft: STATUS_TEXT_INSET,
+    paddingRight: spacing.md,
   },
 });

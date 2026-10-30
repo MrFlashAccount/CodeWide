@@ -1,33 +1,18 @@
-import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type {
   ConversationReviewThread,
   ReviewThreadId,
 } from "../../../data/forgeConversationContract";
-import { colors, controlSize, iconSize, spacing } from "../../../theme";
-import { CaptionBadge } from "../../../ui/CaptionBadge";
-import { compactAge } from "../../../ui/relativeAge";
-import { AppText as Text } from "../../../ui/Typography";
-import { MessageAuthorName } from "../../messageContent/MessageAuthorName";
-import { MessageAvatar } from "../../messageContent/MessageAvatar";
+import { colors, spacing } from "../../../theme";
 import { MessageCard } from "../../messageContent/MessageCard";
-import { overviewStyles } from "../overview/overview.styles";
-import { conversationStyles } from "./conversation.styles";
-import {
-  commentContent,
-  commentReactions,
-  eventRunLabel,
-  messageAuthor,
-  verdictLabel,
-  verdictPhrase,
-  verdictTone,
-} from "./conversationContent";
-import type { EventEntry, ReviewEntry, TimelineItem } from "./discussionModel";
+import { commentContent, commentReactions, messageAuthor } from "./conversationContent";
+import type { ReviewEntry, TimelineItem } from "./discussionModel";
 import type { DiscussionNavigator } from "./discussionNavigator";
 import { ReviewThreadCard } from "./ReviewThreadCard";
+import { EventLine, EventRun } from "./TimelineEventRow";
+import { verdictEvent } from "./timelineEvent";
 import type { ConversationWrites } from "./useConversationWrites";
 
 /** What every timeline item needs from the section. */
@@ -41,10 +26,16 @@ export type TimelineContext = {
   readonly onAddressThread: (threadId: ReviewThreadId) => void;
   readonly onRun: (action: ActionDescriptor) => void;
   readonly pending: Readonly<Record<string, true>>;
+  /** `forge.conversation.resolve@1` is declared, so conversations can be resolved. */
+  readonly resolveEnabled: boolean;
   readonly writes: ConversationWrites;
 };
 
-/** The Discussion, newest first: comment groups, reviews with their threads, verdicts and events. */
+/**
+ * The conversation, newest first, as full-width items separated by
+ * hairlines: comment groups, reviews (a verdict row, the review's text and
+ * its threads), verdict-only rows and event rows. No item draws a card.
+ */
 export function DiscussionTimeline({
   context,
   items,
@@ -72,18 +63,28 @@ function Item({
     return <CommentGroup comments={item.comments} nowMs={context.nowMs} />;
   }
   if (item.kind === "review") {
-    return <ReviewCard context={context} review={item.review} threads={item.threads} />;
+    return <Review context={context} review={item.review} threads={item.threads} />;
   }
   if (item.kind === "verdict") {
-    return <VerdictRow nowMs={context.nowMs} review={item.review} />;
+    return (
+      <EventLine
+        event={verdictEvent(item.review)}
+        nowMs={context.nowMs}
+        testID={`conversation-verdict-${item.review.id}`}
+      />
+    );
   }
   if (item.kind === "thread") {
-    return <ThreadEntry context={context} thread={item.thread} />;
+    return (
+      <View style={styles.threadItem}>
+        <ThreadEntry context={context} thread={item.thread} />
+      </View>
+    );
   }
   return <EventRun events={item.events} nowMs={context.nowMs} />;
 }
 
-/** Top-level comments of one author, newest first: the header once, older comments as continuations. */
+/** Top-level comments of one author, newest first: the header once, older comments continue below. */
 function CommentGroup({
   comments,
   nowMs,
@@ -92,13 +93,14 @@ function CommentGroup({
   readonly nowMs: number;
 }): React.JSX.Element {
   return (
-    <View style={conversationStyles.frame}>
+    <View style={styles.block}>
       {comments.map((comment, index) => (
         <MessageCard
           author={messageAuthor(comment.author)}
           content={commentContent(comment)}
           continuation={index > 0}
           createdAt={comment.createdAt}
+          density="message"
           divided={false}
           edited={comment.updatedAt !== null}
           key={comment.id}
@@ -111,12 +113,8 @@ function CommentGroup({
   );
 }
 
-function VerdictBadge({ review }: { readonly review: ReviewEntry }): React.JSX.Element {
-  return <CaptionBadge label={verdictLabel(review.verdict)} tone={verdictTone(review.verdict)} />;
-}
-
-/** A review with its summary body (if any) and the threads published with it. */
-function ReviewCard({
+/** A review: its verdict as a row, its own text below, then the threads published with it. */
+function Review({
   context,
   review,
   threads,
@@ -127,29 +125,27 @@ function ReviewCard({
 }): React.JSX.Element {
   const { body } = review;
   return (
-    <View style={conversationStyles.frame} testID={`conversation-review-${review.id}`}>
-      {body === null ? (
-        <View style={styles.reviewHeader} testID={`conversation-review-card-${review.id}`}>
-          <MessageAvatar avatarUrl={review.author.avatarUrl} login={review.author.login} />
-          <MessageAuthorName author={messageAuthor(review.author)} />
-          <VerdictBadge review={review} />
-          <Text style={[overviewStyles.meta, styles.age]}>
-            {compactAge(review.createdAt, context.nowMs)}
-          </Text>
+    <View testID={`conversation-review-${review.id}`}>
+      <EventLine
+        event={verdictEvent(review)}
+        nowMs={context.nowMs}
+        testID={`conversation-review-${review.id}-row`}
+      />
+      {body === null ? null : (
+        <View style={styles.reviewBody}>
+          <MessageCard
+            author={messageAuthor(review.author)}
+            content={commentContent(body)}
+            continuation
+            createdAt={review.createdAt}
+            density="message"
+            divided={false}
+            edited={body.updatedAt !== null}
+            nowMs={context.nowMs}
+            reactions={commentReactions(body)}
+            testID={`conversation-review-card-${review.id}`}
+          />
         </View>
-      ) : (
-        <MessageCard
-          author={messageAuthor(review.author)}
-          badge={<VerdictBadge review={review} />}
-          content={commentContent(body)}
-          continuation={false}
-          createdAt={review.createdAt}
-          divided={false}
-          edited={body.updatedAt !== null}
-          nowMs={context.nowMs}
-          reactions={commentReactions(body)}
-          testID={`conversation-review-card-${review.id}`}
-        />
       )}
       {threads.length === 0 ? null : (
         <View style={styles.reviewThreads} testID={`conversation-review-${review.id}-threads`}>
@@ -158,26 +154,6 @@ function ReviewCard({
           ))}
         </View>
       )}
-    </View>
-  );
-}
-
-/** A verdict without text: one quiet line. */
-function VerdictRow({
-  nowMs,
-  review,
-}: {
-  readonly nowMs: number;
-  readonly review: ReviewEntry;
-}): React.JSX.Element {
-  return (
-    <View style={styles.line} testID={`conversation-verdict-${review.id}`}>
-      <MessageAvatar avatarUrl={review.author.avatarUrl} login={review.author.login} />
-      <MessageAuthorName author={messageAuthor(review.author)} />
-      <Text numberOfLines={1} style={[overviewStyles.meta, styles.phrase]}>
-        {verdictPhrase(review.verdict)}
-      </Text>
-      <Text style={[overviewStyles.meta, styles.age]}>{compactAge(review.createdAt, nowMs)}</Text>
     </View>
   );
 }
@@ -201,104 +177,34 @@ function ThreadEntry({
         context.onAddressThread(thread.id);
       }}
       onReply={async (markdown) => context.writes.reply(thread.id, markdown)}
+      onResolve={async (resolved) => context.writes.resolve(thread.id, resolved)}
       onRun={context.onRun}
       pending={context.pending}
+      resolveEnabled={context.resolveEnabled}
       thread={thread}
     />
   );
 }
 
-/** One event line: the actor's login and the event's plain text. */
-function EventLine({
-  event,
-  nowMs,
-}: {
-  readonly event: EventEntry;
-  readonly nowMs: number;
-}): React.JSX.Element {
-  return (
-    <View style={styles.event} testID={`conversation-event-${event.id}`}>
-      <Text style={[overviewStyles.meta, overviewStyles.fill]}>
-        {event.author === null ? event.text : `${event.author.login} ${event.text}`}
-      </Text>
-      <Text style={overviewStyles.meta}>{compactAge(event.createdAt, nowMs)}</Text>
-    </View>
-  );
-}
-
-/** A single event, or a collapsed run of same-category events that expands in place; the run shows its newest age. */
-function EventRun({
-  events,
-  nowMs,
-}: {
-  readonly events: Extract<TimelineItem, { readonly kind: "events" }>["events"];
-  readonly nowMs: number;
-}): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false);
-  const [first] = events;
-  if (events.length === 1) {
-    return <EventLine event={first} nowMs={nowMs} />;
-  }
-  const label = eventRunLabel(first.category, events.length);
-  return (
-    <View testID={`conversation-events-${first.id}`}>
-      <Pressable
-        accessibilityLabel={label}
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        onPress={() => {
-          setExpanded(!expanded);
-        }}
-        style={styles.event}
-        testID={`conversation-events-${first.id}-toggle`}
-      >
-        <Text style={[overviewStyles.meta, overviewStyles.fill]}>{label}</Text>
-        <Text style={overviewStyles.meta}>{compactAge(first.createdAt, nowMs)}</Text>
-        <Ionicons
-          color={colors.textMuted}
-          name={expanded ? "chevron-up" : "chevron-down"}
-          size={iconSize.inline}
-        />
-      </Pressable>
-      {expanded
-        ? events.map((event) => <EventLine event={event} key={event.id} nowMs={nowMs} />)
-        : null}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  age: {
-    flexShrink: 0,
-    marginLeft: "auto",
+  block: {
+    borderTopColor: colors.borderSoft,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xxs,
   },
-  event: {
-    alignItems: "center",
-    columnGap: spacing.xs,
-    flexDirection: "row",
-    minHeight: controlSize.compact,
-    paddingHorizontal: spacing.sm,
-  },
-  line: {
-    alignItems: "center",
-    columnGap: spacing.xs,
-    flexDirection: "row",
-    minHeight: controlSize.touch,
-    paddingHorizontal: spacing.sm,
-  },
-  phrase: {
-    flexShrink: 1,
-  },
-  reviewHeader: {
-    alignItems: "center",
-    columnGap: spacing.xs,
-    flexDirection: "row",
-    minHeight: controlSize.touch,
-    paddingHorizontal: spacing.sm,
+  reviewBody: {
+    marginTop: -spacing.xs,
+    paddingHorizontal: spacing.md,
   },
   reviewThreads: {
-    gap: spacing.xs,
-    paddingBottom: spacing.sm,
-    paddingHorizontal: spacing.sm,
+    gap: spacing.sm,
+    paddingBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+  },
+  threadItem: {
+    borderTopColor: colors.borderSoft,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    padding: spacing.md,
   },
 });

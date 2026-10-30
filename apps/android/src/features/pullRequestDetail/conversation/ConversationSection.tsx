@@ -1,121 +1,78 @@
-import { StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type { ReviewThreadId } from "../../../data/forgeConversationContract";
-import { useConstant } from "../../../react/useConstant";
 import { DirectImageSourcesProvider } from "../../../rendering/directImageSources";
-import { colors, radii, spacing, typeScale } from "../../../theme";
-import { CaptionBadge } from "../../../ui/CaptionBadge";
+import { colors, controlSize, spacing, typeScale, typeWeight } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
-import { MessageReplyInput } from "../../messageContent/MessageReplyInput";
-import { CardNote } from "../overview/CardHeader";
-import { overviewStyles } from "../overview/overview.styles";
-import { conversationStyles } from "./conversation.styles";
+import { SectionBand } from "../sections/SectionBand";
 import { DiscussionTimeline, type TimelineContext } from "./DiscussionTimeline";
-import { projectDiscussion, type Discussion } from "./discussionModel";
-import {
-  createDiscussionNavigator,
-  type DiscussionNavigator,
-  type RevealTarget,
-} from "./discussionNavigator";
-import { PinnedIssues } from "./PinnedIssues";
+import type { Discussion } from "./discussionModel";
+import type { DiscussionNavigator } from "./discussionNavigator";
 import type { ConversationWrites } from "./useConversationWrites";
 import type { PullRequestConversation } from "./usePullRequestConversation";
 
-/** Everything the Discussion renders; the screen owns data and intents. */
+/** Everything the Conversation section renders; the screen owns data and intents. */
 export type ConversationSectionProps = {
   readonly addressing: Readonly<Record<string, true>>;
   readonly anchored: ReadonlyMap<string, readonly ActionDescriptor[]>;
   readonly conversation: Exclude<PullRequestConversation, { readonly status: "unsupported" }>;
+  /** The loaded pages' projection; `null` until the first page is ready. */
+  readonly discussion: Discussion | null;
+  /** The page's owner of thread expansion and reveal, shared with the Issues status row. */
+  readonly navigator: DiscussionNavigator;
   readonly nowMs: number;
   readonly onAddressThread: (threadId: ReviewThreadId) => void;
   readonly onRun: (action: ActionDescriptor) => void;
   readonly pending: Readonly<Record<string, true>>;
-  /** The Details page's scroll view; a pinned issue scrolls it to its thread. */
-  readonly revealTarget: RevealTarget;
   readonly writes: ConversationWrites;
 };
 
 const LOADING_PLACEHOLDER_HEIGHT = 104;
 
 /**
- * The Discussion section after the description, set apart by a divider: a
- * heading with the comment count and a summary chip, the pinned issues (only
- * when the forge reports issues), a new-comment input when the plugin
- * declares `forge.comments@1`, then the timeline newest first with "Show more
- * discussion" at its end loading older entries. Bodies use the shared
- * complete-document renderer.
+ * The Conversation band with the loaded comment count and its order, then
+ * the timeline newest first as full-width items and "Show more discussion"
+ * at its end, loading older entries below. New top-level comments come from
+ * the floating Comment button. Bodies use the shared complete-document
+ * renderer.
  */
 export function ConversationSection(props: ConversationSectionProps): React.JSX.Element {
-  const { conversation, revealTarget } = props;
-  const navigator = useConstant(() => createDiscussionNavigator(revealTarget));
-  const discussion = conversation.status === "ready" ? projectDiscussion(conversation.page) : null;
+  const { discussion } = props;
   return (
-    <View style={styles.section} testID="pull-request-conversation">
-      <DiscussionHeading discussion={discussion} />
-      <DiscussionBody {...props} discussion={discussion} navigator={navigator} />
+    <View testID="pull-request-conversation">
+      <SectionBand
+        count={discussion === null ? null : String(discussion.commentCount)}
+        testID="pull-request-discussion-heading"
+        title="Conversation"
+        trailing={<Text style={styles.order}>Newest first</Text>}
+      />
+      <ConversationBody {...props} />
     </View>
   );
 }
 
-function DiscussionHeading({
-  discussion,
-}: {
-  readonly discussion: Discussion | null;
-}): React.JSX.Element {
-  const summary = discussion?.summary ?? null;
-  return (
-    <View style={styles.heading} testID="pull-request-discussion-heading">
-      <Text accessibilityRole="header" style={styles.title}>
-        Discussion
-      </Text>
-      {discussion === null ? null : (
-        <Text
-          accessibilityLabel={`${String(discussion.commentCount)} comments`}
-          style={styles.count}
-          testID="pull-request-discussion-count"
-        >
-          {String(discussion.commentCount)}
-        </Text>
-      )}
-      {summary === null ? null : (
-        <View style={styles.summary}>
-          <CaptionBadge
-            label={summary.label}
-            testID="pull-request-discussion-summary"
-            tone={summary.tone}
-          />
-        </View>
-      )}
-    </View>
-  );
-}
-
-function DiscussionBody(
-  props: ConversationSectionProps & {
-    readonly discussion: Discussion | null;
-    readonly navigator: DiscussionNavigator;
-  },
-): React.JSX.Element {
-  const { conversation, discussion, navigator } = props;
+function ConversationBody(props: ConversationSectionProps): React.JSX.Element {
+  const { conversation, discussion } = props;
   if (conversation.status === "failed") {
     return (
-      <View style={conversationStyles.frame}>
-        <CardNote text={conversation.message} />
-        <Text
+      <View style={styles.note}>
+        <Text style={styles.noteText}>{conversation.message}</Text>
+        <Pressable
           accessibilityRole="button"
           onPress={conversation.retry}
-          style={[overviewStyles.cardLine, overviewStyles.meta]}
+          style={styles.action}
+          testID="pull-request-discussion-retry"
         >
-          Try again
-        </Text>
+          <Text style={styles.actionLabel}>Try again</Text>
+        </Pressable>
       </View>
     );
   }
   if (conversation.status === "loading" || discussion === null) {
     return (
       <View
-        accessibilityLabel="Discussion is loading"
+        accessibilityLabel="Conversation is loading"
         accessibilityState={{ busy: true }}
         style={styles.placeholder}
         testID="pull-request-conversation-loading"
@@ -127,77 +84,73 @@ function DiscussionBody(
     anchored: props.anchored,
     commentsEnabled: conversation.commentsEnabled,
     latestIteration: discussion.latestIteration,
-    navigator,
+    navigator: props.navigator,
     nowMs: props.nowMs,
     onAddressThread: props.onAddressThread,
     onRun: props.onRun,
     pending: props.pending,
+    resolveEnabled: conversation.resolveEnabled,
     writes: props.writes,
   };
-  const hasIssues = discussion.openIssues.length + discussion.settledIssues.length > 0;
   return (
     <DirectImageSourcesProvider sources={conversation.images}>
-      {hasIssues ? (
-        <PinnedIssues
-          addressing={props.addressing}
-          onAddressThread={props.onAddressThread}
-          onReveal={navigator.reveal}
-          open={discussion.openIssues}
-          settled={discussion.settledIssues}
-        />
+      {discussion.timeline.length === 0 ? (
+        <View style={styles.note}>
+          <Text style={styles.noteText}>No conversation yet.</Text>
+        </View>
       ) : null}
-      {conversation.commentsEnabled ? (
-        <MessageReplyInput
-          accessibilityLabel="Comment on this pull request"
-          onSend={props.writes.comment}
-          placeholder="Add a comment…"
-          testID="pull-request-new-comment"
-        />
-      ) : null}
-      {discussion.timeline.length === 0 ? <CardNote text="No discussion yet." /> : null}
       <DiscussionTimeline context={context} items={discussion.timeline} />
       {conversation.loadMore === null ? null : (
-        <Text
+        <Pressable
           accessibilityRole="button"
           onPress={conversation.loadMore}
-          style={[overviewStyles.cardLine, overviewStyles.meta]}
+          style={({ pressed }) => [styles.more, pressed && styles.pressed]}
           testID="pull-request-discussion-more"
         >
-          Show more discussion
-        </Text>
+          <Text style={styles.actionLabel}>Show more discussion</Text>
+        </Pressable>
       )}
     </DirectImageSourcesProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  count: {
-    ...typeScale.label,
+  action: {
+    alignSelf: "flex-start",
+    justifyContent: "center",
+    minHeight: controlSize.touch,
+  },
+  actionLabel: {
+    ...typeScale.body,
+    color: colors.text,
+    fontWeight: typeWeight.medium,
+  },
+  more: {
+    alignItems: "center",
+    borderTopColor: colors.borderSoft,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    justifyContent: "center",
+    minHeight: controlSize.touch,
+  },
+  note: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  noteText: {
+    ...typeScale.body,
     color: colors.textMuted,
   },
-  heading: {
-    alignItems: "center",
-    columnGap: spacing.xs,
-    flexDirection: "row",
+  order: {
+    ...typeScale.label,
+    color: colors.textDim,
   },
   placeholder: {
     backgroundColor: colors.surfaceContainer,
-    borderRadius: radii.medium,
     height: LOADING_PLACEHOLDER_HEIGHT,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
   },
-  // A divider and a step of space keep the description from running into the comments.
-  section: {
-    borderTopColor: colors.border,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    gap: spacing.sm,
-    paddingTop: spacing.lg,
-  },
-  summary: {
-    flexShrink: 1,
-    marginLeft: "auto",
-  },
-  title: {
-    ...typeScale.title,
-    color: colors.text,
+  pressed: {
+    backgroundColor: colors.surfaceContainer,
   },
 });

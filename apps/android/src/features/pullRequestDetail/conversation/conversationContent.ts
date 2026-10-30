@@ -7,12 +7,10 @@ import type {
   ConversationAuthor,
   ConversationComment,
   EventCategory,
-  IssueState,
   ReactionContent,
   ReviewVerdict,
   ThreadAnchor,
 } from "../../../data/forgeConversationContract";
-import type { CaptionBadgeTone } from "../../../ui/CaptionBadge";
 import type {
   MessageAuthor,
   MessageContent,
@@ -30,25 +28,54 @@ const REACTION_EMOJI: Readonly<Record<ReactionContent, string>> = {
   thumbsUp: "👍",
 };
 
-const VERDICT_LABELS: Readonly<Record<ReviewVerdict, string>> = {
-  approvalWithdrawn: "Approval withdrawn",
-  approved: "Approved",
-  changesRequested: "Changes requested",
-  commented: "Reviewed",
-  dismissed: "Dismissed",
-  mergeBlocked: "Blocks merge",
-  mergeUnblocked: "Unblocked",
+/** The tinted circle of a one-line timeline row; color always pairs with the row's words. */
+export type EventTone = "danger" | "neutral" | "success" | "warning";
+
+/** The glyph and tone of a timeline row's leading circle. */
+export type EventGlyph = {
+  readonly icon:
+    | "arrow-undo"
+    | "ban"
+    | "checkmark"
+    | "close"
+    | "construct-outline"
+    | "ellipse-outline"
+    | "eye-outline"
+    | "git-commit-outline"
+    | "git-pull-request-outline"
+    | "lock-open-outline"
+    | "remove";
+  readonly tone: EventTone;
 };
 
-const VERDICT_TONES: Readonly<Record<ReviewVerdict, CaptionBadgeTone>> = {
-  approvalWithdrawn: "warning",
-  approved: "success",
-  changesRequested: "danger",
-  commented: "neutral",
-  dismissed: "neutral",
-  mergeBlocked: "danger",
-  mergeUnblocked: "success",
+const VERDICT_GLYPHS: Readonly<Record<ReviewVerdict, EventGlyph>> = {
+  approvalWithdrawn: { icon: "arrow-undo", tone: "warning" },
+  approved: { icon: "checkmark", tone: "success" },
+  // A no-entry sign: the reviewer stops the change until it is reworked.
+  changesRequested: { icon: "remove", tone: "danger" },
+  commented: { icon: "eye-outline", tone: "neutral" },
+  dismissed: { icon: "close", tone: "neutral" },
+  mergeBlocked: { icon: "ban", tone: "danger" },
+  mergeUnblocked: { icon: "lock-open-outline", tone: "success" },
 };
+
+/** Events carry no outcome, so their circle stays neutral and names only the subject. */
+const EVENT_GLYPHS: Readonly<Record<EventCategory, EventGlyph>> = {
+  ci: { icon: "construct-outline", tone: "neutral" },
+  other: { icon: "ellipse-outline", tone: "neutral" },
+  push: { icon: "git-commit-outline", tone: "neutral" },
+  state: { icon: "git-pull-request-outline", tone: "neutral" },
+};
+
+/** The leading circle of a review's verdict row. */
+export function verdictGlyph(verdict: ReviewVerdict): EventGlyph {
+  return VERDICT_GLYPHS[verdict];
+}
+
+/** The leading circle of an event row. */
+export function eventGlyph(category: EventCategory): EventGlyph {
+  return EVENT_GLYPHS[category];
+}
 
 /** The verdict as a phrase after the reviewer's login, for a compact verdict row. */
 const VERDICT_PHRASES: Readonly<Record<ReviewVerdict, string>> = {
@@ -66,18 +93,6 @@ const EVENT_RUN_LABELS: Readonly<Record<EventCategory, (count: number) => string
   other: (count) => `${String(count)} events`,
   push: (count) => `${String(count)} updates pushed`,
   state: (count) => `${String(count)} state changes`,
-};
-
-const ISSUE_LABELS: Readonly<Record<IssueState, string>> = {
-  dropped: "Dropped",
-  open: "Open issue",
-  resolved: "Resolved",
-};
-
-const ISSUE_TONES: Readonly<Record<IssueState, CaptionBadgeTone>> = {
-  dropped: "neutral",
-  open: "danger",
-  resolved: "success",
 };
 
 /** Forge comment bodies embed their images inline, so they carry no separate attachments. */
@@ -104,16 +119,6 @@ export function commentReactions(comment: ConversationComment): readonly Message
   }));
 }
 
-/** A review verdict as the pill beside its author. */
-export function verdictLabel(verdict: ReviewVerdict): string {
-  return VERDICT_LABELS[verdict];
-}
-
-/** The pill tone of a verdict; color always pairs with the label. */
-export function verdictTone(verdict: ReviewVerdict): CaptionBadgeTone {
-  return VERDICT_TONES[verdict];
-}
-
 /** `dana approved these changes`: a verdict without text as one line. */
 export function verdictPhrase(verdict: ReviewVerdict): string {
   return VERDICT_PHRASES[verdict];
@@ -122,14 +127,6 @@ export function verdictPhrase(verdict: ReviewVerdict): string {
 /** The collapsed label of a run of same-category events, for example "6 updates pushed". */
 export function eventRunLabel(category: EventCategory, count: number): string {
   return EVENT_RUN_LABELS[category](count);
-}
-
-/** An issue's state as its badge label and tone. */
-export function issueBadge(state: IssueState): {
-  readonly label: string;
-  readonly tone: CaptionBadgeTone;
-} {
-  return { label: ISSUE_LABELS[state], tone: ISSUE_TONES[state] };
 }
 
 /** `src/file.rs:42`, `src/file.rs:40-42`, the bare path, or `Pull request` for a PR-level thread. */

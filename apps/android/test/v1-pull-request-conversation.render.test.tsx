@@ -1,27 +1,19 @@
 import { RpcResponseError } from "@codewide/sync-client";
-import { act, fireEvent, render, waitFor, within } from "@testing-library/react-native";
-import { Suspense, type ReactNode } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { act, fireEvent, waitFor, within } from "@testing-library/react-native";
+import type { ReactNode } from "react";
+import { ScrollView, View } from "react-native";
 import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markdown";
-import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { parsePullRequestKeyParam } from "../src/data/forgeContract";
-import { createForgeResources } from "../src/data/forgeResources";
-import { createPullRequestCommentDestinations } from "../src/data/pullRequestCommentDestinations";
-import { createReviewResources } from "../src/data/reviewResources";
-import { threadId } from "../src/data/reviewContract";
-import { PullRequestScreen } from "../src/features/pullRequestDetail/PullRequestScreen";
-import type { PullRequestDetailWorkspaceCapabilities } from "../src/features/pullRequestDetail/workspaceCapabilities";
-import type { ReviewTargetCapabilities } from "../src/features/review/reviewTargetCapabilities";
+import { conversation91, conversationArcanum } from "./fixtures/forgeWireFixtures";
 import {
-  connectedAccount,
-  conversation91,
-  conversationArcanum,
-  githubConversationProvider,
-  githubProvider,
-  overview91,
-} from "./fixtures/forgeWireFixtures";
-import { createMemoryQueryPersister } from "./fixtures/queryPersister";
+  PULL_REQUEST,
+  REVIEW_CHAT,
+  renderScreen,
+  textOf,
+  type,
+  unmountScreens,
+  type Capabilities,
+} from "./fixtures/pullRequestDetailsHarness";
 import { getAppDialogRequest, resetAppDialog } from "./mocks/AppDialog";
 
 // WHY: Expo's filesystem bridge cannot initialize in Node; the editor's suggestion popup imports it.
@@ -48,203 +40,27 @@ jest.mock("react-native-enriched-markdown", () => {
   };
 });
 
-const PULL_REQUEST = parsePullRequestKeyParam(overview91.pullRequest);
-const REVIEW_CHAT = threadId("thread-review-chat", "threadId");
-
-type Capabilities = PullRequestDetailWorkspaceCapabilities;
-
-/** A companion that answers the PR reads until `goOffline` makes it unreachable. */
-function companion({
-  conversation,
-  conversationDeclared,
-  olderConversation,
-}: {
-  readonly conversation: unknown;
-  readonly conversationDeclared: boolean;
-  /** The page answered for a non-null cursor. */
-  readonly olderConversation: unknown;
-}) {
-  const reads: string[] = [];
-  let reachable = true;
-  const answers: Readonly<Record<string, unknown>> = {
-    "companion/forge/accounts/read": {
-      accounts: [connectedAccount],
-      flows: [],
-      providers: [conversationDeclared ? githubConversationProvider : githubProvider],
-    },
-    "companion/pullRequest/activity/read": overview91.activity,
-    "companion/pullRequest/conversation/read": conversation,
-    "companion/pullRequest/files/read": { files: [], headRevision: "head-1", nextCursor: null },
-    "companion/pullRequest/read": overview91,
-    "companion/review/drafts/read": { drafts: [] },
-  };
-  const cursors: unknown[] = [];
-  const rpcAfterAttach = async <Result,>(
-    _session: unknown,
-    method: string,
-    params?: unknown,
-  ): Promise<Result> => {
-    reads.push(method);
-    await Promise.resolve();
-    if (!reachable) {
-      throw new Error("The companion is unreachable");
-    }
-    const cursor =
-      typeof params === "object" && params !== null && "cursor" in params ? params.cursor : null;
-    if (method === "companion/pullRequest/conversation/read" && cursor !== null) {
-      cursors.push(cursor);
-      // WHY: as below, a wire fixture the app's own parser validates.
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      return olderConversation as Result;
-    }
-    if (!(method in answers)) {
-      throw new RpcResponseError(-32_601, `Unknown ${method}`);
-    }
-    // WHY: the fake transport returns wire fixtures; the app's own parsers validate them.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    return answers[method] as Result;
-  };
-  // WHY: the fake session is only a handle passed back to rpcAfterAttach.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const session = {} as never;
-  const forge = createForgeResources({
-    getSession: () => session,
-    persister: createMemoryQueryPersister().persister,
-    reportDroppedAction: () => undefined,
-    rpcAfterAttach,
-  });
-  const review = createReviewResources({
-    getSession: () => session,
-    queryClient: forge.queryClient,
-    rpcAfterAttach,
-  });
+// WHY: the native sheet window cannot mount in the Node renderer; the sheet's content is the contract here.
+jest.mock("../src/ui/AppSheet", () => {
+  const { View: MockView } = jest.requireActual<typeof import("react-native")>("react-native");
   return {
-    cursors,
-    forge,
-    goOffline: () => {
-      reachable = false;
-    },
-    reads,
-    review,
+    AppSheet: ({ children }: { readonly children: ReactNode }) => <MockView>{children}</MockView>,
+    AppSheetScrollView: ({
+      children,
+      testID,
+    }: {
+      readonly children: ReactNode;
+      readonly testID?: string;
+    }) => <MockView testID={testID}>{children}</MockView>,
   };
-}
-
-function capabilities(overrides: Partial<Capabilities>): Capabilities {
-  const unused = async (): Promise<never> => Promise.reject(new Error("not part of this test"));
-  return {
-    createComment: unused,
-    ensureReviewChat: unused,
-    markAttentionSeen: async () => undefined,
-    replyToReviewThread: unused,
-    runAction: unused,
-    setLink: unused,
-    setViewed: unused,
-    startScenario: unused,
-    submitReview: unused,
-    transferAccess: unused,
-    ...overrides,
-  };
-}
-
-/** No chat is unread: the review chat badge is covered by its own test. */
-function readNoChat(): boolean {
-  return false;
-}
-
-function renderScreen({
-  capabilityOverrides = {},
-  conversation = conversation91,
-  conversationDeclared = true,
-  olderConversation = null,
-  openChanges = jest.fn(),
-  openThread = jest.fn(),
-}: {
-  readonly capabilityOverrides?: Partial<Capabilities>;
-  readonly conversation?: unknown;
-  readonly conversationDeclared?: boolean;
-  readonly olderConversation?: unknown;
-  readonly openChanges?: (view: "files" | "guide") => void;
-  readonly openThread?: (id: string) => void;
-}) {
-  if (PULL_REQUEST === null) {
-    throw new Error("the pull request key fixture must parse");
-  }
-  const server = companion({ conversation, conversationDeclared, olderConversation });
-  const wrap = (children: ReactNode) => (
-    <SafeAreaProvider
-      initialMetrics={{
-        frame: { height: 900, width: 420, x: 0, y: 0 },
-        insets: { bottom: 0, left: 0, right: 0, top: 0 },
-      }}
-    >
-      <Suspense fallback={<Text>Loading pull request</Text>}>{children}</Suspense>
-    </SafeAreaProvider>
-  );
-  const view = render(
-    wrap(
-      <PullRequestScreen
-        capabilities={capabilities(capabilityOverrides)}
-        commentDestinations={createPullRequestCommentDestinations({
-          deleteConnection: async () => undefined,
-          read: async () => null,
-          write: async () => undefined,
-        })}
-        connectionId="server"
-        describeThread={() => null}
-        forge={server.forge}
-        isThreadUnread={readNoChat}
-        navigation={{
-          back: () => undefined,
-          chatVisible: true,
-          closeChanges: () => undefined,
-          deferReviewChatScenario: async () => Promise.resolve(null),
-          openPullRequestFullscreen: () => undefined,
-          openReviewChat: () => undefined,
-          openChanges,
-          openThread,
-          pullRequestFullscreen: false,
-        }}
-        pullRequest={PULL_REQUEST}
-        review={server.review}
-        // WHY: the Details tab never reaches the Changes review target; an empty owner suffices.
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-        reviewCapabilities={{} as ReviewTargetCapabilities}
-        initialChangesView="files"
-        tab="overview"
-        tablet={false}
-      />,
-    ),
-  );
-  mounted.push({ clear: () => server.forge.queryClient.clear(), unmount: view.unmount });
-  return { server, view };
-}
-
-/** Types into one reply input through the editor's native text and Markdown events. */
-function type(input: ReturnType<typeof within>, text: string): void {
-  const editor = input.getByTestId("native-editor");
-  act(() => {
-    editor.props.onChangeText(text);
-    editor.props.onChangeMarkdown(text);
-  });
-}
-
-const mounted: { readonly clear: () => void; readonly unmount: () => void }[] = [];
+});
 
 beforeEach(() => {
   resetAppDialog();
 });
 
 afterEach(async () => {
-  // Stops the screen's queries and delivers TanStack's last batched notification inside act.
-  await act(async () => {
-    for (const screen of mounted.splice(0)) {
-      screen.unmount();
-      screen.clear();
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0);
-    });
-  });
+  await unmountScreens();
 });
 
 it("opens Files changed and the review guide as nested routes from Details", async () => {
@@ -257,23 +73,22 @@ it("opens Files changed and the review guide as nested routes from Details", asy
   expect(view.queryByRole("tab")).toBeNull();
 });
 
-/** The Discussion's comment input, entries and "Show more" control in rendered order. */
+/** The conversation's entries and "Show more" control in rendered order. */
 function discussionOrder(conversation: Parameters<typeof within>[0]): string[] {
   return within(conversation)
     .getAllByTestId(
-      /^(pull-request-new-comment$|pull-request-discussion-more$|conversation-(comment|event)-|conversation-review-r-\d$|review-thread-rt-\d$)/u,
+      /^(pull-request-discussion-more$|conversation-(comment|event)-[a-z]+-\d+$|conversation-review-r-\d$|review-thread-rt-\d$)/u,
     )
     .map((node) => String(node.props.testID));
 }
 
-it("renders the conversation newest first, below the comment input, instead of the activity list", async () => {
+it("renders the conversation newest first instead of the activity list", async () => {
   const { view } = renderScreen({});
 
   await view.findByTestId("conversation-comment-c-1");
   const conversation = view.getByTestId("pull-request-conversation");
   expect(view.queryByTestId("pull-request-activity")).toBeNull();
   expect(discussionOrder(conversation)).toEqual([
-    "pull-request-new-comment",
     "conversation-event-e-1",
     "review-thread-rt-2",
     "conversation-review-r-1",
@@ -284,13 +99,24 @@ it("renders the conversation newest first, below the comment input, instead of t
     "conversation-comment-c-4",
     "conversation-comment-c-1",
   ]);
-  expect(within(conversation).getByText(/Changes requested/u)).toBeOnTheScreen();
-  // The review's inline thread is drawn inside the review's card.
-  expect(
-    within(view.getByTestId("conversation-review-r-1")).getByTestId("review-thread-rt-1"),
-  ).toBeOnTheScreen();
+  // The review is a verdict row, its text below and its inline thread inside it.
+  const review = view.getByTestId("conversation-review-r-1");
+  expect(within(review).getByTestId("conversation-review-r-1-row")).toHaveProp(
+    "accessibilityLabel",
+    expect.stringMatching(/^mikhail-p requested changes, /u) as string,
+  );
+  expect(within(review).getByTestId("conversation-review-card-r-1")).toHaveTextContent(
+    /Two small things inline/u,
+  );
+  expect(within(review).getByTestId("review-thread-rt-1")).toBeOnTheScreen();
+  // Events are one-line rows naming the actor and what happened.
+  expect(view.getByTestId("conversation-event-e-1")).toHaveTextContent(
+    /dana-r merged main into this branch/u,
+  );
   expect(view.getByLabelText("👍 3 reactions, including yours")).toBeOnTheScreen();
-  expect(view.getByTestId("pull-request-new-comment")).toBeOnTheScreen();
+  // New top-level comments come from the floating Comment button, not an inline input.
+  expect(within(conversation).queryByTestId("pull-request-new-comment")).toBeNull();
+  expect(view.getByTestId("pull-request-comment-button")).toBeOnTheScreen();
 });
 
 it("loads older discussion below the newest entries from Show more", async () => {
@@ -316,7 +142,6 @@ it("loads older discussion below the newest entries from Show more", async () =>
   const more = await view.findByTestId("pull-request-discussion-more");
   const conversation = view.getByTestId("pull-request-conversation");
   expect(discussionOrder(conversation)).toEqual([
-    "pull-request-new-comment",
     "conversation-event-e-1",
     "conversation-comment-c-1",
     "pull-request-discussion-more",
@@ -328,7 +153,6 @@ it("loads older discussion below the newest entries from Show more", async () =>
   expect(server.cursors).toEqual(["older-1"]);
   // Older entries continue below; nothing above the newest entry moves.
   expect(discussionOrder(conversation)).toEqual([
-    "pull-request-new-comment",
     "conversation-event-e-1",
     "conversation-comment-c-1",
     "conversation-event-e-0",
@@ -488,7 +312,8 @@ it("refuses conversation writes locally while the companion is offline", async (
   const { server, view } = renderScreen({
     capabilityOverrides: { createComment, startScenario },
   });
-  const comment = within(await view.findByTestId("pull-request-new-comment"));
+  fireEvent.press(await view.findByTestId("pull-request-comment-button"));
+  const comment = within(view.getByTestId("pull-request-new-comment"));
   server.goOffline();
   await act(async () => {
     if (PULL_REQUEST !== null) {
@@ -516,50 +341,19 @@ it("refuses conversation writes locally while the companion is offline", async (
   expect(startScenario).not.toHaveBeenCalled();
   expect(comment.queryByTestId("pull-request-new-comment-pending")).toBeNull();
   expect(comment.getByTestId("pull-request-new-comment-send")).toBeEnabled();
+  // A refused comment keeps the composer open with its text.
+  expect(view.getByTestId("pull-request-comment-sheet")).toBeOnTheScreen();
 });
 
-/** Every element of a pressable or text tree, flattened to its visible text. */
-function textOf(node: Parameters<typeof within>[0]): string {
-  return within(node)
-    .queryAllByText(/.+/u)
-    .map((child) => String(child.props.children))
-    .join(" ");
-}
-
-it("sets the Discussion apart from the description with its heading, count and summary", async () => {
-  const { view } = renderScreen({});
-  // The heading renders before the first page; wait for the loaded count, not just the heading.
-  await view.findByTestId("pull-request-discussion-count");
-  const heading = view.getByTestId("pull-request-discussion-heading");
-
-  expect(within(heading).getByRole("header")).toHaveTextContent("Discussion");
-  expect(within(heading).getByTestId("pull-request-discussion-count")).toHaveTextContent("6");
-  expect(within(heading).getByTestId("pull-request-discussion-summary")).toHaveTextContent(
-    /1 unresolved/u,
-  );
-  const section = view.getByTestId("pull-request-conversation");
-  expect(section).toHaveStyle({ borderTopWidth: expect.any(Number) as number });
-  // The description is its own section, before the Discussion, never inside it.
-  const description = view.getByTestId("pull-request-description");
-  expect(within(section).queryByTestId("pull-request-description")).toBeNull();
-  const page = view.getByTestId("pull-request-overview");
-  const order = within(page)
-    .getAllByTestId(/^pull-request-(description|conversation)$/u)
-    .map((node) => String(node.props.testID));
-  expect(order).toEqual(["pull-request-description", "pull-request-conversation"]);
-  expect(description).toBeOnTheScreen();
-  // GitHub reports no issues, so nothing is pinned.
-  expect(view.queryByTestId("discussion-issues")).toBeNull();
-});
-
-it("renders an Arcanum-shaped discussion: pinned issues, iterations, verdict rows and initials", async () => {
+it("renders an Arcanum-shaped discussion: the Issues row, iterations, verdict rows and machine authors", async () => {
   const { view } = renderScreen({ conversation: conversationArcanum });
   const issues = await view.findByTestId("discussion-issues");
 
-  expect(view.getByTestId("pull-request-discussion-summary")).toHaveTextContent(
-    /2 open issues · blocks merge/u,
+  const row = view.getByTestId("pull-request-status-issues");
+  expect(within(row).getByTestId("pull-request-status-issues-detail")).toHaveTextContent(
+    "2 open · blocks merge",
   );
-  // Open issues first, newest first; resolved and dropped wait behind their counter.
+  // Expanded while an issue is open: open issues first, newest first; settled ones wait.
   expect(
     within(issues)
       .getAllByTestId(/^discussion-issue-is-[a-z]+(?:-line|-pr)?$/u)
@@ -568,11 +362,13 @@ it("renders an Arcanum-shaped discussion: pinned issues, iterations, verdict row
   const line = view.getByTestId("discussion-issue-is-open-line");
   expect(within(line).getByText("disk/volga/api.py:10-12")).toBeOnTheScreen();
   expect(within(line).getByText("Race")).toBeOnTheScreen();
-  expect(
-    within(view.getByTestId("discussion-issue-is-open-pr")).getByText("Pull request"),
-  ).toBeOnTheScreen();
-  // No avatars: the initials stand in.
-  expect(within(line).getByText("CA", { includeHiddenElements: true })).toBeOnTheScreen();
+  expect(within(line).getByTestId("discussion-issue-is-open-line-reveal")).toHaveProp(
+    "accessibilityLabel",
+    "View code",
+  );
+  const prLevel = view.getByTestId("discussion-issue-is-open-pr");
+  expect(within(prLevel).getByText("Pull request")).toBeOnTheScreen();
+  expect(within(prLevel).getByText(/^arc-robot · /u)).toBeOnTheScreen();
 
   fireEvent.press(within(issues).getByTestId("discussion-settled-toggle"));
   expect(
@@ -585,32 +381,41 @@ it("renders an Arcanum-shaped discussion: pinned issues, iterations, verdict row
     "discussion-issue-is-resolved",
     "discussion-issue-is-dropped",
   ]);
-  expect(within(issues).getByText("resolved by arc-robot")).toBeOnTheScreen();
-  expect(within(issues).getByText("dropped by olga.v")).toBeOnTheScreen();
+  expect(within(issues).getByText(/^resolved by arc-robot · /u)).toBeOnTheScreen();
+  expect(within(issues).getByText(/^dropped by olga\.v · /u)).toBeOnTheScreen();
+  // Collapsing the row hides its issues.
+  fireEvent.press(within(row).getByTestId("pull-request-status-issues-toggle"));
+  expect(view.queryByTestId("discussion-issues")).toBeNull();
 
-  // Issue badges and iteration chips in the thread headers.
-  const badges = (id: string): string => textOf(view.getByTestId(`review-thread-${id}-toggle`));
-  expect(badges("is-open-line")).toMatch(/Open issue.*Iteration 3/u);
-  expect(badges("is-dropped")).toMatch(/Dropped.*Iteration 1.*Outdated/u);
-  expect(badges("is-resolved")).toMatch(/Resolved.*Iteration 2/u);
+  // Thread headers: the state as a word, the iteration only when it is not the newest.
+  const header = (id: string): string => textOf(view.getByTestId(`review-thread-${id}-toggle`));
+  expect(header("is-open-line")).toMatch(/Open issue/u);
+  expect(header("is-open-line")).not.toMatch(/Iteration/u);
+  expect(header("is-dropped")).toMatch(/Iteration 1.*Outdated.*Dropped/u);
+  expect(header("is-resolved")).toMatch(/Iteration 2.*Resolved/u);
   expect(view.getByTestId("review-thread-is-open-pr-toggle")).toHaveProp(
     "accessibilityLabel",
     "Pull request, open issue, iteration 3",
   );
-  // The merge-blocking review contains its issue; the withdrawn approval is one quiet row.
+  // The merge-blocking review is a row containing its issue; the withdrawn approval is one row.
   const block = view.getByTestId("conversation-review-rv-block");
-  expect(within(block).getByText(/Blocks merge/u)).toBeOnTheScreen();
-  expect(within(block).getByTestId("review-thread-is-open-line")).toBeOnTheScreen();
-  expect(view.getByTestId("conversation-verdict-rv-approve")).toHaveTextContent(
-    /code-assistant.*AI.*withdrew their approval/u,
+  expect(within(block).getByTestId("conversation-review-rv-block-row")).toHaveTextContent(
+    /code-assistant blocked merging/u,
   );
-  // An AI reviewer and a bot are marked next to their names.
-  expect(view.getAllByLabelText("arc-robot, bot").length).toBeGreaterThan(0);
+  expect(within(block).getByTestId("review-thread-is-open-line")).toBeOnTheScreen();
+  expect(view.getByTestId("conversation-verdict-rv-approve")).toHaveProp(
+    "accessibilityLabel",
+    expect.stringMatching(/^code-assistant, AI withdrew their approval, /u) as string,
+  );
+  // A bot is badged under its name and spoken with it.
+  expect(view.getAllByLabelText("arc-robot, Bot").length).toBeGreaterThan(0);
   // A PR-level issue the viewer cannot reply to has no reply input.
   expect(view.queryByTestId("review-thread-is-open-pr-reply")).toBeNull();
+  // Arcanum withdrew its only verdict, so there is no Reviews row.
+  expect(view.queryByTestId("pull-request-status-reviews")).toBeNull();
 });
 
-it("starts settled issues collapsed and reveals one from the pinned list", async () => {
+it("starts settled issues collapsed and reveals one from the Issues row", async () => {
   const measure = jest
     .spyOn(
       View.prototype as unknown as { measureLayout: (...args: unknown[]) => void },
@@ -638,7 +443,7 @@ it("starts settled issues collapsed and reveals one from the pinned list", async
   }
 });
 
-it("addresses an issue from the pinned list with its thread id", async () => {
+it("addresses an issue from the Issues row with its thread id", async () => {
   const startScenario = jest.fn<
     ReturnType<Capabilities["startScenario"]>,
     Parameters<Capabilities["startScenario"]>

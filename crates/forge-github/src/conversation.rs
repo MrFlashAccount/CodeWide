@@ -18,8 +18,8 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use forge_protocol::{
     Author, AuthorKind, Comment, ConversationEntry, ConversationPage, DiffSide, EventCategory,
-    PluginError, Reaction, ReactionContent, ReviewThread, ReviewVerdict, ThreadAnchor,
-    ThreadResolution,
+    EventCommits, PluginError, Reaction, ReactionContent, ReviewThread, ReviewVerdict,
+    ThreadAnchor, ThreadResolution,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 use crate::{
     api::Api,
     comment_media::{MediaScope, avatar_is_direct, comment_media},
+    excerpt, pushes,
     repo::PullTarget,
 };
 
@@ -43,6 +44,8 @@ const MAX_CURSOR_CHARS: usize = 4_096;
 
 const AUTHOR: &str = "author { __typename login avatarUrl }";
 const REACTIONS: &str = "reactionGroups { content viewerHasReacted reactors { totalCount } }";
+const COMMIT: &str =
+    "oid abbreviatedOid messageHeadline author { user { __typename login avatarUrl } }";
 
 fn review_comment_fields() -> String {
     format!("id {AUTHOR} createdAt lastEditedAt body bodyHTML url {REACTIONS}")
@@ -56,7 +59,7 @@ fn page_query() -> String {
   repository(owner: $owner, name: $name) {{
     isPrivate
     pullRequest(number: $number) {{
-      timelineItems(last: {TIMELINE_PAGE}, before: $timelineBefore, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT]) @include(if: $withTimeline) {{
+      timelineItems(last: {TIMELINE_PAGE}, before: $timelineBefore, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT]) @include(if: $withTimeline) {{
         pageInfo {{ hasPreviousPage }}
         edges {{ cursor node {{
           __typename
@@ -65,7 +68,8 @@ fn page_query() -> String {
           ... on MergedEvent {{ id {actor} createdAt mergeRefName commit {{ abbreviatedOid }} }}
           ... on ClosedEvent {{ id {actor} createdAt }}
           ... on ReopenedEvent {{ id {actor} createdAt }}
-          ... on HeadRefForcePushedEvent {{ id {actor} createdAt }}
+          ... on PullRequestCommit {{ id commit {{ {COMMIT} committedDate }} }}
+          ... on HeadRefForcePushedEvent {{ id {actor} createdAt beforeCommit {{ abbreviatedOid }} afterCommit {{ {COMMIT} }} }}
           ... on ReadyForReviewEvent {{ id {actor} createdAt }}
           ... on ConvertToDraftEvent {{ id {actor} createdAt }}
           ... on ReviewRequestedEvent {{ id {actor} createdAt requestedReviewer {{ ... on User {{ login }} ... on Team {{ name }} ... on Mannequin {{ login }} }} }}
@@ -74,7 +78,8 @@ fn page_query() -> String {
       reviewThreads(last: {THREADS_PAGE}, before: $threadsBefore) @include(if: $withThreads) {{
         pageInfo {{ hasPreviousPage }}
         edges {{ cursor node {{
-          id path line startLine diffSide isResolved isOutdated viewerCanReply
+          id path line startLine diffSide isResolved isOutdated viewerCanReply viewerCanResolve viewerCanUnresolve
+          opening: comments(first: 1) {{ nodes {{ diffHunk }} }}
           comments(first: {THREAD_COMMENTS_PAGE}) {{ pageInfo {{ hasNextPage endCursor }} nodes {{ {comment} pullRequestReview {{ id }} }} }}
         }} }}
       }}
@@ -162,6 +167,8 @@ struct Edge {
     cursor: String,
     created_at: String,
     entry: Option<ConversationEntry>,
+    /// A single `PullRequestCommit`, which may join a push.
+    commit: bool,
 }
 
 /// One read connection, its edges newest first.
@@ -241,6 +248,8 @@ fn batch(connection: Option<&Value>, map: impl Fn(&Value) -> Option<Conversation
                     cursor,
                     created_at,
                     entry,
+                    commit: node.get("__typename").and_then(Value::as_str)
+                        == Some("PullRequestCommit"),
                 })
             })
             .collect(),
@@ -353,12 +362,20 @@ fn merge(cursor: &PageCursor, timeline: Option<Batch>, threads: Option<Batch>) -
         timeline: resume(&cursor.timeline, timeline.as_ref(), taken[0]),
         threads: resume(&cursor.threads, threads.as_ref(), taken[1]),
     };
-    let mut entries: Vec<ConversationEntry> = [(threads, taken[1]), (timeline, taken[0])]
-        .into_iter()
-        .filter_map(|(batch, count)| batch.map(|batch| (batch, count)))
-        .flat_map(|(batch, count)| batch.edges.into_iter().take(count))
+    let taken_edges = |batch: Option<Batch>, count: usize| {
+        batch
+            .into_iter()
+            .flat_map(move |batch| batch.edges.into_iter().take(count))
+    };
+    let mut entries: Vec<ConversationEntry> = taken_edges(threads, taken[1])
         .filter_map(|edge| edge.entry)
         .collect();
+    entries.extend(pushes::group(taken_edges(timeline, taken[0]).map(|edge| {
+        pushes::TimelineEntry {
+            commit: edge.commit,
+            entry: edge.entry,
+        }
+    })));
     entries.sort_by(|left, right| right.created_at().cmp(left.created_at()));
     ConversationPage {
         entries,
@@ -507,11 +524,11 @@ fn timeline_entry(node: &Value, scope: MediaScope) -> Option<ConversationEntry> 
             EventCategory::State,
             "reopened this pull request".into(),
         ),
-        "HeadRefForcePushedEvent" => event(
-            node,
-            EventCategory::Push,
-            "force-pushed the head branch".into(),
-        ),
+        "PullRequestCommit" => pushes::commit_event(node, |user| author(Some(user))),
+        "HeadRefForcePushedEvent" => {
+            let (text, commits) = pushes::force_push(node);
+            event_with_commits(node, EventCategory::Push, text, commits)
+        }
         "ReadyForReviewEvent" => event(
             node,
             EventCategory::State,
@@ -543,6 +560,15 @@ fn timeline_entry(node: &Value, scope: MediaScope) -> Option<ConversationEntry> 
 }
 
 fn event(node: &Value, category: EventCategory, text: String) -> Option<ConversationEntry> {
+    event_with_commits(node, category, text, None)
+}
+
+fn event_with_commits(
+    node: &Value,
+    category: EventCategory,
+    text: String,
+    commits: Option<EventCommits>,
+) -> Option<ConversationEntry> {
     Some(ConversationEntry::Event {
         id: node.get("id")?.as_str()?.to_owned(),
         author: node
@@ -552,6 +578,7 @@ fn event(node: &Value, category: EventCategory, text: String) -> Option<Conversa
         created_at: node.get("createdAt")?.as_str()?.to_owned(),
         category,
         text,
+        commits,
     })
 }
 
@@ -608,20 +635,20 @@ fn thread_entry(node: &Value, scope: MediaScope) -> Option<ConversationEntry> {
         .pointer("/comments/nodes/0/pullRequestReview/id")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let anchor = thread_anchor(node, line("line"), line("startLine"))?;
+    let excerpt = node
+        .pointer("/opening/nodes/0/diffHunk")
+        .and_then(Value::as_str)
+        .and_then(|hunk| excerpt::from_diff_hunk(hunk, &anchor));
     Some(ConversationEntry::ReviewThread {
         thread: ReviewThread {
             id: node.get("id")?.as_str()?.to_owned(),
-            anchor: thread_anchor(node, line("line"), line("startLine"))?,
+            anchor,
             outdated: node
                 .get("isOutdated")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
-            resolution: ThreadResolution::Conversation {
-                resolved: node
-                    .get("isResolved")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            },
+            resolution: conversation_resolution(node),
             review_id,
             // GitHub has no iterations.
             iteration: None,
@@ -630,8 +657,24 @@ fn thread_entry(node: &Value, scope: MediaScope) -> Option<ConversationEntry> {
                 .get("viewerCanReply")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            excerpt,
         },
     })
+}
+
+/// `isResolved`, and whether the viewer may flip it: `viewerCanUnresolve`
+/// for a resolved thread, `viewerCanResolve` for an unresolved one.
+pub(crate) fn conversation_resolution(node: &Value) -> ThreadResolution {
+    let flag = |field: &str| node.get(field).and_then(Value::as_bool).unwrap_or(false);
+    let resolved = flag("isResolved");
+    ThreadResolution::Conversation {
+        resolved,
+        viewer_can_toggle: flag(if resolved {
+            "viewerCanUnresolve"
+        } else {
+            "viewerCanResolve"
+        }),
+    }
 }
 
 /// A GitHub thread is always on a file: on its lines while `line` still
@@ -703,6 +746,8 @@ mod tests {
                 "edges": [
                     {"cursor": "r1", "node": {"id": "PRRT_1", "path": "src/a.rs", "line": 42, "startLine": 40,
                         "diffSide": "RIGHT", "isResolved": true, "isOutdated": false, "viewerCanReply": true,
+                        "viewerCanResolve": true, "viewerCanUnresolve": false,
+                        "opening": {"nodes": [{"diffHunk": "@@ -39,3 +39,5 @@ fn parse() {\n let a = 1;\n-let b = 2;\n+let b = 3;\n+let c = 4;\n let d = 5;"}]},
                         "comments": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": [
                             {"id": "PRRC_1", "author": {"login": "rev", "avatarUrl": null},
                              "createdAt": "2026-10-01T00:30:00Z", "lastEditedAt": null, "body": "Rename",
@@ -713,6 +758,7 @@ mod tests {
                         ]}}},
                     {"cursor": "r2", "node": {"id": "PRRT_2", "path": "src/b.rs", "line": null, "startLine": null,
                         "diffSide": "LEFT", "isResolved": false, "isOutdated": true, "viewerCanReply": false,
+                        "viewerCanResolve": true, "viewerCanUnresolve": false,
                         "comments": {"pageInfo": {"hasNextPage": false}, "nodes": [
                             {"id": "PRRC_3", "author": {"login": "rev"}, "createdAt": "2026-10-01T03:00:00Z",
                              "body": "Old line", "reactionGroups": []}
@@ -825,7 +871,10 @@ mod tests {
         assert!(!thread.outdated && thread.viewer_can_reply);
         assert_eq!(
             thread.resolution,
-            ThreadResolution::Conversation { resolved: true }
+            ThreadResolution::Conversation {
+                resolved: true,
+                viewer_can_toggle: false
+            }
         );
         assert_eq!(
             thread.anchor,
@@ -842,6 +891,21 @@ mod tests {
             "the thread links to the review its first comment was published with"
         );
         assert_eq!(thread.iteration, None);
+        assert_eq!(
+            thread.excerpt.as_ref().map(|excerpt| excerpt
+                .lines
+                .iter()
+                .map(|line| (line.number(DiffSide::New), line.text()))
+                .collect::<Vec<_>>()),
+            Some(vec![
+                (Some(39), "let a = 1;"),
+                (None, "let b = 2;"),
+                (Some(40), "let b = 3;"),
+                (Some(41), "let c = 4;"),
+                (Some(42), "let d = 5;"),
+            ]),
+            "the first comment's hunk, numbered from its header"
+        );
         assert_eq!(
             thread
                 .comments
@@ -866,7 +930,10 @@ mod tests {
         );
         assert_eq!(
             outdated.resolution,
-            ThreadResolution::Conversation { resolved: false }
+            ThreadResolution::Conversation {
+                resolved: false,
+                viewer_can_toggle: true
+            }
         );
         assert_eq!(outdated.review_id, None);
         let ConversationEntry::ReviewThread { thread: single } = &result.entries[0] else {
@@ -960,6 +1027,68 @@ mod tests {
         assert!(
             all.windows(2).all(|pair| pair[0] >= pair[1]),
             "pages concatenate newest first: {all:?}"
+        );
+    }
+
+    #[test]
+    fn commits_on_a_page_become_pushes_and_force_pushes_name_their_heads() {
+        let commit = |cursor: &str, id: &str, at: &str| {
+            json!({"cursor": cursor, "node": {"__typename": "PullRequestCommit", "id": id,
+                "commit": {"oid": format!("{id:0<40}"), "abbreviatedOid": &format!("{id:0<40}")[..7],
+                    "messageHeadline": format!("Commit {id}"), "committedDate": at,
+                    "author": {"user": {"__typename": "User", "login": "ana", "avatarUrl": null}}}}})
+        };
+        let pull = json!({"timelineItems": {"pageInfo": {"hasPreviousPage": false}, "edges": [
+            commit("t1", "c1", "2026-10-01T01:00:00Z"),
+            commit("t2", "c2", "2026-10-01T02:00:00Z"),
+            {"cursor": "t3", "node": {"__typename": "HeadRefForcePushedEvent", "id": "FP_1",
+                "actor": {"login": "ana"}, "createdAt": "2026-10-01T03:00:00Z",
+                "beforeCommit": {"abbreviatedOid": "c200000"},
+                "afterCommit": {"oid": "f".repeat(40), "abbreviatedOid": "fffffff",
+                    "messageHeadline": "Squash", "author": {"user": {"login": "ana"}}}}},
+            commit("t4", "c4", "2026-10-01T04:00:00Z")
+        ]}});
+        let result = page(
+            &pull,
+            &PageCursor {
+                timeline: Phase::Start,
+                threads: Phase::Done,
+            },
+        );
+        let pushes: Vec<(&str, &str, Vec<&str>)> = result
+            .entries
+            .iter()
+            .map(|entry| match entry {
+                ConversationEntry::Event {
+                    id,
+                    text,
+                    category: EventCategory::Push,
+                    commits: Some(commits),
+                    ..
+                } => (
+                    id.as_str(),
+                    text.as_str(),
+                    commits
+                        .items
+                        .iter()
+                        .map(|item| item.title.as_str())
+                        .collect(),
+                ),
+                other => panic!("a push event, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            pushes,
+            [
+                ("c4", "added 1 commit", vec!["Commit c4"]),
+                (
+                    "FP_1",
+                    "force-pushed the head branch from c200000 to fffffff",
+                    vec!["Squash"]
+                ),
+                ("c2", "added 2 commits", vec!["Commit c1", "Commit c2"]),
+            ],
+            "a force-push ends a push; commits read oldest first"
         );
     }
 

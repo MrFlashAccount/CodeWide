@@ -109,7 +109,6 @@ it("opens pull-request search in the shared overlay without the sort action", ()
         capabilities={capabilities}
         connectionId="server"
         forge={forge}
-        isThreadUnread={() => false}
         onOpenPullRequest={() => undefined}
       />
     </SafeAreaProvider>,
@@ -380,7 +379,6 @@ it("keeps the published rows visible while a filter refresh is pending", () => {
       <PullRequestList
         filter={defaultPullRequestFilter()}
         iconFor={() => null}
-        isThreadUnread={() => false}
         nowMs={0}
         onEndReached={() => undefined}
         onOpenFilters={() => undefined}

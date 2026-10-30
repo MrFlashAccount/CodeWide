@@ -145,6 +145,7 @@ mod tests {
                     created_at: "2026-10-01T05:00:00Z".into(),
                     category: forge_protocol::EventCategory::Push,
                     text: "force-pushed the head branch".into(),
+                    commits: None,
                 },
                 ConversationEntry::Review {
                     id: "PRR_1".into(),
@@ -163,7 +164,10 @@ mod tests {
                             side: DiffSide::New,
                         },
                         outdated: false,
-                        resolution: ThreadResolution::Conversation { resolved: false },
+                        resolution: ThreadResolution::Conversation {
+                            resolved: false,
+                            viewer_can_toggle: false,
+                        },
                         review_id: Some("PRR_1".into()),
                         iteration: None,
                         comments: vec![
@@ -171,6 +175,7 @@ mod tests {
                             comment("PRRC_2", "2026-10-01T03:00:00Z"),
                         ],
                         viewer_can_reply: true,
+                        excerpt: None,
                     },
                 },
                 ConversationEntry::Comment {

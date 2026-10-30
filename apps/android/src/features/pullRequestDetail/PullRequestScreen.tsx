@@ -9,7 +9,7 @@ import { PrivateImageAccessProvider } from "../../rendering/use-private-image-ur
 import { colors } from "../../theme";
 import { useAppDialog } from "../../ui/AppDialog";
 import { ExtensionInputSheet } from "./actions/ExtensionInputSheet";
-import { LinkedChatButton } from "./LinkedChatButton";
+import { FloatingActions } from "./FloatingActions";
 import { alertOfflineWrite } from "./actions/offlineRefusal";
 import { openOnForge } from "./actions/openOnForge";
 import { usePullRequestActions } from "./actions/usePullRequestActions";
@@ -136,19 +136,15 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
             onSubmit={actions.submitInput}
           />
         )}
-        {props.navigation.chatVisible ? null : (
-          <LinkedChatButton
-            disabled={false}
-            isThreadUnread={props.isThreadUnread}
-            label={
-              data.agentThread === null
-                ? "Start linked review chat"
-                : `Open linked review chat: ${data.agentThread.title}`
-            }
-            onPress={openReviewChat}
-            reviewThreadId={data.agentThread?.threadId ?? null}
-          />
-        )}
+        <FloatingActions
+          agentThread={data.agentThread}
+          chatVisible={props.navigation.chatVisible}
+          conversation={data.conversation}
+          details={props.tab === "overview"}
+          isThreadUnread={props.isThreadUnread}
+          onComment={data.writes.comment}
+          onOpenChat={openReviewChat}
+        />
       </View>
     </PrivateImageAccessProvider>
   );

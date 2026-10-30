@@ -13,6 +13,7 @@ import {
 } from "../src/features/pullRequestDetail/conversation/conversationContent";
 import {
   projectDiscussion,
+  reviewsSummary,
   threadSettled,
   type TimelineItem,
 } from "../src/features/pullRequestDetail/conversation/discussionModel";
@@ -192,23 +193,19 @@ describe("discussion issues and summary", () => {
       ["is-resolved", "resolved"],
       ["is-dropped", "dropped"],
     ]);
-    expect(discussion.summary).toEqual({ label: "2 open issues · blocks merge", tone: "danger" });
+    expect(discussion.issueSummary).toEqual({ label: "2 open · blocks merge", tone: "danger" });
     expect(discussion.latestIteration).toBe(3);
   });
 
-  it("names unresolved conversations without issues, and nothing when all are resolved", () => {
-    expect(projectDiscussion(parsed(conversation91)).summary).toEqual({
-      label: "1 unresolved",
-      tone: "warning",
-    });
-    expect(projectDiscussion(page([conversation91.entries[1]])).summary).toBeNull();
+  it("has no Issues summary when the forge reports no issues", () => {
+    expect(projectDiscussion(parsed(conversation91)).issueSummary).toBeNull();
   });
 
   it("does not claim a merge block the forge did not report", () => {
     const unknownRule = projectDiscussion(
       parsed({ ...conversationArcanum, openIssuesBlockMerge: null }),
     );
-    expect(unknownRule.summary).toEqual({ label: "2 open issues", tone: "warning" });
+    expect(unknownRule.issueSummary).toEqual({ label: "2 open", tone: "warning" });
     const settled = projectDiscussion(
       parsed({
         ...conversationArcanum,
@@ -219,7 +216,7 @@ describe("discussion issues and summary", () => {
         ),
       }),
     );
-    expect(settled.summary).toEqual({ label: "No open issues", tone: "success" });
+    expect(settled.issueSummary).toEqual({ label: "No open issues", tone: "success" });
   });
 
   it("starts settled threads collapsed", () => {
@@ -234,6 +231,54 @@ describe("discussion issues and summary", () => {
       ["is-resolved", true],
       ["is-dropped", true],
     ]);
+  });
+});
+
+describe("reviewer verdicts", () => {
+  function review(id: string, login: string, verdict: string, createdAt: string) {
+    return {
+      author: { avatarUrl: null, kind: "user", login },
+      body: null,
+      createdAt,
+      id,
+      kind: "review",
+      verdict,
+    };
+  }
+
+  it("keeps each reviewer's newest decisive verdict and lets a withdrawal clear an older approval", () => {
+    const discussion = projectDiscussion(
+      page([
+        review("r-4", "bob", "approvalWithdrawn", "2026-10-21T12:00:00Z"),
+        review("r-3", "alice", "commented", "2026-10-21T11:00:00Z"),
+        review("r-2", "alice", "changesRequested", "2026-10-21T10:00:00Z"),
+        review("r-1", "bob", "approved", "2026-10-21T09:00:00Z"),
+        review("r-0", "carol", "approved", "2026-10-21T08:00:00Z"),
+      ]),
+    );
+    expect(
+      discussion.reviewers.map((reviewer) => [reviewer.author.login, reviewer.verdict]),
+    ).toEqual([
+      ["alice", "changesRequested"],
+      ["carol", "approved"],
+    ]);
+    expect(reviewsSummary(discussion.reviewers)).toEqual({
+      label: "alice requested changes · 1 approval",
+      tone: "danger",
+    });
+  });
+
+  it("summarizes approvals alone and says nothing without a standing verdict", () => {
+    const one = projectDiscussion(page([review("r-1", "bob", "approved", "2026-10-21T09:00:00Z")]));
+    expect(reviewsSummary(one.reviewers)).toEqual({ label: "Approved by bob", tone: "success" });
+    const two = projectDiscussion(
+      page([
+        review("r-2", "carol", "approved", "2026-10-21T10:00:00Z"),
+        review("r-1", "bob", "approved", "2026-10-21T09:00:00Z"),
+      ]),
+    );
+    expect(reviewsSummary(two.reviewers)).toEqual({ label: "2 approvals", tone: "success" });
+    expect(reviewsSummary(projectDiscussion(parsed(conversationArcanum)).reviewers)).toBeNull();
   });
 });
 

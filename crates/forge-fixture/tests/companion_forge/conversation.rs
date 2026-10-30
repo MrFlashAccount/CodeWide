@@ -1,6 +1,6 @@
-//! The pull request conversation: reads, capability gating, the two
-//! journaled conversation writes, forge-hosted media routing and the
-//! scenario context focused on one review thread.
+//! The pull request conversation: reads, capability gating, the three
+//! journaled conversation writes (comment, reply, resolution), forge-hosted
+//! media routing and the scenario context focused on one review thread.
 
 use companion_core::forge::{
     ForgeContext,
@@ -14,6 +14,7 @@ use crate::support::*;
 
 const COMMENT_CREATE: &str = "forge.pullRequest.comment.create";
 const THREAD_REPLY: &str = "forge.pullRequest.reviewThread.reply";
+const THREAD_RESOLVE: &str = "forge.pullRequest.reviewThread.resolve";
 
 async fn connected(fixture: &Value) -> (Harness, String) {
     let harness = Harness::start(fixture);
@@ -106,7 +107,11 @@ async fn conversation_pages_are_validated_cached_and_capability_gated() {
     );
 
     let mut without = base_fixture();
-    without["hideCapabilities"] = json!(["forge.conversation@1", "forge.comments@1"]);
+    without["hideCapabilities"] = json!([
+        "forge.conversation@1",
+        "forge.comments@1",
+        "forge.conversation.resolve@1"
+    ]);
     let (bare, bare_key) = connected(&without).await;
     let refused = bare
         .call(
@@ -117,19 +122,26 @@ async fn conversation_pages_are_validated_cached_and_capability_gated() {
         .expect_err("undeclared capability");
     assert_eq!(refused["code"], -32_080);
     assert_eq!(refused["data"]["capability"], "forge.conversation@1");
-    for (method, params) in [
+    for (method, params, capability) in [
         (
             "companion/pullRequest/comment/create",
             json!({"pullRequest": bare_key, "body": "Hi", "idempotencyKey": "gate-1"}),
+            "forge.comments@1",
         ),
         (
             "companion/pullRequest/reviewThread/reply",
             json!({"pullRequest": bare_key, "threadId": "thread-1", "body": "Hi", "idempotencyKey": "gate-2"}),
+            "forge.comments@1",
+        ),
+        (
+            "companion/pullRequest/reviewThread/resolve",
+            json!({"pullRequest": bare_key, "threadId": "thread-1", "resolved": true, "idempotencyKey": "gate-3"}),
+            "forge.conversation.resolve@1",
         ),
     ] {
         let refused = bare.call(method, params).await.expect_err("undeclared");
         assert_eq!(refused["code"], -32_080);
-        assert_eq!(refused["data"]["capability"], "forge.comments@1");
+        assert_eq!(refused["data"]["capability"], capability);
     }
     assert!(
         bare.forge
@@ -271,6 +283,141 @@ async fn thread_replies_are_journaled_and_unknown_outcomes_stay_unknown() {
     assert_eq!(harness.writes(THREAD_REPLY), 1);
     // The success and the unknown outcome may have changed the forge.
     assert_eq!(invalidations(&harness, &key).await, 2);
+}
+
+#[tokio::test]
+async fn a_conversation_resolves_once_per_key_and_the_page_follows() {
+    let (harness, key) = connected(&base_fixture()).await;
+    let resolve = |thread: &str, resolved: bool, idempotency_key: &str| json!({"pullRequest": key, "threadId": thread, "resolved": resolved, "idempotencyKey": idempotency_key});
+    let thread_resolution = async || {
+        harness
+            .ok(
+                "companion/pullRequest/conversation/read",
+                json!({"pullRequest": key, "cursor": null}),
+            )
+            .await["entries"][1]["thread"]["resolution"]["resolved"]
+            .clone()
+    };
+    let first = harness
+        .ok(
+            "companion/pullRequest/conversation/read",
+            json!({"pullRequest": key, "cursor": null}),
+        )
+        .await;
+    assert_eq!(first["entries"][0]["commits"]["total"], 2);
+    assert_eq!(
+        first["entries"][0]["commits"]["items"][1],
+        json!({"sha": "2222222222222222222222222222222222222222", "shortSha": null,
+               "title": "Rename the parser", "authorLogin": null})
+    );
+    assert_eq!(
+        first["entries"][1]["thread"]["excerpt"]["lines"][2],
+        json!({"kind": "context", "oldLine": 2, "newLine": 2, "text": "fn other() {}"}),
+        "an excerpt ending at the anchored line reaches the client"
+    );
+    assert_eq!(
+        first["entries"][1]["thread"]["resolution"],
+        json!({"kind": "conversation", "resolved": false, "viewerCanToggle": true})
+    );
+    assert_eq!(thread_resolution().await, false);
+    let resolved = harness
+        .ok(
+            "companion/pullRequest/reviewThread/resolve",
+            resolve("thread-1", true, "resolve-1"),
+        )
+        .await;
+    assert_eq!(resolved, json!({"resolved": true, "viewerCanToggle": true}));
+    let replay = harness
+        .ok(
+            "companion/pullRequest/reviewThread/resolve",
+            resolve("thread-1", true, "resolve-1"),
+        )
+        .await;
+    assert_eq!(replay, resolved);
+    assert_eq!(
+        harness.writes(THREAD_RESOLVE),
+        1,
+        "one key, one forge write"
+    );
+    assert_eq!(
+        thread_resolution().await,
+        true,
+        "the write dropped the cached page"
+    );
+    let other_direction = harness
+        .call(
+            "companion/pullRequest/reviewThread/resolve",
+            resolve("thread-1", false, "resolve-1"),
+        )
+        .await
+        .expect_err("a key belongs to one direction");
+    assert_eq!(other_direction["code"], -32_602);
+    let reopened = harness
+        .ok(
+            "companion/pullRequest/reviewThread/resolve",
+            resolve("thread-1", false, "resolve-2"),
+        )
+        .await;
+    assert_eq!(reopened["resolved"], false);
+    assert_eq!(harness.writes(THREAD_RESOLVE), 2);
+    assert_eq!(invalidations(&harness, &key).await, 2);
+}
+
+#[tokio::test]
+async fn resolution_refusals_are_typed_and_unknown_outcomes_stay_unknown() {
+    let (harness, key) = connected(&base_fixture()).await;
+    let resolve = |thread: &str, resolved: bool, idempotency_key: &str| json!({"pullRequest": key, "threadId": thread, "resolved": resolved, "idempotencyKey": idempotency_key});
+    let missing = harness
+        .call(
+            "companion/pullRequest/reviewThread/resolve",
+            resolve("thread-9", true, "resolve-3"),
+        )
+        .await
+        .expect_err("unknown thread");
+    assert_eq!(missing["code"], -32_088);
+    let issue = harness
+        .call(
+            "companion/pullRequest/reviewThread/resolve",
+            resolve("thread-2", true, "resolve-4"),
+        )
+        .await
+        .expect_err("an issue is not a conversation");
+    assert_eq!(issue["code"], -32_083);
+    let invalid = harness
+        .call(
+            "companion/pullRequest/reviewThread/resolve",
+            resolve("bad\nthread", true, "resolve-5"),
+        )
+        .await
+        .expect_err("invalid thread id");
+    assert_eq!(invalid["code"], -32_602);
+    let mut crashing = base_fixture();
+    crashing["commentMode"] = json!("crash");
+    harness.set_fixture(&crashing);
+    let unknown = harness
+        .call(
+            "companion/pullRequest/reviewThread/resolve",
+            resolve("thread-1", true, "resolve-6"),
+        )
+        .await
+        .expect_err("the plugin died mid-write");
+    assert_eq!(unknown["data"]["kind"], "outcomeUnknown");
+    harness.set_fixture(&base_fixture());
+    let still_unknown = harness
+        .call(
+            "companion/pullRequest/reviewThread/resolve",
+            resolve("thread-1", true, "resolve-6"),
+        )
+        .await
+        .expect_err("an unknown outcome is never retried under its key");
+    assert_eq!(still_unknown["data"]["kind"], "outcomeUnknown");
+    assert_eq!(
+        harness.writes(THREAD_RESOLVE),
+        0,
+        "refusals and the crash wrote nothing"
+    );
+    // Only the unknown outcome may have changed the forge.
+    assert_eq!(invalidations(&harness, &key).await, 1);
 }
 
 #[tokio::test]

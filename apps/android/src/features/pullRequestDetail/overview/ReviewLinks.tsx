@@ -2,13 +2,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, View } from "react-native";
 
 import type { PullRequestOverview } from "../../../data/forgePullRequestContract";
-import { colors, controlSize, iconSize, radii, spacing, typeScale } from "../../../theme";
+import { colors, controlSize, iconSize, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import type { ChangesView } from "../pullRequestScreenModel";
 
 /**
- * Details' entries into the nested review routes, GitHub-mobile style: Files
- * changed (with the PR's size and pending drafts) and the review guide.
+ * The Changes section's rows into the nested review routes, GitHub Mobile
+ * style: Files changed (with the PR's size and pending drafts) and the review
+ * guide, full width with an inset divider.
  */
 export function ReviewLinks({
   draftCount,
@@ -93,9 +94,6 @@ const styles = StyleSheet.create({
     color: colors.primary,
   },
   group: {
-    borderColor: colors.border,
-    borderRadius: radii.small,
-    borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
   },
   label: {
@@ -113,15 +111,16 @@ const styles = StyleSheet.create({
   },
   row: {
     alignItems: "center",
-    columnGap: spacing.sm,
+    columnGap: spacing.md,
     flexDirection: "row",
-    minHeight: controlSize.touch,
-    paddingHorizontal: spacing.sm,
+    minHeight: controlSize.touch + spacing.xs,
+    paddingHorizontal: spacing.md,
   },
+  // Inset to the label, as the Status rows inset their dividers.
   separator: {
-    backgroundColor: colors.border,
+    backgroundColor: colors.borderSoft,
     height: StyleSheet.hairlineWidth,
-    marginLeft: spacing.sm + iconSize.action + spacing.sm,
+    marginLeft: spacing.md + iconSize.action + spacing.md,
   },
   trailing: {
     ...typeScale.label,

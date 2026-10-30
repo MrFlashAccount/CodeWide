@@ -1,8 +1,13 @@
-import { Image, StyleSheet, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { Image, StyleSheet, View, type TextStyle, type ViewStyle } from "react-native";
 
 import { usePrivateImageUri } from "../../rendering/use-private-image-uri";
-import { colors, controlSize, radii, typeScale, typeWeight } from "../../theme";
+import { colors, iconSize, radii, typeScale, typeWeight } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
+import type { MessageAuthor } from "./messageContent";
+
+/** A message header uses 36dp, a reply 28dp and a one-line event 20dp. */
+export type MessageAvatarSize = "event" | "message" | "reply";
 
 const WORDS = /[\p{L}\p{N}]+/gu;
 
@@ -20,25 +25,36 @@ function initialsOf(login: string): string {
 }
 
 /**
- * Round author avatar. The remote picture resolves through the private image
- * path; without one, until it loads, or when it fails, the login's initials
- * stand in.
+ * Author avatar. A person is round with the login's initials standing in
+ * until the remote picture loads (or when there is none, or it fails); an
+ * automation account or AI reviewer is a rounded square with a chip or
+ * sparkles glyph, so it never reads as a person. The picture resolves through
+ * the private image path.
  */
 export function MessageAvatar({
-  avatarUrl,
-  login,
+  author,
+  size,
 }: {
-  readonly avatarUrl: string | null;
-  readonly login: string;
+  readonly author: MessageAuthor;
+  readonly size: MessageAvatarSize;
 }): React.JSX.Element {
-  const image = usePrivateImageUri(avatarUrl);
+  const image = usePrivateImageUri(author.avatarUrl);
+  const geometry = SIZES[size];
   return (
     <View
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      style={styles.avatar}
+      style={[styles.avatar, geometry.frame, author.marker !== null && geometry.square]}
     >
-      <Text style={styles.initial}>{initialsOf(login)}</Text>
+      {author.marker === null ? (
+        <Text style={[styles.initial, geometry.initial]}>{initialsOf(author.login)}</Text>
+      ) : (
+        <Ionicons
+          color={colors.textMuted}
+          name={author.marker === "bot" ? "hardware-chip-outline" : "sparkles-outline"}
+          size={geometry.glyph}
+        />
+      )}
       {image.source === null || image.failed ? null : (
         <Image source={image.source} style={styles.picture} />
       )}
@@ -46,24 +62,82 @@ export function MessageAvatar({
   );
 }
 
-const AVATAR_SIZE = controlSize.compact;
+const MESSAGE_SIZE = 36;
+const REPLY_SIZE = 28;
+const EVENT_SIZE = 20;
+const EVENT_INITIAL_SIZE = 9;
 
 const styles = StyleSheet.create({
   avatar: {
     alignItems: "center",
     backgroundColor: colors.surfaceContainerHigh,
     borderRadius: radii.pill,
-    height: AVATAR_SIZE,
+    flexShrink: 0,
     justifyContent: "center",
     overflow: "hidden",
-    width: AVATAR_SIZE,
+  },
+  event: {
+    height: EVENT_SIZE,
+    width: EVENT_SIZE,
+  },
+  eventInitial: {
+    fontSize: EVENT_INITIAL_SIZE,
+    lineHeight: EVENT_SIZE,
+  },
+  eventSquare: {
+    borderRadius: radii.compact,
   },
   initial: {
     ...typeScale.label,
     color: colors.textMuted,
     fontWeight: typeWeight.semibold,
   },
+  message: {
+    height: MESSAGE_SIZE,
+    width: MESSAGE_SIZE,
+  },
   picture: {
     ...StyleSheet.absoluteFill,
   },
+  reply: {
+    height: REPLY_SIZE,
+    width: REPLY_SIZE,
+  },
+  replyInitial: {
+    ...typeScale.caption,
+  },
+  square: {
+    borderRadius: radii.small,
+  },
 });
+
+const SIZES: Readonly<
+  Record<
+    MessageAvatarSize,
+    {
+      readonly frame: ViewStyle;
+      readonly glyph: number;
+      readonly initial: TextStyle | null;
+      readonly square: ViewStyle;
+    }
+  >
+> = {
+  event: {
+    frame: styles.event,
+    glyph: iconSize.indicator,
+    initial: styles.eventInitial,
+    square: styles.eventSquare,
+  },
+  message: {
+    frame: styles.message,
+    glyph: iconSize.action,
+    initial: null,
+    square: styles.square,
+  },
+  reply: {
+    frame: styles.reply,
+    glyph: iconSize.inline,
+    initial: styles.replyInitial,
+    square: styles.square,
+  },
+};

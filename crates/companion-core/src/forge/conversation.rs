@@ -8,7 +8,7 @@
 
 use forge_protocol::{
     Author, Comment, CommentMedia, ConversationEntry, ConversationPage, ConversationParams,
-    Iteration, ReviewThread, ThreadAnchor, ThreadResolution, methods,
+    EventCategory, EventCommits, Iteration, ReviewThread, ThreadAnchor, ThreadResolution, methods,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -176,8 +176,11 @@ pub fn thread_location(thread: &ReviewThread) -> (String, &'static str) {
 #[must_use]
 pub fn thread_state(thread: &ReviewThread) -> String {
     let state = match &thread.resolution {
-        ThreadResolution::None | ThreadResolution::Conversation { resolved: false } => "open",
-        ThreadResolution::Conversation { resolved: true } => "resolved",
+        ThreadResolution::None
+        | ThreadResolution::Conversation {
+            resolved: false, ..
+        } => "open",
+        ThreadResolution::Conversation { resolved: true, .. } => "resolved",
         ThreadResolution::Issue { state, .. } => match state {
             forge_protocol::IssueState::Open => "open issue",
             forge_protocol::IssueState::Resolved => "resolved issue",
@@ -200,7 +203,8 @@ fn valid_cursor(cursor: &str) -> bool {
 /// The validating adapter of a plugin page: an oversized page or cursor is
 /// refused; entries without a valid id, threads without comments and
 /// threads with an impossible anchor are dropped; an invalid `reviewId`,
-/// iteration or issue `changedAt` becomes `null`; a permalink that is not `https` on the pull request's host and
+/// iteration or issue `changedAt` becomes `null`; an excerpt or a push's
+/// commits that break the protocol's rules are dropped, their entry kept; a permalink that is not `https` on the pull request's host and
 /// an avatar that is not `https` become `null`; direct media and direct
 /// avatars survive only as `https` URLs on a declared media host.
 ///
@@ -260,12 +264,14 @@ fn entry_of(entry: ConversationEntry, origin: PageOrigin<'_>) -> Option<Conversa
             created_at,
             category,
             text,
+            commits,
         } => valid_forge_id(&id).then(|| ConversationEntry::Event {
             id,
             author: author.map(|author| author_of(author, origin)),
             created_at,
             category,
             text: text.chars().take(limits::MAX_EVENT_TEXT_CHARS).collect(),
+            commits: commits.and_then(|commits| commits_of(commits, category)),
         }),
     }
 }
@@ -280,6 +286,10 @@ fn thread_of(thread: ReviewThread, origin: PageOrigin<'_>) -> Option<ReviewThrea
     if !valid_forge_id(&thread.id) || comments.is_empty() || !valid_anchor(&thread.anchor) {
         return None;
     }
+    // An excerpt that breaks the shared rules is dropped; the thread stays.
+    let excerpt = thread
+        .excerpt
+        .filter(|excerpt| excerpt.rules(&thread.anchor).is_ok());
     Some(ReviewThread {
         id: thread.id,
         anchor: thread.anchor,
@@ -289,7 +299,15 @@ fn thread_of(thread: ReviewThread, origin: PageOrigin<'_>) -> Option<ReviewThrea
         iteration: thread.iteration.filter(valid_iteration),
         comments,
         viewer_can_reply: thread.viewer_can_reply,
+        excerpt,
     })
+}
+
+/// A push event's commits as a client may render them: an invalid commit
+/// list (see [`EventCommits::rules`]) is dropped as a whole, and the event
+/// keeps its text.
+fn commits_of(commits: EventCommits, category: EventCategory) -> Option<EventCommits> {
+    commits.rules(category).is_ok().then_some(commits)
 }
 
 /// A bounded non-empty path; positive lines with `startLine` strictly
@@ -667,7 +685,61 @@ mod tests {
         assert!(kept[1].outdated);
         assert_eq!(
             kept[2].resolution,
-            ThreadResolution::Conversation { resolved: true }
+            ThreadResolution::Conversation {
+                resolved: true,
+                viewer_can_toggle: false
+            }
+        );
+    }
+
+    #[test]
+    fn excerpts_and_push_commits_that_break_the_rules_are_dropped_alone() {
+        let line =
+            json!({"kind": "line", "path": "a.rs", "line": 3, "startLine": null, "side": "new"});
+        let none = json!({"kind": "none"});
+        let with_excerpt = |lines: Value| {
+            let mut entry = thread_entry(&line, &none, &Value::Null, &Value::Null);
+            entry["thread"]["excerpt"] = json!({ "lines": lines });
+            entry
+        };
+        let (kept, _) = validated_threads(
+            &[
+                with_excerpt(json!([{"kind": "added", "newLine": 3, "text": "kept"}])),
+                with_excerpt(json!([{"kind": "added", "newLine": 2, "text": "not the anchor"}])),
+            ],
+            &Value::Null,
+        );
+        assert_eq!(kept.len(), 2, "a broken excerpt never drops its thread");
+        assert!(kept[0].excerpt.is_some());
+        assert_eq!(kept[1].excerpt, None);
+        let commits = json!({"total": 1, "items": [{"sha": "abc123", "shortSha": null, "title": "Fix", "authorLogin": null}]});
+        let page: ConversationPage = serde_json::from_value(json!({"entries": [
+            {"kind": "event", "id": "push", "author": null, "createdAt": "2026-10-01T00:00:00Z",
+             "category": "push", "text": "added 1 commit", "commits": commits},
+            {"kind": "event", "id": "state", "author": null, "createdAt": "2026-10-01T00:00:00Z",
+             "category": "state", "text": "closed", "commits": commits},
+            {"kind": "event", "id": "short", "author": null, "createdAt": "2026-10-01T00:00:00Z",
+             "category": "push", "text": "added 2 commits",
+             "commits": {"total": 0, "items": commits["items"]}}
+        ], "nextCursor": null, "openIssuesBlockMerge": null}))
+        .expect("page");
+        let kept: Vec<(String, bool)> = validate(page, ORIGIN)
+            .expect("valid")
+            .entries
+            .into_iter()
+            .filter_map(|entry| match entry {
+                ConversationEntry::Event { id, commits, .. } => Some((id, commits.is_some())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                ("push".to_owned(), true),
+                ("state".to_owned(), false),
+                ("short".to_owned(), false)
+            ],
+            "commits survive only on a push event within the rules; the event stays"
         );
     }
 

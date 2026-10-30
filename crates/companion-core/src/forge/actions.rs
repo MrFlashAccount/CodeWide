@@ -337,6 +337,10 @@ pub enum RunKind {
     /// `companion/pullRequest/reviewThread/reply`; `actionId` is the
     /// review thread id.
     ReviewThreadReply,
+    /// `companion/pullRequest/reviewThread/resolve`; `actionId` is the
+    /// requested state and the thread id, `resolved:<id>` or
+    /// `unresolved:<id>`.
+    ReviewThreadResolve,
 }
 
 /// One journal record. `result` is the stored client result of a success,

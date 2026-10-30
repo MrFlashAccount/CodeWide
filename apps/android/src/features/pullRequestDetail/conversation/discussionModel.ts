@@ -1,6 +1,6 @@
 /**
- * Projects loaded conversation pages into the Discussion section: the pinned
- * issues, the summary chip and a newest-first timeline in which reviews
+ * Projects loaded conversation pages into the Details page: the issues and
+ * reviewer verdicts the Status section summarizes, and a newest-first timeline in which reviews
  * contain their threads, nearby comments of one author are grouped and runs of
  * same-category events collapse. Pages arrive newest first and later pages
  * hold older entries, so the concatenated entries are already in display
@@ -15,6 +15,7 @@ import type {
   ConversationReviewThread,
   EventCategory,
   IssueState,
+  ReviewVerdict,
 } from "../../../data/forgeConversationContract";
 
 /** Consecutive comments of one author at most five minutes apart share one group. */
@@ -67,23 +68,36 @@ export type TimelineItem =
       readonly kind: "events";
     };
 
-/** The summary chip beside the Discussion heading. */
-type DiscussionSummary = {
+/** The second line of a Status row (Issues or Reviews) and the tone of its icon. */
+export type StatusSummary = {
   readonly label: string;
   readonly tone: "danger" | "success" | "warning";
+};
+
+/** A verdict that still counts toward merging: the reviewer's newest approval or change request. */
+type StandingVerdict = Extract<ReviewVerdict, "approved" | "changesRequested">;
+
+/** One reviewer's standing verdict, from the newest of their reviews loaded so far. */
+export type ReviewerVerdict = {
+  readonly author: ConversationAuthor;
+  readonly createdAt: string;
+  readonly verdict: StandingVerdict;
 };
 
 /** Everything the Discussion section renders from the loaded pages. */
 export type Discussion = {
   /** Comments loaded so far: top-level, review bodies and thread comments. */
   readonly commentCount: number;
+  /** `null` when the forge reports no issues on the loaded pages. */
+  readonly issueSummary: StatusSummary | null;
   /** The largest iteration number seen on a thread; `null` without iterations. */
   readonly latestIteration: number | null;
   /** Open issues, newest first. */
   readonly openIssues: readonly DiscussionIssue[];
+  /** Reviewers whose newest loaded review approves or requests changes, newest first. */
+  readonly reviewers: readonly ReviewerVerdict[];
   /** Resolved and dropped issues, newest first; shown behind a counter. */
   readonly settledIssues: readonly DiscussionIssue[];
-  readonly summary: DiscussionSummary | null;
   readonly timeline: readonly TimelineItem[];
 };
 
@@ -91,32 +105,80 @@ function plural(count: number, one: string, many: string): string {
   return `${String(count)} ${count === 1 ? one : many}`;
 }
 
+/**
+ * The Reviews row's second line: who requested changes and how many approve,
+ * `alice requested changes · 1 approval` or `Approved by bob`; `null` without
+ * a standing verdict. A change request outweighs approvals, so it sets the tone.
+ */
+export function reviewsSummary(reviewers: readonly ReviewerVerdict[]): StatusSummary | null {
+  const blocking = reviewers.filter((reviewer) => reviewer.verdict === "changesRequested");
+  const approving = reviewers.filter((reviewer) => reviewer.verdict === "approved");
+  const [first] = blocking;
+  if (first === undefined) {
+    const [approver] = approving;
+    if (approver === undefined) {
+      return null;
+    }
+    return {
+      label:
+        approving.length === 1
+          ? `Approved by ${approver.author.login}`
+          : plural(approving.length, "approval", "approvals"),
+      tone: "success",
+    };
+  }
+  const who =
+    blocking.length === 1
+      ? first.author.login
+      : `${first.author.login} and ${plural(blocking.length - 1, "other", "others")}`;
+  const approved =
+    approving.length === 0 ? "" : ` · ${plural(approving.length, "approval", "approvals")}`;
+  return { label: `${who} requested changes${approved}`, tone: "danger" };
+}
+
 function issueOf(thread: ConversationReviewThread): DiscussionIssue | null {
   return thread.resolution.kind === "issue" ? { state: thread.resolution.state, thread } : null;
 }
 
-/** The chip: open issues (and whether they block merging) when the forge has issues, otherwise unresolved threads. */
-function summaryOf(
-  threads: readonly ConversationReviewThread[],
-  issues: {
-    readonly blocksMerge: boolean | null;
-    readonly open: number;
-    readonly total: number;
-  },
-): DiscussionSummary | null {
-  if (issues.total > 0) {
-    if (issues.open === 0) {
-      return { label: "No open issues", tone: "success" };
-    }
-    const label = plural(issues.open, "open issue", "open issues");
-    return issues.blocksMerge === true
-      ? { label: `${label} · blocks merge`, tone: "danger" }
-      : { label, tone: "warning" };
+/** `1 open · blocks merge` when the forge has issues; `null` when it reported none. */
+function issueSummaryOf(issues: {
+  readonly blocksMerge: boolean | null;
+  readonly open: number;
+  readonly total: number;
+}): StatusSummary | null {
+  if (issues.total === 0) {
+    return null;
   }
-  const unresolved = threads.filter(
-    (thread) => thread.resolution.kind === "conversation" && !thread.resolution.resolved,
-  ).length;
-  return unresolved === 0 ? null : { label: `${String(unresolved)} unresolved`, tone: "warning" };
+  if (issues.open === 0) {
+    return { label: "No open issues", tone: "success" };
+  }
+  const label = `${String(issues.open)} open`;
+  return issues.blocksMerge === true
+    ? { label: `${label} · blocks merge`, tone: "danger" }
+    : { label, tone: "warning" };
+}
+
+/**
+ * Each reviewer's newest decisive review on the loaded pages. Entries arrive
+ * newest first, so the first decisive review of an author is their standing
+ * one; a newer dismissal or withdrawn approval clears what came before it.
+ */
+function reviewersOf(entries: readonly ConversationEntry[]): ReviewerVerdict[] {
+  const decided = new Set<string>();
+  const reviewers: ReviewerVerdict[] = [];
+  for (const entry of entries) {
+    if (entry.kind !== "review" || decided.has(entry.author.login)) {
+      continue;
+    }
+    const { verdict } = entry;
+    if (verdict === "approved" || verdict === "changesRequested") {
+      decided.add(entry.author.login);
+      reviewers.push({ author: entry.author, createdAt: entry.createdAt, verdict });
+    } else if (verdict === "approvalWithdrawn" || verdict === "dismissed") {
+      decided.add(entry.author.login);
+    }
+  }
+  return reviewers;
 }
 
 /** Whether `older`, the next comment down the newest-first timeline, joins the group of `newer`. */
@@ -265,14 +327,15 @@ export function projectDiscussion(page: ConversationPage): Discussion {
   const openIssues = issues.filter((issue) => issue.state === "open");
   return {
     commentCount,
-    latestIteration: latestIterationOf(threads),
-    openIssues,
-    settledIssues: issues.filter((issue) => issue.state !== "open"),
-    summary: summaryOf(threads, {
+    issueSummary: issueSummaryOf({
       blocksMerge: page.openIssuesBlockMerge,
       open: openIssues.length,
       total: issues.length,
     }),
+    latestIteration: latestIterationOf(threads),
+    openIssues,
+    reviewers: reviewersOf(page.entries),
+    settledIssues: issues.filter((issue) => issue.state !== "open"),
     timeline: builder.items,
   };
 }

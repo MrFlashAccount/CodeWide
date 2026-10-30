@@ -1,28 +1,27 @@
-import type { ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
-import { colors, controlSize, spacing, typeScale } from "../../theme";
+import { colors, spacing, typeScale } from "../../theme";
 import { compactAge } from "../../ui/relativeAge";
 import { AppText as Text } from "../../ui/Typography";
 import { MessageAuthorName } from "./MessageAuthorName";
 import { MessageAvatar } from "./MessageAvatar";
-import { MessageBody } from "./MessageBody";
 import type { MessageAuthor, MessageContent, MessageReaction } from "./messageContent";
+import { MessageFoldedBody } from "./MessageFoldedBody";
 import { MessageReactions } from "./MessageReactions";
 
-/** Everything one message card shows; the owner maps its own DTO into it. */
+/** Everything one message shows; the owner maps its own DTO into it. */
 export type MessageCardProps = {
   readonly author: MessageAuthor;
-  /** Optional label beside the author, for example a review verdict. */
-  readonly badge?: ReactNode;
   readonly content: MessageContent;
   /**
    * Continues the previous message of the same author: no avatar or header,
-   * the body aligned under the previous message's text.
+   * only the body (and a quiet edited mark).
    */
   readonly continuation: boolean;
   readonly createdAt: string;
-  /** Draws the hairline that separates it from the message above in one group. */
+  /** `message` for a top-level message (36dp avatar), `reply` inside a thread (28dp). */
+  readonly density: "message" | "reply";
+  /** Draws the hairline that separates it from the message above. */
   readonly divided: boolean;
   readonly edited: boolean;
   readonly nowMs: number;
@@ -31,10 +30,11 @@ export type MessageCardProps = {
 };
 
 /**
- * One authored message: avatar, login (with a bot or AI marker), relative age
- * and an edited mark, then the rich body and the read-only reactions. A
- * continuation drops the header and keeps only a quiet edited mark. It draws no
- * frame of its own, so the owner groups messages inside one bordered surface.
+ * One authored message, GitHub Mobile style: the avatar beside `login · age`
+ * (with an outlined `Bot` / `AI` badge under the login), then the rich body
+ * at full width below, folded behind "Read more" when it is long, and the
+ * read-only reactions. It draws no frame; the owner places messages on its
+ * page or inside a thread.
  */
 export function MessageCard(props: MessageCardProps): React.JSX.Element {
   const age = compactAge(props.createdAt, props.nowMs);
@@ -49,13 +49,11 @@ export function MessageCard(props: MessageCardProps): React.JSX.Element {
     >
       {props.continuation ? null : (
         <View style={styles.header}>
-          <MessageAvatar avatarUrl={props.author.avatarUrl} login={props.author.login} />
-          <MessageAuthorName author={props.author} />
-          {props.badge}
-          <Text style={styles.meta}>{props.edited ? `${age} · edited` : age}</Text>
+          <MessageAvatar author={props.author} size={props.density} />
+          <MessageAuthorName age={props.edited ? `${age} · edited` : age} author={props.author} />
         </View>
       )}
-      <MessageBody content={props.content} />
+      <MessageFoldedBody content={props.content} testID={props.testID} />
       {props.continuation && props.edited ? <Text style={styles.edited}>edited</Text> : null}
       <MessageReactions reactions={props.reactions} />
     </View>
@@ -65,16 +63,14 @@ export function MessageCard(props: MessageCardProps): React.JSX.Element {
 const styles = StyleSheet.create({
   card: {
     alignItems: "stretch",
-    gap: spacing.xs,
-    padding: spacing.sm,
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
   },
-  // Aligns the body under the previous message's text: past the avatar and its gap.
   continuation: {
-    paddingLeft: spacing.sm + controlSize.compact + spacing.xs,
     paddingTop: 0,
   },
   divided: {
-    borderTopColor: colors.border,
+    borderTopColor: colors.borderSoft,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   edited: {
@@ -83,14 +79,7 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: "center",
-    columnGap: spacing.xs,
+    columnGap: spacing.sm,
     flexDirection: "row",
-    minHeight: controlSize.compact,
-  },
-  meta: {
-    ...typeScale.label,
-    color: colors.textMuted,
-    flexShrink: 0,
-    marginLeft: "auto",
   },
 });

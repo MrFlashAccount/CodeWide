@@ -125,6 +125,7 @@ function capabilities(): PullRequestDetailWorkspaceCapabilities {
     ensureReviewChat: unused,
     markAttentionSeen: async () => undefined,
     replyToReviewThread: unused,
+    resolveReviewThread: unused,
     runAction: unused,
     setLink: unused,
     setViewed: unused,

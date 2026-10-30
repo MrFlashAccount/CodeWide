@@ -132,8 +132,10 @@ Required: `forge.auth@1`, `forge.list@1`, `forge.read@1`, `forge.diff@1`, `forge
 `forge.review@1`.
 
 Optional: `forge.search@1`, `forge.checks@1`, `forge.viewed@1`, `forge.resolve@1`,
-`forge.scenarioContext@1`, `forge.conversation@1`, `forge.comments@1` (these two are specified
-in [Pull request conversation](forge-conversation.md)), `forge.fileContent@1` (see
+`forge.scenarioContext@1`, `forge.conversation@1`, `forge.comments@1`,
+`forge.conversation.resolve@1` (these three are specified in
+[Pull request conversation](forge-conversation.md); `forge.conversation.resolve@1` resolves review
+conversations and is unrelated to `forge.resolve@1`), `forge.fileContent@1` (see
 [Whole-file content](#whole-file-content)).
 
 - Without `forge.search@1`, the provider remains available through `forge.list@1`. The companion
@@ -147,6 +149,8 @@ in [Pull request conversation](forge-conversation.md)), `forge.fileContent@1` (s
 - Without `forge.resolve@1`, the provider takes no part in branch detection; manual links still
   work.
 - Without `forge.fileContent@1`, Changes shows only the recorded patch hunks of each file.
+- Without `forge.conversation.resolve@1`, review conversations are read-only: no Resolve or
+  Unresolve button is shown.
 - A call for an undeclared capability answers `-32080` without spawning the plugin.
 
 ## Methods
@@ -180,6 +184,7 @@ known and takes only the remotes.
 | `forge.media.read` | `forge.conversation@1` | `{ account, url }` → `{ contentType, bytesBase64 }`, at most 10 MiB; a URL outside the account's forge and media hosts, or a redirect there, answers `-32602`; larger media answer `-32113` with `data.kind = "tooLarge"` |
 | `forge.pullRequest.comment.create` | `forge.comments@1` | `{ account, ref, body, idempotencyKey }` → `{ comment }` |
 | `forge.pullRequest.reviewThread.reply` | `forge.comments@1` | `{ account, ref, threadId, body, idempotencyKey }` → `{ comment }`; a thread of another pull request answers `-32115` |
+| `forge.pullRequest.reviewThread.resolve` | `forge.conversation.resolve@1` | `{ account, ref, threadId, resolved, idempotencyKey }` → `{ resolved, viewerCanToggle }`; a thread of another pull request answers `-32115`, a thread that is not a conversation or a change the viewer may not make `-32113` |
 | `forge.pullRequest.fileContent` | `forge.fileContent@1` | `{ account, ref, headRevision, path }` → `{ state: "text", content }`, `{ state: "tooLarge", bytes \| null }`, `{ state: "binary" }` or `{ state: "missing" }`; see [Whole-file content](#whole-file-content) |
 | `forge.pullRequest.scenarioContext` | `forge.scenarioContext@1` | `{ account, ref, scenario, checkId \| null }` → `{ conflicts, failingChecks: { checkId, name, logExcerpt }[], comments: { author, path \| null, line \| null, body }[] }`, at most 64 KiB |
 
@@ -435,9 +440,10 @@ Each forge write has exactly one trigger, enforced in the companion:
   effective level;
 - viewed marks: only `companion/pullRequest/viewed/set`;
 - a conversation comment: only `companion/pullRequest/comment/create`;
-- a review thread reply: only `companion/pullRequest/reviewThread/reply`.
+- a review thread reply: only `companion/pullRequest/reviewThread/reply`;
+- resolving or unresolving a conversation: only `companion/pullRequest/reviewThread/resolve`.
 
-The two conversation writes publish immediately and carry no `headRevision`; they are journaled
+The three conversation writes publish immediately and carry no `headRevision`; they are journaled
 and replayed exactly like a run.
 
 Every run and Submit carries `headRevision`; a plugin must return `-32112` instead of writing
@@ -451,8 +457,8 @@ agent path starts an auth flow.
 
 Owned by the companion (`forge/limits.rs`):
 
-- plugin call timeout 30 s; `action.run`, `review.submit`, `comment.create` and
-  `reviewThread.reply` 60 s;
+- plugin call timeout 30 s; `action.run`, `review.submit`, `comment.create`,
+  `reviewThread.reply` and `reviewThread.resolve` 60 s;
 - at most 4 concurrent plugin processes per companion;
 - list and overview reads are cached for 60 s; derived account states are re-verified after
   60 s;
@@ -563,11 +569,12 @@ capability of a plugin executable against recorded fixtures. On Linux it is expo
 methods at a deliberately stale head, which a conformant plugin refuses without writing. With
 `forge.conversation@1` it reads the first conversation page, checks every thread's rules (at least
 one comment, positive lines with `startLine` before `line`, a non-empty anchored path, a positive
-iteration number) and requires a media read of a foreign host to answer `-32602`; with
+iteration number, an `excerpt` within its rules) and of every push event's `commits`, and requires a media read of a foreign host to answer `-32602`; with
 `forge.fileContent@1` it reads the first listed file the head still has (text within 1 MiB and
 without NUL, or a `tooLarge` size above it), requires a path the head cannot have to answer
 `missing` and a path with a `..` segment to answer `-32602`; with `forge.comments@1` and `--write-probes` it requires a reply
-to a thread that cannot exist to be refused (a comment create has no safe probe). An external plugin is documented as
+to a thread that cannot exist to be refused (a comment create has no safe probe), and with
+`forge.conversation.resolve@1` the same for resolving such a thread. An external plugin is documented as
 supported only after it passes the harness.
 
 ## Arcanum plugin guidance

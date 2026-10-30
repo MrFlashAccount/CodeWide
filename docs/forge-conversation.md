@@ -1,7 +1,8 @@
 # Pull request conversation: reading, rendering and replying
 
-Status: contract of `forge.conversation@1` (revised in place before release: typed anchors,
-resolutions with issues, verdicts, iterations, author kinds and event categories). The plugin,
+Status: contract of `forge.conversation@1` and `forge.conversation.resolve@1` (revised in place
+before release: typed anchors, resolutions with issues, verdicts, iterations, author kinds, event
+categories, code excerpts, conversation resolution and push commits). The plugin,
 companion and Android sides implement exactly these shapes; changing them changes all three. There
 is no compatibility layer for the earlier flat shape (`path`/`line`/`side`/`resolved` on a thread).
 
@@ -15,15 +16,17 @@ resolved or dropped, written on iterations). The user can address the conversati
 
 - write a top-level comment;
 - reply in a review thread;
+- resolve or unresolve a conversation (a thread whose resolution is `conversation`);
 - hand one review thread or issue to the agent (the existing `addressComments` scenario, focused
   on that thread, in the PR's canonical review chat).
 
-Out of scope for this step: reactions writes, edit/delete, resolve/unresolve, changing an issue's
-state, attachment upload. Reactions and issues are read and displayed only.
+Out of scope for this step: reactions writes, edit/delete, changing an issue's state, attachment
+upload, and an outcome (success/failure) on `ci` events. Reactions and issues are read and displayed only.
 
 ## Write rule
 
-A conversation comment and a thread reply publish immediately, as on the forge itself. Line
+A conversation comment, a thread reply and a resolution change publish immediately, as on the
+forge itself. Line
 comments on the diff remain drafts that reach the forge only through Submit review. Offline,
 every write is refused locally and nothing is queued. Every write carries an `idempotencyKey`; the
 companion journals it before calling the plugin and replays the stored outcome for a repeated key,
@@ -35,6 +38,8 @@ Optional capabilities, declared by the plugin:
 
 - `forge.conversation@1`: `forge.pullRequest.conversation` and `forge.media.read`.
 - `forge.comments@1`: `forge.pullRequest.comment.create` and `forge.pullRequest.reviewThread.reply`.
+- `forge.conversation.resolve@1`: `forge.pullRequest.reviewThread.resolve`. Unrelated to
+  `forge.resolve@1` (remote → repository resolution).
 
 The companion rejects undeclared capabilities with `-32080`. Android branches only on declared
 capabilities, never on the forge's name.
@@ -68,7 +73,8 @@ page of one read carries the same value; the client uses the first page's.
 { "kind": "reviewThread", "thread": ReviewThread }
 { "kind": "event", "id": "…", "author": Author | null, "createdAt": "RFC3339",
   "category": "push" | "state" | "ci" | "other",
-  "text": "plain text, e.g. merged main into this branch" }
+  "text": "plain text, e.g. added 3 commits",
+  "commits": EventCommits }             // optional, absent (or null) when none; push events only
 ```
 
 ```jsonc
@@ -119,7 +125,8 @@ ReviewThread = {
   "reviewId": "…" | null,                // the `review` entry this thread was published with
   "iteration": { "id": "…", "number": 3 } | null, // the iteration it was written on
   "comments": [Comment],                 // oldest first, at least one
-  "viewerCanReply": true
+  "viewerCanReply": true,
+  "excerpt": CodeExcerpt                 // optional, absent (or null) when unknown
 }
 
 ThreadAnchor =
@@ -132,11 +139,33 @@ ThreadAnchor =
 
 ThreadResolution =
     { "kind": "none" }                              // the forge cannot resolve this thread
-  | { "kind": "conversation", "resolved": false }   // a resolvable discussion (GitHub)
+  | { "kind": "conversation", "resolved": false,    // a resolvable discussion (GitHub)
+      "viewerCanToggle": true }                     // optional, default false, see below
   | { "kind": "issue",                              // a review remark with a lifecycle (Arcanum)
       "state": "open" | "resolved" | "dropped",
       "changedBy": Author | null,                   // who last changed the state, if known
       "changedAt": "RFC3339" | null }
+
+CodeExcerpt = {
+  "lines": [ExcerptLine]                            // 1..8, top to bottom; the last is the anchored line
+}
+
+ExcerptLine =
+    { "kind": "context", "oldLine": 40, "newLine": 41, "text": "unchanged code" }
+  | { "kind": "added",   "newLine": 42, "text": "added code" }
+  | { "kind": "removed", "oldLine": 39, "text": "removed code" }
+
+EventCommits = {
+  "total": 25,                                      // every commit of the push, >= items.length
+  "items": [EventCommit]                            // 1..20, oldest first, the first 20 of the push
+}
+
+EventCommit = {
+  "sha": "full commit id",                          // 1..64 ASCII letters and digits
+  "shortSha": "abc1234" | null,                     // 1..16 ASCII letters and digits; the client abbreviates when null
+  "title": "first line of the message",             // one line, at most 256 characters
+  "authorLogin": "octocat" | null                   // the forge login of the commit's author, if known
+}
 ```
 
 Rules every plugin keeps:
@@ -171,6 +200,25 @@ Rules every plugin keeps:
   `ci`: checks and pipelines; `other`: everything else (review requests, labels, links).
 - **Verdicts.** A verdict-only review (no body, no threads) is a valid entry; the client shows it
   as a compact row.
+- **Code excerpt.** `excerpt` is the code the thread is about, as the forge's diff showed it when
+  the thread started: at most 8 lines ending at the anchored line, each with the line numbers its
+  kind has (`context` both, `added` the new side's, `removed` the old side's). Lines are one
+  contiguous piece of one diff hunk, so each side's numbers grow by exactly one from one line
+  carrying that side to the next. Texts are single lines (a tab is allowed, no other control
+  character) of at most 400 characters; the plugin cuts longer lines. Only a `line` or `file`
+  anchor has an excerpt. For a `line` anchor the last line exists on the anchor's `side` with the
+  anchor's `line` (so a thread whose line moved since gets no excerpt unless the plugin renumbers
+  it correctly); for a `file` anchor (a line that no longer maps) the excerpt shows the code as it
+  was, numbered as it was. A `pullRequest` thread has none. The client marks the last line, and
+  for a range (`startLine`) every excerpt line whose number on the anchor's side is within
+  `startLine..line`. The rules are `CodeExcerpt::rules` in `crates/forge-protocol`.
+- **Conversation resolution.** `viewerCanToggle` says the viewer may flip `resolved` through
+  `forge.pullRequest.reviewThread.resolve`: resolve it while unresolved, unresolve it while
+  resolved. A plugin without `forge.conversation.resolve@1` omits it (false). Issues and `none`
+  threads are never resolved through this write.
+- **Push commits.** A `push` event may list the commits it added: `items` oldest first, cut to the
+  first 20, and `total` counting all of them. A force-push lists the new head commit. Only `push`
+  events carry `commits`; the rules are `EventCommits::rules` in `crates/forge-protocol`.
 
 ### Direct media
 
@@ -206,6 +254,18 @@ Params: `{ account, ref, threadId, body, idempotencyKey }` → `{ "comment": Com
 
 `body` is Markdown, 1..65536 characters after trimming; the companion validates the bound.
 
+### `forge.pullRequest.reviewThread.resolve`
+
+Params: `{ account, ref, threadId, resolved: boolean, idempotencyKey }` →
+`{ "resolved": boolean, "viewerCanToggle": boolean }`, the thread's conversation resolution after
+the write. `resolved: true` resolves, `false` unresolves.
+
+- A thread already in the requested state answers that state without writing (a stale screen is
+  not an error).
+- A thread of another pull request, or an unknown one, answers `-32115`.
+- A thread whose resolution is not `conversation` (an issue, `none`), or a change the viewer may
+  not make, answers `-32113` with the forge's reason and writes nothing.
+
 ## Companion RPCs (Android ↔ companion)
 
 - `companion/pullRequest/conversation/read` `{ pullRequest, cursor }` → `ConversationPage`.
@@ -213,6 +273,10 @@ Params: `{ account, ref, threadId, body, idempotencyKey }` → `{ "comment": Com
 - `companion/pullRequest/comment/create` `{ pullRequest, body, idempotencyKey }` → `{ comment }`.
 - `companion/pullRequest/reviewThread/reply`
   `{ pullRequest, threadId, body, idempotencyKey }` → `{ comment }`.
+- `companion/pullRequest/reviewThread/resolve`
+  `{ pullRequest, threadId, resolved, idempotencyKey }` → `{ resolved, viewerCanToggle }`;
+  `-32080` without `forge.conversation.resolve@1`, `-32088` for an unknown thread, `-32083` for a
+  refusal or an unknown outcome.
 - `companion/pullRequest/scenario/start` gains an optional `reviewThreadId`. With it, the
   `addressComments` scenario context contains only that thread (its comments, its anchor as
   `location`: `path:start-end`, `path:line`, the path or `pull request`, its diff `side` or `none`,
@@ -245,8 +309,9 @@ Additions the shapes above needed:
 - **Bodies.** The companion validates 1..65 536 characters after trimming and sends the trimmed
   body.
 - **Journal.** Comment writes use the action journal with kinds `comment` (`actionId` `comment`)
-  and `reviewThreadReply` (`actionId` the thread id), so a key reused for another write or thread
-  is refused. The capability is checked before journaling, so an undeclared capability consumes no
+  and `reviewThreadReply` (`actionId` the thread id), and resolution changes kind
+  `reviewThreadResolve` (`actionId` `resolved:<threadId>` or `unresolved:<threadId>`), so a key
+  reused for another write, thread or direction is refused. The capability is checked before journaling, so an undeclared capability consumes no
   key. A local failure after the call started (timeout, a plugin that died) and a success whose
   comment fails validation are `outcomeUnknown`. Success and `outcomeUnknown` invalidate the pull
   request (cache and `pullRequest` event); a typed refusal does not.
@@ -254,7 +319,10 @@ Additions the shapes above needed:
   valid id, without a valid comment, or with an impossible anchor (an empty, control-character or
   over-4 KiB path, line 0, or a `startLine` not strictly before `line`) is dropped; an invalid
   `reviewId` and an iteration with an invalid id or number 0 become `null`; an issue's `changedBy`
-  is checked like every author and an unreadable `changedAt` becomes `null`. `Author.kind`,
+  is checked like every author and an unreadable `changedAt` becomes `null`. An `excerpt` that
+  breaks `CodeExcerpt::rules` for its anchor, and `commits` that break `EventCommits::rules` (on a
+  non-`push` event, empty, over 20, `total` below the item count, a malformed id, a multi-line or
+  over-long title), are dropped; their thread or event stays. `Author.kind`,
   verdicts, event categories and `openIssuesBlockMerge` are closed enums or booleans checked by
   the decoder; an unknown value rejects the page.
 - **Caching.** Conversation pages are cached per pull request and cursor for the overview's 60 s
@@ -286,6 +354,24 @@ Additions the shapes above needed:
   Whether `github.com/user-attachments` honours a bearer token for private repositories is not yet
   verified against live GitHub; a public attachment that redirects outside the allowlist falls back
   to the anonymous fetch.
+- **GitHub excerpts, resolution and pushes.** The excerpt is the tail of the thread's first
+  comment's `diffHunk` (read once per thread as `opening: comments(first: 1) { nodes { diffHunk } }`),
+  numbered from its `@@` header, at most 8 lines, text cut to 400 characters with control
+  characters other than a tab replaced by U+FFFD. GitHub numbers the hunk as the diff was when the
+  comment was written; when that no longer ends at the thread's current `line`, the thread gets no
+  excerpt. An outdated thread (a `file` anchor) keeps the original hunk. `viewerCanToggle` is
+  `viewerCanUnresolve` for a resolved thread and `viewerCanResolve` for an unresolved one;
+  `forge.pullRequest.reviewThread.resolve` reads the thread (its pull request, `isResolved` and
+  both permissions), answers the current state without a write when it already matches, refuses
+  with `-32113` a change the viewer may not make, and otherwise runs `resolveReviewThread` or
+  `unresolveReviewThread`. The timeline also reads `PullRequestCommit` items (they count towards
+  the 50 items of a page): consecutive commits by the same author (`commit.author.user.login`)
+  with no other timeline item between them become one `push` event, "added N commits", with the
+  newest commit's node id, author and `committedDate` and the commits oldest first (`oid`,
+  `abbreviatedOid`, `messageHeadline`); a push that straddles a page boundary shows as two events.
+  A force-push reads "force-pushed the head branch from `<before>` to `<after>`" (abbreviated ids)
+  and lists the new head commit. GitHub's timeline has no check or workflow items, so GitHub sends
+  no `ci` events.
 - **GitHub activity.** `forge.pullRequest.activity` (and the first page embedded in
   `forge.pullRequest.read`) is a projection of the same conversation page and cursor: issue
   comments, reviews (with their verdict label and body) and every review-thread comment (with the
@@ -309,34 +395,47 @@ Additions the shapes above needed:
 
 - `features/messageContent` owns the forge-independent message content model and its rendering:
   `MessageContent = { markdown, attachments }`, `MessageBody` (Markdown through the shared
-  `CompleteMarkdown`, images through the private image access path), `MessageCard` (author,
-  avatar, age, edited mark, body, read-only reactions) and `MessageReplyInput` (Markdown input
-  with Send; pending text shimmers in place). It imports only `rendering/**`, `ui/**`, `theme`,
-  `data` content/image primitives and the composer's public Markdown input module. It must not
-  import conversation, composer internals or any forge/PR feature. The chat and its bubbles are
-  not changed by this step.
-- `features/pullRequestDetail` maps `ConversationPage` into `MessageContent` and renders the
-  Discussion section after the description, set apart by a divider: a "Discussion" heading with the
-  loaded comment count and a summary chip (`2 open issues · blocks merge` when
-  `openIssuesBlockMerge` is `true`, `2 open issues`, `No open issues`, or `3 unresolved` for a
-  forge without issues). When the page has issues, they are pinned above the timeline: one row
-  per issue (status dot: open red, resolved green, dropped grey; the first comment's author
-  avatar; the anchor label `file:line`, file or "Pull request"; the first line; "resolved by …"),
-  open issues first, resolved and dropped behind a counter; a row scrolls to its thread and
-  expands it, and has its own "Address in agent". The timeline, newest first as the pages arrive
-  (later pages append older entries below), draws a review as a
-  card (author, verdict pill, optional body) containing the threads whose `reviewId` names it, a
-  review without body and threads as a compact verdict line, top-level comments as message cards
-  (consecutive comments of one author at most five minutes apart share one header, carried by the
-  newest; a group never spans a verdict, thread, review or event), and quiet event lines whose
-  consecutive same-category runs collapse ("3 updates pushed", with the newest age). A thread card shows its anchor, the issue badge or
-  Resolved, the iteration chip (muted unless it is the newest iteration on the loaded pages) and
-  Outdated; settled threads (resolved, or resolved/dropped issues) start collapsed; it keeps the
-  reply input (with `forge.comments@1` and `viewerCanReply`) and "Address in agent". Authors of
-  kind `bot` or `ai` carry a `bot` / `AI` marker; an avatar without a URL shows the login's
-  initials. A comment input at the top, above the newest entry, writes a top-level comment, and
-  "Show more discussion" at the end loads older entries. Without `forge.conversation@1`
-  the screen keeps the activity list, newest first, with "Show more activity" at the end.
+  `CompleteMarkdown`, images through the private image access path), `MessageCard` (avatar beside
+  `login · age`, an outlined `Bot` / `AI` badge under the login, the body at full width below,
+  folded behind a fade and "Read more" when long, and read-only reactions) and `MessageReplyInput`
+  (Markdown input with Send; pending text shimmers in place). It imports only `rendering/**`,
+  `ui/**`, `theme`, `data` content/image primitives and the composer's public Markdown input
+  module. It must not import conversation, composer internals or any forge/PR feature. The chat
+  and its bubbles are not changed by this step.
+- `features/pullRequestDetail` maps `ConversationPage` into `MessageContent` and lays Details out
+  in GitHub Mobile style: full-width sections under grey bands, rows separated by inset hairlines,
+  no cards around comments. The Status band summarizes the page: an Issues row when the page has
+  issues (`2 open · blocks merge` when `openIssuesBlockMerge` is `true`, `2 open`, or `No open
+  issues`; expanded while one is open, each issue shows its anchor label `file:line`, file or
+  "Pull request", its first line, who last changed it, "Address in agent" and "View code", which
+  scrolls to its thread and expands it; resolved and dropped issues wait behind a counter), a
+  Reviews row with each reviewer's newest approval or change request on the loaded pages, the
+  Checks row and the merge state. The Conversation band ("Conversation N", "Newest first") draws
+  the timeline newest first as the pages arrive (later pages append older entries below): a review
+  as a one-line verdict row (glyph in a tinted circle, small avatar, login and verb, age) with its
+  body below and the threads whose `reviewId` names it, a review without body and threads as the
+  verdict row alone, top-level comments as messages (consecutive comments of one author at most
+  five minutes apart share one header, carried by the newest; a group never spans a verdict,
+  thread, review or event), and event rows whose consecutive same-category runs collapse ("3
+  updates pushed", with the newest age). A thread is a bordered block with a file header (the
+  anchor, the iteration only when it is older than the newest on the loaded pages, Outdated, and
+  the state as a dot and a word: Unresolved, Resolved, Open issue, Dropped); its body starts with
+  the code excerpt when the thread has one (monospace, old and new line-number gutters, `+`/`-`
+  markers, added and removed lines tinted, the anchored lines marked, long lines scrolled
+  sideways rather than wrapped), collapsing with the thread. Settled threads (resolved, or
+  resolved/dropped issues) start collapsed; a thread keeps its replies, the reply input (with
+  `forge.comments@1` and `viewerCanReply`), "Resolve conversation" / "Unresolve conversation"
+  (with `forge.conversation.resolve@1`, a `conversation` resolution and `viewerCanToggle`; the
+  label shimmers in place while pending, offline it is refused locally, a success patches the
+  thread's resolution and a resolve collapses the thread, a failure restores the button and shows
+  the forge's reason) and "Address in agent". A push event with `commits` lists them under its
+  row: the short id (`shortSha`, else the first 7 characters) in muted monospace, the title on one
+  line, then "and N more commits" when `total` exceeds the list. Authors of kind `bot` or `ai` have a rounded-square
+  avatar with a chip or sparkles glyph and the role badge; a person without an avatar URL shows the
+  login's initials. A floating "Comment" pill beside the linked-chat button opens a composer sheet
+  that writes a top-level comment, and "Show more discussion" at the end loads older entries.
+  Without `forge.conversation@1` the screen keeps the activity list, newest first, with "Show
+  more activity" at the end.
 - Direct media: the conversation mounts a `DirectImageSourcesProvider` (`rendering/**`, forge
   independent) built from the page. A Markdown or HTML image whose `src` equals a `media[].source`,
   or an avatar marked `avatarDirect`, loads from its `url` without any header and is stored in the
@@ -366,10 +465,38 @@ Additions the shapes above needed:
 - `forge.media.read` for forge-hosted images, refusing foreign hosts with `-32602`.
 - `forge.pullRequest.comment.create` / `forge.pullRequest.reviewThread.reply` accept the thread id
   of an issue too; issue state changes are not part of this contract.
+- **Code excerpt (`ReviewThread.excerpt`, optional).** From the diff and the remark's anchor data:
+  for a remark on lines of a file, up to 8 diff lines of the iteration's diff that end at the
+  remark's last line, each `context` (both numbers), `added` (new-side number) or `removed`
+  (old-side number), text cut to 400 characters, one line each. The last line must exist on the
+  anchor's `side` with the anchor's `line`; if the remark's numbering cannot be matched to the diff
+  (for example it was written on an older iteration whose diff is unavailable), omit the excerpt.
+  A remark that is now a `file` anchor may carry the excerpt from the iteration it was written on,
+  numbered as there. A general remark (`pullRequest` anchor) has none. Breaking a rule drops only
+  the excerpt.
+- **Resolve conversations (`forge.conversation.resolve@1`, optional).** Declare it only if
+  Arcanum can resolve and reopen plain discussion threads (threads mapped to
+  `{ kind: "conversation" }`). Then send `viewerCanToggle: true` on those threads the viewer may
+  resolve (while unresolved) or reopen (while resolved), and implement
+  `forge.pullRequest.reviewThread.resolve`: `{ account, ref, threadId, resolved, idempotencyKey }`
+  → `{ resolved, viewerCanToggle }`; a thread already in that state answers it without writing; a
+  thread of another pull request or an unknown one answers `-32115`; an issue thread, a `none`
+  thread or a forbidden change answers `-32113` with the reason. Issue states (open, resolved,
+  dropped) are not changed through this method. Without the capability, the client shows no
+  Resolve button; nothing else changes.
+- **Push commits (`event.commits`, optional).** For a `push` event (an iteration upload or a push to
+  the review branch): `{ total, items }` with the iteration's commits oldest first, the first 20 of
+  them in `items` and all of them counted in `total`; each `{ sha, shortSha | null, title,
+  authorLogin | null }` with `sha` 1..64 ASCII letters and digits (`shortSha` 1..16), `title` the
+  first line of the message (at most 256 characters, no control characters), `authorLogin` the
+  author's login when known. Omit `commits` when the iteration's commits are unknown. Breaking a
+  rule drops only the list; the event keeps its text. Arcanum `ci` events may stay without an
+  outcome: the contract has none yet.
 - `forge.pullRequest.activity` (still required by `forge.read@1`): items newest first by
   `createdAt` within a page; the first page holds the newest and `nextCursor` continues to older
   items (a review-thread reply may stay on the page of its thread's first comment).
 - `codewide-companion forge plugin check` checks the page shape plus the rules serde cannot
-  express (at least one comment, valid lines, positive iteration number, conversation entries
-  newest first on the first two pages, activity items newest first on the first page, thread
-  comments oldest first, RFC 3339 `createdAt`).
+  express (at least one comment, valid lines, positive iteration number, excerpt and push commit
+  rules, conversation entries newest first on the first two pages, activity items newest first on
+  the first page, thread comments oldest first, RFC 3339 `createdAt`); with `--write-probes` it
+  sends a reply and a resolution to a thread that cannot exist and requires both to be refused.

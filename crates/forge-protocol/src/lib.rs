@@ -60,6 +60,11 @@ pub mod capability {
     /// Optional: `forge.pullRequest.comment.create` and
     /// `forge.pullRequest.reviewThread.reply`, both published immediately.
     pub const COMMENTS: &str = "forge.comments@1";
+    /// Optional: `forge.pullRequest.reviewThread.resolve`, resolving and
+    /// unresolving a conversation (a thread whose resolution is
+    /// `conversation`). Unrelated to [`RESOLVE`], which maps remotes to
+    /// repositories.
+    pub const RESOLVE_CONVERSATION: &str = "forge.conversation.resolve@1";
     /// Optional: `forge.pullRequest.fileContent`, one complete file of a pull
     /// request at its head revision, so a client can show the whole file with
     /// the changes inline.

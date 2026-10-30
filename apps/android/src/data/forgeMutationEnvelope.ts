@@ -5,6 +5,7 @@ const DURABLE_FORGE_METHODS = [
   "companion/pullRequest/action/run",
   "companion/pullRequest/comment/create",
   "companion/pullRequest/reviewThread/reply",
+  "companion/pullRequest/reviewThread/resolve",
   "companion/pullRequest/links/set",
   "companion/pullRequest/review/submit",
   "companion/pullRequest/scenario/start",

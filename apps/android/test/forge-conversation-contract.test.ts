@@ -4,6 +4,7 @@ import { headRevision, parsePullRequestKeyParam } from "../src/data/forgeContrac
 import {
   parseConversationPage,
   parseConversationWrite,
+  parseThreadResolveWrite,
   type ConversationEntry,
   type ConversationPage,
   type ConversationReviewThread,
@@ -67,6 +68,8 @@ function withThread(overrides: Record<string, unknown>): unknown {
   };
 }
 
+const COMMIT = { authorLogin: null, sha: "a".repeat(40), shortSha: null, title: "t" };
+
 describe("forge conversation contract", () => {
   it("keeps every entry kind in the forge's newest-first order", () => {
     const page = parsed(conversation91);
@@ -110,7 +113,8 @@ describe("forge conversation contract", () => {
 
   it.each([
     [{ kind: "none" }],
-    [{ kind: "conversation", resolved: true }],
+    [{ kind: "conversation", resolved: true, viewerCanToggle: true }],
+    [{ kind: "conversation", resolved: false, viewerCanToggle: false }],
     [{ changedAt: null, changedBy: null, kind: "issue", state: "open" }],
     [
       {
@@ -123,6 +127,55 @@ describe("forge conversation contract", () => {
     [{ changedAt: null, changedBy: null, kind: "issue", state: "dropped" }],
   ])("keeps the resolution %j", (resolution) => {
     expect(threadRt1(parsed(withThread({ resolution })))?.resolution).toEqual(resolution);
+  });
+
+  it("lets the viewer toggle a conversation only when the forge says so", () => {
+    expect(
+      threadRt1(parsed(withThread({ resolution: { kind: "conversation", resolved: false } })))
+        ?.resolution,
+    ).toEqual({ kind: "conversation", resolved: false, viewerCanToggle: false });
+  });
+
+  it("keeps a code excerpt line by line and treats a missing one as none", () => {
+    const lines = [
+      { kind: "context", newLine: 212, oldLine: 211, text: "fn read() {" },
+      { kind: "removed", oldLine: 212, text: "    let stderr = Stdio::null();" },
+      { kind: "added", newLine: 213, text: "    let stderr = Stdio::piped();" },
+    ];
+    expect(threadRt1(parsed(withThread({ excerpt: { lines } })))?.excerpt).toEqual({ lines });
+    expect(threadRt1(parsed(withThread({ excerpt: null })))?.excerpt).toBeNull();
+    expect(openThread().excerpt).toBeNull();
+  });
+
+  it("keeps a push's commits and treats a missing list as none", () => {
+    const commits = {
+      items: [
+        { authorLogin: "dana", sha: "a".repeat(40), shortSha: "aaaaaaa", title: "Map stderr" },
+        { authorLogin: null, sha: "b".repeat(40), shortSha: null, title: "Keep the hint" },
+      ],
+      total: 5,
+    };
+    const page = parsed({
+      ...conversation91,
+      entries: [{ ...conversation91.entries[0], commits }],
+    });
+    expect(page.entries[0]).toMatchObject({ commits, kind: "event" });
+    const bare = parsed({
+      ...conversation91,
+      entries: [
+        {
+          ...conversation91.entries[0],
+          commits: {
+            items: [{ sha: "c".repeat(40), title: "Only the required fields" }],
+            total: 1,
+          },
+        },
+      ],
+    });
+    expect(bare.entries[0]).toMatchObject({
+      commits: { items: [{ authorLogin: null, shortSha: null }], total: 1 },
+    });
+    expect(parsed(conversation91).entries[0]).toMatchObject({ commits: null, kind: "event" });
   });
 
   it("keeps the iteration, every author kind and the page's merge rule", () => {
@@ -234,6 +287,57 @@ describe("forge conversation contract", () => {
       "an event without a category",
       { ...conversation91, entries: [{ ...conversation91.entries[0], category: undefined }] },
     ],
+    ["an empty excerpt", withThread({ excerpt: { lines: [] } })],
+    [
+      "an excerpt of nine lines",
+      withThread({
+        excerpt: {
+          lines: Array.from({ length: 9 }, (_, index) => ({
+            kind: "added",
+            newLine: index + 1,
+            text: "x",
+          })),
+        },
+      }),
+    ],
+    [
+      "an added excerpt line without its new number",
+      withThread({ excerpt: { lines: [{ kind: "added", oldLine: 3, text: "x" }] } }),
+    ],
+    [
+      "an excerpt line spanning two lines",
+      withThread({ excerpt: { lines: [{ kind: "removed", oldLine: 3, text: "a\nb" }] } }),
+    ],
+    [
+      "a conversation toggle that is not a flag",
+      withThread({ resolution: { kind: "conversation", resolved: false, viewerCanToggle: "yes" } }),
+    ],
+    [
+      "push commits without items",
+      {
+        ...conversation91,
+        entries: [{ ...conversation91.entries[0], commits: { items: [], total: 0 } }],
+      },
+    ],
+    [
+      "push commits with a total below the listed items",
+      {
+        ...conversation91,
+        entries: [{ ...conversation91.entries[0], commits: { items: [COMMIT, COMMIT], total: 1 } }],
+      },
+    ],
+    [
+      "more than twenty push commits",
+      {
+        ...conversation91,
+        entries: [
+          {
+            ...conversation91.entries[0],
+            commits: { items: Array.from({ length: 21 }, () => COMMIT), total: 21 },
+          },
+        ],
+      },
+    ],
     ["a page without the merge rule", { ...conversation91, openIssuesBlockMerge: undefined }],
     [
       "an unknown reaction",
@@ -291,6 +395,14 @@ describe("forge conversation contract", () => {
       id: "c-10",
     });
     expect(parseConversationWrite({})).toBeNull();
+  });
+
+  it("parses an acknowledged resolution and rejects one without its state", () => {
+    expect(parseThreadResolveWrite({ resolved: true, viewerCanToggle: false })).toEqual({
+      resolved: true,
+      viewerCanToggle: false,
+    });
+    expect(parseThreadResolveWrite({ resolved: true })).toBeNull();
   });
 });
 
@@ -403,6 +515,37 @@ describe("pull request conversation writes", () => {
     expect(forge.conversation.data(target)?.entries).toHaveLength(
       conversation91.entries.length + 1,
     );
+  });
+
+  it("resolves a conversation and shows the forge's resolution on its thread", async () => {
+    const { adapter, calls, forge, target } = adapterFixture((method) => {
+      if (method === "companion/pullRequest/reviewThread/resolve") {
+        return { resolved: true, viewerCanToggle: true };
+      }
+      throw new Error(`Unexpected RPC: ${method}`);
+    });
+    forge.conversation.publish(target, parsed(conversation91));
+    const threadId = openThread().id;
+
+    const result = await adapter.resolveReviewThread(target, {
+      idempotencyKey: "key-3",
+      resolved: true,
+      threadId,
+    });
+
+    expect(result).toEqual({ resolved: true, viewerCanToggle: true });
+    expect(calls.find((call) => call.method.endsWith("/resolve"))?.params).toEqual({
+      idempotencyKey: "key-3",
+      pullRequest: target.pullRequest,
+      resolved: true,
+      threadId,
+    });
+    const shown = forge.conversation.data(target);
+    expect(shown === null ? null : threadRt1(shown)?.resolution).toEqual({
+      kind: "conversation",
+      resolved: true,
+      viewerCanToggle: true,
+    });
   });
 
   it("names the review thread only for a focused scenario start", async () => {

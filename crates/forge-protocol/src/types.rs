@@ -1056,7 +1056,15 @@ pub enum ThreadResolution {
     /// The forge cannot resolve this thread.
     None,
     /// A resolvable discussion.
-    Conversation { resolved: bool },
+    #[serde(rename_all = "camelCase")]
+    Conversation {
+        resolved: bool,
+        /// The viewer may flip `resolved` through
+        /// `forge.pullRequest.reviewThread.resolve`: resolve it while it is
+        /// unresolved, unresolve it while it is resolved.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        viewer_can_toggle: bool,
+    },
     /// A review remark with its own lifecycle.
     #[serde(rename_all = "camelCase")]
     Issue {
@@ -1093,6 +1101,131 @@ pub struct ReviewThread {
     /// Oldest first, at least one.
     pub comments: Vec<Comment>,
     pub viewer_can_reply: bool,
+    /// The code the thread is anchored on, as the forge's diff showed it when
+    /// the thread started; `None` when unknown. See [`CodeExcerpt::rules`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt: Option<CodeExcerpt>,
+}
+
+/// At most this many lines in a [`CodeExcerpt`].
+pub const MAX_EXCERPT_LINES: usize = 8;
+/// One excerpt line's text, in characters.
+pub const MAX_EXCERPT_LINE_CHARS: usize = 400;
+
+/// A bounded diff excerpt ending at a thread's anchored line: the context a
+/// reader needs to see what the thread is about.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeExcerpt {
+    /// Top to bottom, 1..=[`MAX_EXCERPT_LINES`]; the last is the anchored line.
+    pub lines: Vec<ExcerptLine>,
+}
+
+/// One diff line of an excerpt with the line numbers its kind has.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ExcerptLine {
+    /// Unchanged: present on both sides.
+    #[serde(rename_all = "camelCase")]
+    Context {
+        old_line: u32,
+        new_line: u32,
+        text: String,
+    },
+    /// Only on the new side.
+    #[serde(rename_all = "camelCase")]
+    Added { new_line: u32, text: String },
+    /// Only on the old side.
+    #[serde(rename_all = "camelCase")]
+    Removed { old_line: u32, text: String },
+}
+
+impl ExcerptLine {
+    /// The line's number on one side of the diff, if it exists there.
+    #[must_use]
+    pub fn number(&self, side: DiffSide) -> Option<u32> {
+        match (self, side) {
+            (Self::Context { old_line, .. } | Self::Removed { old_line, .. }, DiffSide::Old) => {
+                Some(*old_line)
+            }
+            (Self::Context { new_line, .. } | Self::Added { new_line, .. }, DiffSide::New) => {
+                Some(*new_line)
+            }
+            (Self::Added { .. }, DiffSide::Old) | (Self::Removed { .. }, DiffSide::New) => None,
+        }
+    }
+
+    /// The line's text, without its diff marker.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Context { text, .. } | Self::Added { text, .. } | Self::Removed { text, .. } => {
+                text
+            }
+        }
+    }
+}
+
+impl CodeExcerpt {
+    /// The rules serde cannot express, shared by the conformance harness and
+    /// the companion's adapter:
+    ///
+    /// - 1..=[`MAX_EXCERPT_LINES`] lines, each text single-line (no control
+    ///   character except a tab) and at most [`MAX_EXCERPT_LINE_CHARS`]
+    ///   characters; line numbers are positive;
+    /// - the lines are one contiguous piece of a diff: each side's numbers
+    ///   grow by exactly one from one line carrying that side to the next;
+    /// - only a `line` or `file` anchor has an excerpt; for a `line` anchor
+    ///   the last line exists on the anchor's side with the anchor's `line`.
+    ///   A `file` anchor (a thread whose line no longer maps) keeps the code
+    ///   as it was, numbered as it was.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first broken rule.
+    pub fn rules(&self, anchor: &ThreadAnchor) -> Result<(), &'static str> {
+        if self.lines.is_empty() || self.lines.len() > MAX_EXCERPT_LINES {
+            return Err("an excerpt has 1 to 8 lines");
+        }
+        for line in &self.lines {
+            let text = line.text();
+            if text.chars().count() > MAX_EXCERPT_LINE_CHARS
+                || text.chars().any(|char| char.is_control() && char != '\t')
+            {
+                return Err("an excerpt line is too long or not a single line");
+            }
+            if [DiffSide::Old, DiffSide::New]
+                .into_iter()
+                .any(|side| line.number(side) == Some(0))
+            {
+                return Err("excerpt line numbers are positive");
+            }
+        }
+        for side in [DiffSide::Old, DiffSide::New] {
+            let numbers: Vec<u32> = self
+                .lines
+                .iter()
+                .filter_map(|line| line.number(side))
+                .collect();
+            if numbers
+                .windows(2)
+                .any(|pair| pair[0].checked_add(1) != Some(pair[1]))
+            {
+                return Err("excerpt lines are not one contiguous piece of the diff");
+            }
+        }
+        match anchor {
+            ThreadAnchor::PullRequest => Err("a pull request thread has no excerpt"),
+            ThreadAnchor::File { .. } => Ok(()),
+            ThreadAnchor::Line { line, side, .. } => {
+                if self.lines.last().and_then(|last| last.number(*side)) == Some(*line) {
+                    Ok(())
+                } else {
+                    Err("an excerpt ends at the anchored line")
+                }
+            }
+        }
+    }
 }
 
 /// What a timeline event is about.
@@ -1136,7 +1269,91 @@ pub enum ConversationEntry {
         category: EventCategory,
         /// Plain text, for example "merged main into this branch".
         text: String,
+        /// The commits a `push` event added; `None` for other events or when
+        /// unknown. See [`EventCommits::rules`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commits: Option<EventCommits>,
     },
+}
+
+/// At most this many commits in [`EventCommits::items`].
+pub const MAX_EVENT_COMMITS: usize = 20;
+/// A commit title, in characters.
+pub const MAX_COMMIT_TITLE_CHARS: usize = 256;
+/// A commit id (`sha`), in characters.
+pub const MAX_COMMIT_SHA_CHARS: usize = 64;
+/// An abbreviated commit id (`shortSha`), in characters.
+pub const MAX_SHORT_SHA_CHARS: usize = 16;
+
+/// The commits one push event added: the first ones, oldest first, and how
+/// many there were.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EventCommits {
+    /// Every commit of the push, at least `items.len()`.
+    pub total: u32,
+    /// The push's commits oldest first, cut to [`MAX_EVENT_COMMITS`].
+    pub items: Vec<EventCommit>,
+}
+
+/// One commit of a push.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EventCommit {
+    /// The full commit id: ASCII letters and digits.
+    pub sha: String,
+    /// The forge's abbreviation of `sha`; the client abbreviates when absent.
+    pub short_sha: Option<String>,
+    /// The first line of the commit message.
+    pub title: String,
+    /// The forge login of the commit's author, when it is known.
+    pub author_login: Option<String>,
+}
+
+/// A commit id: 1..=`max` ASCII letters and digits.
+#[must_use]
+pub fn valid_commit_id(id: &str, max: usize) -> bool {
+    !id.is_empty() && id.len() <= max && id.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+impl EventCommits {
+    /// The rules serde cannot express, shared by the conformance harness and
+    /// the companion's adapter: only a `push` event carries commits; 1..=
+    /// [`MAX_EVENT_COMMITS`] items; `total` is at least the item count; each
+    /// `sha` is 1..=[`MAX_COMMIT_SHA_CHARS`] ASCII letters and digits, a
+    /// `shortSha` 1..=[`MAX_SHORT_SHA_CHARS`]; a title is one line of at
+    /// most [`MAX_COMMIT_TITLE_CHARS`] characters.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first broken rule.
+    pub fn rules(&self, category: EventCategory) -> Result<(), &'static str> {
+        if category != EventCategory::Push {
+            return Err("only a push event carries commits");
+        }
+        if self.items.is_empty() || self.items.len() > MAX_EVENT_COMMITS {
+            return Err("a push event lists 1 to 20 commits");
+        }
+        if usize::try_from(self.total).unwrap_or(usize::MAX) < self.items.len() {
+            return Err("total counts at least the listed commits");
+        }
+        for commit in &self.items {
+            if !valid_commit_id(&commit.sha, MAX_COMMIT_SHA_CHARS)
+                || commit
+                    .short_sha
+                    .as_deref()
+                    .is_some_and(|short| !valid_commit_id(short, MAX_SHORT_SHA_CHARS))
+            {
+                return Err("a commit id is not 1 to 64 ASCII letters and digits");
+            }
+            if commit.title.chars().count() > MAX_COMMIT_TITLE_CHARS
+                || commit.title.chars().any(char::is_control)
+            {
+                return Err("a commit title is one line of at most 256 characters");
+            }
+        }
+        Ok(())
+    }
 }
 
 impl ConversationEntry {
@@ -1204,6 +1421,29 @@ pub struct ReviewThreadReplyParams {
     /// Markdown, 1..=[`MAX_COMMENT_BODY_CHARS`] characters after trimming.
     pub body: String,
     pub idempotency_key: String,
+}
+
+/// `forge.pullRequest.reviewThread.resolve`: resolve or unresolve one
+/// conversation (a thread whose resolution is `conversation`).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThreadResolveParams {
+    pub account: ForgeAccountRef,
+    #[serde(rename = "ref")]
+    pub pr_ref: ForgePrRef,
+    pub thread_id: String,
+    /// The state to reach: `true` resolves, `false` unresolves.
+    pub resolved: bool,
+    pub idempotency_key: String,
+}
+
+/// The thread's conversation resolution after the write.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewThreadResolveResult {
+    pub resolved: bool,
+    /// As [`ThreadResolution::Conversation`]'s: the viewer may flip it again.
+    pub viewer_can_toggle: bool,
 }
 
 /// The result of both comment writes: the published comment.
@@ -1502,6 +1742,163 @@ mod tests {
             serde_json::from_value::<ThreadResolution>(json!({"kind": "issue", "state": "closed"}))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn excerpts_commits_and_toggles_round_trip_and_stay_optional() {
+        let line =
+            json!({"kind": "line", "path": "a.rs", "line": 12, "startLine": null, "side": "new"});
+        let mut thread = wire_thread(
+            "t-1",
+            &line,
+            &json!({"kind": "conversation", "resolved": false, "viewerCanToggle": true}),
+        );
+        thread["thread"]["excerpt"] = json!({"lines": [
+            {"kind": "context", "oldLine": 10, "newLine": 10, "text": "\tfn a() {"},
+            {"kind": "removed", "oldLine": 11, "text": "    old();"},
+            {"kind": "added", "newLine": 11, "text": "    new();"},
+            {"kind": "added", "newLine": 12, "text": "    more();"}
+        ]});
+        let push = json!({"kind": "event", "id": "E_1", "author": null,
+        "createdAt": "2026-10-01T02:00:00Z", "category": "push", "text": "added 2 commits",
+        "commits": {"total": 2, "items": [
+            {"sha": "a".repeat(40), "shortSha": "aaaaaaa", "title": "First", "authorLogin": "ana"},
+            {"sha": "b".repeat(40), "shortSha": null, "title": "Second", "authorLogin": null}
+        ]}});
+        let page = round_trips::<ConversationPage>(&json!({
+            "entries": [thread, push], "nextCursor": null, "openIssuesBlockMerge": null
+        }));
+        let ConversationEntry::ReviewThread { thread } = &page.entries[0] else {
+            panic!("thread");
+        };
+        let excerpt = thread.excerpt.as_ref().expect("excerpt");
+        assert_eq!(excerpt.rules(&thread.anchor), Ok(()));
+        assert!(matches!(
+            thread.resolution,
+            ThreadResolution::Conversation {
+                viewer_can_toggle: true,
+                ..
+            }
+        ));
+        let ConversationEntry::Event {
+            category,
+            commits: Some(commits),
+            ..
+        } = &page.entries[1]
+        else {
+            panic!("push");
+        };
+        assert_eq!(commits.rules(*category), Ok(()));
+        // Absent fields read as none and are not written back.
+        let bare = round_trips::<ReviewThread>(
+            &wire_thread(
+                "t-2",
+                &line,
+                &json!({"kind": "conversation", "resolved": true}),
+            )["thread"],
+        );
+        assert_eq!(bare.excerpt, None);
+        assert_eq!(
+            bare.resolution,
+            ThreadResolution::Conversation {
+                resolved: true,
+                viewer_can_toggle: false
+            }
+        );
+        let resolve = json!({"account": {"host": "github.com", "login": "octocat"},
+            "ref": {"host": "github.com", "repository": "o/r", "number": "1"},
+            "threadId": "PRRT_1", "resolved": false, "idempotencyKey": "k-3"});
+        assert!(!round_trips::<ReviewThreadResolveParams>(&resolve).resolved);
+        round_trips::<ReviewThreadResolveResult>(
+            &json!({"resolved": true, "viewerCanToggle": false}),
+        );
+    }
+
+    #[test]
+    fn excerpt_rules_refuse_what_no_diff_shows() {
+        let excerpt = |lines: serde_json::Value| -> CodeExcerpt {
+            serde_json::from_value(json!({ "lines": lines })).expect("excerpt")
+        };
+        let line = |line: u32, side: DiffSide| ThreadAnchor::Line {
+            path: "a.rs".into(),
+            line,
+            start_line: None,
+            side,
+        };
+        let file = ThreadAnchor::File {
+            path: "a.rs".into(),
+        };
+        let removed_last = excerpt(json!([
+            {"kind": "context", "oldLine": 4, "newLine": 5, "text": "a"},
+            {"kind": "removed", "oldLine": 5, "text": "b"}
+        ]));
+        assert_eq!(removed_last.rules(&line(5, DiffSide::Old)), Ok(()));
+        assert!(
+            removed_last.rules(&line(5, DiffSide::New)).is_err(),
+            "no new-side line"
+        );
+        assert!(removed_last.rules(&ThreadAnchor::PullRequest).is_err());
+        assert_eq!(
+            removed_last.rules(&file),
+            Ok(()),
+            "an outdated thread keeps old numbers"
+        );
+        for broken in [
+            json!([]),
+            json!([{"kind": "added", "newLine": 0, "text": "zero"}]),
+            json!([{"kind": "added", "newLine": 1, "text": "two\nlines"}]),
+            json!([{"kind": "added", "newLine": 1, "text": "x".repeat(MAX_EXCERPT_LINE_CHARS + 1)}]),
+            json!([{"kind": "added", "newLine": 1, "text": "a"}, {"kind": "added", "newLine": 3, "text": "gap"}]),
+            json!([{"kind": "removed", "oldLine": 2, "text": "a"}, {"kind": "context", "oldLine": 2, "newLine": 1, "text": "repeat"}]),
+            json!(
+                (1..=9)
+                    .map(|n| json!({"kind": "added", "newLine": n, "text": "a"}))
+                    .collect::<Vec<_>>()
+            ),
+        ] {
+            assert!(excerpt(broken.clone()).rules(&file).is_err(), "{broken}");
+        }
+        assert!(
+            serde_json::from_value::<ExcerptLine>(
+                json!({"kind": "added", "oldLine": 1, "text": "a"})
+            )
+            .is_err(),
+            "an added line has a new-side number"
+        );
+    }
+
+    #[test]
+    fn commit_rules_bound_push_lists() {
+        let commit = |sha: &str, title: &str| EventCommit {
+            sha: sha.into(),
+            short_sha: None,
+            title: title.into(),
+            author_login: None,
+        };
+        let commits = |total: u32, items: Vec<EventCommit>| EventCommits { total, items };
+        assert_eq!(
+            commits(30, vec![commit("abc123", "Fix")]).rules(EventCategory::Push),
+            Ok(())
+        );
+        for (category, broken) in [
+            (EventCategory::State, commits(1, vec![commit("abc", "x")])),
+            (EventCategory::Push, commits(0, Vec::new())),
+            (EventCategory::Push, commits(0, vec![commit("abc", "x")])),
+            (
+                EventCategory::Push,
+                commits(1, vec![commit("not-hex!", "x")]),
+            ),
+            (
+                EventCategory::Push,
+                commits(1, vec![commit("abc", "two\nlines")]),
+            ),
+            (
+                EventCategory::Push,
+                commits(21, (0..21).map(|_| commit("abc", "x")).collect()),
+            ),
+        ] {
+            assert!(broken.rules(category).is_err(), "{broken:?}");
+        }
     }
 
     #[test]
