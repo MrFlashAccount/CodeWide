@@ -27,10 +27,10 @@ use tokio::{
 
 use crate::{
     AuthMethodKind, AuthMethodsResult, AuthVerifyResult, ChecksResult, ConversationEntry,
-    ConversationPage, FilesResult, ForgeAccountRef, ForgePrRef, InitializeResult, ListResult,
-    PROTOCOL_VERSION, PluginIcon, PullRequestCategory, PullRequestOverview, RawActionCatalog,
-    ResolveResult, ReviewThread, ScenarioContext, ThreadAnchor, capability, code, methods,
-    read_frame, write_frame,
+    ConversationPage, FileContent, FilePatch, FileStatus, FilesResult, ForgeAccountRef, ForgePrRef,
+    InitializeResult, ListResult, MAX_FILE_CONTENT_BYTES, PROTOCOL_VERSION, PluginIcon,
+    PullRequestCategory, PullRequestOverview, RawActionCatalog, ResolveResult, ReviewThread,
+    ScenarioContext, ThreadAnchor, capability, code, methods, read_frame, write_frame,
 };
 
 const CALL_TIMEOUT: Duration = Duration::from_mins(1);
@@ -249,7 +249,7 @@ async fn initialize(
                     capability::AUTH, capability::LIST, capability::READ, capability::DIFF,
                     capability::ACTIONS, capability::REVIEW, capability::CHECKS, capability::VIEWED,
                     capability::RESOLVE, capability::SCENARIO_CONTEXT, capability::CONVERSATION,
-                    capability::COMMENTS
+                    capability::COMMENTS, capability::FILE_CONTENT
                 ],
                 "stateDirectory": state,
             }),
@@ -433,8 +433,20 @@ async fn check_pull_request(
         .await;
     report.record(
         methods::PULL_REQUEST_ACTIVITY,
-        expect::<crate::ActivityPage>(methods::PULL_REQUEST_ACTIVITY, activity, &[])
-            .map(|_| "page".into()),
+        expect::<crate::ActivityPage>(methods::PULL_REQUEST_ACTIVITY, activity, &[]).and_then(
+            |page| {
+                let Some(page) = page else {
+                    return Ok("page".into());
+                };
+                let times: Vec<&str> = page
+                    .items
+                    .iter()
+                    .map(|item| item.created_at.as_str())
+                    .collect();
+                newest_first(&times, "activity items")?;
+                Ok(format!("{} items, newest first", page.items.len()))
+            },
+        ),
     );
     if declared.iter().any(|cap| cap == capability::CHECKS) {
         let checks = session
@@ -458,15 +470,62 @@ async fn check_pull_request(
             }),
         );
     }
+    let readable = check_files(session, account, pr, &head, report).await;
+    if declared.iter().any(|cap| cap == capability::FILE_CONTENT) {
+        check_file_content(
+            session,
+            &json!({"account": account, "ref": pr, "headRevision": head}),
+            readable.as_deref(),
+            report,
+        )
+        .await;
+    }
+    let actions = session.call(methods::PULL_REQUEST_ACTIONS, &target).await;
+    report.record(
+        methods::PULL_REQUEST_ACTIONS,
+        expect::<RawActionCatalog>(methods::PULL_REQUEST_ACTIONS, actions, &[]).and_then(
+            |catalog| {
+                let catalog = catalog.ok_or("actions failed")?;
+                if catalog.head_revision != head {
+                    return Err("the catalog names another head".into());
+                }
+                Ok(format!("{} actions", catalog.actions.len()))
+            },
+        ),
+    );
+}
+
+/// `forge.pullRequest.files` at the head and at a stale head; answers the
+/// path of a listed file the head still has, with a patch.
+async fn check_files(
+    session: &mut Session,
+    account: &ForgeAccountRef,
+    pr: &ForgePrRef,
+    head: &str,
+    report: &mut Report,
+) -> Option<String> {
     let files = session
         .call(
             methods::PULL_REQUEST_FILES,
             &json!({"account": account, "ref": pr, "headRevision": head, "cursor": null}),
         )
         .await;
+    let files = expect::<FilesResult>(methods::PULL_REQUEST_FILES, files, &[]);
+    // A file the head still has, with a patch, is one a client asks the whole content of.
+    let readable = files
+        .as_ref()
+        .ok()
+        .and_then(Option::as_ref)
+        .and_then(|listed| {
+            listed.files.iter().find(|file| {
+                file.status != FileStatus::Removed
+                    && matches!(file.patch, FilePatch::Present { .. })
+            })
+        })
+        .map(|file| file.path.clone());
     report.record(
         methods::PULL_REQUEST_FILES,
-        expect::<FilesResult>(methods::PULL_REQUEST_FILES, files, &[]).and_then(|files| {
+        files.and_then(|files| {
             let files = files.ok_or("files failed")?;
             if files.head_revision != head {
                 return Err("files answered another head".into());
@@ -488,19 +547,73 @@ async fn check_pull_request(
             Err(error) => Err(error),
         },
     );
-    let actions = session.call(methods::PULL_REQUEST_ACTIONS, &target).await;
+    readable
+}
+
+/// `forge.fileContent@1`: a listed file reads as a bounded state, a path the
+/// head cannot have reads as `missing`, and a traversing path is refused.
+async fn check_file_content(
+    session: &mut Session,
+    target: &Value,
+    readable: Option<&str>,
+    report: &mut Report,
+) {
+    let mut read = async |path: &str| {
+        let mut params = target.clone();
+        params["path"] = json!(path);
+        session
+            .call(methods::PULL_REQUEST_FILE_CONTENT, &params)
+            .await
+    };
+    if let Some(path) = readable {
+        let answer = read(path).await;
+        report.record(
+            methods::PULL_REQUEST_FILE_CONTENT,
+            expect::<FileContent>(methods::PULL_REQUEST_FILE_CONTENT, answer, &[])
+                .and_then(|content| file_content_rules(content.ok_or("file content failed")?)),
+        );
+    }
+    let missing = read("codewide-conformance/missing-file.txt").await;
     report.record(
-        methods::PULL_REQUEST_ACTIONS,
-        expect::<RawActionCatalog>(methods::PULL_REQUEST_ACTIONS, actions, &[]).and_then(
-            |catalog| {
-                let catalog = catalog.ok_or("actions failed")?;
-                if catalog.head_revision != head {
-                    return Err("the catalog names another head".into());
-                }
-                Ok(format!("{} actions", catalog.actions.len()))
-            },
-        ),
+        "forge.pullRequest.fileContent missing path",
+        match expect::<FileContent>(methods::PULL_REQUEST_FILE_CONTENT, missing, &[]) {
+            Ok(Some(FileContent::Missing)) => Ok("missing".into()),
+            Ok(_) => Err("a path the head does not have must answer state missing".into()),
+            Err(error) => Err(error),
+        },
     );
+    let traversal = read("../codewide-conformance").await;
+    report.record(
+        "forge.pullRequest.fileContent traversal",
+        match traversal {
+            Ok(Answer::Error(code::INVALID_PARAMS)) => Ok("refused".into()),
+            Ok(_) => Err("a path with a .. segment must answer -32602".into()),
+            Err(error) => Err(error),
+        },
+    );
+}
+
+/// The `FileContent` rules serde cannot express: text within the bound and
+/// without NUL, and a `tooLarge` size, when known, above the bound.
+fn file_content_rules(content: FileContent) -> Result<String, String> {
+    match content {
+        FileContent::Text { content } if content.len() > MAX_FILE_CONTENT_BYTES => Err(format!(
+            "{} bytes of text exceed the 1 MiB bound",
+            content.len()
+        )),
+        FileContent::Text { content } if content.contains('\0') => {
+            Err("text content contains NUL".into())
+        }
+        FileContent::Text { content } => Ok(format!("{} bytes", content.len())),
+        FileContent::TooLarge { bytes: Some(bytes) }
+            if usize::try_from(bytes).is_ok_and(|bytes| bytes <= MAX_FILE_CONTENT_BYTES) =>
+        {
+            Err(format!("tooLarge reports {bytes} bytes, within the bound"))
+        }
+        FileContent::TooLarge { .. } => Ok("tooLarge".into()),
+        FileContent::Binary => Ok("binary".into()),
+        FileContent::Missing => Ok("missing".into()),
+    }
 }
 
 /// `forge.conversation@1`: a well-formed first page, and a media read of a
@@ -517,19 +630,50 @@ async fn check_conversation(
             &json!({"account": account, "ref": pr, "cursor": null}),
         )
         .await;
+    let page = expect::<ConversationPage>(methods::PULL_REQUEST_CONVERSATION, page, &[]);
+    let older = match &page {
+        Ok(Some(ConversationPage {
+            next_cursor: Some(cursor),
+            ..
+        })) => Some(expect::<ConversationPage>(
+            methods::PULL_REQUEST_CONVERSATION,
+            session
+                .call(
+                    methods::PULL_REQUEST_CONVERSATION,
+                    &json!({"account": account, "ref": pr, "cursor": cursor}),
+                )
+                .await,
+            &[],
+        )),
+        _ => None,
+    };
     report.record(
         methods::PULL_REQUEST_CONVERSATION,
-        expect::<ConversationPage>(methods::PULL_REQUEST_CONVERSATION, page, &[]).and_then(
-            |page| {
-                let page = page.ok_or("conversation failed")?;
-                for entry in &page.entries {
-                    if let ConversationEntry::ReviewThread { thread } = entry {
-                        conversation_thread_rules(thread)?;
-                    }
+        page.and_then(|page| {
+            let page = page.ok_or("conversation failed")?;
+            let older = older.transpose()?.flatten();
+            let entries: Vec<&ConversationEntry> = page
+                .entries
+                .iter()
+                .chain(older.iter().flat_map(|older| &older.entries))
+                .collect();
+            for entry in &entries {
+                if let ConversationEntry::ReviewThread { thread } = entry {
+                    conversation_thread_rules(thread)?;
                 }
-                Ok(format!("{} entries", page.entries.len()))
-            },
-        ),
+            }
+            let times: Vec<&str> = entries.iter().map(|entry| entry.created_at()).collect();
+            newest_first(&times, "conversation entries")?;
+            Ok(format!(
+                "{} entries, newest first{}",
+                page.entries.len(),
+                if older.is_some() {
+                    " across two pages"
+                } else {
+                    ""
+                }
+            ))
+        }),
     );
     let foreign = session
         .call(
@@ -548,12 +692,22 @@ async fn check_conversation(
 }
 
 /// The `ReviewThread` rules serde cannot express: at least one comment,
-/// positive lines with `startLine` strictly before `line`, a positive
-/// iteration number and a non-empty anchored path.
+/// comments oldest first, positive lines with `startLine` strictly before
+/// `line`, a positive iteration number and a non-empty anchored path.
 fn conversation_thread_rules(thread: &ReviewThread) -> Result<(), String> {
     if thread.comments.is_empty() {
         return Err(format!("review thread {} has no comments", thread.id));
     }
+    let mut times: Vec<&str> = thread
+        .comments
+        .iter()
+        .map(|comment| comment.created_at.as_str())
+        .collect();
+    times.reverse();
+    newest_first(
+        &times,
+        &format!("review thread {} comments (oldest first)", thread.id),
+    )?;
     let anchor_valid = match &thread.anchor {
         ThreadAnchor::PullRequest => true,
         ThreadAnchor::File { path } => !path.is_empty(),
@@ -582,6 +736,98 @@ fn conversation_thread_rules(thread: &ReviewThread) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Order keys that must not increase: every one RFC 3339, each at most
+/// as late as the one before it.
+fn newest_first(times: &[&str], what: &str) -> Result<(), String> {
+    let mut previous: Option<(i64, u32)> = None;
+    for time in times {
+        let instant = rfc3339_instant(time)
+            .ok_or_else(|| format!("{what}: createdAt {time:?} is not RFC 3339"))?;
+        if previous.is_some_and(|previous| instant > previous) {
+            return Err(format!("{what} are not newest first at {time}"));
+        }
+        previous = Some(instant);
+    }
+    Ok(())
+}
+
+/// An RFC 3339 timestamp as seconds since the Unix epoch and nanoseconds,
+/// so timestamps with different offsets or precision compare correctly.
+fn rfc3339_instant(text: &str) -> Option<(i64, u32)> {
+    let number = |range: std::ops::Range<usize>| -> Option<i64> {
+        let digits = text.get(range)?;
+        digits
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+            .then(|| digits.parse().ok())?
+    };
+    let bytes = text.as_bytes();
+    if bytes.len() < 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !matches!(bytes[10], b'T' | b't' | b' ')
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return None;
+    }
+    let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
+    let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    let mut rest = &text[19..];
+    let mut nanos = 0_u32;
+    if let Some(fraction) = rest.strip_prefix('.') {
+        let digits = fraction.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 {
+            return None;
+        }
+        for (index, byte) in fraction.bytes().take(digits).enumerate() {
+            if index < 9 {
+                nanos = nanos * 10 + u32::from(byte - b'0');
+            }
+        }
+        for _ in digits..9 {
+            nanos *= 10;
+        }
+        rest = &fraction[digits..];
+    }
+    let offset = match rest {
+        "Z" | "z" => 0,
+        _ => {
+            let sign = match rest.as_bytes().first()? {
+                b'+' => 1,
+                b'-' => -1,
+                _ => return None,
+            };
+            let offset = rest.get(1..)?;
+            if offset.len() != 5 || offset.as_bytes()[2] != b':' {
+                return None;
+            }
+            let hours: i64 = offset[..2].parse().ok()?;
+            let minutes: i64 = offset[3..].parse().ok()?;
+            sign * (hours * 3_600 + minutes * 60)
+        }
+    };
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let shifted = if month <= 2 { year - 1 } else { year };
+    let era = shifted.div_euclid(400);
+    let year_of_era = shifted - era * 400;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    Some((
+        days * 86_400 + hour * 3_600 + minute * 60 + second - offset,
+        nanos,
+    ))
 }
 
 async fn check_resolve(
@@ -736,6 +982,73 @@ mod tests {
             "viewerCanReply": false
         }))
         .expect("thread")
+    }
+
+    #[test]
+    fn file_content_rules_hold_text_and_sizes_to_the_bound() {
+        assert!(
+            file_content_rules(FileContent::Text {
+                content: "a\n".into()
+            })
+            .is_ok()
+        );
+        assert!(
+            file_content_rules(FileContent::Text {
+                content: "a\0".into()
+            })
+            .is_err()
+        );
+        assert!(
+            file_content_rules(FileContent::Text {
+                content: "a".repeat(MAX_FILE_CONTENT_BYTES + 1)
+            })
+            .is_err()
+        );
+        assert!(file_content_rules(FileContent::TooLarge { bytes: Some(10) }).is_err());
+        assert!(file_content_rules(FileContent::TooLarge { bytes: None }).is_ok());
+        assert!(file_content_rules(FileContent::Missing).is_ok());
+    }
+
+    #[test]
+    fn order_rules_compare_instants_across_offsets_and_precision() {
+        assert_eq!(rfc3339_instant("1970-01-01T00:00:00Z"), Some((0, 0)));
+        assert_eq!(
+            rfc3339_instant("2026-10-01T03:00:00+03:00"),
+            rfc3339_instant("2026-10-01T00:00:00Z")
+        );
+        assert_eq!(
+            rfc3339_instant("2026-10-01T00:00:00.5Z"),
+            rfc3339_instant("2026-10-01T00:00:00.500000000Z")
+        );
+        assert_eq!(rfc3339_instant("2026-10-01"), None);
+        assert!(
+            newest_first(
+                &[
+                    "2026-10-02T00:00:00Z",
+                    "2026-10-01T05:00:00+03:00",
+                    "2026-10-01T01:00:00.5Z",
+                    "2026-10-01T01:00:00Z",
+                    "2026-10-01T01:00:00Z",
+                ],
+                "entries"
+            )
+            .is_ok()
+        );
+        assert!(
+            newest_first(&["2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"], "entries").is_err()
+        );
+        assert!(newest_first(&["yesterday"], "entries").is_err());
+    }
+
+    #[test]
+    fn thread_rules_require_comments_oldest_first() {
+        let mut later = thread(&json!({"kind": "pullRequest"}), &Value::Null);
+        let mut reply = later.comments[0].clone();
+        reply.created_at = "2026-10-01T01:00:00Z".into();
+        later.comments.push(reply);
+        assert!(conversation_thread_rules(&later).is_ok());
+        later.comments.reverse();
+        assert!(conversation_thread_rules(&later).is_err());
     }
 
     #[test]

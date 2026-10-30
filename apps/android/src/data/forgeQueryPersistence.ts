@@ -22,10 +22,12 @@ const FORGE_QUERY_CACHE_BUSTER = "forge-query-cache-v2";
 function isForgeServerQuery(query: Query): boolean {
   const owner = query.queryKey[0];
   // Live scenario states are not restored: a persisted `running` would show a run that may have
-  // ended while the app was closed.
+  // ended while the app was closed. Whole head files (up to 1 MiB each) stay in memory only; the
+  // diff keeps its patch view until one is read again.
   return (
     (owner === "forge" || owner === "review") &&
     query.queryKey[1] !== "scenarios" &&
+    query.queryKey[1] !== "fileContent" &&
     defaultShouldDehydrateQuery(query)
   );
 }

@@ -41,9 +41,10 @@ const LOADING_PLACEHOLDER_HEIGHT = 104;
 /**
  * The Discussion section after the description, set apart by a divider: a
  * heading with the comment count and a summary chip, the pinned issues (only
- * when the forge reports issues), then the chronological timeline and a
- * new-comment input when the plugin declares `forge.comments@1`. Bodies use
- * the shared complete-document renderer.
+ * when the forge reports issues), a new-comment input when the plugin
+ * declares `forge.comments@1`, then the timeline newest first with "Show more
+ * discussion" at its end loading older entries. Bodies use the shared
+ * complete-document renderer.
  */
 export function ConversationSection(props: ConversationSectionProps): React.JSX.Element {
   const { conversation, revealTarget } = props;
@@ -145,17 +146,6 @@ function DiscussionBody(
           settled={discussion.settledIssues}
         />
       ) : null}
-      {discussion.timeline.length === 0 ? <CardNote text="No discussion yet." /> : null}
-      <DiscussionTimeline context={context} items={discussion.timeline} />
-      {conversation.loadMore === null ? null : (
-        <Text
-          accessibilityRole="button"
-          onPress={conversation.loadMore}
-          style={[overviewStyles.cardLine, overviewStyles.meta]}
-        >
-          Show more discussion
-        </Text>
-      )}
       {conversation.commentsEnabled ? (
         <MessageReplyInput
           accessibilityLabel="Comment on this pull request"
@@ -164,6 +154,18 @@ function DiscussionBody(
           testID="pull-request-new-comment"
         />
       ) : null}
+      {discussion.timeline.length === 0 ? <CardNote text="No discussion yet." /> : null}
+      <DiscussionTimeline context={context} items={discussion.timeline} />
+      {conversation.loadMore === null ? null : (
+        <Text
+          accessibilityRole="button"
+          onPress={conversation.loadMore}
+          style={[overviewStyles.cardLine, overviewStyles.meta]}
+          testID="pull-request-discussion-more"
+        >
+          Show more discussion
+        </Text>
+      )}
     </DirectImageSourcesProvider>
   );
 }

@@ -132,8 +132,9 @@ Required: `forge.auth@1`, `forge.list@1`, `forge.read@1`, `forge.diff@1`, `forge
 `forge.review@1`.
 
 Optional: `forge.search@1`, `forge.checks@1`, `forge.viewed@1`, `forge.resolve@1`,
-`forge.scenarioContext@1`, `forge.conversation@1`, `forge.comments@1` (the last two are specified
-in [Pull request conversation](forge-conversation.md)).
+`forge.scenarioContext@1`, `forge.conversation@1`, `forge.comments@1` (these two are specified
+in [Pull request conversation](forge-conversation.md)), `forge.fileContent@1` (see
+[Whole-file content](#whole-file-content)).
 
 - Without `forge.search@1`, the provider remains available through `forge.list@1`. The companion
   projects a legacy-compatible query (category, zero or one repository, open state and default
@@ -145,6 +146,7 @@ in [Pull request conversation](forge-conversation.md)).
   "Viewed · this companion".
 - Without `forge.resolve@1`, the provider takes no part in branch detection; manual links still
   work.
+- Without `forge.fileContent@1`, Changes shows only the recorded patch hunks of each file.
 - A call for an undeclared capability answers `-32080` without spawning the plugin.
 
 ## Methods
@@ -167,7 +169,7 @@ known and takes only the remotes.
 | `forge.pullRequests.byBranch` | `forge.resolve@1` | `{ account, repository, branch }` → `{ refs: ForgePrRef[] }`, open PRs only |
 | `forge.repository.resolve` | `forge.resolve@1` | `{ remotes: string[] }` → `{ host, repository }` or `-32004` |
 | `forge.pullRequest.read` | `forge.read@1` | `{ account, ref }` → overview fields except `links`, `localCheckout` and `catalog`; `activityRevision`, `checks`, `checkItems` and `activity` are optional, and `forge.checks@1` results take precedence |
-| `forge.pullRequest.activity` | `forge.read@1` | `{ account, ref, cursor }` → `ActivityPage` |
+| `forge.pullRequest.activity` | `forge.read@1` | `{ account, ref, cursor }` → `ActivityPage`: items newest first by `createdAt` within a page; the first page (also the `activity` of `forge.pullRequest.read`) holds the newest, `nextCursor` continues to older items (a review-thread reply may stay on the page of its thread's first comment) |
 | `forge.pullRequest.checks` | `forge.checks@1` | `{ account, ref, headRevision }` → `{ summary: CheckSummary, items: CheckItem[] }` |
 | `forge.pullRequest.files` | `forge.diff@1` | `{ account, ref, headRevision, cursor \| null }` → `{ headRevision, files, truncated, nextCursor }`; a file's `patch` is `{ state: "present", text }`, `tooLarge`, `binary` or `notProvided` (the companion adds hunks), and `viewed: boolean \| null` |
 | `forge.pullRequest.actions` | `forge.actions@1` | `{ account, ref }` → `ActionCatalog` |
@@ -178,6 +180,7 @@ known and takes only the remotes.
 | `forge.media.read` | `forge.conversation@1` | `{ account, url }` → `{ contentType, bytesBase64 }`, at most 10 MiB; a URL outside the account's forge and media hosts, or a redirect there, answers `-32602`; larger media answer `-32113` with `data.kind = "tooLarge"` |
 | `forge.pullRequest.comment.create` | `forge.comments@1` | `{ account, ref, body, idempotencyKey }` → `{ comment }` |
 | `forge.pullRequest.reviewThread.reply` | `forge.comments@1` | `{ account, ref, threadId, body, idempotencyKey }` → `{ comment }`; a thread of another pull request answers `-32115` |
+| `forge.pullRequest.fileContent` | `forge.fileContent@1` | `{ account, ref, headRevision, path }` → `{ state: "text", content }`, `{ state: "tooLarge", bytes \| null }`, `{ state: "binary" }` or `{ state: "missing" }`; see [Whole-file content](#whole-file-content) |
 | `forge.pullRequest.scenarioContext` | `forge.scenarioContext@1` | `{ account, ref, scenario, checkId \| null }` → `{ conflicts, failingChecks: { checkId, name, logExcerpt }[], comments: { author, path \| null, line \| null, body }[] }`, at most 64 KiB |
 
 The shared shapes (`AuthMethod`, `CheckSummary`, `CheckItem`, `ActivityPage`, `ActionCatalog`,
@@ -192,6 +195,49 @@ companion re-validates every result before it becomes a project type.
 - File pages hold at most 100 files. A patch above 4 MiB, or any forge-side too-large flag,
   becomes `patchState: "tooLarge"`; forge file limits (GitHub: 300 and 3 000 files) become
   `truncated { shown, total }`.
+
+### Whole-file content
+
+`forge.fileContent@1` lets a client show a changed file whole, with its changes inline, instead of
+only the recorded patch hunks. `forge.pullRequest.fileContent` reads one file of the head side:
+
+```json
+{"account": {"host": "github.com", "login": "octocat"},
+ "ref": {"host": "github.com", "repository": "octo/repo", "number": "7"},
+ "headRevision": "<the overview's headRevision>",
+ "path": "src/lib.rs"}
+```
+
+and answers exactly one of:
+
+```json
+{"state": "text", "content": "<the complete file>"}
+{"state": "tooLarge", "bytes": 5000000}
+{"state": "binary"}
+{"state": "missing"}
+```
+
+- `headRevision` is the opaque head revision of `forge.pullRequest.read` (the head SHA on GitHub,
+  the diff-set id on Arcanum). Content at a revision never changes, so a plugin need not check that
+  it is still the head; a plugin that can no longer read an older revision may answer `-32112`.
+- `path` is the file's head-side path: repository-relative, `/`-separated, at most 4 096 bytes, no
+  control characters, and no empty, `.` or `..` segment. Any other path answers `-32602` before
+  the forge is contacted.
+- `text` is the whole file, valid UTF-8 without NUL, at most 1 MiB (1 048 576 bytes). A larger
+  file is `tooLarge` (`bytes` is its size when known, else `null`) and should not be downloaded in
+  full; NUL or invalid UTF-8 is `binary`. `forge_protocol::FileContent::classify` applies these
+  rules to a file's bytes.
+- `missing`: the head has no file at this path (it was removed, or the path is a directory or a
+  submodule). A plugin answers `missing`, not an error, for a path that does not exist.
+- Line endings are returned as stored; the client aligns the content with the file's patch and
+  keeps the patch-only view when they do not match.
+
+The companion serves it to clients as `companion/pullRequest/fileContent/read`
+`{ pullRequest, headRevision, path }` → the same four states, after re-applying the size and text
+rules. A provider whose last `initialize` did not declare `forge.fileContent@1` is refused with
+`-32080` without a plugin spawn. Nothing is cached in the companion; Android keys its query by
+connection, pull request, head revision and path, reads it only for a provider that declares the
+capability, keeps the patch-only diff while it loads, and keeps it for every state but `text`.
 
 ### Action descriptors
 
@@ -313,6 +359,14 @@ Methods:
 Scopes: a `gh` login has `gh`'s default scopes (`repo`, `read:org`, `gist`). CodeWide inherits the
 host login's scopes, states them on the card, and never runs `gh auth refresh` to widen them.
 
+Whole-file content (`forge.fileContent@1`): `GET /repos/{owner}/{repo}/contents/{path}?ref=<head
+SHA>` on the pull request's base repository, in the raw media type
+(`application/vnd.github.raw+json`), with every path segment percent-encoded and the head revision
+required to be a full commit SHA. A fork's head commit is readable there through the base
+repository's `refs/pull/<n>/head`, so no access to the fork is needed. A body announced or streamed
+above 1 MiB is `tooLarge` without reading the rest; 404, and a JSON answer (a directory listing),
+are `missing`. It needs the same Contents read permission as the diff.
+
 Disconnect: `unlink` is the default for `gh` and environment credentials; `forgetToken` is
 always used for a saved token; `logoutHost` runs `gh auth logout --hostname <host> --user
 <login>` only with destructive confirmation, because it also signs out every other host tool
@@ -407,7 +461,8 @@ Owned by the companion (`forge/limits.rs`):
 - scenario context at most 64 KiB, bounded by the plugin;
 - conversation pages at most 500 entries and cursors at most 4 096 bytes; a comment or reply body
   1..65 536 characters after trimming; `forge.media.read` at most 10 MiB; a focused scenario looks
-  its thread up in at most 20 conversation pages.
+  its thread up in at most 20 conversation pages;
+- `forge.pullRequest.fileContent` text at most 1 MiB, paths at most 4 096 bytes.
 
 ## Safety rules
 
@@ -508,7 +563,10 @@ capability of a plugin executable against recorded fixtures. On Linux it is expo
 methods at a deliberately stale head, which a conformant plugin refuses without writing. With
 `forge.conversation@1` it reads the first conversation page, checks every thread's rules (at least
 one comment, positive lines with `startLine` before `line`, a non-empty anchored path, a positive
-iteration number) and requires a media read of a foreign host to answer `-32602`; with `forge.comments@1` and `--write-probes` it requires a reply
+iteration number) and requires a media read of a foreign host to answer `-32602`; with
+`forge.fileContent@1` it reads the first listed file the head still has (text within 1 MiB and
+without NUL, or a `tooLarge` size above it), requires a path the head cannot have to answer
+`missing` and a path with a `..` segment to answer `-32602`; with `forge.comments@1` and `--write-probes` it requires a reply
 to a thread that cannot exist to be refused (a comment create has no safe probe). An external plugin is documented as
 supported only after it passes the harness.
 
@@ -526,6 +584,8 @@ today). The protocol does not change for it.
   `CI_OAUTH_TOKEN`, `~/.ci/token`). Without it, checks show as `unavailable` and everything else
   works.
 - `HeadRevision` is the diff-set id.
+- `forge.fileContent@1` (optional): `forge.pullRequest.fileContent` answers the file's content at
+  that diff set's head, by the rules in [Whole-file content](#whole-file-content).
 - Verdicts are a plugin-declared group; Block is marked `destructive`.
 - Partial review publication must be reported per comment.
 - `forge.resolve@1`: `forge.repository.resolve` maps the Arc VCS plugin's `arc://arcadia` remote to

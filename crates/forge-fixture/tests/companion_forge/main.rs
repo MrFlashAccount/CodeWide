@@ -4,6 +4,7 @@
 
 mod auth;
 mod conversation;
+mod file_content;
 mod hosts;
 mod reads;
 mod support;

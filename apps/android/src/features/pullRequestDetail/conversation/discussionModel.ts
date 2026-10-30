@@ -1,8 +1,10 @@
 /**
  * Projects loaded conversation pages into the Discussion section: the pinned
- * issues, the summary chip and a chronological timeline in which reviews
+ * issues, the summary chip and a newest-first timeline in which reviews
  * contain their threads, nearby comments of one author are grouped and runs of
- * same-category events collapse. Pure and forge-independent: it reads only the
+ * same-category events collapse. Pages arrive newest first and later pages
+ * hold older entries, so the concatenated entries are already in display
+ * order; only a thread's own comments read oldest first. Pure and forge-independent: it reads only the
  * declared contract fields, never a forge's name.
  */
 import type {
@@ -29,9 +31,9 @@ export type DiscussionIssue = {
   readonly thread: ConversationReviewThread;
 };
 
-/** One rendered timeline item, oldest first. */
+/** One rendered timeline item, newest first. */
 export type TimelineItem =
-  /** A review with a body or threads: a card containing its threads. */
+  /** A review with a body or threads: a card containing its threads, newest first. */
   | {
       readonly key: string;
       readonly kind: "review";
@@ -50,14 +52,14 @@ export type TimelineItem =
       readonly kind: "thread";
       readonly thread: ConversationReviewThread;
     }
-  /** Top-level comments of one author, each within the window of the previous one. */
+  /** Top-level comments of one author, newest first, each within the window of the one above. */
   | {
       readonly author: ConversationAuthor;
       readonly comments: readonly [ConversationComment, ...ConversationComment[]];
       readonly key: string;
       readonly kind: "comments";
     }
-  /** Consecutive events of one category; a run of one is a single event row. */
+  /** Consecutive events of one category, newest first; a run of one is a single event row. */
   | {
       readonly category: EventCategory;
       readonly events: readonly [EventEntry, ...EventEntry[]];
@@ -77,9 +79,9 @@ export type Discussion = {
   readonly commentCount: number;
   /** The largest iteration number seen on a thread; `null` without iterations. */
   readonly latestIteration: number | null;
-  /** Open issues, oldest first. */
+  /** Open issues, newest first. */
   readonly openIssues: readonly DiscussionIssue[];
-  /** Resolved and dropped issues, oldest first; shown behind a counter. */
+  /** Resolved and dropped issues, newest first; shown behind a counter. */
   readonly settledIssues: readonly DiscussionIssue[];
   readonly summary: DiscussionSummary | null;
   readonly timeline: readonly TimelineItem[];
@@ -117,8 +119,9 @@ function summaryOf(
   return unresolved === 0 ? null : { label: `${String(unresolved)} unresolved`, tone: "warning" };
 }
 
-function withinWindow(previous: ConversationComment, next: ConversationComment): boolean {
-  const gap = Date.parse(next.createdAt) - Date.parse(previous.createdAt);
+/** Whether `older`, the next comment down the newest-first timeline, joins the group of `newer`. */
+function withinWindow(newer: ConversationComment, older: ConversationComment): boolean {
+  const gap = Date.parse(newer.createdAt) - Date.parse(older.createdAt);
   return Number.isFinite(gap) && gap >= 0 && gap <= COMMENT_GROUP_WINDOW_MS;
 }
 
@@ -247,7 +250,7 @@ function latestIterationOf(threads: readonly ConversationReviewThread[]): number
   return latest;
 }
 
-/** Projects the loaded pages; entries keep the forge's oldest-first order. */
+/** Projects the loaded pages; entries keep the forge's newest-first order. */
 export function projectDiscussion(page: ConversationPage): Discussion {
   const threads = page.entries.flatMap((entry) =>
     entry.kind === "reviewThread" ? [entry.thread] : [],

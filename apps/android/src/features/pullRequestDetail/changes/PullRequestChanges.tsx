@@ -165,10 +165,8 @@ function ChangesBody({
           besideDiff={besideDiff}
           drafts={data.drafts}
           filesOpen={filesOpen}
+          headContent={data.headContent}
           host={props.host}
-          onCloseFiles={() => {
-            model.filesPanelOpen.set(false);
-          }}
           onDeleteDraft={(draft) => {
             props.reviewCapabilities.deleteDraft(connectionId, draft).catch((error: unknown) => {
               dialog.error("Could not delete the draft", error);
@@ -186,20 +184,18 @@ function ChangesBody({
                 }
           }
           onReanchor={composer.startReanchor}
-          onSelect={(file) => {
-            model.selectedPath.set(file.path);
+          onSelect={(path) => {
+            model.selectedPath.set(path);
             if (!besideDiff) {
-              // The overlay tree covers the diff; choosing a file reveals it.
+              // The narrow tree takes the diff's place; choosing a file reveals it.
               model.filesPanelOpen.set(false);
             }
           }}
           onSendToAgent={(draft) => {
             onSendToAgent([draft.id]);
           }}
-          onToggleViewed={data.toggleViewed}
           page={page}
           selected={data.selected}
-          viewedPending={data.viewedPending}
         />
       ) : null}
       {data.view === "guide" ? (

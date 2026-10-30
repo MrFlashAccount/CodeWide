@@ -1,6 +1,7 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../../../../../src/components/navigation/RouteUnavailable";
+import { parsePullRequestKeyParam } from "../../../../../../../src/data/forgeContract";
 import { workspaceRuntime } from "../../../../../../../src/data/workspace-runtime";
 import { ActiveWorkspaceConversation } from "../../../../../../../src/features/conversation/ConversationWorkspace";
 import { workspaceFeatures as features } from "../../../../../../../src/features/workspace/createWorkspaceFeatures";
@@ -8,6 +9,7 @@ import { WorkspaceConversationProviders } from "../../../../../../../src/feature
 import { searchRouteSessions } from "../../../../../../../src/services/search/searchRouteSession";
 import { newThreadService } from "../../../../../../../src/services/threads/newThreadService";
 import { useEvent } from "../../../../../../../src/react/useEvent";
+import { ThreadPullRequestPaneLayout } from "../../../../../../../src/routeComposition/ThreadPullRequestPane";
 import {
   routeSessionIdParam,
   threadRouteSessionOwner,
@@ -46,6 +48,7 @@ export default function V1ThreadRoute(): React.JSX.Element {
   const raw = useLocalSearchParams<{
     connectionId?: string | string[];
     globalSearchSessionId?: string | string[];
+    pullRequest?: string | string[];
     searchWindowId?: string | string[];
     threadId?: string | string[];
   }>();
@@ -108,47 +111,53 @@ export default function V1ThreadRoute(): React.JSX.Element {
   const connectionId = params.value.connectionId.value;
   const threadId = params.value.threadId.value;
   return (
-    <WorkspaceConversationProviders
-      activeConnectionId={connectionId}
-      composerThreadId={threadId}
-      feedback={resources.browserFeedback}
-      initialBrowserDestination={`${connectionId}\u0000${threadId}`}
-      runtime={resources.runtime}
+    <ThreadPullRequestPaneLayout
+      connectionId={connectionId}
+      pullRequest={parsePullRequestKeyParam(raw.pullRequest)}
+      threadId={threadId}
     >
-      <ActiveWorkspaceConversation
-        connections={resources.connections}
-        desktop={resources.desktop}
-        destination={{
-          connectionId,
-          kind: "thread",
-          searchWindow: searchRoute.window,
-          threadId,
-        }}
-        features={features}
-        fileTransferController={workspaceRuntime.fileTransferController}
-        loadedThreadSummaries={resources.list.loadedThreadSummaries}
-        native={workspaceRuntime.native}
-        onChangeDraftProject={() => undefined}
-        onChangeDraftWorkspaceMode={() => undefined}
-        onClose={resources.list.closeActiveThread}
-        onDraftAdmitted={closeDraft}
-        onExitSearchHistory={closeSearchHistory}
-        onFixUnsupportedBlock={resources.recovery.createUnsupportedFixThread}
-        onManageProjects={() => {
-          router.push("/projects");
-        }}
-        onOpenBrowser={resources.openBrowser}
-        onOpenBrowserInThread={resources.openBrowserInThread}
-        onSelectThread={resources.list.selectThread}
-        onShowActiveThreads={() => {
-          resources.list.listState.setThreadListMode("active");
-        }}
-        pendingRequests={resources.pendingRequests}
+      <WorkspaceConversationProviders
+        activeConnectionId={connectionId}
+        composerThreadId={threadId}
+        feedback={resources.browserFeedback}
+        initialBrowserDestination={`${connectionId}\u0000${threadId}`}
         runtime={resources.runtime}
-        scopedThreads={resources.list.scopedThreads}
-        servers={resources.list.servers}
-        voiceController={workspaceRuntime.voiceController}
-      />
-    </WorkspaceConversationProviders>
+      >
+        <ActiveWorkspaceConversation
+          connections={resources.connections}
+          desktop={resources.desktop}
+          destination={{
+            connectionId,
+            kind: "thread",
+            searchWindow: searchRoute.window,
+            threadId,
+          }}
+          features={features}
+          fileTransferController={workspaceRuntime.fileTransferController}
+          loadedThreadSummaries={resources.list.loadedThreadSummaries}
+          native={workspaceRuntime.native}
+          onChangeDraftProject={() => undefined}
+          onChangeDraftWorkspaceMode={() => undefined}
+          onClose={resources.list.closeActiveThread}
+          onDraftAdmitted={closeDraft}
+          onExitSearchHistory={closeSearchHistory}
+          onFixUnsupportedBlock={resources.recovery.createUnsupportedFixThread}
+          onManageProjects={() => {
+            router.push("/projects");
+          }}
+          onOpenBrowser={resources.openBrowser}
+          onOpenBrowserInThread={resources.openBrowserInThread}
+          onSelectThread={resources.list.selectThread}
+          onShowActiveThreads={() => {
+            resources.list.listState.setThreadListMode("active");
+          }}
+          pendingRequests={resources.pendingRequests}
+          runtime={resources.runtime}
+          scopedThreads={resources.list.scopedThreads}
+          servers={resources.list.servers}
+          voiceController={workspaceRuntime.voiceController}
+        />
+      </WorkspaceConversationProviders>
+    </ThreadPullRequestPaneLayout>
   );
 }

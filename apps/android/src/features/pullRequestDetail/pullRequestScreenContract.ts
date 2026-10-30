@@ -25,7 +25,8 @@ export type DeferReviewChatScenario = (scenario: {
 
 /** Route intents the PR screen raises; route composition owns navigation. */
 type PullRequestScreenNavigation = {
-  readonly back: () => void;
+  /** Leaves Details; `null` where Details is a side pane with nothing behind it to return to. */
+  readonly back: (() => void) | null;
   readonly chatVisible: boolean;
   /** Leaves Changes for the Details screen beneath it. */
   readonly closeChanges: () => void;

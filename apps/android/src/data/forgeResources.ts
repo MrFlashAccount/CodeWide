@@ -1,8 +1,8 @@
 /**
  * The single owner of forge Promise identity and request deduplication:
  * accounts (availability), list pages, the atomic PR overview, file,
- * activity and conversation pages, the PR's agent scenario states, plus the
- * invalidation subscription.
+ * activity and conversation pages, whole head files, the PR's agent scenario
+ * states, plus the invalidation subscription.
  *
  * `preloadOverview` primes the same cached Promise the PR screen reads with
  * Suspense when a caller has intent early enough. Mutations live with their
@@ -16,6 +16,10 @@ import type { RpcClient } from "@codewide/sync-client";
 import { ForgeContractViolation } from "./forgeErrors";
 import { parseForgeAccounts, type ForgeAccountsSnapshot } from "./forgeContract";
 import { parseConversationPage, type ConversationPage } from "./forgeConversationContract";
+import {
+  parsePullRequestFileContent,
+  type PullRequestFileContent,
+} from "./forgeFileContentContract";
 import { forgeInvalidationBus } from "./forgeInvalidationBus";
 import {
   createForgeMutationQueue,
@@ -23,7 +27,11 @@ import {
   type ForgeMutationQueue,
 } from "./forgeMutationQueue";
 import { persistForgeQueryClient } from "./forgeQueryPersistence";
-import { createForgeQueryResource, type ForgeQueryResource } from "./forgeQueryResource";
+import {
+  createForgeQueryResource,
+  createImmutableForgeQueryResource,
+  type ForgeQueryResource,
+} from "./forgeQueryResource";
 import { mergeListPages, type ListParams } from "./forgeListPages";
 import type { OverviewParams } from "./forgeOverview";
 import {
@@ -49,12 +57,17 @@ export type ForgeReadAuthority = {
 /** Params of a files page set: the head revision is part of its identity. */
 type FilesParams = OverviewParams & { readonly headRevision: string };
 
+/** Params of one head file: content at a head revision never changes. */
+type FileContentParams = FilesParams & { readonly path: string };
+
 /** Process-lifetime forge read model. */
 export type ForgeResources = {
   readonly accounts: ForgeQueryResource<{ readonly connectionId: string }, ForgeAccountsSnapshot>;
   readonly activity: ForgeQueryResource<OverviewParams, ActivityPage>;
   /** The PR conversation of a plugin declaring `forge.conversation@1`. */
   readonly conversation: ForgeQueryResource<OverviewParams, ConversationPage>;
+  /** One whole head file of a plugin declaring `forge.fileContent@1`; read once per head. */
+  readonly fileContent: ForgeQueryResource<FileContentParams, PullRequestFileContent>;
   readonly files: ForgeQueryResource<FilesParams, PullRequestFilesPage>;
   readonly lists: ForgeQueryResource<ListParams, PullRequestListPage>;
   /** Resolves once an accounts snapshot exists (read now if none); never rejects. */
@@ -189,6 +202,28 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
     ],
     load: async (params) => readFiles(params, null),
   });
+  const fileContent = createImmutableForgeQueryResource<FileContentParams, PullRequestFileContent>({
+    client: queryClient,
+    keyOf: (params) => [
+      "forge",
+      "fileContent",
+      params.connectionId,
+      params.pullRequest,
+      params.headRevision,
+      params.path,
+    ],
+    load: async (params) =>
+      requireParsed(
+        parsePullRequestFileContent(
+          await call(params.connectionId, "companion/pullRequest/fileContent/read", {
+            headRevision: params.headRevision,
+            path: params.path,
+            pullRequest: params.pullRequest,
+          }),
+        ),
+        "file content",
+      ),
+  });
   const readActivity = async (params: OverviewParams, cursor: string | null) =>
     requireParsed(
       parseActivityPage(
@@ -278,6 +313,7 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
     accounts,
     activity,
     conversation,
+    fileContent,
     files,
     lists,
     loadAccounts: async (connectionId) => {

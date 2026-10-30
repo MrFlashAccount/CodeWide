@@ -59,6 +59,8 @@ export type PullRequestScreenData = {
   readonly offline: boolean;
   readonly overview: PullRequestOverview;
   readonly params: OverviewParams;
+  /** Capabilities the PR account's plugin declares; empty until the accounts snapshot loads. */
+  readonly providerCapabilities: readonly string[];
   /** The PR account's provider mark from the accounts snapshot; `null` until it loads. */
   readonly providerIcon: ProviderIcon | null;
   /** The first scenario whose run failed at the shown head, with the real reason. */
@@ -138,6 +140,7 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
     offline,
     overview,
     params,
+    providerCapabilities: capabilitiesOf(provider),
     providerIcon: provider?.icon ?? null,
     scenarioFailure: scenarioFailure(overview.catalog.actions, scenarios),
     scenarioViews: scenarios,
@@ -174,6 +177,11 @@ function useProvider(props: PullRequestScreenProps, pluginId: string): ForgeProv
   return (
     remoteValue(accounts)?.providers.find((candidate) => candidate.pluginId === pluginId) ?? null
   );
+}
+
+/** What the PR account's plugin declares; nothing until the accounts snapshot names it. */
+function capabilitiesOf(provider: ForgeProvider | null): readonly string[] {
+  return provider === null ? [] : provider.capabilities;
 }
 
 function useDraftCount(props: PullRequestScreenProps): number {

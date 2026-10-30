@@ -236,6 +236,16 @@ async fn activity_files_hunks_and_badges_answer_from_the_fixture_plugin() {
         )
         .await;
     assert_eq!(activity["items"][0]["author"], "reviewer");
+    assert_eq!(
+        activity["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|item| item["id"].as_str().expect("id"))
+            .collect::<Vec<_>>(),
+        ["r1", "c1"],
+        "activity reaches the client newest first, as the plugin sent it"
+    );
     let files = harness
         .ok(
             "companion/pullRequest/files/read",

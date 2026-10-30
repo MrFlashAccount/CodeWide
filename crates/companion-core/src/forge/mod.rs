@@ -28,6 +28,7 @@ pub mod declarations;
 pub mod detection;
 pub mod directory;
 pub mod errors;
+pub mod file_content;
 pub mod icons;
 pub mod identity;
 pub mod ids;
@@ -329,6 +330,7 @@ impl ForgeService {
                 | "companion/pullRequest/conversation/read"
                 | "companion/pullRequest/scenarios/read"
                 | "companion/pullRequest/files/read"
+                | "companion/pullRequest/fileContent/read"
                 | "companion/review/hunks/read"
                 | "companion/review/drafts/read"
                 | "companion/review/guide/read"
@@ -360,6 +362,7 @@ impl ForgeService {
             "companion/pullRequest/comment/create" => comments::create(context, params).await,
             "companion/pullRequest/reviewThread/reply" => comments::reply(context, params).await,
             "companion/pullRequest/files/read" => reads::files(context, params).await,
+            "companion/pullRequest/fileContent/read" => file_content::read(context, params).await,
             "companion/pullRequest/action/run" => action_run::run(context, params).await,
             "companion/pullRequest/review/submit" => submit::submit(context, params).await,
             "companion/pullRequest/viewed/set" => reads::set_viewed(context, params).await,

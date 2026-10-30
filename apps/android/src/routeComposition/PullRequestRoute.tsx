@@ -122,7 +122,8 @@ function PullRequestRouteContent({
                 connectionId,
               )}
               navigation={{
-                back,
+                // A wide PR sits beside its catalog, so Details has nothing behind it.
+                back: desktop ? null : back,
                 chatVisible: chat.status !== "closed",
                 closeChanges,
                 deferReviewChatScenario: reviewChat.deferScenario,

@@ -1,6 +1,7 @@
 /**
- * Pure projections of a PR files page for the Changes tab: recorded-patch
- * editor documents, viewed counts and labels, draft comments and hunk lookup.
+ * Pure projections of a PR files page for the Changes tab: recorded-patch and
+ * whole-file editor documents, viewed counts and labels, draft comments and
+ * hunk lookup.
  */
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
 import type { Hunk, HunkId } from "../../../data/reviewContract";
@@ -31,6 +32,92 @@ export function fileDocument(file: PullRequestFile): CodeReviewDocument | null {
     path: file.path,
     revision: codeReviewDocumentRevision(file.path, "", patches),
     source: "",
+  };
+}
+
+/**
+ * Whether the whole head file is worth reading for this file: it has a patch
+ * to show inline, and the head side is neither empty (removed) nor entirely
+ * the patch already (added).
+ */
+export function showsWholeFile(file: PullRequestFile): boolean {
+  return file.patch.state === "present" && file.status !== "added" && file.status !== "removed";
+}
+
+/**
+ * The whole head file with the recorded patch inline (`fullFileDiff`), or
+ * `null` when the patch's new side does not line up with `content` (for
+ * example a symlink, whose patch is its target path). The editor then keeps
+ * the recorded-patch document instead of reporting that the diff cannot be
+ * aligned. CRLF is shown as LF, as the patch lines are compared without it.
+ */
+export function wholeFileDocument(
+  file: PullRequestFile,
+  content: string,
+): CodeReviewDocument | null {
+  if (file.patch.state !== "present") {
+    return null;
+  }
+  const source = content.replaceAll("\r\n", "\n");
+  if (!patchMatchesSource(file.patch.text, source)) {
+    return null;
+  }
+  const patches = [{ diff: file.patch.text, kind: PATCH_KINDS[file.status] }];
+  return {
+    fullFileDiff: true,
+    patches,
+    path: file.path,
+    revision: codeReviewDocumentRevision(file.path, source, patches),
+    source,
+  };
+}
+
+const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(?<start>\d+)(?:,(?<count>\d+))? @@/u;
+const TRAILING_CARRIAGE_RETURN = /\r$/u;
+/** Old-side lines and the "no newline at end of file" note: not part of the head file. */
+const OLD_SIDE_MARKERS: ReadonlySet<string> = new Set(["-", "\\"]);
+/** Context and added lines; an empty line is context whose leading space was trimmed. */
+const NEW_SIDE_MARKERS: ReadonlySet<string> = new Set(["+", " ", ""]);
+
+/** Every hunk's new side (context and additions) appears in `source` at its stated line. */
+function patchMatchesSource(patch: string, source: string): boolean {
+  const lines = source.split("\n");
+  let next = 0;
+  let remaining = 0;
+  let hunks = 0;
+  for (const raw of patch.split("\n")) {
+    const header = hunkHeader(raw);
+    if (header !== null) {
+      hunks += 1;
+      next = header.start;
+      remaining = header.count;
+      continue;
+    }
+    const marker = raw.slice(0, 1);
+    if (remaining === 0 || OLD_SIDE_MARKERS.has(marker)) {
+      continue;
+    }
+    if (
+      !NEW_SIDE_MARKERS.has(marker) ||
+      lines[next] !== raw.slice(1).replace(TRAILING_CARRIAGE_RETURN, "")
+    ) {
+      return false;
+    }
+    next += 1;
+    remaining -= 1;
+  }
+  return hunks > 0;
+}
+
+/** A hunk header's zero-based new-side start and new-side line count. */
+function hunkHeader(raw: string): { readonly count: number; readonly start: number } | null {
+  const groups = HUNK_HEADER.exec(raw)?.groups;
+  if (groups === undefined) {
+    return null;
+  }
+  return {
+    count: groups.count === undefined ? 1 : Number(groups.count),
+    start: Math.max(0, Number(groups.start) - 1),
   };
 }
 

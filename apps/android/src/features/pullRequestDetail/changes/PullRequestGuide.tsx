@@ -6,7 +6,7 @@ import type { CodeReviewLineReference } from "../../review/comments/reviewCommen
 import type { CommentSheetTarget } from "../../review/comments/CommentSheet";
 import { GuidePanel } from "../../review/guide/GuidePanel";
 import type { ReviewTargetCapabilities } from "../../review/reviewTargetCapabilities";
-import { draftEditorComments, hunkLocations } from "./changesPresentation";
+import { hunkLocations } from "./changesPresentation";
 import { PullRequestDiff } from "./PullRequestDiff";
 
 /**
@@ -79,10 +79,12 @@ export function PullRequestGuide({
             : files.find((candidate) => candidate.path === first.path);
         return file === undefined || first === undefined ? null : (
           <PullRequestDiff
-            comments={draftEditorComments(drafts, file.path)}
-            file={file}
+            drafts={drafts}
+            headContent={null}
             onLinePress={onLinePress}
             reveal={{ line: first.line, path: first.path, side: "new" }}
+            selected={file}
+            tree={null}
           />
         );
       }}

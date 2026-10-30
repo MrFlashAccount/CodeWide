@@ -29,7 +29,7 @@ use tracing::info;
 use super::limits;
 
 /// Every capability this companion understands, sent in `initialize`.
-const KNOWN_CAPABILITIES: [&str; 13] = [
+const KNOWN_CAPABILITIES: [&str; 14] = [
     capability::AUTH,
     capability::LIST,
     capability::SEARCH,
@@ -43,6 +43,7 @@ const KNOWN_CAPABILITIES: [&str; 13] = [
     capability::SCENARIO_CONTEXT,
     capability::CONVERSATION,
     capability::COMMENTS,
+    capability::FILE_CONTENT,
 ];
 
 /// How to start one plugin.

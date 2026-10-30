@@ -44,7 +44,7 @@ export type TimelineContext = {
   readonly writes: ConversationWrites;
 };
 
-/** The chronological Discussion: comment groups, reviews with their threads, verdicts and events. */
+/** The Discussion, newest first: comment groups, reviews with their threads, verdicts and events. */
 export function DiscussionTimeline({
   context,
   items,
@@ -83,7 +83,7 @@ function Item({
   return <EventRun events={item.events} nowMs={context.nowMs} />;
 }
 
-/** Top-level comments of one author: the header once, later comments as continuations. */
+/** Top-level comments of one author, newest first: the header once, older comments as continuations. */
 function CommentGroup({
   comments,
   nowMs,
@@ -226,7 +226,7 @@ function EventLine({
   );
 }
 
-/** A single event, or a collapsed run of same-category events that expands in place. */
+/** A single event, or a collapsed run of same-category events that expands in place; the run shows its newest age. */
 function EventRun({
   events,
   nowMs,
@@ -239,7 +239,6 @@ function EventRun({
   if (events.length === 1) {
     return <EventLine event={first} nowMs={nowMs} />;
   }
-  const last = events.at(-1) ?? first;
   const label = eventRunLabel(first.category, events.length);
   return (
     <View testID={`conversation-events-${first.id}`}>
@@ -254,7 +253,7 @@ function EventRun({
         testID={`conversation-events-${first.id}-toggle`}
       >
         <Text style={[overviewStyles.meta, overviewStyles.fill]}>{label}</Text>
-        <Text style={overviewStyles.meta}>{compactAge(last.createdAt, nowMs)}</Text>
+        <Text style={overviewStyles.meta}>{compactAge(first.createdAt, nowMs)}</Text>
         <Ionicons
           color={colors.textMuted}
           name={expanded ? "chevron-up" : "chevron-down"}

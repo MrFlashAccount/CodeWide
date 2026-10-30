@@ -1,17 +1,16 @@
-//! One pull request's overview, merge readiness and activity.
+//! One pull request's overview and merge readiness.
 
 use forge_protocol::{
-    ActivityItem, ActivityKind, ActivityPage, DiffStats, MergeState, MergeStatus, PluginError,
-    PullRequestOverview, PullRequestState,
+    ActivityPage, DiffStats, MergeState, MergeStatus, PluginError, PullRequestOverview,
+    PullRequestState,
 };
 use serde_json::Value;
 
 use crate::{
+    activity::activity,
     api::Api,
     repo::{PullTarget, head_sha},
 };
-
-const ACTIVITY_PAGE_SIZE: u32 = 50;
 
 /// `forge.pullRequest.read`.
 ///
@@ -125,134 +124,4 @@ pub fn merge_status(pull: &Value, state: PullRequestState) -> MergeStatus {
             reason: None,
         },
     }
-}
-
-/// `forge.pullRequest.activity`: issue comments, reviews and review
-/// comments of one page, oldest first.
-///
-/// # Errors
-///
-/// Returns the mapped GitHub failure.
-pub async fn activity(
-    api: &Api,
-    target: &PullTarget,
-    cursor: Option<String>,
-) -> Result<ActivityPage, PluginError> {
-    let page = cursor
-        .as_deref()
-        .map_or(Ok(1), str::parse::<u32>)
-        .map_err(|_| PluginError::invalid_params("invalid activity cursor"))?
-        .max(1);
-    let query = [
-        ("per_page", ACTIVITY_PAGE_SIZE.to_string()),
-        ("page", page.to_string()),
-    ];
-    let comments = api
-        .get(
-            &target
-                .repo
-                .path(&format!("/issues/{}/comments", target.number)),
-            &query,
-        )
-        .await?;
-    let reviews = api.get(&target.path("/reviews"), &query).await?;
-    let review_comments = api.get(&target.path("/comments"), &query).await?;
-    let mut items = Vec::new();
-    let mut full_page = false;
-    for (list, map) in [
-        (
-            &comments,
-            issue_comment as fn(&Value) -> Option<ActivityItem>,
-        ),
-        (&reviews, review),
-        (&review_comments, review_comment),
-    ] {
-        let entries = list.as_array().map(Vec::as_slice).unwrap_or_default();
-        full_page |= entries.len() >= usize::try_from(ACTIVITY_PAGE_SIZE).unwrap_or(usize::MAX);
-        items.extend(entries.iter().filter_map(map));
-    }
-    items.sort_by(|left, right| left.created_at.cmp(&right.created_at));
-    Ok(ActivityPage {
-        items,
-        next_cursor: full_page.then(|| (page + 1).to_string()),
-    })
-}
-
-fn user(value: &Value) -> String {
-    value
-        .pointer("/user/login")
-        .and_then(Value::as_str)
-        .unwrap_or("ghost")
-        .to_owned()
-}
-
-fn issue_comment(value: &Value) -> Option<ActivityItem> {
-    Some(ActivityItem {
-        id: format!("c{}", value.get("id")?.as_u64()?),
-        kind: ActivityKind::Comment,
-        author: user(value),
-        created_at: value.get("created_at")?.as_str()?.to_owned(),
-        body: value
-            .get("body")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        path: None,
-        line: None,
-        review_thread_id: None,
-        verdict_label: None,
-    })
-}
-
-fn review(value: &Value) -> Option<ActivityItem> {
-    let verdict = match value.get("state")?.as_str()? {
-        "APPROVED" => "Approved",
-        "CHANGES_REQUESTED" => "Changes requested",
-        "COMMENTED" => "Commented",
-        "DISMISSED" => "Dismissed",
-        _ => return None,
-    };
-    Some(ActivityItem {
-        id: format!("r{}", value.get("id")?.as_u64()?),
-        kind: ActivityKind::Review,
-        author: user(value),
-        created_at: value.get("submitted_at")?.as_str()?.to_owned(),
-        body: value
-            .get("body")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        path: None,
-        line: None,
-        review_thread_id: None,
-        verdict_label: Some(verdict.to_owned()),
-    })
-}
-
-fn review_comment(value: &Value) -> Option<ActivityItem> {
-    let id = value.get("id")?.as_u64()?;
-    let root = value
-        .get("in_reply_to_id")
-        .and_then(Value::as_u64)
-        .unwrap_or(id);
-    let line = value
-        .get("line")
-        .and_then(Value::as_u64)
-        .or_else(|| value.get("original_line").and_then(Value::as_u64))
-        .and_then(|line| u32::try_from(line).ok());
-    Some(ActivityItem {
-        id: format!("rc{id}"),
-        kind: ActivityKind::Comment,
-        author: user(value),
-        created_at: value.get("created_at")?.as_str()?.to_owned(),
-        body: value
-            .get("body")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        path: value.get("path").and_then(Value::as_str).map(str::to_owned),
-        line,
-        review_thread_id: Some(format!("t{root}")),
-        verdict_label: None,
-    })
 }

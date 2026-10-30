@@ -30,7 +30,8 @@ const CLOSER_VERBS: Readonly<Record<IssueState, string>> = {
 /**
  * The issues of the pull request, pinned above the timeline: one compact row
  * per issue (status dot, author avatar, anchor, first line, who settled it),
- * open issues first. Resolved and dropped issues collapse behind a counter.
+ * open issues first, each list newest first. Resolved and dropped issues
+ * collapse behind a counter.
  * A row reveals its thread; each row also hands its thread to the agent.
  */
 export function PinnedIssues(props: PinnedIssuesProps): React.JSX.Element {

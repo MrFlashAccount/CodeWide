@@ -165,7 +165,7 @@ function Screen({ tablet }: { readonly tablet: boolean }): React.JSX.Element | n
         forge={forge}
         isThreadUnread={() => false}
         navigation={{
-          back: () => undefined,
+          back: tablet ? null : () => undefined,
           chatVisible: false,
           deferReviewChatScenario: async () => Promise.resolve(null),
           openPullRequestFullscreen: () => undefined,

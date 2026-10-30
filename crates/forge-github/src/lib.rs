@@ -11,11 +11,13 @@
 //! the companion closes stdin, which drops and kills it.
 
 pub mod actions;
+pub mod activity;
 pub mod api;
 pub mod auth;
 pub mod checks;
 pub mod comment_media;
 pub mod comments;
+pub mod content;
 pub mod conversation;
 pub mod credentials;
 pub mod files;
@@ -33,11 +35,11 @@ use std::{path::PathBuf, sync::Arc};
 
 use forge_protocol::{
     ActivityParams, AuthDisconnectParams, AuthMethodsParams, AuthStartParams, AuthVerifyParams,
-    ByBranchParams, ChecksParams, CommentCreateParams, ConversationParams, FilesParams,
-    ForgeAccountRef, ForgePlugin, InitializeParams, InitializeResult, ListParams, MediaReadParams,
-    PROTOCOL_VERSION, PluginError, PluginIcon, PullRequestParams, ResolveParams, ResolveResult,
-    ReviewSubmitParams, ReviewThreadReplyParams, ScenarioContextParams, ViewedSetParams,
-    capability, code, methods,
+    ByBranchParams, ChecksParams, CommentCreateParams, ConversationParams, FileContentParams,
+    FilesParams, ForgeAccountRef, ForgePlugin, InitializeParams, InitializeResult, ListParams,
+    MediaReadParams, PROTOCOL_VERSION, PluginError, PluginIcon, PullRequestParams, ResolveParams,
+    ResolveResult, ReviewSubmitParams, ReviewThreadReplyParams, ScenarioContextParams,
+    ViewedSetParams, capability, code, methods,
     plugin::{from_params, to_result},
 };
 use serde_json::{Value, json};
@@ -148,6 +150,7 @@ impl GithubPlugin {
                 capability::SCENARIO_CONTEXT.into(),
                 capability::CONVERSATION.into(),
                 capability::COMMENTS.into(),
+                capability::FILE_CONTENT.into(),
             ],
             media_hosts: media::GITHUB_MEDIA_HOSTS
                 .iter()
@@ -294,7 +297,7 @@ impl GithubPlugin {
             methods::PULL_REQUEST_ACTIVITY => {
                 let params: ActivityParams = from_params(params)?;
                 let (api, target) = self.pull_request(&params.account, &params.pr_ref).await?;
-                to_result(&pull::activity(&api, &target, params.cursor).await?)
+                to_result(&activity::activity(&api, &target, params.cursor.as_deref()).await?)
             }
             methods::PULL_REQUEST_CHECKS => {
                 let params: ChecksParams = from_params(params)?;
@@ -305,6 +308,14 @@ impl GithubPlugin {
                 let params: FilesParams = from_params(params)?;
                 let (api, target) = self.pull_request(&params.account, &params.pr_ref).await?;
                 to_result(&files::files(&api, &target, &params.head_revision, params.cursor).await?)
+            }
+            methods::PULL_REQUEST_FILE_CONTENT => {
+                let params: FileContentParams = from_params(params)?;
+                let (api, target) = self.pull_request(&params.account, &params.pr_ref).await?;
+                to_result(
+                    &content::file_content(&api, &target, &params.head_revision, &params.path)
+                        .await?,
+                )
             }
             methods::PULL_REQUEST_ACTIONS => {
                 let params: PullRequestParams = from_params(params)?;

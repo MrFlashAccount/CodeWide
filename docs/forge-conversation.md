@@ -47,8 +47,8 @@ Result `ConversationPage`:
 
 ```jsonc
 {
-  "entries": [ /* ConversationEntry, oldest first */ ],
-  "nextCursor": "opaque", // or null
+  "entries": [ /* ConversationEntry, newest first */ ],
+  "nextCursor": "opaque", // older entries, or null when none are left
   "openIssuesBlockMerge": true // boolean | null, see below
 }
 ```
@@ -142,7 +142,12 @@ ThreadResolution =
 Rules every plugin keeps:
 
 - **Entry order.** Entries are ordered by `createdAt` of the entry (a thread by its first
-  comment), oldest first, across pages.
+  comment), newest first, within and across pages: the first page (`cursor: null`) holds the
+  newest entries, and `nextCursor` continues to older ones, so the last entry of a page is at
+  least as new as the first entry of the next. Entries with the same `createdAt` may come in any
+  order. A thread's `comments` stay oldest first: a thread reads top-down, and a reply does not
+  move its thread. Instants are compared, not strings: `2026-10-01T03:00:00+03:00` and
+  `2026-10-01T00:00:00Z` are equal.
 - **Reviews and threads.** A review's inline comments appear in their `reviewThread` entries, never
   inside the `review` entry. `reviewId` links a thread to the `review` entry it was published
   with, so the client can draw the thread inside that review; it is `null` for a thread started
@@ -258,10 +263,12 @@ Additions the shapes above needed:
 - **Focused scenario.** The thread is looked up in at most 20 conversation pages before the run is
   journaled; an unknown thread answers `-32088`. `reviewThreadId` with any scenario other than
   `addressComments` is `-32602`. The context carries only the thread; the PR description stays out.
-- **GitHub plugin.** One page reads at most 50 timeline items (comments, reviews and merge, close,
-  reopen, force-push, ready-for-review, draft and review-request events) and 20 review threads, and
-  emits entries only up to the earliest point a connection with more pages stopped, so pages stay
-  in global order. A thread carries at most 250 comments (50 with the thread, then follow-up reads
+- **GitHub plugin.** Both connections are read backwards from their newest item (GraphQL
+  `last`/`before`, `pageInfo.hasPreviousPage`). One page reads at most 50 timeline items
+  (comments, reviews and merge, close, reopen, force-push, ready-for-review, draft and
+  review-request events) and 20 review threads, and emits entries only down to the latest point at
+  which a connection with older pages stopped, so pages stay in global newest-first order; the
+  cursor records, per connection, the oldest item emitted. A thread carries at most 250 comments (50 with the thread, then follow-up reads
   of 100); later comments are not returned. Thread ids are GraphQL `PullRequestReviewThread` node
   ids, comment ids GraphQL node ids. A `COMMENTED` review without a body and a pending review are
   omitted; their inline comments are in the threads. Mapping: a thread is a `line` anchor while
@@ -279,6 +286,11 @@ Additions the shapes above needed:
   Whether `github.com/user-attachments` honours a bearer token for private repositories is not yet
   verified against live GitHub; a public attachment that redirects outside the allowlist falls back
   to the anonymous fetch.
+- **GitHub activity.** `forge.pullRequest.activity` (and the first page embedded in
+  `forge.pullRequest.read`) is a projection of the same conversation page and cursor: issue
+  comments, reviews (with their verdict label and body) and every review-thread comment (with the
+  thread id, path and line), newest first within the page; events are not activity. A reply stays
+  on the page of its thread, which is placed by the thread's first comment.
 - **GitHub direct media.** Every conversation comment is read with its GraphQL `bodyHTML`. GitHub
   renders an attachment (`github.com/user-attachments/assets/<uuid>`, the older
   `github.com/<owner>/<repo>/assets/<id>/<uuid>` form, or a pasted `private-user-images` URL) as
@@ -311,18 +323,20 @@ Additions the shapes above needed:
   per issue (status dot: open red, resolved green, dropped grey; the first comment's author
   avatar; the anchor label `file:line`, file or "Pull request"; the first line; "resolved by …"),
   open issues first, resolved and dropped behind a counter; a row scrolls to its thread and
-  expands it, and has its own "Address in agent". The chronological timeline draws a review as a
+  expands it, and has its own "Address in agent". The timeline, newest first as the pages arrive
+  (later pages append older entries below), draws a review as a
   card (author, verdict pill, optional body) containing the threads whose `reviewId` names it, a
   review without body and threads as a compact verdict line, top-level comments as message cards
-  (consecutive comments of one author at most five minutes apart share one header; a group never
-  spans a verdict, thread, review or event), and quiet event lines whose consecutive same-category
-  runs collapse ("3 updates pushed"). A thread card shows its anchor, the issue badge or
+  (consecutive comments of one author at most five minutes apart share one header, carried by the
+  newest; a group never spans a verdict, thread, review or event), and quiet event lines whose
+  consecutive same-category runs collapse ("3 updates pushed", with the newest age). A thread card shows its anchor, the issue badge or
   Resolved, the iteration chip (muted unless it is the newest iteration on the loaded pages) and
   Outdated; settled threads (resolved, or resolved/dropped issues) start collapsed; it keeps the
   reply input (with `forge.comments@1` and `viewerCanReply`) and "Address in agent". Authors of
   kind `bot` or `ai` carry a `bot` / `AI` marker; an avatar without a URL shows the login's
-  initials. A comment input at the end writes a top-level comment. Without `forge.conversation@1`
-  the screen keeps the current activity list.
+  initials. A comment input at the top, above the newest entry, writes a top-level comment, and
+  "Show more discussion" at the end loads older entries. Without `forge.conversation@1`
+  the screen keeps the activity list, newest first, with "Show more activity" at the end.
 - Direct media: the conversation mounts a `DirectImageSourcesProvider` (`rendering/**`, forge
   independent) built from the page. A Markdown or HTML image whose `src` equals a `media[].source`,
   or an avatar marked `avatarDirect`, loads from its `url` without any header and is stored in the
@@ -338,7 +352,9 @@ Additions the shapes above needed:
 
 - Declare `forge.conversation@1` (and `forge.comments@1` for writes) and, if comment images or
   avatars can be handed out credential-free, the media hosts in `initialize`.
-- `forge.pullRequest.conversation`: entries oldest first across pages with an opaque cursor;
+- `forge.pullRequest.conversation`: entries newest first across pages with an opaque cursor
+  (the first page holds the newest entries, `nextCursor` continues to older ones; a thread is
+  placed by its first comment, and its own `comments` stay oldest first);
   every `Author` with its `kind` (`bot` for robots, `ai` for AI reviewers); comment remarks as
   `reviewThread` entries with `resolution: { kind: "issue", state, changedBy, changedAt }`, plain
   discussions as `{ kind: "conversation", resolved }` and unresolvable ones as `{ kind: "none" }`;
@@ -350,5 +366,10 @@ Additions the shapes above needed:
 - `forge.media.read` for forge-hosted images, refusing foreign hosts with `-32602`.
 - `forge.pullRequest.comment.create` / `forge.pullRequest.reviewThread.reply` accept the thread id
   of an issue too; issue state changes are not part of this contract.
-- `codewide-companion forge plugin check` checks the page shape plus the thread rules serde cannot
-  express (at least one comment, valid lines, positive iteration number).
+- `forge.pullRequest.activity` (still required by `forge.read@1`): items newest first by
+  `createdAt` within a page; the first page holds the newest and `nextCursor` continues to older
+  items (a review-thread reply may stay on the page of its thread's first comment).
+- `codewide-companion forge plugin check` checks the page shape plus the rules serde cannot
+  express (at least one comment, valid lines, positive iteration number, conversation entries
+  newest first on the first two pages, activity items newest first on the first page, thread
+  comments oldest first, RFC 3339 `createdAt`).

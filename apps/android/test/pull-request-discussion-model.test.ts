@@ -66,26 +66,33 @@ function page(entries: readonly unknown[]): ConversationPage {
 }
 
 describe("discussion timeline", () => {
-  it("draws a review's threads inside its card and a review without text or threads as a row", () => {
+  it("keeps the newest-first page order, draws a review's threads inside its card and a review without text or threads as a row", () => {
     const discussion = projectDiscussion(parsed(conversation91));
     expect(shape(discussion.timeline)).toEqual([
-      "comments:c-1",
-      "review:r-1[rt-1]",
-      "thread:rt-2",
       "events:e-1",
+      "thread:rt-2",
+      "review:r-1[rt-1]",
+      "comments:c-1",
     ]);
     expect(discussion.commentCount).toBe(6);
 
     const arcanum = projectDiscussion(parsed(conversationArcanum));
     expect(shape(arcanum.timeline)).toEqual([
-      "events:ev-1+ev-2+ev-3",
-      "thread:is-dropped",
-      "review:rv-block[is-open-line]",
-      "thread:is-open-pr",
-      "comments:ac-1+ac-2",
-      "thread:is-resolved",
       "verdict:rv-approve",
+      "thread:is-resolved",
+      "comments:ac-2+ac-1",
+      "thread:is-open-pr",
+      "review:rv-block[is-open-line]",
+      "thread:is-dropped",
+      "events:ev-3+ev-2+ev-1",
     ]);
+  });
+
+  it("keeps a thread's own comments oldest first", () => {
+    const [thread] = projectDiscussion(parsed(conversation91)).timeline.flatMap((item) =>
+      item.kind === "review" ? item.threads : [],
+    );
+    expect(thread?.comments.map((entry) => entry.id)).toEqual(["c-2", "c-3", "c-4"]);
   });
 
   it("shows a thread on its own while its review is not loaded", () => {
@@ -94,65 +101,96 @@ describe("discussion timeline", () => {
     expect(shape(discussion.timeline)).toEqual(["thread:rt-1"]);
   });
 
+  it("draws a thread from an older page inside its review loaded on a newer page", () => {
+    // The review is submitted after its inline thread starts, so newest first it arrives first.
+    const [, , thread, review, older] = conversation91.entries;
+    const discussion = projectDiscussion(page([review, thread, older]));
+    expect(shape(discussion.timeline)).toEqual(["review:r-1[rt-1]", "comments:c-1"]);
+  });
+
   it("groups nearby comments of one author, never across another author, a gap, an event or a thread", () => {
     const discussion = projectDiscussion(
       page([
-        comment("a", DANA, "2026-10-21T09:00:00Z"),
-        comment("b", DANA, "2026-10-21T09:04:00Z"),
-        comment("c", DANA, "2026-10-21T09:09:00Z"),
-        comment("d", DANA, "2026-10-21T09:20:00Z"),
-        comment("e", OLEG, "2026-10-21T09:21:00Z"),
-        comment("f", DANA, "2026-10-21T09:22:00Z"),
-        event("x", "state", "2026-10-21T09:23:00Z"),
-        comment("g", DANA, "2026-10-21T09:24:00Z"),
-        conversation91.entries[3],
         comment("h", DANA, "2026-10-21T09:26:00Z"),
+        conversation91.entries[1],
+        comment("g", DANA, "2026-10-21T09:24:00Z"),
+        event("x", "state", "2026-10-21T09:23:00Z"),
+        comment("f", DANA, "2026-10-21T09:22:00Z"),
+        comment("e", OLEG, "2026-10-21T09:21:00Z"),
+        comment("d", DANA, "2026-10-21T09:20:00Z"),
+        comment("c", DANA, "2026-10-21T09:09:00Z"),
+        comment("b", DANA, "2026-10-21T09:04:00Z"),
+        comment("a", DANA, "2026-10-21T09:00:00Z"),
       ]),
     );
     expect(shape(discussion.timeline)).toEqual([
-      "comments:a+b+c",
-      "comments:d",
-      "comments:e",
-      "comments:f",
-      "events:x",
-      "comments:g",
-      "thread:rt-2",
       "comments:h",
+      "thread:rt-2",
+      "comments:g",
+      "events:x",
+      "comments:f",
+      "comments:e",
+      "comments:d",
+      "comments:c+b+a",
     ]);
+  });
+
+  it("does not group a comment that is newer than the one above it", () => {
+    // Out-of-order input never joins a newest-first group.
+    const discussion = projectDiscussion(
+      page([
+        comment("a", DANA, "2026-10-21T09:00:00Z"),
+        comment("b", DANA, "2026-10-21T09:02:00Z"),
+      ]),
+    );
+    expect(shape(discussion.timeline)).toEqual(["comments:a", "comments:b"]);
   });
 
   it("collapses runs of one event category only", () => {
     const discussion = projectDiscussion(
       page([
-        event("p1", "push", "2026-10-21T09:00:00Z"),
-        event("p2", "push", "2026-10-21T09:01:00Z"),
-        event("s1", "state", "2026-10-21T09:02:00Z"),
-        event("p3", "push", "2026-10-21T09:03:00Z"),
-        comment("a", DANA, "2026-10-21T09:04:00Z"),
         event("p4", "push", "2026-10-21T09:05:00Z"),
+        comment("a", DANA, "2026-10-21T09:04:00Z"),
+        event("p3", "push", "2026-10-21T09:03:00Z"),
+        event("s1", "state", "2026-10-21T09:02:00Z"),
+        event("p2", "push", "2026-10-21T09:01:00Z"),
+        event("p1", "push", "2026-10-21T09:00:00Z"),
       ]),
     );
     expect(shape(discussion.timeline)).toEqual([
-      "events:p1+p2",
-      "events:s1",
-      "events:p3",
-      "comments:a",
       "events:p4",
+      "comments:a",
+      "events:p3",
+      "events:s1",
+      "events:p2+p1",
     ]);
     expect(eventRunLabel("push", 6)).toBe("6 updates pushed");
+  });
+
+  it("joins a run split across a page boundary when the older page loads", () => {
+    const newer = [event("p3", "push", "2026-10-21T09:03:00Z")];
+    const older = [
+      event("p2", "push", "2026-10-21T09:01:00Z"),
+      comment("a", DANA, "2026-10-21T09:00:00Z"),
+    ];
+    expect(shape(projectDiscussion(page(newer)).timeline)).toEqual(["events:p3"]);
+    expect(shape(projectDiscussion(page([...newer, ...older])).timeline)).toEqual([
+      "events:p3+p2",
+      "comments:a",
+    ]);
   });
 });
 
 describe("discussion issues and summary", () => {
-  it("lists open issues first and settles resolved and dropped ones behind them", () => {
+  it("lists open issues first and settles resolved and dropped ones behind them, each newest first", () => {
     const discussion = projectDiscussion(parsed(conversationArcanum));
     expect(discussion.openIssues.map((issue) => issue.thread.id)).toEqual([
-      "is-open-line",
       "is-open-pr",
+      "is-open-line",
     ]);
     expect(discussion.settledIssues.map((issue) => [issue.thread.id, issue.state])).toEqual([
-      ["is-dropped", "dropped"],
       ["is-resolved", "resolved"],
+      ["is-dropped", "dropped"],
     ]);
     expect(discussion.summary).toEqual({ label: "2 open issues · blocks merge", tone: "danger" });
     expect(discussion.latestIteration).toBe(3);
@@ -163,7 +201,7 @@ describe("discussion issues and summary", () => {
       label: "1 unresolved",
       tone: "warning",
     });
-    expect(projectDiscussion(page([conversation91.entries[3]])).summary).toBeNull();
+    expect(projectDiscussion(page([conversation91.entries[1]])).summary).toBeNull();
   });
 
   it("does not claim a merge block the forge did not report", () => {
@@ -191,10 +229,10 @@ describe("discussion issues and summary", () => {
       threadSettled(issue.thread),
     ]);
     expect(settled).toEqual([
-      ["is-open-line", false],
       ["is-open-pr", false],
-      ["is-dropped", true],
+      ["is-open-line", false],
       ["is-resolved", true],
+      ["is-dropped", true],
     ]);
   });
 });

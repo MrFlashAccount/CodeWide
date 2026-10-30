@@ -1,6 +1,7 @@
 import {
   Stack,
   useGlobalSearchParams,
+  useIsFocused,
   useLocalSearchParams,
   usePathname,
   useRouter,
@@ -13,7 +14,11 @@ import {
   v1ThreadRouteParams,
   type V1ThreadRouteParams,
 } from "../../../../../../../src/services/threads/threadRouteParams";
+import type { PullRequestKey } from "../../../../../../../src/data/forgeContract";
+import { useEvent } from "../../../../../../../src/react/useEvent";
 import { LinkedPullRequestChipProvider } from "../../../../../../../src/routeComposition/LinkedPullRequestChipProvider";
+import { usePullRequestNavigation } from "../../../../../../../src/routeComposition/pullRequestNavigation";
+import { ThreadDestinationActiveContext } from "../../../../../../../src/routeComposition/threadDestinationActive";
 import { useThreadRouteNavigation } from "../../../../../../../src/routeComposition/threadRouteNavigation";
 import {
   v1FullscreenScreenOptions,
@@ -42,6 +47,15 @@ export default function V1ThreadLayout(): React.JSX.Element {
   }>();
   const raw = isV1ThreadContextPath(pathname) ? globalParams : localParams;
   const parsed = v1ThreadRouteParams(raw);
+  const active = useIsFocused();
+  const pullRequestNavigation = usePullRequestNavigation();
+  // Child routes (subagents) cover the thread, so their chip opens the PR in Pull requests; the
+  // thread screen itself opens it beside the chat instead.
+  const openPullRequest = useEvent((pullRequest: PullRequestKey): void => {
+    if (parsed.status === "valid") {
+      pullRequestNavigation.openPullRequest(parsed.value.connectionId.value, pullRequest);
+    }
+  });
   if (parsed.status === "invalid") {
     return (
       <RouteUnavailable
@@ -55,18 +69,21 @@ export default function V1ThreadLayout(): React.JSX.Element {
   }
   const parsedSearchSessionId = routeSessionIdParam(raw.globalSearchSessionId);
   return (
-    <LinkedPullRequestChipProvider
-      connectionId={parsed.value.connectionId.value}
-      threadId={parsed.value.threadId.value}
-      visiblePullRequest={null}
-    >
-      <ValidV1ThreadLayout
-        globalSearchSessionId={
-          parsedSearchSessionId.status === "valid" ? parsedSearchSessionId.value.value : null
-        }
-        params={parsed.value}
-      />
-    </LinkedPullRequestChipProvider>
+    <ThreadDestinationActiveContext.Provider value={active}>
+      <LinkedPullRequestChipProvider
+        connectionId={parsed.value.connectionId.value}
+        onOpen={openPullRequest}
+        threadId={parsed.value.threadId.value}
+        visiblePullRequest={null}
+      >
+        <ValidV1ThreadLayout
+          globalSearchSessionId={
+            parsedSearchSessionId.status === "valid" ? parsedSearchSessionId.value.value : null
+          }
+          params={parsed.value}
+        />
+      </LinkedPullRequestChipProvider>
+    </ThreadDestinationActiveContext.Provider>
   );
 }
 

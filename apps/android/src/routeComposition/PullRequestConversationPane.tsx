@@ -15,6 +15,7 @@ import {
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { useEvent } from "../react/useEvent";
 import { LinkedPullRequestChipProvider } from "./LinkedPullRequestChipProvider";
+import { usePullRequestNavigation } from "./pullRequestNavigation";
 import { useThreadRouteNavigation } from "./threadRouteNavigation";
 import type { WorkspacePaneChrome } from "./workspacePanes";
 
@@ -39,9 +40,14 @@ export function PullRequestConversationPane({
   readonly threadId: ThreadId;
 }): React.JSX.Element | null {
   const parsed = v1ThreadRouteParams({ connectionId, threadId });
+  const navigation = usePullRequestNavigation();
+  const openPullRequest = useEvent((linked: PullRequestKey): void => {
+    navigation.openPullRequest(connectionId, linked);
+  });
   return parsed.status === "invalid" ? null : (
     <LinkedPullRequestChipProvider
       connectionId={connectionId}
+      onOpen={openPullRequest}
       threadId={threadId}
       visiblePullRequest={pullRequest}
     >

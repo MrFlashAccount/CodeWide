@@ -10,6 +10,7 @@ import { useAppDialog } from "../../../ui/AppDialog";
 import type { PullRequestChangesProps } from "./changesContract";
 import { firstPageFailure, type FilesFailure } from "./filesFailure";
 import type { PullRequestTarget } from "../workspaceCapabilities";
+import { useHeadFileContent } from "./useHeadFileContent";
 
 /** Files, drafts, the selected file and the viewed toggle of the Changes tab. */
 export type ChangesData = {
@@ -18,6 +19,8 @@ export type ChangesData = {
   readonly filesFailure: FilesFailure | null;
   /** The user's file tree choice; `null` follows the form factor. */
   readonly filesPanelOpen: boolean | null;
+  /** The selected file's whole head content once read; `null` keeps the patch view. */
+  readonly headContent: string | null;
   readonly page: PullRequestFilesPage | null;
   readonly selected: PullRequestFile | null;
   readonly source: {
@@ -31,8 +34,8 @@ export type ChangesData = {
 };
 
 /**
- * Demands the files page of the current head and the PR's drafts (both
- * progressive) and owns the viewed toggle. A failed first files page is
+ * Demands the files page of the current head, the selected file's whole head
+ * content and the PR's drafts (all progressive) and owns the viewed toggle. A failed first files page is
  * reported with a retry instead of an endless loading state. A viewed change
  * is an explicit forge write with its own pending state; a failure keeps the
  * previous mark.
@@ -56,6 +59,13 @@ export function useChangesData(props: PullRequestChangesProps): ChangesData {
   const filesPanelOpen = useSelector(() => model.filesPanelOpen.get());
   const [viewedPending, setViewedPending] = useState<ReadonlySet<string>>(new Set());
   const page = remoteValue(files);
+  const selected = page?.files.find((file) => file.path === selectedPath) ?? page?.files[0] ?? null;
+  const headContent = useHeadFileContent({
+    file: selected,
+    forge,
+    providerCapabilities: props.providerCapabilities,
+    target,
+  });
   const retryFiles = useEvent((): void => {
     forge.files.refresh(target).catch(() => undefined);
   });
@@ -74,8 +84,9 @@ export function useChangesData(props: PullRequestChangesProps): ChangesData {
     drafts: remoteValue(drafts)?.drafts ?? [],
     filesFailure: firstPageFailure(files, retryFiles),
     filesPanelOpen,
+    headContent,
     page,
-    selected: page?.files.find((file) => file.path === selectedPath) ?? page?.files[0] ?? null,
+    selected,
     source,
     target,
     toggleViewed,

@@ -121,6 +121,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
             }}
             overview={overview}
             ownPullRequest={overview.author === overview.account.login}
+            providerCapabilities={data.providerCapabilities}
             renderAppBar={appBar}
             review={props.review}
             reviewCapabilities={props.reviewCapabilities}
@@ -153,12 +154,9 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
   );
 }
 
-/** Changes always steps back to Details; Details steps back only where it is not a side pane. */
+/** Changes always steps back to Details; Details steps back only where the route declares it. */
 function backFor(props: PullRequestScreenProps): (() => void) | null {
-  if (props.tab === "changes") {
-    return props.navigation.closeChanges;
-  }
-  return props.tablet ? null : props.navigation.back;
+  return props.tab === "changes" ? props.navigation.closeChanges : props.navigation.back;
 }
 
 const styles = StyleSheet.create({

@@ -45,6 +45,11 @@ import {
   encodeTimelineRowPremeasurementPreference,
 } from "../src/data/timelineRowPremeasurementPreferences";
 import {
+  decodePeleDiagramRendererPreference,
+  encodePeleDiagramRendererPreference,
+  PELE_DIAGRAM_RENDERER_PREFERENCE_ID,
+} from "../src/data/peleDiagramRendererPreferences";
+import {
   decodeVoiceHandoffPreference,
   DEFAULT_VOICE_HANDOFF_BEHAVIOR,
   encodeVoiceHandoffPreference,
@@ -205,6 +210,39 @@ describe("user preferences", () => {
     expect(decodeTimelineRowPremeasurementPreference('{"enabled":true,"schemaVersion":2}')).toEqual(
       { enabled: false },
     );
+  });
+
+  it("keeps the Pele diagram renderer opt-in, versioned and fail-disabled", () => {
+    expect(decodePeleDiagramRendererPreference(null)).toEqual({ enabled: false });
+    expect(
+      decodePeleDiagramRendererPreference(encodePeleDiagramRendererPreference({ enabled: true })),
+    ).toEqual({ enabled: true });
+    expect(decodePeleDiagramRendererPreference("not json")).toEqual({ enabled: false });
+    expect(decodePeleDiagramRendererPreference('{"enabled":true,"schemaVersion":2}')).toEqual({
+      enabled: false,
+    });
+  });
+
+  it("persists the Pele diagram renderer independently", async () => {
+    const database = getUserPreferencesDatabase();
+
+    await database.update(PELE_DIAGRAM_RENDERER_PREFERENCE_ID, () =>
+      encodePeleDiagramRendererPreference({ enabled: true }),
+    );
+    expect(
+      decodePeleDiagramRendererPreference(
+        database.collection.get(PELE_DIAGRAM_RENDERER_PREFERENCE_ID)?.value,
+      ),
+    ).toEqual({ enabled: true });
+
+    await database.update(PELE_DIAGRAM_RENDERER_PREFERENCE_ID, () =>
+      encodePeleDiagramRendererPreference({ enabled: false }),
+    );
+    expect(
+      decodePeleDiagramRendererPreference(
+        database.collection.get(PELE_DIAGRAM_RENDERER_PREFERENCE_ID)?.value,
+      ),
+    ).toEqual({ enabled: false });
   });
 
   it("keeps Voice Assistant personality separate, versioned and bounded", () => {

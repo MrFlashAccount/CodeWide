@@ -3,7 +3,6 @@ import { createContext, type ReactNode, useContext, useSyncExternalStore } from 
 export type PerformanceExperimentId =
   | "disableTextShimmer"
   | "hideThreadLists"
-  | "peleDiagramRenderer"
   | "plainTextMarkdown"
   | "skipMarkdownLayout"
   | "reduceCustomMotion";
@@ -13,7 +12,6 @@ export type PerformanceExperimentSnapshot = Readonly<Record<PerformanceExperimen
 const DEFAULT_SNAPSHOT: PerformanceExperimentSnapshot = {
   disableTextShimmer: false,
   hideThreadLists: false,
-  peleDiagramRenderer: false,
   plainTextMarkdown: false,
   reduceCustomMotion: false,
   skipMarkdownLayout: false,

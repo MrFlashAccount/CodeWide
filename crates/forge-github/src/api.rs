@@ -11,6 +11,9 @@ use reqwest::{Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(25);
+const JSON_MEDIA_TYPE: &str = "application/vnd.github+json";
+/// The contents API media type that answers a file's bytes as they are.
+const RAW_MEDIA_TYPE: &str = "application/vnd.github.raw+json";
 const MAX_ERROR_MESSAGE_CHARS: usize = 200;
 
 /// The API roots of one GitHub host.
@@ -51,6 +54,19 @@ pub struct Api {
 pub struct Reply {
     pub body: Value,
     pub headers: HeaderMap,
+}
+
+/// A raw contents answer, read only up to the caller's bound.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RawReply {
+    /// The complete body, within the bound.
+    Body(Vec<u8>),
+    /// GitHub answered 404.
+    NotFound,
+    /// GitHub answered JSON instead of raw bytes (a directory listing).
+    NotRaw,
+    /// The body exceeds the bound; `bytes` when GitHub announced its length.
+    TooLarge { bytes: Option<u64> },
 }
 
 impl Api {
@@ -127,6 +143,60 @@ impl Api {
         Ok((status, body, headers))
     }
 
+    /// `GET` a REST path in the raw media type, reading at most `max_bytes`
+    /// of the body: a longer body is `TooLarge` and the rest is never read.
+    ///
+    /// # Errors
+    ///
+    /// Returns the mapped GitHub failure for any status but 404.
+    pub async fn get_raw(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        max_bytes: usize,
+    ) -> Result<RawReply, PluginError> {
+        let url = format!("{}{path}", self.endpoints.rest);
+        let mut response = self
+            .authorized_as(self.client.get(url), RAW_MEDIA_TYPE)
+            .query(query)
+            .send()
+            .await
+            .map_err(|_| unreachable_error())?;
+        let status = response.status();
+        if status == StatusCode::NOT_FOUND {
+            return Ok(RawReply::NotFound);
+        }
+        if !status.is_success() {
+            let headers = response.headers().clone();
+            let body = response.json::<Value>().await.unwrap_or(Value::Null);
+            return Err(status_error(status, &headers, &body));
+        }
+        let json = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("application/json"));
+        if json {
+            return Ok(RawReply::NotRaw);
+        }
+        if let Some(length) = response
+            .content_length()
+            .filter(|length| usize::try_from(*length).map_or(true, |length| length > max_bytes))
+        {
+            return Ok(RawReply::TooLarge {
+                bytes: Some(length),
+            });
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|_| unreachable_error())? {
+            if bytes.len().saturating_add(chunk.len()) > max_bytes {
+                return Ok(RawReply::TooLarge { bytes: None });
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(RawReply::Body(bytes))
+    }
+
     /// One GraphQL operation; GraphQL `errors` map to typed failures.
     ///
     /// # Errors
@@ -193,9 +263,17 @@ impl Api {
     }
 
     fn authorized(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        self.authorized_as(request, JSON_MEDIA_TYPE)
+    }
+
+    fn authorized_as(
+        &self,
+        request: reqwest::RequestBuilder,
+        media_type: &str,
+    ) -> reqwest::RequestBuilder {
         request
             .bearer_auth(self.token.expose())
-            .header("Accept", "application/vnd.github+json")
+            .header("Accept", media_type)
             .header("X-GitHub-Api-Version", "2022-11-28")
     }
 }

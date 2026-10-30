@@ -1,111 +1,134 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, View } from "react-native";
 
-import type { PullRequestFile } from "../../../data/forgeMutationContract";
+import type { PullRequestFile, PullRequestFilesPage } from "../../../data/forgeMutationContract";
 import type { DraftComment } from "../../../data/reviewDraftContract";
-import { colors } from "../../../theme";
+import { colors, controlHitSlop, iconSize, spacing, typeScale } from "../../../theme";
+import { AppText as Text } from "../../../ui/Typography";
 import type { CodeReviewLineReference } from "../../review/comments/reviewComment";
-import { draftEditorComments } from "./changesPresentation";
+import { viewedSummary } from "./changesPresentation";
 import { FileDrafts } from "./FileDrafts";
-import { FileTree } from "./FileTree";
-import type { FileTreeProps } from "./fileTreeContract";
 import { PullRequestDiff } from "./PullRequestDiff";
 
-/** What the files view needs besides the tree's own props. */
-type FilesViewProps = Omit<FileTreeProps, "overlay" | "selectedPath"> & {
+/** Everything the files view needs. */
+type FilesViewProps = {
   readonly besideDiff: boolean;
+  readonly drafts: readonly DraftComment[];
   readonly filesOpen: boolean;
-  readonly onCloseFiles: () => void;
+  /** The selected file's whole head content once read; `null` keeps the patch view. */
+  readonly headContent: string | null;
+  readonly host: string;
   readonly onDeleteDraft: (draft: DraftComment) => void;
+  readonly onGuide: () => void;
   readonly onLinePress: (reference: CodeReviewLineReference) => void;
+  readonly onLoadMore: (() => void) | null;
   readonly onReanchor: (draft: DraftComment) => void;
+  readonly onSelect: (path: string) => void;
   readonly onSendToAgent: (draft: DraftComment) => void;
+  readonly page: PullRequestFilesPage;
   readonly selected: PullRequestFile | null;
 };
 
 /**
- * Files view: the changed-files tree beside the selected file's diff where
- * the pane is wide enough, otherwise as a panel over it, with the file's
- * drafts folded under the diff.
+ * Files view: the Pierre file tree beside the selected file's diff where the
+ * pane is wide enough, otherwise instead of it, under a header with the viewed
+ * summary and the review guide entry; the file's drafts fold under the diff.
  */
 export function FilesView(props: FilesViewProps): React.JSX.Element {
-  const { besideDiff, filesOpen, selected } = props;
-  const tree = filesOpen ? (
-    <FileTree {...props} overlay={!besideDiff} selectedPath={selected?.path ?? null} />
-  ) : null;
+  const { selected } = props;
   return (
-    <View style={styles.row}>
-      {besideDiff ? tree : null}
-      <View style={styles.fill}>
-        {selected === null ? null : <SelectedFile {...props} file={selected} />}
-      </View>
-      {besideDiff || tree === null ? null : (
-        <TreeOverlay onClose={props.onCloseFiles} tree={tree} />
+    <View style={styles.fill}>
+      {props.filesOpen ? <TreeHeader {...props} /> : null}
+      {selected === null ? null : (
+        <PullRequestDiff
+          drafts={props.drafts}
+          headContent={props.headContent}
+          onLinePress={props.onLinePress}
+          reveal={null}
+          selected={selected}
+          tree={{
+            besideDiff: props.besideDiff,
+            files: props.page.files,
+            onSelect: props.onSelect,
+            open: props.filesOpen,
+          }}
+        />
+      )}
+      {selected === null ? null : (
+        <FileDrafts
+          drafts={props.drafts.filter((draft) => draft.anchor.path === selected.path)}
+          host={props.host}
+          onDelete={props.onDeleteDraft}
+          onReanchor={props.onReanchor}
+          onSendToAgent={props.onSendToAgent}
+        />
       )}
     </View>
   );
 }
 
-/** The selected file's diff with its drafts folded under it. */
-function SelectedFile(
-  props: FilesViewProps & { readonly file: PullRequestFile },
-): React.JSX.Element {
-  const { file } = props;
+/** `✦ Guide · 3 of 24 viewed`, plus the forge's truncation note and Show more files. */
+function TreeHeader(props: FilesViewProps): React.JSX.Element {
+  const { page } = props;
   return (
-    <>
-      <PullRequestDiff
-        comments={draftEditorComments(props.drafts, file.path)}
-        file={file}
-        onLinePress={props.onLinePress}
-        reveal={null}
-      />
-      <FileDrafts
-        drafts={props.drafts.filter((draft) => draft.anchor.path === file.path)}
-        host={props.host}
-        onDelete={props.onDeleteDraft}
-        onReanchor={props.onReanchor}
-        onSendToAgent={props.onSendToAgent}
-      />
-    </>
-  );
-}
-
-/** The tree as a panel over the diff; a tap beside it hides it. */
-function TreeOverlay({
-  onClose,
-  tree,
-}: {
-  readonly onClose: () => void;
-  readonly tree: React.JSX.Element;
-}): React.JSX.Element {
-  return (
-    <View style={styles.overlay}>
-      {tree}
+    <View style={styles.header}>
       <Pressable
-        accessibilityLabel="Hide files"
         accessibilityRole="button"
-        onPress={onClose}
-        style={styles.scrim}
-      />
+        hitSlop={controlHitSlop.compact}
+        onPress={props.onGuide}
+        style={styles.guide}
+        testID="changes-view-guide"
+      >
+        <Ionicons color={colors.text} name="sparkles-outline" size={iconSize.inline} />
+        <Text style={styles.guideLabel}>Guide</Text>
+      </Pressable>
+      <Text numberOfLines={1} style={styles.summary}>
+        {page.truncated === null
+          ? viewedSummary(page.files)
+          : `${viewedSummary(page.files)} · forge shows ${String(page.truncated.shown)} of ${String(page.truncated.total)}`}
+      </Text>
+      {props.onLoadMore === null ? null : (
+        <Text accessibilityRole="button" onPress={props.onLoadMore} style={styles.more}>
+          Show more files
+        </Text>
+      )}
     </View>
   );
 }
 
+/** Matches the Pierre tree's compact row. */
+const HEADER_HEIGHT = 30;
+
 const styles = StyleSheet.create({
   fill: {
     flex: 1,
-    minWidth: 0,
-  },
-  overlay: {
-    ...StyleSheet.absoluteFill,
-    flexDirection: "row",
-  },
-  row: {
-    flex: 1,
-    flexDirection: "row",
     minHeight: 0,
   },
-  scrim: {
-    backgroundColor: colors.scrim,
+  guide: {
+    alignItems: "center",
+    columnGap: spacing.xxs,
+    flexDirection: "row",
+  },
+  guideLabel: {
+    ...typeScale.label,
+    color: colors.text,
+  },
+  header: {
+    alignItems: "center",
+    borderBottomColor: colors.borderSoft,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    columnGap: spacing.sm,
+    flexDirection: "row",
+    height: HEADER_HEIGHT,
+    paddingHorizontal: spacing.sm,
+  },
+  more: {
+    ...typeScale.label,
+    color: colors.primary,
+  },
+  summary: {
+    ...typeScale.label,
+    color: colors.textMuted,
     flex: 1,
   },
 });

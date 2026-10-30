@@ -58,11 +58,6 @@ export const EXPERIMENTS: ReadonlyArray<{
     id: "reduceCustomMotion",
     title: "Disable custom animations",
   },
-  {
-    description: "Render Mermaid as native SVG with Pele on a lazy worker runtime.",
-    id: "peleDiagramRenderer",
-    title: "Pele diagram renderer",
-  },
 ];
 
 type ExperimentWindow = {

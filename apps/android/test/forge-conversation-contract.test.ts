@@ -29,8 +29,13 @@ function threads(page: ConversationPage) {
   return page.entries.flatMap((entry) => (entry.kind === "reviewThread" ? [entry.thread] : []));
 }
 
+/** The fixture's open thread `rt-1`, the one `withThread` changes. */
+function threadRt1(page: ConversationPage): ConversationReviewThread | undefined {
+  return threads(page).find((thread) => thread.id === "rt-1");
+}
+
 function openThread(): ConversationReviewThread {
-  const [thread] = threads(parsed(conversation91));
+  const thread = threadRt1(parsed(conversation91));
   if (thread === undefined) {
     throw new Error("the conversation fixture has an open thread");
   }
@@ -38,7 +43,10 @@ function openThread(): ConversationReviewThread {
 }
 
 function bodyOf(params: unknown): string {
-  return typeof params === "object" && params !== null && "body" in params && typeof params.body === "string"
+  return typeof params === "object" &&
+    params !== null &&
+    "body" in params &&
+    typeof params.body === "string"
     ? params.body
     : "";
 }
@@ -60,23 +68,23 @@ function withThread(overrides: Record<string, unknown>): unknown {
 }
 
 describe("forge conversation contract", () => {
-  it("keeps every entry kind in the forge's order", () => {
+  it("keeps every entry kind in the forge's newest-first order", () => {
     const page = parsed(conversation91);
     expect(page.entries.map((entry: ConversationEntry) => entry.kind)).toEqual([
-      "comment",
-      "review",
-      "reviewThread",
-      "reviewThread",
       "event",
+      "reviewThread",
+      "reviewThread",
+      "review",
+      "comment",
     ]);
     expect(page.nextCursor).toBeNull();
-    const [open] = threads(page);
+    const open = threadRt1(page);
     expect(open?.comments.map((comment) => comment.id)).toEqual(["c-2", "c-3", "c-4"]);
     expect(open?.comments[1]?.updatedAt).toBe("2026-10-21T09:22:00Z");
   });
 
   it("maps anchors, resolution, the review link and the outdated mark", () => {
-    const [open, settled] = threads(parsed(conversation91));
+    const [settled, open] = threads(parsed(conversation91));
     expect(open).toMatchObject({
       anchor: { kind: "line", line: 214, side: "new", startLine: null },
       outdated: false,
@@ -97,7 +105,7 @@ describe("forge conversation contract", () => {
     [{ kind: "line", line: 7, path: "a.rs", side: "old", startLine: 3 }],
     [{ kind: "line", line: 7, path: "a.rs", side: "new", startLine: null }],
   ])("keeps the anchor %j", (anchor) => {
-    expect(threads(parsed(withThread({ anchor })))[0]?.anchor).toEqual(anchor);
+    expect(threadRt1(parsed(withThread({ anchor })))?.anchor).toEqual(anchor);
   });
 
   it.each([
@@ -114,24 +122,26 @@ describe("forge conversation contract", () => {
     ],
     [{ changedAt: null, changedBy: null, kind: "issue", state: "dropped" }],
   ])("keeps the resolution %j", (resolution) => {
-    expect(threads(parsed(withThread({ resolution })))[0]?.resolution).toEqual(resolution);
+    expect(threadRt1(parsed(withThread({ resolution })))?.resolution).toEqual(resolution);
   });
 
   it("keeps the iteration, every author kind and the page's merge rule", () => {
     const page = parsed({
       ...withThread({
         comments: [
-          conversationComment("c-ai", { author: { avatarUrl: null, kind: "ai", login: "assistant" } }),
+          conversationComment("c-ai", {
+            author: { avatarUrl: null, kind: "ai", login: "assistant" },
+          }),
           conversationComment("c-bot", { author: { avatarUrl: null, kind: "bot", login: "ci" } }),
         ],
         iteration: { id: "it-4", number: 4 },
       }),
       openIssuesBlockMerge: true,
     });
-    const [thread] = threads(page);
+    const thread = threadRt1(page);
     expect(thread?.iteration).toEqual({ id: "it-4", number: 4 });
     expect(thread?.comments.map((comment) => comment.author.kind)).toEqual(["ai", "bot"]);
-    expect(page.entries[0]).toMatchObject({ comment: { author: { kind: "user" } } });
+    expect(page.entries.at(-1)).toMatchObject({ comment: { author: { kind: "user" } } });
     expect(page.openIssuesBlockMerge).toBe(true);
     expect(parsed(conversation91).openIssuesBlockMerge).toBeNull();
   });
@@ -147,7 +157,7 @@ describe("forge conversation contract", () => {
   ])("keeps the verdict %s", (verdict) => {
     const page = parsed({
       ...conversation91,
-      entries: [{ ...conversation91.entries[1], verdict }],
+      entries: [{ ...conversation91.entries[3], verdict }],
     });
     expect(page.entries[0]).toMatchObject({ kind: "review", verdict });
   });
@@ -155,7 +165,7 @@ describe("forge conversation contract", () => {
   it.each(["push", "state", "ci", "other"])("keeps the event category %s", (category) => {
     const page = parsed({
       ...conversation91,
-      entries: [{ ...conversation91.entries.at(-1), category }],
+      entries: [{ ...conversation91.entries[0], category }],
     });
     expect(page.entries[0]).toMatchObject({ category, kind: "event" });
   });
@@ -181,7 +191,7 @@ describe("forge conversation contract", () => {
         ],
       }),
     );
-    expect(threads(page)[0]?.comments[0]?.reactions).toEqual([
+    expect(threadRt1(page)?.comments[0]?.reactions).toEqual([
       { content: "heart", count: 2, viewerReacted: true },
     ]);
   });
@@ -201,18 +211,28 @@ describe("forge conversation contract", () => {
       withThread({ anchor: { kind: "line", line: 3, path: "a", side: "new", startLine: 3 } }),
     ],
     ["a file anchor without a path", withThread({ anchor: { kind: "file", path: "" } })],
-    ["the retired flat location", withThread({ anchor: undefined, line: 3, path: "a", side: "new" })],
+    [
+      "the retired flat location",
+      withThread({ anchor: undefined, line: 3, path: "a", side: "new" }),
+    ],
     ["the retired resolved flag", withThread({ resolution: undefined, resolved: true })],
-    ["an unknown issue state", withThread({ resolution: { changedAt: null, changedBy: null, kind: "issue", state: "closed" } })],
+    [
+      "an unknown issue state",
+      withThread({
+        resolution: { changedAt: null, changedBy: null, kind: "issue", state: "closed" },
+      }),
+    ],
     ["iteration 0", withThread({ iteration: { id: "it-0", number: 0 } })],
     ["a missing review link", withThread({ reviewId: undefined })],
     [
       "an author without a kind",
-      withThread({ comments: [conversationComment("c-9", { author: { avatarUrl: null, login: "a" } })] }),
+      withThread({
+        comments: [conversationComment("c-9", { author: { avatarUrl: null, login: "a" } })],
+      }),
     ],
     [
       "an event without a category",
-      { ...conversation91, entries: [{ ...conversation91.entries.at(-1), category: undefined }] },
+      { ...conversation91, entries: [{ ...conversation91.entries[0], category: undefined }] },
     ],
     ["a page without the merge rule", { ...conversation91, openIssuesBlockMerge: undefined }],
     [
@@ -250,7 +270,10 @@ describe("forge conversation contract", () => {
       "a comment without an author login",
       {
         entries: [
-          { comment: conversationComment("c", { author: { avatarUrl: null, kind: "user" } }), kind: "comment" },
+          {
+            comment: conversationComment("c", { author: { avatarUrl: null, kind: "user" } }),
+            kind: "comment",
+          },
         ],
         nextCursor: null,
         openIssuesBlockMerge: null,
@@ -261,7 +284,9 @@ describe("forge conversation contract", () => {
   });
 
   it("parses an acknowledged write and rejects one without a comment", () => {
-    expect(parseConversationWrite({ comment: conversationComment("c-10", { body: "Done" }) })).toMatchObject({
+    expect(
+      parseConversationWrite({ comment: conversationComment("c-10", { body: "Done" }) }),
+    ).toMatchObject({
       body: "Done",
       id: "c-10",
     });
@@ -335,26 +360,33 @@ describe("pull request conversation writes", () => {
     expect(calls.filter((call) => call.method.endsWith("/reply"))).toEqual([
       {
         method: "companion/pullRequest/reviewThread/reply",
-        params: { body: "On it", idempotencyKey: "key-1", pullRequest: target.pullRequest, threadId },
+        params: {
+          body: "On it",
+          idempotencyKey: "key-1",
+          pullRequest: target.pullRequest,
+          threadId,
+        },
       },
     ]);
     const shown = forge.conversation.data(target);
-    expect(shown === null ? [] : threads(shown)[0]?.comments.map((comment) => comment.body)).toEqual([
-      "stderr is discarded here, so an expired token surfaces as a timeout.",
-      "Good catch. Should `AuthRequired` carry the host's hint?",
-      "Yes, keep the hint; the Accounts sheet already shows it.",
-      "On it",
-    ]);
+    expect(shown === null ? [] : threadRt1(shown)?.comments.map((comment) => comment.body)).toEqual(
+      [
+        "stderr is discarded here, so an expired token surfaces as a timeout.",
+        "Good catch. Should `AuthRequired` carry the host's hint?",
+        "Yes, keep the hint; the Accounts sheet already shows it.",
+        "On it",
+      ],
+    );
   });
 
-  it("appends a top-level comment after the newest entry", async () => {
+  it("puts a top-level comment above the newest entry, even with older pages left", async () => {
     const { adapter, calls, forge, target } = adapterFixture((method) => {
       if (method === "companion/pullRequest/comment/create") {
         return { comment: conversationComment("c-top", { body: "Ship it" }) };
       }
       throw new Error(`Unexpected RPC: ${method}`);
     });
-    forge.conversation.publish(target, parsed(conversation91));
+    forge.conversation.publish(target, { ...parsed(conversation91), nextCursor: "older" });
 
     await adapter.createComment(target, { body: "Ship it", idempotencyKey: "key-2" });
 
@@ -364,7 +396,13 @@ describe("pull request conversation writes", () => {
       pullRequest: target.pullRequest,
     });
     const entries = forge.conversation.data(target)?.entries ?? [];
-    expect(entries.at(-1)).toMatchObject({ comment: { body: "Ship it" }, kind: "comment" });
+    expect(entries[0]).toMatchObject({ comment: { body: "Ship it" }, kind: "comment" });
+    expect(entries).toHaveLength(conversation91.entries.length + 1);
+    // A read that already holds the acknowledged comment is not patched twice.
+    await adapter.createComment(target, { body: "Ship it", idempotencyKey: "key-2" });
+    expect(forge.conversation.data(target)?.entries).toHaveLength(
+      conversation91.entries.length + 1,
+    );
   });
 
   it("names the review thread only for a focused scenario start", async () => {
@@ -382,7 +420,11 @@ describe("pull request conversation writes", () => {
     } as const;
     const withHead = { ...target, headRevision: headRevision("head-1", "headRevision") };
 
-    await adapter.startScenario(withHead, { ...request, idempotencyKey: "k-a", reviewThreadId: null });
+    await adapter.startScenario(withHead, {
+      ...request,
+      idempotencyKey: "k-a",
+      reviewThreadId: null,
+    });
     await adapter.startScenario(withHead, {
       ...request,
       idempotencyKey: "k-b",

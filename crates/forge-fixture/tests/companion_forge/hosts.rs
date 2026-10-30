@@ -44,6 +44,8 @@ async fn the_fixture_external_plugin_passes_conformance() {
         "forge.pullRequest.conversation",
         "forge.media.read foreign host",
         "forge.pullRequest.reviewThread.reply missing thread",
+        "forge.pullRequest.fileContent missing path",
+        "forge.pullRequest.fileContent traversal",
     ] {
         assert!(
             report

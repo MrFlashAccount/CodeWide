@@ -60,17 +60,20 @@ async fn conversation_pages_are_validated_cached_and_capability_gated() {
             json!({"pullRequest": key, "cursor": null}),
         )
         .await;
-    assert_eq!(ids(&first), ["c-1", "review-1", "thread-1", "event-1"]);
+    // Newest first; a thread's own comments stay oldest first.
+    assert_eq!(ids(&first), ["event-1", "thread-1", "review-1", "c-1"]);
     assert_eq!(
-        first["entries"][0]["comment"]["reactions"][0]["content"],
+        first["entries"][3]["comment"]["reactions"][0]["content"],
         "thumbsUp"
     );
     assert_eq!(
-        first["entries"][2]["thread"]["anchor"],
+        first["entries"][1]["thread"]["anchor"],
         json!({"kind": "line", "path": "src/a.rs", "line": 2, "startLine": 1, "side": "new"})
     );
-    assert_eq!(first["entries"][2]["thread"]["reviewId"], "review-1");
-    assert_eq!(first["entries"][3]["category"], "push");
+    assert_eq!(first["entries"][1]["thread"]["reviewId"], "review-1");
+    assert_eq!(first["entries"][1]["thread"]["comments"][0]["id"], "rc-1");
+    assert_eq!(first["entries"][1]["thread"]["comments"][1]["id"], "rc-2");
+    assert_eq!(first["entries"][0]["category"], "push");
     assert_eq!(first["openIssuesBlockMerge"], true);
     let second = harness
         .ok(
@@ -84,7 +87,7 @@ async fn conversation_pages_are_validated_cached_and_capability_gated() {
         second["entries"][0]["thread"]["resolution"],
         json!({"kind": "issue", "state": "resolved",
                "changedBy": {"login": "arc-robot", "kind": "bot", "avatarUrl": null},
-               "changedAt": "2026-10-01T04:00:00Z"})
+               "changedAt": "2026-09-30T04:00:00Z"})
     );
     assert_eq!(
         second["entries"][0]["thread"]["iteration"],
@@ -145,10 +148,10 @@ async fn a_comment_publishes_once_replays_its_outcome_and_invalidates_the_pull_r
     let before = harness
         .ok(
             "companion/pullRequest/conversation/read",
-            json!({"pullRequest": key, "cursor": "page-2"}),
+            json!({"pullRequest": key, "cursor": null}),
         )
         .await;
-    assert_eq!(ids(&before), ["thread-2"]);
+    assert_eq!(ids(&before)[0], "event-1");
     let create = |body: &str, idempotency_key: &str| json!({"pullRequest": key, "body": body, "idempotencyKey": idempotency_key});
     for body in ["", " \n\t ", &"x".repeat(65_537)] {
         let refused = harness
@@ -184,13 +187,13 @@ async fn a_comment_publishes_once_replays_its_outcome_and_invalidates_the_pull_r
     let after = harness
         .ok(
             "companion/pullRequest/conversation/read",
-            json!({"pullRequest": key, "cursor": "page-2"}),
+            json!({"pullRequest": key, "cursor": null}),
         )
         .await;
     assert_eq!(
         ids(&after),
-        ["thread-2", "comment-1"],
-        "the write dropped the cached page"
+        ["comment-1", "event-1", "thread-1", "review-1", "c-1"],
+        "the write dropped the cached page; the newest comment is on top"
     );
     let reused = harness
         .call(

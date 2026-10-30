@@ -570,6 +570,9 @@ it("keeps the draft usable without suggestions when the request fails", async ()
 });
 
 it("closes every PR tab to the canonical pull-request catalog route", () => {
+  // Only a phone's Details has a Back; a wide PR sits beside its catalog.
+  mockDesktop = false;
+  mockViewportWidth = 400;
   const view = render(<PullRequestRoute tab="changes" />);
 
   fireEvent.press(view.getByTestId("close-pull-request"));

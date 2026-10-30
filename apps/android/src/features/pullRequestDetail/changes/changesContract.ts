@@ -22,7 +22,7 @@ export type PullRequestChangesProps = {
   readonly connectionId: string;
   readonly describeThread: (threadId: ThreadId) => string;
   readonly fileActions: ReadonlyMap<string, readonly ActionDescriptor[]>;
-  readonly forge: Pick<ForgeResources, "files" | "loadMoreFiles">;
+  readonly forge: Pick<ForgeResources, "fileContent" | "files" | "loadMoreFiles">;
   readonly host: string;
   readonly model: Observable<PullRequestScreenState>;
   readonly nowMs: number;
@@ -31,6 +31,8 @@ export type PullRequestChangesProps = {
   readonly onStale: (kind: "outcomeUnknown" | "stale") => void;
   readonly overview: PullRequestOverview;
   readonly ownPullRequest: boolean;
+  /** Capabilities the PR account's plugin declares; empty until the accounts snapshot loads. */
+  readonly providerCapabilities: readonly string[];
   /** The PR app bar titled with this route's `section` and carrying `trailing` controls. */
   readonly renderAppBar: (section: string, trailing: React.ReactNode) => React.JSX.Element;
   readonly review: Pick<ReviewResources, "drafts" | "guide">;

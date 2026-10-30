@@ -578,43 +578,37 @@ export function conversationComment(
 }
 
 /**
- * The #91 conversation, oldest first: a comment with an image and Mermaid, a
- * review with a body, an open thread with three comments and reactions, a
- * resolved outdated thread and a timeline event.
+ * The #91 conversation, newest first as the wire sends it: a timeline event, a
+ * resolved outdated thread, an open thread with three comments (oldest first)
+ * and reactions, a review with a body and a comment with an image and Mermaid.
  */
 export const conversation91 = {
   entries: [
     {
-      comment: conversationComment("c-1", {
-        author: DANA,
-        body: [
-          "Here is the token-expiry flow after this change:",
-          "",
-          "```mermaid",
-          "sequenceDiagram",
-          "  Android->>Companion: pullRequest/read",
-          "  Companion->>Plugin: forge.pullRequest.read",
-          "  Plugin-->>Companion: AuthRequired",
-          "  Companion-->>Android: -32081",
-          "```",
-          "",
-          `![Expired token banner](${FORGE_IMAGE_URL})`,
-        ].join("\n"),
-        createdAt: "2026-10-21T08:40:00Z",
-        reactions: [{ content: "rocket", count: 2, viewerReacted: false }],
-      }),
-      kind: "comment",
+      author: DANA,
+      category: "push",
+      createdAt: "2026-10-21T10:02:00Z",
+      id: "e-1",
+      kind: "event",
+      text: "merged main into this branch",
     },
     {
-      author: MIKHAIL,
-      body: conversationComment("r-1-body", {
-        body: "Two small things inline; the mapping itself looks right.",
-        createdAt: "2026-10-21T09:05:00Z",
-      }),
-      createdAt: "2026-10-21T09:05:00Z",
-      id: "r-1",
-      kind: "review",
-      verdict: "changesRequested",
+      kind: "reviewThread",
+      thread: {
+        comments: [
+          conversationComment("c-5", {
+            body: "Nit: this timeout constant moved to `forge/limits.rs`.",
+            createdAt: "2026-10-21T09:12:00Z",
+          }),
+        ],
+        anchor: { kind: "file", path: "crates/companion-core/src/forge/reads.rs" },
+        id: "rt-2",
+        iteration: null,
+        outdated: true,
+        resolution: { kind: "conversation", resolved: true },
+        reviewId: null,
+        viewerCanReply: true,
+      },
     },
     {
       kind: "reviewThread",
@@ -657,30 +651,36 @@ export const conversation91 = {
       },
     },
     {
-      kind: "reviewThread",
-      thread: {
-        comments: [
-          conversationComment("c-5", {
-            body: "Nit: this timeout constant moved to `forge/limits.rs`.",
-            createdAt: "2026-10-21T09:12:00Z",
-          }),
-        ],
-        anchor: { kind: "file", path: "crates/companion-core/src/forge/reads.rs" },
-        id: "rt-2",
-        iteration: null,
-        outdated: true,
-        resolution: { kind: "conversation", resolved: true },
-        reviewId: null,
-        viewerCanReply: true,
-      },
+      author: MIKHAIL,
+      body: conversationComment("r-1-body", {
+        body: "Two small things inline; the mapping itself looks right.",
+        createdAt: "2026-10-21T09:05:00Z",
+      }),
+      createdAt: "2026-10-21T09:05:00Z",
+      id: "r-1",
+      kind: "review",
+      verdict: "changesRequested",
     },
     {
-      author: DANA,
-      category: "push",
-      createdAt: "2026-10-21T10:02:00Z",
-      id: "e-1",
-      kind: "event",
-      text: "merged main into this branch",
+      comment: conversationComment("c-1", {
+        author: DANA,
+        body: [
+          "Here is the token-expiry flow after this change:",
+          "",
+          "```mermaid",
+          "sequenceDiagram",
+          "  Android->>Companion: pullRequest/read",
+          "  Companion->>Plugin: forge.pullRequest.read",
+          "  Plugin-->>Companion: AuthRequired",
+          "  Companion-->>Android: -32081",
+          "```",
+          "",
+          `![Expired token banner](${FORGE_IMAGE_URL})`,
+        ].join("\n"),
+        createdAt: "2026-10-21T08:40:00Z",
+        reactions: [{ content: "rocket", count: 2, viewerReacted: false }],
+      }),
+      kind: "comment",
     },
   ],
   nextCursor: null,
@@ -718,31 +718,72 @@ function arcEvent(id: string, createdAt: string, text: string): Record<string, u
 }
 
 /**
- * An Arcanum-shaped conversation: no avatars anywhere, three iterations
+ * An Arcanum-shaped conversation, newest first: no avatars anywhere, three iterations
  * uploaded in a row, a merge-blocking verdict without text, issues that block
  * merging (open on a line and on the whole PR, resolved by a robot, dropped on
  * an older iteration), an AI reviewer and two nearby comments of one author.
  */
 export const conversationArcanum = {
   entries: [
-    arcEvent("ev-1", "2026-10-20T08:00:00Z", "uploaded iteration 1"),
-    arcEvent("ev-2", "2026-10-20T09:00:00Z", "uploaded iteration 2"),
-    arcEvent("ev-3", "2026-10-20T10:00:00Z", "uploaded iteration 3"),
+    {
+      author: AI_REVIEWER,
+      body: null,
+      createdAt: "2026-10-20T11:30:00Z",
+      id: "rv-approve",
+      kind: "review",
+      verdict: "approvalWithdrawn",
+    },
     issueThread(
-      "is-dropped",
+      "is-resolved",
       {
-        anchor: { kind: "file", path: "disk/volga/old.py" },
-        iteration: { id: "it-1", number: 1 },
-        outdated: true,
+        anchor: { kind: "file", path: "disk/volga/config.yaml" },
+        iteration: { id: "it-2", number: 2 },
         resolution: {
-          changedAt: "2026-10-20T10:30:00Z",
-          changedBy: OLGA,
+          changedAt: "2026-10-20T11:20:00Z",
+          changedBy: ARC_ROBOT,
           kind: "issue",
-          state: "dropped",
+          state: "resolved",
         },
       },
-      [conversationComment("ic-1", { author: AI_REVIEWER, body: "Unused import.", createdAt: "2026-10-20T10:20:00Z" })],
+      [
+        conversationComment("ic-4", {
+          author: OLGA,
+          body: "Bump the quota.",
+          createdAt: "2026-10-20T11:15:00Z",
+        }),
+      ],
     ),
+    {
+      comment: conversationComment("ac-2", {
+        author: OLGA,
+        body: "Pushed.",
+        createdAt: "2026-10-20T11:13:00Z",
+      }),
+      kind: "comment",
+    },
+    {
+      comment: conversationComment("ac-1", {
+        author: OLGA,
+        body: "Fixing both now.",
+        createdAt: "2026-10-20T11:10:00Z",
+      }),
+      kind: "comment",
+    },
+    issueThread("is-open-pr", { viewerCanReply: false }, [
+      conversationComment("ic-3", {
+        author: ARC_ROBOT,
+        body: "Release notes are missing.",
+        createdAt: "2026-10-20T11:00:00Z",
+      }),
+    ]),
+    {
+      author: AI_REVIEWER,
+      body: null,
+      createdAt: "2026-10-20T10:45:00Z",
+      id: "rv-block",
+      kind: "review",
+      verdict: "mergeBlocked",
+    },
     issueThread(
       "is-open-line",
       {
@@ -757,51 +798,30 @@ export const conversationArcanum = {
         }),
       ],
     ),
-    {
-      author: AI_REVIEWER,
-      body: null,
-      createdAt: "2026-10-20T10:45:00Z",
-      id: "rv-block",
-      kind: "review",
-      verdict: "mergeBlocked",
-    },
-    issueThread("is-open-pr", { viewerCanReply: false }, [
-      conversationComment("ic-3", {
-        author: ARC_ROBOT,
-        body: "Release notes are missing.",
-        createdAt: "2026-10-20T11:00:00Z",
-      }),
-    ]),
-    {
-      comment: conversationComment("ac-1", { author: OLGA, body: "Fixing both now.", createdAt: "2026-10-20T11:10:00Z" }),
-      kind: "comment",
-    },
-    {
-      comment: conversationComment("ac-2", { author: OLGA, body: "Pushed.", createdAt: "2026-10-20T11:13:00Z" }),
-      kind: "comment",
-    },
     issueThread(
-      "is-resolved",
+      "is-dropped",
       {
-        anchor: { kind: "file", path: "disk/volga/config.yaml" },
-        iteration: { id: "it-2", number: 2 },
+        anchor: { kind: "file", path: "disk/volga/old.py" },
+        iteration: { id: "it-1", number: 1 },
+        outdated: true,
         resolution: {
-          changedAt: "2026-10-20T11:20:00Z",
-          changedBy: ARC_ROBOT,
+          changedAt: "2026-10-20T10:30:00Z",
+          changedBy: OLGA,
           kind: "issue",
-          state: "resolved",
+          state: "dropped",
         },
       },
-      [conversationComment("ic-4", { author: OLGA, body: "Bump the quota.", createdAt: "2026-10-20T11:15:00Z" })],
+      [
+        conversationComment("ic-1", {
+          author: AI_REVIEWER,
+          body: "Unused import.",
+          createdAt: "2026-10-20T10:20:00Z",
+        }),
+      ],
     ),
-    {
-      author: AI_REVIEWER,
-      body: null,
-      createdAt: "2026-10-20T11:30:00Z",
-      id: "rv-approve",
-      kind: "review",
-      verdict: "approvalWithdrawn",
-    },
+    arcEvent("ev-3", "2026-10-20T10:00:00Z", "uploaded iteration 3"),
+    arcEvent("ev-2", "2026-10-20T09:00:00Z", "uploaded iteration 2"),
+    arcEvent("ev-1", "2026-10-20T08:00:00Z", "uploaded iteration 1"),
   ],
   nextCursor: null,
   openIssuesBlockMerge: true,

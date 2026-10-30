@@ -22,10 +22,28 @@ type ForgeQueryOptions<Value> = {
   readonly gcTime: number;
   readonly queryFn: () => Promise<Value>;
   readonly queryKey: QueryKey;
-  readonly refetchInterval: number;
+  readonly refetchInterval: number | false;
   readonly refetchIntervalInBackground: false;
   readonly retry: false;
   readonly staleTime: number;
+};
+
+/** How long a resource's data stays current and whether an active screen re-reads it. */
+type Freshness = {
+  readonly refetchInterval: number | false;
+  readonly staleTime: number;
+};
+
+/** Live server state: stale after a short window and re-read while shown. */
+const POLLED: Freshness = {
+  refetchInterval: ACTIVE_RESYNC_INTERVAL_MS,
+  staleTime: STALE_AFTER_MS,
+};
+
+/** Data addressed by an immutable revision: read once, never polled. */
+const IMMUTABLE: Freshness = {
+  refetchInterval: false,
+  staleTime: Number.POSITIVE_INFINITY,
 };
 
 /** One keyed server resource backed only by a TanStack Query cache. */
@@ -48,19 +66,37 @@ export type ForgeQueryResourceOptions<Params, Value> = {
   readonly load: (params: Params) => Promise<Value>;
 };
 
-/** Creates one process-owned query resource. */
+/** Creates one process-owned query resource of live server state. */
 export function createForgeQueryResource<Params, Value>(
   resource: ForgeQueryResourceOptions<Params, Value>,
+): ForgeQueryResource<Params, Value> {
+  return createResource(resource, POLLED);
+}
+
+/**
+ * Creates one process-owned query resource whose key names an immutable
+ * revision (for example a file at a head commit): it is read once per key and
+ * never re-read while shown.
+ */
+export function createImmutableForgeQueryResource<Params, Value>(
+  resource: ForgeQueryResourceOptions<Params, Value>,
+): ForgeQueryResource<Params, Value> {
+  return createResource(resource, IMMUTABLE);
+}
+
+function createResource<Params, Value>(
+  resource: ForgeQueryResourceOptions<Params, Value>,
+  freshness: Freshness,
 ): ForgeQueryResource<Params, Value> {
   const options = (params: Params): ForgeQueryOptions<Value> => ({
     gcTime: CACHE_RETENTION_MS,
     queryFn: async () => loadWithRetry(resource.load, params),
     queryKey: resource.keyOf(params),
-    refetchInterval: ACTIVE_RESYNC_INTERVAL_MS,
+    refetchInterval: freshness.refetchInterval,
     refetchIntervalInBackground: false,
     // The resource retries only unreachable reads so semantic failures are immediate.
     retry: false,
-    staleTime: STALE_AFTER_MS,
+    staleTime: freshness.staleTime,
   });
   const snapshot = (params: Params): Value | undefined =>
     resource.client.getQueryData<Value>(resource.keyOf(params));

@@ -2,7 +2,7 @@
 
 Public surfaces: `PullRequestScreen`, `PullRequestScreenSkeleton` and `pullRequestScreenContract`. Route composition publishes the destination immediately; the screen suspends on the process-owned overview query behind its own stable skeleton, so the adjacent catalog does not disappear while the detail loads.
 
-The screen owns: the app bar, the Details | Changes tabs, the Details reading surface (one column at every width: the full title, state pill, `author wants to merge into base from head` and stats; the action row; a merge box with a checks row whose sheet lists every check, the merge-state row with conflict actions, and the merge method and auto-merge controls; then description and activity. Merged and closed PRs show no merge box. The app bar's single ⋯ holds every overflowed action and Open on forge on both tabs), the Changes work surface (Files | Guide over the forge diff in recorded-patch mode, viewed marks with their source, drafts with per-axis badges, the comment sheet, the review dock and Submit sheet), and agent scenarios started from catalog actions. Opening the linked chat is navigation and must not start a scenario or enqueue input. `LinkedChatButton` carries the unread dot while `overview.reviewThread` is unread in the thread catalog (the route-supplied `isThreadUnread` reader); reading that chat clears it. PR descriptions and activity comment bodies use the shared complete-document Markdown renderer from `rendering/**`; this feature must not recreate, truncate or downgrade that pipeline to plain text.
+The screen owns: the app bar, the Details | Changes tabs, the Details reading surface (one column at every width: the full title, state pill, `author wants to merge into base from head` and stats; the action row; a merge box with a checks row whose sheet lists every check, the merge-state row with conflict actions, and the merge method and auto-merge controls; then description and activity. Merged and closed PRs show no merge box. The app bar's single ⋯ holds every overflowed action and Open on forge on both tabs), the Changes work surface (Files | Guide over the forge diff; with `forge.fileContent@1` the selected file shows whole with its changes inline once the process-owned `forge.fileContent` query (keyed by connection, PR, head and path, read during render, never polled or persisted) returns text that lines up with the patch, and stays in recorded-patch mode while it loads and for every other answer; guide stops stay in recorded-patch mode, viewed marks with their source, drafts with per-axis badges, the comment sheet, the review dock and Submit sheet), and agent scenarios started from catalog actions. Opening the linked chat is navigation and must not start a scenario or enqueue input. `LinkedChatButton` carries the unread dot while `overview.reviewThread` is unread in the thread catalog (the route-supplied `isThreadUnread` reader); reading that chat clears it. PR descriptions and activity comment bodies use the shared complete-document Markdown renderer from `rendering/**`; this feature must not recreate, truncate or downgrade that pipeline to plain text.
 
 A PR has one conversation. Agent scenarios started from catalog actions (`reviewPr`,
 `addressComments`, `fixCi`, `rebase`) always send the `reviewChat` target; the companion resolves
@@ -53,13 +53,18 @@ answers that it cannot serve the read, the activity list stays. The process-owne
 `forge.conversation` query is read during render and never runs for an undeclared plugin.
 `conversation/conversationContent.ts` maps the DTOs into the forge-independent
 `features/messageContent` model, and `conversation/discussionModel.ts` projects the loaded pages
-into the Discussion: the pinned issues (open first, settled behind a counter), the summary chip
-and the timeline (reviews containing their threads by `reviewId`, verdict-only reviews as rows,
-comment groups of one author within five minutes, collapsed same-category event runs). The
-Discussion section sits after the description behind a divider and renders the pinned issues, the
-timeline, thread cards (anchor label, issue or Resolved badge, iteration chip muted unless newest,
+into the Discussion: the pinned issues (open first, settled behind a counter, each newest first),
+the summary chip and the timeline, newest first exactly as the pages arrive (the forge sends the
+newest entries on the first page and older ones on later pages; a thread's own comments stay
+oldest first): reviews containing their threads by `reviewId` (a thread on a later page joins its
+already loaded review), verdict-only reviews as rows, comment groups of one author within five
+minutes (newest first, the newest carrying the header), collapsed same-category event runs
+(showing the newest age). The Discussion section sits after the description behind a divider and
+renders the pinned issues, a new-comment input above the newest entry, the timeline, thread cards (anchor label, issue or Resolved badge, iteration chip muted unless newest,
 Outdated, collapsed while settled, anchored catalog actions, "Address in agent" and, with
-`forge.comments@1` and `viewerCanReply`, a reply input) and a new-comment input at the end.
+`forge.comments@1` and `viewerCanReply`, a reply input) and "Show more discussion" at the end,
+which appends the next, older page below. An acknowledged top-level comment is patched in at the
+top of the loaded pages.
 `conversation/discussionNavigator.ts` is the section's Legend-backed owner of per-thread
 expansion and of revealing a thread from a pinned issue (expand, then scroll the Details page
 measured from its page view). "Address in agent", on a thread or a pinned issue, starts

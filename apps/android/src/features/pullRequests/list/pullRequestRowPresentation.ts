@@ -6,7 +6,6 @@
 import type { CheckSummary, PullRequestRow } from "../../../data/forgePullRequestContract";
 
 /** A row shows at most two badges plus the linked-thread count (N-06). */
-const MAX_ROW_BADGES = 2;
 
 /** Check state as a glyph kind plus the word screen readers announce. */
 export type CheckGlyph = {
@@ -43,18 +42,15 @@ export function rowMeta(row: PullRequestRow): string {
   return parts.join(" · ");
 }
 
-/** At most two badges, in priority order. */
+/** The PR's lifecycle badge: Draft, Merged or Closed; open PRs carry none. */
 export function rowBadges(row: PullRequestRow): readonly string[] {
-  const badges: string[] = [];
-  if (row.localCheckout) {
-    badges.push("Local");
-  }
   if (row.state === "draft") {
-    badges.push("Draft");
-  } else if (row.state === "merged" || row.state === "closed") {
-    badges.push(row.state === "merged" ? "Merged" : "Closed");
+    return ["Draft"];
   }
-  return badges.slice(0, MAX_ROW_BADGES);
+  if (row.state === "merged" || row.state === "closed") {
+    return [row.state === "merged" ? "Merged" : "Closed"];
+  }
+  return [];
 }
 
 /** Spoken summary of a row: title, meta, check word, badges and linked threads. */

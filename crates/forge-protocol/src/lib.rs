@@ -60,6 +60,10 @@ pub mod capability {
     /// Optional: `forge.pullRequest.comment.create` and
     /// `forge.pullRequest.reviewThread.reply`, both published immediately.
     pub const COMMENTS: &str = "forge.comments@1";
+    /// Optional: `forge.pullRequest.fileContent`, one complete file of a pull
+    /// request at its head revision, so a client can show the whole file with
+    /// the changes inline.
+    pub const FILE_CONTENT: &str = "forge.fileContent@1";
 
     /// Capabilities every forge plugin must declare.
     pub const REQUIRED: [&str; 6] = [AUTH, LIST, READ, DIFF, ACTIONS, REVIEW];

@@ -34,12 +34,15 @@ async function settleReviewChatRequest(
   });
 }
 
-/** Appends an acknowledged top-level comment when the loaded page already reaches the newest entry. */
-function appendComment(page: ConversationPage, comment: ConversationComment): ConversationPage {
-  if (page.nextCursor !== null) {
+/**
+ * Puts an acknowledged top-level comment on top: the loaded pages are newest first and always
+ * start at the newest entry. A page that already holds it (a read that raced the write) is kept.
+ */
+function prependComment(page: ConversationPage, comment: ConversationComment): ConversationPage {
+  if (page.entries.some((entry) => entry.kind === "comment" && entry.comment.id === comment.id)) {
     return page;
   }
-  return { ...page, entries: [...page.entries, { comment, kind: "comment" }] };
+  return { ...page, entries: [{ comment, kind: "comment" }, ...page.entries] };
 }
 
 /** Appends an acknowledged reply to its thread; other entries keep their identity. */
@@ -96,7 +99,7 @@ export function createPullRequestDetailWorkspaceAdapter({
         "comment",
       );
       // Shown at once; the settled mutation also invalidates the page for the forge's own order.
-      forge.conversation.patch(target, (page) => appendComment(page, comment));
+      forge.conversation.patch(target, (page) => prependComment(page, comment));
       return comment;
     },
     async ensureReviewChat(target, workspace) {

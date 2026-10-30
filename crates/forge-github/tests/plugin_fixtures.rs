@@ -62,6 +62,8 @@ struct FakeGithub {
     media_hits: Vec<(String, bool)>,
     foreign_hits: usize,
     created_comments: Vec<String>,
+    /// `(encoded path, query, Accept)` of every contents request.
+    content_requests: Vec<(String, String, String)>,
 }
 
 /// A PNG signature followed by padding, `size` bytes long.
@@ -160,6 +162,9 @@ fn respond(
     if let Some(response) = conversation_rest(&mut state, method, uri, &login, body) {
         return response;
     }
+    if let Some(response) = contents_rest(&mut state, uri, headers) {
+        return response;
+    }
     let json = |value: Value| axum::Json(value).into_response();
     match (method.as_str(), uri.path()) {
         ("GET", "/user") => {
@@ -248,12 +253,12 @@ fn conversation_graphql(state: &mut FakeGithub, query: &Value) -> Option<Respons
         )
     } else if text.contains("reviewThreads(") {
         json(json!({"data": {"repository": {"pullRequest": {
-            "timelineItems": {"pageInfo": {"hasNextPage": false}, "edges": [
+            "timelineItems": {"pageInfo": {"hasPreviousPage": false}, "edges": [
                 {"cursor": "t1", "node": {"__typename": "IssueComment", "id": "IC_1",
                     "author": {"__typename": "Bot", "login": "ci-bot", "avatarUrl": null}, "createdAt": "2026-10-01T00:00:00Z",
                     "lastEditedAt": null, "body": "Looks good", "url": null, "reactionGroups": []}}
             ]},
-            "reviewThreads": {"pageInfo": {"hasNextPage": false}, "edges": [
+            "reviewThreads": {"pageInfo": {"hasPreviousPage": false}, "edges": [
                 {"cursor": "r1", "node": {"id": "PRRT_1", "path": "src/a.rs", "line": 3, "startLine": null,
                     "diffSide": "RIGHT", "isResolved": false, "isOutdated": false, "viewerCanReply": true,
                     "comments": {"pageInfo": {"hasNextPage": false, "endCursor": null},
@@ -302,6 +307,51 @@ fn conversation_rest(
         )
             .into_response(),
         _ => return None,
+    })
+}
+
+/// The head commit the contents routes answer.
+const HEAD_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+const HEAD_FILE: &str = "fn main() {\n    new();\n}\n";
+
+/// The contents API in the raw media type at [`HEAD_SHA`]: a text file, a
+/// file with a space in its name, a binary, an oversized file, a directory
+/// (answered as a JSON listing) and 404 for anything else.
+fn contents_rest(state: &mut FakeGithub, uri: &Uri, headers: &HeaderMap) -> Option<Response> {
+    let path = uri.path().strip_prefix("/repos/octo/repo/contents/")?;
+    let accept = headers
+        .get("accept")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let query = uri.query().unwrap_or_default().to_owned();
+    state
+        .content_requests
+        .push((path.to_owned(), query.clone(), accept));
+    let raw = |body: Vec<u8>| {
+        (
+            [(
+                "content-type",
+                "application/vnd.github.raw+json; charset=utf-8",
+            )],
+            body,
+        )
+            .into_response()
+    };
+    if query != format!("ref={HEAD_SHA}") {
+        return Some(StatusCode::NOT_FOUND.into_response());
+    }
+    Some(match path {
+        "src/a.rs" => raw(HEAD_FILE.as_bytes().to_vec()),
+        "docs/read%20me.md" => raw(b"# Read me\n".to_vec()),
+        "assets/logo.png" => raw(png(64)),
+        "data/huge.txt" => raw(vec![b'a'; forge_protocol::MAX_FILE_CONTENT_BYTES + 1]),
+        "src" => axum::Json(json!([{"type": "file", "name": "a.rs"}])).into_response(),
+        _ => (
+            StatusCode::NOT_FOUND,
+            axum::Json(json!({"message": "Not Found"})),
+        )
+            .into_response(),
     })
 }
 
@@ -1025,10 +1075,11 @@ async fn conversation_reads_and_comment_writes_reach_github() {
         .await;
     let entries = page["result"]["entries"].as_array().expect("entries");
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0]["kind"], "comment");
-    assert_eq!(entries[0]["comment"]["author"]["kind"], "bot");
+    // Newest first: the thread (2026-10-02) above the comment (2026-10-01).
+    assert_eq!(entries[1]["kind"], "comment");
+    assert_eq!(entries[1]["comment"]["author"]["kind"], "bot");
     assert_eq!(
-        entries[1]["thread"],
+        entries[0]["thread"],
         json!({
             "id": "PRRT_1",
             "anchor": {"kind": "line", "path": "src/a.rs", "line": 3, "startLine": null, "side": "new"},
@@ -1044,6 +1095,20 @@ async fn conversation_reads_and_comment_writes_reach_github() {
     );
     assert_eq!(page["result"]["nextCursor"], Value::Null);
     assert_eq!(page["result"]["openIssuesBlockMerge"], Value::Null);
+    let activity = harness
+        .call(
+            "forge.pullRequest.activity",
+            json!({"account": account("hubot"), "ref": pull_ref(), "cursor": null}),
+        )
+        .await;
+    let items: Vec<&str> = activity["result"]["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .collect();
+    assert_eq!(items, ["PRRC_1", "IC_1"], "activity is newest first");
+    assert_eq!(activity["result"]["items"][0]["reviewThreadId"], "PRRT_1");
 
     let created = harness
         .call(
@@ -1145,6 +1210,77 @@ async fn media_reads_only_forge_hosts_and_never_follow_a_foreign_redirect() {
                 .iter()
                 .any(|(tag, token)| tag == "github.com" && token == GH_TOKEN),
             "the web origin received the account token"
+        );
+    }
+    for frame in harness.close().await {
+        assert!(!frame.contains(GH_TOKEN), "token leaked: {frame}");
+    }
+}
+
+#[tokio::test]
+async fn file_content_reads_the_head_file_in_the_raw_media_type_within_its_bound() {
+    let mut harness = linked_hubot().await;
+    let read = async |harness: &mut Harness, head: &str, path: &str| {
+        harness
+            .call(
+                "forge.pullRequest.fileContent",
+                json!({"account": account("hubot"), "ref": pull_ref(), "headRevision": head, "path": path}),
+            )
+            .await
+    };
+    assert_eq!(
+        read(&mut harness, HEAD_SHA, "src/a.rs").await["result"],
+        json!({"state": "text", "content": HEAD_FILE})
+    );
+    assert_eq!(
+        read(&mut harness, HEAD_SHA, "docs/read me.md").await["result"],
+        json!({"state": "text", "content": "# Read me\n"})
+    );
+    assert_eq!(
+        read(&mut harness, HEAD_SHA, "assets/logo.png").await["result"],
+        json!({"state": "binary"})
+    );
+    let huge = read(&mut harness, HEAD_SHA, "data/huge.txt").await;
+    assert_eq!(huge["result"]["state"], "tooLarge");
+    assert!(
+        huge["result"]["bytes"]
+            .as_u64()
+            .is_none_or(|bytes| bytes > 1024 * 1024)
+    );
+    for missing in ["src", "src/removed.rs"] {
+        assert_eq!(
+            read(&mut harness, HEAD_SHA, missing).await["result"],
+            json!({"state": "missing"}),
+            "{missing}"
+        );
+    }
+    let requests = harness.api.lock().expect("state").content_requests.len();
+    for (head, path) in [
+        ("main", "src/a.rs"),
+        (HEAD_SHA, "../secrets"),
+        (HEAD_SHA, "src/../../x"),
+    ] {
+        assert_eq!(
+            read(&mut harness, head, path).await["error"]["code"],
+            -32_602,
+            "{head} {path}"
+        );
+    }
+    {
+        let state = harness.api.lock().expect("state");
+        assert_eq!(
+            state.content_requests.len(),
+            requests,
+            "a refused read never reaches GitHub"
+        );
+        assert!(state.content_requests.iter().all(|(_, query, accept)| {
+            query == &format!("ref={HEAD_SHA}") && accept == "application/vnd.github.raw+json"
+        }));
+        assert!(
+            state
+                .content_requests
+                .iter()
+                .any(|(path, _, _)| path == "docs/read%20me.md")
         );
     }
     for frame in harness.close().await {

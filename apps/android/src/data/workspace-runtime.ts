@@ -74,6 +74,7 @@ import { createThreadListStream } from "./threadListStream";
 import { createThreadSyncReconnect } from "./thread-sync-reconnect";
 import { createThreadSyncRemoteLoader } from "./thread-sync-remote-loader";
 import { createThreadSyncRuntime } from "./thread-sync-runtime";
+import { hydratePeleDiagramRendererPreference } from "./peleDiagramRendererPreference";
 import { hydrateTimelineRowPremeasurementPreference } from "./timelineRowPremeasurementPreference";
 import {
   createThreadUiStateDatabase,
@@ -245,6 +246,7 @@ async function startWorkspaceRuntime(): Promise<void> {
     await Promise.all([
       globalSupervisorAttention.ready,
       hydrateGlobalVoiceOrbStylePreference(),
+      hydratePeleDiagramRendererPreference(),
       hydrateTimelineRowPremeasurementPreference(),
       hydrateVoiceHandoffPreference(),
       details.prepare(),

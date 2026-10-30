@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useSelector } from "@legendapp/state/react";
 import * as Clipboard from "expo-clipboard";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
-import { usePerformanceExperiment } from "../data/performance-experiments";
+import { peleDiagramRendererEnabled$ } from "../data/peleDiagramRendererPreference";
 import {
   colors,
   radii,
@@ -120,7 +121,7 @@ export function MermaidDiagram({
   reviewTarget?: ContentReviewTarget;
   source: string;
 }) {
-  const peleEnabled = usePerformanceExperiment("peleDiagramRenderer");
+  const peleEnabled = useSelector(peleDiagramRendererEnabled$);
   return (
     <LocalDiagram
       engine={MERMAID_ENGINE}

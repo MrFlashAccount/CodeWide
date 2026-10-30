@@ -177,7 +177,7 @@ export type ConversationEntry =
       readonly text: string;
     };
 
-/** One page of the conversation, oldest first. */
+/** One page of the conversation, newest first; `nextCursor` continues to older entries. */
 export type ConversationPage = {
   readonly entries: readonly ConversationEntry[];
   readonly nextCursor: string | null;

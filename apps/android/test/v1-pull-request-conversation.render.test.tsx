@@ -57,9 +57,12 @@ type Capabilities = PullRequestDetailWorkspaceCapabilities;
 function companion({
   conversation,
   conversationDeclared,
+  olderConversation,
 }: {
   readonly conversation: unknown;
   readonly conversationDeclared: boolean;
+  /** The page answered for a non-null cursor. */
+  readonly olderConversation: unknown;
 }) {
   const reads: string[] = [];
   let reachable = true;
@@ -75,11 +78,24 @@ function companion({
     "companion/pullRequest/read": overview91,
     "companion/review/drafts/read": { drafts: [] },
   };
-  const rpcAfterAttach = async <Result,>(_session: unknown, method: string): Promise<Result> => {
+  const cursors: unknown[] = [];
+  const rpcAfterAttach = async <Result,>(
+    _session: unknown,
+    method: string,
+    params?: unknown,
+  ): Promise<Result> => {
     reads.push(method);
     await Promise.resolve();
     if (!reachable) {
       throw new Error("The companion is unreachable");
+    }
+    const cursor =
+      typeof params === "object" && params !== null && "cursor" in params ? params.cursor : null;
+    if (method === "companion/pullRequest/conversation/read" && cursor !== null) {
+      cursors.push(cursor);
+      // WHY: as below, a wire fixture the app's own parser validates.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+      return olderConversation as Result;
     }
     if (!(method in answers)) {
       throw new RpcResponseError(-32_601, `Unknown ${method}`);
@@ -103,6 +119,7 @@ function companion({
     rpcAfterAttach,
   });
   return {
+    cursors,
     forge,
     goOffline: () => {
       reachable = false;
@@ -138,19 +155,21 @@ function renderScreen({
   capabilityOverrides = {},
   conversation = conversation91,
   conversationDeclared = true,
+  olderConversation = null,
   openChanges = jest.fn(),
   openThread = jest.fn(),
 }: {
   readonly capabilityOverrides?: Partial<Capabilities>;
   readonly conversation?: unknown;
   readonly conversationDeclared?: boolean;
+  readonly olderConversation?: unknown;
   readonly openChanges?: (view: "files" | "guide") => void;
   readonly openThread?: (id: string) => void;
 }) {
   if (PULL_REQUEST === null) {
     throw new Error("the pull request key fixture must parse");
   }
-  const server = companion({ conversation, conversationDeclared });
+  const server = companion({ conversation, conversationDeclared, olderConversation });
   const wrap = (children: ReactNode) => (
     <SafeAreaProvider
       initialMetrics={{
@@ -238,26 +257,32 @@ it("opens Files changed and the review guide as nested routes from Details", asy
   expect(view.queryByRole("tab")).toBeNull();
 });
 
-it("renders the conversation in the forge's order instead of the activity list", async () => {
+/** The Discussion's comment input, entries and "Show more" control in rendered order. */
+function discussionOrder(conversation: Parameters<typeof within>[0]): string[] {
+  return within(conversation)
+    .getAllByTestId(
+      /^(pull-request-new-comment$|pull-request-discussion-more$|conversation-(comment|event)-|conversation-review-r-\d$|review-thread-rt-\d$)/u,
+    )
+    .map((node) => String(node.props.testID));
+}
+
+it("renders the conversation newest first, below the comment input, instead of the activity list", async () => {
   const { view } = renderScreen({});
 
   await view.findByTestId("conversation-comment-c-1");
   const conversation = view.getByTestId("pull-request-conversation");
   expect(view.queryByTestId("pull-request-activity")).toBeNull();
-  const order = within(conversation)
-    .getAllByTestId(
-      /^(conversation-(comment|event)-|conversation-review-r-\d$|review-thread-rt-\d$)/u,
-    )
-    .map((node) => String(node.props.testID));
-  expect(order).toEqual([
-    "conversation-comment-c-1",
+  expect(discussionOrder(conversation)).toEqual([
+    "pull-request-new-comment",
+    "conversation-event-e-1",
+    "review-thread-rt-2",
     "conversation-review-r-1",
     "review-thread-rt-1",
+    // A thread still reads top-down.
     "conversation-comment-c-2",
     "conversation-comment-c-3",
     "conversation-comment-c-4",
-    "review-thread-rt-2",
-    "conversation-event-e-1",
+    "conversation-comment-c-1",
   ]);
   expect(within(conversation).getByText(/Changes requested/u)).toBeOnTheScreen();
   // The review's inline thread is drawn inside the review's card.
@@ -266,6 +291,48 @@ it("renders the conversation in the forge's order instead of the activity list",
   ).toBeOnTheScreen();
   expect(view.getByLabelText("👍 3 reactions, including yours")).toBeOnTheScreen();
   expect(view.getByTestId("pull-request-new-comment")).toBeOnTheScreen();
+});
+
+it("loads older discussion below the newest entries from Show more", async () => {
+  const [event, , , , comment] = conversation91.entries;
+  const older = {
+    entries: [
+      {
+        author: null,
+        category: "state",
+        createdAt: "2026-10-20T07:00:00Z",
+        id: "e-0",
+        kind: "event",
+        text: "opened this pull request",
+      },
+    ],
+    nextCursor: null,
+    openIssuesBlockMerge: null,
+  };
+  const { server, view } = renderScreen({
+    conversation: { entries: [event, comment], nextCursor: "older-1", openIssuesBlockMerge: null },
+    olderConversation: older,
+  });
+  const more = await view.findByTestId("pull-request-discussion-more");
+  const conversation = view.getByTestId("pull-request-conversation");
+  expect(discussionOrder(conversation)).toEqual([
+    "pull-request-new-comment",
+    "conversation-event-e-1",
+    "conversation-comment-c-1",
+    "pull-request-discussion-more",
+  ]);
+
+  fireEvent.press(more);
+
+  await view.findByTestId("conversation-event-e-0");
+  expect(server.cursors).toEqual(["older-1"]);
+  // Older entries continue below; nothing above the newest entry moves.
+  expect(discussionOrder(conversation)).toEqual([
+    "pull-request-new-comment",
+    "conversation-event-e-1",
+    "conversation-comment-c-1",
+    "conversation-event-e-0",
+  ]);
 });
 
 it("keeps the activity list when the plugin does not declare the conversation", async () => {
@@ -492,12 +559,12 @@ it("renders an Arcanum-shaped discussion: pinned issues, iterations, verdict row
   expect(view.getByTestId("pull-request-discussion-summary")).toHaveTextContent(
     /2 open issues · blocks merge/u,
   );
-  // Open issues first; resolved and dropped wait behind their counter.
+  // Open issues first, newest first; resolved and dropped wait behind their counter.
   expect(
     within(issues)
       .getAllByTestId(/^discussion-issue-is-[a-z]+(?:-line|-pr)?$/u)
       .map((node) => String(node.props.testID)),
-  ).toEqual(["discussion-issue-is-open-line", "discussion-issue-is-open-pr"]);
+  ).toEqual(["discussion-issue-is-open-pr", "discussion-issue-is-open-line"]);
   const line = view.getByTestId("discussion-issue-is-open-line");
   expect(within(line).getByText("disk/volga/api.py:10-12")).toBeOnTheScreen();
   expect(within(line).getByText("Race")).toBeOnTheScreen();
@@ -513,10 +580,10 @@ it("renders an Arcanum-shaped discussion: pinned issues, iterations, verdict row
       .getAllByTestId(/^discussion-issue-is-[a-z]+(?:-line|-pr)?$/u)
       .map((node) => String(node.props.testID)),
   ).toEqual([
-    "discussion-issue-is-open-line",
     "discussion-issue-is-open-pr",
-    "discussion-issue-is-dropped",
+    "discussion-issue-is-open-line",
     "discussion-issue-is-resolved",
+    "discussion-issue-is-dropped",
   ]);
   expect(within(issues).getByText("resolved by arc-robot")).toBeOnTheScreen();
   expect(within(issues).getByText("dropped by olga.v")).toBeOnTheScreen();
@@ -594,19 +661,26 @@ it("addresses an issue from the pinned list with its thread id", async () => {
   });
 });
 
-it("groups nearby comments under one header and collapses a run of pushes", async () => {
+it("groups nearby comments under one header and collapses a run of pushes, newest first", async () => {
   const { view } = renderScreen({ conversation: conversationArcanum });
-  const first = await view.findByTestId("conversation-comment-ac-1");
-  const second = view.getByTestId("conversation-comment-ac-2");
+  const newest = await view.findByTestId("conversation-comment-ac-2");
+  const older = view.getByTestId("conversation-comment-ac-1");
 
-  expect(within(first).getByText("olga.v")).toBeOnTheScreen();
-  expect(within(second).queryByText("olga.v")).toBeNull();
-  expect(within(second).getByText("Pushed.")).toBeOnTheScreen();
+  // The newer comment carries the group's header; the older one continues below it.
+  expect(within(newest).getByText("olga.v")).toBeOnTheScreen();
+  expect(within(newest).getByText("Pushed.")).toBeOnTheScreen();
+  expect(within(older).queryByText("olga.v")).toBeNull();
+  expect(within(older).getByText("Fixing both now.")).toBeOnTheScreen();
 
-  const run = view.getByTestId("conversation-events-ev-1-toggle");
+  const run = view.getByTestId("conversation-events-ev-3-toggle");
   expect(run).toHaveTextContent(/3 updates pushed/u);
   expect(view.queryByTestId("conversation-event-ev-2")).toBeNull();
   fireEvent.press(run);
+  expect(
+    within(view.getByTestId("conversation-events-ev-3"))
+      .getAllByTestId(/^conversation-event-ev-\d$/u)
+      .map((node) => String(node.props.testID)),
+  ).toEqual(["conversation-event-ev-3", "conversation-event-ev-2", "conversation-event-ev-1"]);
   expect(view.getByTestId("conversation-event-ev-2")).toHaveTextContent(
     /olga\.v uploaded iteration 2/u,
   );

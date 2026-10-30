@@ -57,10 +57,26 @@ route keys and nested state while inactive.
 - `LinkedPullRequestChipProvider` supplies the composer's linked pull request chip for one mounted
   conversation from the thread-row badge store (`data/pullRequestLinkResources`, demanded during
   render; the Companion orders a thread's links by canonical review chat, then most recently
-  linked) and opens Details through `usePullRequestNavigation().openPullRequest`. The Threads
-  thread layout mounts it with no visible pull request; `PullRequestConversationPane` mounts it
-  with the route's own pull request, which its review chat therefore never offers in any split or
-  fullscreen arrangement. A phone opens that chat through Threads, where it is offered.
+  linked) and opens the chosen pull request through the mounting route's `onOpen`. The thread
+  screen's `ThreadPullRequestPaneLayout` mounts it with the pull request its side pane shows and
+  opens the chip's choice in that pane; the thread layout keeps an outer provider for child routes
+  (subagents), which opens Details in Pull requests through `usePullRequestNavigation()`.
+  `PullRequestConversationPane` mounts it with the route's own pull request, which its review chat
+  therefore never offers in any split or fullscreen arrangement. A phone opens that chat through
+  Threads, where it is offered.
+- `ThreadPullRequestPaneLayout` owns the thread route's panes: the conversation is the center
+  pane (always mounted through `WorkspaceCenterLayout`, so opening the pane never replaces it) and
+  the linked pull request is the right pane (close and fullscreen). The open pull request is the
+  thread route's `pullRequest` search param, set in place with `setParams` like desktop Search's
+  `globalSearchSessionId`, so it is per thread route and adds no history entry. Details and its
+  nested Changes view (files or guide) are pane-local state of that owner, keyed by the open pull
+  request. Android Back leaves pane fullscreen (frame), then Changes, then closes the pane, then
+  falls through to the thread's own Back. The PR's Back closes the pane; a review chat that is
+  this thread closes the pane, another chat opens through the canonical Threads URL, and a PR
+  without a review chat (or a scenario that needs its draft) opens the PR route, which owns the
+  review-chat draft. The thread layout publishes its own focus
+  (`ThreadDestinationActiveContext`), so sheet and tool routes pushed inside the thread keep the
+  pane's presence while a newer thread or the other tab does not.
 
 Routes may import these modules and feature public surfaces. Features, components, services, data
 and native owners must not import route composition or route modules; they consume narrow typed
@@ -105,8 +121,8 @@ but it does not own transport, persistence, protocol reduction or application da
 ## Three-pane model
 
 The workspace has exactly three panes, named by `workspacePanes.ts`: `left` (the catalog),
-`center` (the destination) and `right` (a side pane the destination opens, today the PR review
-chat). One frame owns one model:
+`center` (the destination) and `right` (a side pane the destination opens: the PR review chat
+beside a PR, or the linked pull request beside a thread). One frame owns one model:
 
 - `WorkspacePaneFrame` creates the frame's `WorkspacePaneOwner` (the fullscreen request and the
   active right pane's key) and the motion window, resolves the single published
@@ -138,8 +154,9 @@ chat). One frame owns one model:
   declared actions against the visibility (fullscreen only where panes sit side by side) and
   returns its menu items and close; whatever draws that pane's header renders them. Undeclared
   actions never appear and cannot be triggered. Today the catalogs declare nothing, the PR center
-  declares fullscreen (its app-bar toggle) and the review chat declares close and fullscreen
-  (shown in the conversation's single thread menu). Widen/Narrow is not a capability: center and
+  declares fullscreen (its app-bar toggle), the review chat declares close and fullscreen
+  (shown in the conversation's single thread menu) and a thread's pull request pane declares
+  close (its app-bar Back) and fullscreen (its app-bar toggle). Widen/Narrow is not a capability: center and
   right always split equally.
 
 ## Compatibility and lifetimes

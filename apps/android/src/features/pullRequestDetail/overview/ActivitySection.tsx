@@ -18,8 +18,10 @@ function activityHeadline(item: ActivityItem): string {
 }
 
 /**
- * Recent forge activity: metadata stays plain while the untrusted body uses the
- * same safe complete-document renderer as conversation responses.
+ * Recent forge activity, newest first as the plugin pages it, with "Show more
+ * activity" at the end loading older items. Metadata stays plain while the
+ * untrusted body uses the same safe complete-document renderer as conversation
+ * responses.
  * Actions anchored to a review thread sit in that item's header.
  */
 export function ActivitySection({

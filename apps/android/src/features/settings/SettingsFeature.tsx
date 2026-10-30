@@ -18,6 +18,7 @@ import type { VoiceAssistantModelCatalog } from "../../data/voiceAssistantModelC
 import { hasCustomVoiceAssistantPersonality } from "../../data/voiceAssistantPersonality";
 import { useEvent } from "../../react/useEvent";
 import { PerformanceDiagnostics } from "../diagnostics/PerformanceDiagnostics";
+import { PeleDiagramRendererSettings } from "./PeleDiagramRendererSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { ChatSettings } from "./ChatSettings";
 import { SettingsSection, SettingsSheet } from "./SettingsSheet";
@@ -141,6 +142,7 @@ export function ConnectionSettings({
       advanced={
         <>
           <SettingsSection title="Experiments">
+            <PeleDiagramRendererSettings />
             <TimelineRowMeasurementSettings />
           </SettingsSection>
           <SettingsSection title="Diagnostics">

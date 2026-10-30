@@ -306,6 +306,17 @@ pub enum PatchWire {
     NotProvided,
 }
 
+/// `companion/pullRequest/fileContent/read`: one complete file at a head
+/// revision. `text` is valid UTF-8 without NUL and at most 1 MiB.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum FileContentWire {
+    Text { content: String },
+    TooLarge { bytes: Option<u64> },
+    Binary,
+    Missing,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileWire {

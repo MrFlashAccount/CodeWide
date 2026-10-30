@@ -413,6 +413,10 @@ pub struct ActivityItem {
     pub verdict_label: Option<String>,
 }
 
+/// `forge.pullRequest.activity`: items newest first by `created_at` within
+/// a page; the first page holds the newest items and `next_cursor`
+/// continues to older ones (a review-thread reply may stay on the page of
+/// its thread's first comment).
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityPage {
@@ -1150,7 +1154,9 @@ impl ConversationEntry {
     }
 }
 
-/// `forge.pullRequest.conversation`: entries oldest first.
+/// `forge.pullRequest.conversation`: entries newest first by
+/// [`ConversationEntry::created_at`] across pages; the first page holds the
+/// newest entries and `next_cursor` continues to older ones.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationPage {
@@ -1206,6 +1212,76 @@ pub struct ReviewThreadReplyParams {
 pub struct CommentResult {
     pub comment: Comment,
 }
+
+/// `forge.pullRequest.fileContent`: one file of a pull request at one of its
+/// head revisions (the head SHA on GitHub, the diff-set id on Arcanum).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContentParams {
+    pub account: ForgeAccountRef,
+    #[serde(rename = "ref")]
+    pub pr_ref: ForgePrRef,
+    /// The head revision the file is read at. Content at a revision never
+    /// changes, so a plugin need not check that it is still the head.
+    pub head_revision: String,
+    /// A repository-relative path of the head side, `/`-separated, without
+    /// empty, `.` or `..` segments.
+    pub path: String,
+}
+
+/// The result of `forge.pullRequest.fileContent`.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum FileContent {
+    /// The complete file: valid UTF-8 without NUL, at most
+    /// [`MAX_FILE_CONTENT_BYTES`] bytes.
+    Text { content: String },
+    /// Larger than [`MAX_FILE_CONTENT_BYTES`]; `bytes` when the size is known.
+    TooLarge { bytes: Option<u64> },
+    /// Not text: it contains NUL or is not valid UTF-8.
+    Binary,
+    /// No file at this path and revision (removed, a directory, a submodule).
+    Missing,
+}
+
+impl FileContent {
+    /// Classifies a file's complete bytes by the protocol rules: above
+    /// [`MAX_FILE_CONTENT_BYTES`] is `tooLarge`, NUL or invalid UTF-8 is
+    /// `binary`, anything else is `text`.
+    #[must_use]
+    pub fn classify(bytes: Vec<u8>) -> Self {
+        if bytes.len() > MAX_FILE_CONTENT_BYTES {
+            return Self::TooLarge {
+                bytes: u64::try_from(bytes.len()).ok(),
+            };
+        }
+        if bytes.contains(&0) {
+            return Self::Binary;
+        }
+        String::from_utf8(bytes).map_or(Self::Binary, |content| Self::Text { content })
+    }
+}
+
+/// Whether `path` is a repository-relative file path `forge.pullRequest.fileContent`
+/// accepts: at most 4 096 bytes, no NUL or other control character, and only
+/// non-empty segments other than `.` and `..`.
+#[must_use]
+pub fn valid_file_path(path: &str) -> bool {
+    path.len() <= MAX_FILE_PATH_BYTES
+        && !path.chars().any(char::is_control)
+        && path
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
+/// The largest text `forge.pullRequest.fileContent` returns, in UTF-8 bytes.
+pub const MAX_FILE_CONTENT_BYTES: usize = 1024 * 1024;
+/// The longest path `forge.pullRequest.fileContent` accepts, in bytes.
+pub const MAX_FILE_PATH_BYTES: usize = 4_096;
 
 /// The largest media body `forge.media.read` returns; larger media are
 /// refused with an explicit error.
@@ -1451,6 +1527,71 @@ mod tests {
         assert_eq!(serde_json::to_value(media).expect("encodes"), values[2]);
         let read = serde_json::from_value::<MediaReadResult>(values[3].clone()).expect("read");
         assert_eq!(serde_json::to_value(read).expect("encodes"), values[3]);
+    }
+
+    #[test]
+    fn file_content_round_trips_every_state() {
+        let params = json!({"account": {"host": "github.com", "login": "octocat"},
+                            "ref": {"host": "github.com", "repository": "o/r", "number": "1"},
+                            "headRevision": "abc", "path": "src/a.rs"});
+        let parsed = serde_json::from_value::<FileContentParams>(params.clone()).expect("params");
+        assert_eq!(serde_json::to_value(parsed).expect("encodes"), params);
+        for value in [
+            json!({"state": "text", "content": "fn main() {}\n"}),
+            json!({"state": "tooLarge", "bytes": 2_000_000}),
+            json!({"state": "tooLarge", "bytes": null}),
+            json!({"state": "binary"}),
+            json!({"state": "missing"}),
+        ] {
+            let parsed = serde_json::from_value::<FileContent>(value.clone()).expect("parses");
+            assert_eq!(serde_json::to_value(parsed).expect("encodes"), value);
+        }
+        assert!(serde_json::from_value::<FileContent>(json!({"state": "text"})).is_err());
+        assert!(serde_json::from_value::<FileContent>(json!({"state": "unknown"})).is_err());
+    }
+
+    #[test]
+    fn file_content_classification_bounds_text_and_detects_binary() {
+        assert_eq!(
+            FileContent::classify(b"line\n".to_vec()),
+            FileContent::Text {
+                content: "line\n".into()
+            }
+        );
+        assert_eq!(
+            FileContent::classify(vec![b'a', 0, b'b']),
+            FileContent::Binary
+        );
+        assert_eq!(FileContent::classify(vec![0xff, 0xfe]), FileContent::Binary);
+        let at_bound = vec![b'a'; MAX_FILE_CONTENT_BYTES];
+        assert!(matches!(
+            FileContent::classify(at_bound),
+            FileContent::Text { content } if content.len() == MAX_FILE_CONTENT_BYTES
+        ));
+        assert_eq!(
+            FileContent::classify(vec![b'a'; MAX_FILE_CONTENT_BYTES + 1]),
+            FileContent::TooLarge {
+                bytes: Some(u64::try_from(MAX_FILE_CONTENT_BYTES + 1).expect("fits"))
+            }
+        );
+    }
+
+    #[test]
+    fn file_paths_refuse_traversal_and_empty_segments() {
+        for valid in [
+            "a.rs",
+            "src/a b.rs",
+            "docs/ünïcode.md",
+            ".github/workflows/ci.yml",
+        ] {
+            assert!(valid_file_path(valid), "{valid}");
+        }
+        for invalid in [
+            "", "/a.rs", "a//b", "a/", "../a", "a/../b", "./a", "a/.", "a\0b", "a\nb",
+        ] {
+            assert!(!valid_file_path(invalid), "{invalid:?}");
+        }
+        assert!(!valid_file_path(&"a".repeat(MAX_FILE_PATH_BYTES + 1)));
     }
 
     #[test]

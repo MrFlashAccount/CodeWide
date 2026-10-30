@@ -74,6 +74,7 @@ let wrapLines = false;
 let tree: FileTree | null = null;
 let treePathToFile = new Map<string, CodeReviewFileItem>();
 let selectedTreePath: string | null = null;
+let currentReviewSignature = "";
 let fileRenderer: PierreFile<AnnotationMetadata> | null = null;
 let diffRenderer: FileDiff<AnnotationMetadata> | null = null;
 let activeFileRenderer: PierreFile<AnnotationMetadata> | null = null;
@@ -106,6 +107,28 @@ const treeTheme = {
   type: "dark",
 } satisfies TreeThemeInput;
 const treeThemeStyles = themeToTreeStyles(treeTheme);
+/** Status glyphs drawn as boxed icons (plus, dot, minus, arrow) instead of Pierre's letters. */
+const STATUS_ICON_PATHS: Readonly<Record<"added" | "deleted" | "modified" | "renamed", string>> = {
+  added:
+    "<path d='M8 4.75v6.5M4.75 8h6.5' stroke='black' stroke-width='1.5' stroke-linecap='round'/>",
+  deleted: "<path d='M4.75 8h6.5' stroke='black' stroke-width='1.5' stroke-linecap='round'/>",
+  modified: "<circle cx='8' cy='8' r='2.25' fill='black'/>",
+  renamed:
+    "<path d='M4.5 8h6.25M8.5 5.5 11 8l-2.5 2.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/>",
+};
+
+function statusIconMask(inner: string): string {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='1.75' y='1.75' width='12.5' height='12.5' rx='3' fill='none' stroke='black' stroke-width='1.5'/>${inner}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
+const STATUS_ICON_CSS = Object.entries(STATUS_ICON_PATHS)
+  .map(
+    ([status, inner]) =>
+      `[data-item-git-status="${status}"] [data-item-section="git"] { --review-status-icon: ${statusIconMask(inner)}; }`,
+  )
+  .join("\n");
+
 const TOUCH_FILE_TREE_CSS = `
 @media (hover: none), (pointer: coarse) {
   [data-type="item"]:hover:not([data-item-selected="true"]) {
@@ -126,6 +149,25 @@ const TOUCH_FILE_TREE_CSS = `
     opacity: 0;
   }
 }
+
+[data-item-git-status] [data-item-section="git"] {
+  font-size: 0;
+  min-width: 16px;
+  overflow: visible;
+}
+
+[data-item-git-status] [data-item-section="git"]::before {
+  content: "";
+  display: inline-block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  background-color: currentColor;
+  -webkit-mask: var(--review-status-icon) center / contain no-repeat;
+  mask: var(--review-status-icon) center / contain no-repeat;
+}
+
+${STATUS_ICON_CSS}
 `;
 
 const treeHost = requiredElement("tree");
@@ -278,6 +320,7 @@ function updateWorkspace(payload: CodeReviewWorkspaceState): void {
   } else {
     instance.setGitStatus(gitStatus(payload.files));
   }
+  refreshReviewDecorations(instance, payload.files);
   selectTreeFile(payload.selectedPath, pathsChanged);
   if (currentDocument === null) {
     renderCurrentDocument();
@@ -321,16 +364,18 @@ function ensureTree(payload: CodeReviewWorkspaceState): FileTree {
       if (file.sourceOnly === true) {
         return { parts: [{ color: "#8b949e", text: "Attachment" }], text: "Attachment" };
       }
+      if (file.review !== undefined) {
+        // PR rows keep the lane for review state; counts live in the file toolbar.
+        const review = reviewDecoration(file.review);
+        return review.length === 0 ? null : decorationText(review);
+      }
       if (file.countsAreNet === false) {
         return null;
       }
-      return {
-        parts: [
-          { color: "#3fb950", text: `+${String(file.additions)}` },
-          { color: "#f85149", text: ` −${String(file.deletions)}` },
-        ],
-        text: `+${String(file.additions)} −${String(file.deletions)}`,
-      };
+      return decorationText([
+        { color: "#3fb950", text: `+${String(file.additions)}` },
+        { color: "#f85149", text: ` −${String(file.deletions)}` },
+      ]);
     },
     search: true,
     stickyFolders: false,
@@ -344,6 +389,49 @@ function ensureTree(payload: CodeReviewWorkspaceState): FileTree {
     }
   }
   return tree;
+}
+
+type DecorationPart = { readonly color: string; readonly text: string };
+
+/** `✎2 ✓`: pending drafts and the viewed mark of a PR file. */
+function reviewDecoration(review: NonNullable<CodeReviewFileItem["review"]>): DecorationPart[] {
+  const parts: DecorationPart[] = [];
+  if (review.drafts > 0) {
+    parts.push({ color: "#78a9ff", text: `✎${String(review.drafts)}` });
+  }
+  if (review.viewed) {
+    parts.push({ color: "#3fb950", text: parts.length === 0 ? "✓" : " ✓" });
+  }
+  return parts;
+}
+
+/** Redraws row decorations when a viewed mark or draft count changed. */
+function refreshReviewDecorations(instance: FileTree, files: readonly CodeReviewFileItem[]): void {
+  const nextReviewSignature = reviewSignature(files);
+  if (nextReviewSignature === currentReviewSignature) {
+    return;
+  }
+  currentReviewSignature = nextReviewSignature;
+  // Row decorations read the file map lazily; re-rendering the root redraws them
+  // without resetting paths, expansion or scroll.
+  instance.setComposition(instance.getComposition());
+}
+
+function reviewSignature(files: readonly CodeReviewFileItem[]): string {
+  return files
+    .map((file) =>
+      file.review === undefined
+        ? ""
+        : `${file.treePath}:${String(file.review.drafts)}:${file.review.viewed ? "1" : "0"}`,
+    )
+    .join("|");
+}
+
+function decorationText(parts: readonly DecorationPart[]): {
+  parts: readonly DecorationPart[];
+  text: string;
+} {
+  return { parts, text: parts.map((part) => part.text).join("") };
 }
 
 function gitStatus(files: readonly CodeReviewFileItem[]): GitStatusEntry[] {

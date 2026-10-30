@@ -1,13 +1,14 @@
 //! `forge.pullRequest.conversation`: issue comments, reviews, selected
 //! timeline events and review threads of one pull request, read with
-//! GitHub GraphQL and merged oldest first.
+//! GitHub GraphQL and merged newest first.
 //!
 //! Two GitHub connections feed one page: the timeline (comments, reviews,
-//! events) and the review threads. Each page reads at most
-//! [`TIMELINE_PAGE`] timeline items and [`THREADS_PAGE`] threads, then emits
-//! only the entries up to the earliest `createdAt` at which a connection with
-//! more pages stopped, so concatenated pages stay in global order. The
-//! opaque cursor records where each connection resumes.
+//! events) and the review threads. Both are read backwards (`last`/`before`)
+//! from their newest item. Each page reads at most [`TIMELINE_PAGE`] timeline
+//! items and [`THREADS_PAGE`] threads, then emits only the entries down to
+//! the latest `createdAt` at which a connection with older pages stopped, so
+//! concatenated pages stay in global newest-first order. The opaque cursor
+//! records where each connection resumes towards older items.
 //!
 //! A thread carries at most [`MAX_THREAD_COMMENTS`] comments, oldest first:
 //! the first [`THREAD_COMMENTS_PAGE`] arrive with the thread and longer
@@ -51,12 +52,12 @@ fn page_query() -> String {
     let actor = "actor { __typename login avatarUrl }";
     let comment = review_comment_fields();
     format!(
-        r"query($owner: String!, $name: String!, $number: Int!, $timelineAfter: String, $threadsAfter: String, $withTimeline: Boolean!, $withThreads: Boolean!) {{
+        r"query($owner: String!, $name: String!, $number: Int!, $timelineBefore: String, $threadsBefore: String, $withTimeline: Boolean!, $withThreads: Boolean!) {{
   repository(owner: $owner, name: $name) {{
     isPrivate
     pullRequest(number: $number) {{
-      timelineItems(first: {TIMELINE_PAGE}, after: $timelineAfter, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT]) @include(if: $withTimeline) {{
-        pageInfo {{ hasNextPage }}
+      timelineItems(last: {TIMELINE_PAGE}, before: $timelineBefore, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT]) @include(if: $withTimeline) {{
+        pageInfo {{ hasPreviousPage }}
         edges {{ cursor node {{
           __typename
           ... on IssueComment {{ id {AUTHOR} createdAt lastEditedAt body bodyHTML url {REACTIONS} }}
@@ -70,8 +71,8 @@ fn page_query() -> String {
           ... on ReviewRequestedEvent {{ id {actor} createdAt requestedReviewer {{ ... on User {{ login }} ... on Team {{ name }} ... on Mannequin {{ login }} }} }}
         }} }}
       }}
-      reviewThreads(first: {THREADS_PAGE}, after: $threadsAfter) @include(if: $withThreads) {{
-        pageInfo {{ hasNextPage }}
+      reviewThreads(last: {THREADS_PAGE}, before: $threadsBefore) @include(if: $withThreads) {{
+        pageInfo {{ hasPreviousPage }}
         edges {{ cursor node {{
           id path line startLine diffSide isResolved isOutdated viewerCanReply
           comments(first: {THREAD_COMMENTS_PAGE}) {{ pageInfo {{ hasNextPage endCursor }} nodes {{ {comment} pullRequestReview {{ id }} }} }}
@@ -96,12 +97,13 @@ fn thread_comments_query() -> String {
     )
 }
 
-/// Where one connection resumes.
+/// Where one connection resumes: from its newest item, before the oldest
+/// item already emitted, or nowhere.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "state", rename_all = "camelCase")]
 enum Phase {
     Start,
-    After { cursor: String },
+    Before { cursor: String },
     Done,
 }
 
@@ -110,9 +112,9 @@ impl Phase {
         !matches!(self, Self::Done)
     }
 
-    fn after(&self) -> Option<&str> {
+    fn before(&self) -> Option<&str> {
         match self {
-            Self::After { cursor } => Some(cursor),
+            Self::Before { cursor } => Some(cursor),
             Self::Start | Self::Done => None,
         }
     }
@@ -162,10 +164,11 @@ struct Edge {
     entry: Option<ConversationEntry>,
 }
 
-/// One read connection.
+/// One read connection, its edges newest first.
 struct Batch {
     edges: Vec<Edge>,
-    has_next: bool,
+    /// The connection has older items than the oldest edge.
+    has_older: bool,
 }
 
 /// # Errors
@@ -185,8 +188,8 @@ pub async fn conversation(
                 "owner": target.repo.owner,
                 "name": target.repo.name,
                 "number": target.number,
-                "timelineAfter": cursor.timeline.after(),
-                "threadsAfter": cursor.threads.after(),
+                "timelineBefore": cursor.timeline.before(),
+                "threadsBefore": cursor.threads.before(),
                 "withTimeline": cursor.timeline.wants_read(),
                 "withThreads": cursor.threads.wants_read(),
             }),
@@ -214,6 +217,8 @@ pub async fn conversation(
     Ok(merge(&cursor, timeline, threads))
 }
 
+/// The edges of a backwards page arrive oldest first; the batch keeps them
+/// newest first.
 fn batch(connection: Option<&Value>, map: impl Fn(&Value) -> Option<ConversationEntry>) -> Batch {
     let edges = connection
         .and_then(|connection| connection.get("edges"))
@@ -223,6 +228,7 @@ fn batch(connection: Option<&Value>, map: impl Fn(&Value) -> Option<Conversation
     Batch {
         edges: edges
             .iter()
+            .rev()
             .filter_map(|edge| {
                 let cursor = edge.get("cursor")?.as_str()?.to_owned();
                 let node = edge.get("node")?;
@@ -238,8 +244,8 @@ fn batch(connection: Option<&Value>, map: impl Fn(&Value) -> Option<Conversation
                 })
             })
             .collect(),
-        has_next: connection
-            .and_then(|connection| connection.pointer("/pageInfo/hasNextPage"))
+        has_older: connection
+            .and_then(|connection| connection.pointer("/pageInfo/hasPreviousPage"))
             .and_then(Value::as_bool)
             .unwrap_or(false),
     }
@@ -308,22 +314,22 @@ async fn complete_threads(
     Ok(())
 }
 
-/// Emits the entries up to the earliest point at which a connection with
-/// more pages stopped, oldest first, and records where each connection
+/// Emits the entries down to the latest point at which a connection with
+/// older pages stopped, newest first, and records where each connection
 /// resumes.
 fn merge(cursor: &PageCursor, timeline: Option<Batch>, threads: Option<Batch>) -> ConversationPage {
     let cut = [&timeline, &threads]
         .into_iter()
         .flatten()
-        .filter(|batch| batch.has_next)
+        .filter(|batch| batch.has_older)
         .filter_map(|batch| batch.edges.last().map(|edge| edge.created_at.clone()))
-        .min();
+        .max();
     let consumed = |batch: &Batch| match &cut {
         None => batch.edges.len(),
         Some(cut) => batch
             .edges
             .iter()
-            .take_while(|edge| edge.created_at <= *cut)
+            .take_while(|edge| edge.created_at >= *cut)
             .count(),
     };
     let mut taken = [
@@ -335,7 +341,7 @@ fn merge(cursor: &PageCursor, timeline: Option<Batch>, threads: Option<Batch>) -
         // take the whole batch that defined the cut.
         for (index, batch) in [&timeline, &threads].into_iter().enumerate() {
             if let Some(batch) = batch
-                && batch.has_next
+                && batch.has_older
                 && cut.as_deref() == batch.edges.last().map(|edge| edge.created_at.as_str())
             {
                 taken[index] = batch.edges.len();
@@ -347,13 +353,13 @@ fn merge(cursor: &PageCursor, timeline: Option<Batch>, threads: Option<Batch>) -
         timeline: resume(&cursor.timeline, timeline.as_ref(), taken[0]),
         threads: resume(&cursor.threads, threads.as_ref(), taken[1]),
     };
-    let mut entries: Vec<ConversationEntry> = [(timeline, taken[0]), (threads, taken[1])]
+    let mut entries: Vec<ConversationEntry> = [(threads, taken[1]), (timeline, taken[0])]
         .into_iter()
         .filter_map(|(batch, count)| batch.map(|batch| (batch, count)))
         .flat_map(|(batch, count)| batch.edges.into_iter().take(count))
         .filter_map(|edge| edge.entry)
         .collect();
-    entries.sort_by(|left, right| left.created_at().cmp(right.created_at()));
+    entries.sort_by(|left, right| right.created_at().cmp(left.created_at()));
     ConversationPage {
         entries,
         next_cursor: next.encode(),
@@ -366,11 +372,11 @@ fn resume(previous: &Phase, batch: Option<&Batch>, taken: usize) -> Phase {
     let Some(batch) = batch else {
         return previous.clone();
     };
-    if taken == batch.edges.len() && !batch.has_next {
+    if taken == batch.edges.len() && !batch.has_older {
         return Phase::Done;
     }
     match taken.checked_sub(1).and_then(|last| batch.edges.get(last)) {
-        Some(edge) => Phase::After {
+        Some(edge) => Phase::Before {
             cursor: edge.cursor.clone(),
         },
         None => previous.clone(),
@@ -663,10 +669,11 @@ mod tests {
         ])
     }
 
-    fn fixture_page(has_next_timeline: bool, has_next_threads: bool) -> Value {
+    /// A backwards page as GitHub sends it: the newest items, oldest first.
+    fn fixture_page(older_timeline: bool, older_threads: bool) -> Value {
         json!({
             "timelineItems": {
-                "pageInfo": {"hasNextPage": has_next_timeline},
+                "pageInfo": {"hasPreviousPage": older_timeline},
                 "edges": [
                     {"cursor": "t1", "node": {"__typename": "IssueComment", "id": "IC_1",
                         "author": {"__typename": "User", "login": "octocat", "avatarUrl": "https://avatars.githubusercontent.com/u/1"},
@@ -692,7 +699,7 @@ mod tests {
                 ]
             },
             "reviewThreads": {
-                "pageInfo": {"hasNextPage": has_next_threads},
+                "pageInfo": {"hasPreviousPage": older_threads},
                 "edges": [
                     {"cursor": "r1", "node": {"id": "PRRT_1", "path": "src/a.rs", "line": 42, "startLine": 40,
                         "diffSide": "RIGHT", "isResolved": true, "isOutdated": false, "viewerCanReply": true,
@@ -736,28 +743,30 @@ mod tests {
         )
     }
 
-    #[test]
-    fn maps_comments_reviews_threads_and_events_oldest_first() {
-        let result = page(&fixture_page(false, false), &PageCursor::FIRST);
-        let ids: Vec<&str> = result
-            .entries
+    fn ids(page: &ConversationPage) -> Vec<&str> {
+        page.entries
             .iter()
             .map(|entry| match entry {
                 ConversationEntry::Comment { comment } => comment.id.as_str(),
                 ConversationEntry::Review { id, .. } | ConversationEntry::Event { id, .. } => id,
                 ConversationEntry::ReviewThread { thread } => thread.id.as_str(),
             })
-            .collect();
+            .collect()
+    }
+
+    #[test]
+    fn maps_comments_reviews_threads_and_events_newest_first() {
+        let result = page(&fixture_page(false, false), &PageCursor::FIRST);
         // The body-less COMMENTED review is skipped: its comments live in threads.
         assert_eq!(
-            ids,
+            ids(&result),
             [
-                "IC_1", "PRRT_1", "PRR_1", "PRRT_2", "ME_1", "RRE_1", "PRRT_3"
+                "PRRT_3", "RRE_1", "ME_1", "PRRT_2", "PRR_1", "PRRT_1", "IC_1"
             ]
         );
         assert_eq!(result.next_cursor, None);
-        let ConversationEntry::Comment { comment } = &result.entries[0] else {
-            panic!("comment first");
+        let ConversationEntry::Comment { comment } = &result.entries[6] else {
+            panic!("comment last");
         };
         assert_eq!(comment.updated_at.as_deref(), Some("2026-10-01T00:05:00Z"));
         assert!(comment.author.avatar_direct);
@@ -790,19 +799,19 @@ mod tests {
                 },
             ]
         );
-        let ConversationEntry::Review { verdict, body, .. } = &result.entries[2] else {
-            panic!("review third");
+        let ConversationEntry::Review { verdict, body, .. } = &result.entries[4] else {
+            panic!("review fifth");
         };
         assert_eq!(*verdict, ReviewVerdict::ChangesRequested);
         let body = body.as_ref().expect("review body");
         assert_eq!(body.body, "Please fix the parser.");
         assert_eq!(body.created_at, "2026-10-01T01:00:00Z");
         assert!(
-            matches!(&result.entries[4], ConversationEntry::Event { text, author: Some(actor), category: EventCategory::State, .. }
+            matches!(&result.entries[2], ConversationEntry::Event { text, author: Some(actor), category: EventCategory::State, .. }
             if text == "merged commit abc1234 into main" && actor.login == "merge-bot" && actor.kind == AuthorKind::Bot)
         );
         assert!(
-            matches!(&result.entries[5], ConversationEntry::Event { text, author: None, category: EventCategory::Other, .. }
+            matches!(&result.entries[1], ConversationEntry::Event { text, author: None, category: EventCategory::Other, .. }
             if text == "requested a review from core")
         );
     }
@@ -810,8 +819,8 @@ mod tests {
     #[test]
     fn maps_threads_to_anchors_resolutions_and_their_reviews() {
         let result = page(&fixture_page(false, false), &PageCursor::FIRST);
-        let ConversationEntry::ReviewThread { thread } = &result.entries[1] else {
-            panic!("thread second");
+        let ConversationEntry::ReviewThread { thread } = &result.entries[5] else {
+            panic!("thread sixth");
         };
         assert!(!thread.outdated && thread.viewer_can_reply);
         assert_eq!(
@@ -833,7 +842,15 @@ mod tests {
             "the thread links to the review its first comment was published with"
         );
         assert_eq!(thread.iteration, None);
-        assert_eq!(thread.comments.len(), 2);
+        assert_eq!(
+            thread
+                .comments
+                .iter()
+                .map(|comment| comment.id.as_str())
+                .collect::<Vec<_>>(),
+            ["PRRC_1", "PRRC_2"],
+            "a thread's own comments stay oldest first"
+        );
         assert_eq!(thread.comments[1].author.login, "ghost");
         assert_eq!(thread.comments[0].updated_at, None);
         let ConversationEntry::ReviewThread { thread: outdated } = &result.entries[3] else {
@@ -852,7 +869,7 @@ mod tests {
             ThreadResolution::Conversation { resolved: false }
         );
         assert_eq!(outdated.review_id, None);
-        let ConversationEntry::ReviewThread { thread: single } = &result.entries[6] else {
+        let ConversationEntry::ReviewThread { thread: single } = &result.entries[0] else {
             panic!("single-line thread");
         };
         assert!(matches!(
@@ -868,34 +885,39 @@ mod tests {
     }
 
     #[test]
-    fn pages_stop_at_the_earliest_unfinished_connection_and_resume_in_order() {
-        // Threads have more pages and stopped at 07:00; the timeline is done.
+    fn pages_stop_at_the_latest_unfinished_connection_and_resume_towards_older_items() {
+        // Threads have older pages and stopped at 00:30; the timeline has
+        // none: its 00:00 comment waits for the next page.
         let first = page(&fixture_page(false, true), &PageCursor::FIRST);
-        assert_eq!(first.entries.len(), 7);
-        let cursor = PageCursor::decode(first.next_cursor.as_deref()).expect("cursor");
-        assert_eq!(cursor.timeline, Phase::Done);
         assert_eq!(
-            cursor.threads,
-            Phase::After {
-                cursor: "r3".into()
+            ids(&first),
+            ["PRRT_3", "RRE_1", "ME_1", "PRRT_2", "PRR_1", "PRRT_1"]
+        );
+        let cursor = PageCursor::decode(first.next_cursor.as_deref()).expect("cursor");
+        assert_eq!(
+            cursor.timeline,
+            Phase::Before {
+                cursor: "t2".into()
             }
         );
-        // Timeline has more and stopped at 06:00: the 07:00 thread waits.
+        assert_eq!(
+            cursor.threads,
+            Phase::Before {
+                cursor: "r1".into()
+            }
+        );
+        // The timeline has older pages and stopped at 00:00, below every
+        // thread: everything read is emitted and the threads are done.
         let second = page(&fixture_page(true, false), &PageCursor::FIRST);
-        assert_eq!(second.entries.len(), 6);
+        assert_eq!(second.entries.len(), 7);
         let cursor = PageCursor::decode(second.next_cursor.as_deref()).expect("cursor");
         assert_eq!(
             cursor.timeline,
-            Phase::After {
-                cursor: "t5".into()
+            Phase::Before {
+                cursor: "t1".into()
             }
         );
-        assert_eq!(
-            cursor.threads,
-            Phase::After {
-                cursor: "r2".into()
-            }
-        );
+        assert_eq!(cursor.threads, Phase::Done);
         // A finished pair of connections ends the conversation.
         let done = PageCursor {
             timeline: Phase::Done,
@@ -903,6 +925,42 @@ mod tests {
         };
         assert_eq!(page(&Value::Null, &done), ConversationPage::default());
         assert!(PageCursor::decode(Some("not a cursor")).is_err());
+    }
+
+    #[test]
+    fn concatenated_pages_stay_newest_first_across_connections() {
+        // The older remainder of both connections, read before the first
+        // page's cursor: a thread and a comment older than everything above.
+        let first = page(&fixture_page(false, true), &PageCursor::FIRST);
+        let resume = PageCursor::decode(first.next_cursor.as_deref()).expect("cursor");
+        let older = json!({
+            "timelineItems": {"pageInfo": {"hasPreviousPage": false}, "edges": [
+                {"cursor": "t1", "node": {"__typename": "IssueComment", "id": "IC_1",
+                    "author": {"login": "octocat"}, "createdAt": "2026-10-01T00:00:00Z",
+                    "body": "First", "reactionGroups": []}}
+            ]},
+            "reviewThreads": {"pageInfo": {"hasPreviousPage": false}, "edges": [
+                {"cursor": "r0", "node": {"id": "PRRT_0", "path": "src/z.rs", "line": 1,
+                    "diffSide": "RIGHT", "isResolved": false, "isOutdated": false, "viewerCanReply": true,
+                    "comments": {"pageInfo": {"hasNextPage": false}, "nodes": [
+                        {"id": "PRRC_0", "author": {"login": "rev"}, "createdAt": "2026-09-30T00:00:00Z",
+                         "body": "Earliest", "reactionGroups": []}
+                    ]}}}
+            ]}
+        });
+        let second = page(&older, &resume);
+        assert_eq!(ids(&second), ["IC_1", "PRRT_0"]);
+        assert_eq!(second.next_cursor, None);
+        let all: Vec<&str> = first
+            .entries
+            .iter()
+            .chain(&second.entries)
+            .map(ConversationEntry::created_at)
+            .collect();
+        assert!(
+            all.windows(2).all(|pair| pair[0] >= pair[1]),
+            "pages concatenate newest first: {all:?}"
+        );
     }
 
     #[test]

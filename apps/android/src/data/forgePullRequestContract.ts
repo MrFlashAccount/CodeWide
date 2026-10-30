@@ -83,7 +83,7 @@ export type ActivityItem = {
   readonly verdictLabel: string | null;
 };
 
-/** One page of activity. */
+/** One page of activity, newest first; `nextCursor` continues to older items. */
 export type ActivityPage = {
   readonly items: readonly ActivityItem[];
   readonly nextCursor: string | null;
