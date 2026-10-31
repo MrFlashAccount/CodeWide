@@ -1,31 +1,31 @@
 import { Pressable, Text, View } from "react-native";
 
-import type { WorkspacePaneChrome } from "../../src/routeComposition/workspacePanes";
+import { useThreePanels } from "../../src/ui/threePanels";
 
 /**
- * Renders a pane's layout-resolved chrome the way a pane header does: one button per declared
- * menu item and the pane's close, so route tests can drive pane actions without the conversation.
+ * Renders the pane chrome `ThreePanelsContext` publishes the way a pane header does: the fullscreen
+ * toggle and the pane's close, so route tests can drive pane actions without the real content.
  */
 export function PaneChromeControls({
-  chrome,
   name,
 }: {
-  readonly chrome: WorkspacePaneChrome;
-  /** Names the pane in control labels: `<name> menu: <item>` and `Close <name>`. */
+  /** Names the pane in control labels: `Open <name> fullscreen` and `Close <name>`. */
   readonly name: string;
 }): React.JSX.Element {
+  const { chrome } = useThreePanels();
   return (
     <View testID={`${name} chrome`}>
-      {chrome.menuItems.map((item) => (
+      {chrome.toggleFullscreen === null ? null : (
         <Pressable
-          accessibilityLabel={`${name} menu: ${item.label}`}
+          accessibilityLabel={
+            chrome.fullscreen ? `Exit ${name} fullscreen` : `Open ${name} fullscreen`
+          }
           accessibilityRole="button"
-          key={item.id}
-          onPress={item.onSelect}
+          onPress={chrome.toggleFullscreen}
         >
-          <Text>{item.label}</Text>
+          <Text>Fullscreen</Text>
         </Pressable>
-      ))}
+      )}
       {chrome.close === null ? null : (
         <Pressable
           accessibilityLabel={`Close ${name}`}

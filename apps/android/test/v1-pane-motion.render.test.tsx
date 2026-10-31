@@ -19,7 +19,6 @@ import {
 import { COVERED_CATALOG_OPACITY } from "../src/routeComposition/paneMotionSpec";
 import { WorkspaceCenterLayout } from "../src/routeComposition/WorkspaceCenterLayout";
 import { WorkspacePaneFrame } from "../src/routeComposition/WorkspacePaneFrame";
-import { useWorkspacePaneChrome } from "../src/routeComposition/workspacePanes";
 import { colors, radii } from "../src/theme";
 import { MessageListBoundary } from "../src/ui/MessageListBoundary";
 import { SurfaceToneProvider } from "../src/ui/surfaceTone";
@@ -243,11 +242,10 @@ describe("starting a rearrangement on the UI thread", () => {
 });
 
 function PaneContent({ name }: { readonly name: string }): React.JSX.Element {
-  const chrome = useWorkspacePaneChrome();
   return (
     <View>
       <Text testID={`${name}-content`}>{name}</Text>
-      <PaneChromeControls chrome={chrome} name={name} />
+      <PaneChromeControls name={name} />
     </View>
   );
 }
@@ -294,13 +292,13 @@ describe("pane motion in the frame", () => {
       const spring = jest.spyOn(Reanimated, "withSpring");
       const view = render(<Workspace />);
       spring.mockClear();
-      fireEvent.press(view.getByLabelText("right menu: Fullscreen"));
+      fireEvent.press(view.getByLabelText("Open right fullscreen"));
       if (reduced) {
         expect(spring).not.toHaveBeenCalled();
       } else {
         expect(spring).toHaveBeenCalled();
       }
-      expect(view.getByLabelText("right menu: Exit fullscreen")).toBeVisible();
+      expect(view.getByLabelText("Exit right fullscreen")).toBeVisible();
       view.unmount();
       spring.mockRestore();
     }

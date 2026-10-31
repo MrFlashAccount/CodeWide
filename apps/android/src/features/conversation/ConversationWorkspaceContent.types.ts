@@ -17,7 +17,6 @@ import type { ConversationDetailSnapshot } from "./conversationCapabilities";
 import type { createConversationScopeBindings } from "./conversationScopeBindings";
 import type { ConversationWorkspaceFeatures } from "./conversationWorkspaceFeatures";
 import type { DraftAdmission } from "./ConversationWorkspace.types";
-import type { ConversationHostPresentation } from "./header/ConversationHeaderContract";
 
 /** Inputs owned by this composition boundary; concrete state owners remain separate. */
 export type RenderConversationWorkspaceContentProps = {
@@ -58,7 +57,6 @@ export type RenderConversationWorkspaceContentProps = {
   onManageProjects: () => void;
   onOpenBrowser: (title: string, url: string) => void;
   openActiveLoopbackLink: ReturnType<typeof useLoopbackNavigation>;
-  presentation: ConversationHostPresentation;
   readActiveDirectory: ReturnType<typeof useActiveProjectSelection>["readActiveDirectory"];
   runtime: Pick<WorkspaceRuntimeSnapshot, "threadDetails" | "resources" | "accountRateLimits">;
   servers: ThreadListServer[];

@@ -1,5 +1,6 @@
 import { Pressable, Text } from "react-native";
 
+import { PaneChromeControls } from "./PaneChromeControls";
 import type { DeferReviewChatScenario } from "../../src/features/pullRequestDetail/pullRequestScreenContract";
 
 type DeferredScenario = Parameters<DeferReviewChatScenario>[0];
@@ -14,11 +15,9 @@ type PullRequestRouteScreenNavigation = {
   readonly back: () => void;
   readonly closeChanges: () => void;
   readonly deferReviewChatScenario: DeferReviewChatScenario;
-  readonly openPullRequestFullscreen: (() => void) | null;
   readonly openReviewChat: (reviewThread: string | null) => void;
   readonly openChanges: (view: "files" | "guide") => void;
   readonly openThread: (threadId: string) => void;
-  readonly pullRequestFullscreen: boolean;
 };
 
 /** Minimal PR detail surface exposing route intents to route-composition render tests. */
@@ -87,19 +86,7 @@ export function PullRequestScreen({
       >
         <Text>Defer review scenario</Text>
       </Pressable>
-      {navigation.openPullRequestFullscreen === null ? null : (
-        <Pressable
-          accessibilityLabel={
-            navigation.pullRequestFullscreen
-              ? "Exit pull request fullscreen"
-              : "Open pull request fullscreen"
-          }
-          accessibilityRole="button"
-          onPress={navigation.openPullRequestFullscreen}
-        >
-          <Text>Toggle pull request fullscreen</Text>
-        </Pressable>
-      )}
+      <PaneChromeControls name="pull request" />
     </>
   );
 }

@@ -9,6 +9,7 @@ import type { ChangesView } from "../features/pullRequestDetail/pullRequestScree
 import { useEvent } from "../react/useEvent";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { RecoverableRenderBoundary } from "../ui/RecoverableRenderBoundary";
+import { useThreePanels } from "../ui/threePanels";
 import { useAndroidBackHandler } from "../ui/use-android-back-handler";
 import { LinkedPullRequestChipProvider } from "./LinkedPullRequestChipProvider";
 import { useLinkedThreadDescriptions } from "./linkedThreadDescriptions";
@@ -17,11 +18,7 @@ import { PullRequestDetailPane } from "./PullRequestDetailPane";
 import { linkedThreadSelectionKey, usePullRequestNavigation } from "./pullRequestNavigation";
 import { ThreadDestinationActiveContext } from "./threadDestinationActive";
 import { WorkspaceCenterLayout } from "./WorkspaceCenterLayout";
-import {
-  useWorkspacePaneChrome,
-  WorkspacePanesContext,
-  type WorkspacePaneCapabilities,
-} from "./workspacePanes";
+import { WorkspacePanesContext, type WorkspacePaneCapabilities } from "./workspacePanes";
 
 /** The thread's own conversation declares no pane actions. */
 const CONVERSATION_CAPABILITIES: WorkspacePaneCapabilities = {};
@@ -101,48 +98,54 @@ export function ThreadPullRequestPaneLayout({
   // The frame's Back-leaves-fullscreen subscribes later, so it still runs first.
   useAndroidBackHandler(pullRequest !== null, back);
   return (
-    <LinkedPullRequestChipProvider
-      connectionId={connectionId}
-      onOpen={open}
-      threadId={threadId}
-      visiblePullRequest={pullRequest}
-    >
-      <WorkspaceCenterLayout
-        active={active}
-        center={{
-          capabilities: CONVERSATION_CAPABILITIES,
-          content: children,
-          testID: "thread-primary-pane",
-        }}
-        right={
-          pullRequest === null
-            ? null
-            : {
-                capabilities: { close, fullscreen: true },
-                content: (
-                  <ThreadPullRequestPaneContent
-                    changesView={changesView}
-                    closeChanges={closeChanges}
-                    connectionId={connectionId}
-                    key={pullRequest}
-                    openChanges={openChanges}
-                    pullRequest={pullRequest}
-                    threadId={threadId}
-                  />
-                ),
-                testID: desktop ? "thread-pull-request-pane" : "thread-compact-pull-request",
-              }
-        }
-        testID="thread-workspace"
-      />
-    </LinkedPullRequestChipProvider>
+    <WorkspaceCenterLayout
+      active={active}
+      center={{
+        capabilities: CONVERSATION_CAPABILITIES,
+        // Inside the center pane the chip reads the pull request shown beside it as its neighbour.
+        content: (
+          <LinkedPullRequestChipProvider
+            connectionId={connectionId}
+            onOpen={open}
+            threadId={threadId}
+          >
+            {children}
+          </LinkedPullRequestChipProvider>
+        ),
+        label: "conversation",
+        shows: { connectionId, kind: "conversation", threadId },
+        testID: "thread-primary-pane",
+      }}
+      right={
+        pullRequest === null
+          ? null
+          : {
+              capabilities: { close, fullscreen: true },
+              content: (
+                <ThreadPullRequestPaneContent
+                  changesView={changesView}
+                  closeChanges={closeChanges}
+                  connectionId={connectionId}
+                  key={pullRequest}
+                  openChanges={openChanges}
+                  pullRequest={pullRequest}
+                  threadId={threadId}
+                />
+              ),
+              label: "pull request",
+              shows: { connectionId, kind: "pullRequest", pullRequest },
+              testID: desktop ? "thread-pull-request-pane" : "thread-compact-pull-request",
+            }
+      }
+      testID="thread-workspace"
+    />
   );
 }
 
 /**
- * The PR detail in the thread's right pane. Its Back is the pane's close; a review chat that is
- * this thread closes the pane back to it, and any other chat or a PR without one leaves for the
- * existing route that hosts it.
+ * The PR detail in the thread's right pane. The pane's declared close is its `×`, with no Details
+ * Back; a review chat that is this thread closes the pane back to it, and any other chat or a PR
+ * without one leaves for the existing route that hosts it.
  */
 function ThreadPullRequestPaneContent({
   changesView,
@@ -159,13 +162,10 @@ function ThreadPullRequestPaneContent({
   readonly pullRequest: PullRequestKey;
   readonly threadId: string;
 }): React.JSX.Element {
-  const chrome = useWorkspacePaneChrome();
+  const { chrome } = useThreePanels();
   const { desktop, list, runtime } = useWorkspaceRouteResources();
   const describeLinkedThread = useLinkedThreadDescriptions(list.loadedThreadSummaries);
   const navigation = usePullRequestNavigation();
-  const back = useEvent((): void => {
-    chrome.close?.();
-  });
   const openThread = useEvent((target: ThreadId): void => {
     if (target === threadId) {
       chrome.close?.();
@@ -205,8 +205,7 @@ function ThreadPullRequestPaneContent({
           connectionId,
         )}
         navigation={{
-          back,
-          chatVisible: false,
+          back: null,
           closeChanges,
           deferReviewChatScenario,
           openChanges,

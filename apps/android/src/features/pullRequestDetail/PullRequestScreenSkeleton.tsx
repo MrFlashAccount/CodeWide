@@ -9,7 +9,10 @@ const DESCRIPTION_CARD_HEIGHT = 132;
 const ACTIVITY_CARD_HEIGHT = 104;
 const CARD_HEIGHTS = [SUMMARY_CARD_HEIGHT, DESCRIPTION_CARD_HEIGHT, ACTIVITY_CARD_HEIGHT] as const;
 
-/** Stable detail-pane placeholder shown from the first navigation frame. */
+/**
+ * Stable detail-pane placeholder shown from the first navigation frame. Like the screen it stands
+ * in for, it paints no surface: it sits on the surface of the pane it is placed in.
+ */
 export function PullRequestScreenSkeleton(): React.JSX.Element {
   return (
     <View
@@ -89,7 +92,6 @@ const styles = StyleSheet.create({
     width: "42%",
   },
   screen: {
-    backgroundColor: colors.conversationSurface,
     flex: 1,
   },
   tab: {

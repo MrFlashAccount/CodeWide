@@ -8,7 +8,6 @@ import {
   placeFramePresentation,
   resolvePaneArrangement,
   resolveWorkspacePaneVisibility,
-  useWorkspacePaneChrome,
   type WorkspaceFramePresentation,
   type WorkspacePaneCapabilities,
 } from "../src/routeComposition/workspacePanes";
@@ -44,11 +43,10 @@ function pressSystemBack(): boolean {
 
 /** Pane content that renders the chrome the layout resolves for its pane, as a header would. */
 function PaneContent({ name }: { readonly name: string }): React.JSX.Element {
-  const chrome = useWorkspacePaneChrome();
   return (
     <View>
       <Text testID={`${name}-content`}>{name}</Text>
-      <PaneChromeControls chrome={chrome} name={name} />
+      <PaneChromeControls name={name} />
     </View>
   );
 }
@@ -78,12 +76,20 @@ function Workspace({
           center={{
             capabilities: center,
             content: <PaneContent name="center" />,
+            label: "center",
+            shows: null,
             testID: "center",
           }}
           right={
             right === null
               ? null
-              : { capabilities: right, content: <PaneContent name="right" />, testID: "right" }
+              : {
+                  capabilities: right,
+                  content: <PaneContent name="right" />,
+                  label: "right",
+                  shows: null,
+                  testID: "right",
+                }
           }
           testID="center-layout"
         />
@@ -166,9 +172,9 @@ describe("center corners follow the one visible neighbouring pane", () => {
 
   it("rounds nothing in fullscreen, which has no neighbours", async () => {
     const view = render(<Workspace center={FULLSCREEN} right={NONE} />);
-    fireEvent.press(view.getByLabelText("center menu: Fullscreen"));
+    fireEvent.press(view.getByLabelText("Open center fullscreen"));
     await waitFor(() => {
-      expect(view.getByLabelText("center menu: Exit fullscreen")).toBeVisible();
+      expect(view.getByLabelText("Exit center fullscreen")).toBeVisible();
     });
     expectCenterRadii(view, { left: 0, right: 0 });
   });
@@ -236,7 +242,7 @@ describe("pane widths", () => {
 
   it("lets a fullscreen right pane cover the whole frame", async () => {
     const view = render(<Workspace right={FULLSCREEN} />);
-    fireEvent.press(view.getByLabelText("right menu: Fullscreen"));
+    fireEvent.press(view.getByLabelText("Open right fullscreen"));
     await waitFor(() => {
       expect(view.getByTestId("right")).toHaveStyle({
         transform: [{ translateX: 0 }],
@@ -263,9 +269,9 @@ describe("fullscreen shows one declared pane alone and keeps the others mounted"
       panes.map((name) => [name, view.getByTestId(`${name}-content`)] as const),
     );
 
-    fireEvent.press(view.getByLabelText(`${pane} menu: Fullscreen`));
+    fireEvent.press(view.getByLabelText(`Open ${pane} fullscreen`));
     await waitFor(() => {
-      expect(view.getByLabelText(`${pane} menu: Exit fullscreen`)).toBeVisible();
+      expect(view.getByLabelText(`Exit ${pane} fullscreen`)).toBeVisible();
     });
     for (const [other, instance] of instances) {
       const content = view.getByTestId(`${other}-content`, { includeHiddenElements: true });
@@ -281,7 +287,7 @@ describe("fullscreen shows one declared pane alone and keeps the others mounted"
       expect(pressSystemBack()).toBe(true);
     });
     await waitFor(() => {
-      expect(view.getByLabelText(`${pane} menu: Fullscreen`)).toBeVisible();
+      expect(view.getByLabelText(`Open ${pane} fullscreen`)).toBeVisible();
     });
     for (const [other, instance] of instances) {
       expect(view.getByTestId(`${other}-content`)).toBe(instance);
@@ -293,16 +299,16 @@ describe("fullscreen shows one declared pane alone and keeps the others mounted"
   it("offers no fullscreen to a left pane the right pane covers", () => {
     const view = render(<Workspace left={FULLSCREEN} right={NONE} />);
     expect(
-      view.queryByLabelText("left menu: Fullscreen", { includeHiddenElements: true }),
+      view.queryByLabelText("Open left fullscreen", { includeHiddenElements: true }),
     ).toBeNull();
   });
 
   it("closes a fullscreen pane back into the split", async () => {
     const closeRight = jest.fn();
     const view = render(<Workspace right={{ close: closeRight, fullscreen: true }} />);
-    fireEvent.press(view.getByLabelText("right menu: Fullscreen"));
+    fireEvent.press(view.getByLabelText("Open right fullscreen"));
     await waitFor(() => {
-      expect(view.getByLabelText("right menu: Exit fullscreen")).toBeVisible();
+      expect(view.getByLabelText("Exit right fullscreen")).toBeVisible();
     });
     expect(view.queryByTestId("center-content")).toBeNull();
 
@@ -328,10 +334,10 @@ describe("pane chrome comes only from declared capabilities", () => {
 
   it("renders exactly the declared actions of each pane", () => {
     const view = render(<Workspace center={FULLSCREEN} right={{ close: jest.fn() }} />);
-    expect(view.getByLabelText("center menu: Fullscreen")).toBeVisible();
+    expect(view.getByLabelText("Open center fullscreen")).toBeVisible();
     expect(view.queryByLabelText("Close center")).toBeNull();
     expect(view.getByLabelText("Close right")).toBeVisible();
-    expect(view.queryByLabelText("right menu: Fullscreen")).toBeNull();
+    expect(view.queryByLabelText("Open right fullscreen")).toBeNull();
     expect(view.getByTestId("left chrome", { includeHiddenElements: true })).toBeEmptyElement();
     expect(view.queryByText(/Widen|Narrow/u)).toBeNull();
   });
@@ -345,7 +351,7 @@ describe("pane chrome comes only from declared capabilities", () => {
         right={{ close: jest.fn(), fullscreen: true }}
       />,
     );
-    expect(view.queryByLabelText(/menu: Fullscreen/u)).toBeNull();
+    expect(view.queryByLabelText(/^Open .* fullscreen$/u)).toBeNull();
     expect(view.getByLabelText("Close right")).toBeVisible();
   });
 });

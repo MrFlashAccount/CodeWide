@@ -4,24 +4,30 @@ import Reanimated, { useAnimatedStyle } from "react-native-reanimated";
 
 import { useConstant } from "../react/useConstant";
 import { colors } from "../theme";
-import { SurfaceToneProvider } from "../ui/surfaceTone";
+import type { ThreePanelsContent } from "../ui/threePanels";
 import { threadListLayout } from "../ui/thread-list-layout";
 import { currentPaneGeometry, usePaneMotionArmed, type PaneMotionState } from "./paneMotion";
 import {
   createRightPaneKey,
   rightPanePlacement,
-  WorkspacePaneContext,
   WorkspacePanesContext,
   type RightPanePlacement,
   type WorkspacePaneCapabilities,
   type WorkspacePaneVisibility,
 } from "./workspacePanes";
+import { ThreePanelsPane } from "./ThreePanelsPane";
 import { v1WorkspaceShellStyles } from "./WorkspaceShell.styles";
 
-/** A pane a destination places: its content and the actions its owner declares for it. */
+/**
+ * A pane a destination places: its content, the actions its owner declares for it, its control
+ * label and what it shows, which the other pane reads as its neighbour.
+ */
 type WorkspacePaneDeclaration = {
   readonly capabilities: WorkspacePaneCapabilities;
   readonly content: ReactElement;
+  /** What the pane holds, for its control labels (`Close review chat`). */
+  readonly label: string;
+  readonly shows: ThreePanelsContent | null;
   readonly testID: string;
 };
 
@@ -102,12 +108,18 @@ function FramedCenterLayout({
   const placement = right === null ? "stashed" : rightPanePlacement(visibility);
   return (
     <View style={[styles.layout, v1WorkspaceShellStyles.paneFrame]} testID={testID}>
-      <FramedCenterPane covered={placement === "cover"} declaration={center} geometry={geometry} />
+      <FramedCenterPane
+        covered={placement === "cover"}
+        declaration={center}
+        geometry={geometry}
+        neighbour={right?.shows ?? null}
+      />
       {shown === null ? null : (
         <FramedRightPane
           declaration={shown}
           geometry={geometry}
           gutter={visibility.kind !== "stacked"}
+          neighbour={center.shows}
           placement={placement}
         />
       )}
@@ -120,10 +132,12 @@ function FramedCenterPane({
   covered,
   declaration,
   geometry,
+  neighbour,
 }: {
   readonly covered: boolean;
   readonly declaration: WorkspacePaneDeclaration;
   readonly geometry: PaneMotionState;
+  readonly neighbour: ThreePanelsContent | null;
 }): React.JSX.Element {
   const clip = useAnimatedStyle(() => {
     const pane = currentPaneGeometry(geometry);
@@ -145,23 +159,29 @@ function FramedCenterPane({
       testID={declaration.testID}
     >
       <Reanimated.View style={[styles.pane, content]}>
-        <CenterPaneContent declaration={declaration} />
+        <CenterPaneContent declaration={declaration} neighbour={neighbour} />
       </Reanimated.View>
     </Reanimated.View>
   );
 }
 
+/** The center pane's subtree, told what the declared right pane shows beside it. */
 function CenterPaneContent({
   declaration,
+  neighbour,
 }: {
   readonly declaration: WorkspacePaneDeclaration;
+  readonly neighbour: ThreePanelsContent | null;
 }): React.JSX.Element {
   return (
-    <WorkspacePaneContext.Provider
-      value={{ capabilities: declaration.capabilities, pane: "center" }}
+    <ThreePanelsPane
+      capabilities={declaration.capabilities}
+      label={declaration.label}
+      neighbour={neighbour}
+      pane="center"
     >
       {declaration.content}
-    </WorkspacePaneContext.Provider>
+    </ThreePanelsPane>
   );
 }
 
@@ -186,12 +206,14 @@ function FramedRightPane({
   declaration,
   geometry,
   gutter,
+  neighbour,
   placement,
 }: {
   readonly declaration: WorkspacePaneDeclaration;
   readonly geometry: PaneMotionState;
   /** Beside other panes the right pane keeps the left pane's edge inset. */
   readonly gutter: boolean;
+  readonly neighbour: ThreePanelsContent | null;
   readonly placement: RightPanePlacement;
 }): React.JSX.Element {
   const frame = useAnimatedStyle(() => {
@@ -214,24 +236,28 @@ function FramedRightPane({
       ]}
       testID={declaration.testID}
     >
-      <RightPaneContent declaration={declaration} />
+      <RightPaneContent declaration={declaration} neighbour={neighbour} />
     </Reanimated.View>
   );
 }
 
+/** The right pane's subtree on the recessed frame surface, told what the center shows. */
 function RightPaneContent({
   declaration,
+  neighbour,
 }: {
   readonly declaration: WorkspacePaneDeclaration;
+  readonly neighbour: ThreePanelsContent | null;
 }): React.JSX.Element {
   return (
-    <SurfaceToneProvider value="recessed">
-      <WorkspacePaneContext.Provider
-        value={{ capabilities: declaration.capabilities, pane: "right" }}
-      >
-        {declaration.content}
-      </WorkspacePaneContext.Provider>
-    </SurfaceToneProvider>
+    <ThreePanelsPane
+      capabilities={declaration.capabilities}
+      label={declaration.label}
+      neighbour={neighbour}
+      pane="right"
+    >
+      {declaration.content}
+    </ThreePanelsPane>
   );
 }
 
@@ -246,14 +272,14 @@ function StandaloneCenterLayout({ center, right, testID }: CenterLayoutProps): R
         style={[StyleSheet.absoluteFill, styles.center]}
         testID={center.testID}
       >
-        <CenterPaneContent declaration={center} />
+        <CenterPaneContent declaration={center} neighbour={right?.shows ?? null} />
       </View>
       {right === null ? null : (
         <View
           style={[StyleSheet.absoluteFill, styles.right, v1WorkspaceShellStyles.paneFrame]}
           testID={right.testID}
         >
-          <RightPaneContent declaration={right} />
+          <RightPaneContent declaration={right} neighbour={center.shows} />
         </View>
       )}
     </View>

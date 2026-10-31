@@ -12,7 +12,6 @@ import type {
   ActiveWorkspaceConversationProps,
   DraftAdmission,
 } from "./ConversationWorkspace.types";
-import type { ConversationHostPresentation } from "./header/ConversationHeaderContract";
 import { renderConversationWorkspaceContent } from "./ConversationWorkspaceContent";
 
 /** Presents the selected destination under local recovery while its data publishes progressively. */
@@ -48,7 +47,6 @@ export function renderConversationDestinationSurface(props: {
   onManageProjects: ActiveWorkspaceConversationProps["onManageProjects"];
   onOpenBrowser: ActiveWorkspaceConversationProps["onOpenBrowser"];
   openActiveLoopbackLink: ReturnType<typeof useLoopbackNavigation>;
-  presentation: ConversationHostPresentation;
   readActiveDirectory: ReturnType<typeof useActiveProjectSelection>["readActiveDirectory"];
   runtime: ActiveWorkspaceConversationProps["runtime"];
   scope: ReturnType<typeof useActiveConversationScope>;
@@ -100,7 +98,6 @@ export function renderConversationDestinationSurface(props: {
               onManageProjects: props.onManageProjects,
               onOpenBrowser: props.onOpenBrowser,
               openActiveLoopbackLink: props.openActiveLoopbackLink,
-              presentation: props.presentation,
               readActiveDirectory: props.readActiveDirectory,
               runtime: props.runtime,
               servers: props.servers,

@@ -1,6 +1,5 @@
 import { Text, View } from "react-native";
 
-import type { WorkspacePaneChrome } from "../../src/routeComposition/workspacePanes";
 import { PaneChromeControls } from "./PaneChromeControls";
 
 const pullRequestModel = { get: () => ({}) };
@@ -40,28 +39,22 @@ export function useProductionPullRequestScreen() {
 }
 
 export function ProductionPullRequestConversation({
-  chrome,
   threadId,
 }: {
-  readonly chrome: WorkspacePaneChrome;
   readonly threadId: string;
 }): React.JSX.Element {
   return (
     <View testID="production-canonical-conversation">
       <Text>{threadId}</Text>
-      <PaneChromeControls chrome={chrome} name="review chat" />
+      <PaneChromeControls name="review chat" />
     </View>
   );
 }
 
-export function ProductionPullRequestDraft({
-  chrome,
-}: {
-  readonly chrome: WorkspacePaneChrome;
-}): React.JSX.Element {
+export function ProductionPullRequestDraft(): React.JSX.Element {
   return (
     <View testID="production-review-chat-draft">
-      <PaneChromeControls chrome={chrome} name="review chat" />
+      <PaneChromeControls name="review chat" />
     </View>
   );
 }

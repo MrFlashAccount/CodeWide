@@ -4,6 +4,7 @@ import type { ComponentProps } from "react";
 import { ConversationHeader } from "../src/features/conversation/header/ConversationHeader";
 import { ActionMenu } from "../src/ui/ActionMenu";
 import { AppNoticeProvider } from "../src/ui/AppNotice";
+import { ThreePanelsContext, type ThreePanels } from "../src/ui/threePanels";
 
 type HeaderProps = ComponentProps<typeof ConversationHeader>;
 
@@ -17,8 +18,8 @@ const thread = {
   unread: 0,
 };
 
-function renderHeader(overrides: Partial<HeaderProps> = {}) {
-  const props: HeaderProps = {
+function headerProps(overrides: Partial<HeaderProps> = {}): HeaderProps {
+  return {
     accountRateLimitsDatabase: null,
     archived: false,
     closeThreadSearch: jest.fn(),
@@ -53,6 +54,10 @@ function renderHeader(overrides: Partial<HeaderProps> = {}) {
     threadSearchVisible: false,
     ...overrides,
   };
+}
+
+function renderHeader(overrides: Partial<HeaderProps> = {}) {
+  const props = headerProps(overrides);
   return {
     props,
     view: render(<ConversationHeader {...props} />, { wrapper: AppNoticeProvider }),
@@ -119,28 +124,31 @@ it("shows a read-only thread's menu with reading actions enabled and changes dis
   expect(view.getByLabelText("Thread menu: Rename")).toBeDisabled();
 });
 
-it("presents a pane header: title, one menu with the pane items, and close instead of back", () => {
+it("presents a right-pane header: the pane's fullscreen and close instead of back", () => {
   const onBack = jest.fn();
-  const onFullscreen = jest.fn();
-  const { view } = renderHeader({
-    onBack,
-    presentation: {
-      closeLabel: "Close review chat",
-      kind: "pane",
-      menuItems: [
-        { icon: "expand-outline", id: "fullscreen", label: "Fullscreen", onSelect: onFullscreen },
-      ],
-    },
-  });
+  const close = jest.fn();
+  const toggleFullscreen = jest.fn();
+  const pane: ThreePanels = {
+    chrome: { close, fullscreen: false, label: "review chat", toggleFullscreen },
+    neighbour: null,
+    pane: "right",
+    tone: "recessed",
+    variant: { kind: "split", panes: "center+right" },
+  };
+  const view = render(
+    <ThreePanelsContext.Provider value={pane}>
+      <ConversationHeader {...headerProps({ onBack })} />
+    </ThreePanelsContext.Provider>,
+    { wrapper: AppNoticeProvider },
+  );
 
   expect(view.queryByLabelText("Back to threads")).toBeNull();
   expect(view.getByTestId("conversation-title")).toHaveTextContent("Review the parser");
-  expect(menuActions(view).map((action) => action.label)).toEqual(["Fullscreen", ...THREAD_ITEMS]);
-  fireEvent.press(view.getByLabelText("Thread menu"));
-  fireEvent.press(view.getByLabelText("Thread menu: Fullscreen"));
-  expect(onFullscreen).toHaveBeenCalledTimes(1);
+  fireEvent.press(view.getByLabelText("Open review chat fullscreen"));
+  expect(toggleFullscreen).toHaveBeenCalledTimes(1);
   fireEvent.press(view.getByLabelText("Close review chat"));
-  expect(onBack).toHaveBeenCalledTimes(1);
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(onBack).not.toHaveBeenCalled();
 });
 
 it("keeps a new chat without a thread menu", () => {

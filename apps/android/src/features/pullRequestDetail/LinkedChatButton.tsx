@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 import type { ThreadUnreadReader } from "../../data/project-unread-model";
 import type { ThreadId } from "../../data/reviewContract";
 import { colors, controlSize, iconSize, radii } from "../../theme";
+import { surfaceToneCanvasColor, useSurfaceTone } from "../../ui/surfaceTone";
 
 /**
  * Opens the PR's canonical ordinary conversation; the route owns its panel.
@@ -25,6 +26,8 @@ export function LinkedChatButton({
   readonly reviewThreadId: ThreadId | null;
 }): React.JSX.Element {
   const unread = useSelector(() => reviewThreadId !== null && isThreadUnread(reviewThreadId));
+  // The ring cuts the dot out of the button in the surface of the pane the screen sits on.
+  const ring = surfaceToneCanvasColor(useSurfaceTone());
   return (
     <Pressable
       accessibilityLabel={unread ? `${label}, new agent reply` : label}
@@ -36,13 +39,18 @@ export function LinkedChatButton({
       testID="pull-request-linked-chat"
     >
       <Ionicons color={colors.onPrimary} name="chatbubble-outline" size={iconSize.navigation} />
-      {unread ? <View style={styles.unreadBadge} testID="pull-request-linked-chat-unread" /> : null}
+      {unread ? (
+        <View
+          style={[styles.unreadBadge, { borderColor: ring }]}
+          testID="pull-request-linked-chat-unread"
+        />
+      ) : null}
     </Pressable>
   );
 }
 
 const MUTED_CONTROL_OPACITY = 0.6;
-/** The catalog unread dot, enlarged for the button and ringed by the screen surface. */
+/** The catalog unread dot, enlarged for the button and ringed by the pane's surface. */
 const UNREAD_BADGE_SIZE = 12;
 const UNREAD_BADGE_RING = 2;
 
@@ -60,7 +68,6 @@ const styles = StyleSheet.create({
   },
   unreadBadge: {
     backgroundColor: colors.primary,
-    borderColor: colors.conversationSurface,
     borderRadius: radii.pill,
     borderWidth: UNREAD_BADGE_RING,
     height: UNREAD_BADGE_SIZE,

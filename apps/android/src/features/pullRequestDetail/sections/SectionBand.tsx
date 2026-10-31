@@ -5,7 +5,7 @@ import { colors, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 
 /**
- * A full-width grey band that opens one Details section ("Changes", "Status",
+ * A full-width band on the pane's surface, under a hairline, that opens one Details section ("Changes", "Status",
  * "Conversation 6"), GitHub Mobile style: the title, an optional count and an
  * optional trailing hint aligned to the right edge.
  */
@@ -38,7 +38,6 @@ export function SectionBand({
 const styles = StyleSheet.create({
   band: {
     alignItems: "baseline",
-    backgroundColor: colors.surface,
     borderTopColor: colors.borderSoft,
     borderTopWidth: StyleSheet.hairlineWidth,
     columnGap: spacing.xs,

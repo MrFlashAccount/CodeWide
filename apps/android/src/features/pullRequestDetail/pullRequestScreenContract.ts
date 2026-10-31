@@ -25,23 +25,22 @@ export type DeferReviewChatScenario = (scenario: {
 
 /** Route intents the PR screen raises; route composition owns navigation. */
 type PullRequestScreenNavigation = {
-  /** Leaves Details; `null` where Details is a side pane with nothing behind it to return to. */
+  /**
+   * Leaves Details; `null` where Details has nothing behind it. A pane that declares close shows
+   * its `×` instead (`ThreePanelsHeader`).
+   */
   readonly back: (() => void) | null;
-  readonly chatVisible: boolean;
   /** Leaves Changes for the Details screen beneath it. */
   readonly closeChanges: () => void;
   readonly deferReviewChatScenario: DeferReviewChatScenario;
   /** Pushes the Changes route over Details, opening the files or the guide. */
   readonly openChanges: (view: ChangesView) => void;
-  /** Toggles the PR pane alone; `null` where its pane cannot be shown alone. */
-  readonly openPullRequestFullscreen: (() => void) | null;
   /**
    * Presents the PR's review chat: the canonical thread the overview names opens directly;
    * without one, the route opens the review-chat draft at once.
    */
   readonly openReviewChat: (reviewThread: ThreadId | null) => void;
   readonly openThread: (threadId: ThreadId) => void;
-  readonly pullRequestFullscreen: boolean;
 };
 
 /** Stable owners and intents route composition passes to the PR screen. */

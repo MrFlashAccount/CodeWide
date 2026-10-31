@@ -18,7 +18,6 @@ import type { NewChatProjectPickerBinding } from "../projects/NewChatProjectPick
 import type { SearchConversationWindow } from "../search/search-conversation-window";
 import type { ThreadListItem } from "../threadList/threadListTypes";
 import type { ConversationWorkspaceFeatures } from "./conversationWorkspaceFeatures";
-import type { ConversationHostPresentation } from "./header/ConversationHeaderContract";
 
 /** Sends a draft's first message and settles with the composer command id. */
 export type DraftSubmission = (
@@ -82,8 +81,6 @@ export type ActiveWorkspaceConversationProps = {
   onSelectThread: SelectWorkspaceThread;
   onShowActiveThreads: () => void;
   pendingRequests: PendingServerRequest[];
-  /** How the host places the conversation; an ordinary thread screen when absent. */
-  presentation?: ConversationHostPresentation;
   runtime: Pick<
     WorkspaceRuntimeSnapshot,
     "threadDetails" | "threadSummaries" | "threadUiState" | "resources" | "accountRateLimits"

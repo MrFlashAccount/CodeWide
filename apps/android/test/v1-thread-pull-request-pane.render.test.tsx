@@ -7,7 +7,6 @@ import V1ThreadRoute from "../app/(workspace)/(tabs)/(threads)/threads/[connecti
 import type { PullRequestBadge } from "../src/data/forgePullRequestContract";
 import type { PullRequestDetailPaneProps } from "../src/routeComposition/PullRequestDetailPane";
 import { WorkspacePaneFrame } from "../src/routeComposition/WorkspacePaneFrame";
-import { useWorkspacePaneChrome } from "../src/routeComposition/workspacePanes";
 import { PaneChromeControls } from "./fixtures/PaneChromeControls";
 import {
   clearMockRoutes,
@@ -93,7 +92,6 @@ const THREAD_PATH = "/threads/[connectionId]/[threadId]";
  * navigation intents the real screen does, with Back following the screen's `backFor` rule.
  */
 function MockPullRequestPane(props: PullRequestDetailPaneProps): React.JSX.Element {
-  const chrome = useWorkspacePaneChrome();
   const back = props.tab === "changes" ? props.navigation.closeChanges : props.navigation.back;
   return (
     <View>
@@ -128,7 +126,7 @@ function MockPullRequestPane(props: PullRequestDetailPaneProps): React.JSX.Eleme
           );
         }}
       />
-      <PaneChromeControls chrome={chrome} name="pull request" />
+      <PaneChromeControls name="pull request" />
     </View>
   );
 }
@@ -228,7 +226,7 @@ it("opens the linked pull request beside the chat without leaving the thread", (
   );
   expect(view.getByTestId("composer-pull-request-label")).toHaveTextContent("#120");
   // Beside the chat the pane can close and go fullscreen.
-  expect(view.getByLabelText("pull request menu: Fullscreen")).toBeOnTheScreen();
+  expect(view.getByLabelText("Open pull request fullscreen")).toBeOnTheScreen();
   fireEvent.press(view.getByLabelText("Close pull request"));
   expect(view.queryByTestId("thread-pull-request-pane")).toBeNull();
   expect(currentRoute()?.params).toEqual({ connectionId: "server", threadId: "linked" });
@@ -275,15 +273,18 @@ it("steps Back from Changes to Details, then closes the pane, then yields to the
   view.unmount();
 });
 
-it("steps back in the pane through the PR's own Back controls", () => {
+it("steps back from Changes in the pane, then closes it with its ×", () => {
   mockDesktop = false;
   const view = renderThread([badge("fpr1.github-91", "91")]);
   fireEvent.press(view.getByTestId("composer-pull-request-chip"));
   fireEvent.press(view.getByLabelText("Open review guide"));
+  expect(view.getByLabelText("Close pull request")).toBeOnTheScreen();
 
   fireEvent.press(view.getByLabelText("Pane back"));
   expect(view.getByTestId("pane-pull-request")).toHaveTextContent("fpr1.github-91 overview");
-  fireEvent.press(view.getByLabelText("Pane back"));
+  // Details has nothing behind it in the pane: the pane's × is its only exit.
+  expect(view.queryByLabelText("Pane back")).toBeNull();
+  fireEvent.press(view.getByLabelText("Close pull request"));
   expect(view.queryByTestId("thread-compact-pull-request")).toBeNull();
   expect(mockRouterHistory()).toHaveLength(1);
   view.unmount();

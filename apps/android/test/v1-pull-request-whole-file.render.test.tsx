@@ -176,14 +176,11 @@ function renderChanges(server: ReturnType<typeof companion>) {
           isThreadUnread={() => false}
           navigation={{
             back: () => undefined,
-            chatVisible: true,
             closeChanges: () => undefined,
             deferReviewChatScenario: async () => Promise.resolve(null),
             openChanges: () => undefined,
-            openPullRequestFullscreen: () => undefined,
             openReviewChat: () => undefined,
             openThread: () => undefined,
-            pullRequestFullscreen: false,
           }}
           pullRequest={PULL_REQUEST}
           review={server.review}

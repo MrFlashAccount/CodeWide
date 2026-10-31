@@ -9,6 +9,7 @@ import { ThreadResourceContextChips } from "../src/features/changes/ThreadResour
 import { ComposerContextStrip } from "../src/features/composer/ComposerContextStrip";
 import { ComposerPullRequestContextChip } from "../src/features/composer/ComposerPullRequestContextChip";
 import { PullRequestConversationPane } from "../src/routeComposition/PullRequestConversationPane";
+import { WorkspaceCenterLayout } from "../src/routeComposition/WorkspaceCenterLayout";
 import {
   clearMockRoutes,
   mockRouterHistory,
@@ -101,7 +102,42 @@ function renderThreadRoute(threadId: string) {
   return render(<V1ThreadLayout />);
 }
 
-const noChrome = { close: null, menuItems: [] } as const;
+/**
+ * The review chat as the right pane beside the pull request the center pane shows, exactly as the
+ * PR route declares both panes; the chip learns what is beside it only from that declaration.
+ */
+function renderReviewChatBeside(pullRequest: string) {
+  // WHY: PullRequestKey is a validated brand; this fixture stands in for the PR route's key.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const key = pullRequest as PullRequestBadge["pullRequest"];
+  return render(
+    <WorkspaceCenterLayout
+      active
+      center={{
+        capabilities: {},
+        content: <Text>Pull request</Text>,
+        label: "pull request",
+        shows: { connectionId: "server", kind: "pullRequest", pullRequest: key },
+        testID: "center",
+      }}
+      right={{
+        capabilities: {},
+        content: (
+          <PullRequestConversationPane
+            connectionId="server"
+            // WHY: the PR route passes the ensured canonical thread id; this fixture stands in.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+            threadId={"review" as Parameters<typeof PullRequestConversationPane>[0]["threadId"]}
+          />
+        ),
+        label: "review chat",
+        shows: { connectionId: "server", kind: "conversation", threadId: "review" },
+        testID: "right",
+      }}
+      testID="pull-request-workspace"
+    />,
+  );
+}
 
 beforeEach(() => {
   mockDemand.mockClear();
@@ -166,18 +202,7 @@ it("labels several links with a count, opens the most relevant and offers the re
 
 it("hides the chip in the review chat beside its own pull request", () => {
   linkThread("review", [badge("fpr1.github-91", "91")]);
-  const view = render(
-    <PullRequestConversationPane
-      chrome={noChrome}
-      connectionId="server"
-      // WHY: the PR route passes its validated route key; this fixture stands in for it.
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      pullRequest={"fpr1.github-91" as PullRequestBadge["pullRequest"]}
-      // WHY: the PR route passes the ensured canonical thread id; this fixture stands in for it.
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      threadId={"review" as Parameters<typeof PullRequestConversationPane>[0]["threadId"]}
-    />,
-  );
+  const view = renderReviewChatBeside("fpr1.github-91");
 
   expect(view.getByTestId("canonical-conversation")).toBeOnTheScreen();
   expect(view.queryByTestId("composer-pull-request-chip")).toBeNull();

@@ -85,6 +85,15 @@ conversation, `conversation/conversationImages.ts` turns the page's plugin-marke
 cached by their stable source in the connection scope; an expired, uncached URL re-reads the
 conversation query once. Unmarked images keep the companion path.
 
+Placement: the screen is position-agnostic. It paints no background of its own (nor does its
+skeleton) and inherits the surface of the pane it is placed in: the center surface on the PR route,
+the frame surface in a thread's right pane. Colors that must match that surface (the folded-message
+fade, the unread ring) come from `ui/surfaceTone`, and no section band or thread header paints the
+pane surface. Its app bar is a `ThreePanelsHeader`: Details supplies an `exit` Back only where the
+route has one, Changes a `nested` Back to Details, and the pane's `×` and fullscreen toggle come
+from `ThreePanelsContext`. The linked-chat button is absent while the neighbouring pane shows a
+conversation. The screen never takes pane position, close or chat visibility as props.
+
 Boundaries: may import `features/review` public modules (editor, comment sheet, draft card, guide
 panel, review target capabilities) and `features/messageContent` public modules; must not import `features/pullRequests`, Expo Router, route
 files, the parent `(tabs)` layout or `CatalogModeBarHost`. Details and Changes remain route-owned

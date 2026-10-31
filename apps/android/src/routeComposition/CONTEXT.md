@@ -155,18 +155,41 @@ beside a PR, or the linked pull request beside a thread). One frame owns one mod
   keeps its width and dims. Every hidden pane stays mounted. Beside other panes the right pane
   keeps the left pane's edge inset (`threadListLayout.edgeInset`) on both sides.
 - Surfaces: the left and right panes sit on the frame color (`threadListSurface`) with no border
-  against the center (`conversationSurface`). The right pane declares `SurfaceToneProvider`
-  `recessed`, so content that honours `ui/surfaceTone` paints the frame color and no chat
-  container (layout, timeline, transcript boundary, empty state) paints an inner surface.
+  against the center (`conversationSurface`). The pane frame owns surface color by position;
+  `ThreePanelsPane` declares the tone (`left`/`right` recessed, `center` raised) through
+  `ThreePanelsContext` and `ui/surfaceTone`, so content that honours the tone paints the frame
+  color and no chat container (layout, timeline, transcript boundary, empty state) paints an inner
+  surface. Components inside a pane never set an opaque background for the pane area; where they
+  need a matching color (fades, rings, sticky headers, masks) they read it from the tone. The PR
+  screen is position-agnostic: the same screen sits on the center surface on the PR route and on
+  the frame surface in a thread's right pane.
+- `ThreePanelsContext` (`ui/threePanels.ts`) is the one way pane content learns where it is.
+  `ThreePanelsPane` is its only writer: `WorkspacePaneFrame` publishes the left pane and the
+  frame's default center, `WorkspaceCenterLayout` the destination's center and right panes. Each
+  value carries the `pane` (`left | center | right`), the frame `variant` (`stacked`, `split`
+  `left+center | center+right`, `fullscreen` of one pane), the pane `chrome` (the owner-declared
+  capabilities resolved by `useWorkspacePaneChrome`: `close`, `fullscreen`, `toggleFullscreen`
+  and the pane `label` used for control labels), the surface `tone` and the `neighbour`: what the
+  other pane of the same destination shows (`ThreePanelsContent`: a `conversation` with its
+  thread, `null` for a draft, or a `pullRequest`), published by the route that declares that pane
+  (`WorkspaceCenterLayout` declarations carry `label` and `shows`). Components read position,
+  tone, chrome and neighbour from the context, never from props or position assumptions.
+- `ThreePanelsHeader` (`ui/ThreePanelsHeader.tsx`) is the standard pane header, used by the PR app
+  bar and the conversation header (review chat, thread conversation): `[←] title [trailing] [⤢]
+[⋯] [×]`. The content supplies a back intent (`exit` leaves the content's root, `nested` steps
+  back inside the pane), its title, trailing actions and menu; the header shows `nested` Back
+  always, `exit` Back only where the pane declares no close, and the fullscreen toggle and `×`
+  from the chrome. So a right pane shows `×` on PR Details (no Back) and Back plus `×` on Files
+  changed / Review guide; the PR route's center keeps its route Back and no `×`.
+- Neighbour suppression: the PR screen hides its linked-chat button while the neighbour is a
+  conversation (the PR route's review chat, or the thread that opened the PR in its right pane);
+  `LinkedPullRequestChipProvider`, mounted inside the conversation's pane, drops the pull request
+  the neighbour shows from the composer chip.
 - Pane actions are capabilities each pane's owner declares (`WorkspacePaneCapabilities`): `close`
-  and `fullscreen`, none by default. `useWorkspacePaneChrome()` resolves the current pane's
-  declared actions against the visibility (fullscreen only for a pane the split shows, so a
-  covered catalog offers none) and
-  returns its menu items and close; whatever draws that pane's header renders them. Undeclared
-  actions never appear and cannot be triggered. Today the catalogs declare nothing, the PR center
-  declares fullscreen (its app-bar toggle), the review chat declares close and fullscreen
-  (shown in the conversation's single thread menu) and a thread's pull request pane declares
-  close (its app-bar Back) and fullscreen (its app-bar toggle). Widen/Narrow is not a capability: center and
+  and `fullscreen`, none by default. Undeclared actions never appear and cannot be triggered;
+  fullscreen resolves only for a pane the split shows (a covered catalog offers none). Today the
+  catalogs declare nothing, the PR center declares fullscreen, and the review chat and a thread's
+  pull request pane declare close and fullscreen. Widen/Narrow is not a capability: center and
   right always split equally.
 
 ## Compatibility and lifetimes

@@ -95,7 +95,6 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: "center",
-    backgroundColor: colors.surface,
     columnGap: spacing.xs,
     flexDirection: "row",
     minHeight: controlSize.regular + spacing.xs,

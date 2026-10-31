@@ -200,13 +200,9 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         draftNotice: hostedDraft?.notice ?? null,
         firstUnreadAgentTurnId: props.snapshot.firstUnreadAgentTurnId ?? null,
         newChat: props.newChatDraft !== null,
-        // A pane closes itself from its header wherever it is placed.
-        onBack:
-          props.desktop && props.presentation.kind === "screen"
-            ? undefined
-            : props.closeActiveConversation,
+        // A closable pane shows its own `×` from ThreePanelsContext instead of this back.
+        onBack: props.desktop ? undefined : props.closeActiveConversation,
         onViewedLatest: props.markActiveThreadRead,
-        presentation: props.presentation,
         // A thread another process holds opens read-only until it lets go; a
         // sub-agent, driven by its parent agent, is always read-only.
         readOnly: threadRefusesDirectInput(remoteThread),

@@ -165,9 +165,7 @@ function Screen({ tablet }: { readonly tablet: boolean }): React.JSX.Element | n
         isThreadUnread={() => false}
         navigation={{
           back: tablet ? null : () => undefined,
-          chatVisible: false,
           deferReviewChatScenario: async () => Promise.resolve(null),
-          openPullRequestFullscreen: () => undefined,
           openReviewChat: () => undefined,
           closeChanges: () => {
             setTab("overview");
@@ -176,7 +174,6 @@ function Screen({ tablet }: { readonly tablet: boolean }): React.JSX.Element | n
             setTab("changes");
           },
           openThread: () => undefined,
-          pullRequestFullscreen: false,
         }}
         pullRequest={pullRequest}
         review={review}

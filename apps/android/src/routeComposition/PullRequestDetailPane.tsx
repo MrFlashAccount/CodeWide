@@ -12,12 +12,7 @@ import type { PullRequestScreenProps } from "../features/pullRequestDetail/pullR
 import type { PullRequestTab } from "../features/pullRequestDetail/pullRequestScreenModel";
 import { workspaceFeatures } from "../features/workspace/createWorkspaceFeatures";
 import { useEvent } from "../react/useEvent";
-import { useWorkspacePaneChrome } from "./workspacePanes";
-
-type PullRequestPaneNavigation = Omit<
-  PullRequestScreenProps["navigation"],
-  "openPullRequestFullscreen" | "pullRequestFullscreen"
->;
+import { useThreePanels } from "../ui/threePanels";
 
 export type PullRequestDetailPaneProps = {
   readonly connectionId: string;
@@ -25,18 +20,19 @@ export type PullRequestDetailPaneProps = {
   readonly desktop: boolean;
   readonly initialChangesView: PullRequestScreenProps["initialChangesView"];
   readonly isThreadUnread: PullRequestScreenProps["isThreadUnread"];
-  readonly navigation: PullRequestPaneNavigation;
+  readonly navigation: PullRequestScreenProps["navigation"];
   readonly pullRequest: PullRequestScreenProps["pullRequest"];
   readonly tab: PullRequestTab;
 };
 
 /**
- * Renders the route-owned PR detail as the center pane's content. Its fullscreen control is the
- * center pane's declared fullscreen action; opening a chat from a fullscreen PR leaves fullscreen
- * so the chat can appear beside it.
+ * Renders the route-owned PR detail as the content of whichever pane places it. The screen is
+ * position-agnostic: its header reads close, Back and fullscreen from `ThreePanelsContext`, and it
+ * paints no surface of its own. Opening a chat from a fullscreen PR leaves fullscreen so the chat
+ * can appear beside it.
  */
 export function PullRequestDetailPane(props: PullRequestDetailPaneProps): React.JSX.Element {
-  const chrome = useWorkspacePaneChrome();
+  const { chrome } = useThreePanels();
   const leaveFullscreen = (): void => {
     if (chrome.fullscreen) {
       chrome.toggleFullscreen?.();
@@ -62,10 +58,8 @@ export function PullRequestDetailPane(props: PullRequestDetailPaneProps): React.
         isThreadUnread={props.isThreadUnread}
         navigation={{
           ...props.navigation,
-          openPullRequestFullscreen: chrome.toggleFullscreen,
           openReviewChat,
           openThread,
-          pullRequestFullscreen: chrome.fullscreen,
         }}
         pullRequest={props.pullRequest}
         review={reviewResources}

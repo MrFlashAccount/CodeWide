@@ -63,16 +63,10 @@ jest.mock("../src/routeComposition/PullRequestConversationPane", () => {
   const { Text: MockText, View: MockView } = jest.requireActual("react-native");
   const { PaneChromeControls } = jest.requireActual("./fixtures/PaneChromeControls");
   return {
-    PullRequestConversationPane: ({
-      chrome,
-      threadId,
-    }: {
-      readonly chrome: unknown;
-      readonly threadId: string;
-    }) => (
+    PullRequestConversationPane: ({ threadId }: { readonly threadId: string }) => (
       <MockView>
         <MockText testID="canonical-conversation">{threadId}</MockText>
-        <PaneChromeControls chrome={chrome} name="review chat" />
+        <PaneChromeControls name="review chat" />
       </MockView>
     ),
   };
@@ -106,9 +100,9 @@ jest.mock("../src/routeComposition/PullRequestReviewChatDraftPane", () => {
   const { View: MockView } = jest.requireActual("react-native");
   const { PaneChromeControls } = jest.requireActual("./fixtures/PaneChromeControls");
   return {
-    PullRequestReviewChatDraftPane: ({ chrome }: { readonly chrome: unknown }) => (
+    PullRequestReviewChatDraftPane: () => (
       <MockView testID="pull-request-chat-draft">
-        <PaneChromeControls chrome={chrome} name="review chat" />
+        <PaneChromeControls name="review chat" />
       </MockView>
     ),
   };
@@ -244,7 +238,7 @@ it("shows only the right pane's declared actions: fullscreen and close, never wi
   await openLinkedThreadBeside(view);
 
   const chat = within(view.getByTestId("pull-request-chat-pane"));
-  expect(chat.getByLabelText("review chat menu: Fullscreen")).toBeVisible();
+  expect(chat.getByLabelText("Open review chat fullscreen")).toBeVisible();
   expect(chat.getByLabelText("Close review chat")).toBeVisible();
   expect(view.queryByText(/Widen|Narrow/u)).toBeNull();
   expect(view.getByLabelText("Open pull request fullscreen")).toBeVisible();
@@ -257,9 +251,9 @@ it("shows the chat alone in fullscreen within the route tree and keeps every pan
   const conversation = view.getByTestId("canonical-conversation");
   const pullRequest = view.getByTestId("pull-request-primary-pane");
 
-  fireEvent.press(view.getByLabelText("review chat menu: Fullscreen"));
+  fireEvent.press(view.getByLabelText("Open review chat fullscreen"));
   await waitFor(() => {
-    expect(view.getByLabelText("review chat menu: Exit fullscreen")).toBeVisible();
+    expect(view.getByLabelText("Exit review chat fullscreen")).toBeVisible();
   });
   expect(view.queryByTestId("catalog")).toBeNull();
   expect(view.getByTestId("catalog", { includeHiddenElements: true })).not.toBeVisible();
@@ -272,7 +266,7 @@ it("shows the chat alone in fullscreen within the route tree and keeps every pan
     within(view.getByTestId("pull-request-workspace")).getByTestId("canonical-conversation"),
   ).toBe(conversation);
 
-  fireEvent.press(view.getByLabelText("review chat menu: Exit fullscreen"));
+  fireEvent.press(view.getByLabelText("Exit review chat fullscreen"));
   await waitFor(() => {
     expect(view.getByTestId("pull-request-primary-pane")).toBeVisible();
   });
@@ -280,9 +274,9 @@ it("shows the chat alone in fullscreen within the route tree and keeps every pan
   expect(view.getByTestId("catalog", { includeHiddenElements: true })).not.toBeVisible();
   expect(view.getByTestId("canonical-conversation")).toBe(conversation);
 
-  fireEvent.press(view.getByLabelText("review chat menu: Fullscreen"));
+  fireEvent.press(view.getByLabelText("Open review chat fullscreen"));
   await waitFor(() => {
-    expect(view.getByLabelText("review chat menu: Exit fullscreen")).toBeVisible();
+    expect(view.getByLabelText("Exit review chat fullscreen")).toBeVisible();
   });
   expect(view.queryByTestId("pull-request-primary-pane")).toBeNull();
   act(() => {
@@ -299,9 +293,9 @@ it("shows the chat alone in fullscreen within the route tree and keeps every pan
 it("returns to the PR when the fullscreen chat closes", async () => {
   const view = renderInWideFrame();
   await openLinkedThreadBeside(view);
-  fireEvent.press(view.getByLabelText("review chat menu: Fullscreen"));
+  fireEvent.press(view.getByLabelText("Open review chat fullscreen"));
   await waitFor(() => {
-    expect(view.getByLabelText("review chat menu: Exit fullscreen")).toBeVisible();
+    expect(view.getByLabelText("Exit review chat fullscreen")).toBeVisible();
   });
   expect(view.queryByTestId("pull-request-primary-pane")).toBeNull();
 
@@ -342,7 +336,7 @@ it("offers no pane fullscreen where panes do not sit side by side", () => {
   fireEvent.press(view.getByTestId("open-review-chat"));
 
   expect(view.getByTestId("pull-request-chat-draft")).toBeVisible();
-  expect(view.queryByLabelText("review chat menu: Fullscreen")).toBeNull();
+  expect(view.queryByLabelText("Open review chat fullscreen")).toBeNull();
   expect(view.queryByLabelText(/fullscreen/iu)).toBeNull();
   fireEvent.press(view.getByLabelText("Close review chat"));
   expect(view.queryByTestId("pull-request-chat-draft")).toBeNull();

@@ -5,11 +5,8 @@ import { useAppDialog } from "../../ui/AppDialog";
 import { useAppNotice } from "../../ui/useAppNotice";
 import { copySessionId } from "./turnActions";
 
-import type { ThreadHeaderHostItem, ThreadHeaderProps } from "./threadHeaderContract";
+import type { ThreadHeaderProps } from "./threadHeaderContract";
 
-const NO_HOST_ITEMS: readonly ThreadHeaderHostItem[] = [];
-/** Host items share the menu's id space; the prefix keeps them apart from thread action ids. */
-const HOST_ITEM_PREFIX = "host:";
 const READ_ONLY_REASON = "Read-only thread";
 
 type ThreadMenuActionId =
@@ -42,7 +39,6 @@ export function useThreadHeaderActions({
   archived,
   forkOffer,
   forkPicker,
-  hostItems,
   onArchive,
   onCompact,
   onDelete,
@@ -90,7 +86,7 @@ export function useThreadHeaderActions({
       openElsewhere,
     ),
   ];
-  const actions = menuActions(hostItems, threadActions, readOnly);
+  const actions = threadActions.map((item) => readOnlyItem(item, readOnly === true));
   const run = useEvent((action: (() => Promise<void>) | undefined, label: string) => {
     if (action === undefined) {
       return;
@@ -103,11 +99,6 @@ export function useThreadHeaderActions({
     });
   });
   const handleAction = useEvent((id: string) => {
-    if (id.startsWith(HOST_ITEM_PREFIX)) {
-      const hostId = id.slice(HOST_ITEM_PREFIX.length);
-      hostItems?.find((item) => item.id === hostId)?.onSelect();
-      return;
-    }
     // A disabled action never runs, whichever menu raised it.
     if (actions.find((item) => item.id === id)?.disabled === true) {
       return;
@@ -155,22 +146,7 @@ export function useThreadHeaderActions({
   return { actions, handleAction };
 }
 
-/** Host items first, then thread actions; a read-only thread disables the mutating ones. */
-function menuActions(
-  hostItems: readonly ThreadHeaderHostItem[] | undefined,
-  threadActions: readonly ThreadMenuAction[],
-  readOnly: boolean | undefined,
-): ActionMenuItem[] {
-  return [
-    ...(hostItems ?? NO_HOST_ITEMS).map((item) => ({
-      icon: item.icon,
-      id: `${HOST_ITEM_PREFIX}${item.id}`,
-      label: item.label,
-    })),
-    ...threadActions.map((item) => readOnlyItem(item, readOnly === true)),
-  ];
-}
-
+/** A read-only thread disables the mutating actions. */
 function readOnlyItem(item: ThreadMenuAction, readOnly: boolean): ActionMenuItem {
   return readOnly && THREAD_MENU_EFFECTS[item.id] === "mutates"
     ? { ...item, description: READ_ONLY_REASON, disabled: true }

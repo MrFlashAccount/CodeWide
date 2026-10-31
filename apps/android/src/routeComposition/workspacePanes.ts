@@ -3,9 +3,9 @@ import { useSelector } from "@legendapp/state/react";
 import { createContext, useContext } from "react";
 
 import { desktopThreadSidebarWidth } from "../presentation/layouts/windowLayout";
-import type { ActionMenuIconName } from "../ui/ActionMenu.types";
 import { useEvent } from "../react/useEvent";
 import { radii } from "../theme";
+import type { ThreePanelsChrome, ThreePanelsPane, ThreePanelsVariant } from "../ui/threePanels";
 import type { PaneArrangement } from "./paneGeometry";
 import { usePaneRearrangement, type PaneMotionState } from "./paneMotion";
 import type { WorkspaceTwoPanePresentation } from "./WorkspaceTwoPaneLayout";
@@ -15,25 +15,14 @@ import type { WorkspaceTwoPanePresentation } from "./WorkspaceTwoPaneLayout";
  * `right` an optional side pane the destination opens beside itself (the PR review chat). The
  * left and right panes are never visible at the same time.
  */
-export type WorkspacePane = "left" | "center" | "right";
+export type WorkspacePane = ThreePanelsPane;
 
 /**
- * The two panes a split shows side by side. The left and right panes are never visible together:
- * a present right pane covers the left pane, and closing it restores the left pane.
- */
-type WorkspaceSplitPanes = "center+right" | "left+center";
-
-/**
- * Which panes the frame shows. `stacked` is the one-pane-at-a-time phone layout: a right pane
- * covers the center. A `split` shows the center beside exactly one neighbour; `fullscreen` shows
- * one pane alone while the other two stay mounted. Only a present pane can be fullscreen:
+ * Which panes the frame shows (`ThreePanelsVariant`). Only a present pane can be fullscreen:
  * resolution falls back to a split when the requested pane is absent, so an absent fullscreen
  * pane is never published.
  */
-export type WorkspacePaneVisibility =
-  | { readonly kind: "stacked" }
-  | { readonly kind: "split"; readonly panes: WorkspaceSplitPanes }
-  | { readonly kind: "fullscreen"; readonly pane: WorkspacePane };
+export type WorkspacePaneVisibility = ThreePanelsVariant;
 
 /**
  * The presentation a route layout hands its frame. The expanded kinds are the frame's own
@@ -46,29 +35,13 @@ export type WorkspaceFramePresentation = Exclude<
 
 /**
  * Actions a pane's owner declares for its pane. Every action is absent unless declared, so an
- * undeclared action can neither appear in the pane menu nor be triggered.
+ * undeclared action can neither appear in the pane header nor be triggered.
  */
 export type WorkspacePaneCapabilities = {
   /** The pane can close; the layout runs it as a rearrangement and leaves fullscreen first. */
   readonly close?: () => void;
   /** The pane can be shown alone. */
   readonly fullscreen?: true;
-};
-
-/** One item of a pane's menu, rendered by whatever draws that pane's header. */
-type WorkspacePaneMenuItem = {
-  readonly icon: ActionMenuIconName;
-  readonly id: "fullscreen";
-  readonly label: "Exit fullscreen" | "Fullscreen";
-  readonly onSelect: () => void;
-};
-
-/** The declared actions of the current pane, resolved against the current visibility. */
-export type WorkspacePaneChrome = {
-  readonly close: (() => void) | null;
-  readonly fullscreen: boolean;
-  readonly menuItems: readonly WorkspacePaneMenuItem[];
-  readonly toggleFullscreen: (() => void) | null;
 };
 
 /** One frame's three-pane state; the frame creates it once and both pane levels feed it. */
@@ -220,23 +193,19 @@ export const WorkspacePanesContext = createContext<{
   readonly visibility: WorkspacePaneVisibility;
 } | null>(null);
 
-/** The pane a subtree renders in, with its owner's declared actions. */
-export const WorkspacePaneContext = createContext<{
+/**
+ * A pane's declared actions resolved against the current visibility; the pane provider publishes
+ * the result through `ThreePanelsContext`.
+ */
+export function useWorkspacePaneChrome({
+  capabilities,
+  label,
+  pane,
+}: {
   readonly capabilities: WorkspacePaneCapabilities;
+  readonly label: string;
   readonly pane: WorkspacePane;
-} | null>(null);
-
-const NO_ITEMS: readonly WorkspacePaneMenuItem[] = [];
-const STACKED: WorkspacePaneVisibility = { kind: "stacked" };
-/** Outside any declared pane nothing is declared, so no action resolves. */
-const UNDECLARED: {
-  readonly capabilities: WorkspacePaneCapabilities;
-  readonly pane: WorkspacePane;
-} = { capabilities: {}, pane: "center" };
-
-/** The current pane's declared actions, for whatever renders that pane's header. */
-export function useWorkspacePaneChrome(): WorkspacePaneChrome {
-  const { capabilities, pane } = useContext(WorkspacePaneContext) ?? UNDECLARED;
+}): ThreePanelsChrome {
   const layout = useContext(WorkspacePanesContext);
   const rearrange = usePaneRearrangement();
   const visibility = layout?.visibility ?? STACKED;
@@ -252,10 +221,12 @@ export function useWorkspacePaneChrome(): WorkspacePaneChrome {
   return {
     close: capabilities.close === undefined ? null : close,
     fullscreen,
-    menuItems: fullscreenAvailable ? [fullscreenItem(fullscreen, toggleFullscreen)] : NO_ITEMS,
+    label,
     toggleFullscreen: fullscreenAvailable ? toggleFullscreen : null,
   };
 }
+
+const STACKED: WorkspacePaneVisibility = { kind: "stacked" };
 
 /**
  * A pane the split shows can enter fullscreen, and only the fullscreen pane can leave it. A
@@ -275,14 +246,12 @@ function paneFullscreen(
   };
 }
 
-function splitShows(panes: WorkspaceSplitPanes, pane: WorkspacePane): boolean {
+/** A split shows the center beside exactly one neighbour. */
+function splitShows(
+  panes: Extract<WorkspacePaneVisibility, { readonly kind: "split" }>["panes"],
+  pane: WorkspacePane,
+): boolean {
   return pane === "center" || pane === (panes === "left+center" ? "left" : "right");
-}
-
-function fullscreenItem(fullscreen: boolean, onSelect: () => void): WorkspacePaneMenuItem {
-  return fullscreen
-    ? { icon: "contract-outline", id: "fullscreen", label: "Exit fullscreen", onSelect }
-    : { icon: "expand-outline", id: "fullscreen", label: "Fullscreen", onSelect };
 }
 
 /** Leaves the pane's fullscreen and closes it in one rearrangement; a phone moves no panes. */

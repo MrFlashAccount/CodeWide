@@ -13,9 +13,6 @@ import { renderConversationDestinationSurface } from "./ConversationDestinationS
 import type { ConversationDestinationProps } from "./ConversationDetail";
 import { createConversationScopeBindings } from "./conversationScopeBindings";
 import type { ActiveWorkspaceConversationProps } from "./ConversationWorkspace.types";
-import type { ConversationHostPresentation } from "./header/ConversationHeaderContract";
-
-const SCREEN_PRESENTATION: ConversationHostPresentation = { kind: "screen" };
 
 export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationProps) {
   const scope = useActiveConversationScope({
@@ -236,7 +233,6 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
     onManageProjects: props.onManageProjects,
     onOpenBrowser: props.onOpenBrowser,
     openActiveLoopbackLink,
-    presentation: props.presentation ?? SCREEN_PRESENTATION,
     readActiveDirectory: projectSelection.readActiveDirectory,
     runtime: props.runtime,
     scope,

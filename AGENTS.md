@@ -40,6 +40,11 @@
 - Menu-bar managers can move a status-item window offscreen while its menu is open. Keep the last visible screen anchor when content resizes; never follow an offscreen anchor. Test repeated disclosure, native action-menu tracking and mouse-versus-keyboard focus using a running AppKit event loop, not only static view measurements.
 - Verify changed screens in both appearances, including unavailable, pending, empty and populated states. Fixture rendering is visual evidence, not a passed native interaction test.
 
+## Pane surfaces and chrome
+
+- The workspace pane frame owns surface color by position: left and right panes sit on the frame color, the center on the destination surface. Components inside a pane never set an opaque background for the pane area; a component that needs the matching color (fade, ring, sticky header, mask, skeleton) reads it from `ui/surfaceTone`.
+- Pane content reads its position, frame variant, chrome, surface tone and neighbouring content from `ThreePanelsContext` (`ui/threePanels.ts`), never from props or position assumptions, and renders its header through `ThreePanelsHeader`, which alone decides Back versus `×` and the fullscreen toggle. The contract is in [apps/android/src/routeComposition/CONTEXT.md](apps/android/src/routeComposition/CONTEXT.md).
+
 ## Android V1 feature boundary
 
 - The selected V1 ownership contract and implemented source tree are in [docs/android-v1-feature-architecture.md](docs/android-v1-feature-architecture.md); exact owner moves, lifetimes and migration gates are in [docs/android-v1-feature-migration.md](docs/android-v1-feature-migration.md). Read [apps/android/src/CONTEXT.md](apps/android/src/CONTEXT.md) and the nearest local ownership contract before a V1 source move. M0–M8 source migration is implemented; the migration ledger records completed automated checks and unverified device scenarios.

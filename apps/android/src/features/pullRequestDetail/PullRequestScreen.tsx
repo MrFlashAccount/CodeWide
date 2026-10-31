@@ -6,8 +6,8 @@ import type { ReviewThreadId } from "../../data/forgeConversationContract";
 import { useMinuteClock } from "../../data/minuteClock";
 import { useEvent } from "../../react/useEvent";
 import { PrivateImageAccessProvider } from "../../rendering/use-private-image-uri";
-import { colors } from "../../theme";
 import { useAppDialog } from "../../ui/AppDialog";
+import type { ThreePanelsBack } from "../../ui/ThreePanelsHeader";
 import { ExtensionInputSheet } from "./actions/ExtensionInputSheet";
 import { FloatingActions } from "./FloatingActions";
 import { alertOfflineWrite } from "./actions/offlineRefusal";
@@ -64,11 +64,9 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
   const extra = openOnForge(overview.webUrl, host);
   const appBar = (section: string | null, trailing: React.ReactNode): React.JSX.Element => (
     <PullRequestAppBar
+      back={backFor(props)}
       extra={extra}
-      fullscreen={props.navigation.pullRequestFullscreen}
       icon={data.providerIcon}
-      onBack={backFor(props)}
-      onFullscreen={props.navigation.openPullRequestFullscreen}
       onRun={(action) => {
         run(action, null);
       }}
@@ -88,6 +86,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
       getAccess={getTransferAccess}
       scope={`pull-request:${props.connectionId}:${props.pullRequest}`}
     >
+      {/* The pane the screen is placed in paints its surface (ThreePanelsContext); none here. */}
       <View style={styles.screen} testID="pull-request-screen">
         {props.tab === "overview" ? appBar(null, null) : null}
         {props.tab === "overview" ? (
@@ -138,7 +137,6 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
         )}
         <FloatingActions
           agentThread={data.agentThread}
-          chatVisible={props.navigation.chatVisible}
           conversation={data.conversation}
           details={props.tab === "overview"}
           isThreadUnread={props.isThreadUnread}
@@ -150,14 +148,20 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
   );
 }
 
-/** Changes always steps back to Details; Details steps back only where the route declares it. */
-function backFor(props: PullRequestScreenProps): (() => void) | null {
-  return props.tab === "changes" ? props.navigation.closeChanges : props.navigation.back;
+/**
+ * Changes always steps back to Details inside its pane; Details leaves the screen only where the
+ * route declares a Back, and a closable pane shows its `×` instead.
+ */
+function backFor(props: PullRequestScreenProps): ThreePanelsBack | null {
+  if (props.tab === "changes") {
+    return { kind: "nested", label: "Back", run: props.navigation.closeChanges };
+  }
+  const { back } = props.navigation;
+  return back === null ? null : { kind: "exit", label: "Back", run: back };
 }
 
 const styles = StyleSheet.create({
   screen: {
-    backgroundColor: colors.conversationSurface,
     flex: 1,
   },
 });

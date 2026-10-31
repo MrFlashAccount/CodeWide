@@ -13,11 +13,11 @@ import type { NewChatProjectPickerBinding } from "../features/projects/NewChatPr
 import { workspaceFeatures as features } from "../features/workspace/createWorkspaceFeatures";
 import { WorkspaceConversationProviders } from "../features/workspace/WorkspaceConversationProviders";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
+import { useThreePanels } from "../ui/threePanels";
 import { pullRequestReviewChatStyles as styles } from "./PullRequestReviewChatPane.styles";
 import type { ReviewChatDraft } from "./reviewChatDraft";
 import { ReviewChatScenarioNotice } from "./ReviewChatScenarioNotice";
 import type { ReviewChatDraftCommands } from "./usePullRequestReviewChat";
-import type { WorkspacePaneChrome } from "./workspacePanes";
 
 const REASON_LABELS: Readonly<Record<ReviewChatWorkspaceCandidate["reason"], string>> = {
   pullRequestBranch: "Has the PR branch",
@@ -54,12 +54,10 @@ function ignoreClose(): void {}
  * default, and the first send creates the chat in the chosen project.
  */
 export function PullRequestReviewChatDraftPane({
-  chrome,
   commands,
   connectionId,
   draft,
 }: {
-  readonly chrome: WorkspacePaneChrome;
   readonly commands: ReviewChatDraftCommands;
   readonly connectionId: string;
   readonly draft: ReviewChatDraft;
@@ -108,7 +106,6 @@ export function PullRequestReviewChatDraftPane({
       <ConversationRouteNavigationContext.Provider value={DRAFT_NAVIGATION}>
         <DraftConversation
           admission={admission}
-          chrome={chrome}
           commands={commands}
           connectionId={connectionId}
           draft={draft}
@@ -118,23 +115,21 @@ export function PullRequestReviewChatDraftPane({
   );
 }
 
-/** The shared conversation surface bound to the hosted draft and the right pane's chrome. */
+/** The shared conversation surface bound to the hosted draft; its pane header owns the close. */
 function DraftConversation({
   admission,
-  chrome,
   commands,
   connectionId,
   draft,
 }: {
   readonly admission: DraftAdmission;
-  readonly chrome: WorkspacePaneChrome;
   readonly commands: ReviewChatDraftCommands;
   readonly connectionId: string;
   readonly draft: ReviewChatDraft;
 }): React.JSX.Element {
   const router = useRouter();
   const resources = useWorkspaceRouteResources();
-  const onClose = chrome.close ?? ignoreClose;
+  const onClose = useThreePanels().chrome.close ?? ignoreClose;
   return (
     <WorkspaceConversationProviders
       activeConnectionId={connectionId}
@@ -175,11 +170,6 @@ function DraftConversation({
           resources.list.listState.setThreadListMode("active");
         }}
         pendingRequests={resources.pendingRequests}
-        presentation={{
-          closeLabel: "Close review chat",
-          kind: "pane",
-          menuItems: chrome.menuItems,
-        }}
         runtime={resources.runtime}
         scopedThreads={resources.list.scopedThreads}
         servers={resources.list.servers}

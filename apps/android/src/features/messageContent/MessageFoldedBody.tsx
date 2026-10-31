@@ -12,6 +12,7 @@ import {
   typeScale,
   typeWeight,
 } from "../../theme";
+import { surfaceToneCanvasColor, useSurfaceTone, type SurfaceTone } from "../../ui/surfaceTone";
 import { AppText as Text } from "../../ui/Typography";
 import { MessageBody } from "./MessageBody";
 import type { MessageContent } from "./messageContent";
@@ -27,7 +28,7 @@ type Fold = "fits" | "folded" | "unfolded";
 
 /**
  * A message body clipped at a fixed height while it is longer, with a fade
- * into the page surface and a "Read more" pill that unfolds it for this
+ * into the surface of the pane it sits on (`ui/surfaceTone`) and a "Read more" pill that unfolds it for this
  * mount. The renderer always receives the complete document; only the view
  * clips it.
  */
@@ -39,6 +40,7 @@ export function MessageFoldedBody({
   readonly testID: string;
 }): React.JSX.Element {
   const [fold, setFold] = useState<Fold>("fits");
+  const fade = fadeStyles[useSurfaceTone()];
   const measure = (event: LayoutChangeEvent): void => {
     const tall = event.nativeEvent.layout.height > FOLDED_HEIGHT;
     if (tall && fold === "fits") {
@@ -51,7 +53,9 @@ export function MessageFoldedBody({
     <View>
       <View style={fold === "unfolded" ? null : styles.clamp}>
         <MeasuredBody content={content} onLayout={measure} testID={testID} />
-        {fold === "folded" ? <View pointerEvents="none" style={styles.fade} /> : null}
+        {fold === "folded" ? (
+          <View pointerEvents="none" style={[styles.fade, fade]} testID={`${testID}-fade`} />
+        ) : null}
       </View>
       {fold === "folded" ? (
         <ReadMorePill
@@ -103,6 +107,16 @@ function ReadMorePill({
   );
 }
 
+function fadeInto(tone: SurfaceTone): string {
+  return `linear-gradient(to bottom, transparent, ${surfaceToneCanvasColor(tone)})`;
+}
+
+/** The fade ends in the canvas color of each surface tone, so it melts into the pane behind it. */
+const fadeStyles = StyleSheet.create({
+  raised: { experimental_backgroundImage: fadeInto("raised") },
+  recessed: { experimental_backgroundImage: fadeInto("recessed") },
+});
+
 const styles = StyleSheet.create({
   clamp: {
     maxHeight: FOLDED_HEIGHT,
@@ -110,7 +124,6 @@ const styles = StyleSheet.create({
   },
   fade: {
     bottom: 0,
-    experimental_backgroundImage: `linear-gradient(to bottom, transparent, ${colors.messageSurface})`,
     height: FADE_HEIGHT,
     left: 0,
     position: "absolute",

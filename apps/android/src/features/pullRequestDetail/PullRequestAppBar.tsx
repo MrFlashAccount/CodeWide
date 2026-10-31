@@ -1,37 +1,34 @@
-import { Ionicons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
 import type { ActionDescriptor } from "../../data/forgeActionCatalog";
 import type { ProviderIcon } from "../../data/forgeProviderIcon";
 import type { PullRequestOverview } from "../../data/forgePullRequestContract";
-import { colors, controlSize, iconSize, spacing, typeScale, typeWeight } from "../../theme";
+import { colors, controlSize, spacing, typeScale, typeWeight } from "../../theme";
 import { ForgeIcon } from "../../ui/ForgeIcon";
+import { ThreePanelsHeader, type ThreePanelsBack } from "../../ui/ThreePanelsHeader";
 import { AppText as Text } from "../../ui/Typography";
 import { OverflowActionsMenu, type ExtraMenuItem } from "./actions/OverflowActionsMenu";
 import { repositoryShortName } from "./pullRequestPresentation";
 
 /**
- * `‹  [icon] repo #91  ⋯` on Details, whose header carries the full title, and
- * `‹  #91 · Files changed  [Review]  ⋯` on the Changes route pushed over it. One
- * compact row; the one ⋯ holds every overflowed catalog action and Open on forge.
+ * `←  [icon] repo #91  ⤢ ⋯ ×` on Details, whose header carries the full title, and
+ * `←  #91 · Files changed  [Review]  ⤢ ⋯ ×` on the Changes route pushed over it. One compact
+ * `ThreePanelsHeader` row: the pane decides Back versus `×` and the fullscreen toggle, wherever the
+ * screen is placed; the one ⋯ holds every overflowed catalog action and Open on forge.
  */
 export function PullRequestAppBar({
+  back,
   extra,
-  fullscreen,
   icon,
-  onBack,
-  onFullscreen,
   onRun,
   overflow,
   overview,
   section,
   trailing,
 }: {
+  readonly back: ThreePanelsBack | null;
   readonly extra: readonly ExtraMenuItem[];
-  readonly fullscreen: boolean;
   readonly icon: ProviderIcon | null;
-  readonly onBack: (() => void) | null;
-  readonly onFullscreen: (() => void) | null;
   readonly onRun: (action: ActionDescriptor) => void;
   readonly overflow: readonly ActionDescriptor[];
   readonly overview: PullRequestOverview;
@@ -41,45 +38,22 @@ export function PullRequestAppBar({
   readonly trailing: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <View
-      style={[styles.bar, onBack === null && styles.barWithoutBack]}
+    <ThreePanelsHeader
+      back={back}
+      menu={
+        <OverflowActionsMenu
+          accessibilityLabel="Pull request menu"
+          actions={overflow}
+          extra={extra}
+          onRun={onRun}
+        />
+      }
+      style={styles.bar}
       testID="pull-request-app-bar"
-    >
-      {onBack === null ? null : (
-        <Pressable
-          accessibilityLabel="Back"
-          accessibilityRole="button"
-          onPress={onBack}
-          style={styles.icon}
-        >
-          <Ionicons color={colors.text} name="chevron-back" size={iconSize.navigation} />
-        </Pressable>
-      )}
-      <AppBarTitles icon={icon} overview={overview} section={section} />
-      {trailing}
-      {onFullscreen === null ? null : (
-        <Pressable
-          accessibilityLabel={
-            fullscreen ? "Exit pull request fullscreen" : "Open pull request fullscreen"
-          }
-          accessibilityRole="button"
-          onPress={onFullscreen}
-          style={styles.icon}
-        >
-          <Ionicons
-            color={colors.text}
-            name={fullscreen ? "contract-outline" : "expand-outline"}
-            size={iconSize.action}
-          />
-        </Pressable>
-      )}
-      <OverflowActionsMenu
-        accessibilityLabel="Pull request menu"
-        actions={overflow}
-        extra={extra}
-        onRun={onRun}
-      />
-    </View>
+      title={<AppBarTitles icon={icon} overview={overview} section={section} />}
+      trailing={trailing}
+      withoutBackStyle={styles.barWithoutBack}
+    />
   );
 }
 
@@ -93,11 +67,9 @@ function AppBarTitles({
   readonly section: string | null;
 }): React.JSX.Element {
   return (
-    <View style={styles.titles}>
-      <View style={styles.titleRow}>
-        {section === null ? <ForgeIcon color={colors.text} icon={icon} /> : null}
-        <TitleText overview={overview} section={section} />
-      </View>
+    <View style={styles.titleRow}>
+      {section === null ? <ForgeIcon color={colors.text} icon={icon} /> : null}
+      <TitleText overview={overview} section={section} />
     </View>
   );
 }
@@ -131,12 +103,6 @@ const styles = StyleSheet.create({
   barWithoutBack: {
     paddingLeft: spacing.md,
   },
-  icon: {
-    alignItems: "center",
-    height: controlSize.touch,
-    justifyContent: "center",
-    width: controlSize.regular,
-  },
   section: {
     color: colors.textMuted,
     fontWeight: typeWeight.regular,
@@ -151,9 +117,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     columnGap: spacing.compact,
     flexDirection: "row",
-  },
-  titles: {
-    flex: 1,
-    minWidth: 0,
   },
 });

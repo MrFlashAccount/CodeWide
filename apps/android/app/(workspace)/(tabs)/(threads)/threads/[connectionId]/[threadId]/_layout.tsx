@@ -74,7 +74,6 @@ export default function V1ThreadLayout(): React.JSX.Element {
         connectionId={parsed.value.connectionId.value}
         onOpen={openPullRequest}
         threadId={parsed.value.threadId.value}
-        visiblePullRequest={null}
       >
         <ValidV1ThreadLayout
           globalSearchSessionId={

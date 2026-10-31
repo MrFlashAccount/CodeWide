@@ -123,7 +123,6 @@ function PullRequestRouteContent({
               navigation={{
                 // A wide PR sits beside its catalog, so Details has nothing behind it.
                 back: desktop ? null : back,
-                chatVisible: chat.status !== "closed",
                 closeChanges,
                 deferReviewChatScenario: reviewChat.deferScenario,
                 openChanges,
@@ -134,6 +133,8 @@ function PullRequestRouteContent({
               tab={tab}
             />
           ),
+          label: "pull request",
+          shows: { connectionId, kind: "pullRequest", pullRequest },
           testID: "pull-request-primary-pane",
         }}
         right={
@@ -149,9 +150,14 @@ function PullRequestRouteContent({
                     chat={chat}
                     connectionId={connectionId}
                     draft={reviewChat.draft}
-                    pullRequest={pullRequest}
                   />
                 ),
+                label: "review chat",
+                shows: {
+                  connectionId,
+                  kind: "conversation",
+                  threadId: chat.status === "open" ? chat.threadId : null,
+                },
                 testID: desktop ? "pull-request-chat-pane" : "pull-request-compact-chat",
               }
         }

@@ -13,13 +13,13 @@ import {
   resolvePaneArrangement,
   resolveWorkspacePaneVisibility,
   useWorkspacePaneOwnerState,
-  WorkspacePaneContext,
   WorkspacePanesContext,
   type WorkspaceFramePresentation,
   type WorkspacePaneCapabilities,
   type WorkspacePaneOwner,
   type WorkspacePaneVisibility,
 } from "./workspacePanes";
+import { ThreePanelsPane } from "./ThreePanelsPane";
 import { v1WorkspaceShellStyles } from "./WorkspaceShell.styles";
 import {
   WorkspaceTwoPaneLayout,
@@ -90,11 +90,14 @@ function WorkspacePaneFrameContent({
     <WorkspacePanesContext.Provider value={{ geometry, owner, visibility }}>
       <WorkspaceTwoPaneLayout
         catalog={
-          <WorkspacePaneContext.Provider
-            value={{ capabilities: leftCapabilities ?? NO_CAPABILITIES, pane: "left" }}
+          <ThreePanelsPane
+            capabilities={leftCapabilities ?? NO_CAPABILITIES}
+            label="catalog"
+            neighbour={null}
+            pane="left"
           >
             {catalog}
-          </WorkspacePaneContext.Provider>
+          </ThreePanelsPane>
         }
         catalogViewProps={{
           accessibilityElementsHidden: !catalogAccessible,
@@ -105,9 +108,15 @@ function WorkspacePaneFrameContent({
           testID: "workspace-catalog-pane",
         }}
         detail={
-          <WorkspacePaneContext.Provider value={{ capabilities: NO_CAPABILITIES, pane: "center" }}>
+          // A destination that declares its own panes publishes them through WorkspaceCenterLayout.
+          <ThreePanelsPane
+            capabilities={NO_CAPABILITIES}
+            label="destination"
+            neighbour={null}
+            pane="center"
+          >
             {detail}
-          </WorkspacePaneContext.Provider>
+          </ThreePanelsPane>
         }
         detailStyle={desktop ? v1WorkspaceShellStyles.destination : undefined}
         detailViewProps={destinationViewProps(desktop, catalogFocused, centerHidden)}

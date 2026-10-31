@@ -33,7 +33,7 @@ export const REVIEW_CHAT = threadId("thread-review-chat", "threadId");
 export type Capabilities = PullRequestDetailWorkspaceCapabilities;
 
 /** A companion that answers the PR reads until `goOffline` makes it unreachable. */
-function companion({
+export function companion({
   conversation,
   conversationDeclared,
   extraCapabilities,
@@ -119,7 +119,7 @@ function companion({
   };
 }
 
-function capabilities(overrides: Partial<Capabilities>): Capabilities {
+export function capabilities(overrides: Partial<Capabilities>): Capabilities {
   const unused = async (): Promise<never> => Promise.reject(new Error("not part of this test"));
   return {
     createComment: unused,
@@ -194,14 +194,11 @@ export function renderScreen({
         isThreadUnread={readNoChat}
         navigation={{
           back: () => undefined,
-          chatVisible: true,
           closeChanges: () => undefined,
           deferReviewChatScenario: async () => Promise.resolve(null),
-          openPullRequestFullscreen: () => undefined,
           openReviewChat: () => undefined,
           openChanges,
           openThread,
-          pullRequestFullscreen: false,
         }}
         pullRequest={PULL_REQUEST}
         review={server.review}

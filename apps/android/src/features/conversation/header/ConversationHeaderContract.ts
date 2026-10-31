@@ -9,22 +9,7 @@ import type { ThreadHistoryModel } from "../../../data/thread-history-model";
 import type { ThreadListServer } from "../../connections/connectionPresentation";
 import type { ForkTargetPicker } from "../../turnActions/forkTargetPicker";
 import type { ReadForkOffer } from "../../turnActions/forkTargets";
-import type { ThreadHeaderHostItem } from "../../turnActions/threadHeaderContract";
 import type { ThreadListItem } from "../../threadList/threadListTypes";
-
-/**
- * How the host places the canonical conversation. A `screen` owns the window and navigates back;
- * a `pane` sits beside other content, so a trailing close replaces the back arrow and the host's
- * layout actions join the one thread menu.
- */
-export type ConversationHostPresentation =
-  | { readonly kind: "screen" }
-  | {
-      /** Accessible label of the trailing close control. */
-      readonly closeLabel: string;
-      readonly kind: "pane";
-      readonly menuItems: readonly ThreadHeaderHostItem[];
-    };
 
 /** Display state and actions accepted by the conversation header. */
 export type ConversationHeaderProps = {
@@ -55,7 +40,6 @@ export type ConversationHeaderProps = {
   openThreadRename: () => void;
   pinned: boolean;
   /** Absent for an ordinary thread screen. */
-  presentation?: ConversationHostPresentation;
   /** The thread's own provider limits (a provider without an account pool); absent or `null` otherwise. */
   providerLimits?: ProviderLimitsSource | null;
   readOnly: boolean;
