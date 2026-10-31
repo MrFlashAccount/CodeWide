@@ -9,11 +9,13 @@ import { PaneMotionProvider } from "./PaneMotionProvider";
 import { usePaneMotionState, usePaneRearrangement } from "./paneMotion";
 import {
   createWorkspacePaneOwner,
+  placeFramePresentation,
   resolvePaneArrangement,
   resolveWorkspacePaneVisibility,
   useWorkspacePaneOwnerState,
   WorkspacePaneContext,
   WorkspacePanesContext,
+  type WorkspaceFramePresentation,
   type WorkspacePaneCapabilities,
   type WorkspacePaneOwner,
   type WorkspacePaneVisibility,
@@ -32,7 +34,7 @@ type WorkspacePaneFrameProps = {
   readonly detail: ReactElement;
   /** Actions the left (catalog) pane supports; none by default. */
   readonly leftCapabilities?: WorkspacePaneCapabilities;
-  readonly presentation: WorkspaceTwoPanePresentation;
+  readonly presentation: WorkspaceFramePresentation;
   readonly viewportWidth: number;
 };
 
@@ -40,7 +42,8 @@ const NO_CAPABILITIES: WorkspacePaneCapabilities = {};
 
 /**
  * One workspace frame of the three-pane model: it owns the pane rearrangement window, the
- * fullscreen request, the resolved pane visibility and Back-exits-fullscreen. It places the left
+ * fullscreen request, the resolved pane visibility (a right pane covers the left one) and
+ * Back-exits-fullscreen. It places the left
  * pane and the center destination; a destination that opens a right pane places it through
  * `WorkspaceCenterLayout`, which feeds the same owner.
  */
@@ -76,7 +79,7 @@ function WorkspacePaneFrameContent({
       viewportWidth,
     });
   }, [catalogFocused, catalogStatus, desktop, viewportWidth]);
-  const placed = placedPresentation(presentation, visibility);
+  const placed = placeFramePresentation(presentation, visibility);
   const geometry = usePaneMotionState(
     resolvePaneArrangement({ presentation: placed, rightPresent, visibility }),
     viewportWidth,
@@ -123,7 +126,7 @@ function WorkspacePaneFrameContent({
  */
 function useWorkspacePaneModel(
   desktop: boolean,
-  presentation: WorkspaceTwoPanePresentation,
+  presentation: WorkspaceFramePresentation,
 ): {
   readonly owner: WorkspacePaneOwner;
   readonly rightPresent: boolean;
@@ -132,11 +135,9 @@ function useWorkspacePaneModel(
   const owner = useConstant(createWorkspacePaneOwner);
   const ownerState = useWorkspacePaneOwnerState(owner);
   const rearrange = usePaneRearrangement();
-  const wide = presentation.kind === "wide" || presentation.kind === "wideDetailExpanded";
   const visibility = resolveWorkspacePaneVisibility({
     fullscreen: ownerState.fullscreen,
-    leftPresent: presentation.kind === "wide",
-    multiPane: desktop && wide,
+    multiPane: desktop && presentation.kind === "wide",
     rightPresent: ownerState.rightPresent,
   });
   const exitFullscreen = useEvent((): void => {
@@ -158,22 +159,6 @@ function destinationViewProps(desktop: boolean, catalogFocused: boolean, centerH
       : ("none" as const),
     testID: "v1-workspace-destination",
   };
-}
-
-/** A fullscreen pane collapses the frame's other side while keeping it mounted. */
-function placedPresentation(
-  presentation: WorkspaceTwoPanePresentation,
-  visibility: WorkspacePaneVisibility,
-): WorkspaceTwoPanePresentation {
-  if (
-    visibility.kind !== "fullscreen" ||
-    (presentation.kind !== "wide" && presentation.kind !== "wideDetailExpanded")
-  ) {
-    return presentation;
-  }
-  return visibility.pane === "left"
-    ? { kind: "wideCatalogExpanded", viewportWidth: presentation.viewportWidth }
-    : { kind: "wideDetailExpanded", viewportWidth: presentation.viewportWidth };
 }
 
 function isCatalogAccessible(

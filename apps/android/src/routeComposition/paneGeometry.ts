@@ -10,6 +10,9 @@ import { COVERED_CATALOG_OPACITY } from "./paneMotionSpec";
  *   full-width catalog.
  * - `right`: `beside` splits the destination equally between center and right; `cover` lays the
  *   right pane over the retained center; `offscreen` keeps it past the trailing edge.
+ *
+ * The frame resolves `right: "beside"` only with `left: "covered"` (`resolvePaneArrangement`), so
+ * the destination spans the frame and center and right split its whole width.
  */
 export type PaneArrangement = {
   readonly centerLeftRadius: number;

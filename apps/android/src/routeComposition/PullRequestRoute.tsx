@@ -67,7 +67,7 @@ function PullRequestRouteContent({
 }): React.JSX.Element {
   const routeActive = useIsFocused();
   const router = useRouter();
-  const { desktop, list, runtime, viewportWidth } = useWorkspaceRouteResources();
+  const { desktop, list, runtime } = useWorkspaceRouteResources();
   const describeLinkedThread = useLinkedThreadDescriptions(list.loadedThreadSummaries);
   const reviewChat = usePullRequestReviewChat({
     connectionId,
@@ -77,7 +77,6 @@ function PullRequestRouteContent({
     pullRequest,
     routeActive,
     sendText: workspaceFeatures.composer.sendText,
-    viewportWidth,
   });
   const back = useEvent((): void => {
     router.dismissTo("/pulls");

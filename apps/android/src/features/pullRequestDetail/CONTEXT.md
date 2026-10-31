@@ -32,13 +32,12 @@ run keeps the plain label and its real reason appears through the action notice 
 The linked-chat action only chooses or creates the PR-linked thread. Route composition presents that
 thread through the canonical `ActiveWorkspaceConversation`; the PR feature must not own or copy
 conversation rows, bubbles, renderers, activity, composer state or composer controls. On every
-desktop layout (an unfolded Fold included) the review chat stays in a pane beside the retained PR;
-below the three-pane width (1200dp) that pane takes the catalog's place. Only a phone (non-desktop)
-layout opens the canonical thread through the parent Tabs navigator, preserving ensure, attempt
-fencing, `prepareThreadLink`, cancel/retry and the original `dialog.error`. An opening or open chat
-that takes the catalog's place may publish only the `pullRequestChatClaimsCatalog` presentation
-claim; it does not own tab selection or navigation state, and a three-pane chat must not hide the
-shared catalog bar.
+desktop layout (an unfolded Fold included) the review chat stays in a pane beside the retained PR,
+and the shared pane frame lets that right pane cover the catalog while it is open (the catalog and
+the chat are never visible together). Only a phone (non-desktop) layout opens the canonical thread
+through the parent Tabs navigator, preserving ensure, attempt fencing, `prepareThreadLink`,
+cancel/retry and the original `dialog.error`. The chat publishes no presentation claim and owns no
+tab selection, navigation or pane-layout state.
 
 Pure policies: `actions/actionSlotting.ts` (phone 1 + 2, tablet 2 + 3, measured width, anchored targets, verdicts to the dock, merge kinds to the merge card) and `actions/confirmationPolicy.ts` (kind floors only raise a level). The runner (`actions/useActionRunner.ts`) confirms at the effective level, keeps one idempotency key per intent across a transport failure, and recovers by code: a moved head shows the stale banner and refreshes; a forge refusal restores the forge's state and shows its reason. The native RPC bridge carries no JSON-RPC `data`, so recovery re-reads resources instead of trusting error payloads.
 

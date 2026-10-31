@@ -155,7 +155,7 @@ function Workspace(): React.JSX.Element {
   const [desktop] = useState(mockDesktop);
   return (
     <WorkspacePaneFrame
-      catalog={null}
+      catalog={<Text testID="threads-catalog">Threads</Text>}
       catalogFocused={false}
       catalogStatus="present"
       desktop={desktop}
@@ -204,6 +204,7 @@ afterEach(() => {
 it("opens the linked pull request beside the chat without leaving the thread", () => {
   const view = renderThread([badge("fpr1.github-115", "115"), badge("fpr1.github-120", "120")]);
   expect(view.queryByTestId("thread-pull-request-pane")).toBeNull();
+  expect(view.getByTestId("threads-catalog")).toBeVisible();
   expect(view.getByTestId("composer-pull-request-label")).toHaveTextContent("#115 +1");
 
   fireEvent.press(view.getByTestId("composer-pull-request-chip"));
@@ -216,6 +217,9 @@ it("opens the linked pull request beside the chat without leaving the thread", (
   });
   expect(view.getByTestId("thread-pull-request-pane")).toBeOnTheScreen();
   expect(view.getByTestId("pane-pull-request")).toHaveTextContent("fpr1.github-115 overview");
+  // The pane beside the chat covers the threads catalog; the catalog stays mounted.
+  const catalog = view.getByTestId("threads-catalog", { includeHiddenElements: true });
+  expect(catalog).not.toBeVisible();
   // The chat stays mounted and reachable beside the pane, and stops offering the shown PR.
   expect(view.getByTestId("thread-conversation")).toHaveTextContent("conversation mount 1");
   expect(view.getByTestId("thread-primary-pane")).not.toHaveProp(
@@ -229,6 +233,9 @@ it("opens the linked pull request beside the chat without leaving the thread", (
   expect(view.queryByTestId("thread-pull-request-pane")).toBeNull();
   expect(currentRoute()?.params).toEqual({ connectionId: "server", threadId: "linked" });
   expect(view.getByTestId("thread-conversation")).toHaveTextContent("conversation mount 1");
+  // Closing the pane restores the same catalog beside the chat.
+  expect(view.getByTestId("threads-catalog")).toBe(catalog);
+  expect(catalog).toBeVisible();
   view.unmount();
 });
 

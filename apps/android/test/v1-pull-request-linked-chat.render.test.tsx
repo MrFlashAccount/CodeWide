@@ -9,7 +9,6 @@ const mockSelectThread = jest.fn();
 const mockPrepareThreadLink = jest.fn();
 const mockReplaceWithLinkedThread = jest.fn();
 const mockEnsureReviewChat = jest.fn();
-const mockSetDetailExpanded = jest.fn();
 const mockDismissTo = jest.fn();
 const mockReplace = jest.fn();
 const mockPush = jest.fn();
@@ -114,11 +113,6 @@ jest.mock("../src/routeComposition/PullRequestReviewChatDraftPane", () => {
     ),
   };
 });
-jest.mock("../src/routeComposition/pullRequestsPaneController", () => ({
-  usePullRequestsPaneController: () => ({
-    setDetailExpanded: (_owner: symbol, expanded: boolean) => mockSetDetailExpanded(expanded),
-  }),
-}));
 jest.mock("../src/ui/RecoverableRenderBoundary", () => ({
   RecoverableRenderBoundary: ({ children }: { readonly children: React.ReactNode }) => children,
 }));
@@ -131,7 +125,6 @@ beforeEach(() => {
   mockSelectThread.mockClear();
   mockPrepareThreadLink.mockClear();
   mockReplaceWithLinkedThread.mockClear();
-  mockSetDetailExpanded.mockClear();
   mockDismissTo.mockClear();
   mockReplace.mockClear();
   mockPush.mockClear();
@@ -162,10 +155,9 @@ it("reveals the review-chat draft immediately, with no opening skeleton, while s
     { connectionId: "server", pullRequest: "fpr1.github-91" },
     { kind: "ask" },
   );
-  expect(mockSetDetailExpanded).toHaveBeenCalledWith(true);
 });
 
-it("keeps the canonical chat and pane claim current across adaptive width changes", () => {
+it("keeps the canonical chat mounted across adaptive width changes", () => {
   const view = render(<PullRequestRoute tab="overview" />);
 
   fireEvent.press(view.getByTestId("open-linked-thread"));
@@ -173,20 +165,14 @@ it("keeps the canonical chat and pane claim current across adaptive width change
   const route = view.getByTestId("pull-request-workspace");
   const conversation = view.getByTestId("canonical-conversation");
   expect(conversation).toHaveTextContent("linked-thread");
-  expect(mockSetDetailExpanded).toHaveBeenLastCalledWith(false);
 
   resizeWorkspace(false, 400);
   expect(view.getByTestId("pull-request-workspace")).toBe(route);
   expect(view.getByTestId("canonical-conversation")).toBe(conversation);
   expect(view.getByTestId("pull-request-compact-chat")).toBeVisible();
-  expect(mockSetDetailExpanded).toHaveBeenLastCalledWith(true);
 
   resizeWorkspace(true, 1200);
   expect(view.getByTestId("canonical-conversation")).toBe(conversation);
-  expect(mockSetDetailExpanded).toHaveBeenLastCalledWith(false);
-
-  resizeWorkspace(true, 1199);
-  expect(mockSetDetailExpanded).toHaveBeenLastCalledWith(true);
   expect(mockSelectThread).not.toHaveBeenCalled();
   expect(mockReplaceWithLinkedThread).not.toHaveBeenCalled();
   expect(mockReplace).not.toHaveBeenCalled();
@@ -234,6 +220,25 @@ async function openLinkedThreadBeside(view: ReturnType<typeof render>): Promise<
   });
 }
 
+it("covers the catalog while the review chat is beside the PR and restores it on close", async () => {
+  const view = renderInWideFrame();
+  expect(view.getByTestId("catalog")).toBeVisible();
+
+  await openLinkedThreadBeside(view);
+  expect(view.getByTestId("pull-request-primary-pane")).toBeVisible();
+  expect(view.getByTestId("catalog", { includeHiddenElements: true })).not.toBeVisible();
+  expect(view.getByTestId("workspace-catalog-pane", { includeHiddenElements: true })).toHaveProp(
+    "pointerEvents",
+    "none",
+  );
+
+  fireEvent.press(view.getByLabelText("Close review chat"));
+  await waitFor(() => {
+    expect(view.getByTestId("catalog")).toBeVisible();
+  });
+  expect(view.queryByTestId("canonical-conversation", { includeHiddenElements: true })).toBeNull();
+});
+
 it("shows only the right pane's declared actions: fullscreen and close, never widen", async () => {
   const view = renderInWideFrame();
   await openLinkedThreadBeside(view);
@@ -271,7 +276,8 @@ it("shows the chat alone in fullscreen within the route tree and keeps every pan
   await waitFor(() => {
     expect(view.getByTestId("pull-request-primary-pane")).toBeVisible();
   });
-  expect(view.getByTestId("catalog")).toBeVisible();
+  // Back in the split, the chat beside the PR still covers the catalog.
+  expect(view.getByTestId("catalog", { includeHiddenElements: true })).not.toBeVisible();
   expect(view.getByTestId("canonical-conversation")).toBe(conversation);
 
   fireEvent.press(view.getByLabelText("review chat menu: Fullscreen"));
@@ -340,7 +346,6 @@ it("offers no pane fullscreen where panes do not sit side by side", () => {
   expect(view.queryByLabelText(/fullscreen/iu)).toBeNull();
   fireEvent.press(view.getByLabelText("Close review chat"));
   expect(view.queryByTestId("pull-request-chat-draft")).toBeNull();
-  expect(mockSetDetailExpanded).toHaveBeenLastCalledWith(false);
 });
 
 it("covers the PR with the compact draft and restores the PR pane on close", () => {
@@ -444,7 +449,6 @@ it("keeps the review chat beside the PR on a desktop narrower than three panes",
     expect(view.getByTestId("canonical-conversation")).toHaveTextContent("linked-thread");
   });
   expect(view.getByTestId("pull-request-chat-pane")).toBeVisible();
-  expect(mockSetDetailExpanded).toHaveBeenLastCalledWith(true);
   expect(mockReplaceWithLinkedThread).not.toHaveBeenCalled();
   expect(mockPrepareThreadLink).not.toHaveBeenCalled();
 });

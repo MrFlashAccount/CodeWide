@@ -5,10 +5,13 @@ import { desktopThreadSidebarWidth } from "../src/presentation/layouts/windowLay
 import { WorkspaceCenterLayout } from "../src/routeComposition/WorkspaceCenterLayout";
 import { WorkspacePaneFrame } from "../src/routeComposition/WorkspacePaneFrame";
 import {
+  placeFramePresentation,
+  resolvePaneArrangement,
+  resolveWorkspacePaneVisibility,
   useWorkspacePaneChrome,
+  type WorkspaceFramePresentation,
   type WorkspacePaneCapabilities,
 } from "../src/routeComposition/workspacePanes";
-import type { WorkspaceTwoPanePresentation } from "../src/routeComposition/WorkspaceTwoPaneLayout";
 import { colors, radii } from "../src/theme";
 import { PaneChromeControls } from "./fixtures/PaneChromeControls";
 
@@ -60,7 +63,7 @@ function Workspace({
   readonly center?: WorkspacePaneCapabilities;
   readonly desktop?: boolean;
   readonly left?: WorkspacePaneCapabilities;
-  readonly presentation?: WorkspaceTwoPanePresentation;
+  readonly presentation?: WorkspaceFramePresentation;
   readonly right?: WorkspacePaneCapabilities | null;
 }): React.JSX.Element {
   return (
@@ -105,26 +108,48 @@ function expectCenterRadii(
   });
 }
 
-describe("center corners follow the visible neighbouring panes", () => {
+describe("the left and right panes are never visible together", () => {
+  const frames: readonly (readonly [boolean, WorkspaceFramePresentation])[] = [
+    [true, { kind: "wide", viewportWidth: VIEWPORT }],
+    [true, { kind: "catalogOnly" }],
+    [false, { kind: "catalogOnly" }],
+    [false, { kind: "detailOnly" }],
+    [false, { kind: "stacked" }],
+  ];
+  const requests = [null, "left", "center", "right"] as const;
+
+  it.each(frames)("resolves desktop %s %o to one side of the center", (desktop, presentation) => {
+    for (const fullscreen of requests) {
+      for (const rightPresent of [false, true]) {
+        const visibility = resolveWorkspacePaneVisibility({
+          fullscreen,
+          multiPane: desktop && presentation.kind === "wide",
+          rightPresent,
+        });
+        const arrangement = resolvePaneArrangement({
+          presentation: placeFramePresentation(presentation, visibility),
+          rightPresent,
+          visibility,
+        });
+        if (arrangement.right === "beside") {
+          expect(arrangement.left).toBe("covered");
+          expect(arrangement.centerLeftRadius).toBe(0);
+        }
+        if (arrangement.left === "beside") {
+          expect(arrangement.right).toBe("offscreen");
+        }
+      }
+    }
+  });
+});
+
+describe("center corners follow the one visible neighbouring pane", () => {
   it("rounds the left side beside the left pane only", () => {
     expectCenterRadii(render(<Workspace />), { left: radii.composer, right: 0 });
   });
 
-  it("rounds both sides between the left and right panes", () => {
-    expectCenterRadii(render(<Workspace right={NONE} />), {
-      left: radii.composer,
-      right: radii.composer,
-    });
-  });
-
-  it("rounds the right side when the left pane is hidden", () => {
-    const view = render(
-      <Workspace
-        presentation={{ kind: "wideDetailExpanded", viewportWidth: VIEWPORT }}
-        right={NONE}
-      />,
-    );
-    expectCenterRadii(view, { left: 0, right: radii.composer });
+  it("rounds only the right side beside the right pane, which covers the left pane", () => {
+    expectCenterRadii(render(<Workspace right={NONE} />), { left: 0, right: radii.composer });
   });
 
   it("rounds nothing on a phone, where panes never sit side by side", () => {
@@ -173,34 +198,40 @@ describe("pane widths", () => {
     expect(view.getByTestId("center")).toHaveStyle({ width: VIEWPORT - sidebar });
   });
 
-  it("splits the rest equally between the center and right panes", () => {
+  it("covers the left pane and splits the whole width equally beside the right pane", () => {
     const view = render(<Workspace right={NONE} />);
-    expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle({ width: sidebar });
-    const share = (VIEWPORT - sidebar) / 2;
-    expect(view.getByTestId("center")).toHaveStyle({ width: share });
-    expect(view.getByTestId("right")).toHaveStyle({
-      transform: [{ translateX: share }],
-      width: share,
-    });
-  });
-
-  it("gives the center and right panes the whole width when the left pane is hidden", () => {
-    const view = render(
-      <Workspace
-        presentation={{ kind: "wideDetailExpanded", viewportWidth: VIEWPORT }}
-        right={NONE}
-      />,
-    );
     // The covered catalog keeps its width and dims under the destination.
-    expect(view.getByTestId("workspace-catalog-pane", { includeHiddenElements: true })).toHaveStyle(
-      { opacity: 0, width: sidebar },
-    );
+    const catalog = view.getByTestId("workspace-catalog-pane", { includeHiddenElements: true });
+    expect(catalog).toHaveStyle({ opacity: 0, width: sidebar });
+    expect(catalog).toHaveProp("pointerEvents", "none");
+    expect(view.getByTestId("left-content", { includeHiddenElements: true })).not.toBeVisible();
     expect(view.getByTestId("v1-workspace-destination")).toHaveStyle({
       transform: [{ translateX: 0 }],
       width: VIEWPORT,
     });
     expect(view.getByTestId("center")).toHaveStyle({ width: VIEWPORT / 2 });
-    expect(view.getByTestId("right")).toHaveStyle({ width: VIEWPORT / 2 });
+    expect(view.getByTestId("right")).toHaveStyle({
+      transform: [{ translateX: VIEWPORT / 2 }],
+      width: VIEWPORT / 2,
+    });
+  });
+
+  it("restores the left pane when the right pane closes", async () => {
+    const view = render(<Workspace right={NONE} />);
+    const left = view.getByTestId("left-content", { includeHiddenElements: true });
+    expect(left).not.toBeVisible();
+
+    view.rerender(<Workspace right={null} />);
+    await waitFor(() => {
+      expect(view.getByTestId("left-content")).toBeVisible();
+    });
+    expect(view.getByTestId("left-content")).toBe(left);
+    expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle({ opacity: 1, width: sidebar });
+    expect(view.getByTestId("v1-workspace-destination")).toHaveStyle({
+      transform: [{ translateX: sidebar }],
+      width: VIEWPORT - sidebar,
+    });
+    expectCenterRadii(view, { left: radii.composer, right: 0 });
   });
 
   it("lets a fullscreen right pane cover the whole frame", async () => {
@@ -219,21 +250,26 @@ describe("pane widths", () => {
 });
 
 describe("fullscreen shows one declared pane alone and keeps the others mounted", () => {
-  it.each(["left", "center", "right"] as const)("shows the %s pane alone", async (pane) => {
-    const view = render(<Workspace center={FULLSCREEN} left={FULLSCREEN} right={FULLSCREEN} />);
-    const instances = {
-      center: view.getByTestId("center-content"),
-      left: view.getByTestId("left-content"),
-      right: view.getByTestId("right-content"),
-    };
+  // The left pane is visible only while no right pane covers it, so it enters fullscreen from the
+  // left+center split; the center and right panes enter it from the center+right split.
+  it.each([
+    ["left", null],
+    ["center", FULLSCREEN],
+    ["right", FULLSCREEN],
+  ] as const)("shows the %s pane alone", async (pane, right) => {
+    const view = render(<Workspace center={FULLSCREEN} left={FULLSCREEN} right={right} />);
+    const panes = right === null ? (["left", "center"] as const) : (["center", "right"] as const);
+    const instances = new Map(
+      panes.map((name) => [name, view.getByTestId(`${name}-content`)] as const),
+    );
 
     fireEvent.press(view.getByLabelText(`${pane} menu: Fullscreen`));
     await waitFor(() => {
       expect(view.getByLabelText(`${pane} menu: Exit fullscreen`)).toBeVisible();
     });
-    for (const other of ["left", "center", "right"] as const) {
+    for (const [other, instance] of instances) {
       const content = view.getByTestId(`${other}-content`, { includeHiddenElements: true });
-      expect(content).toBe(instances[other]);
+      expect(content).toBe(instance);
       if (other === pane) {
         expect(content).toBeVisible();
       } else {
@@ -247,11 +283,18 @@ describe("fullscreen shows one declared pane alone and keeps the others mounted"
     await waitFor(() => {
       expect(view.getByLabelText(`${pane} menu: Fullscreen`)).toBeVisible();
     });
-    for (const other of ["left", "center", "right"] as const) {
-      expect(view.getByTestId(`${other}-content`)).toBe(instances[other]);
-      expect(instances[other]).toBeVisible();
+    for (const [other, instance] of instances) {
+      expect(view.getByTestId(`${other}-content`)).toBe(instance);
+      expect(instance).toBeVisible();
     }
     expect(pressSystemBack()).toBe(false);
+  });
+
+  it("offers no fullscreen to a left pane the right pane covers", () => {
+    const view = render(<Workspace left={FULLSCREEN} right={NONE} />);
+    expect(
+      view.queryByLabelText("left menu: Fullscreen", { includeHiddenElements: true }),
+    ).toBeNull();
   });
 
   it("closes a fullscreen pane back into the split", async () => {
@@ -277,7 +320,9 @@ describe("pane chrome comes only from declared capabilities", () => {
   it("renders no actions for a pane that declares none", () => {
     const view = render(<Workspace right={NONE} />);
     for (const pane of ["left", "center", "right"]) {
-      expect(view.getByTestId(`${pane} chrome`)).toBeEmptyElement();
+      expect(
+        view.getByTestId(`${pane} chrome`, { includeHiddenElements: true }),
+      ).toBeEmptyElement();
     }
   });
 
@@ -287,7 +332,7 @@ describe("pane chrome comes only from declared capabilities", () => {
     expect(view.queryByLabelText("Close center")).toBeNull();
     expect(view.getByLabelText("Close right")).toBeVisible();
     expect(view.queryByLabelText("right menu: Fullscreen")).toBeNull();
-    expect(view.getByTestId("left chrome")).toBeEmptyElement();
+    expect(view.getByTestId("left chrome", { includeHiddenElements: true })).toBeEmptyElement();
     expect(view.queryByText(/Widen|Narrow/u)).toBeNull();
   });
 

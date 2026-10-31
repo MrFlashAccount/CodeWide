@@ -126,21 +126,30 @@ beside a PR, or the linked pull request beside a thread). One frame owns one mod
 
 - `WorkspacePaneFrame` creates the frame's `WorkspacePaneOwner` (the fullscreen request and the
   active right pane's key) and the motion window, resolves the single published
-  `WorkspacePaneVisibility` (`stacked` on a phone, `split` with left/right flags, or `fullscreen`
-  of one present pane), applies it to the left/center geometry, and owns Back: while a pane is
-  fullscreen, Back leaves fullscreen before anything below the frame handles it.
+  `WorkspacePaneVisibility` (`stacked` on a phone, a `split` of `left+center` or `center+right`,
+  or `fullscreen` of one present pane), applies it to the left/center geometry, and owns Back:
+  while a pane is fullscreen, Back leaves fullscreen before anything below the frame handles it.
+- The left and right panes are never visible at the same time. The frame owns this invariant for
+  every subtree: a present right pane resolves the split to `center+right`, and
+  `placeFramePresentation` turns a route's `wide` presentation into `wideDetailExpanded`, so the
+  catalog is covered (dimmed, inert, hidden from assistive technology, still mounted) for exactly
+  as long as the right pane is open; closing the right pane resolves `left+center` and restores
+  it. Routes hand the frame only `WorkspaceFramePresentation` (no expanded kinds) and never claim
+  the catalog themselves. Opening or closing the right pane is one rearrangement, so the catalog,
+  the destination and the right pane move on the same spring.
 - The right pane must render inside its route tree, so it cannot be a sibling of the frame's
   center. A destination places it with `WorkspaceCenterLayout`, inside the center destination.
   That layout feeds right-pane presence into the same owner (only while its route is active) and
   reads back the same resolved visibility; it never owns fullscreen or a second visibility.
   Nothing route-owned renders through an overlay or portal.
-- Rounding has one rule, `centerCornerRadii(visibility)`: the center rounds its left corners when
-  the left pane is visible and its right corners when the right pane is visible beside it, both
-  with `radii.composer`; fullscreen and phone layouts have no neighbours and no rounding. Both
+- Rounding has one rule, `centerCornerRadii(visibility)`: the center rounds its left corners in a
+  `left+center` split and its right corners in a `center+right` split, with `radii.composer`;
+  it never rounds both sides. Fullscreen and phone layouts have no neighbours and no rounding. Both
   radii are part of the frame's arrangement: the destination's leading edge and the center's
   trailing edge move with the same progress.
-- Sizing: the left pane keeps `desktopThreadSidebarWidth`; when the right pane is beside the
-  center they split the remaining width equally. A fullscreen right pane covers the retained
+- Sizing: beside the center the left pane keeps `desktopThreadSidebarWidth` and the center takes
+  the rest; when the right pane is beside the center they split the whole frame width equally
+  over the covered catalog. A fullscreen right pane covers the retained
   center; a fullscreen center keeps the right pane mounted past the trailing edge; a fullscreen
   left pane moves the destination past the trailing edge at its split width; a covered catalog
   keeps its width and dims. Every hidden pane stays mounted. Beside other panes the right pane
@@ -151,7 +160,8 @@ beside a PR, or the linked pull request beside a thread). One frame owns one mod
   container (layout, timeline, transcript boundary, empty state) paints an inner surface.
 - Pane actions are capabilities each pane's owner declares (`WorkspacePaneCapabilities`): `close`
   and `fullscreen`, none by default. `useWorkspacePaneChrome()` resolves the current pane's
-  declared actions against the visibility (fullscreen only where panes sit side by side) and
+  declared actions against the visibility (fullscreen only for a pane the split shows, so a
+  covered catalog offers none) and
   returns its menu items and close; whatever draws that pane's header renders them. Undeclared
   actions never appear and cannot be triggered. Today the catalogs declare nothing, the PR center
   declares fullscreen (its app-bar toggle), the review chat declares close and fullscreen
@@ -170,10 +180,8 @@ native resources, conversation host, both nested Stacks, route sessions, Global 
 fullscreen-window ownership. `unmountOnBlur` and `popToTopOnBlur` are forbidden. Explicit close and
 workspace teardown retain their existing cleanup authority.
 
-The parent presentation claim is `normal | pullRequestChatClaimsCatalog`. It may hide the bar only
-while Pull requests is active and compact review chat is opening or open. An inactive PR claim must
-not hide the Threads bar; wide linked chat must not claim it. The claim is presentation state, not
-navigation state.
+No route publishes a presentation claim over the catalog or the shared bar: covering the catalog
+beside a right pane is the pane frame's rule, and the bar stays the Tabs layout's presentation.
 
 ## Module and deletion proofs
 

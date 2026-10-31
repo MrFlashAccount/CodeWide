@@ -144,9 +144,6 @@ jest.mock("../src/routeComposition/PullRequestConversationPane", () => {
     ),
   };
 });
-jest.mock("../src/routeComposition/pullRequestsPaneController", () => ({
-  usePullRequestsPaneController: () => ({ setDetailExpanded: () => undefined }),
-}));
 jest.mock("../src/services/workspace/workspaceRouteResources", () => ({
   useWorkspaceRouteResources: () => ({
     browserFeedback: null,

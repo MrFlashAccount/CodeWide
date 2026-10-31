@@ -13,7 +13,6 @@ import { useEvent } from "../react/useEvent";
 import { useAppDialog } from "../ui/AppDialog";
 import { usePaneRearrangement } from "./paneMotion";
 import { linkedThreadSelectionKey, usePullRequestNavigation } from "./pullRequestNavigation";
-import { usePullRequestsPaneController } from "./pullRequestsPaneController";
 import {
   type ReviewChatDraft,
   withProject,
@@ -40,11 +39,8 @@ type PendingScenario = {
   readonly start: (path: string) => Promise<ThreadId>;
 };
 
-/** Minimum viewport width that keeps the catalog, the PR detail and its chat side by side. */
-const pullRequestThreePaneMinWidth = 1200;
-
 /**
- * Owns one PR route's review-chat presentation and owner-keyed pane claims. A chat the overview
+ * Owns one PR route's review-chat presentation. A chat the overview
  * names opens at once. Without one, the review-chat draft opens at once, exactly like a new
  * chat: the Companion's suggested projects arrive in the background (the first is pre-selected)
  * and nothing is created until the first send, or until a deferred scenario starts, in the
@@ -62,7 +58,6 @@ export function usePullRequestReviewChat({
   pullRequest,
   routeActive,
   sendText,
-  viewportWidth,
 }: {
   readonly connectionId: string;
   readonly desktop: boolean;
@@ -71,9 +66,7 @@ export function usePullRequestReviewChat({
   readonly pullRequest: PullRequestKey;
   readonly routeActive: boolean;
   readonly sendText: ComposerWorkspaceCapabilities["sendText"];
-  readonly viewportWidth: number;
 }): {
-  readonly catalogClaimed: boolean;
   readonly chat: PullRequestChatState;
   readonly deferScenario: DeferReviewChatScenario;
   /** Closes the chat at once; the pane layout runs it inside its own rearrangement. */
@@ -84,7 +77,6 @@ export function usePullRequestReviewChat({
 } {
   const dialog = useAppDialog();
   const navigation = usePullRequestNavigation();
-  const paneController = usePullRequestsPaneController();
   // Opening and closing the chat beside the PR are the rearrangements that animate the
   // desktop panes. A phone presents the chat over the PR without moving panes, so it applies
   // changes immediately.
@@ -95,14 +87,9 @@ export function usePullRequestReviewChat({
   const nextAttemptId = useRef(0);
   const pendingScenario = useRef<PendingScenario | null>(null);
   const draftId = useConstant(() => `review-chat-draft-${randomUUID()}`);
-  const presentationOwner = useConstant(() => Symbol("pull-request-route-presentation"));
-  const catalogClaimed =
-    chat.status !== "closed" && (!desktop || viewportWidth < pullRequestThreePaneMinWidth);
-  // Any desktop layout (an unfolded Fold included) keeps the chat beside the PR; below three-pane
-  // width the chat claims the catalog's place. Only phones navigate to the Threads tab.
+  // Any desktop layout (an unfolded Fold included) keeps the chat beside the PR, where the pane
+  // frame lets it cover the catalog. Only phones navigate to the Threads tab.
   const wideChat = desktop;
-  const activeCatalogClaimed = routeActive && catalogClaimed;
-  const setDetailExpanded = paneController.setDetailExpanded;
   const target = { connectionId, pullRequest };
   const beginAttempt = useEvent((): number => {
     nextAttemptId.current += 1;
@@ -281,13 +268,6 @@ export function usePullRequestReviewChat({
     settleSend(attempt, opening.threadId);
     return commandId;
   });
-  useLayoutEffect(() => {
-    setDetailExpanded(presentationOwner, activeCatalogClaimed);
-    return () => {
-      setDetailExpanded(presentationOwner, false);
-    };
-  }, [activeCatalogClaimed, presentationOwner, setDetailExpanded]);
-
   useLayoutEffect(
     () => () => {
       activeAttempt.current = null;
@@ -297,7 +277,6 @@ export function usePullRequestReviewChat({
   );
 
   return {
-    catalogClaimed,
     chat,
     deferScenario,
     dismissChat,

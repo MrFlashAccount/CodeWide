@@ -186,11 +186,10 @@ the companion contract is in [Forge plugins](forge-plugins.md).
   It must not use `router.replace`, `dismissTo`, `navigation.reset` or manually assembled navigation
   state. Cancel and failure retain the PR route; wide linked chat remains local to the mounted PR
   route and reuses the canonical conversation surface.
-- Pull request composition may publish `normal | pullRequestChatClaimsCatalog`. The claim hides the
-  single parent bar only when Pull requests is active and existing `catalogClaimed` is true:
-  `chat !== closed && (!desktop || viewportWidth < 1200)`. Wide chat at 1200 px or above does not
-  claim the bar; an inactive PR claim cannot hide the Threads bar. Wide-to-compact preserves chat
-  identity and emits no Router action.
+- Pull request composition publishes no presentation claim. Wide linked chat is the PR route's
+  right pane, and the shared pane frame covers the catalog while any right pane is open, so the
+  catalog and a right pane are never visible together (see `routeComposition/CONTEXT.md`).
+  Wide-to-compact preserves chat identity and emits no Router action.
 - Features emit typed navigation intents; `features/pullRequests` and
   `features/pullRequestDetail` reach each other only through these intents.
 

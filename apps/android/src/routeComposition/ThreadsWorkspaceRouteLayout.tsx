@@ -15,7 +15,7 @@ import {
   v1RouteSheetScreenOptions,
   v1SheetScreenOptions,
 } from "./WorkspaceShell.styles";
-import type { WorkspaceTwoPanePresentation } from "./WorkspaceTwoPaneLayout";
+import type { WorkspaceFramePresentation } from "./workspacePanes";
 
 type PaneLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["layout"]>>[0];
 type ScreenLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["screenLayout"]>>[0];
@@ -121,7 +121,7 @@ function threadsPresentation({
   readonly desktop: boolean;
   readonly viewportWidth: number;
   readonly welcomeVisible: boolean;
-}): WorkspaceTwoPanePresentation {
+}): WorkspaceFramePresentation {
   if (welcomeVisible) {
     return { kind: "catalogOnly" };
   }

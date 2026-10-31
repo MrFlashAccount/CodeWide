@@ -1,24 +1,18 @@
 import { Stack } from "expo-router";
 import { createContext, useContext, type ComponentProps, type ReactElement } from "react";
 
-import { useConstant } from "../react/useConstant";
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { PullRequestsPreviewRoute } from "./PullRequestsCatalogRoute";
-import {
-  PullRequestsPaneControllerProvider,
-  type PullRequestsPaneController,
-} from "./pullRequestsPaneController";
 import { WorkspaceCatalogMaster } from "./WorkspaceCatalogMaster";
 import { WorkspacePaneFrame } from "./WorkspacePaneFrame";
-import { useOwnedPresentationClaims } from "./useOwnedPresentationClaims";
 import {
   v1CatalogRootScreenOptions,
   v1DesktopRouteScreenOptions,
   v1MobileRouteScreenOptions,
   v1RouteScreenOptions,
 } from "./WorkspaceShell.styles";
-import type { WorkspaceTwoPanePresentation } from "./WorkspaceTwoPaneLayout";
+import type { WorkspaceFramePresentation } from "./workspacePanes";
 
 type PaneLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["layout"]>>[0];
 type ScreenLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["screenLayout"]>>[0];
@@ -47,11 +41,6 @@ export function PullRequestsWorkspaceRouteLayout(): React.JSX.Element {
 /** Places the real Pull requests catalog descriptor around its subtree-owned destinations. */
 export function PullRequestsWorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
   const { desktop, viewportWidth } = useWorkspaceRouteResources();
-  const detailClaims = useOwnedPresentationClaims();
-  const paneController = useConstant<PullRequestsPaneController>(() => ({
-    setDetailExpanded: detailClaims.setClaimed,
-  }));
-  const detailExpanded = detailClaims.claimed;
   const focusedRouteName = props.state.routes[props.state.index]?.name ?? null;
   const catalogFocused = focusedRouteName === "pulls/index";
   const catalog = pullRequestsCatalogPresentation(props);
@@ -64,18 +53,11 @@ export function PullRequestsWorkspacePaneLayout(props: PaneLayoutProps): React.J
       catalogStatus={catalog.status}
       desktop={desktop}
       detail={
-        <PullRequestsPaneControllerProvider value={paneController}>
-          <PullRequestsDestinationPlacement.Provider value>
-            {props.children}
-          </PullRequestsDestinationPlacement.Provider>
-        </PullRequestsPaneControllerProvider>
+        <PullRequestsDestinationPlacement.Provider value>
+          {props.children}
+        </PullRequestsDestinationPlacement.Provider>
       }
-      presentation={pullRequestsPresentation({
-        catalogFocused,
-        desktop,
-        detailExpanded,
-        viewportWidth,
-      })}
+      presentation={pullRequestsPresentation({ catalogFocused, desktop, viewportWidth })}
       viewportWidth={viewportWidth}
     />
   );
@@ -113,23 +95,16 @@ function pullRequestsCatalogPresentation(props: PaneLayoutProps) {
 function pullRequestsPresentation({
   catalogFocused,
   desktop,
-  detailExpanded,
   viewportWidth,
 }: {
   readonly catalogFocused: boolean;
   readonly desktop: boolean;
-  readonly detailExpanded: boolean;
   readonly viewportWidth: number;
-}): WorkspaceTwoPanePresentation {
+}): WorkspaceFramePresentation {
   if (catalogFocused) {
     return desktop ? { kind: "wide", viewportWidth } : { kind: "catalogOnly" };
   }
-  if (!desktop) {
-    return { kind: "detailOnly" };
-  }
-  return detailExpanded
-    ? { kind: "wideDetailExpanded", viewportWidth }
-    : { kind: "wide", viewportWidth };
+  return desktop ? { kind: "wide", viewportWidth } : { kind: "detailOnly" };
 }
 
 function renderPullRequestsPaneLayout(props: PaneLayoutProps): React.JSX.Element {

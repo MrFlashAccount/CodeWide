@@ -9,16 +9,12 @@ type EnsureReviewChat = PullRequestDetailWorkspaceCapabilities["ensureReviewChat
 type ReviewChatProps = Parameters<typeof usePullRequestReviewChat>[0];
 
 const mockEnsureReviewChat = jest.fn<ReturnType<EnsureReviewChat>, Parameters<EnsureReviewChat>>();
-const mockSetDetailExpanded = jest.fn();
 let mockNavigateToLinkedThread = jest.fn<void, [string, ThreadId]>();
 
 jest.mock("../src/routeComposition/pullRequestNavigation", () => ({
   linkedThreadSelectionKey: (connectionId: string, resolvedThreadId: string) =>
     `${connectionId}:${resolvedThreadId}`,
   usePullRequestNavigation: () => ({ navigateToLinkedThread: mockNavigateToLinkedThread }),
-}));
-jest.mock("../src/routeComposition/pullRequestsPaneController", () => ({
-  usePullRequestsPaneController: () => ({ setDetailExpanded: mockSetDetailExpanded }),
 }));
 
 const pullRequest = parsePullRequestKeyParam("fpr1.github-91");
@@ -30,12 +26,10 @@ function reviewChatProps({
   desktop,
   prepareThreadLink,
   routeActive = true,
-  viewportWidth,
 }: {
   readonly desktop: boolean;
   readonly prepareThreadLink: (selectionKey: string) => void;
   readonly routeActive?: boolean;
-  readonly viewportWidth: number;
 }): ReviewChatProps {
   return {
     connectionId: "server",
@@ -45,14 +39,12 @@ function reviewChatProps({
     pullRequest,
     routeActive,
     sendText: jest.fn(),
-    viewportWidth,
   };
 }
 
 beforeEach(() => {
   mockEnsureReviewChat.mockReset();
   mockNavigateToLinkedThread = jest.fn<void, [string, ThreadId]>();
-  mockSetDetailExpanded.mockClear();
 });
 
 it("uses current compact layout and navigation inputs when a wide suggestion request finds a chat", async () => {
@@ -65,7 +57,6 @@ it("uses current compact layout and navigation inputs when a wide suggestion req
     initialProps: reviewChatProps({
       desktop: true,
       prepareThreadLink: initialPrepare,
-      viewportWidth: 1200,
     }),
   });
 
@@ -73,9 +64,7 @@ it("uses current compact layout and navigation inputs when a wide suggestion req
     hook.result.current.openReviewChat(null);
   });
   mockNavigateToLinkedThread = jest.fn<void, [string, ThreadId]>();
-  hook.rerender(
-    reviewChatProps({ desktop: false, prepareThreadLink: currentPrepare, viewportWidth: 400 }),
-  );
+  hook.rerender(reviewChatProps({ desktop: false, prepareThreadLink: currentPrepare }));
   const resolvedThreadId = threadId("compact-thread", "test.threadId");
   await act(async () => {
     pending.resolve({ created: false, kind: "ready", threadId: resolvedThreadId });
@@ -97,14 +86,13 @@ it("uses current wide layout instead of navigating after a compact suggestion re
     initialProps: reviewChatProps({
       desktop: false,
       prepareThreadLink,
-      viewportWidth: 400,
     }),
   });
 
   act(() => {
     hook.result.current.openReviewChat(null);
   });
-  hook.rerender(reviewChatProps({ desktop: true, prepareThreadLink, viewportWidth: 1200 }));
+  hook.rerender(reviewChatProps({ desktop: true, prepareThreadLink }));
   const resolvedThreadId = threadId("wide-thread", "test.threadId");
   await act(async () => {
     pending.resolve({ created: false, kind: "ready", threadId: resolvedThreadId });

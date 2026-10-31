@@ -12,20 +12,37 @@ import type { WorkspaceTwoPanePresentation } from "./WorkspaceTwoPaneLayout";
 
 /**
  * The workspace has exactly three panes. `left` holds a catalog, `center` the destination and
- * `right` an optional side pane the destination opens beside itself (the PR review chat).
+ * `right` an optional side pane the destination opens beside itself (the PR review chat). The
+ * left and right panes are never visible at the same time.
  */
 export type WorkspacePane = "left" | "center" | "right";
 
 /**
+ * The two panes a split shows side by side. The left and right panes are never visible together:
+ * a present right pane covers the left pane, and closing it restores the left pane.
+ */
+type WorkspaceSplitPanes = "center+right" | "left+center";
+
+/**
  * Which panes the frame shows. `stacked` is the one-pane-at-a-time phone layout: a right pane
- * covers the center. A `split` always shows the center; `fullscreen` shows one pane alone while
- * the other two stay mounted. Only a present pane can be fullscreen: resolution falls back to a
- * split when the requested pane is absent, so an absent fullscreen pane is never published.
+ * covers the center. A `split` shows the center beside exactly one neighbour; `fullscreen` shows
+ * one pane alone while the other two stay mounted. Only a present pane can be fullscreen:
+ * resolution falls back to a split when the requested pane is absent, so an absent fullscreen
+ * pane is never published.
  */
 export type WorkspacePaneVisibility =
   | { readonly kind: "stacked" }
-  | { readonly kind: "split"; readonly left: boolean; readonly right: boolean }
+  | { readonly kind: "split"; readonly panes: WorkspaceSplitPanes }
   | { readonly kind: "fullscreen"; readonly pane: WorkspacePane };
+
+/**
+ * The presentation a route layout hands its frame. The expanded kinds are the frame's own
+ * placements of a fullscreen pane or a right pane covering the catalog, so no route requests them.
+ */
+export type WorkspaceFramePresentation = Exclude<
+  WorkspaceTwoPanePresentation,
+  { readonly kind: "wideCatalogExpanded" } | { readonly kind: "wideDetailExpanded" }
+>;
 
 /**
  * Actions a pane's owner declares for its pane. Every action is absent unless declared, so an
@@ -76,15 +93,17 @@ export function createRightPaneKey(): number {
   return nextRightPaneKey;
 }
 
-/** Resolves the published visibility; a fullscreen request for an absent pane yields a split. */
+/**
+ * Resolves the published visibility; a fullscreen request for an absent pane yields a split. A
+ * multi-pane frame always has its catalog, so a split shows the right pane instead of the left
+ * one whenever the right pane is present.
+ */
 export function resolveWorkspacePaneVisibility({
   fullscreen,
-  leftPresent,
   multiPane,
   rightPresent,
 }: {
   readonly fullscreen: WorkspacePane | null;
-  readonly leftPresent: boolean;
   readonly multiPane: boolean;
   readonly rightPresent: boolean;
 }): WorkspacePaneVisibility {
@@ -93,16 +112,38 @@ export function resolveWorkspacePaneVisibility({
   }
   if (
     fullscreen === "center" ||
-    (fullscreen === "left" && leftPresent) ||
+    fullscreen === "left" ||
     (fullscreen === "right" && rightPresent)
   ) {
     return { kind: "fullscreen", pane: fullscreen };
   }
-  return { kind: "split", left: leftPresent, right: rightPresent };
+  return { kind: "split", panes: rightPresent ? "center+right" : "left+center" };
 }
 
 /**
- * The center surface rounds each side that has a visible neighbouring pane. This is the single
+ * Where the frame places a route's presentation for the resolved visibility. A fullscreen left
+ * pane shows the catalog alone; a fullscreen center or right pane, and a right pane beside the
+ * center, cover the catalog while keeping it mounted.
+ */
+export function placeFramePresentation(
+  presentation: WorkspaceFramePresentation,
+  visibility: WorkspacePaneVisibility,
+): WorkspaceTwoPanePresentation {
+  if (presentation.kind !== "wide" || visibility.kind === "stacked") {
+    return presentation;
+  }
+  if (visibility.kind === "fullscreen") {
+    return visibility.pane === "left"
+      ? { kind: "wideCatalogExpanded", viewportWidth: presentation.viewportWidth }
+      : { kind: "wideDetailExpanded", viewportWidth: presentation.viewportWidth };
+  }
+  return visibility.panes === "center+right"
+    ? { kind: "wideDetailExpanded", viewportWidth: presentation.viewportWidth }
+    : presentation;
+}
+
+/**
+ * The center surface rounds the side of its one visible neighbouring pane. This is the single
  * radius rule: the frame applies `left` to the center's leading edge and the center layout applies
  * `right` beside the right pane, so both sides share one token and one spring.
  */
@@ -113,16 +154,18 @@ function centerCornerRadii(visibility: WorkspacePaneVisibility): {
   if (visibility.kind !== "split") {
     return { left: 0, right: 0 };
   }
-  return {
-    left: visibility.left ? radii.composer : 0,
-    right: visibility.right ? radii.composer : 0,
-  };
+  return visibility.panes === "left+center"
+    ? { left: radii.composer, right: 0 }
+    : { left: 0, right: radii.composer };
 }
 
 /** Where the right pane sits relative to the center surface. */
 export type RightPanePlacement = "beside" | "cover" | "stashed";
 
-/** Beside in a split; over the center on a phone or when it is fullscreen; otherwise stashed. */
+/**
+ * Beside the center in a `center+right` split; over the center on a phone or when it is
+ * fullscreen; otherwise stashed.
+ */
 export function rightPanePlacement(visibility: WorkspacePaneVisibility): RightPanePlacement {
   if (visibility.kind === "stacked") {
     return "cover";
@@ -130,7 +173,7 @@ export function rightPanePlacement(visibility: WorkspacePaneVisibility): RightPa
   if (visibility.kind === "fullscreen") {
     return visibility.pane === "right" ? "cover" : "stashed";
   }
-  return "beside";
+  return visibility.panes === "center+right" ? "beside" : "stashed";
 }
 
 const LEFT_PLACEMENT: Readonly<
@@ -145,8 +188,9 @@ const LEFT_PLACEMENT: Readonly<
 };
 
 /**
- * The settled arrangement of all three panes for a placed presentation and its visibility: the
- * single target the frame's pane motion springs to.
+ * The settled arrangement of all three panes for a placed presentation (`placeFramePresentation`)
+ * and its visibility: the single target the frame's pane motion springs to. A right pane beside
+ * the center always comes with a covered left pane.
  */
 export function resolvePaneArrangement({
   presentation,
@@ -213,7 +257,10 @@ export function useWorkspacePaneChrome(): WorkspacePaneChrome {
   };
 }
 
-/** A pane can enter fullscreen from a split, and only the fullscreen pane can leave it. */
+/**
+ * A pane the split shows can enter fullscreen, and only the fullscreen pane can leave it. A
+ * covered left pane offers nothing.
+ */
 function paneFullscreen(
   capabilities: WorkspacePaneCapabilities,
   visibility: WorkspacePaneVisibility,
@@ -223,8 +270,13 @@ function paneFullscreen(
   return {
     fullscreen,
     fullscreenAvailable:
-      capabilities.fullscreen === true && (visibility.kind === "split" || fullscreen),
+      capabilities.fullscreen === true &&
+      ((visibility.kind === "split" && splitShows(visibility.panes, pane)) || fullscreen),
   };
+}
+
+function splitShows(panes: WorkspaceSplitPanes, pane: WorkspacePane): boolean {
+  return pane === "center" || pane === (panes === "left+center" ? "left" : "right");
 }
 
 function fullscreenItem(fullscreen: boolean, onSelect: () => void): WorkspacePaneMenuItem {
