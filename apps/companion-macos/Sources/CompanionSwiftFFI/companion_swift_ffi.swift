@@ -654,7 +654,7 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
      * Returns Companion's application-owned HTTP proxy settings.
      *
      * # Errors
-     * Returns an adapter error when the settings cannot be read or encoded.
+     * Returns an adapter error when the settings cannot be encoded.
      */
     func httpProxySettingsJson() throws  -> String
 
@@ -986,7 +986,7 @@ open func health()throws  -> FfiRuntimeHealth  {
      * Returns Companion's application-owned HTTP proxy settings.
      *
      * # Errors
-     * Returns an adapter error when the settings cannot be read or encoded.
+     * Returns an adapter error when the settings cannot be encoded.
      */
 open func httpProxySettingsJson()throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
@@ -2117,7 +2117,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_health() != 9536) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_method_corehost_http_proxy_settings_json() != 27077) {
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_http_proxy_settings_json() != 17424) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_pair_relay() != 64584) {
