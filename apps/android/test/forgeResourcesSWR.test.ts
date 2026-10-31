@@ -57,14 +57,14 @@ describe("forge persisted stale-while-revalidate", () => {
       })),
     });
     await vi.waitFor(() => {
-      expect(memory.read()).toContain('"buster":"forge-query-cache-v2"');
+      expect(memory.read()).toContain('"buster":"forge-query-cache-');
     });
     const persisted = memory.read();
     if (persisted === null) {
       throw new Error("The Forge query fixture was not persisted");
     }
     memory.overwrite(
-      persisted.replace('"buster":"forge-query-cache-v2"', '"buster":"forge-query-cache-v1"'),
+      persisted.replace(/"buster":"forge-query-cache-[^"]*"/u, '"buster":"forge-query-cache-v2"'),
     );
 
     const restarted = createResources(memory.persister);
