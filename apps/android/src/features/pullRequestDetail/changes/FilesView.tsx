@@ -1,22 +1,26 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useDeferredValue } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 
 import type { PullRequestFile, PullRequestFilesPage } from "../../../data/forgeMutationContract";
 import type { DraftComment } from "../../../data/reviewDraftContract";
+import { useConstant } from "../../../react/useConstant";
 import { colors, controlHitSlop, iconSize, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import type { CodeReviewLineReference } from "../../review/comments/reviewComment";
 import { viewedSummary } from "./changesPresentation";
 import { FileDrafts } from "./FileDrafts";
+import { createHeadFileViews, type HeadFileSource, type HeadFileViews } from "./headFileViews";
 import { PullRequestDiff } from "./PullRequestDiff";
+import { useHeadFileContent } from "./useHeadFileContent";
 
 /** Everything the files view needs. */
 type FilesViewProps = {
   readonly besideDiff: boolean;
   readonly drafts: readonly DraftComment[];
   readonly filesOpen: boolean;
-  /** The selected file's whole head content once read; `null` keeps the patch view. */
-  readonly headContent: string | null;
+  /** Where the selected file's whole head content is read from. */
+  readonly headFiles: HeadFileSource;
   readonly host: string;
   readonly onDeleteDraft: (draft: DraftComment) => void;
   readonly onGuide: () => void;
@@ -36,24 +40,11 @@ type FilesViewProps = {
  */
 export function FilesView(props: FilesViewProps): React.JSX.Element {
   const { selected } = props;
+  const views = useConstant(createHeadFileViews);
   return (
     <View style={styles.fill}>
       {props.filesOpen ? <TreeHeader {...props} /> : null}
-      {selected === null ? null : (
-        <PullRequestDiff
-          drafts={props.drafts}
-          headContent={props.headContent}
-          onLinePress={props.onLinePress}
-          reveal={null}
-          selected={selected}
-          tree={{
-            besideDiff: props.besideDiff,
-            files: props.page.files,
-            onSelect: props.onSelect,
-            open: props.filesOpen,
-          }}
-        />
-      )}
+      {selected === null ? null : <SelectedFileDiff {...props} selected={selected} views={views} />}
       {selected === null ? null : (
         <FileDrafts
           drafts={props.drafts.filter((draft) => draft.anchor.path === selected.path)}
@@ -64,6 +55,39 @@ export function FilesView(props: FilesViewProps): React.JSX.Element {
         />
       )}
     </View>
+  );
+}
+
+/**
+ * The selected file's diff, decided once per file view. The selection is
+ * deferred: while the next file's whole content is read (at most
+ * `WHOLE_FILE_WAIT_MS`), its render suspends and the previous file stays on
+ * screen; the first render of the view shows the editor's loading state.
+ */
+function SelectedFileDiff(
+  props: FilesViewProps & { readonly selected: PullRequestFile; readonly views: HeadFileViews },
+): React.JSX.Element {
+  const shown = useDeferredValue<PullRequestFile | null>(props.selected, null);
+  const content = useHeadFileContent({
+    file: shown,
+    files: props.page.files,
+    source: props.headFiles,
+    views: props.views,
+  });
+  return (
+    <PullRequestDiff
+      content={content}
+      drafts={props.drafts}
+      onLinePress={props.onLinePress}
+      reveal={null}
+      selected={shown ?? props.selected}
+      tree={{
+        besideDiff: props.besideDiff,
+        files: props.page.files,
+        onSelect: props.onSelect,
+        open: props.filesOpen,
+      }}
+    />
   );
 }
 

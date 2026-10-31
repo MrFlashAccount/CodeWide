@@ -201,6 +201,9 @@ backdrop or sheet surface as React content of its screen: the Threads Stack is p
 center pane by `ThreadsWorkspacePaneLayout`, so screen content is clipped to that pane on wide
 layouts. Native sheet dismissal (Back, outside tap, swipe) closes the route through Router history;
 losing focus to a pushed child route hides the sheet without navigating.
+Because these routes belong to Threads, the Pull requests review chat (existing chat and draft)
+never pushes `/projects`: it presents the same Manage Projects and Add project sheets locally
+through `LocalProjectManagement`, so the tab, the PR route and its chat stay as they were.
 
 Compatibility is explicit: the existing public URLs are permanent Router-owned surfaces.
 `WorkspacePaneLayout`, `WorkspaceScreenLayout`, `projectWorkspaceRoutes`,

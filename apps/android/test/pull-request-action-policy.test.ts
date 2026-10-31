@@ -61,6 +61,18 @@ describe("action slotting", () => {
     );
   });
 
+  it("sends row-placed agent scenarios to the Agent section in plugin order, never to the measured row", () => {
+    const actions = catalog([
+      action("address", { kind: "addressComments", order: 3 }),
+      action("review", { anchor: { kind: "header" }, kind: "reviewPr", order: 1 }),
+      action("update", { kind: "updateBranch", order: 2, placement: "primary" }),
+      action("rebase", { kind: "rebase", order: 4, placement: "overflow" }),
+    ]);
+    const slots = slotActions(actions, noTargets, { ...phone, availableWidth: 0 });
+    expect(ids(slots.agent)).toEqual(["review", "address"]);
+    expect(ids(slots.overflow)).toEqual(["update", "rebase"]);
+  });
+
   it("puts an anchored action on its target, and in ⋯ when the target is missing", () => {
     const anchored = catalog([
       action("fix", { anchor: { checkId: "c1", kind: "checks" }, kind: "fixCi" }),
@@ -87,6 +99,7 @@ describe("action slotting", () => {
       phone,
     );
     const placed = [
+      ...slots.agent,
       ...slots.primary,
       ...slots.secondary,
       ...slots.overflow,

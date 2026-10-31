@@ -1,6 +1,7 @@
 /**
  * Pure placement of a PR action catalog into bounded UI slots (N-07):
  * - plugin order inside each slot;
+ * - agent scenarios the plugin places in the row feed the Agent section, one row each;
  * - action row: phone 1 primary + 2 secondary, tablet 2 + 3, and only as many
  *   as fit one line by measured width; excess degrades primary → secondary → ⋯;
  * - verdicts never enter the action row: they feed the review dock, default first;
@@ -9,6 +10,7 @@
  * Placement never changes confirmation.
  */
 import type { ActionAnchor, ActionDescriptor } from "../../../data/forgeActionCatalog";
+import { scenarioOf } from "./scenarioKind";
 
 /** Slot bounds and measurement of the current layout. */
 export type SlotLayout = {
@@ -29,6 +31,8 @@ export type SlotTargets = {
 
 /** Every place an action can appear. */
 export type ActionSlots = {
+  /** Row-placed agent scenarios for the Agent section, in plugin order. */
+  readonly agent: readonly ActionDescriptor[];
   readonly anchored: {
     readonly checks: ReadonlyMap<string, readonly ActionDescriptor[]>;
     readonly conflict: readonly ActionDescriptor[];
@@ -76,6 +80,7 @@ const TABLET_PRIMARY_SLOTS = 2;
 const TABLET_SECONDARY_SLOTS = 3;
 
 type MutableSlots = {
+  readonly agent: ActionDescriptor[];
   readonly checks: Map<string, ActionDescriptor[]>;
   readonly conflict: ActionDescriptor[];
   readonly files: Map<string, ActionDescriptor[]>;
@@ -114,7 +119,19 @@ function anchorTarget(anchor: ActionAnchor, targets: SlotTargets): AnchorTarget 
   return { slot: "row" };
 }
 
-/** Routes one action by kind first (verdict, merge), then by anchor, then by placement. */
+/**
+ * An agent scenario the plugin asks to show in the header row (no anchor or the header
+ * anchor, not ⋯): the Agent section shows it as a row with its run state instead of a pill.
+ */
+export function isAgentRowAction(action: ActionDescriptor): boolean {
+  return (
+    scenarioOf(action.kind) !== null &&
+    action.placement !== "overflow" &&
+    (action.anchor === null || action.anchor.kind === "header")
+  );
+}
+
+/** Routes one action by kind first (verdict, merge, agent row), then by anchor, then by placement. */
 function place(action: ActionDescriptor, targets: SlotTargets, slots: MutableSlots): void {
   if (action.kind === "verdict") {
     slots.verdicts.push(action);
@@ -122,6 +139,10 @@ function place(action: ActionDescriptor, targets: SlotTargets, slots: MutableSlo
   }
   if (action.kind === "merge") {
     slots.merge.push(action);
+    return;
+  }
+  if (isAgentRowAction(action)) {
+    slots.agent.push(action);
     return;
   }
   if (action.anchor === null) {
@@ -145,6 +166,7 @@ export function slotActions(
   const ordered = byOrder(actions);
   const autoMerge = ordered.find((action) => action.kind === "autoMerge") ?? null;
   const slots: MutableSlots = {
+    agent: [],
     checks: new Map(),
     conflict: [],
     files: new Map(),
@@ -161,6 +183,7 @@ export function slotActions(
   }
   const row = fillActionRow(slots.row, layout);
   return {
+    agent: slots.agent,
     anchored: {
       checks: slots.checks,
       conflict: slots.conflict,

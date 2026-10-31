@@ -261,6 +261,22 @@ Validation, applied by the companion before Android sees the catalog:
 
 Dropped descriptors are logged by their opaque `actionId` only.
 
+Scenario actions belong to the companion. A plugin descriptor whose `actionId` starts with
+`codewide.scenario.` or whose kind is a scenario kind is dropped, so no plugin can attach an agent
+scenario to a target the companion did not judge. The companion derives `fixCi` from the checks:
+
+- every `failed` `CheckItem` gets its own `fixCi` action anchored `{ kind: "checks", checkId }`,
+  with a distinct opaque `actionId`; starting it names that `checkId`, and its run state is that
+  check's scenario slot;
+- `passed`, `skipped`, `pending` and `cancelled` checks never get one: there is nothing for an
+  agent to repair, and a cancelled run is re-run rather than fixed. A plugin maps
+  `timed_out`, `action_required` and similar problem outcomes to `failed`;
+- a `checkId` shared by several items is ambiguous and is never an anchor (a client would show the
+  action on every row with that id). When checks are failing but no failed item can be anchored,
+  one whole-PR `fixCi` (`codewide.scenario.fixCi`, no anchor) is offered instead.
+
+A plugin must therefore give each `CheckItem` a `checkId` unique within its pull request.
+
 Kind floors can only raise the plugin's `confirm` level. Both the companion and Android apply
 them:
 

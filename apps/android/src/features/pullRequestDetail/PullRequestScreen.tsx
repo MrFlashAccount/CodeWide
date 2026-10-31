@@ -1,9 +1,11 @@
 import { useSelector } from "@legendapp/state/react";
+import { useTransition } from "react";
 import { StyleSheet, View } from "react-native";
 
 import type { ActionDescriptor } from "../../data/forgeActionCatalog";
 import type { ReviewThreadId } from "../../data/forgeConversationContract";
 import { useMinuteClock } from "../../data/minuteClock";
+import type { ThreadId } from "../../data/reviewContract";
 import { useEvent } from "../../react/useEvent";
 import { PrivateImageAccessProvider } from "../../rendering/use-private-image-uri";
 import { useAppDialog } from "../../ui/AppDialog";
@@ -17,6 +19,7 @@ import { PullRequestChanges } from "./changes/PullRequestChanges";
 import { OverviewPane } from "./OverviewPane";
 import { PullRequestAppBar } from "./PullRequestAppBar";
 import type { PullRequestScreenProps } from "./pullRequestScreenContract";
+import { refreshPullRequest } from "./refreshPullRequest";
 import { threadTitle, usePullRequestScreen } from "./usePullRequestScreen";
 
 /**
@@ -34,6 +37,16 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
   const host = overview.account.host;
   const refresh = useEvent((): void => {
     props.forge.overviews.refresh(params).catch(() => undefined);
+  });
+  // The pull indicator is the pending async Transition: it ends when the shown refetches settle.
+  const [pullRefreshing, startPullRefresh] = useTransition();
+  const pullRefresh = useEvent((): void => {
+    startPullRefresh(async () => {
+      await refreshPullRequest(
+        { forge: props.forge, review: props.review },
+        { ...params, headRevision: overview.headRevision },
+      );
+    });
   });
   const actions = usePullRequestActions({
     capabilities: props.capabilities,
@@ -60,6 +73,10 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
   });
   const openReviewChat = useEvent((): void => {
     props.navigation.openReviewChat(data.agentThread?.threadId ?? null);
+  });
+  // An agent run's chat; a settled run shows no thread of its own, so it opens the review chat.
+  const openAgentChat = useEvent((threadId: ThreadId | null): void => {
+    props.navigation.openReviewChat(threadId ?? data.agentThread?.threadId ?? null);
   });
   const extra = openOnForge(overview.webUrl, host);
   const appBar = (section: string | null, trailing: React.ReactNode): React.JSX.Element => (
@@ -95,7 +112,10 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
             nowMs={nowMs}
             onAddressThread={addressThread}
             onOpenChanges={props.navigation.openChanges}
+            onOpenReviewChat={openAgentChat}
+            onPullRefresh={pullRefresh}
             onRun={run}
+            pullRefreshing={pullRefreshing}
             state={state}
           />
         ) : (

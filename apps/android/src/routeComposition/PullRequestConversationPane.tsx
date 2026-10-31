@@ -30,9 +30,12 @@ function ignoreClose(): void {}
  */
 export function PullRequestConversationPane({
   connectionId,
+  onManageProjects,
   threadId,
 }: {
   readonly connectionId: string;
+  /** Presents project management over the mounted PR route; it never navigates. */
+  readonly onManageProjects: () => void;
   readonly threadId: ThreadId;
 }): React.JSX.Element | null {
   const parsed = v1ThreadRouteParams({ connectionId, threadId });
@@ -46,14 +49,16 @@ export function PullRequestConversationPane({
       onOpen={openPullRequest}
       threadId={threadId}
     >
-      <ValidPullRequestConversation thread={parsed.value} />
+      <ValidPullRequestConversation onManageProjects={onManageProjects} thread={parsed.value} />
     </LinkedPullRequestChipProvider>
   );
 }
 
 function ValidPullRequestConversation({
+  onManageProjects,
   thread,
 }: {
+  readonly onManageProjects: () => void;
   readonly thread: V1ThreadRouteParams;
 }): React.JSX.Element {
   const onClose = useThreePanels().chrome.close ?? ignoreClose;
@@ -93,9 +98,7 @@ function ValidPullRequestConversation({
           onDraftAdmitted={closeDraft}
           onExitSearchHistory={onClose}
           onFixUnsupportedBlock={resources.recovery.createUnsupportedFixThread}
-          onManageProjects={() => {
-            router.push("/projects");
-          }}
+          onManageProjects={onManageProjects}
           onOpenBrowser={resources.openBrowser}
           onOpenBrowserInThread={resources.openBrowserInThread}
           onSelectThread={resources.list.selectThread}

@@ -139,3 +139,21 @@ export function scenarioFailure(
   }
   return null;
 }
+
+/** What a tap does beyond the label, by the action's live scenario state. */
+const SCENARIO_HINTS: Readonly<Record<ScenarioView["kind"], string | undefined>> = {
+  active: "Opens the running agent chat",
+  done: "Runs it again",
+  failed: undefined,
+  idle: undefined,
+};
+
+/** The accessibility hint of a catalog action: its disabled reason, else what a tap does now. */
+export function scenarioActionHint(
+  action: ActionDescriptor,
+  scenario: ScenarioView,
+): string | undefined {
+  return action.availability.state === "disabled"
+    ? action.availability.reason
+    : SCENARIO_HINTS[scenario.kind];
+}

@@ -20,7 +20,7 @@ import {
 } from "../../../theme";
 import { TextShimmer } from "../../../ui/TextShimmer";
 import { AppText as Text } from "../../../ui/Typography";
-import type { ScenarioView } from "./scenarioRuns";
+import { scenarioActionHint } from "./scenarioRuns";
 import { useScenarioView } from "./ScenarioViewsContext";
 
 /** Matches AppButton's disabled and pressed feedback. */
@@ -68,11 +68,7 @@ export function CatalogActionButton({
   const busy = pending || running;
   return (
     <Pressable
-      accessibilityHint={
-        action.availability.state === "disabled"
-          ? action.availability.reason
-          : SCENARIO_HINTS[scenario.kind]
-      }
+      accessibilityHint={scenarioActionHint(action, scenario)}
       accessibilityLabel={shown}
       accessibilityRole="button"
       accessibilityState={{ busy, disabled }}
@@ -167,14 +163,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceContainerHigh,
   },
 });
-
-/** What a tap does beyond the label, by the action's live scenario state. */
-const SCENARIO_HINTS: Readonly<Record<ScenarioView["kind"], string | undefined>> = {
-  active: "Opens the running agent chat",
-  done: "Runs it again",
-  failed: undefined,
-  idle: undefined,
-};
 
 /** Compact geometry extends its touch target to 48dp. */
 const VARIANT_HIT_SLOP: Readonly<Record<CatalogActionVariant, number | undefined>> = {

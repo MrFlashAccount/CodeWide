@@ -21,6 +21,15 @@ const PATCH_KINDS: Readonly<Record<PullRequestFile["status"], CodeReviewPatch["k
   renamed: "update",
 };
 
+/**
+ * What one file's diff shows: the whole head file with the patch inline, the
+ * recorded patch alone, or nothing yet while its first view is being decided.
+ */
+export type DiffContent =
+  | { readonly content: string; readonly state: "wholeFile" }
+  | { readonly state: "patch" }
+  | { readonly state: "pending" };
+
 /** Recorded-patch document (`source: ""`) of one file; files without a patch get no document. */
 export function fileDocument(file: PullRequestFile): CodeReviewDocument | null {
   if (file.patch.state !== "present") {

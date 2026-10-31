@@ -5,7 +5,10 @@ import { CatalogActionButton } from "../actions/CatalogActionButton";
 import type { ActionSlots } from "../actions/actionSlotting";
 import { overviewStyles as styles } from "./overview.styles";
 
-/** Header action row: slotted primaries and secondaries on one line; the rest go to the app bar ⋯. */
+/**
+ * Header row of forge actions: slotted primaries and secondaries on one line; the rest go to
+ * the app bar ⋯. Agent scenarios placed in the row show in the Agent section below instead.
+ */
 export function ActionRow({
   onLayoutWidth,
   onRun,

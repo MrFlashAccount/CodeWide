@@ -79,8 +79,8 @@ export function PullRequestGuide({
             : files.find((candidate) => candidate.path === first.path);
         return file === undefined || first === undefined ? null : (
           <PullRequestDiff
+            content={{ state: "patch" }}
             drafts={drafts}
-            headContent={null}
             onLinePress={onLinePress}
             reveal={{ line: first.line, path: first.path, side: "new" }}
             selected={file}

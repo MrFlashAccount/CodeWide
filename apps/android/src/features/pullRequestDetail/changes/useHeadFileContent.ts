@@ -1,42 +1,39 @@
-import { useQuery } from "@tanstack/react-query";
+import { use, useEffect } from "react";
 
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
-import { forgeQueryRemoteValue } from "../../../data/forgeQueryResource";
-import { remoteValue } from "../../../data/forgeRemoteValue";
-import type { ForgeResources } from "../../../data/forgeResources";
-import type { PullRequestTarget } from "../workspaceCapabilities";
-import { showsWholeFile } from "./changesPresentation";
+import type { DiffContent } from "./changesPresentation";
+import type { HeadFileSource, HeadFileViews } from "./headFileViews";
 
-/** Plugin capability that serves whole head files. */
-const FILE_CONTENT_CAPABILITY = "forge.fileContent@1";
+const PENDING: DiffContent = { state: "pending" };
 
 /**
- * The selected file's whole head content, read during render through the
- * process-owned query when the PR's plugin declares `forge.fileContent@1` and
- * the file has a patch to show inline. `null` while it loads, when it is not
- * text (too large, binary, missing), when the read fails, and for an
- * undeclared plugin, whose read never runs: the diff keeps its patch view.
+ * What the diff of `file` shows, decided once per view by `views`. While the
+ * whole head file is still being read this suspends the render, so a deferred
+ * selection keeps the previous file on screen and the editor receives only
+ * the final document. `file: null` is the not-yet-deferred first render, which
+ * shows the editor's own loading state.
  */
 export function useHeadFileContent({
   file,
-  forge,
-  providerCapabilities,
-  target,
+  files,
+  source,
+  views,
 }: {
   readonly file: PullRequestFile | null;
-  readonly forge: Pick<ForgeResources, "fileContent">;
-  readonly providerCapabilities: readonly string[];
-  readonly target: PullRequestTarget;
-}): string | null {
-  const wanted =
-    file !== null && showsWholeFile(file) && providerCapabilities.includes(FILE_CONTENT_CAPABILITY);
-  const query = useQuery(
-    {
-      ...forge.fileContent.options({ ...target, path: file?.path ?? "" }),
-      enabled: wanted,
-    },
-    forge.fileContent.client,
-  );
-  const content = wanted ? remoteValue(forgeQueryRemoteValue(query)) : null;
-  return content?.state === "text" ? content.content : null;
+  readonly files: readonly PullRequestFile[];
+  readonly source: HeadFileSource;
+  readonly views: HeadFileViews;
+}): DiffContent {
+  const key = file === null ? null : views.keyOf(source, file);
+  // Retention only: the shown view's decision outlives revisits of other files.
+  useEffect(() => {
+    if (key !== null) {
+      views.retainOnly(key);
+    }
+  }, [key, views]);
+  if (file === null) {
+    return PENDING;
+  }
+  const decision = views.decide(source, files, file);
+  return decision.status === "settled" ? decision.content : use(decision.promise);
 }

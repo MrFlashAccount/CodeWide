@@ -15,6 +15,7 @@ import {
 } from "../../../theme";
 import { AppSheet, AppSheetScrollView } from "../../../ui/AppSheet";
 import { AppText as Text } from "../../../ui/Typography";
+import { AgentIconActionButton } from "../actions/AgentIconActionButton";
 import { CatalogActionButton } from "../actions/CatalogActionButton";
 import { CHECK_STATE_GLYPHS } from "./checkPresentation";
 import { checkOutcome } from "./mergeBox";
@@ -23,9 +24,10 @@ import { checkOutcome } from "./mergeBox";
 const SHEET_MAX_HEIGHT_RATIO = 0.7;
 
 /**
- * Every check of the PR with its outcome, its anchored actions (Fix in agent)
- * and its forge details page. Running an action closes the sheet first, so a
- * confirmation or the linked chat never opens beneath it.
+ * Every check of the PR with its outcome, its anchored actions (a failed
+ * check's agent (sparkles) Fix in agent icon) and its forge details page. Running an
+ * action closes the sheet first, so a confirmation or the linked chat never
+ * opens beneath it.
  */
 export function ChecksSheet({
   actionsFor,
@@ -111,15 +113,25 @@ function CheckRow({
           {outcome}
         </Text>
       </View>
-      {actions.map((action) => (
-        <CatalogActionButton
-          action={action}
-          key={action.actionId}
-          onPress={onRun}
-          pending={pending[action.actionId] === true}
-          variant="raised"
-        />
-      ))}
+      {actions.map((action) =>
+        action.kind === "fixCi" ? (
+          <AgentIconActionButton
+            accessibilityLabel={`Fix ${check.name} in agent`}
+            action={action}
+            key={action.actionId}
+            onPress={onRun}
+            pending={pending[action.actionId] === true}
+          />
+        ) : (
+          <CatalogActionButton
+            action={action}
+            key={action.actionId}
+            onPress={onRun}
+            pending={pending[action.actionId] === true}
+            variant="raised"
+          />
+        ),
+      )}
       {detailsUrl === null ? null : <DetailsLink name={check.name} url={detailsUrl} />}
     </View>
   );

@@ -159,6 +159,13 @@ beside a PR, or the linked pull request beside a thread). One frame owns one mod
   pane, so they render no backdrop or sheet surface there: the surface is a native `AppSheet`
   window bound to route focus, which covers the whole application while the covered destination
   stays mounted and visible. Fullscreen routes likewise project into `AppFullscreenOverlayHost`.
+- Sheet routes are tab-scoped: `/projects/**` lives in the Threads Stack, so pushing it from Pull
+  requests switches tabs. A Pull requests surface that offers Manage projects (the PR review chat
+  and its draft) presents it locally instead: `PullRequestReviewChatPane` owns a
+  `LocalProjectManagement` page (closed, Manage Projects, Add project) and renders the same
+  `ProjectManagementSheet` / `AddProjectSheet` bindings the `/projects` routes render
+  (`ProjectManagementSheets.tsx`). No navigation happens, so the PR route stays focused and
+  mounted, its right pane keeps its presence, and closing returns to it.
 - Rounding has one rule, `centerCornerRadii(visibility)`: the center rounds its left corners in a
   `left+center` split and its right corners in a `center+right` split, with `radii.composer`;
   it never rounds both sides. Fullscreen and phone layouts have no neighbours and no rounding. Both

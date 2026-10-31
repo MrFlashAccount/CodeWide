@@ -2,7 +2,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, View, type TextStyle, type ViewStyle } from "react-native";
 
 import type { PullRequestOverview, PullRequestRow } from "../../../data/forgePullRequestContract";
-import { CaptionBadge } from "../../../ui/CaptionBadge";
 import { ageAgo } from "../../../ui/relativeAge";
 import { AppText as Text } from "../../../ui/Typography";
 import { colors, iconSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
@@ -44,7 +43,6 @@ export function StatusHeader({
           style={[styles.meta, styles.deletions]}
         >{`−${String(overview.stats.deletions)}`}</Text>
         {age === "" ? null : <Text style={styles.meta}>{`· updated ${age}`}</Text>}
-        {overview.localCheckout === null ? null : <CaptionBadge label="Local checkout" />}
       </View>
     </View>
   );

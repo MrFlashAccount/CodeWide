@@ -165,7 +165,7 @@ function ChangesBody({
           besideDiff={besideDiff}
           drafts={data.drafts}
           filesOpen={filesOpen}
-          headContent={data.headContent}
+          headFiles={data.headFiles}
           host={props.host}
           onDeleteDraft={(draft) => {
             props.reviewCapabilities.deleteDraft(connectionId, draft).catch((error: unknown) => {

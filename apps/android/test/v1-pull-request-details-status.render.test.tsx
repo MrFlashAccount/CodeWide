@@ -1,5 +1,5 @@
-import { act, fireEvent, within } from "@testing-library/react-native";
-import type { ReactNode } from "react";
+import { act, fireEvent, waitFor, within } from "@testing-library/react-native";
+import { isValidElement, type ReactNode } from "react";
 import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markdown";
 
 import {
@@ -179,4 +179,46 @@ it("folds a long comment behind Read more until the reader unfolds it", async ()
     nativeEvent: { layout: { height: 40, width: 360, x: 0, y: 0 } },
   });
   expect(view.queryByTestId("conversation-comment-c-2-read-more")).toBeNull();
+});
+
+it("keeps the local checkout out of the status line", async () => {
+  const { view } = renderScreen({});
+  await view.findByTestId("pull-request-discussion-heading-count");
+  const header = view.getByTestId("pull-request-status-header");
+
+  expect(header).toHaveTextContent(/files/u);
+  expect(within(header).queryByText("Local checkout")).toBeNull();
+});
+
+it("re-reads the overview and conversation once per pull and ends the indicator when they settle", async () => {
+  const { server, view } = renderScreen({});
+  await view.findByTestId("pull-request-discussion-heading-count");
+  const readsOf = (method: string): number => server.reads.filter((read) => read === method).length;
+  const overviewReads = readsOf("companion/pullRequest/read");
+  const conversationReads = readsOf("companion/pullRequest/conversation/read");
+  // The host scroll view carries the platform RefreshControl element; the Node renderer does not mount it.
+  const control = (): { readonly onRefresh: () => void; readonly refreshing: boolean } => {
+    const element: unknown = view.getByTestId("pull-request-overview").props.refreshControl;
+    if (
+      !isValidElement<{ readonly onRefresh: () => void; readonly refreshing: boolean }>(element)
+    ) {
+      throw new Error("Details must offer pull-to-refresh");
+    }
+    return element.props;
+  };
+  expect(control().refreshing).toBe(false);
+
+  act(() => {
+    control().onRefresh();
+  });
+
+  // The published page stays while the reads run.
+  expect(control().refreshing).toBe(true);
+  expect(view.getByTestId("pull-request-discussion-heading-count")).toHaveTextContent("6");
+  await waitFor(() => {
+    expect(control().refreshing).toBe(false);
+  });
+  expect(readsOf("companion/pullRequest/read")).toBe(overviewReads + 1);
+  expect(readsOf("companion/pullRequest/conversation/read")).toBe(conversationReads + 1);
+  expect(view.getByTestId("pull-request-discussion-heading-count")).toHaveTextContent("6");
 });

@@ -72,6 +72,17 @@ impl ActionKind {
         }
     }
 
+    /// The companion's own agent scenarios. Only the companion declares
+    /// them, from the pull request's own state (a `fixCi` only on a failed
+    /// check); a plugin descriptor of one of these kinds is dropped.
+    #[must_use]
+    pub fn is_scenario(self) -> bool {
+        matches!(
+            self,
+            Self::FixCi | Self::Rebase | Self::AddressComments | Self::ReviewPr
+        )
+    }
+
     /// Kinds that only run through their own trigger (Submit review, or a
     /// scenario start), never through `action/run`.
     #[must_use]
@@ -238,7 +249,9 @@ pub fn parse_catalog(raw: &[Value]) -> Vec<ActionDescriptor> {
     let mut actions: Vec<ActionDescriptor> = raw
         .iter()
         .filter_map(parse_descriptor)
-        .filter(|action| !action.action_id.starts_with(SCENARIO_ACTION_PREFIX))
+        .filter(|action| {
+            !action.action_id.starts_with(SCENARIO_ACTION_PREFIX) && !action.kind.is_scenario()
+        })
         .collect();
     actions.sort_by_key(|action| action.order);
     let mut seen_ids = std::collections::HashSet::new();
@@ -590,7 +603,11 @@ mod tests {
         c["isDefault"] = json!(true);
         c["order"] = json!(3);
         let spoof = raw("codewide.scenario.fixCi", "fixCi", "none");
-        let actions = parse_catalog(&[a, b, c, spoof]);
+        // A plugin's own fixCi, anchored to a check the companion never
+        // judged failed, is dropped like a spoofed scenario id.
+        let mut plugin_fix = raw("plugin.fix", "fixCi", "none");
+        plugin_fix["anchor"] = json!({"kind": "checks", "checkId": "passing"});
+        let actions = parse_catalog(&[a, b, c, spoof, plugin_fix]);
         assert_eq!(actions.len(), 3);
         let defaults: Vec<&str> = actions
             .iter()

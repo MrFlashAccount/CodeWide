@@ -132,8 +132,13 @@ async fn the_list_and_atomic_overview_carry_keys_states_and_a_validated_catalog(
         .as_array()
         .expect("actions")
         .iter()
-        .find(|action| action["actionId"] == "codewide.scenario.fixCi")
+        .find(|action| action["kind"] == "fixCi")
         .expect("fixCi");
+    assert_eq!(
+        fix_ci["anchor"],
+        json!({"kind": "checks", "checkId": "ci-1"}),
+        "the failed check carries its own fix"
+    );
     assert_eq!(fix_ci["availability"]["state"], "disabled");
     assert_eq!(
         fix_ci["availability"]["reason"],

@@ -57,6 +57,38 @@ fn scenario_id(kind: ScenarioKind) -> String {
     format!("{SCENARIO_ACTION_PREFIX}{name}")
 }
 
+/// The checks that get their own `fixCi` action: every `failed` check whose
+/// id names exactly one listed check and can start a scenario slot. Passed,
+/// skipped, pending and cancelled checks never get one: there is nothing for
+/// an agent to fix, and a cancelled run is re-run, not repaired. An id shared
+/// by several checks is ambiguous, so a client would attach the action to
+/// every row with that id, passing ones included; such a check gets none.
+fn fix_ci_targets(check_items: &[CheckItem]) -> Vec<&str> {
+    let mut seen = std::collections::HashMap::<&str, usize>::new();
+    for item in check_items {
+        *seen.entry(item.check_id.as_str()).or_default() += 1;
+    }
+    let mut targets: Vec<&str> = Vec::new();
+    for item in check_items {
+        let id = item.check_id.as_str();
+        if item.state == CheckItemState::Failed
+            && seen.get(id) == Some(&1)
+            && super::ids::valid_forge_id(id)
+        {
+            targets.push(id);
+        }
+    }
+    targets
+}
+
+/// A per-check `fixCi` action id: distinct per check, so a client keys each
+/// row's pending and run state apart, and bounded whatever the check id's
+/// length. The scenario start names the check through the anchor, not this id.
+fn fix_ci_check_action_id(check_id: &str) -> String {
+    let digest = blake3::hash(check_id.as_bytes()).to_hex();
+    format!("{}.{}", scenario_id(ScenarioKind::FixCi), &digest[..16])
+}
+
 fn needs_checkout(kind: ScenarioKind) -> bool {
     matches!(
         kind,
@@ -97,9 +129,18 @@ pub fn descriptors(
             }
         };
     let mut actions = Vec::new();
-    let failing = check_items
-        .iter()
-        .find(|item| item.state == CheckItemState::Failed);
+    let anchored = fix_ci_targets(check_items);
+    for check_id in &anchored {
+        let mut action = descriptor(
+            ScenarioKind::FixCi,
+            ActionKind::FixCi,
+            "Fix in agent",
+            100,
+            Some(json!({"kind": "checks", "checkId": check_id})),
+        );
+        action.action_id = fix_ci_check_action_id(check_id);
+        actions.push(action);
+    }
     let checks_failing = matches!(
         checks,
         CheckSummary::Counted {
@@ -107,13 +148,18 @@ pub fn descriptors(
             ..
         }
     );
-    if checks_failing || failing.is_some() {
+    let any_failed = check_items
+        .iter()
+        .any(|item| item.state == CheckItemState::Failed);
+    if anchored.is_empty() && (checks_failing || any_failed) {
+        // No failed check can carry its own action (none listed, or only
+        // ambiguous or invalid ids): one whole-PR fix keeps the scenario.
         actions.push(descriptor(
             ScenarioKind::FixCi,
             ActionKind::FixCi,
             "Fix in agent",
             100,
-            failing.map(|item| json!({"kind": "checks", "checkId": item.check_id})),
+            None,
         ));
     }
     if read.merge.state == MergeState::Conflicts {
@@ -802,6 +848,113 @@ pub async fn links_set(context: &ForgeContext, raw: &Value) -> Result<Value, For
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    fn overview_read() -> PullRequestOverview {
+        serde_json::from_value(json!({
+            "repository": "o/r", "number": "1", "title": "t", "author": "a",
+            "state": "open", "webUrl": "https://example.test/pr/1",
+            "headRevision": "h1", "headBranch": "fix", "baseBranch": "main",
+            "description": "", "stats": {"files": 1, "additions": 1, "deletions": 0},
+            "merge": {"state": "ready", "reason": null},
+        }))
+        .expect("overview")
+    }
+
+    fn check(check_id: &str, state: CheckItemState) -> CheckItem {
+        CheckItem {
+            check_id: check_id.into(),
+            name: check_id.into(),
+            state,
+            duration_seconds: None,
+            details_url: None,
+        }
+    }
+
+    fn failing_summary() -> CheckSummary {
+        serde_json::from_value(json!({"state": "failing", "passed": 1, "failing": 2, "pending": 0}))
+            .expect("summary")
+    }
+
+    /// The `checkId` each `fixCi` action is anchored to; `None` for a whole-PR one.
+    fn fix_ci_anchors(actions: &[ActionDescriptor]) -> Vec<Option<String>> {
+        actions
+            .iter()
+            .filter(|action| action.kind == ActionKind::FixCi)
+            .map(|action| {
+                action
+                    .anchor
+                    .as_ref()
+                    .and_then(|anchor| anchor.get("checkId"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_failed_check_gets_its_own_fix_and_no_other_check_does() {
+        let items = [
+            check("macos", CheckItemState::Failed),
+            check("linux", CheckItemState::Failed),
+            check("plan", CheckItemState::Passed),
+            check("lint", CheckItemState::Skipped),
+            check("docs", CheckItemState::Pending),
+            check("e2e", CheckItemState::Cancelled),
+        ];
+        let actions = descriptors(&overview_read(), &failing_summary(), &items, true);
+        assert_eq!(
+            fix_ci_anchors(&actions),
+            vec![Some("macos".to_owned()), Some("linux".to_owned())]
+        );
+        let ids: std::collections::HashSet<&str> = actions
+            .iter()
+            .filter(|action| action.kind == ActionKind::FixCi)
+            .map(|action| action.action_id.as_str())
+            .collect();
+        assert_eq!(ids.len(), 2, "each check's fix has its own action id");
+        assert!(
+            ids.iter()
+                .all(|id| id.starts_with("codewide.scenario.fixCi."))
+        );
+    }
+
+    #[test]
+    fn an_id_shared_with_a_passing_check_falls_back_to_one_whole_pr_fix() {
+        // Two checks reported under one id: anchoring to it would put the
+        // action on the passing row as well.
+        let items = [
+            check("CI", CheckItemState::Failed),
+            check("CI", CheckItemState::Passed),
+            check("plan", CheckItemState::Passed),
+        ];
+        let actions = descriptors(&overview_read(), &failing_summary(), &items, true);
+        assert_eq!(fix_ci_anchors(&actions), vec![None]);
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.action_id == "codewide.scenario.fixCi")
+        );
+    }
+
+    #[test]
+    fn passing_checks_offer_no_fix() {
+        let items = [
+            check("plan", CheckItemState::Passed),
+            check("e2e", CheckItemState::Cancelled),
+        ];
+        let passing: CheckSummary = serde_json::from_value(
+            json!({"state": "passing", "passed": 1, "failing": 0, "pending": 0}),
+        )
+        .expect("summary");
+        let actions = descriptors(&overview_read(), &passing, &items, true);
+        assert!(fix_ci_anchors(&actions).is_empty());
+    }
+
+    #[test]
+    fn a_failing_rollup_without_items_keeps_one_whole_pr_fix() {
+        let actions = descriptors(&overview_read(), &failing_summary(), &[], true);
+        assert_eq!(fix_ci_anchors(&actions), vec![None]);
+    }
 
     #[test]
     fn only_address_comments_takes_a_review_thread() {

@@ -1,10 +1,8 @@
 import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../../../../src/components/navigation/RouteUnavailable";
-import { ProjectDirectoryPicker } from "../../../../../../src/features/projects/ProjectDirectoryPicker";
-import { workspaceRuntime } from "../../../../../../src/data/workspace-runtime";
 import { useEvent } from "../../../../../../src/react/useEvent";
-import { workspaceFeatures as features } from "../../../../../../src/features/workspace/createWorkspaceFeatures";
+import { AddProjectSheet } from "../../../../../../src/routeComposition/ProjectManagementSheets";
 import { connectionIdParam } from "../../../../../../src/services/threads/threadRouteParams";
 import { useWorkspaceRouteResources } from "../../../../../../src/services/workspace/workspaceRouteResources";
 
@@ -32,20 +30,7 @@ export default function V1AddProjectRoute(): React.JSX.Element {
       />
     );
   }
-  const id = parsed.value.value;
   return (
-    <ProjectDirectoryPicker
-      connections={resources.connections}
-      initialConnectionId={id}
-      native={workspaceRuntime.native}
-      onAddProject={resources.project.projectWorkspace.addSidebarProject}
-      onClose={close}
-      remote={{
-        readDirectory: features.projects.readDirectory,
-        readProjectHome: features.projects.readProjectHome,
-      }}
-      servers={resources.list.servers}
-      visible={visible}
-    />
+    <AddProjectSheet initialConnectionId={parsed.value.value} onClose={close} visible={visible} />
   );
 }

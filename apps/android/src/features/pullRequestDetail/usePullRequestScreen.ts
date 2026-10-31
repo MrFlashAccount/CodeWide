@@ -20,11 +20,12 @@ import { useConstant } from "../../react/useConstant";
 import { useEvent } from "../../react/useEvent";
 import { spacing } from "../../theme";
 import { measureActionLabel } from "./actions/actionMeasure";
-import { slotActions, type ActionSlots } from "./actions/actionSlotting";
+import { isAgentRowAction, slotActions, type ActionSlots } from "./actions/actionSlotting";
 import {
   scenarioFailure,
   scenarioViews,
   withScenarioLabels,
+  type ScenarioView,
   type ScenarioViews,
 } from "./actions/scenarioRuns";
 import { dockCounts } from "./changes/dockCounts";
@@ -122,7 +123,8 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
     remoteValue(useForgeQuery(props.forge.scenarios, params)),
     overview.headRevision,
   );
-  const labelled = withScenarioLabels(overview.catalog.actions, scenarios, useMinuteClock());
+  const outsideAgentRows = withoutAgentRows(overview.catalog.actions, scenarios);
+  const labelled = withScenarioLabels(overview.catalog.actions, outsideAgentRows, useMinuteClock());
   return {
     activity,
     agentThread:
@@ -142,7 +144,7 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
     params,
     providerCapabilities: capabilitiesOf(provider),
     providerIcon: provider?.icon ?? null,
-    scenarioFailure: scenarioFailure(overview.catalog.actions, scenarios),
+    scenarioFailure: scenarioFailure(overview.catalog.actions, outsideAgentRows),
     scenarioViews: scenarios,
     setRowWidth,
     slots: pullRequestSlots(labelled, overview, {
@@ -233,6 +235,25 @@ function visibleReviewThreadIds(
       item.reviewThreadId === null ? [] : [item.reviewThreadId],
     ),
   );
+}
+
+/**
+ * The scenario views of actions outside the Agent section. An Agent row keeps the plugin's
+ * label and shows its run state and failure reason itself, so it takes no live label and
+ * raises no failure banner.
+ */
+function withoutAgentRows(
+  actions: PullRequestOverview["catalog"]["actions"],
+  views: ScenarioViews,
+): ScenarioViews {
+  const outside = new Map<string, ScenarioView>();
+  for (const action of actions) {
+    const view = views.get(action.actionId);
+    if (view !== undefined && !isAgentRowAction(action)) {
+      outside.set(action.actionId, view);
+    }
+  }
+  return outside;
 }
 
 /**

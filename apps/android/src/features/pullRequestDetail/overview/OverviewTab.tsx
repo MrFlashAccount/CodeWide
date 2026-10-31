@@ -1,15 +1,16 @@
 import { useRef } from "react";
-import { ScrollView, StyleSheet, View } from "react-native";
+import { RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type { ReviewThreadId } from "../../../data/forgeConversationContract";
+import type { ThreadId } from "../../../data/reviewContract";
 import type {
   ActivityItem,
   PullRequestOverview,
   PullRequestRow,
 } from "../../../data/forgePullRequestContract";
 import { useConstant } from "../../../react/useConstant";
-import { controlSize, spacing } from "../../../theme";
+import { colors, controlSize, spacing } from "../../../theme";
 import type { ActionSlots } from "../actions/actionSlotting";
 import { ConversationSection } from "../conversation/ConversationSection";
 import { projectDiscussion, type Discussion } from "../conversation/discussionModel";
@@ -25,6 +26,7 @@ import { StatusSection } from "../sections/StatusSection";
 import { ActionNoticeBanner } from "./ActionNoticeBanner";
 import { ActionRow } from "./ActionRow";
 import { ActivitySection } from "./ActivitySection";
+import { AgentSection } from "./AgentSection";
 import { DescriptionSection } from "./DescriptionSection";
 import { ReviewLinks } from "./ReviewLinks";
 import { StatusHeader } from "./StatusHeader";
@@ -48,10 +50,16 @@ export type OverviewTabProps = {
   readonly onLoadMoreActivity: (() => void) | null;
   /** Opens a nested review route over Details. */
   readonly onOpenChanges: (view: ChangesView) => void;
+  /** Opens an agent run's chat, or the PR's review chat when the run's thread is not known. */
+  readonly onOpenReviewChat: (threadId: ThreadId | null) => void;
+  /** Pull-to-refresh: re-reads everything the page shows while it stays visible. */
+  readonly onPullRefresh: () => void;
   readonly onRun: (action: ActionDescriptor, input: boolean | string | null) => void;
   readonly overview: PullRequestOverview;
   readonly pending: Readonly<Record<string, true>>;
   readonly pendingToggles: Readonly<Record<string, boolean>>;
+  /** A pull refresh is running; the indicator stays until its reads settle. */
+  readonly pullRefreshing: boolean;
   readonly slots: ActionSlots;
   readonly writes: ConversationWrites;
 };
@@ -76,7 +84,20 @@ export function OverviewTab(props: OverviewTabProps): React.JSX.Element {
   const discussion =
     props.conversation.status === "ready" ? projectDiscussion(props.conversation.page) : null;
   return (
-    <ScrollView contentContainerStyle={styles.content} ref={scroll} testID="pull-request-overview">
+    <ScrollView
+      contentContainerStyle={styles.content}
+      ref={scroll}
+      refreshControl={
+        <RefreshControl
+          colors={[colors.accent]}
+          onRefresh={props.onPullRefresh}
+          progressBackgroundColor={colors.surfaceContainerHigh}
+          refreshing={props.pullRefreshing}
+          testID="pull-request-overview-refresh"
+        />
+      }
+      testID="pull-request-overview"
+    >
       <View ref={content} style={styles.page}>
         <WorkHeader {...props} />
         <Description description={props.overview.description} />
@@ -126,18 +147,26 @@ function ChangesSection(props: OverviewTabProps): React.JSX.Element {
   );
 }
 
-/** Status, the action row and its notices. */
+/** Status, the forge action row, the Agent section and the action notices. */
 function WorkHeader(props: OverviewTabProps): React.JSX.Element {
+  const run = (action: ActionDescriptor): void => {
+    props.onRun(action, null);
+  };
   return (
     <View style={[styles.inset, styles.header, styles.lead]}>
       <StatusHeader listRow={props.listRow} nowMs={props.nowMs} overview={props.overview} />
       <ActionRow
         onLayoutWidth={props.onActionRowWidth}
-        onRun={(action) => {
-          props.onRun(action, null);
-        }}
+        onRun={run}
         pending={props.pending}
         slots={props.slots}
+      />
+      <AgentSection
+        actions={props.slots.agent}
+        nowMs={props.nowMs}
+        onOpenChat={props.onOpenReviewChat}
+        onRun={run}
+        pending={props.pending}
       />
       <ActionNoticeBanner host={props.host} notice={props.notice} />
     </View>

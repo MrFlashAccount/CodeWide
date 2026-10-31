@@ -1,4 +1,3 @@
-import { useRouter } from "expo-router";
 import { View } from "react-native";
 
 import type { ReviewChatWorkspaceCandidate } from "../data/forgeMutationContract";
@@ -57,10 +56,13 @@ export function PullRequestReviewChatDraftPane({
   commands,
   connectionId,
   draft,
+  onManageProjects,
 }: {
   readonly commands: ReviewChatDraftCommands;
   readonly connectionId: string;
   readonly draft: ReviewChatDraft;
+  /** Presents project management over the mounted PR route; it never navigates. */
+  readonly onManageProjects: () => void;
 }): React.JSX.Element {
   const resources = useWorkspaceRouteResources();
   const picker: NewChatProjectPickerBinding = {
@@ -109,6 +111,7 @@ export function PullRequestReviewChatDraftPane({
           commands={commands}
           connectionId={connectionId}
           draft={draft}
+          onManageProjects={onManageProjects}
         />
       </ConversationRouteNavigationContext.Provider>
     </View>
@@ -121,13 +124,14 @@ function DraftConversation({
   commands,
   connectionId,
   draft,
+  onManageProjects,
 }: {
   readonly admission: DraftAdmission;
   readonly commands: ReviewChatDraftCommands;
   readonly connectionId: string;
   readonly draft: ReviewChatDraft;
+  readonly onManageProjects: () => void;
 }): React.JSX.Element {
-  const router = useRouter();
   const resources = useWorkspaceRouteResources();
   const onClose = useThreePanels().chrome.close ?? ignoreClose;
   return (
@@ -160,9 +164,7 @@ function DraftConversation({
         onDraftAdmitted={() => undefined}
         onExitSearchHistory={onClose}
         onFixUnsupportedBlock={resources.recovery.createUnsupportedFixThread}
-        onManageProjects={() => {
-          router.push("/projects");
-        }}
+        onManageProjects={onManageProjects}
         onOpenBrowser={resources.openBrowser}
         onOpenBrowserInThread={resources.openBrowserInThread}
         onSelectThread={resources.list.selectThread}
