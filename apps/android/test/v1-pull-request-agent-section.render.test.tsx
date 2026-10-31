@@ -20,6 +20,7 @@ import { resetAppDialog } from "./mocks/AppDialog";
 const HEAD = headRevision("head-2", "headRevision");
 const REVIEW_CHAT = threadId("thread-review-chat", "threadId");
 const NOW_MS = Date.parse("2026-10-28T12:10:00Z");
+const MINUTE_MS = 60_000;
 const REVIEW = "codewide.scenario.reviewPr";
 const ADDRESS = "codewide.scenario.addressComments";
 /** Progress words the row must never put in place of the plugin's label. */
@@ -115,13 +116,13 @@ function renderSection(
       target: { connectionId: "server", headRevision: HEAD, host: "github.com", pullRequest },
     }),
   );
-  function Section(): React.JSX.Element {
+  function Section({ nowMs }: { readonly nowMs: number }): React.JSX.Element {
     const pending = useSelector(() => model.pending.get());
     return (
       <ScenarioViewsContext.Provider value={views}>
         <AgentSection
           actions={actions}
-          nowMs={NOW_MS}
+          nowMs={nowMs}
           onOpenChat={onOpenChat}
           onRun={(action) => {
             hook.result.current.run(action, null);
@@ -131,8 +132,12 @@ function renderSection(
       </ScenarioViewsContext.Provider>
     );
   }
-  render(<Section />);
-  return { model, onOpenChat, onOpenThread };
+  const { rerender } = render(<Section nowMs={NOW_MS} />);
+  /** Advances the screen's minute clock the section reads. */
+  const setNow = (nowMs: number) => {
+    rerender(<Section nowMs={nowMs} />);
+  };
+  return { model, onOpenChat, onOpenThread, setNow };
 }
 
 function labelText(label: string) {
@@ -173,12 +178,12 @@ it("keeps a running review's label, shimmers it and opens its chat without start
     threadId: REVIEW_CHAT,
   });
   const start = jest.fn<ReturnType<Start>, Parameters<Start>>();
-  const { onOpenChat } = renderSection(actions, views, start);
+  const { onOpenChat, setNow } = renderSection(actions, views, start);
 
   const row = screen.getByTestId(`agent-action-${REVIEW}`);
   expect(row.props.accessibilityLabel).toBe("Review PR, running, opens the chat");
   expect(labelText("Review PR")?.props.shimmering).toBe(true);
-  expect(screen.getByText("open chat")).toBeOnTheScreen();
+  expect(screen.getByText("Started 2 min ago · open chat")).toBeOnTheScreen();
   expect(screen.queryByText(PROGRESS_WORDS)).toBeNull();
   // A running row has no start control of its own.
   expect(screen.queryByTestId(`catalog-action-${REVIEW}`)).toBeNull();
@@ -187,6 +192,26 @@ it("keeps a running review's label, shimmers it and opens its chat without start
 
   expect(onOpenChat.mock.calls).toEqual([[REVIEW_CHAT]]);
   expect(start).not.toHaveBeenCalled();
+
+  setNow(NOW_MS + 3 * MINUTE_MS);
+
+  expect(screen.getByText("Started 5 min ago · open chat")).toBeOnTheScreen();
+  expect(screen.queryByText("Started 2 min ago · open chat")).toBeNull();
+});
+
+it("says only open chat for a queued run that has not started yet", () => {
+  const actions = catalog(ENABLED);
+  const views = reviewViews(actions, {
+    headRevision: "head-2",
+    queuedAt: "2026-10-28T12:08:00Z",
+    status: "queued",
+    threadId: REVIEW_CHAT,
+  });
+  renderSection(actions, views, jest.fn<ReturnType<Start>, Parameters<Start>>());
+
+  expect(labelText("Review PR")?.props.shimmering).toBe(true);
+  expect(screen.getByText("open chat")).toBeOnTheScreen();
+  expect(screen.queryByText(/Started/u)).toBeNull();
 });
 
 it("shows a failed run's real reason and starts it once again from Retry", async () => {

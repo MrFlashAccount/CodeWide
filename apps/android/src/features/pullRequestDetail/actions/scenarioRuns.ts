@@ -18,7 +18,8 @@ import { scenarioOf } from "./scenarioKind";
 /** What one scenario action shows and does. */
 export type ScenarioView =
   | { readonly kind: "idle" }
-  | { readonly kind: "active"; readonly threadId: ThreadId }
+  /** A queued or running run; `startedAt` is `null` until the run leaves the queue. */
+  | { readonly kind: "active"; readonly startedAt: string | null; readonly threadId: ThreadId }
   | { readonly finishedAt: string; readonly kind: "done" }
   | { readonly kind: "failed"; readonly reason: string };
 
@@ -58,8 +59,11 @@ function slotOf(action: ActionDescriptor): {
 
 function viewOf(slot: ScenarioSlotState, head: HeadRevision): ScenarioView {
   const { state } = slot;
-  if (state.status === "queued" || state.status === "running") {
-    return { kind: "active", threadId: state.threadId };
+  if (state.status === "queued") {
+    return { kind: "active", startedAt: null, threadId: state.threadId };
+  }
+  if (state.status === "running") {
+    return { kind: "active", startedAt: state.startedAt, threadId: state.threadId };
   }
   if (state.status === "idle" || state.headRevision !== head) {
     return IDLE;

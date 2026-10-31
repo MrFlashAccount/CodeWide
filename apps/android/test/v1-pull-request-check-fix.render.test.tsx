@@ -120,7 +120,7 @@ it("shows and shimmers the live label beside the icon while that check's fix run
   const views: ScenarioViews = new Map([
     [
       "codewide.scenario.fixCi.linux",
-      { kind: "active", threadId: threadId("thread-1", "threadId") },
+      { kind: "active", startedAt: null, threadId: threadId("thread-1", "threadId") },
     ],
   ]);
   renderSheet(running, views, () => undefined);

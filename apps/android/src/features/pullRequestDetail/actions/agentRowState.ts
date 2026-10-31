@@ -11,7 +11,7 @@ import type { ScenarioView } from "./scenarioRuns";
 
 /** One row's state; each kind carries only what that row can show. */
 export type AgentRowState =
-  | { readonly kind: "active"; readonly threadId: ThreadId }
+  | { readonly kind: "active"; readonly startedAt: string | null; readonly threadId: ThreadId }
   | { readonly kind: "disabled"; readonly reason: string }
   | { readonly finishedAt: string; readonly kind: "done" }
   | { readonly kind: "failed"; readonly reason: string }
@@ -25,7 +25,7 @@ export function agentRowState(
   pending: boolean,
 ): AgentRowState {
   if (view.kind === "active") {
-    return { kind: "active", threadId: view.threadId };
+    return view;
   }
   if (action.availability.state === "disabled") {
     return { kind: "disabled", reason: action.availability.reason };
@@ -36,10 +36,14 @@ export function agentRowState(
   return view;
 }
 
-/** The row's second line: the run's real age or failure, or the catalog's disabled reason. */
+/**
+ * The row's second line: a running run's start age, a finished run's age or failure, or the
+ * catalog's disabled reason.
+ */
 export function agentRowDetail(state: AgentRowState, nowMs: number): string | null {
   if (state.kind === "active") {
-    return "open chat";
+    const age = state.startedAt === null ? "" : ageAgo(state.startedAt, nowMs);
+    return age === "" ? "open chat" : `Started ${age} · open chat`;
   }
   if (state.kind === "done") {
     const age = ageAgo(state.finishedAt, nowMs);
