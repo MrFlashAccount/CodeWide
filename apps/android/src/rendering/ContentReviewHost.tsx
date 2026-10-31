@@ -367,6 +367,25 @@ export function useImageReviewPoints(targetId: string): readonly ContentReviewPo
   return points;
 }
 
+export function useVideoReviewPoints(targetId: string): readonly ContentReviewPoint[] {
+  const controller = useContext(ContentReviewContext);
+  if (controller === null) {
+    return [];
+  }
+  const points: ContentReviewPoint[] = [];
+  for (const comment of controller.comments) {
+    const anchor = comment.anchor;
+    if (anchor.kind === "video" && anchor.target.id === targetId) {
+      points.push({ id: comment.id, pending: false, x: anchor.x, y: anchor.y });
+    }
+  }
+  const active = controller.active;
+  if (active?.anchor.kind === "video" && active.anchor.target.id === targetId) {
+    points.push({ id: active.id, pending: true, x: active.anchor.x, y: active.anchor.y });
+  }
+  return points;
+}
+
 export function ContentReviewComposer({
   anchorKind,
   diagramId,
@@ -686,7 +705,8 @@ function commentAnchorLabel(anchor: ContentReviewAnchor): string {
   if (anchor.kind === "response") {
     return "Entire agent response";
   }
-  return `${anchor.kind === "image" ? "Image" : "Mermaid"} · ${(anchor.x * 100).toFixed(1)}%, ${(anchor.y * 100).toFixed(1)}%`;
+  const label = anchor.kind === "image" ? "Image" : anchor.kind === "video" ? "Video" : "Mermaid";
+  return `${label} · ${(anchor.x * 100).toFixed(1)}%, ${(anchor.y * 100).toFixed(1)}%`;
 }
 
 const REVIEW_PURPLE = "#B794F6";

@@ -185,7 +185,6 @@ function isCommandOutputPointer(pointer: string): boolean {
 }
 
 function FullContentViewer({ onClose, onNext, onPrevious, selection }: FullContentViewerProps) {
-  const [viewportHeight, setViewportHeight] = useState(0);
   const title =
     selection.pointer === "/" ? "Full output" : contentPointerLabel(selection.pointer, 0);
   const hasPrevious = selection.offset > 0;
@@ -202,9 +201,7 @@ function FullContentViewer({ onClose, onNext, onPrevious, selection }: FullConte
     onPrevious,
     rangeEnd,
     selection,
-    setViewportHeight,
     title,
-    viewportHeight,
   });
 }
 

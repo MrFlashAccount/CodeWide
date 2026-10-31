@@ -5,7 +5,11 @@ import {
 } from "./thread-detail-projection";
 import { appLogger } from "../observability/logger";
 import type { CommandReceipt } from "./command-receipt-evidence";
-import { getUiCacheFileDiagnostics, getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
+import {
+  getUiCacheFileDiagnostics,
+  getUiCacheSqliteDatabase,
+  scheduleUiCacheFreePageReclaim,
+} from "./ui-cache-persistence.native";
 import { incrementMetric, recordSqliteSubsetLoad, recordTiming } from "./operational-metrics";
 import { sqliteRows } from "./sqliteResult";
 import { unknownRecord } from "./unknownRecord";
@@ -31,8 +35,9 @@ const CONTENT_TABLE = "codewide_history_content";
 const CHECKPOINT_DELAY_MS = 250;
 const CHECKPOINT_ATTEMPTS = 3;
 // History is a reconstructable FIFO cache, not an LRU. Let it grow to 2 GiB,
-// then rotate the oldest inserted sealed turn families down to 1 GiB. The
-// remaining history reuses the freed pages for newer rows.
+// then rotate the oldest inserted sealed turn families down to 1 GiB. After a
+// rotation commits, the freed pages return to the filesystem in bounded
+// incremental-vacuum steps outside the checkpoint chain.
 const HISTORY_CACHE_SOFT_LIMIT_BYTES = 1 * 1024 * 1024 * 1024;
 const HISTORY_CACHE_HARD_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
 const HISTORY_CACHE_MAINTENANCE_WRITE_BYTES = 64 * 1024 * 1024;
@@ -184,6 +189,7 @@ export function createThreadDetailSqlite(
       const attempt = prepareSchema(database)
         .then((result) => {
           maintenance = result;
+          reclaimEvictedPages(result);
         })
         .catch((error: unknown) => {
           if (prepared === attempt) {
@@ -261,6 +267,7 @@ export function createThreadDetailSqlite(
             try {
               const rotation = await database.transaction(rotateHistoryCache);
               historyBytesWrittenSinceMaintenance = 0;
+              reclaimEvictedPages(rotation);
               maintenance = {
                 ...maintenance,
                 historyBytesEvicted: maintenance.historyBytesEvicted + rotation.historyBytesEvicted,
@@ -621,6 +628,14 @@ function isUnconfirmedReceiptRow(
     pendingEntry.commandId === receipt.commandId &&
     pendingEntry.confirmation === undefined
   );
+}
+
+function reclaimEvictedPages(
+  rotation: Pick<ThreadDetailSqliteMaintenance, "historyFamiliesEvicted">,
+): void {
+  if (rotation.historyFamiliesEvicted > 0) {
+    scheduleUiCacheFreePageReclaim();
+  }
 }
 
 async function prepareSchema(

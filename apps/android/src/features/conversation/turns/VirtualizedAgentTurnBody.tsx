@@ -9,6 +9,8 @@ import { BubbleContent } from "../../../rendering/Bubble";
 import { ContentReviewComments } from "../../../rendering/ContentReviewHost";
 import { MessageAttachmentCard } from "../../../rendering/MessageAttachmentCard";
 import { MessageAttachmentGrid } from "../../../rendering/MessageAttachmentTile";
+import { MessageVideoGallery } from "../../../rendering/MessageVideoGallery";
+import { isAttachmentVideo } from "../../../rendering/videoPreview";
 import { RichMarkdownDocumentBlockView } from "../../../rendering/RichMarkdown";
 import { RichMarkdownPremeasurementBoundary } from "../../../rendering/RichMarkdownPremeasurementProvider";
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
@@ -377,9 +379,19 @@ function AgentArtifacts(props: VirtualizedAgentTurnBodyProps): ReactElement | nu
     return null;
   }
   const images = props.presentation.artifacts.filter((attachment) => attachment.kind === "image");
-  const attachments = props.presentation.artifacts.filter(
-    (attachment) => attachment.kind !== "image",
+  const videos = props.presentation.artifacts.filter((attachment) =>
+    isAttachmentVideo(attachment.name),
   );
+  const attachments = props.presentation.artifacts.filter(
+    (attachment) => attachment.kind !== "image" && !isAttachmentVideo(attachment.name),
+  );
+  const videoCards = videos.map((attachment) => (
+    <MessageAttachmentCard
+      attachment={attachment}
+      key={userMessageAttachmentReference(attachment)}
+      {...(props.getTransferAccess === undefined ? {} : { getAccess: props.getTransferAccess })}
+    />
+  ));
   const cards = attachments.map((attachment) => (
     <MessageAttachmentCard
       attachment={attachment}
@@ -395,6 +407,9 @@ function AgentArtifacts(props: VirtualizedAgentTurnBodyProps): ReactElement | nu
           ? {}
           : { getTransferAccess: props.getTransferAccess })}
       />
+      {videos.length === 0 ? null : (
+        <MessageVideoGallery style={styles.agentAttachmentGrid}>{videoCards}</MessageVideoGallery>
+      )}
       {attachments.length === 0 ? null : (
         <MessageAttachmentGrid style={styles.agentAttachmentGrid}>{cards}</MessageAttachmentGrid>
       )}
