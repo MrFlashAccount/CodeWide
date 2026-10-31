@@ -39,6 +39,10 @@ export function ThreePanelsHeader({
   /** The content's row metrics (height, insets). */
   readonly style?: StyleProp<ViewStyle>;
   readonly testID: string;
+  /**
+   * Laid out as an item of the header row, vertically centred on the controls: content that fills
+   * the remaining width or truncates sets `flex: 1` or `flexShrink: 1` with `minWidth: 0`.
+   */
   readonly title: ReactNode;
   /** Content actions before the pane controls, such as Search or Submit review. */
   readonly trailing?: ReactNode;
@@ -140,8 +144,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
   },
+  // A centring row: the title lays out exactly as a direct child of the header row did. In a
+  // column slot, React Native's legacy Yoga errata (`YGErrataAll`) let a `flex: 1` title grow to
+  // the row's full height, top-anchoring a two-line title instead of centring it on the controls.
   title: {
+    alignItems: "center",
     flex: 1,
+    flexDirection: "row",
     minWidth: 0,
   },
 });

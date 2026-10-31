@@ -113,9 +113,12 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     fontWeight: typeWeight.semibold,
   },
+  // Fills the title slot so a long repository name truncates instead of overflowing the controls.
   titleRow: {
     alignItems: "center",
     columnGap: spacing.compact,
+    flex: 1,
     flexDirection: "row",
+    minWidth: 0,
   },
 });
