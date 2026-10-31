@@ -12,7 +12,7 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from "react-native-reanimated";
-import { SvgFromXml, SvgXml } from "react-native-svg";
+import Svg, { SvgXml } from "react-native-svg";
 import { scheduleOnRN } from "react-native-worklets";
 
 import { useEvent } from "../react/useEvent";
@@ -24,6 +24,7 @@ import { DiagramPreviewVisibility } from "./DiagramPreviewViewport";
 import { InlineMediaFrame } from "./InlineMediaFrame";
 import { peleDiagramKey, renderPeleDiagram } from "./peleDiagramWorker.native";
 import type { PeleDiagramRenderResult } from "./peleDiagramRenderer";
+import { parsePeleDiagramSvg } from "./peleDiagramSvg";
 import { peleDiagramTextureTransform, peleDiagramViewBox } from "./peleDiagramViewBox";
 
 interface PeleDiagramPreviewProps {
@@ -57,7 +58,7 @@ const STRING_BYTES_PER_CHAR = 2;
 const ZOOM_ANIMATION_MS = 140;
 const ZOOM_IN_FACTOR = 1.25;
 const ZOOM_OUT_FACTOR = 0.8;
-const AnimatedSvgFromXml = createAnimatedComponent(SvgFromXml);
+const AnimatedSvg = createAnimatedComponent(Svg);
 
 export type PeleDiagramZoomCommand = {
   readonly id: number;
@@ -450,6 +451,7 @@ function PeleDiagramLayer({
   readonly transform: DiagramTransform;
   readonly viewport: Size;
 }): ReactElement | null {
+  const content = parsePeleDiagramSvg(svg);
   const vectorProps = useAnimatedProps(() => ({
     viewBox: peleDiagramViewBox({
       fitHeight: fit.height,
@@ -491,13 +493,18 @@ function PeleDiagramLayer({
         pointerEvents="none"
         style={[StyleSheet.absoluteFill, textureStyle]}
       >
-        <AnimatedSvgFromXml
+        <AnimatedSvg
           animatedProps={vectorProps}
+          fill={content.fill}
+          fontFamily={content.fontFamily}
+          fontSize={content.fontSize}
           height="100%"
           preserveAspectRatio="xMidYMid meet"
+          viewBox={content.viewBox}
           width="100%"
-          xml={svg}
-        />
+        >
+          {content.children}
+        </AnimatedSvg>
       </Animated.View>
       {reviewPoints.map((point) => (
         <DiagramReviewPoint

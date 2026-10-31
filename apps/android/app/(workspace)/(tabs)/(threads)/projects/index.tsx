@@ -5,10 +5,14 @@ import { workspaceRuntime } from "../../../../../src/data/workspace-runtime";
 import { workspaceFeatures as features } from "../../../../../src/features/workspace/createWorkspaceFeatures";
 import { ALL_SERVER_SCOPE } from "../../../../../src/services/servers/serverScope";
 import { useProjectWorkspace } from "../../../../../src/features/projects/projectWorkspace";
-import { SidebarProjectsRouteSurface } from "../../../../../src/features/projects/SidebarProjectsRouteSurface";
+import { SidebarProjectsSheet } from "../../../../../src/features/projects/SidebarProjectViews";
 import { useWorkspaceRouteResources } from "../../../../../src/services/workspace/workspaceRouteResources";
 
-/** Composes project management while each directory browser has its own route. */
+/**
+ * Composes project management while each directory browser has its own route. The transparent
+ * route keeps the covered destination mounted and visible; the native sheet window presents the
+ * surface over the whole application while this route is focused.
+ */
 export default function V1ProjectsRoute(): React.JSX.Element {
   const router = useRouter();
   const visible = useIsFocused();
@@ -28,7 +32,7 @@ export default function V1ProjectsRoute(): React.JSX.Element {
     false,
   );
   return (
-    <SidebarProjectsRouteSurface
+    <SidebarProjectsSheet
       errors={project.sidebarProjectErrors}
       initialConnectionId={
         resources.list.servers.find((server) => server.id === connectionId)?.id ?? null
@@ -47,6 +51,7 @@ export default function V1ProjectsRoute(): React.JSX.Element {
       onToggle={project.toggleSidebarProject}
       projects={project.availableSidebarProjects}
       servers={project.sidebarServers}
+      visible={visible}
     />
   );
 }

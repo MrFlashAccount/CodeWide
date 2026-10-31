@@ -3,6 +3,7 @@ import { SvgXml } from "react-native-svg";
 
 import { MAX_INLINE_DIAGRAM_SOURCE_CHARS } from "../src/rendering/inlineMediaGeometry";
 import { renderPeleDiagramSvg } from "../src/rendering/peleDiagramRenderer";
+import { parsePeleDiagramSvg } from "../src/rendering/peleDiagramSvg";
 
 const fixtures = [
   {
@@ -163,6 +164,7 @@ describe("Pele native diagram contract", () => {
       if (arrows) {
         expect(result.svg).toContain('class="pele-marker"');
       }
+      expect(parsePeleDiagramSvg(result.svg).children.length).toBeGreaterThan(0);
       for (const label of labels) {
         expect(result.svg).toContain(label);
       }

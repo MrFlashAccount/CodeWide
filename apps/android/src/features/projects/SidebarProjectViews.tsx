@@ -138,18 +138,16 @@ export function SidebarProjectsSheet(
       onClose={props.onClose}
       visible={props.visible}
     >
-      <ProjectManagementContent props={props} sheetScroll />
+      <ProjectManagementContent props={props} />
     </ProjectManagementSurface>
   );
 }
 
-/** Shared project-management body for sheet-owned and route-owned presentation. */
-export function ProjectManagementContent({
+/** Project-management body hosted by the native sheet window. */
+function ProjectManagementContent({
   props,
-  sheetScroll = false,
 }: {
   readonly props: ProjectManagementProps;
-  readonly sheetScroll?: boolean;
 }): React.JSX.Element {
   const { servers } = props;
   const state = useProjectManagement(props);
@@ -179,7 +177,7 @@ export function ProjectManagementContent({
         renderItem={({ index, item }) => (
           <ProjectManagementRow index={index} item={item} props={props} state={state} />
         )}
-        {...(sheetScroll ? { scrollComponent: AppSheetScrollView } : {})}
+        scrollComponent={AppSheetScrollView}
         style={styles.sheetList}
         testID="project-management-list"
         virtualized

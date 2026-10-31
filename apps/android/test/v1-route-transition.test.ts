@@ -5,7 +5,6 @@ import { v1MobileRouteMotion } from "../src/ui/v1MobileRouteMotion";
 import {
   v1MobileRouteScreenOptions,
   v1ProjectListScreenOptions,
-  v1RouteSheetScreenOptions,
 } from "../src/routeComposition/WorkspaceShell.styles";
 
 vi.mock("react-native", () => ({
@@ -22,10 +21,4 @@ it("uses the app fade and short slide for the shared project stack", () => {
   expect(v1ProjectListScreenOptions.animation).toBe(v1MobileRouteScreenOptions.animation);
   expect(v1ProjectListScreenOptions.animationDuration).toBe(v1MobileRouteMotion.durationMs);
   expect(v1ProjectListScreenOptions.headerShown).toBe(false);
-});
-
-it("animates route-owned sheets through native-stack", () => {
-  expect(v1RouteSheetScreenOptions.animation).toBe("fade_from_bottom");
-  expect(v1RouteSheetScreenOptions.animationDuration).toBe(v1MobileRouteMotion.durationMs);
-  expect(v1RouteSheetScreenOptions.presentation).toBe("transparentModal");
 });

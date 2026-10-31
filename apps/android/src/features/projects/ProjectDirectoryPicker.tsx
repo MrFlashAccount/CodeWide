@@ -2,10 +2,13 @@ import type { StoredConnection } from "../../data/connection-profile-types";
 import { useEvent } from "../../react/useEvent";
 import type { ThreadListServer } from "../connections/connectionPresentation";
 import type { ProjectsWorkspaceCapabilities } from "./workspaceCapabilities";
-import { ProjectPickerRouteSurface } from "./ProjectPickerSurface";
+import { ProjectPickerSurface } from "./ProjectPickerSurface";
 import { projectPickerServers } from "./projectPickerServers";
 
-/** Adds a folder on an explicitly chosen server without changing the conversation destination. */
+/**
+ * Adds a folder on an explicitly chosen server without changing the conversation destination.
+ * The native sheet window presents it over the whole application, never inside a pane.
+ */
 export function ProjectDirectoryPicker({
   connections,
   initialConnectionId,
@@ -32,7 +35,7 @@ export function ProjectDirectoryPicker({
     return Promise.resolve();
   });
   return (
-    <ProjectPickerRouteSurface
+    <ProjectPickerSurface
       browseOnly
       busy={false}
       choices={[]}

@@ -142,6 +142,11 @@ beside a PR, or the linked pull request beside a thread). One frame owns one mod
   That layout feeds right-pane presence into the same owner (only while its route is active) and
   reads back the same resolved visibility; it never owns fullscreen or a second visibility.
   Nothing route-owned renders through an overlay or portal.
+- Sheet-presented routes (`projects/**`, thread `controls/**`, `goal`, `queue`, ...) are transparent
+  native-stack entries inside the pane-placed Stack. Their React content is clipped to the center
+  pane, so they render no backdrop or sheet surface there: the surface is a native `AppSheet`
+  window bound to route focus, which covers the whole application while the covered destination
+  stays mounted and visible. Fullscreen routes likewise project into `AppFullscreenOverlayHost`.
 - Rounding has one rule, `centerCornerRadii(visibility)`: the center rounds its left corners in a
   `left+center` split and its right corners in a `center+right` split, with `radii.composer`;
   it never rounds both sides. Fullscreen and phone layouts have no neighbours and no rounding. Both

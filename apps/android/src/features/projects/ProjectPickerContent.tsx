@@ -16,11 +16,9 @@ import { styles } from "./ProjectPickerSheet.styles";
 /** Virtualized project and directory lists preserve qualified selection and local errors. */
 export function ProjectPickerContent({
   props,
-  sheetScroll = true,
   state,
 }: {
   props: ScopedProjectPickerProps;
-  readonly sheetScroll?: boolean;
   state: ProjectPickerSession;
 }): React.JSX.Element {
   const { busy, confirmation, onAddProject, onManageProjects, onSelect } = props;
@@ -124,7 +122,7 @@ export function ProjectPickerContent({
               />
             );
           }}
-          {...(sheetScroll ? { scrollComponent: AppSheetScrollView } : {})}
+          scrollComponent={AppSheetScrollView}
           style={styles.projectScroll}
           virtualized
         />

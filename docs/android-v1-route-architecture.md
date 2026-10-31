@@ -194,9 +194,13 @@ the companion contract is in [Forge plugins](forge-plugins.md).
   `features/pullRequestDetail` reach each other only through these intents.
 
 `/projects` and `/projects/add/**` exist only under `(tabs)/(threads)`. They are transparent native-stack
-routes whose React trees draw the backdrop and sheet surface directly. They never create a nested
-native `AppSheet`; route Back, outside dismissal, focus and native-stack animation therefore share
-one lifecycle.
+routes that render nothing in the pane: the covered destination (for example New Chat) stays mounted
+and visible below them, and their surface is a native `AppSheet` window bound to route focus, so it
+covers the whole application like every other sheet. A sheet-presented route must never draw its
+backdrop or sheet surface as React content of its screen: the Threads Stack is placed inside the
+center pane by `ThreadsWorkspacePaneLayout`, so screen content is clipped to that pane on wide
+layouts. Native sheet dismissal (Back, outside tap, swipe) closes the route through Router history;
+losing focus to a pushed child route hides the sheet without navigating.
 
 Compatibility is explicit: the existing public URLs are permanent Router-owned surfaces.
 `WorkspacePaneLayout`, `WorkspaceScreenLayout`, `projectWorkspaceRoutes`,

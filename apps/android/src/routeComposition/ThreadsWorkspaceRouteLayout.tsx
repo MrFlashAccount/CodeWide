@@ -12,7 +12,6 @@ import {
   v1ListScreenOptions,
   v1MobileRouteScreenOptions,
   v1RouteScreenOptions,
-  v1RouteSheetScreenOptions,
   v1SheetScreenOptions,
 } from "./WorkspaceShell.styles";
 import type { WorkspaceFramePresentation } from "./workspacePanes";
@@ -31,7 +30,6 @@ export function ThreadsWorkspaceRouteLayout(): React.JSX.Element {
     : desktop
       ? v1DesktopRouteScreenOptions
       : v1MobileRouteScreenOptions;
-  const routeSheetScreenOptions = reducedMotion ? v1SheetScreenOptions : v1RouteSheetScreenOptions;
   return (
     <Stack
       layout={renderThreadsPaneLayout}
@@ -39,9 +37,9 @@ export function ThreadsWorkspaceRouteLayout(): React.JSX.Element {
       screenOptions={routeScreenOptions}
     >
       <Stack.Screen name="(lists)" options={v1ListScreenOptions} />
-      <Stack.Screen name="projects/add/[connectionId]" options={routeSheetScreenOptions} />
-      <Stack.Screen name="projects/add/index" options={routeSheetScreenOptions} />
-      <Stack.Screen name="projects/index" options={routeSheetScreenOptions} />
+      <Stack.Screen name="projects/add/[connectionId]" options={v1SheetScreenOptions} />
+      <Stack.Screen name="projects/add/index" options={v1SheetScreenOptions} />
+      <Stack.Screen name="projects/index" options={v1SheetScreenOptions} />
       <Stack.Screen name="search" options={v1SheetScreenOptions} />
     </Stack>
   );

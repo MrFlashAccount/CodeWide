@@ -2,6 +2,19 @@ import {
   peleDiagramTextureTransform,
   peleDiagramViewBox,
 } from "../src/rendering/peleDiagramViewBox";
+import { parsePeleDiagramSvg } from "../src/rendering/peleDiagramSvg";
+
+it("parses the SVG root before the animated native host mounts", () => {
+  const content = parsePeleDiagramSvg(
+    '<svg viewBox="0 0 100 50" fill="#fff" font-family="sans-serif" font-size="16"><rect width="100" height="50" /></svg>',
+  );
+
+  expect(content.viewBox).toBe("0 0 100 50");
+  expect(content.fill).toBe("#fff");
+  expect(content.fontFamily).toBe("sans-serif");
+  expect(content.fontSize).toBe(16);
+  expect(content.children).toHaveLength(1);
+});
 
 it("zooms by narrowing the SVG viewBox instead of scaling rendered pixels", () => {
   expect(
