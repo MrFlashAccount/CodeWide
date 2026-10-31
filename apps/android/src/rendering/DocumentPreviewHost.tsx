@@ -42,7 +42,8 @@ import {
   useAppFullscreenOverlay,
   type AppFullscreenOverlayController,
 } from "../ui/AppFullscreenOverlay";
-import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
+import type { ActionMenuItem } from "../ui/ActionMenu";
+import { OverflowMenu } from "../ui/OverflowMenu";
 import { useAppDialog } from "../ui/AppDialog";
 import { useAppNotice } from "../ui/useAppNotice";
 import { AppText as Text } from "../ui/Typography";
@@ -564,19 +565,12 @@ function DocumentHeader({
         {title}
       </Text>
       {actions.length > 0 && (
-        <ActionMenu
+        <OverflowMenu
           accessibilityLabel={`Document actions for ${title}`}
           actions={actions}
           onSelect={onSelect}
-        >
-          <Pressable
-            accessibilityLabel={`Document actions for ${title}`}
-            accessibilityRole="button"
-            style={styles.iconButton}
-          >
-            <Ionicons color={colors.text} name="ellipsis-vertical" size={iconSize.action} />
-          </Pressable>
-        </ActionMenu>
+          size="regular"
+        />
       )}
     </View>
   );

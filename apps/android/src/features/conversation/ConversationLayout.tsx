@@ -5,6 +5,7 @@ import { TurnChangesContext } from "../../rendering/TurnChangesContext";
 import { conversationHeaderChromeHeight } from "../../ui/conversation-chrome-layout";
 import { ConversationPanelUnderlay } from "../../ui/ConversationPanelUnderlay";
 import { MessageActionMenuProvider } from "../../ui/MessageActionMenu";
+import { PaneChrome } from "../../ui/PaneChrome";
 import { surfaceToneCanvasStyle, useSurfaceTone } from "../../ui/surfaceTone";
 import { CostBreakdownMenuProvider } from "../accounts/CostBreakdownMenu";
 import { styles } from "./ConversationLayout.styles";
@@ -50,7 +51,7 @@ export function ConversationLayout({
           <View pointerEvents="box-none" style={styles.conversationHeaderChrome}>
             {headerContent}
 
-            {threadSearchVisible && searchContent}
+            {threadSearchVisible && <PaneChrome>{searchContent}</PaneChrome>}
           </View>
 
           <View style={styles.conversationContentSurface}>
@@ -86,7 +87,10 @@ export function ConversationLayout({
             style={styles.composerSticky}
           >
             <ConversationPanelUnderlay style={StyleSheet.absoluteFill} />
-            {jumpContent}
+            {/* The floating jump control keeps its inset from the pane's visible edge. */}
+            <PaneChrome pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+              {jumpContent}
+            </PaneChrome>
 
             {bottomChrome}
           </KeyboardStickyView>

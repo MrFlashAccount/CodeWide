@@ -26,10 +26,14 @@ export type PaneArrangement = {
 /**
  * Pane geometry in frame coordinates. Layout widths size each pane's content box and change at
  * most twice per rearrangement (they hold the larger of both ends while panes move); positions,
- * the center clip, radii and the catalog opacity move every frame without relayout of content.
+ * the center clip, radii, the catalog opacity and every visible width move every frame without
+ * relayout of content. A visible width is the width the pane shows now; pane chrome (headers,
+ * bottom bars) follows it, while the rest of the content keeps the layout width.
  */
 export type PaneGeometry = {
   readonly catalogOpacity: number;
+  /** Visible width of the catalog. */
+  readonly catalogVisibleWidth: number;
   /** Layout width of the catalog content. */
   readonly catalogWidth: number;
   /** Visible width of the center surface; it clips center content of `centerWidth`. */
@@ -38,15 +42,25 @@ export type PaneGeometry = {
   readonly centerRightRadius: number;
   /** Layout width of the center content. */
   readonly centerWidth: number;
+  /** Visible width of the destination. */
+  readonly detailVisibleWidth: number;
   /** Layout width of the destination. */
   readonly detailWidth: number;
   /** Leading edge of the destination. */
   readonly detailX: number;
+  /** Visible width of the right pane. */
+  readonly rightVisibleWidth: number;
   /** Layout width of the right pane. */
   readonly rightWidth: number;
   /** Leading edge of the right pane. */
   readonly rightX: number;
 };
+
+/**
+ * The pane boxes of one frame: the catalog, the destination the frame places beside it, and the
+ * center and right panes a destination splits itself into.
+ */
+export type PaneBox = "catalog" | "center" | "destination" | "right";
 
 /** Center and right split the destination into this many equal shares. */
 const CENTER_RIGHT_SHARES = 2;
@@ -127,15 +141,19 @@ export function paneGeometry(arrangement: PaneArrangement, frameWidth: number): 
   const sidebar = Math.min(Math.max(arrangement.sidebarWidth, 0), frameWidth);
   const left = leftPaneGeometry(arrangement.left, sidebar, frameWidth);
   const right = rightPaneGeometry(arrangement.right, left.detailX, left.detailWidth);
+  // Settled, every pane shows its whole content box.
   return {
     catalogOpacity: left.catalogOpacity,
+    catalogVisibleWidth: left.catalogWidth,
     catalogWidth: left.catalogWidth,
     centerClipWidth: right.centerClipWidth,
     centerLeftRadius: arrangement.centerLeftRadius,
     centerRightRadius: arrangement.centerRightRadius,
     centerWidth: right.centerClipWidth,
+    detailVisibleWidth: left.detailWidth,
     detailWidth: left.detailWidth,
     detailX: left.detailX,
+    rightVisibleWidth: right.rightWidth,
     rightWidth: right.rightWidth,
     rightX: right.rightX,
   };
@@ -146,10 +164,15 @@ function mix(from: number, to: number, progress: number): number {
   return from + (to - from) * progress;
 }
 
+function mixWidth(from: number, to: number, progress: number): number {
+  "worklet";
+  return Math.max(0, mix(from, to, progress));
+}
+
 /**
- * The geometry `progress` of the way from `from` to `to`. Positions, clip, radii and opacity
- * interpolate; layout widths hold the larger end so moving content is clipped, never reflowed
- * or exposed. Every pane derives its frame from this one function of one progress.
+ * The geometry `progress` of the way from `from` to `to`. Positions, clip, visible widths, radii
+ * and opacity interpolate; layout widths hold the larger end so moving content is clipped, never
+ * reflowed or exposed. Every pane derives its frame from this one function of one progress.
  */
 export function interpolatePaneGeometry(
   from: PaneGeometry,
@@ -159,14 +182,37 @@ export function interpolatePaneGeometry(
   "worklet";
   return {
     catalogOpacity: Math.min(1, Math.max(0, mix(from.catalogOpacity, to.catalogOpacity, progress))),
+    catalogVisibleWidth: mixWidth(from.catalogVisibleWidth, to.catalogVisibleWidth, progress),
     catalogWidth: Math.max(from.catalogWidth, to.catalogWidth),
-    centerClipWidth: Math.max(0, mix(from.centerClipWidth, to.centerClipWidth, progress)),
+    centerClipWidth: mixWidth(from.centerClipWidth, to.centerClipWidth, progress),
     centerLeftRadius: Math.max(0, mix(from.centerLeftRadius, to.centerLeftRadius, progress)),
     centerRightRadius: Math.max(0, mix(from.centerRightRadius, to.centerRightRadius, progress)),
     centerWidth: Math.max(from.centerWidth, to.centerWidth),
+    detailVisibleWidth: mixWidth(from.detailVisibleWidth, to.detailVisibleWidth, progress),
     detailWidth: Math.max(from.detailWidth, to.detailWidth),
     detailX: mix(from.detailX, to.detailX, progress),
+    rightVisibleWidth: mixWidth(from.rightVisibleWidth, to.rightVisibleWidth, progress),
     rightWidth: Math.max(from.rightWidth, to.rightWidth),
     rightX: mix(from.rightX, to.rightX, progress),
   };
+}
+
+/**
+ * How far `box`'s content extends past the pane's visible trailing edge: the layout width it
+ * holds while panes move minus the width it shows now; `0` once settled. Pane chrome gives up
+ * this much of its trailing side, so it lays out to exactly the width the pane shows.
+ */
+export function paneChromeInset(pane: PaneGeometry, box: PaneBox): number {
+  "worklet";
+  switch (box) {
+    case "catalog":
+      return Math.max(0, pane.catalogWidth - pane.catalogVisibleWidth);
+    case "center":
+      return Math.max(0, pane.centerWidth - pane.centerClipWidth);
+    case "destination":
+      return Math.max(0, pane.detailWidth - pane.detailVisibleWidth);
+    case "right":
+      break;
+  }
+  return Math.max(0, pane.rightWidth - pane.rightVisibleWidth);
 }

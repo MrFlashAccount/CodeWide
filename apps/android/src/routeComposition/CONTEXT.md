@@ -106,6 +106,18 @@ but it does not own transport, persistence, protocol reduction or application da
   pane uses layout transitions, entering/exiting animations or its own spring. A closed right pane
   stays mounted, hidden, while it slides out, until the motion settles. Reduced motion (system or
   app preference) snaps.
+- Pane chrome is the one exception to fixed content widths. Each pane box also has a visible
+  width that moves with the same progress; `ThreePanelsPane` derives, on the UI thread, how far
+  its box's content extends past that visible edge (`paneChromeInset`) and publishes it as
+  `chromeInset` in `ThreePanelsContext`. `PaneChrome` (`ui/PaneChrome.tsx`) gives up that much
+  trailing margin every frame, so headers and bottom bars lay out to the width the pane shows and
+  settle with the panes; the heavy body keeps the fixed layout width. `ThreePanelsHeader`,
+  `ConversationBottomChrome` (composer, prompts, notices), the thread search bar and the jump
+  control use it; other pane content opts in by rendering its chrome inside `PaneChrome`. Chrome
+  is a few rows, so the per-frame relayout stays small; JavaScript sees nothing until the motion
+  settles (a measured box around chrome keeps the content width). Data for geeks samples the
+  UI-thread frame intervals of each rearrangement (`pane_motion_frame_ms`); otherwise no frame
+  callback runs.
 - `features/pullRequests` and `features/pullRequestDetail` must not import each other. They meet only
   through typed route intents owned here.
 - Tab activation and compact linked-chat handoff must not use `router.replace`, `dismissTo`,

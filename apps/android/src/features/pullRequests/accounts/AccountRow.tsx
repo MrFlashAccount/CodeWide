@@ -5,11 +5,11 @@ import type { AccountState, ForgeProvider } from "../../../data/forgeContract";
 import { ProductText } from "../../../presentation/text/ProductText";
 import { useEvent } from "../../../react/useEvent";
 import { colors } from "../../../theme";
-import { ActionMenu, type ActionMenuItem } from "../../../ui/ActionMenu";
+import type { ActionMenuItem } from "../../../ui/ActionMenu";
 import { AppListRow } from "../../../ui/AppListRow";
-import { AppListRowMenuTrigger } from "../../../ui/AppListRowMenuTrigger";
 import { listRowHeight, type AppListRowProps } from "../../../ui/AppListRow.types";
 import { AppSwitch } from "../../../ui/AppSwitch";
+import { OverflowMenu } from "../../../ui/OverflowMenu";
 import type { PullRequestsWorkspaceCapabilities } from "../workspaceCapabilities";
 import { accountDescription, DISCONNECT_LABELS, disconnectModes } from "./accountPresentation";
 import { accountsSheetStyles as styles } from "./AccountsSheet.styles";
@@ -128,9 +128,12 @@ function AccountRowTrailing({
           value={catalog.value}
         />
       )}
-      <ActionMenu accessibilityLabel={menuLabel} actions={actions} onSelect={onSelect}>
-        <AppListRowMenuTrigger accessibilityLabel={menuLabel} />
-      </ActionMenu>
+      <OverflowMenu
+        accessibilityLabel={menuLabel}
+        actions={actions}
+        onSelect={onSelect}
+        tone="dim"
+      />
     </View>
   );
 }

@@ -363,7 +363,7 @@ it("prevents another project mutation until the current pin request settles", as
   fireEvent.press(view.getByLabelText("Actions for Repo, /repo"));
   fireEvent.press(view.getByLabelText("Actions for Repo, /repo: Pin project"));
   expect(view.getByLabelText("Actions for Repo, /repo")).toBeDisabled();
-  expect(view.queryByText("ellipsis-horizontal")).toBeNull();
+  expect(view.queryByText("ellipsis-vertical")).toBeNull();
   expect(view.getByLabelText("Add project")).toBeDisabled();
   fireEvent.press(view.getByLabelText("Actions for Repo, /repo: Pin project"));
   expect(toggle).toHaveBeenCalledTimes(1);
@@ -372,7 +372,7 @@ it("prevents another project mutation until the current pin request settles", as
     await promise;
   });
   expect(view.getByLabelText("Actions for Repo, /repo")).toBeEnabled();
-  expect(view.getByText("ellipsis-horizontal")).toBeVisible();
+  expect(view.getByText("ellipsis-vertical")).toBeVisible();
 });
 
 it("browses the chosen server without changing the active conversation project", () => {

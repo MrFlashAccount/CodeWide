@@ -138,10 +138,13 @@ describe("one progress derives every pane property", () => {
       const to = paneGeometry(toArrangement, FRAME);
       const positions = [
         "catalogOpacity",
+        "catalogVisibleWidth",
         "centerClipWidth",
         "centerLeftRadius",
         "centerRightRadius",
+        "detailVisibleWidth",
         "detailX",
+        "rightVisibleWidth",
         "rightX",
       ] as const;
       const layoutWidths = ["catalogWidth", "centerWidth", "detailWidth", "rightWidth"] as const;

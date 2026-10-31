@@ -118,6 +118,11 @@ export function useEvent<Handler>(handler: Handler): Handler {
 }
 
 export function useSharedValue<Value>(initial: Value): SharedValue<Value> {
+  return makeMutable(initial);
+}
+
+// Render tests re-create shared values on each render, so a read reflects the latest props.
+export function makeMutable<Value>(initial: Value): SharedValue<Value> {
   let value = initial;
   return {
     get value() {

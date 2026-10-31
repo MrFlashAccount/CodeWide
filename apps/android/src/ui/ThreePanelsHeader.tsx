@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 
 import { colors, iconSize, radii, touchTarget } from "../theme";
+import { PaneChrome } from "./PaneChrome";
 import { useThreePanels, type ThreePanelsChrome } from "./threePanels";
 
 /**
@@ -22,7 +23,8 @@ export type ThreePanelsBack = {
  * pane decides the controls it owns from `ThreePanelsContext`: the fullscreen toggle and the close
  * come from the pane's declared chrome, and the content's back intent shows only when it is nested
  * or the pane cannot close. The content supplies only its title, trailing actions and menu, so
- * back, fullscreen and close look and behave the same in every pane.
+ * back, fullscreen and close look and behave the same in every pane. The header is pane chrome:
+ * while panes rearrange it follows the pane's visible width (`PaneChrome`).
  */
 export function ThreePanelsHeader({
   back,
@@ -52,28 +54,30 @@ export function ThreePanelsHeader({
   const { chrome } = useThreePanels();
   const shownBack = paneBack(back, chrome);
   return (
-    <View style={[styles.row, style, shownBack === null && withoutBackStyle]} testID={testID}>
-      {shownBack === null ? null : (
-        <HeaderControl
-          icon="arrow-back"
-          iconSize={iconSize.navigation}
-          label={shownBack.label}
-          onPress={shownBack.run}
-        />
-      )}
-      <View style={styles.title}>{title}</View>
-      {trailing}
-      <FullscreenControl chrome={chrome} />
-      {menu}
-      {chrome.close === null ? null : (
-        <HeaderControl
-          icon="close"
-          iconSize={iconSize.action}
-          label={`Close ${chrome.label}`}
-          onPress={chrome.close}
-        />
-      )}
-    </View>
+    <PaneChrome testID={`${testID}-chrome`}>
+      <View style={[styles.row, style, shownBack === null && withoutBackStyle]} testID={testID}>
+        {shownBack === null ? null : (
+          <HeaderControl
+            icon="arrow-back"
+            iconSize={iconSize.navigation}
+            label={shownBack.label}
+            onPress={shownBack.run}
+          />
+        )}
+        <View style={styles.title}>{title}</View>
+        {trailing}
+        <FullscreenControl chrome={chrome} />
+        {menu}
+        {chrome.close === null ? null : (
+          <HeaderControl
+            icon="close"
+            iconSize={iconSize.action}
+            label={`Close ${chrome.label}`}
+            onPress={chrome.close}
+          />
+        )}
+      </View>
+    </PaneChrome>
   );
 }
 

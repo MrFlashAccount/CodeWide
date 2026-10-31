@@ -71,7 +71,6 @@ type VideoSize = { readonly height: number; readonly width: number };
 const REVIEW_POINT_PERCENT = 100;
 const PENDING_POINT_OPACITY = 0.6;
 const HALF = 2;
-const PRESSED_OPACITY = 0.82;
 
 export function useAttachmentVideoPreview(): (request: VideoRequest) => void {
   const overlay = useAppFullscreenOverlay();
@@ -116,12 +115,7 @@ export function MessageVideoPreview(props: MessageVideoPreviewProps): React.JSX.
     );
   }
   return (
-    <Pressable
-      accessibilityLabel={`Open ${props.name}`}
-      accessibilityRole="button"
-      onPress={props.onOpen}
-      style={({ pressed }) => [styles.messagePreview, pressed && styles.pressed]}
-    >
+    <View style={styles.messagePreview} testID="message-video-preview">
       {resource.value === null ? (
         <ActivityIndicator color={colors.textMuted} />
       ) : (
@@ -137,7 +131,16 @@ export function MessageVideoPreview(props: MessageVideoPreviewProps): React.JSX.
           {props.name}
         </Text>
       </View>
-    </Pressable>
+      <Pressable
+        accessibilityLabel={`Open ${props.name}`}
+        accessibilityRole="button"
+        onPress={props.onOpen}
+        style={({ pressed }) => [
+          styles.messagePreviewPressTarget,
+          pressed && styles.messagePreviewPressed,
+        ]}
+      />
+    </View>
   );
 }
 
@@ -627,6 +630,16 @@ const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
+  messagePreviewPressed: {
+    backgroundColor: "rgba(255,255,255,0.12)",
+  },
+  messagePreviewPressTarget: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
   messagePreviewShade: {
     backgroundColor: "rgba(0,0,0,0.2)",
     bottom: 0,
@@ -668,7 +681,6 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
   },
-  pressed: { opacity: PRESSED_OPACITY },
   retryButton: {
     padding: spacing.lg,
   },

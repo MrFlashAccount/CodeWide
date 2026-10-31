@@ -9,7 +9,7 @@ import { changeScopeDisplay } from "../../../rendering/changeScopeDisplay";
 import { changedFileDisplayPath } from "../../../rendering/changed-file-path";
 import { CodeReviewEditor } from "../editor/CodeReviewEditor";
 import { colors, iconSize } from "../../../theme";
-import { ActionMenu } from "../../../ui/ActionMenu";
+import { OverflowMenu } from "../../../ui/OverflowMenu";
 import { AppText as Text } from "../../../ui/Typography";
 
 /** Composes file selection, diff viewing, and review-comment submission. */
@@ -113,25 +113,16 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
             </Text>
           )}
         </View>
-        <ActionMenu
+        <OverflowMenu
           accessibilityLabel="Changes options"
           actions={menuActions}
           align="end"
+          busy={scopeLoading}
           onSelect={selectMenuAction}
           placement="bottom"
-        >
-          <Pressable
-            accessibilityLabel="Changes options"
-            disabled={scopeLoading}
-            style={styles.iconButton}
-          >
-            {scopeLoading ? (
-              <ActivityIndicator color={colors.textMuted} size="small" />
-            ) : (
-              <Ionicons color={colors.text} name="ellipsis-vertical" size={iconSize.action} />
-            )}
-          </Pressable>
-        </ActionMenu>
+          size="regular"
+          tone="filled"
+        />
         <Pressable
           accessibilityLabel="Attach review"
           disabled={attachDisabled}

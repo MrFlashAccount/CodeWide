@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import { makeMutable, type DerivedValue } from "react-native-reanimated";
 
 import type { PullRequestKey } from "../data/forgeContract";
 import type { SurfaceTone } from "./surfaceTone";
@@ -50,6 +51,13 @@ export type ThreePanelsContent =
 /** Where a subtree is placed in the three-pane workspace and what sits beside it. */
 export type ThreePanels = {
   readonly chrome: ThreePanelsChrome;
+  /**
+   * How far the pane's content box currently extends past the pane's visible trailing edge, on
+   * the UI thread: positive only while panes rearrange, when content holds its larger layout
+   * width. Pane chrome (`ThreePanelsHeader`, `PaneChrome`) gives up this much of its trailing
+   * side every frame, so it always lays out to the width the pane shows and settles with it.
+   */
+  readonly chromeInset: DerivedValue<number>;
   /** What the other pane of the same destination shows, while it is mounted. */
   readonly neighbour: ThreePanelsContent | null;
   readonly pane: ThreePanelsPane;
@@ -61,6 +69,8 @@ export type ThreePanels = {
 /** Outside any declared pane: a standalone center with nothing declared and nothing beside it. */
 const STANDALONE: ThreePanels = {
   chrome: { close: null, fullscreen: false, label: "", toggleFullscreen: null },
+  // Nothing moves outside a pane frame.
+  chromeInset: makeMutable(0),
   neighbour: null,
   pane: "center",
   tone: "raised",

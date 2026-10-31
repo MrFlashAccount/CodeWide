@@ -175,6 +175,7 @@ function CenterPaneContent({
 }): React.JSX.Element {
   return (
     <ThreePanelsPane
+      box="center"
       capabilities={declaration.capabilities}
       label={declaration.label}
       neighbour={neighbour}
@@ -251,6 +252,7 @@ function RightPaneContent({
 }): React.JSX.Element {
   return (
     <ThreePanelsPane
+      box="right"
       capabilities={declaration.capabilities}
       label={declaration.label}
       neighbour={neighbour}

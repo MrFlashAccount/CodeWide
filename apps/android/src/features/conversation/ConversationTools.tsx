@@ -84,15 +84,18 @@ export function useConversationTools(props: UseConversationToolsProps) {
       props.composerCommands.composerAttachmentsBinding.readDrawingAttachments,
   });
   useImagePreviewAnnotationHandler(drawingFeatureBinding.annotateImage);
-  useReviewFeature(
-    props.composerScope,
-    props.composerStateBinding.reviewAttachmentIdsBinding.contentReviewAttachmentId,
-    props.readInputs.remoteThread,
-    props.appVoiceInputRuntime,
-    props.voiceController,
-    props.composerInputs.onStartVoiceTranscription,
-    reviewSubmissionBinding.attachContentReview,
-  );
+  useReviewFeature({
+    appVoiceInputRuntime: props.appVoiceInputRuntime,
+    attachContentReview: reviewSubmissionBinding.attachContentReview,
+    composerScope: props.composerScope,
+    contentReviewAttachmentId:
+      props.composerStateBinding.reviewAttachmentIdsBinding.contentReviewAttachmentId,
+    onStartVoiceTranscription: props.composerInputs.onStartVoiceTranscription,
+    remoteThread: props.readInputs.remoteThread,
+    removeContentReviewAttachment:
+      props.composerCommands.composerAttachmentsBinding.removeComposerAttachment,
+    voiceController: props.voiceController,
+  });
   const changesFeatureBinding = useChangesFeature({
     appVoiceInputRuntime: props.appVoiceInputRuntime,
     attachCodeReview: reviewSubmissionBinding.attachCodeReview,

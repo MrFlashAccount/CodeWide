@@ -80,16 +80,22 @@ describe("Android-transformed pane geometry", () => {
         const detailX = left === "alone" ? 1200 : left === "beside" ? 300 : 0;
         const detailWidth = left === "alone" || left === "beside" ? 900 : 1200;
         const centerWidth = right === "beside" ? detailWidth / 2 : detailWidth;
+        const catalogWidth = left === "beside" || left === "covered" ? 300 : 1200;
+        const rightWidth = right === "cover" ? detailWidth : detailWidth / 2;
+        // Settled, every pane shows its whole content box.
         expect(invoke(resolve, [arrangement, 1200])).toEqual({
           catalogOpacity: left === "covered" ? 0 : 1,
-          catalogWidth: left === "beside" || left === "covered" ? 300 : 1200,
+          catalogVisibleWidth: catalogWidth,
+          catalogWidth,
           centerClipWidth: centerWidth,
           centerLeftRadius: 12,
           centerRightRadius: 12,
           centerWidth,
+          detailVisibleWidth: detailWidth,
           detailWidth,
           detailX,
-          rightWidth: right === "cover" ? detailWidth : detailWidth / 2,
+          rightVisibleWidth: rightWidth,
+          rightWidth,
           rightX: right === "cover" ? detailX : detailX + centerWidth,
         });
       }
@@ -101,41 +107,70 @@ describe("Android-transformed pane geometry", () => {
       runtime === "UI"
         ? transferToUi(geometry.interpolatePaneGeometry)
         : geometry.interpolatePaneGeometry;
-    const from = {
-      catalogOpacity: 1,
-      catalogWidth: 300,
-      centerClipWidth: 900,
-      centerLeftRadius: 12,
-      centerRightRadius: 0,
-      centerWidth: 900,
-      detailWidth: 900,
-      detailX: 300,
-      rightWidth: 450,
-      rightX: 1200,
-    };
-    const to = {
-      catalogOpacity: 0,
-      catalogWidth: 300,
-      centerClipWidth: 600,
-      centerLeftRadius: 0,
-      centerRightRadius: 12,
-      centerWidth: 600,
-      detailWidth: 1200,
-      detailX: 0,
-      rightWidth: 600,
-      rightX: 600,
-    };
-    expect(invoke(resolve, [from, to, 0.5])).toEqual({
+    expect(invoke(resolve, [FROM, TO, 0.5])).toEqual({
       catalogOpacity: 0.5,
+      catalogVisibleWidth: 300,
       catalogWidth: 300,
       centerClipWidth: 750,
       centerLeftRadius: 6,
       centerRightRadius: 6,
       centerWidth: 900,
+      detailVisibleWidth: 1050,
       detailWidth: 1200,
       detailX: 150,
+      rightVisibleWidth: 525,
       rightWidth: 600,
       rightX: 900,
     });
   });
+
+  it.each(["RN", "UI"] as const)("derives the pane chrome inset on %s", (runtime) => {
+    const interpolate =
+      runtime === "UI"
+        ? transferToUi(geometry.interpolatePaneGeometry)
+        : geometry.interpolatePaneGeometry;
+    const inset =
+      runtime === "UI" ? transferToUi(geometry.paneChromeInset) : geometry.paneChromeInset;
+    const halfway = invoke(interpolate, [FROM, TO, 0.5]);
+    // Content holds the larger layout width; chrome gives up what lies past the visible edge.
+    expect(invoke(inset, [halfway, "catalog"])).toBe(0);
+    expect(invoke(inset, [halfway, "center"])).toBe(150);
+    expect(invoke(inset, [halfway, "destination"])).toBe(150);
+    expect(invoke(inset, [halfway, "right"])).toBe(75);
+    for (const box of ["catalog", "center", "destination", "right"]) {
+      expect(invoke(inset, [TO, box])).toBe(0);
+    }
+  });
 });
+
+/** Opening the right pane beside the center over a catalog that slides away. */
+const FROM = {
+  catalogOpacity: 1,
+  catalogVisibleWidth: 300,
+  catalogWidth: 300,
+  centerClipWidth: 900,
+  centerLeftRadius: 12,
+  centerRightRadius: 0,
+  centerWidth: 900,
+  detailVisibleWidth: 900,
+  detailWidth: 900,
+  detailX: 300,
+  rightVisibleWidth: 450,
+  rightWidth: 450,
+  rightX: 1200,
+};
+const TO = {
+  catalogOpacity: 0,
+  catalogVisibleWidth: 300,
+  catalogWidth: 300,
+  centerClipWidth: 600,
+  centerLeftRadius: 0,
+  centerRightRadius: 12,
+  centerWidth: 600,
+  detailVisibleWidth: 1200,
+  detailWidth: 1200,
+  detailX: 0,
+  rightVisibleWidth: 600,
+  rightWidth: 600,
+  rightX: 600,
+};

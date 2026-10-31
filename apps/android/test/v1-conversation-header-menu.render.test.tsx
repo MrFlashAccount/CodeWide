@@ -1,5 +1,6 @@
 import { fireEvent, render } from "@testing-library/react-native";
 import type { ComponentProps } from "react";
+import { makeMutable } from "react-native-reanimated";
 
 import { ConversationHeader } from "../src/features/conversation/header/ConversationHeader";
 import { ActionMenu } from "../src/ui/ActionMenu";
@@ -130,6 +131,7 @@ it("presents a right-pane header: the pane's fullscreen and close instead of bac
   const toggleFullscreen = jest.fn();
   const pane: ThreePanels = {
     chrome: { close, fullscreen: false, label: "review chat", toggleFullscreen },
+    chromeInset: makeMutable(0),
     neighbour: null,
     pane: "right",
     tone: "recessed",

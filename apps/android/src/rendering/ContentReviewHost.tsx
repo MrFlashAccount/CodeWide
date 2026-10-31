@@ -22,7 +22,7 @@ import type {
 } from "../data/voice-input-controller";
 import type { WorkspaceResourceDatabase } from "../data/workspace-resource-database";
 import type { VoiceInputController } from "../data/voice-input-controller";
-import { colors, radii, spacing, typeScale, typeWeight, iconSize, controlSize } from "../theme";
+import { colors, radii, spacing, typeScale, iconSize, controlSize } from "../theme";
 import { useAppDialog } from "../ui/AppDialog";
 import { useMicrophoneAccess } from "../ui/use-microphone-access";
 import { useScopedVoiceInputResource } from "../ui/VoiceInputRuntime";
@@ -33,6 +33,7 @@ import {
   type ContentReviewAnchor,
   type ContentReviewComment,
 } from "./content-review";
+import { ContentReviewCommentRow } from "./ContentReviewCommentRow";
 
 type VoiceStarter = (
   listener: (event: VoiceTranscriptionEvent) => void,
@@ -42,6 +43,7 @@ type VoiceStarter = (
 export type ContentReviewRuntime = {
   attach: (markdown: string) => Promise<string | null>;
   attachmentId: string | null;
+  removeAttachment?: (attachmentId: string) => void;
   resources: WorkspaceResourceDatabase | null;
   startVoice?: VoiceStarter;
   thread: Thread | null;
@@ -54,17 +56,27 @@ type RuntimeStore = {
   subscribe: (listener: () => void) => () => void;
 };
 
-type ActiveReview = {
+type ActiveReviewBase = {
   anchor: ContentReviewAnchor;
   id: string;
   scope: string;
 };
 
+type ActiveReview =
+  | (ActiveReviewBase & { readonly mode: "create" })
+  | (ActiveReviewBase & {
+      readonly body: string;
+      readonly commentId: string;
+      readonly mode: "edit";
+    });
+
 type ContentReviewController = {
   active: ActiveReview | null;
   begin: (anchor: ContentReviewAnchor) => void;
+  beginEdit: (comment: ContentReviewComment) => void;
   cancel: (id: string) => void;
   comments: readonly ContentReviewComment[];
+  deleteComment: (commentId: string) => Promise<boolean>;
   registerRuntime: (runtime: ContentReviewRuntime) => () => void;
   runtimeStore: RuntimeStore;
   save: (id: string, body: string) => Promise<boolean>;
@@ -79,7 +91,14 @@ export type ContentReviewPoint = {
 };
 
 const EMPTY_CONTENT_REVIEW_COMMENTS: ContentReviewComment[] = [];
+const REVIEW_ID_RADIX = 36;
+const REVIEW_ID_RANDOM_END = 7;
+const REVIEW_ID_RANDOM_START = 2;
 const ContentReviewContext = createContext<ContentReviewController | null>(null);
+
+function createReviewId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(REVIEW_ID_RADIX)}-${Math.random().toString(REVIEW_ID_RADIX).slice(REVIEW_ID_RANDOM_START, REVIEW_ID_RANDOM_END)}`;
+}
 
 function createContentReviewComment(
   anchor: ContentReviewAnchor,
@@ -89,8 +108,22 @@ function createContentReviewComment(
     anchor,
     body: body.trim(),
     createdAt: Date.now(),
-    id: `content-review-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    id: createReviewId("content-review"),
   };
+}
+
+function commentsAfterSave(
+  active: ActiveReview,
+  known: readonly ContentReviewComment[],
+  body: string,
+): ContentReviewComment[] | null {
+  if (active.mode === "create") {
+    return [...known, createContentReviewComment(active.anchor, body)];
+  }
+  if (!known.some((comment) => comment.id === active.commentId)) {
+    return null;
+  }
+  return known.map((comment) => (comment.id === active.commentId ? { ...comment, body } : comment));
 }
 
 /** Owns review comments and active review scope for nested content renderers. */
@@ -140,7 +173,25 @@ export function ContentReviewHost({ children }: { children: ReactNode }) {
     settleActive();
     const next: ActiveReview = {
       anchor,
-      id: `content-review-draft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      id: createReviewId("content-review-draft"),
+      mode: "create",
+      scope,
+    };
+    activeRef.current = next;
+    setActive(next);
+  };
+  const beginEdit = (comment: ContentReviewComment): void => {
+    const scope = runtimeRef.current?.voiceScope ?? activeScopeRef.current;
+    if (scope === null) {
+      return;
+    }
+    settleActive();
+    const next: ActiveReview = {
+      anchor: comment.anchor,
+      body: comment.body,
+      commentId: comment.id,
+      id: createReviewId(`content-review-edit-${comment.id}`),
+      mode: "edit",
       scope,
     };
     activeRef.current = next;
@@ -151,23 +202,24 @@ export function ContentReviewHost({ children }: { children: ReactNode }) {
       settleActive();
     }
   };
-  const save = async (id: string, body: string): Promise<boolean> => {
-    const current = activeRef.current;
-    const runtime = runtimeRef.current;
-    const trimmed = body.trim();
-    if (
-      current === null ||
-      current.id !== id ||
-      trimmed === "" ||
-      runtime === null ||
-      runtime.voiceScope !== current.scope
-    ) {
+  const removeReviewAttachment = (scope: string, runtime: ContentReviewRuntime): boolean => {
+    const attachmentId = attachmentByScopeRef.current.get(scope) ?? runtime.attachmentId;
+    if (attachmentId === null || runtime.removeAttachment === undefined) {
       return false;
     }
-    const next = [
-      ...(commentsByScopeRef.current.get(current.scope) ?? []),
-      createContentReviewComment(current.anchor, trimmed),
-    ];
+    runtime.removeAttachment(attachmentId);
+    attachmentByScopeRef.current.delete(scope);
+    publishComments([], scope);
+    return true;
+  };
+  const persistComments = async (scope: string, next: ContentReviewComment[]): Promise<boolean> => {
+    const runtime = runtimeRef.current;
+    if (runtime === null || runtime.voiceScope !== scope) {
+      return false;
+    }
+    if (next.length === 0) {
+      return removeReviewAttachment(scope, runtime);
+    }
     const markdown = serializeContentReviewAttachment(next);
     if (markdown === "") {
       return false;
@@ -176,8 +228,36 @@ export function ContentReviewHost({ children }: { children: ReactNode }) {
     if (attachmentId === null) {
       return false;
     }
-    attachmentByScopeRef.current.set(current.scope, attachmentId);
-    publishComments(next, current.scope);
+    attachmentByScopeRef.current.set(scope, attachmentId);
+    publishComments(next, scope);
+    return true;
+  };
+  const deleteComment = async (commentId: string): Promise<boolean> => {
+    const scope = activeScopeRef.current;
+    if (scope === null) {
+      return false;
+    }
+    const current = commentsByScopeRef.current.get(scope) ?? [];
+    const next = current.filter((comment) => comment.id !== commentId);
+    if (next.length === current.length) {
+      return false;
+    }
+    return persistComments(scope, next);
+  };
+  const save = async (id: string, body: string): Promise<boolean> => {
+    const current = activeRef.current;
+    const trimmed = body.trim();
+    if (current === null || current.id !== id || trimmed === "") {
+      return false;
+    }
+    const known = commentsByScopeRef.current.get(current.scope) ?? [];
+    const next = commentsAfterSave(current, known, trimmed);
+    if (next === null) {
+      return false;
+    }
+    if (!(await persistComments(current.scope, next))) {
+      return false;
+    }
     if (activeRef.current?.id === id) {
       settleActive();
     }
@@ -219,7 +299,9 @@ export function ContentReviewHost({ children }: { children: ReactNode }) {
 
   const actions = useConstant(() => ({
     begin,
+    beginEdit,
     cancel,
+    deleteComment,
     registerRuntime,
     runtimeStore,
     save,
@@ -313,6 +395,10 @@ export function useContentReviewRuntime(runtime: ContentReviewRuntime): void {
   const controller = useContext(ContentReviewContext);
   const registerRuntime = controller?.registerRuntime;
   const attach = useEvent(runtime.attach);
+  const removeAttachmentAction = runtime.removeAttachment;
+  const removeAttachment = useEvent((attachmentId: string) => {
+    removeAttachmentAction?.(attachmentId);
+  });
   const {
     attachmentId,
     resources,
@@ -328,6 +414,7 @@ export function useContentReviewRuntime(runtime: ContentReviewRuntime): void {
     return registerRuntime({
       attach: async (markdown) => attach(markdown),
       attachmentId,
+      ...(removeAttachmentAction === undefined ? {} : { removeAttachment }),
       resources,
       thread,
       voiceController,
@@ -340,6 +427,8 @@ export function useContentReviewRuntime(runtime: ContentReviewRuntime): void {
     attach,
     attachmentId,
     registerRuntime,
+    removeAttachment,
+    removeAttachmentAction,
     startVoiceInput,
     thread,
     voiceController,
@@ -433,12 +522,15 @@ export function ContentReviewComments({
 }) {
   const controller = useContext(ContentReviewContext);
   const [expanded, setExpanded] = useState(false);
+  const toggleExpanded = useEvent(() => {
+    setExpanded((current) => !current);
+  });
   const comments = useContentReviewComments(targetId, diagramId);
   const active = controller?.active?.anchor;
   const editingThisTarget =
     active?.target.id === targetId &&
     (diagramId === undefined || (active.kind === "mermaid" && active.diagramId === diagramId));
-  if (comments.length === 0 || editingThisTarget) {
+  if (controller === null || comments.length === 0 || editingThisTarget) {
     return null;
   }
   const latest = comments.at(-1);
@@ -455,9 +547,7 @@ export function ContentReviewComments({
         <Pressable
           accessibilityLabel={`${expanded ? "Hide" : "Show"} ${String(comments.length)} review comments`}
           accessibilityRole="button"
-          onPress={() => {
-            setExpanded((current) => !current);
-          }}
+          onPress={toggleExpanded}
           style={({ pressed }) => [styles.commentsSummary, pressed && styles.pressed]}
         >
           <Ionicons
@@ -478,19 +568,14 @@ export function ContentReviewComments({
         {expanded && (
           <ScrollView nestedScrollEnabled style={styles.commentsList}>
             {comments.map((comment, index) => (
-              <View key={comment.id} style={styles.commentRow}>
-                <View style={styles.commentOrdinal}>
-                  <Text style={styles.commentOrdinalText}>{index + 1}</Text>
-                </View>
-                <View style={styles.commentBody}>
-                  <Text numberOfLines={2} style={styles.commentAnchor}>
-                    {commentAnchorLabel(comment.anchor)}
-                  </Text>
-                  <Text selectable style={styles.commentText}>
-                    {comment.body}
-                  </Text>
-                </View>
-              </View>
+              <ContentReviewCommentRow
+                anchorLabel={commentAnchorLabel(comment.anchor)}
+                comment={comment}
+                index={index}
+                key={comment.id}
+                onDelete={controller.deleteComment}
+                onEdit={controller.beginEdit}
+              />
             ))}
           </ScrollView>
         )}
@@ -513,9 +598,10 @@ function InlineContentReviewComposer({
     controller.runtimeStore.getSnapshot,
     controller.runtimeStore.getSnapshot,
   );
-  const [draft, setDraft] = useState("");
+  const initialDraft = active.mode === "edit" ? active.body : "";
+  const [draft, setDraft] = useState(initialDraft);
   const [saving, setSaving] = useState(false);
-  const draftRef = useRef("");
+  const draftRef = useRef(initialDraft);
   const selectionRef = useRef({ end: 0, start: 0 });
   const { cancel } = controller;
   const voiceScope = `${active.scope}\u0000content-review\u0000${active.id}`;
@@ -737,35 +823,6 @@ const styles = StyleSheet.create({
     height: controlSize.compact,
     justifyContent: "center",
     width: controlSize.compact,
-  },
-  commentAnchor: {
-    color: colors.textMuted,
-    ...typeScale.label,
-  },
-  commentBody: {
-    flex: 1,
-    gap: spacing.optical,
-    minWidth: 0,
-  },
-  commentOrdinal: {
-    alignItems: "center",
-    backgroundColor: REVIEW_PURPLE,
-    borderRadius: radii.pill,
-    height: 22,
-    justifyContent: "center",
-    width: 22,
-  },
-  commentOrdinalText: {
-    color: "#0b0b0b",
-    ...typeScale.label,
-    fontWeight: typeWeight.semibold,
-  },
-  commentRow: {
-    alignItems: "flex-start",
-    flexDirection: "row",
-    gap: spacing.xs,
-    minWidth: 0,
-    paddingVertical: spacing.xs,
   },
   commentsCard: {
     backgroundColor: "rgba(28, 28, 28, 0.97)",

@@ -1,13 +1,13 @@
 import { useThreadHeaderActions } from "./threadHeaderActions";
 import type { ThreadHeaderProps } from "./threadHeaderContract";
 /** V1 ThreadActions owner, extracted without changing interaction or resource lifetime. */
-import { Ionicons } from "@expo/vector-icons";
 import { useState, type ReactElement } from "react";
-import { Platform, Pressable } from "react-native";
-import { colors, iconSize } from "../../theme";
-import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
+import { Platform } from "react-native";
+import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { AppSheet } from "../../ui/AppSheet";
 import { MenuAction } from "../../ui/MenuAction";
+import { OverflowMenu } from "../../ui/OverflowMenu";
+import { OverflowMenuButton } from "../../ui/OverflowMenuButton";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ThreadActions.styles";
 
@@ -18,15 +18,12 @@ export function ThreadHeaderMenu(props: ThreadHeaderProps) {
   if (Platform.OS === "web") {
     return (
       <>
-        <Pressable
+        <OverflowMenuButton
           accessibilityLabel="Thread menu"
           onPress={() => {
             setWebMenuVisible(true);
           }}
-          style={styles.headerIcon}
-        >
-          <Ionicons color={colors.text} name="ellipsis-vertical" size={iconSize.action} />
-        </Pressable>
+        />
         {webMenuVisible && (
           <AppSheet
             contentProps={{ enableDynamicSizing: true, index: 0 }}
@@ -37,6 +34,8 @@ export function ThreadHeaderMenu(props: ThreadHeaderProps) {
             {actions.map((action) => (
               <MenuAction
                 danger={action.destructive === true}
+                // WHY: placeholder glyph for a menu row without an icon, not a menu trigger.
+                // oxlint-disable-next-line codewide-v1/overflow-menu-trigger
                 icon={typeof action.icon === "string" ? action.icon : "ellipsis-horizontal"}
                 key={action.id}
                 {...(action.disabled === true
@@ -76,7 +75,7 @@ function NativeThreadMenu({
   readonly onSelect: (id: string) => void;
 }): ReactElement {
   return (
-    <ActionMenu
+    <OverflowMenu
       accessibilityLabel="Thread menu"
       actions={actions}
       {...(onOpenMenu === undefined
@@ -90,10 +89,6 @@ function NativeThreadMenu({
           })}
       onSelect={onSelect}
       style={styles.headerMenuAnchor}
-    >
-      <Pressable accessibilityLabel="Thread menu" style={styles.headerIcon}>
-        <Ionicons color={colors.text} name="ellipsis-vertical" size={iconSize.action} />
-      </Pressable>
-    </ActionMenu>
+    />
   );
 }

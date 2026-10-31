@@ -20,6 +20,7 @@ import {
   type WorkspacePaneVisibility,
 } from "./workspacePanes";
 import { ThreePanelsPane } from "./ThreePanelsPane";
+import { usePaneMotionFrameProbe } from "./usePaneMotionFrameProbe";
 import { v1WorkspaceShellStyles } from "./WorkspaceShell.styles";
 import {
   WorkspaceTwoPaneLayout,
@@ -84,6 +85,7 @@ function WorkspacePaneFrameContent({
     resolvePaneArrangement({ presentation: placed, rightPresent, visibility }),
     viewportWidth,
   );
+  usePaneMotionFrameProbe(geometry.moving);
   const catalogAccessible = isCatalogAccessible(placed, desktop, catalogFocused);
   const centerHidden = placed.kind === "wideCatalogExpanded";
   return (
@@ -91,6 +93,7 @@ function WorkspacePaneFrameContent({
       <WorkspaceTwoPaneLayout
         catalog={
           <ThreePanelsPane
+            box="catalog"
             capabilities={leftCapabilities ?? NO_CAPABILITIES}
             label="catalog"
             neighbour={null}
@@ -110,6 +113,7 @@ function WorkspacePaneFrameContent({
         detail={
           // A destination that declares its own panes publishes them through WorkspaceCenterLayout.
           <ThreePanelsPane
+            box="destination"
             capabilities={NO_CAPABILITIES}
             label="destination"
             neighbour={null}

@@ -5,6 +5,7 @@ import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
 import { ServerIcon } from "../connections/ServerIcon";
 import { InlineIcon } from "../../ui/InlineIcon";
+import { overflowMenuIcon } from "../../ui/overflowMenuIcon";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./SidebarProjects.styles";
 import type { ProjectManagementState } from "./projectManagement";
@@ -159,7 +160,7 @@ export function ProjectManagementRow({
           : {
               trailingIcon: {
                 color: colors.textMuted,
-                name: "ellipsis-horizontal",
+                name: overflowMenuIcon,
                 size: rowIconSize,
               },
             })}

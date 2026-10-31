@@ -110,9 +110,17 @@ export function SubagentConversation({
     remoteThread: thread,
     setChangesPreferences,
   });
-  useReviewFeature(scope, null, thread, appVoiceInputRuntime, null, undefined, async () => {
-    await Promise.resolve();
-    return null;
+  useReviewFeature({
+    appVoiceInputRuntime,
+    attachContentReview: async () => {
+      await Promise.resolve();
+      return null;
+    },
+    composerScope: scope,
+    contentReviewAttachmentId: null,
+    onStartVoiceTranscription: undefined,
+    remoteThread: thread,
+    voiceController: null,
   });
   const openTimelineDocument = useEvent(
     (request: Parameters<typeof routeNavigation.openDocument>[0]) => {

@@ -1,10 +1,6 @@
-import { Ionicons } from "@expo/vector-icons";
-import { Pressable, StyleSheet } from "react-native";
-
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
-import { colors, controlHitSlop, controlSize, iconSize } from "../../../theme";
-import { ActionMenu } from "../../../ui/ActionMenu";
 import type { ActionMenuItem } from "../../../ui/ActionMenu.types";
+import { OverflowMenu } from "../../../ui/OverflowMenu";
 
 const NO_EXTRA_ITEMS: readonly ExtraMenuItem[] = [];
 
@@ -16,7 +12,7 @@ export type ExtraMenuItem = {
 };
 
 /**
- * `⋯` menu of overflowed actions in plugin order. A disabled action keeps its
+ * `⋮` menu of overflowed actions in plugin order. A disabled action keeps its
  * reason as the description; destructive kinds are marked destructive.
  */
 export function OverflowActionsMenu({
@@ -49,7 +45,7 @@ export function OverflowActionsMenu({
     ...extra.map((item) => ({ id: `extra:${item.id}`, label: item.label })),
   ];
   return (
-    <ActionMenu
+    <OverflowMenu
       accessibilityLabel={accessibilityLabel}
       actions={items}
       align="end"
@@ -62,30 +58,7 @@ export function OverflowActionsMenu({
         extra.find((item) => `extra:${item.id}` === id)?.onSelect();
       }}
       placement="bottom"
-    >
-      <Pressable
-        accessibilityLabel={accessibilityLabel}
-        accessibilityRole="button"
-        hitSlop={compact ? controlHitSlop.compact : undefined}
-        style={compact ? styles.compact : styles.regular}
-      >
-        <Ionicons color={colors.text} name="ellipsis-horizontal" size={iconSize.action} />
-      </Pressable>
-    </ActionMenu>
+      size={compact ? "compact" : "touch"}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  compact: {
-    alignItems: "center",
-    height: controlSize.compact,
-    justifyContent: "center",
-    width: controlSize.compact,
-  },
-  regular: {
-    alignItems: "center",
-    height: controlSize.touch,
-    justifyContent: "center",
-    width: controlSize.touch,
-  },
-});

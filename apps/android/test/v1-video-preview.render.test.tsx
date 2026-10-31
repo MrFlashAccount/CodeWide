@@ -1,11 +1,15 @@
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
+import { useState } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { RouteDocumentPreview } from "../src/features/attachments/RouteDocumentPreview";
 import { UserMessageContent } from "../src/features/conversation/turns/UserMessageContent";
 import { ContentReviewHost, useContentReviewRuntime } from "../src/rendering/ContentReviewHost";
 import { DocumentPreviewHost } from "../src/rendering/DocumentPreviewHost";
+import type { DocumentPreviewRequest } from "../src/rendering/DocumentPreviewHost";
 import { ImagePreviewHost } from "../src/rendering/ImagePreviewHost";
 import { RouteAttachmentVideoPreview } from "../src/rendering/AttachmentVideoPreview";
+import { ThreadCodeDocumentContext } from "../src/rendering/ThreadCodeDocumentContext";
 import { touchTarget } from "../src/theme";
 import { AppDialogProvider } from "../src/ui/AppDialog.tsx";
 import { AppFullscreenOverlayProvider } from "../src/ui/AppFullscreenOverlay";
@@ -68,6 +72,33 @@ function ReviewRuntime(): null {
   return null;
 }
 
+function RoutedMessageVideo(): React.JSX.Element {
+  const [request, setRequest] = useState<DocumentPreviewRequest | null>(null);
+  return (
+    <ThreadCodeDocumentContext.Provider value={setRequest}>
+      <UserMessageContent
+        content={[
+          {
+            name: "comparison.mp4",
+            path: "/tmp/comparison.mp4",
+            type: "mention",
+          },
+        ]}
+        getTransferAccess={access}
+      />
+      {request === null ? null : (
+        <RouteDocumentPreview
+          onClose={() => {
+            setRequest(null);
+          }}
+          onOpenDocument={setRequest}
+          request={request}
+        />
+      )}
+    </ThreadCodeDocumentContext.Provider>
+  );
+}
+
 it("renders MP4 as an image-sized paused preview in the message", async () => {
   const view = render(
     <SafeAreaProvider
@@ -80,16 +111,7 @@ it("renders MP4 as an image-sized paused preview in the message", async () => {
         <AppFullscreenOverlayProvider>
           <ImagePreviewHost>
             <DocumentPreviewHost>
-              <UserMessageContent
-                content={[
-                  {
-                    name: "comparison.mp4",
-                    path: "/tmp/comparison.mp4",
-                    type: "mention",
-                  },
-                ]}
-                getTransferAccess={access}
-              />
+              <RoutedMessageVideo />
             </DocumentPreviewHost>
           </ImagePreviewHost>
         </AppFullscreenOverlayProvider>
@@ -98,10 +120,14 @@ it("renders MP4 as an image-sized paused preview in the message", async () => {
   );
 
   const preview = view.getByLabelText("Open comparison.mp4");
-  expect(preview).toHaveStyle({ height: 180, width: 320 });
+  expect(view.getByTestId("message-video-preview")).toHaveStyle({ height: 180, width: 320 });
   expect(view.getByTestId("message-video-gallery")).toBeTruthy();
   await waitFor(() => {
     expect(view.getByTestId("mock-video-view").props.nativeControls).toBe(false);
+  });
+  fireEvent.press(preview);
+  await waitFor(() => {
+    expect(view.getByLabelText("Close video")).toBeTruthy();
   });
 });
 
