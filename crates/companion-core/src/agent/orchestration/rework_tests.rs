@@ -534,6 +534,14 @@ async fn a_foreign_provider_cannot_end_wait_delivery_queue_or_tracker_state() ->
                 .state
                 .provider_turn_id()
                 .is_some()
+                // `send` decides queued versus running from the tracker, which the
+                // turn start reaches after the journal; wait for both so a loaded CI
+                // runner cannot deliver the follow-up into an apparently idle child.
+                && harness
+                    .service
+                    .tracker
+                    .state(&child)
+                    .is_some_and(|state| state.is_running())
             {
                 return Ok::<(), Box<dyn std::error::Error>>(());
             }
