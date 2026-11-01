@@ -45,6 +45,9 @@ internal class NativePortForwardStore {
     profiles[id]
   }
 
+  /** Whether a new profile fits; each live forward holds a listener socket and its accept thread. */
+  fun hasCapacity(): Boolean = synchronized(STORE_LOCK) { profiles.size < MAX_PROFILES }
+
   fun upsert(profile: CurrentPortForward): CurrentPortForward = synchronized(STORE_LOCK) {
     validate(profile)
     if (!profiles.containsKey(profile.id)) require(profiles.size < MAX_PROFILES) { "Too many current port forwards" }

@@ -49,7 +49,11 @@ describe("port forwarding manager", () => {
     // profiles leave the active segment without hiding stopped or errored ones.
     const listed = projectPortList(
       {
-        discoveredPorts: [candidate(3000, "node:3000"), candidate(4000, "node:4000"), candidate(5000, "node:5000")],
+        discoveredPorts: [
+          candidate(3000, "node:3000"),
+          candidate(4000, "node:4000"),
+          candidate(5000, "node:5000"),
+        ],
         profiles: [
           profile("stopped", 3000, "node:3000", "stopped"),
           profile("errored", 4000, null, "error"),
@@ -64,5 +68,22 @@ describe("port forwarding manager", () => {
     expect(
       listed.rows.flatMap((row) => (row.type === "profile" ? [row.profile.id] : [])).sort(),
     ).toEqual(["errored", "stopped"]);
+  });
+
+  it("offers a default-forwarded port the phone did not forward", () => {
+    // Beyond its capacity the phone creates no automatic profile, so such a
+    // port must stay reachable from Available instead of vanishing.
+    const listed = projectPortList(
+      {
+        discoveredPorts: [candidate(3000, "node:3000"), candidate(4000, "node:4000")],
+        profiles: [profile("forwarded", 3000, "node:3000", "live")],
+      },
+      "available",
+      "",
+    );
+    expect(listed.counts).toEqual({ active: 1, available: 1, excluded: 0 });
+    expect(
+      listed.rows.flatMap((row) => (row.type === "candidate" ? [row.candidate.port] : [])),
+    ).toEqual([4000]);
   });
 });

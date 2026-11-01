@@ -15,6 +15,8 @@ import {
 
 type Listener = () => void;
 
+const INVENTORY_FAILED_MESSAGE = "Could not update server ports";
+
 const EMPTY_PORT_FORWARDING_SNAPSHOT: NativePortForwardingSnapshot = {
   discoveredPorts: [],
   discoveryError: null,
@@ -44,6 +46,8 @@ class PortForwardScope {
   #discoveryLoading: Promise<void> | null = null;
   #discoveredAt = 0;
   #discoveryDirty = false;
+  /** The newest pushed inventory failed to apply, so native has none to read yet. */
+  #inventoryFailed = false;
 
   constructor(connectionId: string) {
     this.connectionId = connectionId;
@@ -68,9 +72,10 @@ class PortForwardScope {
   }
 
   inventoryFailed(): void {
+    this.#inventoryFailed = true;
     this.#replace({
       ...this.#snapshot,
-      discoveryError: "Could not update server ports",
+      discoveryError: INVENTORY_FAILED_MESSAGE,
       discoveryStatus: "error",
     });
   }
@@ -107,10 +112,15 @@ class PortForwardScope {
       await this.#discoveryLoading;
       return;
     }
-    this.#replace({ ...this.#snapshot, discoveryError: null, discoveryStatus: "loading" });
+    if (!this.#inventoryFailed) {
+      this.#replace({ ...this.#snapshot, discoveryError: null, discoveryStatus: "loading" });
+    }
     this.#discoveryLoading = discoverNativePorts(this.connectionId)
       .then(async ({ ports, scannedAt }) => {
         this.#discoveredAt = scannedAt;
+        if (scannedAt !== 0) {
+          this.#inventoryFailed = false;
+        }
         // The native push worker reconciles before notifying us. Reload
         // current forwards so missed bridge events cannot retain dead profiles.
         const profiles = await listNativePortForwards(this.connectionId);
@@ -118,8 +128,10 @@ class PortForwardScope {
         this.#replace({
           ...this.#snapshot,
           discoveredPorts: ports,
-          discoveryError: null,
-          discoveryStatus: scannedAt === 0 ? "loading" : "ready",
+          // No snapshot yet is a pending scan, unless the pushed one failed:
+          // the Companion resends only on change, so that must stay an error.
+          discoveryError: this.#inventoryFailed ? INVENTORY_FAILED_MESSAGE : null,
+          discoveryStatus: this.#inventoryFailed ? "error" : scannedAt === 0 ? "loading" : "ready",
           profiles,
           profilesStatus: "ready",
         });
