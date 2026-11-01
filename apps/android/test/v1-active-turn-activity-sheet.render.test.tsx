@@ -1,6 +1,6 @@
 import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RenderBlock } from "@codewide/renderers";
-import { fireEvent, render } from "@testing-library/react-native";
+import { fireEvent, render, within } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 
 import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
@@ -133,4 +133,59 @@ it("shows a running turn's current action without inventing a fallback destinati
   expect(view.getByTestId("protocol-card-header")).toBeDisabled();
   fireEvent.press(view.getByRole("button", { name: /^Open activity/ }));
   expect(view.getByRole("header", { name: "Activity" })).toBeOnTheScreen();
+});
+
+// Regression: a running turn used to replay its newest finished calls as pending
+// when nothing ran; a finished status is authoritative, so it reads as thinking.
+it("shows a running turn whose calls all finished as thinking", () => {
+  const read: RenderBlock = {
+    ...commandBlock,
+    key: "command:read",
+    raw: { ...commandBlock.raw, id: "read" },
+  };
+  const view = render(
+    <ActiveTurnActivity
+      compact
+      earlierIndexes={[]}
+      part={{
+        blocks: [commandBlock, read],
+        followedByAgent: false,
+        key: "activity",
+        kind: "activity",
+      }}
+      turn={runningTurn()}
+    />,
+  );
+
+  const current = within(view.getByTestId("active-turn-current-actions"));
+  expect(current.queryByTestId("protocol-card")).toBeNull();
+  expect(
+    within(current.getByTestId("active-turn-thinking")).getByText("Thinking"),
+  ).toBeOnTheScreen();
+});
+
+it("shows only the current action that still runs as running", () => {
+  const running: RenderBlock = {
+    ...commandBlock,
+    key: "command:running",
+    raw: { ...commandBlock.raw, id: "running", status: "inProgress" },
+    status: "inProgress",
+  };
+  const view = render(
+    <ActiveTurnActivity
+      compact
+      earlierIndexes={[]}
+      part={{
+        blocks: [running, commandBlock],
+        followedByAgent: false,
+        key: "activity",
+        kind: "activity",
+      }}
+      turn={runningTurn()}
+    />,
+  );
+
+  const current = within(view.getByTestId("active-turn-current-actions"));
+  expect(current.getAllByTestId("protocol-card")).toHaveLength(1);
+  expect(current.getByTestId("active-text-shimmer")).toBeOnTheScreen();
 });

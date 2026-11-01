@@ -11,6 +11,7 @@ import { ProtocolBlock } from "../protocol/ProtocolBlock";
 import { protocolActivityRow, protocolBlockUsesCard } from "../protocol/protocolActivityRow";
 import { WebSearchProtocolBlock } from "../protocol/WebSearchProtocolBlock";
 import { webSearchSummary } from "../protocol/webSearchPresentation";
+import { isToolCallRunning } from "./activeToolCall";
 import { styles } from "./ActivityDetailSheet.styles";
 import {
   ActiveToolCallContext,
@@ -152,7 +153,7 @@ function ActivityDetailRow({
   const { isLast } = useAppListItemState();
   return (
     <ActiveActivityDetailRow
-      active={turnStatus === "inProgress" && isLast}
+      active={turnStatus === "inProgress" && isToolCallRunning(block, isLast)}
       block={block}
       itemKey={`${turnKey}:${block.key}`}
       onOpenWebSearch={onOpenWebSearch}

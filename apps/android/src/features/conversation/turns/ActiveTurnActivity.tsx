@@ -7,6 +7,8 @@ import { useEvent } from "../../../react/useEvent";
 import { blockActivitySummary, collapsedActivitySummary } from "../../../rendering/activityMetrics";
 import type { TurnSequencePart } from "../../../rendering/turn-sequence";
 import { ProtocolBlock } from "../protocol/ProtocolBlock";
+import { ThinkingStatus } from "../protocol/ThinkingStatus";
+import { isToolCallRunning } from "./activeToolCall";
 import { ActivityDetailSheet } from "./ActivityDetailSheet";
 import { styles } from "./TurnActivity.styles";
 import { TurnActivity } from "./TurnActivity";
@@ -21,7 +23,6 @@ import type { TurnTimelineItemProps } from "./TurnTimelineItem.types";
 
 /** How many of the newest actions a running turn shows under its activity row. */
 const CURRENT_ACTION_LIMIT = 2;
-const RUNNING_STATUSES: ReadonlySet<string> = new Set(["inProgress", "running"]);
 
 type ActiveTurnActivityProps = {
   compact: boolean;
@@ -36,8 +37,10 @@ type ActiveTurnActivityProps = {
 /**
  * The group of actions a running turn is doing now. It reads like the
  * collapsed groups between its texts: one row with the group's count, plus
- * only the actions running now (else the newest one). The row opens a sheet
- * with every action of the group; the turn's texts stay visible around it.
+ * only the actions running now. When none runs, the agent is working out its
+ * next step, so the row reads as thinking rather than replaying finished
+ * actions. The row opens a sheet with every action of the group; the turn's
+ * texts stay visible around it.
  */
 export function ActiveTurnActivity(props: ActiveTurnActivityProps): ReactElement {
   const metrics = useContext(TurnActivityMetricsContext);
@@ -57,7 +60,7 @@ export function ActiveTurnActivity(props: ActiveTurnActivityProps): ReactElement
       </TurnActivity>
       <ToolCardPlacementContext.Provider value={{ kind: "bubble", openActivity: openSheet }}>
         <CurrentActions
-          blocks={currentActions(props.part.blocks)}
+          blocks={runningActions(props.part.blocks)}
           getTransferAccess={props.getTransferAccess}
           turnKey={props.turn.key}
         />
@@ -92,14 +95,18 @@ function CurrentActions({
 }): ReactElement {
   return (
     <View style={styles.turnActivityList} testID="active-turn-current-actions">
-      {blocks.map((block) => (
-        <CurrentAction
-          block={block}
-          getTransferAccess={getTransferAccess}
-          key={block.key}
-          turnKey={turnKey}
-        />
-      ))}
+      {blocks.length === 0 ? (
+        <ThinkingStatus running testID="active-turn-thinking" text="Thinking" />
+      ) : (
+        blocks.map((block) => (
+          <CurrentAction
+            block={block}
+            getTransferAccess={getTransferAccess}
+            key={block.key}
+            turnKey={turnKey}
+          />
+        ))
+      )}
     </View>
   );
 }
@@ -126,12 +133,12 @@ function CurrentAction({
   );
 }
 
-/** The actions running now, else the newest one, at most `CURRENT_ACTION_LIMIT`. */
-function currentActions(blocks: readonly RenderBlock[]): readonly RenderBlock[] {
-  const running = blocks.filter(
-    (block) => block.status !== null && RUNNING_STATUSES.has(block.status),
-  );
-  return (running.length > 0 ? running : blocks).slice(-CURRENT_ACTION_LIMIT);
+/** The newest actions running now, at most `CURRENT_ACTION_LIMIT`; a finished one never shows. */
+function runningActions(blocks: readonly RenderBlock[]): readonly RenderBlock[] {
+  const newest = blocks.at(-1);
+  return blocks
+    .filter((block) => isToolCallRunning(block, block === newest))
+    .slice(-CURRENT_ACTION_LIMIT);
 }
 
 function activeGroupLabel(
