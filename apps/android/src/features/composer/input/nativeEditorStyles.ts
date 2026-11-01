@@ -4,10 +4,14 @@ import { colors, radii, spacing, touchTarget, typeScale } from "../../../theme";
 import { productFonts } from "../../../ui/product-fonts";
 
 export const styles = StyleSheet.create({
+  // The root owns the touch-target height and centres the editor in it: the
+  // native editor draws its text from the top, and its one-line height comes
+  // from font metrics, not from `lineHeight`.
   root: {
     flex: 1,
     flexBasis: 0,
     flexShrink: 1,
+    justifyContent: "center",
     minHeight: touchTarget,
     minWidth: 0,
     overflow: "visible",
@@ -29,7 +33,9 @@ export const styles = StyleSheet.create({
     zIndex: 1,
   },
   // The native editor owns intrinsic content height up to the caller's
-  // maxHeight. A column-axis flex basis of zero would pin it to one line.
+  // maxHeight. A column-axis flex basis of zero would pin it to one line. It
+  // has no minimum height of its own: a minimum taller than its content would
+  // leave the spare height under the top-drawn text.
   input: {
     alignSelf: "stretch",
     color: colors.text,
@@ -37,7 +43,6 @@ export const styles = StyleSheet.create({
     flexGrow: 0,
     flexShrink: 1,
     fontFamily: productFonts.regular,
-    minHeight: touchTarget,
     minWidth: 0,
     width: "100%",
   },

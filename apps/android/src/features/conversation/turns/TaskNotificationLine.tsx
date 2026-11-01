@@ -8,7 +8,6 @@ import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
 import { AnchoredMenuList, AnchoredMenuRow } from "../../../ui/AnchoredMenuList";
 import { ContentMenu } from "../../../ui/ContentMenu";
 import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
-import { useLayoutWidth } from "../../../ui/useLayoutWidth";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "./AgentChip.styles";
 import { isBackgroundLaunch, type TaskLineEntry } from "./backgroundLaunches";
@@ -21,8 +20,6 @@ import {
 } from "./taskNotificationPresentation";
 import { BackgroundTaskContext, SubagentNavigationContext } from "./turnContexts";
 
-/** The pill takes at most this share of the conversation's width. */
-const PILL_WIDTH_SHARE = 0.5;
 /** How often a running background command's elapsed time advances. */
 const ELAPSED_TICK_MS = 15_000;
 
@@ -39,51 +36,31 @@ export function TaskNotificationLine({
 }: {
   readonly reports: readonly TaskLineEntry[];
 }): React.JSX.Element | null {
-  const layout = useLayoutWidth();
   if (reports.length === 0) {
     return null;
   }
-  // WHY numeric: Compose measures the anchored pill intrinsically (a
-  // percentage bound collapses its label), so the pill is bounded by the
-  // line's laid-out width. Until it is laid out, the line keeps its height.
-  const lineWidth = layout.width;
-  if (lineWidth === null) {
-    return (
-      <View
-        onLayout={layout.onLayout}
-        style={[styles.lineRow, styles.unmeasuredLine]}
-        testID="task-notification-line-row"
-      />
-    );
-  }
   const [only] = reports;
   return (
-    <View onLayout={layout.onLayout} style={styles.lineRow} testID="task-notification-line-row">
+    <View style={styles.lineRow} testID="task-notification-line-row">
       {reports.length === 1 && only !== undefined ? (
-        <SingleReportPill lineWidth={lineWidth} report={only} />
+        <SingleReportPill report={only} />
       ) : (
-        <ReportListPill lineWidth={lineWidth} reports={reports} />
+        <ReportListPill reports={reports} />
       )}
     </View>
   );
 }
 
 /** One report: the pill is the report's own link, without a list. */
-function SingleReportPill({
-  lineWidth,
-  report,
-}: {
-  readonly lineWidth: number;
-  readonly report: TaskLineEntry;
-}): React.JSX.Element {
+function SingleReportPill({ report }: { readonly report: TaskLineEntry }): React.JSX.Element {
   // The pill lives in a recycled list cell.
   const [opening, setOpening] = useRecyclingState<OpeningState>(NOT_OPENING);
   const target = useReportTarget(report, [opening, setOpening], noop);
   return (
     <>
       <TaskNotificationPill
+        bounded
         loading={target.loading}
-        maxWidth={lineWidth * PILL_WIDTH_SHARE}
         onPress={target.kind === "none" ? null : target.press}
         open={null}
         reports={[report]}
@@ -99,10 +76,8 @@ function SingleReportPill({
 
 /** Several reports: the pill opens their list centered on it, above or below. */
 function ReportListPill({
-  lineWidth,
   reports,
 }: {
-  readonly lineWidth: number;
   readonly reports: readonly TaskLineEntry[];
 }): React.JSX.Element {
   const [open, setOpen] = useRecyclingState(false);
@@ -114,8 +89,8 @@ function ReportListPill({
     setOpen(false);
   });
   const trigger = createElement(TaskNotificationPill, {
+    bounded: false,
     loading: false,
-    maxWidth: lineWidth * PILL_WIDTH_SHARE,
     onPress: toggleOpen,
     open,
     reports,
@@ -123,11 +98,12 @@ function ReportListPill({
   return (
     <ContentMenu
       align="center"
+      anchorStyle={styles.pillBound}
       onOpenChange={setOpen}
       open={open}
       placement="bottom"
       trigger={trigger}
-      width={Math.min(menu.width, lineWidth)}
+      width={menu.width}
     >
       <AnchoredMenuList testID="task-notification-list">
         {reports.map((report) => (
@@ -141,16 +117,18 @@ function ReportListPill({
 /**
  * The pill itself. `open` is the list's state for a pill that opens one and
  * `null` for a single report's link; `onPress` is `null` when nothing opens.
+ * A `bounded` pill sits directly in its line and carries the line's width
+ * bound itself; a menu's pill fills the anchor box that carries it.
  */
 function TaskNotificationPill({
+  bounded,
   loading,
-  maxWidth,
   onPress,
   open,
   reports,
 }: {
+  readonly bounded: boolean;
   readonly loading: boolean;
-  readonly maxWidth: number;
   readonly onPress: (() => void) | null;
   readonly open: boolean | null;
   readonly reports: readonly TaskLineEntry[];
@@ -167,7 +145,11 @@ function TaskNotificationPill({
       accessibilityState={open === null ? { busy: loading } : { expanded: open }}
       disabled={onPress === null}
       onPress={onPress ?? undefined}
-      style={({ pressed }) => [styles.trigger, { maxWidth }, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.trigger,
+        bounded && styles.pillBound,
+        pressed && styles.pressed,
+      ]}
       testID="task-notification-line"
     >
       <AgentAvatarStack

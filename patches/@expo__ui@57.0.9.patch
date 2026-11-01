@@ -123,6 +123,78 @@ index e800ec2adafaa7120724b30b65ef37bfbe8a72c2..5074e34b3a750bee6c3cfe2f01afd427
      Children(UIComposableScope(), filter = { !isSlotView(it) })
    }
  
+diff --git a/android/src/main/java/expo/modules/ui/RNHostView.kt b/android/src/main/java/expo/modules/ui/RNHostView.kt
+index f39d2867ede13e9be72aa53297dce3fe100be140..8632d627cd06ea2e70df376a1539cadb3418e10e 100644
+--- a/android/src/main/java/expo/modules/ui/RNHostView.kt
++++ b/android/src/main/java/expo/modules/ui/RNHostView.kt
+@@ -160,6 +160,8 @@ internal class RNHostView(context: Context, appContext: AppContext) :
+   }
+ }
+ 
++private const val NO_ACTIVE_GESTURE = -1L
++
+ /**
+  * A thin FrameLayout that intercepts touch events and dispatches them to JS via
+  * JSTouchDispatcher/JSPointerDispatcher, replicating the pattern from React Native's
+@@ -188,6 +190,9 @@ private class TouchDispatchingRootViewGroup(
+   // True once a fling was dispatched this gesture, so the gentle-release settle doesn't double-fire.
+   private var flingHandledThisGesture = false
+ 
++  // The downTime of the gesture JS is tracking, or NO_ACTIVE_GESTURE between gestures.
++  private var activeGestureDownTime = NO_ACTIVE_GESTURE
++
+   var eventDispatcher: EventDispatcher? = null
+ 
+   private val reactContext: ThemedReactContext
+@@ -215,7 +220,40 @@ private class TouchDispatchingRootViewGroup(
+   }
+ 
+   override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
++    val restampedCancel = cancelForActiveGesture(ev)
++    try {
++      return dispatchGestureEvent(restampedCancel ?: ev)
++    } finally {
++      restampedCancel?.recycle()
++    }
++  }
++
++  // Compose's AndroidView interop delivers its own synthetic ACTION_CANCEL when an ancestor (a
++  // scroll view, pager or sheet) intercepts the gesture, and stamps it with a fresh downTime.
++  // JSTouchDispatcher drops a cancel whose downTime has no matching ACTION_DOWN, so JS never learns
++  // that the gesture ended: the Pressable keeps the responder, its long-press timer still fires, and
++  // the next tap anywhere is released onto it. Re-express the cancel in this gesture's downTime.
++  private fun cancelForActiveGesture(ev: MotionEvent): MotionEvent? {
++    if (
++      ev.actionMasked != MotionEvent.ACTION_CANCEL ||
++      activeGestureDownTime == NO_ACTIVE_GESTURE ||
++      ev.downTime == activeGestureDownTime
++    ) {
++      return null
++    }
++    return MotionEvent.obtain(
++      activeGestureDownTime,
++      ev.eventTime,
++      MotionEvent.ACTION_CANCEL,
++      ev.x,
++      ev.y,
++      ev.metaState
++    )
++  }
++
++  private fun dispatchGestureEvent(ev: MotionEvent): Boolean {
+     if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
++      activeGestureDownTime = ev.downTime
+       // Ancestor React roots (the surface root, outer hosts) also see this gesture and dispatch a
+       // duplicate JS touch stream in their own coordinate space. Their moves land outside the
+       // host-relative responder region and break `Pressable`. Tell them a native child owns the
+@@ -247,6 +285,7 @@ private class TouchDispatchingRootViewGroup(
+ 
+     if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) {
+       trackingGestureOffset = false
++      activeGestureDownTime = NO_ACTIVE_GESTURE
+       notifyAncestorRootViews { it.onChildEndedNativeGesture(this, ev) }
+     }
+     return handled
 diff --git a/android/src/main/java/expo/modules/ui/icon/VectorIconLoader.kt b/android/src/main/java/expo/modules/ui/icon/VectorIconLoader.kt
 index 202c2e55693f15b165127c4b56ee0c485e81013e..3398982592408fbd0c1c6effc08d433ac892c165 100644
 --- a/android/src/main/java/expo/modules/ui/icon/VectorIconLoader.kt

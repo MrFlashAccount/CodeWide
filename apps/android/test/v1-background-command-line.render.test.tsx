@@ -158,13 +158,6 @@ function timelineSurface(turns: readonly Turn[]) {
   );
 }
 
-/** Lays out the task lines, which size their pill by the line's width. */
-function layOut(view: RenderResult) {
-  for (const row of view.queryAllByTestId("task-notification-line-row")) {
-    fireEvent(row, "layout", { nativeEvent: { layout: { height: 40, width: 600, x: 0, y: 0 } } });
-  }
-}
-
 function pillLabels(view: RenderResult): string[] {
   return view
     .queryAllByTestId("task-notification-line")
@@ -251,7 +244,6 @@ it("draws a background command as one pill after its bubble: title, state and ti
         ]),
       ]),
     );
-    layOut(view);
     expect(pillLabels(view)).toEqual([label]);
     view.unmount();
   }
@@ -267,7 +259,6 @@ it("names a command without a description by its shortened first line", () => {
       ]),
     ]),
   );
-  layOut(view);
 
   expect(pillLabels(view)).toEqual(["./scripts/release --with-a-long-argument running · 3m"]);
 });
@@ -278,7 +269,6 @@ it("draws an older Companion's id-only marker as an ended task, never as unknown
     codewideBackgroundTaskId: "brelease1",
   };
   const view = render(timelineSurface([completedTurn("turn", [prompt, legacy, answer("answer")])]));
-  layOut(view);
 
   expect(pillLabels(view)).toEqual(["./scripts/release --with-a-long-argument ended"]);
   expect(view.queryByText(/unknown/u)).toBeNull();
@@ -288,7 +278,6 @@ it("draws no pill for a turn whose commands ran in the foreground", () => {
   const view = render(
     timelineSurface([completedTurn("turn", [prompt, command("build", null), answer("answer")])]),
   );
-  layOut(view);
 
   expect(view.queryByTestId("task-notification-line")).toBeNull();
 });
@@ -312,7 +301,6 @@ it("draws one element per task: the launch pill, not also the command's report",
     answer("wake-answer"),
   ]);
   const view = render(timelineSurface([launch, wake]));
-  layOut(view);
 
   expect(pillLabels(view)).toEqual([`${TITLE} 2m`, "Review the diff finished"]);
 });
@@ -326,7 +314,6 @@ it("updates a sealed turn's pill live when the Companion republishes its command
   expect(stored.items.map((item) => item.id)).toEqual(["prompt", "release", "answer"]);
   const content = detailRow({ turn: stored });
   const view = render(timelineSurface([materializeThreadTurns([content])[0] ?? stored]));
-  layOut(view);
   expect(pillLabels(view)).toEqual([`${TITLE} running · 3m`]);
 
   // The task ended after its turn: the same item of the same turn again.
@@ -350,7 +337,6 @@ it("updates a sealed turn's pill live when the Companion republishes its command
     throw new Error("the turn did not materialize");
   }
   view.rerender(timelineSurface([updated]));
-  layOut(view);
 
   expect(pillLabels(view)).toEqual([`${TITLE} failed · 1m`]);
 });
@@ -376,7 +362,6 @@ it("opens the task's output when its pill is pressed, and offers nothing without
       <BackgroundTaskOutputHost read={read}>{timelineSurface([turn])}</BackgroundTaskOutputHost>
     </ConversationRouteNavigationContext.Provider>,
   );
-  layOut(readable);
   await act(async () => {
     fireEvent.press(readable.getByTestId("task-notification-line"));
   });
@@ -389,7 +374,6 @@ it("opens the task's output when its pill is pressed, and offers nothing without
       <BackgroundTaskOutputHost read={undefined}>{timelineSurface([turn])}</BackgroundTaskOutputHost>
     </ConversationRouteNavigationContext.Provider>,
   );
-  layOut(unreadable);
   expect(unreadable.getByTestId("task-notification-line").props.accessibilityState).toMatchObject({
     disabled: true,
   });

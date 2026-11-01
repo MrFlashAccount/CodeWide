@@ -1,5 +1,5 @@
 import { DropdownMenu, Host, RNHostView } from "@expo/ui/jetpack-compose";
-import { height, width } from "@expo/ui/jetpack-compose/modifiers";
+import { fillMaxSize, height, width } from "@expo/ui/jetpack-compose/modifiers";
 import { useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 
@@ -10,12 +10,23 @@ import { useAnchoredMenuSize } from "./useAnchoredMenuSize";
 
 /** Space between the anchor and its menu, above or below it. */
 const MENU_GAP = spacing.xs;
+/** The menu's anchor is the whole host, which covers the trigger's box. */
+const ANCHOR_MODIFIERS = [fillMaxSize()];
 
 /** Compose owns the popup, clipping, anchoring and alignment; RN owns its
- * body and its scrolling. Compose lines the menu up with the start, centre or
- * end of its anchor from the bounds of its own layout pass, below the anchor or
- * above it when there is no room, inside the window. Placement stays a
- * fallback-platform preference.
+ * trigger, its body and its scrolling. Compose lines the menu up with the
+ * start, centre or end of its anchor from the bounds of its own layout pass,
+ * below the anchor or above it when there is no room, inside the window.
+ * Placement stays a fallback-platform preference.
+ *
+ * The trigger stays in the React Native tree: Yoga sizes the anchor box
+ * around it in the same layout pass as its content, and the Compose host
+ * only fills that box behind it, to give the popup its anchor bounds. A
+ * trigger hosted inside Compose would be sized by a round trip instead
+ * (Yoga lays out the trigger, Compose measures it, the host's Yoga width is
+ * written back on a later frame), so a trigger whose content changed would
+ * keep its previous width for frames and could settle narrower than its
+ * content.
  *
  * The popup's height is the body's height as React Native lays it out, kept
  * between `minHeight` and `maxHeight`, and declared to both layout trees: the
@@ -41,38 +52,72 @@ export function ContentMenu(props: ContentMenuProps): React.JSX.Element {
           Math.max(props.minHeight ?? 0, contentHeight),
         );
   return (
-    <Host colorScheme="dark" matchContents pointerEvents="box-none" style={styles.host}>
-      <DropdownMenu
-        color={colors.menuSurface}
-        cornerRadius={radii.menu}
-        expanded={props.open && height !== null}
-        horizontalAlignment={props.align ?? "start"}
-        offsetY={MENU_GAP}
-        onDismissRequest={dismiss}
+    <View
+      collapsable={false}
+      style={[styles.anchor, props.anchorStyle]}
+      testID="content-menu-anchor"
+    >
+      <NativeMenuHost
+        align={props.align ?? "start"}
+        dismiss={dismiss}
+        height={height}
+        measureContent={measureContent}
+        open={props.open}
+        revealed={props.open && height !== null}
+        width={props.width}
       >
-        <NativeMenuTrigger trigger={props.trigger} />
-        <NativeMenuItems
-          height={height}
-          onContentSizeChange={measureContent}
-          open={props.open}
-          width={props.width}
-        >
-          {props.children}
-        </NativeMenuItems>
-      </DropdownMenu>
-    </Host>
+        {props.children}
+      </NativeMenuHost>
+      {props.trigger}
+    </View>
   );
 }
 
-function NativeMenuTrigger({
-  trigger,
+/**
+ * The Compose host behind the trigger: it covers the anchor box, takes no
+ * part in its layout, and gives the popup that box as its anchor bounds.
+ */
+function NativeMenuHost({
+  align,
+  children,
+  dismiss,
+  height,
+  measureContent,
+  open,
+  revealed,
+  width,
 }: {
-  readonly trigger: ContentMenuProps["trigger"];
+  readonly align: "start" | "center" | "end";
+  readonly children: React.ReactNode;
+  readonly dismiss: () => void;
+  readonly height: number | null;
+  readonly measureContent: (width: number, height: number) => void;
+  readonly open: boolean;
+  /** The popup is shown: open, and its body's height is known. */
+  readonly revealed: boolean;
+  readonly width: number;
 }): React.JSX.Element {
   return (
-    <DropdownMenu.Trigger>
-      <RNHostView matchContents>{trigger}</RNHostView>
-    </DropdownMenu.Trigger>
+    <Host colorScheme="dark" pointerEvents="box-none" style={styles.host}>
+      <DropdownMenu
+        color={colors.menuSurface}
+        cornerRadius={radii.menu}
+        expanded={revealed}
+        horizontalAlignment={align}
+        modifiers={ANCHOR_MODIFIERS}
+        offsetY={MENU_GAP}
+        onDismissRequest={dismiss}
+      >
+        <NativeMenuItems
+          height={height}
+          onContentSizeChange={measureContent}
+          open={open}
+          width={width}
+        >
+          {children}
+        </NativeMenuItems>
+      </DropdownMenu>
+    </Host>
   );
 }
 
@@ -136,5 +181,14 @@ function NativeMenuBody({
 }
 
 const styles = StyleSheet.create({
-  host: { backgroundColor: "transparent" },
+  /** Sized by its trigger alone; the host behind it takes no part in layout. */
+  anchor: { position: "relative" },
+  host: {
+    backgroundColor: "transparent",
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
 });

@@ -4,7 +4,7 @@ import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markd
 import { ComposerMarkdownInput } from "../src/features/composer/input/ComposerMarkdownInput.native";
 import { colors, touchTarget, typeScale } from "../src/theme";
 import type { ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useComposerSession } from "../src/features/composer/composerSession";
 import { TEST_COMPOSER_PREFERENCES } from "./composer-session-fixture";
 
@@ -121,7 +121,6 @@ it("uses the dark composer palette", () => {
   const editor = view.getByTestId("native-editor");
   // V1's input envelope is the explicit visual contract, not a measured text snapshot.
   expect(editor).toHaveStyle({
-    minHeight: touchTarget,
     maxHeight: touchTarget + 4 * typeScale.composerInput.lineHeight,
     color: colors.text,
   });
@@ -155,9 +154,16 @@ it("fills the composer shell, grows intrinsically and keeps the empty-state plac
     flexGrow: 0,
     flexShrink: 1,
     flexBasis: "auto",
-    minHeight: touchTarget,
     width: "100%",
     maxHeight: 132,
+  });
+  // The native editor draws text from its top and sizes one line by font
+  // metrics: the root owns the touch-target height and centres the editor in
+  // it, so the editor itself has no taller minimum to leave space under text.
+  expect(StyleSheet.flatten(editor.props.style).minHeight).toBeUndefined();
+  expect(view.getByTestId("composer-input-layout")).toHaveStyle({
+    justifyContent: "center",
+    minHeight: touchTarget,
   });
   expect(editor.props.placeholder).toBe("Message the agent…");
   expect(editor.props.placeholderTextColor).toBe(colors.textDim);
@@ -301,6 +307,42 @@ it("keeps the resident composer editor mounted while a new chat restores its dra
   view.rerender(wrapper(nextProps));
   expect(view.getByTestId("native-editor")).toBe(residentEditor);
   expect(mockEditor.setValue).toHaveBeenLastCalledWith("Restored second draft");
+});
+
+it("centres one composer line box on the bottom-aligned controls' centre line", () => {
+  const view = renderNative(
+    <ComposerEditor
+      attachments={[]}
+      composerInputRef={{ current: null }}
+      composerScope="server:centre"
+      draft=""
+      draftSelectionRef={{ current: { end: 0, start: 0 } }}
+      editingQueuedMessage={false}
+      fileAttachmentEnabled={false}
+      getStableTransferAccess={async () => {
+        throw new Error("No attachment read expected");
+      }}
+      getTransferAccess={undefined}
+      handleComposerLargePaste={() => undefined}
+      handleComposerTextChange={() => undefined}
+      pastedAttachmentPending={false}
+      pendingVoiceSelection={null}
+      searchComposerSuggestions={async () => []}
+      selectComposerMention={() => undefined}
+      voiceBackend="remote"
+      voiceController={null}
+      voicePhase="idle"
+      voiceResource={null}
+    />,
+  );
+  const editor = StyleSheet.flatten(view.getByTestId("native-editor").props.style);
+  // The + / mic / send controls are touch-target squares aligned to the
+  // composer's bottom; the editor's insets put one line box (the placeholder,
+  // a single line, or the last line of a grown draft) on their centre line.
+  expect(editor.lineHeight).toBe(typeScale.composerInput.lineHeight);
+  expect(editor.paddingTop).toBeUndefined();
+  expect(editor.paddingBottom).toBeUndefined();
+  expect(Number(editor.paddingVertical) * 2 + Number(editor.lineHeight)).toBe(touchTarget);
 });
 
 function PasteSendHarness({
