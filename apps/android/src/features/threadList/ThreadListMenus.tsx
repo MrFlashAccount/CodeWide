@@ -7,6 +7,7 @@ import { serverIconOption } from "../../data/serverIcons";
 import { ThreadListHeaderAction } from "../../presentation/navigation/ThreadListHeader";
 import type { ServerScope } from "../../services/servers/serverScope";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
+import { OverflowMenuButton } from "../../ui/OverflowMenuButton";
 import { WorkspaceAccountUsageMenu } from "../accounts/WorkspaceAccountUsageMenu";
 import type { ThreadListServer } from "../connections/connectionPresentation";
 import { threadFilterLabel, threadFilterOptions, type ThreadListFilter } from "./threadListFilters";
@@ -66,7 +67,7 @@ export function ThreadListMenu({
       align="end"
       placement="bottom"
     >
-      <ThreadListHeaderAction accessibilityLabel="Thread list menu" name="ellipsis-vertical" />
+      <OverflowMenuButton accessibilityLabel="Thread list menu" />
     </WorkspaceAccountUsageMenu>
   );
 }

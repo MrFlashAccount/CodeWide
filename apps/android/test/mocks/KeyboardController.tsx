@@ -2,6 +2,16 @@ import type { PropsWithChildren } from "react";
 import { View, type ViewProps } from "react-native";
 
 export const KeyboardController = { dismiss: jest.fn(async () => undefined) };
+const DEFAULT_KEYBOARD_STATE = {
+  appearance: "dark" as const,
+  duration: 0,
+  height: 0,
+  isVisible: false,
+  target: 0,
+  timestamp: 0,
+  type: "default" as const,
+};
+let keyboardState = DEFAULT_KEYBOARD_STATE;
 const keyboardGeometry = {
   height: {
     value: 0,
@@ -16,6 +26,16 @@ const keyboardGeometry = {
     },
   },
 };
+
+export function setKeyboardHeightForTest(height: number): void {
+  keyboardState = { ...DEFAULT_KEYBOARD_STATE, height, isVisible: height > 0 };
+}
+
+export function useKeyboardState<Value>(
+  selector: (state: typeof DEFAULT_KEYBOARD_STATE) => Value,
+): Value {
+  return selector(keyboardState);
+}
 
 export function useKeyboardContext() {
   return { reanimated: keyboardGeometry };

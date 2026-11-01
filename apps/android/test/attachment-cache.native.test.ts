@@ -7,42 +7,71 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 const environment = vi.hoisted(() => ({ directory: "", interrupt: false, downloads: 0 }));
-environment.directory = pathToFileURL(await mkdtemp(join(tmpdir(), "attachment-cache-"))).href + "/";
+environment.directory =
+  pathToFileURL(await mkdtemp(join(tmpdir(), "attachment-cache-"))).href + "/";
 
 // WHY: Expo requires Android. These adapters use real temporary files while exercising the real cache owner and HTTP policy.
 vi.mock("expo-file-system/legacy", () => ({
-  get cacheDirectory() { return environment.directory; },
-  async makeDirectoryAsync(uri: string) { await mkdir(fileURLToPath(uri), { recursive: true }); },
-  async readDirectoryAsync(uri: string) { return readdir(fileURLToPath(uri)); },
-  async getInfoAsync(uri: string) {
-    try { const info = await stat(fileURLToPath(uri)); return { exists: true, isDirectory: info.isDirectory(), size: info.size }; }
-    catch { return { exists: false }; }
+  get cacheDirectory() {
+    return environment.directory;
   },
-  async deleteAsync(uri: string) { await rm(fileURLToPath(uri), { force: true, recursive: true }); },
-  async moveAsync(input: { from: string; to: string }) { await rename(fileURLToPath(input.from), fileURLToPath(input.to)); },
-  async readAsStringAsync(uri: string) { return readFile(fileURLToPath(uri), "utf8"); },
+  async makeDirectoryAsync(uri: string) {
+    await mkdir(fileURLToPath(uri), { recursive: true });
+  },
+  async readDirectoryAsync(uri: string) {
+    return readdir(fileURLToPath(uri));
+  },
+  async getInfoAsync(uri: string) {
+    try {
+      const info = await stat(fileURLToPath(uri));
+      return { exists: true, isDirectory: info.isDirectory(), size: info.size };
+    } catch {
+      return { exists: false };
+    }
+  },
+  async deleteAsync(uri: string) {
+    await rm(fileURLToPath(uri), { force: true, recursive: true });
+  },
+  async moveAsync(input: { from: string; to: string }) {
+    await rename(fileURLToPath(input.from), fileURLToPath(input.to));
+  },
+  async readAsStringAsync(uri: string) {
+    return readFile(fileURLToPath(uri), "utf8");
+  },
   async writeAsStringAsync(uri: string, body: string, options?: { encoding: string }) {
-    await writeFile(fileURLToPath(uri), options?.encoding === "base64" ? Buffer.from(body, "base64") : body);
+    await writeFile(
+      fileURLToPath(uri),
+      options?.encoding === "base64" ? Buffer.from(body, "base64") : body,
+    );
   },
   async downloadAsync(uri: string, target: string, options: { headers: Record<string, string> }) {
     environment.downloads += 1;
     const response = await fetch(uri, { headers: options.headers });
     await writeFile(fileURLToPath(target), Buffer.from(await response.arrayBuffer()));
-    if (environment.interrupt) { environment.interrupt = false; throw new Error("connection reset"); }
+    if (environment.interrupt) {
+      environment.interrupt = false;
+      throw new Error("connection reset");
+    }
     return { status: response.status, headers: Object.fromEntries(response.headers), uri: target };
   },
 }));
 
 // WHY: Expo File is a native host object; only its file read is substituted with the Node filesystem.
-vi.mock("expo-file-system", () => ({ File: class {
-  constructor(readonly uri: string) {}
-  async arrayBuffer() { return Uint8Array.from(await readFile(fileURLToPath(this.uri))).buffer; }
-} }));
+vi.mock("expo-file-system", () => ({
+  File: class {
+    constructor(readonly uri: string) {}
+    async arrayBuffer() {
+      return Uint8Array.from(await readFile(fileURLToPath(this.uri))).buffer;
+    }
+  },
+}));
 
 // WHY: Expo Crypto is a native module; Node computes the same SHA-256 over the actual input.
 vi.mock("expo-crypto", () => ({
   CryptoDigestAlgorithm: { SHA256: "SHA256" },
-  async digestStringAsync(_algorithm: string, value: string) { return createHash("sha256").update(value).digest("hex"); },
+  async digestStringAsync(_algorithm: string, value: string) {
+    return createHash("sha256").update(value).digest("hex");
+  },
 }));
 
 import {
@@ -56,7 +85,11 @@ import { urlTransport } from "../src/native/urlTransport.native";
 
 const transport = urlTransport;
 
-async function fetchCached(uri: string, init: { headers?: Record<string, string>; signal?: AbortSignal }, options: { identity: string; scope: string }) {
+async function fetchCached(
+  uri: string,
+  init: { headers?: Record<string, string>; signal?: AbortSignal },
+  options: { identity: string; scope: string },
+) {
   return cachedAttachmentFetch({ init, options, transport, uri });
 }
 
@@ -69,7 +102,11 @@ function server(initial: string) {
     if (denied) return new Response(null, { status: 403 });
     const bytes = Buffer.from(body);
     const digest = createHash("sha256").update(bytes).digest("hex");
-    const headers = new Headers({ "content-type": "text/plain", "content-length": String(bytes.length), "x-content-sha256": digest });
+    const headers = new Headers({
+      "content-type": "text/plain",
+      "content-length": String(bytes.length),
+      "x-content-sha256": digest,
+    });
     if (init?.method === "HEAD") {
       heads += 1;
       return new Response(null, { headers });
@@ -89,15 +126,23 @@ function server(initial: string) {
   });
   vi.stubGlobal("fetch", request);
   return {
-    update: (value: string) => { body = value; },
-    deny: () => { denied = true; },
+    update: (value: string) => {
+      body = value;
+    },
+    deny: () => {
+      denied = true;
+    },
     gets: () => gets,
     heads: () => heads,
   };
 }
 
-afterEach(() => { vi.unstubAllGlobals(); });
-afterAll(async () => { await rm(fileURLToPath(environment.directory), { recursive: true, force: true }); });
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+afterAll(async () => {
+  await rm(fileURLToPath(environment.directory), { recursive: true, force: true });
+});
 
 describe("native attachment cache", () => {
   it("materializes transformed images on a cold cache with one GET and no HEAD probe", async () => {
@@ -131,7 +176,9 @@ describe("native attachment cache", () => {
     }
     expect(remote.gets()).toBe(1);
     controller.abort();
-    await expect(fetchCached("https://example.test/report.md", init, options)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      fetchCached("https://example.test/report.md", init, options),
+    ).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("retains native media until cancellation without requiring browser-only signal methods", async () => {
@@ -150,13 +197,15 @@ describe("native attachment cache", () => {
     });
     expect(await readFile(fileURLToPath(source.uri), "utf8")).toBe("image bytes");
     controller.abort();
-    await expect(cachedAttachmentSource({
-      headers: {},
-      options,
-      signal: controller.signal,
-      transport,
-      uri: "https://example.test/image",
-    })).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      cachedAttachmentSource({
+        headers: {},
+        options,
+        signal: controller.signal,
+        transport,
+        uri: "https://example.test/image",
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
     const reopened = await cachedAttachmentSource({
       headers: {},
       options,
@@ -168,7 +217,12 @@ describe("native attachment cache", () => {
   });
 
   it("reuses Markdown, text, HTML and arbitrary binary bytes and invalidates changed content", async () => {
-    for (const [name, body] of [["report.md", "# Привет"], ["file.txt", "text"], ["index.html", "<p>Hello</p>"], ["data.bin", "\u0000\u0001bytes"]]) {
+    for (const [name, body] of [
+      ["report.md", "# Привет"],
+      ["file.txt", "text"],
+      ["index.html", "<p>Hello</p>"],
+      ["data.bin", "\u0000\u0001bytes"],
+    ]) {
       if (name === undefined || body === undefined) throw new Error("Incomplete fixture");
       const remote = server(body);
       const options = { scope: "server", identity: name };
@@ -193,7 +247,9 @@ describe("native attachment cache", () => {
       expect(await response.text()).toBe("2345");
     }
     expect(remote.gets()).toBe(1);
-    expect(await (await fetchCached("https://example.test/range", {}, options)).text()).toBe("0123456789");
+    expect(await (await fetchCached("https://example.test/range", {}, options)).text()).toBe(
+      "0123456789",
+    );
     expect(remote.gets()).toBe(2);
   });
 
@@ -205,19 +261,24 @@ describe("native attachment cache", () => {
     await fetchCached("https://example.test/new", {}, { scope: "two", identity: "file" });
     expect(remote.gets()).toBe(2);
     remote.deny();
-    expect((await fetchCached("https://example.test/new", {}, { scope: "one", identity: "file" })).status).toBe(403);
+    expect(
+      (await fetchCached("https://example.test/new", {}, { scope: "one", identity: "file" }))
+        .status,
+    ).toBe(403);
   });
 
   it("does not publish an interrupted download and successfully retries", async () => {
     const remote = server("image bytes");
     const options = { scope: "server", identity: "interrupted" };
     environment.interrupt = true;
-    await expect(cachedAttachmentSource({
-      headers: {},
-      options,
-      transport,
-      uri: "https://example.test/image",
-    })).rejects.toThrow("connection reset");
+    await expect(
+      cachedAttachmentSource({
+        headers: {},
+        options,
+        transport,
+        uri: "https://example.test/image",
+      }),
+    ).rejects.toThrow("connection reset");
     const source = await cachedAttachmentSource({
       headers: {},
       options,
@@ -226,17 +287,25 @@ describe("native attachment cache", () => {
     });
     expect(await readFile(fileURLToPath(source.uri), "utf8")).toBe("image bytes");
     expect(remote.gets()).toBe(2);
-    expect((await readdir(fileURLToPath(environment.directory + "codewide-attachments-v1/"))).some((name) => name.endsWith(".partial"))).toBe(false);
+    expect(
+      (await readdir(fileURLToPath(environment.directory + "codewide-attachments-v1/"))).some(
+        (name) => name.endsWith(".partial"),
+      ),
+    ).toBe(false);
   });
 
   it("returns exact binary bytes for a response without a content revision and never caches it", async () => {
     const bytes = Uint8Array.from([0, 255, 128, 10, 13, 0]);
     let gets = 0;
-    vi.stubGlobal("fetch", vi.fn(async (_uri: string, init?: RequestInit) => {
-      if (init?.method === "HEAD") return new Response(null, { headers: { "content-length": "6" } });
-      gets += 1;
-      return new Response(bytes, { headers: { "content-type": "application/octet-stream" } });
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_uri: string, init?: RequestInit) => {
+        if (init?.method === "HEAD")
+          return new Response(null, { headers: { "content-length": "6" } });
+        gets += 1;
+        return new Response(bytes, { headers: { "content-type": "application/octet-stream" } });
+      }),
+    );
     const options = { scope: "server", identity: "no-revision" };
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -245,7 +314,11 @@ describe("native attachment cache", () => {
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
     }
     expect(gets).toBe(2);
-    expect((await readdir(fileURLToPath(environment.directory + "codewide-attachments-v1/"))).some((name) => name.endsWith(".partial"))).toBe(false);
+    expect(
+      (await readdir(fileURLToPath(environment.directory + "codewide-attachments-v1/"))).some(
+        (name) => name.endsWith(".partial"),
+      ),
+    ).toBe(false);
   });
 
   it("atomically stores inline bytes and restores valid metadata without storing URLs or credentials", async () => {

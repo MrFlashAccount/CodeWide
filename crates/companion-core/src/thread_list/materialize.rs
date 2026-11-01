@@ -5,8 +5,10 @@
 //! at most one read per thread (the hub's materializing set) and at most
 //! [`MAX_CONCURRENT_READS`] at once. The journal head is taken before the
 //! read, so the read row gets that head as its cursor and the buffered events
-//! are replayed over it. A failed read only counts and logs; the row appears
-//! at the device's next page re-read.
+//! are replayed over it. Every failed or empty read is logged with the
+//! thread id and its reason. A failed read is retried after a bounded,
+//! doubling delay (and on the thread's next update); an empty read ignores the
+//! thread until its next lifecycle event.
 //!
 //! The port is implemented by the sync layer, which owns the provider
 //! routing and the row decorations.
@@ -17,11 +19,10 @@ use std::{
 };
 
 use async_trait::async_trait;
-use serde_json::Value;
 use tokio::sync::Semaphore;
-use tracing::warn;
+use tracing::{info, warn};
 
-use super::ThreadListRows;
+use super::{AfterRead, RowRead, ThreadListRows};
 
 /// Most row reads in flight at once.
 pub const MAX_CONCURRENT_READS: usize = 4;
@@ -35,12 +36,13 @@ pub trait RowReader: Send + Sync {
     /// Returns the storage failure.
     async fn journal_head(&self) -> Result<u64, String>;
 
-    /// The thread's decorated row (`thread/list` shape), `None` when the
-    /// catalog hides it or it does not exist.
+    /// The thread's decorated row (`thread/list` shape), or the confirmed
+    /// reason it has none.
     ///
     /// # Errors
-    /// Returns the provider or storage failure (no thread content).
-    async fn read_row(&self, thread_id: &str) -> Result<Option<Value>, String>;
+    /// Returns a provider or storage failure that may be transient (no thread
+    /// content).
+    async fn read_row(&self, thread_id: &str) -> Result<RowRead, String>;
 }
 
 /// Runs the hub's row reads through a [`RowReader`].
@@ -71,33 +73,55 @@ impl Materializer {
 
     async fn read(self, thread_id: String) {
         loop {
-            let Ok(_permit) = self.permits.clone().acquire_owned().await else {
-                return;
-            };
-            let read = match self.reader.journal_head().await {
-                Ok(head) => self
-                    .reader
-                    .read_row(&thread_id)
-                    .await
-                    .map(|row| (head, row)),
-                Err(error) => Err(error),
-            };
-            let (head, row) = match read {
-                Ok((head, row)) => (head, Ok(row)),
-                Err(error) => {
-                    warn!(
-                        err = %error,
-                        failures = self.rows.materialization_failures() + 1,
-                        "thread list row read failed"
-                    );
-                    (0, Err(error))
+            let read = {
+                let Ok(_permit) = self.permits.clone().acquire_owned().await else {
+                    return;
+                };
+                match self.reader.journal_head().await {
+                    Ok(head) => self
+                        .reader
+                        .read_row(&thread_id)
+                        .await
+                        .map(|row| (head, row)),
+                    Err(error) => Err(error),
                 }
             };
-            if !self
+            let (head, row) = match read {
+                Ok((head, row)) => {
+                    if let RowRead::Absent(reason) = &row {
+                        info!(
+                            thread_id = %thread_id,
+                            reason = reason.as_str(),
+                            "thread list row read empty; ignored until its next lifecycle event"
+                        );
+                    }
+                    (head, Ok(row))
+                }
+                Err(error) => (0, Err(error)),
+            };
+            let failure = row.as_ref().err().cloned();
+            let next = self
                 .rows
-                .complete_materialization(&thread_id, head, row, now_secs())
-            {
-                return;
+                .complete_materialization(&thread_id, head, row, now_secs());
+            if let Some(error) = failure {
+                warn!(
+                    thread_id = %thread_id,
+                    reason = "read_failed",
+                    err = %error,
+                    retry = ?next,
+                    failures = self.rows.materialization_failures(),
+                    "thread list row read failed"
+                );
+            }
+            match next {
+                AfterRead::Done => return,
+                AfterRead::ReadAgain => {}
+                AfterRead::RetryAfter { attempt, delay } => {
+                    tokio::time::sleep(delay).await;
+                    if !self.rows.retry_materialization(&thread_id, attempt) {
+                        return;
+                    }
+                }
             }
         }
     }

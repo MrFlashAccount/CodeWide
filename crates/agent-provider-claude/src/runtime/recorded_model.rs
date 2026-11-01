@@ -6,13 +6,17 @@
 //! set) and synthetic placeholders such as `<synthetic>` are skipped. A
 //! sub-agent's own transcript (`subagents/agent-<id>.jsonl`) is read with the
 //! same rule: its stored rows name no `parent_tool_use_id`, so its newest
-//! answer is the sub-agent's model (`native::native_subagents`).
+//! answer is the sub-agent's model (`native::native_subagents`), and the
+//! `effort` recorded on that answer is the effort it ran with
+//! ([`last_recorded_effort`]).
 //! [`RecordedModels`] keeps it per session until the session file changes,
 //! so every projection after the first read reports the same model.
 
 use std::{collections::HashMap, future::Future};
 
 use serde_json::Value;
+
+use crate::cli::command::EFFORTS;
 
 fn recorded_model_of(message: &Value) -> Option<&str> {
     let main_loop_answer = message.get("type").and_then(Value::as_str) == Some("assistant")
@@ -34,6 +38,25 @@ fn recorded_model_of(message: &Value) -> Option<&str> {
 #[must_use]
 pub fn last_recorded_model(messages: &[Value]) -> Option<&str> {
     messages.iter().rev().find_map(recorded_model_of)
+}
+
+/// The reasoning effort Claude sent with the newest main-loop answer among
+/// `messages` (the answer [`last_recorded_model`] reads): the row's top-level
+/// `effort`, one of `low` … `max`. Claude Code records the effective value of
+/// each request there, whatever set it (an explicit `effort` of the spawning
+/// `Agent` call, the agent definition's `effort`, else the session's effort
+/// for the agent's model). `None` when that answer records none or an unknown
+/// value: a model without effort support and Claude Code versions before the
+/// field record nothing, and no other value is substituted.
+#[must_use]
+pub fn last_recorded_effort(messages: &[Value]) -> Option<&str> {
+    messages
+        .iter()
+        .rev()
+        .find(|message| recorded_model_of(message).is_some())?
+        .get("effort")?
+        .as_str()
+        .filter(|effort| EFFORTS.contains(effort))
 }
 
 /// The cached read of one session.
@@ -125,6 +148,44 @@ mod tests {
         assert_eq!(last_recorded_model(&messages), Some("claude-opus-5-5"));
         assert_eq!(last_recorded_model(&[json!({"type": "user"})]), None);
         assert_eq!(last_recorded_model(&[assistant("", None)]), None);
+    }
+
+    fn answered_with(model: &str, effort: Option<&str>) -> Value {
+        let mut row = assistant(model, None);
+        if let Some(effort) = effort {
+            row["effort"] = json!(effort);
+        }
+        row
+    }
+
+    #[test]
+    fn the_recorded_effort_is_the_one_of_the_newest_main_loop_answer() {
+        let messages = [
+            answered_with("claude-opus-5-5", Some("high")),
+            answered_with("claude-opus-5-5", Some("xhigh")),
+            {
+                let mut sub_agent = answered_with("claude-haiku-5-5", Some("low"));
+                sub_agent["parent_tool_use_id"] = json!("toolu_1");
+                sub_agent
+            },
+            answered_with("<synthetic>", None),
+            json!({"message": {"content": "next"}, "type": "user"}),
+        ];
+        assert_eq!(last_recorded_effort(&messages), Some("xhigh"));
+    }
+
+    #[test]
+    fn an_answer_without_a_known_effort_reports_none_not_an_older_one() {
+        // A model without effort support records no effort on its answer;
+        // the older answer's effort is not carried over.
+        let unsupported = [
+            answered_with("claude-opus-5-5", Some("high")),
+            answered_with("claude-haiku-4-5-20251001", None),
+        ];
+        assert_eq!(last_recorded_effort(&unsupported), None);
+        let unknown = [answered_with("claude-opus-5-5", Some("ludicrous"))];
+        assert_eq!(last_recorded_effort(&unknown), None);
+        assert_eq!(last_recorded_effort(&[json!({"type": "user"})]), None);
     }
 
     #[tokio::test]

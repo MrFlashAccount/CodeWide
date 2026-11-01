@@ -25,10 +25,9 @@ export function codeReviewDocumentEmptyState(
   mode: CodeReviewViewMode,
 ): CodeReviewEmptyState | null {
   if (document.displayState === "unsupported") {
-    return {
-      message: "This file format cannot be previewed in Changes.",
-      title: "Unsupported format",
-    };
+    return document.detail === undefined
+      ? { message: "This file format cannot be previewed in Changes.", title: "Unsupported format" }
+      : { message: document.detail, title: "No preview" };
   }
   if (document.displayState === "image") {
     return null;

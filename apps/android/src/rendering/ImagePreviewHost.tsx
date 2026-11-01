@@ -32,7 +32,8 @@ import {
   radii,
   controlSize,
 } from "../theme";
-import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
+import type { ActionMenuItem } from "../ui/ActionMenu";
+import { OverflowMenu } from "../ui/OverflowMenu";
 import { useAppDialog } from "../ui/AppDialog";
 import {
   useAppFullscreenOverlay,
@@ -354,7 +355,7 @@ function ImageViewer({
             />
           </Pressable>
           {imageActions.length > 0 && (
-            <ActionMenu
+            <OverflowMenu
               accessibilityLabel="Image actions"
               actions={imageActions}
               onSelect={(id) => {
@@ -375,11 +376,8 @@ function ImageViewer({
                 }
               }}
               style={styles.imageMenuAnchor}
-            >
-              <Pressable style={styles.roundButton}>
-                <Ionicons color="#ffffff" name="ellipsis-horizontal" size={iconSize.action} />
-              </Pressable>
-            </ActionMenu>
+              tone="media"
+            />
           )}
           {onAnnotate !== undefined && (
             <Pressable

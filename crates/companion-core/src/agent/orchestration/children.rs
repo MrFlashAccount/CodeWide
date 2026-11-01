@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{agent::model::ProviderId, store::IndexStore};
 
-const LINK_VERSION: u32 = 1;
+const LINK_VERSION: u32 = 2;
 
 /// One spawned agent.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -23,6 +23,9 @@ pub struct ChildLink {
     pub model: String,
     pub name: Option<String>,
     pub cwd: String,
+    /// Durable task that created this child. Absent on legacy v1 links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     /// Unix seconds.
     pub created_at: i64,
 }
@@ -50,8 +53,15 @@ impl ChildLink {
             model,
             name,
             cwd,
+            task_id: None,
             created_at,
         }
+    }
+
+    #[must_use]
+    pub fn with_task(mut self, task_id: String) -> Self {
+        self.task_id = Some(task_id);
+        self
     }
 }
 
@@ -164,12 +174,41 @@ impl ChildLinks {
             .transpose()
     }
 
+    /// The durable link of one child.
+    ///
+    /// # Errors
+    /// Returns the store failure or an invalid record.
+    pub async fn link_of(&self, child: &str) -> Result<Option<ChildLink>, LinkError> {
+        let child = child.to_owned();
+        self.blocking(move |store| Self::link_of_blocking(store, &child))
+            .await
+    }
+
     /// Every linked child id (startup).
     ///
     /// # Errors
     /// Returns the store failure.
     pub fn child_ids(&self) -> Result<Vec<String>, LinkError> {
         Ok(self.store.agent_subagent_child_ids()?)
+    }
+
+    /// Every linked child's durable provider owner, used to fence live
+    /// lifecycle side effects without an asynchronous lookup race.
+    ///
+    /// # Errors
+    /// Returns the store failure or an invalid indexed link.
+    pub fn child_owners(&self) -> Result<Vec<(String, ProviderId)>, LinkError> {
+        self.child_ids()?
+            .into_iter()
+            .map(|child| {
+                let link = Self::link_of_blocking(&self.store, &child)?.ok_or_else(|| {
+                    LinkError::Store(crate::store::StoreError::CorruptedIndex(
+                        "subagent child index has no link".into(),
+                    ))
+                })?;
+                Ok((child, link.provider))
+            })
+            .collect()
     }
 }
 

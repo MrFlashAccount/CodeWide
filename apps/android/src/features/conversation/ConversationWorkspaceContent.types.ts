@@ -16,6 +16,7 @@ import type { useActiveThreadActions, useThreadMutationActions } from "../turnAc
 import type { ConversationDetailSnapshot } from "./conversationCapabilities";
 import type { createConversationScopeBindings } from "./conversationScopeBindings";
 import type { ConversationWorkspaceFeatures } from "./conversationWorkspaceFeatures";
+import type { DraftAdmission } from "./ConversationWorkspace.types";
 
 /** Inputs owned by this composition boundary; concrete state owners remain separate. */
 export type RenderConversationWorkspaceContentProps = {
@@ -38,6 +39,8 @@ export type RenderConversationWorkspaceContentProps = {
   closeActiveConversation: () => void;
   conversationActions: ReturnType<typeof createConversationScopeBindings>;
   desktop: boolean;
+  /** Who admits the draft's first message; `null` outside a draft. */
+  draftAdmission: DraftAdmission | null;
   features: Pick<
     ConversationWorkspaceFeatures,
     "composer" | "conversation" | "accounts" | "agents" | "requests"

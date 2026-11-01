@@ -2,6 +2,7 @@ import { appLockVoiceLifecycle } from "../../data/appLockVoiceLifecycle";
 import { readBackgroundTaskOutput } from "../../data/backgroundTaskOutput";
 import {
   commandDelivery,
+  agentProviders,
   currentConnections,
   deleteLocalConnectionData,
   forgetHttpAuthorization,
@@ -18,6 +19,7 @@ import {
   workspaceThreadResources,
   workspaceThreadSync,
 } from "../../data/workspace-runtime";
+import { forgeResources, reportDroppedForgeAction, reviewResources } from "../../data/forgeRuntime";
 import { createAccountsWorkspaceAdapter } from "../accounts/workspaceAdapter";
 import { createComposerWorkspaceAdapter } from "../composer/workspaceAdapter";
 import { createConnectionsWorkspaceAdapter } from "../connections/workspaceAdapter";
@@ -27,8 +29,11 @@ import { createGlobalSupervisorFeature } from "../globalSupervisor";
 import { bindGlobalVoiceOverlayActions } from "../globalSupervisor/globalVoiceOverlayBinding";
 import { createGlobalSupervisorWorkspaceAdapter } from "../globalSupervisor/workspaceAdapter";
 import { createProjectsWorkspaceAdapter } from "../projects/workspaceAdapter";
+import { createPullRequestDetailWorkspaceAdapter } from "../pullRequestDetail/workspaceAdapter";
+import { createPullRequestsWorkspaceAdapter } from "../pullRequests/workspaceAdapter";
 import { createQueueWorkspaceAdapter } from "../queue/workspaceAdapter";
 import { createRequestsWorkspaceAdapter } from "../requests/workspaceAdapter";
+import { createReviewTargetAdapter } from "../review/reviewTargetAdapter";
 import { createReviewWorkspaceAdapter } from "../review/workspaceAdapter";
 import { createSearchWorkspaceAdapter } from "../search/workspaceAdapter";
 import { createTerminalWorkspaceAdapter } from "../terminal/workspaceAdapter";
@@ -107,10 +112,28 @@ function createWorkspaceFeatures() {
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
     rpcAfterAttach: rpcAfterAttach,
   });
+  const pullRequests = createPullRequestsWorkspaceAdapter({
+    forge: forgeResources,
+    getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+    rpcAfterAttach: rpcAfterAttach,
+  });
+  const pullRequestDetail = createPullRequestDetailWorkspaceAdapter({
+    forge: forgeResources,
+    reportDroppedAction: reportDroppedForgeAction,
+    review: reviewResources,
+    transferAccess: transferAccess,
+  });
+  const reviewTarget = createReviewTargetAdapter({
+    getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
+    mutations: forgeResources.mutations,
+    resources: reviewResources,
+    rpcAfterAttach: rpcAfterAttach,
+  });
   const accounts = createAccountsWorkspaceAdapter({
     getAccountRateLimits: () => workspaceRuntime.snapshot.accountRateLimits,
     getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
     refreshAccountRateLimits: refreshAccountRateLimits,
+    refreshAgentProviders: agentProviders.refresh,
     rpcAfterAttach: rpcAfterAttach,
   });
   const requests = createRequestsWorkspaceAdapter({
@@ -166,9 +189,12 @@ function createWorkspaceFeatures() {
     globalSupervisor,
     goal,
     projects,
+    pullRequestDetail,
+    pullRequests,
     queue,
     requests,
     review,
+    reviewTarget,
     search,
     terminal,
     turnActions,

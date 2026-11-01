@@ -10,9 +10,14 @@ def releaseStoreFile = System.getenv("CODEWIDE_RELEASE_STORE_FILE")
 def releaseStorePassword = System.getenv("CODEWIDE_RELEASE_STORE_PASSWORD")
 def releaseKeyAlias = System.getenv("CODEWIDE_RELEASE_KEY_ALIAS")
 def releaseKeyPassword = System.getenv("CODEWIDE_RELEASE_KEY_PASSWORD")
+def previewStoreFile = System.getenv("CODEWIDE_PREVIEW_STORE_FILE")
+def previewStorePassword = System.getenv("CODEWIDE_PREVIEW_STORE_PASSWORD")
+def previewKeyAlias = System.getenv("CODEWIDE_PREVIEW_KEY_ALIAS")
+def previewKeyPassword = System.getenv("CODEWIDE_PREVIEW_KEY_PASSWORD")
 def codeWideUpdateUrl = System.getenv("CODEWIDE_UPDATE_URL")?.trim()
 def codeWideUpdatesEnabled = codeWideUpdateUrl != null && !codeWideUpdateUrl.isEmpty()
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null && !it.isBlank() }
+def hasPreviewSigning = [previewStoreFile, previewStorePassword, previewKeyAlias, previewKeyPassword].every { it != null && !it.isBlank() }
 def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "253").toInteger()
 def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.240"
 def nativeCodeAssetsDir = file("$buildDir/generated/nativeCodeAssets")
@@ -160,6 +165,7 @@ android {
         ]
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
+        buildConfigField "boolean", "PERFORMANCE_MONITORING_DEFAULT", "false"
 
         externalNativeBuild {
             cmake {
@@ -185,6 +191,14 @@ android {
                 storePassword releaseStorePassword
                 keyAlias releaseKeyAlias
                 keyPassword releaseKeyPassword
+            }
+        }
+        if (hasPreviewSigning) {
+            preview {
+                storeFile file(previewStoreFile)
+                storePassword previewStorePassword
+                keyAlias previewKeyAlias
+                keyPassword previewKeyPassword
             }
         }
     }
@@ -213,6 +227,16 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
             def enablePngCrunchInRelease = findProperty('android.enablePngCrunchInReleaseBuilds') ?: 'true'
             crunchPngs enablePngCrunchInRelease.toBoolean()
+        }
+        preview {
+            initWith release
+            // Preview is a standalone, release-shaped application. Its package
+            // identity must not replace production or the Metro-backed debug app.
+            applicationIdSuffix ".preview"
+            buildConfigField "boolean", "PERFORMANCE_MONITORING_DEFAULT", "true"
+            if (hasPreviewSigning) signingConfig signingConfigs.preview
+            resValue "string", "app_name", "CodeWide Preview"
+            matchingFallbacks = ["release"]
         }
     }
     packagingOptions {

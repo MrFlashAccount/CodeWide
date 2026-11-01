@@ -41,6 +41,19 @@ pub enum HistoryPageError {
     Failed(String),
 }
 
+/// What a native store has recorded about one thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoredThreadState {
+    /// Durable history exists and is not archived.
+    Active,
+    /// Durable history exists and the thread is archived.
+    Archived,
+    /// No durable history is written yet. The store cannot tell a thread
+    /// that only its live runtime still holds (no first turn yet) from one
+    /// that is gone; only the runtime can.
+    Unrecorded,
+}
+
 /// Thread catalog visibility and durable turn history of native threads.
 #[async_trait]
 pub trait NativeThreadStore: Send + Sync {
@@ -105,6 +118,13 @@ pub trait NativeThreadStore: Send + Sync {
 
     /// The pin snapshot, with stored archive state for `stored_threads`.
     async fn pin_snapshot(&self, stored_threads: HashSet<String>) -> Result<Value, String>;
+
+    /// What the store has recorded about one thread: its archive state, or
+    /// that no history is written for it yet.
+    ///
+    /// # Errors
+    /// Returns an error when the catalog cannot be read.
+    async fn thread_state(&self, thread_id: &str) -> Result<StoredThreadState, String>;
 
     /// Starts watching changes written outside the companion and publishes
     /// their semantic invalidations into `events`.

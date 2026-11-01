@@ -12,8 +12,12 @@ members = [
     "crates/companion-core",
     "crates/companion-host",
     "crates/companion-swift-ffi",
+    "crates/forge-fixture",
+    "crates/forge-github",
+    "crates/forge-protocol",
     "crates/host-resolver",
     "crates/host-update",
+    "crates/vcs-git",
 ]
 exclude = ["openai-codex/codex-rs"]
 resolver = "2"

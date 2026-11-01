@@ -5,7 +5,11 @@ import { useAccountLogin } from "../src/features/accounts/accountLogin";
 function capabilities() {
   return {
     connectionId: "server",
-    onStartLogin: jest.fn(async () => ({ loginId: "login", verificationUrl: "https://example.test/login", userCode: "1234" })),
+    onStartLogin: jest.fn(async () => ({
+      loginId: "login",
+      verificationUrl: "https://example.test/login",
+      userCode: "1234",
+    })),
     onCancelLogin: jest.fn(async () => undefined),
   };
 }
@@ -14,7 +18,9 @@ afterEach(() => jest.useRealTimers());
 
 it("cancels a login only through explicit close and keeps returned actions stable", async () => {
   const actions = capabilities();
-  const { result, rerender, unmount } = renderHook(() => useAccountLogin(actions, "profile", jest.fn()));
+  const { result, rerender, unmount } = renderHook(() =>
+    useAccountLogin(actions, "profile", jest.fn()),
+  );
   const addAccount = result.current.addAccount;
   await act(async () => addAccount());
   expect(result.current.pendingAccountLogin?.loginId).toBe("login");
@@ -55,7 +61,10 @@ it("expires copied feedback and clears its timer on unmount without cancelling l
 
 it("hides completed login feedback when the profile snapshot changes", async () => {
   const actions = capabilities();
-  const { result, rerender } = renderHook(({ profiles }) => useAccountLogin(actions, profiles, jest.fn()), { initialProps: { profiles: "before" } });
+  const { result, rerender } = renderHook(
+    ({ profiles }) => useAccountLogin(actions, profiles, jest.fn()),
+    { initialProps: { profiles: "before" } },
+  );
   await act(async () => result.current.addAccount());
   rerender({ profiles: "before|new-account" });
   expect(result.current.pendingAccountLogin).toBeNull();

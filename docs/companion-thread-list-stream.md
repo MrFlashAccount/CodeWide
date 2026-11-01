@@ -128,8 +128,16 @@ Row lifecycle in the hub:
 - `Unknown → Seeded`: a page row, or `thread/started` carrying a `Thread`.
 - `Unknown → Materializing`: a journal event for an unknown thread.
 - `Materializing → Seeded`: one `thread/read` without turns plus decoration.
-- `Materializing → Unknown`: the read failed; a telemetry counter grows, no row
-  is pushed, and the row appears on the next page re-read.
+- `Materializing → Retrying`: the read failed; a telemetry counter grows, the
+  failure is logged with the thread id, and no row is pushed. A failure never
+  parks the thread: its next journal event reads it again, and up to five timed
+  retries follow a doubling delay (2 s up to 60 s).
+- `Materializing → Ignored`: the read confirmed the thread has no list row (no
+  owning provider, missing, hidden by the catalog, or a continuation); logged
+  with the thread id and that reason. Only a lifecycle event of the thread
+  (`turn/started`, `turn/completed`, a status change), a page row or
+  `thread/started` reads it again, so an ignored but active thread cannot stay
+  frozen.
 - `Seeded → Seeded`: a journal event changed a field; cursor = event cursor.
 - `Seeded → Removed`: `thread/deleted` or exclusion from the catalog; the
   tombstone is sent to subscribers.

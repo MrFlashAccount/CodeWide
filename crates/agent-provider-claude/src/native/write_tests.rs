@@ -73,7 +73,11 @@ fn projects(root: &Path) -> PathBuf {
 
 fn local(root: &Path) -> LocalSessions {
     let (projects, journal) = fixture_paths(root);
-    LocalSessions::new(projects, journal)
+    LocalSessions::for_test(
+        projects,
+        journal,
+        HashSet::from([SESSION.to_owned(), OTHER.to_owned()]),
+    )
 }
 
 /// The stored rows of a session, as objects.

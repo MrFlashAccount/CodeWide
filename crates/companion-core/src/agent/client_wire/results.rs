@@ -11,8 +11,8 @@ use super::{
 use crate::agent::model::{
     AgentTurn, BackgroundTaskReadParams, BackgroundTaskReadResult, BackgroundTaskStatus,
     ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ItemsView, SortDirection, ThreadChange,
-    ThreadTurnsParams, ThreadUpdateParams, TurnInterruptParams, TurnStartParams, TurnStartResult,
-    TurnSteerParams,
+    ThreadTurnsParams, ThreadUpdateParams, TurnContinueParams, TurnInterruptParams,
+    TurnStartParams, TurnStartResult, TurnSteerParams,
 };
 
 /// Turns read when a call asks for a thread's whole history.
@@ -254,6 +254,21 @@ pub async fn execute(target: &Target, method: &str, params: &Value) -> Result<Va
                     client_message_id: decode::client_message_id(params),
                     input,
                     client_tools: None,
+                })
+                .await
+                .map_err(|error| failure(&error))?;
+            match started {
+                TurnStartResult::Started { turn_id } => Ok(turn_started(turn_id.as_str())),
+                TurnStartResult::Busy { active_turn_id } => Err(RpcFailure::new(
+                    ERROR_INVALID_REQUEST,
+                    format!("thread has an active turn: {active_turn_id}"),
+                )),
+            }
+        }
+        "turn/continue" => {
+            let started = provider
+                .turn_continue(TurnContinueParams {
+                    app_thread_id: thread_id,
                 })
                 .await
                 .map_err(|error| failure(&error))?;

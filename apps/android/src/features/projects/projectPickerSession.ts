@@ -1,21 +1,69 @@
 import { useId, useRef, useState } from "react";
 import { useConversationOwner } from "../../ui/use-conversation-owner";
 import type { ScrollView } from "react-native";
-import { parentDirectoryPath } from "../../data/remote-projects";
+import {
+  normalizeDirectoryPath,
+  parentDirectoryPath,
+  pathCrumbs,
+} from "../../data/remote-projects";
 import { useEvent } from "../../react/useEvent";
-import type { ScopedProjectPickerProps, ProjectPickerChoice } from "./projectPickerContract";
-import { useProjectPickerRows, type ProjectSectionId } from "./projectPickerRows";
+import type {
+  ProjectDestination,
+  ProjectPickerChoice,
+  ScopedProjectPickerProps,
+} from "./projectPickerContract";
+import {
+  useProjectPickerRows,
+  type ProjectSectionId,
+  type SuggestedProjectChoice,
+} from "./projectPickerRows";
 import { useProjectDirectoryResource } from "./projectDirectoryResource";
 
 import { canAddDirectory } from "./projectDirectorySelection";
 
 import { useProjectPickerNavigation } from "./projectPickerNavigation";
 import { directorySelectionPath } from "./projectDirectoryConfirmation";
+
+/**
+ * Qualifies each suggestion with its server and, when the catalog knows the directory, its
+ * project; an unknown directory is shown under its own folder name.
+ */
+function suggestedChoices({
+  choices,
+  confirmation,
+  servers,
+}: Pick<
+  ScopedProjectPickerProps,
+  "choices" | "confirmation" | "servers"
+>): SuggestedProjectChoice[] {
+  return (confirmation?.suggestions ?? []).flatMap(({ destination, reason }) => {
+    const server = servers.find((candidate) => candidate.id === destination.connectionId);
+    if (server === undefined) {
+      return [];
+    }
+    const path = normalizeDirectoryPath(destination.cwd);
+    const known = choices.find(
+      (choice) =>
+        choice.server.id === server.id && normalizeDirectoryPath(choice.project.path) === path,
+    );
+    const project = known?.project ?? {
+      addedAt: 0,
+      lastUsedAt: 0,
+      name: pathCrumbs(path).at(-1)?.label ?? path,
+      path: destination.cwd,
+      pinned: false,
+    };
+    return [{ choice: { project, server }, note: reason }];
+  });
+}
+
 /** Owns local picker navigation, qualified actions and expansion, independently of the sidebar filter. */
 function usePickerSession(argumentsProps: ScopedProjectPickerProps) {
   const {
     busy,
     choices,
+    confirmation,
+    current,
     initialConnectionId,
     onAddProject,
     onReadDirectory,
@@ -58,13 +106,21 @@ function usePickerSession(argumentsProps: ScopedProjectPickerProps) {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredChoices =
     serverFilter === null ? choices : choices.filter((choice) => choice.server.id === serverFilter);
-  const { projectRows, unpinnedProjects } = useProjectPickerRows(
-    filteredChoices,
-    normalizedQuery,
+  const suggested = suggestedChoices(argumentsProps).filter(
+    ({ choice }) => serverFilter === null || choice.server.id === serverFilter,
+  );
+  const { projectRows, unpinnedProjects } = useProjectPickerRows({
+    choices: filteredChoices,
     expandedSections,
+    normalizedQuery,
+    suggested,
+  });
+  // Explicit choice selects locally and offers no server default: the user names a directory.
+  const [selected, setSelected] = useState<ProjectDestination | null>(
+    confirmation === undefined ? null : current,
   );
 
-  if (normalizedQuery === "") {
+  if (normalizedQuery === "" && confirmation === undefined) {
     for (const server of servers) {
       if (serverFilter !== null && server.id !== serverFilter) {
         continue;
@@ -161,6 +217,16 @@ function usePickerSession(argumentsProps: ScopedProjectPickerProps) {
       setDirectoryError(error instanceof Error ? error.message : "Could not add project");
     });
   });
+  const select = useEvent((destination: ProjectDestination) => {
+    if (!busy && !adding) {
+      setSelected(destination);
+    }
+  });
+  const confirmSelection = useEvent(async () => {
+    if (selected !== null && !busy && !adding) {
+      await onSelect(selected);
+    }
+  });
   const pinProject = useEvent(async (choice: ProjectPickerChoice) => {
     if (onAddProject === undefined || pinningPath !== null || busy) {
       return;
@@ -179,6 +245,7 @@ function usePickerSession(argumentsProps: ScopedProjectPickerProps) {
     addCurrentDirectory,
     adding,
     breadcrumbScroll,
+    confirmSelection,
     directory,
     directoryError,
     directoryLoading,
@@ -202,6 +269,8 @@ function usePickerSession(argumentsProps: ScopedProjectPickerProps) {
     readError,
     requestedDirectory,
     scrollToCurrentFolder,
+    select,
+    selected,
     selectServer,
     serverFilter,
     setQuery,

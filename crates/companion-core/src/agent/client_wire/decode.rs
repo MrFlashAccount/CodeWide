@@ -45,7 +45,7 @@ pub enum MethodRoute {
 }
 
 /// Thread-scoped methods every provider supports through neutral operations.
-const CORE_THREAD_METHODS: [&str; 11] = [
+const CORE_THREAD_METHODS: [&str; 12] = [
     "thread/read",
     "thread/resume",
     "thread/turns/list",
@@ -56,6 +56,7 @@ const CORE_THREAD_METHODS: [&str; 11] = [
     "thread/delete",
     "thread/settings/update",
     "turn/start",
+    "turn/continue",
     "turn/interrupt",
 ];
 
@@ -106,6 +107,7 @@ pub fn host_capability(method: &str) -> Capability {
         }
         "account/rateLimits/read" => Capability::AccountsRateLimits,
         method if method.starts_with("companion/accountPool/") => Capability::AccountsPool,
+        "companion/providerRateLimits/reset/consume" => Capability::AccountsRateLimitResets,
         method if method.starts_with("companion/search") => Capability::HistoryMessageSearch,
         _ => Capability::CodexNative,
     }
@@ -405,6 +407,13 @@ mod tests {
             }
         );
         assert_eq!(
+            route("turn/continue", &json!({"threadId": "t"})),
+            MethodRoute::Thread {
+                thread_id: "t".into(),
+                requires: None
+            }
+        );
+        assert_eq!(
             route("thread/goal/get", &json!({"threadId": "t"})),
             MethodRoute::Thread {
                 thread_id: "t".into(),
@@ -415,6 +424,15 @@ mod tests {
             route("fs/readDirectory", &json!({})),
             MethodRoute::Host {
                 owner: Capability::HostFs
+            }
+        );
+        assert_eq!(
+            route(
+                "companion/providerRateLimits/reset/consume",
+                &json!({"providerId": "claude", "grantId": "weekly"})
+            ),
+            MethodRoute::Host {
+                owner: Capability::AccountsRateLimitResets
             }
         );
         assert_eq!(

@@ -70,6 +70,6 @@ module.exports = {
   },
   // WHY: Private icons use ESM-only hashes; real TanStack collections depend on ESM-only fractional-indexing.
   transformIgnorePatterns: [
-    "node_modules/(?!.*(?:react-native|@react-native|expo|@expo|@op-engineering[+/]op-sqlite|@noble[+/]hashes|character-entities|decode-named-character-reference|fractional-indexing|marked))",
+    "node_modules/(?!.*(?:react-native|@react-native|expo|@expo|@op-engineering[+/]op-sqlite|@noble[+/]hashes|character-entities|decode-named-character-reference|fractional-indexing|marked|pele))",
   ],
 };

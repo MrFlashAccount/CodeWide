@@ -70,13 +70,6 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.xs,
   },
-  connectionMiniButton: {
-    alignItems: "center",
-    borderRadius: radii.medium,
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
   connectionRow: {
     gap: spacing.xxs,
     minHeight: layoutSize.row,

@@ -5,7 +5,10 @@ import type { ProjectsWorkspaceCapabilities } from "./workspaceCapabilities";
 import { ProjectPickerSurface } from "./ProjectPickerSurface";
 import { projectPickerServers } from "./projectPickerServers";
 
-/** Adds a folder on an explicitly chosen server without changing the conversation destination. */
+/**
+ * Adds a folder on an explicitly chosen server without changing the conversation destination.
+ * The native sheet window presents it over the whole application, never inside a pane.
+ */
 export function ProjectDirectoryPicker({
   connections,
   initialConnectionId,

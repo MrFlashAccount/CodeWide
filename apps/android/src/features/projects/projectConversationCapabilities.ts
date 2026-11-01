@@ -11,6 +11,11 @@ export type ProjectConversationCapabilities = {
   onManageProjects: ((connectionId?: string | null) => void) | undefined;
   onReadDirectory: ((path: string) => Promise<RemoteDirectoryEntry[]>) | undefined;
   projectLoadError: string | null;
+  /**
+   * `required`: the draft has no server default and nothing can be sent until a project is
+   * chosen; `suggesting` while its host is still finding the project to pre-select.
+   */
+  projectRequirement: "none" | "required" | "suggesting";
   projects: readonly RemoteProject[];
   workspaceMode: NewChatWorkspaceMode;
   workspaceSupport: WorkspaceSupport | null;

@@ -60,11 +60,18 @@ pub struct ManagedRuntimeConfig {
     pub codex_home: PathBuf,
     pub app_server_socket: PathBuf,
     pub enable_mutations: bool,
+    /// Host-owned rollout gate for admitting new durable delegated tasks.
+    pub delegate_task_enabled: bool,
+    /// Host-owned limit on agent nesting (`maxAgentDepth`, default 5).
+    pub max_agent_depth: usize,
     pub secret_storage_policy: SecretStoragePolicy,
     pub host_display_name: HostDisplayName,
     pub listen_address: SocketAddr,
     pub host_update_guardian: Option<SharedHostUpdateGuardian>,
     pub dictation_proxy: HttpProxyConfig,
+    /// The host's bundled forge plugin directory (`Contents/Helpers` in the
+    /// macOS app); `None` leaves the built-in providers unavailable.
+    pub bundled_plugin_directory: Option<PathBuf>,
 }
 
 impl ManagedRuntimeConfig {
@@ -79,12 +86,22 @@ impl ManagedRuntimeConfig {
             app_server_socket: codex_home.join("app-server-control/app-server-control.sock"),
             codex_home,
             enable_mutations: true,
+            delegate_task_enabled: true,
+            max_agent_depth: crate::agent::orchestration::DEFAULT_MAX_AGENT_DEPTH,
             secret_storage_policy: SecretStoragePolicy::PlatformPreferred,
             host_display_name,
             listen_address: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8767)),
             host_update_guardian: None,
             dictation_proxy: HttpProxyConfig::default(),
+            bundled_plugin_directory: None,
         }
+    }
+
+    /// Sets the directory that holds the bundled forge plugin binaries.
+    #[must_use]
+    pub fn with_bundled_plugin_directory(mut self, directory: PathBuf) -> Self {
+        self.bundled_plugin_directory = Some(directory);
+        self
     }
 
     #[must_use]
@@ -102,6 +119,22 @@ impl ManagedRuntimeConfig {
     #[must_use]
     pub fn with_dictation_proxy(mut self, proxy: HttpProxyConfig) -> Self {
         self.dictation_proxy = proxy;
+        self
+    }
+
+    /// Sets the host-owned rollout gate for new `codewide_delegate_task`
+    /// admission without disabling recovery or direct agent controls.
+    #[must_use]
+    pub const fn with_delegate_task_enabled(mut self, enabled: bool) -> Self {
+        self.delegate_task_enabled = enabled;
+        self
+    }
+
+    /// Sets the host-owned limit on agent nesting for new spawns and
+    /// delegated tasks.
+    #[must_use]
+    pub const fn with_max_agent_depth(mut self, depth: usize) -> Self {
+        self.max_agent_depth = depth;
         self
     }
 
@@ -235,6 +268,7 @@ impl ManagedRuntime {
         );
         let vcs = Arc::new(VcsService::new(
             config.state_directory.join("vcs-plugins.json"),
+            config.bundled_plugin_directory.clone(),
         ));
         let resources = Arc::new(
             ResourceService::open(
@@ -268,11 +302,20 @@ impl ManagedRuntime {
             store.clone(),
             config.enable_mutations,
         )
+        .with_delegate_task_enabled(config.delegate_task_enabled)
+        .with_max_agent_depth(config.max_agent_depth)
         .with_content_projector(Arc::new(ContentProjector::new(content.clone())))
         .with_dictation(dictation)
         .with_files(files.clone())
         .with_projects(projects.clone())
-        .with_workspaces(workspaces.clone());
+        .with_workspaces(workspaces.clone())
+        .with_forge(crate::sync::ForgeHostConfig::standard(
+            &config.state_directory,
+            config.bundled_plugin_directory.clone(),
+            vcs.clone(),
+            projects.clone(),
+        ));
+        sync.route_forge_media(&media);
         if let Some(account_pool) = &account_pool {
             sync = sync.with_account_pool(account_pool);
         }
@@ -315,6 +358,9 @@ impl ManagedRuntime {
             media: Some(media.clone()),
             tunnels: Some(tunnels),
             telemetry: Some(telemetry),
+            diagnostics: Some(Arc::new(crate::diagnostics::DiagnosticStore::open(
+                config.state_directory.join("diagnostic-reports"),
+            )?)),
             thread_metadata: Some(Arc::new(RolloutThreadMetadata::new(catalog))),
             app_server_socket_path: Some(config.app_server_socket),
             excluded_ports: HashSet::from([
@@ -328,7 +374,6 @@ impl ManagedRuntime {
             inner_tls_target: Some(inner_target),
             inner_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(256))),
             relay: Some(relay.clone()),
-            ..CompanionServices::default()
         };
         let bootstrap_tls = bootstrap_config(&identity)?;
         let inner_tls = device_bound_config(&identity, registry.trusted_client_spki())?;
@@ -663,6 +708,19 @@ mod tests {
     };
     use tokio::net::TcpListener;
     use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn desktop_host_can_close_only_new_delegate_task_admission() -> RuntimeResult<()> {
+        let config = ManagedRuntimeConfig::desktop(
+            PathBuf::from("state"),
+            PathBuf::from("codex"),
+            HostDisplayName::new("Test computer")?,
+        )
+        .with_delegate_task_enabled(false);
+        assert!(!config.delegate_task_enabled);
+        assert!(config.enable_mutations);
+        Ok(())
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn fresh_desktop_runtime_starts_without_a_running_app_server() -> RuntimeResult<()> {

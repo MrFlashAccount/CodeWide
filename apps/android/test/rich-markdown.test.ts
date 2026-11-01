@@ -65,9 +65,18 @@ next
     const first = parsed.root.children[0];
     expect(first?.type).toBe("paragraph");
     if (first?.type !== "paragraph") throw new Error("Expected paragraph");
-    expect(first.children.map((node) => node.type)).toEqual(["link", "text", "footnoteReference", "break", "text"]);
-    expect(plainRichMarkdownText("[**Docs** &amp; status][docs] and [^note]\n\n[docs]: https://example.test/path\n[^note]: hidden definition"))
-      .toBe("Docs & status and [note]");
+    expect(first.children.map((node) => node.type)).toEqual([
+      "link",
+      "text",
+      "footnoteReference",
+      "break",
+      "text",
+    ]);
+    expect(
+      plainRichMarkdownText(
+        "[**Docs** &amp; status][docs] and [^note]\n\n[docs]: https://example.test/path\n[^note]: hidden definition",
+      ),
+    ).toBe("Docs & status and [note]");
     const imageParagraph = parsed.root.children[1];
     expect(imageParagraph?.type === "paragraph" ? imageParagraph.children[0] : null).toMatchObject({
       type: "image",
@@ -77,7 +86,9 @@ next
     });
     const footnote = parsed.root.children[2];
     expect(footnote).toMatchObject({ type: "footnoteDefinition", identifier: "note" });
-    expect(footnote?.type === "footnoteDefinition" ? footnote.children.length : 0).toBeGreaterThan(0);
+    expect(footnote?.type === "footnoteDefinition" ? footnote.children.length : 0).toBeGreaterThan(
+      0,
+    );
   });
 
   it("covers the full GFM surface plus GitHub alerts and fenced Mermaid", () => {
@@ -108,9 +119,16 @@ flowchart LR
       "code",
     ]);
     const list = parsed.root.children[1];
-    expect(list?.type === "list" ? list.children.map((item) => item.checked) : []).toEqual([false, true]);
+    expect(list?.type === "list" ? list.children.map((item) => item.checked) : []).toEqual([
+      false,
+      true,
+    ]);
     const paragraph = parsed.root.children[2];
-    expect(paragraph?.type === "paragraph" ? paragraph.children.filter((node) => node.type === "link").length : 0).toBe(2);
+    expect(
+      paragraph?.type === "paragraph"
+        ? paragraph.children.filter((node) => node.type === "link").length
+        : 0,
+    ).toBe(2);
     const table = parsed.root.children[3];
     expect(table?.type === "table" ? table.align : []).toEqual(["left", "center", "right"]);
     const diagram = parsed.root.children[4];
@@ -118,8 +136,9 @@ flowchart LR
   });
 
   it("projects collapsed Markdown into one native text flow", () => {
-    expect(plainRichMarkdownText("# Title\n\n- **first**\n- `second`\n\nLast paragraph"))
-      .toBe("Title\n• first\n• second\nLast paragraph");
+    expect(plainRichMarkdownText("# Title\n\n- **first**\n- `second`\n\nLast paragraph")).toBe(
+      "Title\n• first\n• second\nLast paragraph",
+    );
   });
 
   it("bounds pathological message size and allows only explicit web links", () => {
@@ -130,7 +149,7 @@ flowchart LR
     expect(richMarkdownCacheStats()).toEqual({ entries: 0, sourceChars: 0 });
     expect(isSafeLink("https://example.test/path")).toBe(true);
     expect(isSafeLink("javascript:alert(1)")).toBe(false);
-    expect(isSafeLink("file:///data/private" )).toBe(false);
+    expect(isSafeLink("file:///data/private")).toBe(false);
   });
 
   it("bounds the weighted markdown LRU across many large messages", () => {
@@ -152,20 +171,24 @@ flowchart LR
     const stats = richMarkdownCacheStats();
     expect(stats.sourceChars).toBeLessThan(MAX_MARKDOWN_CACHE_SOURCE_CHARS);
     expect(stats.entries).toBeLessThan(48);
-    expect(richMarkdownCacheEstimatedBytes()).toBeLessThanOrEqual(MAX_MARKDOWN_CACHE_ESTIMATED_BYTES);
+    expect(richMarkdownCacheEstimatedBytes()).toBeLessThanOrEqual(
+      MAX_MARKDOWN_CACHE_ESTIMATED_BYTES,
+    );
   });
 
   it("parses 1,000 deterministic mixed Markdown messages", () => {
-    const messages = Array.from({ length: 1_000 }, (_, index) => [
-      `## Result ${index}`,
-      "",
-      `- [${index % 2 === 0 ? "x" : " "}] item`,
-      `- **strong** and \`inline-${index}\``,
-      "",
-      "| Name | State |",
-      "| --- | --- |",
-      `| fixture-${index} | ready |`,
-    ].join("\n"));
+    const messages = Array.from({ length: 1_000 }, (_, index) =>
+      [
+        `## Result ${index}`,
+        "",
+        `- [${index % 2 === 0 ? "x" : " "}] item`,
+        `- **strong** and \`inline-${index}\``,
+        "",
+        "| Name | State |",
+        "| --- | --- |",
+        `| fixture-${index} | ready |`,
+      ].join("\n"),
+    );
     expect(messages).toHaveLength(1_000);
     for (const message of messages) expect(parseRichMarkdown(message).root.type).toBe("root");
   });

@@ -109,16 +109,21 @@ export function LargeContentViewerSession({
 export function LargeContentControls({
   block,
   getTransferAccess,
+  omitCommandOutput = false,
 }: {
   block: RenderBlock;
   getTransferAccess?: (forceRefresh?: boolean) => Promise<TransferAccess>;
+  /** Leaves out the command output, which its own command output screen reads whole. */
+  omitCommandOutput?: boolean;
 }) {
   const open = useContext(LargeContentViewerContext);
   const references = (() => {
     if (block.content === null) {
       return [];
     }
-    const entries = Object.entries(block.content.fields);
+    const entries = Object.entries(block.content.fields).filter(
+      ([pointer]) => !omitCommandOutput || !isCommandOutputPointer(pointer),
+    );
     if (block.content.whole !== null) {
       entries.push(["/", block.content.whole]);
     }
@@ -169,18 +174,17 @@ function largeContentPresentation(
   if (reference.contentType.startsWith("text/markdown")) {
     return "markdown";
   }
-  if (
-    reference.contentType.startsWith("text/x-ansi") ||
-    pointer === "/aggregatedOutput" ||
-    pointer.endsWith("/aggregatedOutput")
-  ) {
+  if (reference.contentType.startsWith("text/x-ansi") || isCommandOutputPointer(pointer)) {
     return "terminal";
   }
   return "text";
 }
 
+function isCommandOutputPointer(pointer: string): boolean {
+  return pointer === "/aggregatedOutput" || pointer.endsWith("/aggregatedOutput");
+}
+
 function FullContentViewer({ onClose, onNext, onPrevious, selection }: FullContentViewerProps) {
-  const [viewportHeight, setViewportHeight] = useState(0);
   const title =
     selection.pointer === "/" ? "Full output" : contentPointerLabel(selection.pointer, 0);
   const hasPrevious = selection.offset > 0;
@@ -197,9 +201,7 @@ function FullContentViewer({ onClose, onNext, onPrevious, selection }: FullConte
     onPrevious,
     rangeEnd,
     selection,
-    setViewportHeight,
     title,
-    viewportHeight,
   });
 }
 

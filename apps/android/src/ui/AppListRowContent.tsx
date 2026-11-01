@@ -155,6 +155,7 @@ export function AppListRowContent(props: AppListRowProps) {
               )}
               <AppText
                 numberOfLines={props.multiline === true ? 2 : 1}
+                shimmering={props.shimmering === true}
                 style={[styles.title, props.danger === true && styles.danger]}
               >
                 {props.title}

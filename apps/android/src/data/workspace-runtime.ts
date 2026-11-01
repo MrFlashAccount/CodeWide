@@ -74,6 +74,7 @@ import { createThreadListStream } from "./threadListStream";
 import { createThreadSyncReconnect } from "./thread-sync-reconnect";
 import { createThreadSyncRemoteLoader } from "./thread-sync-remote-loader";
 import { createThreadSyncRuntime } from "./thread-sync-runtime";
+import { hydratePeleDiagramRendererPreference } from "./peleDiagramRendererPreference";
 import { hydrateTimelineRowPremeasurementPreference } from "./timelineRowPremeasurementPreference";
 import {
   createThreadUiStateDatabase,
@@ -99,6 +100,7 @@ import {
 import { createVoiceAssistantModelCatalog } from "./voiceAssistantModelCatalog";
 import { hostDeclaresCapability } from "./agentProviders";
 import { createAgentProvidersResource } from "./agentProvidersResource";
+import { forgeSnapshotCache } from "./forgeSnapshotCache";
 import {
   createWorkspaceResourceDatabase,
   type WorkspaceResourceDatabase,
@@ -244,6 +246,7 @@ async function startWorkspaceRuntime(): Promise<void> {
     await Promise.all([
       globalSupervisorAttention.ready,
       hydrateGlobalVoiceOrbStylePreference(),
+      hydratePeleDiagramRendererPreference(),
       hydrateTimelineRowPremeasurementPreference(),
       hydrateVoiceHandoffPreference(),
       details.prepare(),
@@ -489,6 +492,7 @@ export async function deleteLocalConnectionData(connectionId: string): Promise<v
   await snapshot.resources?.deleteConnection(connectionId);
   await deleteConnectionQuestionDrafts(connectionId);
   await purgeCachedConnectionAttachments(connectionId);
+  await forgeSnapshotCache.deleteConnection(connectionId);
 }
 
 function requireConnectionDataReady(snapshot: WorkspaceRuntimeSnapshot): void {

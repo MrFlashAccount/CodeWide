@@ -1,15 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Pressable, View } from "react-native";
 import type { CodeReviewWorkspaceProps } from "./codeReviewContract";
 import { useCodeReviewState } from "./codeReviewState";
 import { styles } from "./CodeReviewWorkspace.styles";
-import { shortPath } from "../resources/reviewLocation";
+import { ReviewCommentStrip } from "./ReviewCommentStrip";
 
 import { changeScopeDisplay } from "../../../rendering/changeScopeDisplay";
 import { changedFileDisplayPath } from "../../../rendering/changed-file-path";
 import { CodeReviewEditor } from "../editor/CodeReviewEditor";
 import { colors, iconSize } from "../../../theme";
-import { ActionMenu } from "../../../ui/ActionMenu";
+import { OverflowMenu } from "../../../ui/OverflowMenu";
 import { AppText as Text } from "../../../ui/Typography";
 
 /** Composes file selection, diff viewing, and review-comment submission. */
@@ -113,25 +113,16 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
             </Text>
           )}
         </View>
-        <ActionMenu
+        <OverflowMenu
           accessibilityLabel="Changes options"
           actions={menuActions}
           align="end"
+          busy={scopeLoading}
           onSelect={selectMenuAction}
           placement="bottom"
-        >
-          <Pressable
-            accessibilityLabel="Changes options"
-            disabled={scopeLoading}
-            style={styles.iconButton}
-          >
-            {scopeLoading ? (
-              <ActivityIndicator color={colors.textMuted} size="small" />
-            ) : (
-              <Ionicons color={colors.text} name="ellipsis-vertical" size={iconSize.action} />
-            )}
-          </Pressable>
-        </ActionMenu>
+          size="regular"
+          tone="filled"
+        />
         <Pressable
           accessibilityLabel="Attach review"
           disabled={attachDisabled}
@@ -195,36 +186,12 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
             workspaceRevision={workspaceRevision}
             wrapLines={wrapLines}
           />
-          {comments.length > 0 && (
-            <ScrollView
-              contentContainerStyle={styles.commentStripContent}
-              horizontal
-              keyboardShouldPersistTaps="handled"
-              style={styles.commentStrip}
-            >
-              {comments.map((comment) => (
-                <View key={comment.id} style={styles.commentChip}>
-                  <Text numberOfLines={1} style={styles.commentChipLocation}>
-                    {shortPath(comment.path)}:{comment.line}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.commentChipBody}>
-                    {comment.body}
-                  </Text>
-                  <Pressable
-                    accessibilityLabel="Delete comment"
-                    hitSlop={8}
-                    onPress={() => {
-                      setComments((current) =>
-                        current.filter((candidate) => candidate.id !== comment.id),
-                      );
-                    }}
-                  >
-                    <Ionicons color={colors.textDim} name="close-circle" size={iconSize.inline} />
-                  </Pressable>
-                </View>
-              ))}
-            </ScrollView>
-          )}
+          <ReviewCommentStrip
+            comments={comments}
+            onDelete={(id) => {
+              setComments((current) => current.filter((candidate) => candidate.id !== id));
+            }}
+          />
         </View>
       </View>
     </View>

@@ -33,6 +33,8 @@ export type CodeReviewDocument =
       source: "";
     }
   | {
+      /** Why the file has no preview, when the source knows (too large, binary). */
+      detail?: string;
       displayState: "unsupported";
       fullFileDiff?: never;
       patches: readonly [];
@@ -47,8 +49,10 @@ export type CodeReviewFileItem = {
   countsAreNet?: boolean;
   deletions: number;
   path: string;
+  /** Pull request review state shown on the tree row: viewed mark and pending drafts. */
+  review?: { readonly drafts: number; readonly viewed: boolean };
   sourceOnly?: boolean;
-  status: "added" | "deleted" | "modified";
+  status: "added" | "deleted" | "modified" | "renamed";
   treePath: string;
 };
 

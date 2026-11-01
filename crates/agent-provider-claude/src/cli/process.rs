@@ -28,7 +28,7 @@ use tokio::{
 use super::{
     command::QueryOptions,
     protocol::{
-        ControlRequest, Inbound, Priority, classify_line, control_request_line,
+        Author, ControlRequest, Inbound, Priority, classify_line, control_request_line,
         control_response_line, initialize_request, usage_request, user_message_line,
     },
 };
@@ -194,8 +194,9 @@ impl ClaudeProcess {
         content: &Value,
         uuid: Option<&str>,
         priority: Priority,
+        author: Author,
     ) -> Result<(), ProcessError> {
-        self.write_line(&user_message_line(content, uuid, priority))
+        self.write_line(&user_message_line(content, uuid, priority, author))
             .await
     }
 

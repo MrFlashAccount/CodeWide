@@ -252,6 +252,33 @@ it("retains an end intent received while the cached first page is still refreshi
   await waitFor(() => expect(test.view.getByText("Chat 71")).toBeVisible());
 });
 
+it("retains another end intent while the preceding continuation is still loading", async () => {
+  const tail = deferred();
+  const test = await setup({
+    gate: (cursor) => (cursor === "36" ? tail.promise : Promise.resolve()),
+  });
+  await waitFor(() => expect(test.view.getByText("Chat 35")).toBeVisible());
+  await act(async () => {
+    fireEvent(test.list(), "endReached");
+  });
+  await waitFor(() =>
+    expect(test.rpc).toHaveBeenCalledWith(
+      "thread/list",
+      expect.objectContaining({ cursor: "36" }),
+      "server",
+    ),
+  );
+  fireEvent(test.list(), "endReached");
+  await act(async () => tail.resolve());
+  await waitFor(() =>
+    expect(test.rpc).toHaveBeenCalledWith(
+      "thread/list",
+      expect.objectContaining({ cursor: "72" }),
+      "server",
+    ),
+  );
+});
+
 it("fills an undersized viewport without requiring a second end callback, and stops at exhaustion", async () => {
   const test = await setup({ count: 80 });
   await waitFor(() => expect(test.view.getByText("Chat 35")).toBeVisible());

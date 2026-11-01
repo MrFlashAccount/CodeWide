@@ -560,6 +560,80 @@ async fn thread_sync_does_not_hide_unrelated_resume_errors()
     Ok(())
 }
 
+/// Syncs a thread App Server started but never materialized (no first user
+/// message, so no rollout); `loaded` is whether App Server still holds it.
+async fn sync_unmaterialized_thread(
+    loaded: bool,
+) -> Result<(Value, Vec<String>), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut requests) = mpsc::channel(4);
+    let fake = tokio::spawn(run_unmaterialized_thread_app_server(
+        socket_path.clone(),
+        observed,
+        loaded,
+    ));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+    send_json(
+        &mut client,
+        &json!({
+            "type": "rpc",
+            "request": {
+                "id": "sync-unmaterialized",
+                "method": "companion/thread/sync",
+                "params": {"threadId": EXTERNAL_THREAD_ID, "limit": 36}
+            }
+        }),
+    )
+    .await?;
+    let response = receive_type(&mut client, "rpc").await?;
+    let mut methods = Vec::new();
+    while let Ok(method) = requests.try_recv() {
+        methods.push(method);
+    }
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok((response["response"].clone(), methods))
+}
+
+#[tokio::test]
+async fn a_loaded_thread_before_its_first_message_syncs_as_an_empty_conversation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (response, methods) = sync_unmaterialized_thread(true).await?;
+    assert!(response.get("error").is_none(), "{response}");
+    let result = &response["result"];
+    assert_eq!(result["thread"]["id"], EXTERNAL_THREAD_ID);
+    assert_eq!(result["thread"]["status"]["type"], "idle");
+    assert_eq!(result["history"]["turns"], json!([]));
+    assert_eq!(result["history"]["hasMore"], false);
+    assert!(result["activeTurn"].is_null());
+    assert_eq!(methods, ["thread/resume", "thread/read"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_thread_with_neither_a_rollout_nor_a_runtime_syncs_as_missing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (response, methods) = sync_unmaterialized_thread(false).await?;
+    assert_eq!(response["error"]["code"], -32_073, "{response}");
+    assert_eq!(
+        response["error"]["message"],
+        format!("App Server request failed: thread not found: {EXTERNAL_THREAD_ID}")
+    );
+    assert_eq!(methods, ["thread/resume", "thread/read"]);
+    Ok(())
+}
+
 #[tokio::test]
 async fn unified_sync_uses_the_observer_attachment_as_the_thread_shell()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -1566,6 +1640,13 @@ async fn active_sync_forwards_mutations_and_pumps_durable_queue()
     assert_eq!(
         timeout(Duration::from_secs(2), observed_rx.recv())
             .await?
+            .ok_or("history-free subscription missing")?,
+        "thread/resume",
+        "a turn on a thread this connection never subscribed to subscribes first"
+    );
+    assert_eq!(
+        timeout(Duration::from_secs(2), observed_rx.recv())
+            .await?
             .ok_or("observation channel closed")?,
         "turn/start"
     );
@@ -1656,6 +1737,13 @@ async fn first_message_materializes_an_empty_new_thread() -> Result<(), Box<dyn 
     assert_eq!(
         timeout(Duration::from_secs(2), observed_rx.recv())
             .await?
+            .ok_or("history-free subscription missing")?,
+        "thread/resume",
+        "a turn on a thread this connection never subscribed to subscribes first"
+    );
+    assert_eq!(
+        timeout(Duration::from_secs(2), observed_rx.recv())
+            .await?
             .ok_or("first turn was not started")?,
         "turn/start"
     );
@@ -1736,6 +1824,13 @@ async fn queued_messages_reach_app_server_in_order_after_lifecycle_checks()
         .await?;
         let _ = receive_type(&mut client, "rpc").await?;
     }
+    assert_eq!(
+        timeout(Duration::from_millis(250), observed_rx.recv())
+            .await?
+            .ok_or("history-free subscription missing")?,
+        "thread/resume",
+        "only the first turn of the connection subscribes"
+    );
     assert_eq!(
         timeout(Duration::from_millis(250), observed_rx.recv())
             .await?
@@ -1850,6 +1945,13 @@ async fn assert_explicit_queue_recovers(
     assert_eq!(
         timeout(Duration::from_secs(2), observed_rx.recv())
             .await?
+            .ok_or("history-free subscription missing")?,
+        "thread/resume",
+        "a turn on a thread this connection never subscribed to subscribes first"
+    );
+    assert_eq!(
+        timeout(Duration::from_secs(2), observed_rx.recv())
+            .await?
             .ok_or("queued turn was not released after App Server permitted input")?,
         "next-turn"
     );
@@ -1872,7 +1974,7 @@ async fn assert_explicit_queue_recovers(
 }
 
 #[tokio::test]
-async fn queued_message_rehydrates_missing_thread_before_one_safe_retry()
+async fn queued_message_rehydrates_missing_thread_before_its_turn_start()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let socket_path = directory.path().join("app-server.sock");
@@ -1915,25 +2017,26 @@ async fn queued_message_rehydrates_missing_thread_before_one_safe_retry()
     let lifecycle = timeout(Duration::from_secs(2), observed_rx.recv())
         .await?
         .ok_or("thread lifecycle read missing")?;
-    let first = timeout(Duration::from_secs(2), observed_rx.recv())
-        .await?
-        .ok_or("initial turn/start missing")?;
     let resume = timeout(Duration::from_secs(2), observed_rx.recv())
         .await?
         .ok_or("thread/resume missing")?;
-    let retry = timeout(Duration::from_secs(2), observed_rx.recv())
+    let start = timeout(Duration::from_secs(2), observed_rx.recv())
         .await?
-        .ok_or("retried turn/start missing")?;
+        .ok_or("turn/start missing")?;
     assert_eq!(lifecycle["method"], "thread/read");
     assert_eq!(lifecycle["params"]["includeTurns"], false);
-    assert_eq!(first["method"], "turn/start");
+    // The history-free subscription of a thread this connection never
+    // subscribed to also rehydrates its runtime, so the turn starts once.
     assert_eq!(resume["method"], "thread/resume");
     assert_eq!(
         resume["params"],
         json!({"threadId": "thread-1", "excludeTurns": true})
     );
-    assert_eq!(retry["method"], "turn/start");
-    assert_eq!(retry["params"], first["params"]);
+    assert_eq!(start["method"], "turn/start");
+    assert_eq!(
+        start["params"]["clientUserMessageId"],
+        "message-after-reconnect"
+    );
 
     timeout(Duration::from_secs(2), async {
         loop {
@@ -2018,6 +2121,14 @@ async fn durable_queue_prepares_remote_files_and_broadcasts_delivery()
         receive_type(&mut client, "rpc").await?["response"]["id"],
         "direct-image"
     );
+    let subscription = timeout(Duration::from_secs(2), observed_rx.recv())
+        .await?
+        .ok_or("history-free subscription missing")?;
+    assert_eq!(subscription["method"], "thread/resume");
+    assert_eq!(
+        subscription["params"],
+        json!({"threadId": "thread-direct", "excludeTurns": true})
+    );
     let direct = timeout(Duration::from_secs(2), observed_rx.recv())
         .await?
         .ok_or("direct turn start missing")?;
@@ -2058,10 +2169,17 @@ async fn durable_queue_prepares_remote_files_and_broadcasts_delivery()
     let lifecycle = timeout(Duration::from_secs(2), observed_rx.recv())
         .await?
         .ok_or("thread lifecycle read missing")?;
+    let subscription = timeout(Duration::from_secs(2), observed_rx.recv())
+        .await?
+        .ok_or("history-free subscription missing")?;
     let start = timeout(Duration::from_secs(2), observed_rx.recv())
         .await?
         .ok_or("turn start missing")?;
     assert_eq!(lifecycle["method"], "thread/read");
+    assert_eq!(
+        subscription["params"],
+        json!({"threadId": "thread-1", "excludeTurns": true})
+    );
     assert_eq!(lifecycle["params"]["includeTurns"], false);
     assert_eq!(start["method"], "turn/start");
     assert_eq!(
@@ -2128,14 +2246,17 @@ async fn direct_turn_retry_returns_the_existing_turn_without_duplicate_send()
     }
 
     let mut methods = Vec::new();
-    for _ in 0..2 {
+    for _ in 0..3 {
         methods.push(
             timeout(Duration::from_secs(2), observed_rx.recv())
                 .await?
                 .ok_or("observation channel closed")?,
         );
     }
-    assert_eq!(methods, ["turn/start", "thread/turns/list"]);
+    assert_eq!(
+        methods,
+        ["thread/resume", "turn/start", "thread/turns/list"]
+    );
     assert!(
         timeout(Duration::from_millis(200), observed_rx.recv())
             .await
@@ -2192,6 +2313,13 @@ async fn ambiguous_turn_delivery_never_reads_or_repeats_upstream()
             .await?
             .ok_or("thread lifecycle read was not forwarded")?,
         "thread/read"
+    );
+    assert_eq!(
+        timeout(Duration::from_secs(2), observed_rx.recv())
+            .await?
+            .ok_or("history-free subscription missing")?,
+        "thread/resume",
+        "a turn on a thread this connection never subscribed to subscribes first"
     );
     assert_eq!(
         timeout(Duration::from_secs(2), observed_rx.recv())
@@ -2677,13 +2805,63 @@ async fn run_thread_shell_app_server(
     Ok(())
 }
 
+/// App Server for a started thread without a rollout: `thread/resume` is
+/// rejected as it is before the first user message, and `thread/read`
+/// serves the live session only while the thread is `loaded`.
+async fn run_unmaterialized_thread_app_server(
+    socket_path: PathBuf,
+    observed: mpsc::Sender<String>,
+    loaded: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let listener = UnixListener::bind(socket_path)?;
+    let (stream, _) = listener.accept().await?;
+    let mut socket = accept_initialized(stream).await?;
+    while let Some(frame) = socket.next().await {
+        let Message::Text(raw) = frame? else {
+            continue;
+        };
+        let request: Value = serde_json::from_str(&raw)?;
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        observed.send(method.to_owned()).await?;
+        let reply = match method {
+            "thread/resume" => json!({"id": request["id"], "error": {
+                "code": -32600,
+                "message": format!("no rollout found for thread id {EXTERNAL_THREAD_ID}"),
+            }}),
+            "thread/read" if loaded => {
+                assert_eq!(request["params"]["includeTurns"], false);
+                json!({"id": request["id"], "result": {"thread": {
+                    "id": EXTERNAL_THREAD_ID,
+                    "preview": "",
+                    "status": {"type": "idle"},
+                    "turns": [],
+                }}})
+            }
+            "thread/read" => json!({"id": request["id"], "error": {
+                "code": -32600,
+                "message": format!("thread not loaded: {EXTERNAL_THREAD_ID}"),
+            }}),
+            _ => json!({"id": request["id"], "result": {}}),
+        };
+        send_value(&mut socket, &reply).await?;
+    }
+    Ok(())
+}
+
 async fn run_out_of_order_app_server(
     socket_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = UnixListener::bind(socket_path)?;
     let (stream, _) = listener.accept().await?;
     let mut socket = accept_initialized(stream).await?;
+    // Concurrent reads reach the App Server in either order; the slow read is
+    // answered only after the fast one, so a hub that serialized them would
+    // stall instead of returning the fast response first.
     let mut slow_id = None;
+    let mut fast_answered = false;
     while let Some(frame) = socket.next().await {
         let Message::Text(raw) = frame? else {
             continue;
@@ -2691,13 +2869,16 @@ async fn run_out_of_order_app_server(
         let request: Value = serde_json::from_str(&raw)?;
         let id = request.get("id").cloned().unwrap_or(Value::Null);
         match request.get("method").and_then(Value::as_str) {
+            Some("thread/list") if fast_answered => {
+                send_value(&mut socket, &json!({"id": id, "result": {"data": []}})).await?;
+            }
             Some("thread/list") => slow_id = Some(id),
             Some("config/read") => {
                 send_value(&mut socket, &json!({"id": id, "result": {"fast": true}})).await?;
-                let id = slow_id
-                    .take()
-                    .ok_or("slow request was not forwarded first")?;
-                send_value(&mut socket, &json!({"id": id, "result": {"data": []}})).await?;
+                fast_answered = true;
+                if let Some(id) = slow_id.take() {
+                    send_value(&mut socket, &json!({"id": id, "result": {"data": []}})).await?;
+                }
             }
             _ => send_value(&mut socket, &json!({"id": id, "result": {}})).await?,
         }
@@ -3168,6 +3349,16 @@ async fn run_ambiguous_app_server(
         if method == "turn/start" {
             break;
         }
+        if method == "thread/resume" {
+            send_value(
+                &mut first,
+                &json!({
+                    "id": request["id"].clone(),
+                    "result": {"thread": {"id": "thread-1", "turns": []}}
+                }),
+            )
+            .await?;
+        }
         if method == "thread/read" {
             send_value(
                 &mut first,
@@ -3427,6 +3618,131 @@ async fn companion_pins_are_confirmed_durably_and_shared_by_connected_devices()
     let pins = receive_type(&mut first, "rpc").await?;
     assert_eq!(pins["response"]["result"]["threadIds"], json!(["legacy"]));
     assert!(observed_rx.try_recv().is_err());
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn forge_and_review_methods_are_claimed_and_never_reach_app_server()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_rx) = mpsc::channel(16);
+    let fake = tokio::spawn(run_passthrough_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
+    );
+    let projects =
+        codewide_companion::projects::ProjectService::open(directory.path().join("projects.json"))
+            .await?;
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history).with_forge(
+        codewide_companion::sync::ForgeHostConfig {
+            forge: codewide_companion::forge::ForgeConfig::under(directory.path(), None),
+            vcs: Arc::new(codewide_companion::vcs::VcsService::new(
+                directory.path().join("vcs-plugins.json"),
+                None,
+            )),
+            projects,
+            home: directory.path().to_path_buf(),
+        },
+    );
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+    let pull_request = "fpr1.WyJnaXRodWIiLCJnaXRodWIuY29tIiwibyIsIjEiXQ";
+    for (method, params) in [
+        (
+            "companion/forge/provider/setEnabled",
+            json!({"pluginId": "github", "enabled": false}),
+        ),
+        ("companion/forge/accounts/read", json!({})),
+        (
+            "companion/pullRequests/list",
+            json!({"category": "authored", "repository": null, "cursor": null}),
+        ),
+        (
+            "companion/pullRequest/read",
+            json!({"pullRequest": pull_request}),
+        ),
+        (
+            "companion/forge/auth/submitToken",
+            json!({"pluginId": "github", "host": "github.com", "token": "ghp_sentinel_transport", "idempotencyKey": "k"}),
+        ),
+        (
+            "companion/review/drafts/read",
+            json!({"source": {"kind": "session", "threadId": "t", "resource": "session"}}),
+        ),
+        ("companion/pullRequest/future", json!({})),
+        ("companion/forge/future", json!({})),
+        ("companion/review/future", json!({})),
+    ] {
+        send_json(
+            &mut client,
+            &json!({"type": "rpc", "request": {"id": method, "method": method, "params": params}}),
+        )
+        .await?;
+        let response = receive_type(&mut client, "rpc").await?;
+        assert_eq!(response["response"]["id"], method);
+        assert!(
+            !response.to_string().contains("ghp_sentinel_transport"),
+            "{response}"
+        );
+        if method == "companion/pullRequest/read" || method == "companion/forge/auth/submitToken" {
+            assert_eq!(response["response"]["error"]["code"], -32_080, "{response}");
+        }
+    }
+    assert!(
+        timeout(Duration::from_millis(300), observed_rx.recv())
+            .await
+            .is_err(),
+        "no forge or review method reaches App Server"
+    );
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn forge_methods_without_the_forge_service_answer_locally()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_rx) = mpsc::channel(4);
+    let fake = tokio::spawn(run_passthrough_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        Arc::new(RolloutStore::attach(store.database(), store.clone())?),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+    for method in [
+        "companion/forge/accounts/read",
+        "companion/pullRequestLinks/read",
+        "companion/review/guide/read",
+    ] {
+        send_json(
+            &mut client,
+            &json!({"type": "rpc", "request": {"id": method, "method": method, "params": {}}}),
+        )
+        .await?;
+        let response = receive_type(&mut client, "rpc").await?;
+        assert_eq!(response["response"]["error"]["code"], -32_080);
+    }
+    assert!(
+        timeout(Duration::from_millis(300), observed_rx.recv())
+            .await
+            .is_err()
+    );
+    client.close(None).await?;
     server_task.abort();
     fake.abort();
     Ok(())

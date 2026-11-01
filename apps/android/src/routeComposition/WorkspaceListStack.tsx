@@ -1,6 +1,6 @@
 import { Stack, useRouter } from "expo-router";
 import { useEffect } from "react";
-import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
+import { View, type LayoutChangeEvent } from "react-native";
 
 import { workspaceCatalogDiagnostics } from "../data/workspaceCatalogDiagnostics";
 import {
@@ -11,6 +11,7 @@ import { effectiveThreadListFilter } from "../features/threadList/threadListFilt
 import { NoServerWelcome } from "../features/threadList/NoServerWelcome";
 import { useEvent } from "../react/useEvent";
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
+import { CatalogSearchOverlayHost } from "../presentation/layouts/CatalogSearchOverlayHost";
 import { projectListRouteSessions } from "../services/projects/projectListRouteSession";
 import { useWorkspaceListRouteResources } from "./workspaceListRouteResources";
 import { useWorkspaceRouteModel } from "./WorkspaceRouteModel";
@@ -44,15 +45,9 @@ export function WorkspaceListStack(): React.JSX.Element {
   });
   return (
     <View onLayout={onLayout} style={styles.flex} testID="workspace-list-layout">
-      <View
-        accessibilityElementsHidden={searchVisible}
-        importantForAccessibility={searchVisible ? "no-hide-descendants" : "auto"}
-        pointerEvents={searchVisible ? "none" : "auto"}
-        style={styles.flex}
-      >
+      <CatalogSearchOverlayHost overlay={searchVisible ? sidebarSearch : null}>
         <CatalogContent />
-      </View>
-      {searchVisible ? <View style={StyleSheet.absoluteFill}>{sidebarSearch}</View> : null}
+      </CatalogSearchOverlayHost>
     </View>
   );
 }
@@ -68,12 +63,17 @@ function CatalogContent(): React.JSX.Element {
   }
   return (
     <ThreadListSearchPullProvider>
-      <WorkspaceListHeader />
+      <CatalogHeader />
       <View style={styles.listScenes} testID="workspace-list-scenes">
         <ListContentNavigator />
       </View>
     </ThreadListSearchPullProvider>
   );
+}
+
+/** The retained Threads header shared only by All and project destinations. */
+function CatalogHeader(): React.JSX.Element | null {
+  return <WorkspaceListHeader />;
 }
 
 function ListContentNavigator(): React.JSX.Element {

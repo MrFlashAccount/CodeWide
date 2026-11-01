@@ -1,5 +1,12 @@
 const { installExpoGlobalPolyfill } = require("expo-modules-core/src/polyfill/dangerous-internal");
 
+jest.mock("@react-native-async-storage/async-storage", () =>
+  require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
+);
+jest.mock("@react-native-community/netinfo", () =>
+  require("@react-native-community/netinfo/jest/netinfo-mock"),
+);
+
 global.__DEV__ = false;
 installExpoGlobalPolyfill();
 
@@ -36,7 +43,17 @@ globalThis.expo.modules.ExponentConstants = {
   manifest: null,
   sessionId: "render-test",
 };
+globalThis.expo.modules.ExpoLinking = {
+  addListener: () => ({ remove: () => undefined }),
+  clearInitialURL: () => undefined,
+  getLinkingURL: () => null,
+};
 globalThis.expo.modules.ExpoFetchModule = {};
+globalThis.expo.modules.ExpoFontLoader = {
+  getLoadedFonts: () => [],
+  isLoaded: () => false,
+  loadAsync: async () => undefined,
+};
 globalThis.expo.modules.ExpoAsset = {
   downloadAsync: async (url) => url,
 };

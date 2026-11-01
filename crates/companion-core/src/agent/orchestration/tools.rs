@@ -7,8 +7,12 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::task::{TaskId, WaitMode};
 use crate::agent::model::{AppThreadId, ClientToolSpec, ProviderId};
 
+pub const DELEGATE_TASK: &str = "codewide_delegate_task";
+pub const WAIT_TASK: &str = "codewide_wait_task";
+pub const CANCEL_TASK: &str = "codewide_cancel_task";
 pub const SPAWN_AGENT: &str = "codewide_spawn_agent";
 pub const WAIT_AGENT: &str = "codewide_wait_agent";
 pub const SEND_AGENT: &str = "codewide_send_agent";
@@ -22,6 +26,93 @@ pub const MAX_WAIT: Duration = Duration::from_mins(5);
 /// The declared tools, identical for every provider.
 #[must_use]
 pub fn specs() -> Vec<ClientToolSpec> {
+    let mut specs = task_specs();
+    specs.extend(agent_specs());
+    specs
+}
+
+fn task_specs() -> Vec<ClientToolSpec> {
+    let task_id = json!({
+        "type": "string",
+        "description": "Durable task id returned by codewide_delegate_task."
+    });
+    vec![
+        ClientToolSpec {
+            name: DELEGATE_TASK.into(),
+            description: "Delegate a task to a dedicated child thread. The host preserves the task across reconnects and restarts. Use deferred to continue immediately: the result arrives automatically as a CodeWide notice that starts this thread's next turn once it is idle (never inside a running turn). Use blocking to wait while this turn remains alive; a result returned to you here is not delivered again.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "The complete task for the child agent."},
+                    "waitMode": {"type": "string", "enum": ["blocking", "deferred"]},
+                    "provider": {"type": "string", "description": "Target provider. Default: this thread's provider."},
+                    "model": {"type": "string", "description": "Target model. Default: this thread's model on the same provider, else the target provider default."},
+                    "name": {"type": "string", "description": "Short child display name."},
+                    "permissionProfile": {"type": "string", "description": "Default: inherit the parent's profile exactly, translated to the target provider. An explicit profile may narrow access."},
+                    "workspace": {
+                        "description": "Default: inherit the parent's cwd and permissions. Isolation is explicit opt-in.",
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "mode": {"const": "inherit"},
+                                    "cwd": {"type": "string", "description": "Absolute working directory; default is the parent's cwd. No VCS required."}
+                                },
+                                "required": ["mode"],
+                                "additionalProperties": false
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "mode": {"const": "sharedReadOnly", "description": "Legacy spelling of inherit: keeps the parent permissions. Request :read-only explicitly to restrict access."},
+                                    "cwd": {"type": "string", "description": "Absolute shared working directory; default is the parent's cwd."}
+                                },
+                                "required": ["mode"],
+                                "additionalProperties": false
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "mode": {"const": "isolatedWrite"},
+                                    "sourceWorkspace": {"type": "string", "description": "Absolute source owned by a configured VCS provider supporting workspace.create@1; default is the parent's cwd."}
+                                },
+                                "required": ["mode"],
+                                "additionalProperties": false
+                            }
+                        ]
+                    }
+                },
+                "required": ["prompt", "waitMode"],
+                "additionalProperties": false
+            }),
+        },
+        ClientToolSpec {
+            name: WAIT_TASK.into(),
+            description: "Wait for one durable delegated task. Returns only that task's initial turn result. A terminal result returned here is acknowledged: its automatic notice is not delivered (or is withdrawn while still queued).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "taskId": task_id,
+                    "timeoutSeconds": {"type": "number", "minimum": 0, "maximum": 300, "description": "Default 60, at most 300."}
+                },
+                "required": ["taskId"],
+                "additionalProperties": false
+            }),
+        },
+        ClientToolSpec {
+            name: CANCEL_TASK.into(),
+            description: "Record cancellation for one durable delegated task. Safe to repeat; cancelling is not the same as cancelled.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"taskId": task_id},
+                "required": ["taskId"],
+                "additionalProperties": false
+            }),
+        },
+    ]
+}
+
+fn agent_specs() -> Vec<ClientToolSpec> {
     let agent_thread_id = json!({
         "type": "string",
         "description": "Thread id of an agent this thread started (from codewide_spawn_agent or codewide_list_agents)."
@@ -29,7 +120,7 @@ pub fn specs() -> Vec<ClientToolSpec> {
     vec![
         ClientToolSpec {
             name: SPAWN_AGENT.into(),
-            description: "Start another agent in a new CodeWide thread, linked to this thread as a subagent, and give it a task. The new agent sees only `prompt` (not this conversation). Returns immediately; use codewide_wait_agent to collect its answer.".into(),
+            description: "Start another agent in a new CodeWide thread, linked to this thread as a subagent, and give it a task. The new agent sees only `prompt` (not this conversation). Returns immediately. Its result arrives automatically as a CodeWide notice that starts this thread's next turn once it is idle, so you do not need to poll; call codewide_wait_agent only when you must block on the answer now.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -37,8 +128,8 @@ pub fn specs() -> Vec<ClientToolSpec> {
                     "provider": {"type": "string", "description": "Agent provider id (for example \"codex\" or \"claude\"). Default: this thread's provider."},
                     "model": {"type": "string", "description": "Model id. Default: this thread's model on the same provider, else the provider's default model."},
                     "name": {"type": "string", "description": "Short display name of the agent."},
-                    "cwd": {"type": "string", "description": "Absolute working directory. Default: this thread's working directory."},
-                    "permissionProfile": {"type": "string", "description": "One of :read-only, :workspace, :full-access, :danger-full-access. Default and upper bound: this thread's profile."}
+                    "cwd": {"type": "string", "description": "Absolute working directory; default is the parent's cwd. Used directly with inherited permissions; no VCS or isolation required."},
+                    "permissionProfile": {"type": "string", "description": "Default: inherit the parent's permissions exactly. An explicit profile may narrow access; full-access aliases have the same ceiling."}
                 },
                 "required": ["prompt"],
                 "additionalProperties": false
@@ -46,7 +137,7 @@ pub fn specs() -> Vec<ClientToolSpec> {
         },
         ClientToolSpec {
             name: WAIT_AGENT.into(),
-            description: "Wait until an agent of this thread finishes its current turn, or until the timeout. Returns its status and, when finished, its final message.".into(),
+            description: "Wait until an agent of this thread finishes its current turn, or until the timeout. Returns its status and, when finished, its final message. A finished result returned here is not delivered again as a notice.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -59,7 +150,7 @@ pub fn specs() -> Vec<ClientToolSpec> {
         },
         ClientToolSpec {
             name: SEND_AGENT.into(),
-            description: "Send a follow-up message to an agent of this thread. mode \"queue\" (default) starts a new turn when the agent is idle and otherwise delivers the message after its current turn; \"steer\" adds it to the running turn.".into(),
+            description: "Send a follow-up message to an agent of this thread. mode \"queue\" (default) starts a new turn when the agent is idle and otherwise delivers the message after its current turn; that turn's result arrives automatically as its own notice. \"steer\" adds it to the running turn, whose single result covers it.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -73,7 +164,7 @@ pub fn specs() -> Vec<ClientToolSpec> {
         },
         ClientToolSpec {
             name: CANCEL_AGENT.into(),
-            description: "Interrupt the running turn of an agent of this thread and drop its queued messages. Safe to repeat.".into(),
+            description: "Interrupt the running turn of an agent of this thread and drop its queued messages. Safe to repeat. If the agent stops within the interrupt timeout no notice follows; a later stop arrives as a `cancelled` notice.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {"agentThreadId": agent_thread_id},
@@ -87,6 +178,41 @@ pub fn specs() -> Vec<ClientToolSpec> {
             input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
         },
     ]
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "mode",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum WorkspaceRequest {
+    Inherit {
+        cwd: Option<String>,
+    },
+    SharedReadOnly {
+        cwd: Option<String>,
+    },
+    IsolatedWrite {
+        source_workspace: Option<String>,
+    },
+    /// Internal direct-agent arm; never decoded from `codewide_delegate_task`.
+    /// Admission uses the cwd directly with the parent permissions.
+    AgentSpawn {
+        cwd: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegateRequest {
+    pub prompt: String,
+    pub wait_mode: WaitMode,
+    pub provider: Option<ProviderId>,
+    pub model: Option<String>,
+    pub name: Option<String>,
+    pub permission_profile: Option<String>,
+    pub workspace: WorkspaceRequest,
 }
 
 /// How `codewide_send_agent` delivers a message.
@@ -124,6 +250,9 @@ pub struct SendRequest {
 /// One validated tool call.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolRequest {
+    Delegate(DelegateRequest),
+    WaitTask(TaskWaitRequest),
+    CancelTask(TaskId),
     Spawn(SpawnRequest),
     Wait(WaitRequest),
     Send(SendRequest),
@@ -131,8 +260,52 @@ pub enum ToolRequest {
     List,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskWaitRequest {
+    pub task_id: TaskId,
+    pub timeout: Duration,
+}
+
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DelegateArguments {
+    prompt: String,
+    wait_mode: WaitMode,
+    provider: Option<String>,
+    model: Option<String>,
+    name: Option<String>,
+    permission_profile: Option<String>,
+    workspace: Option<WorkspaceArguments>,
+}
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "mode",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum WorkspaceArguments {
+    Inherit { cwd: Option<String> },
+    SharedReadOnly { cwd: Option<String> },
+    IsolatedWrite { source_workspace: Option<String> },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TaskWaitArguments {
+    task_id: String,
+    timeout_seconds: Option<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TaskArguments {
+    task_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SpawnArguments {
     prompt: String,
     provider: Option<String>,
@@ -143,14 +316,14 @@ struct SpawnArguments {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct WaitArguments {
     agent_thread_id: String,
     timeout_seconds: Option<f64>,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SendArguments {
     agent_thread_id: String,
     message: String,
@@ -159,7 +332,7 @@ struct SendArguments {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ChildArguments {
     agent_thread_id: String,
 }
@@ -177,6 +350,31 @@ fn child(id: &str) -> Result<AppThreadId, String> {
     AppThreadId::parse(id).ok_or_else(|| "agentThreadId must be a non-empty thread id".to_owned())
 }
 
+fn task(id: &str) -> Result<TaskId, String> {
+    TaskId::parse(id).ok_or_else(|| "taskId must be a UUIDv4 task id".to_owned())
+}
+
+fn timeout(seconds: Option<f64>) -> Result<Duration, String> {
+    match seconds {
+        None => Ok(DEFAULT_WAIT),
+        Some(seconds) if seconds.is_finite() && seconds >= 0.0 => {
+            Ok(Duration::from_secs_f64(seconds.min(MAX_WAIT.as_secs_f64())))
+        }
+        Some(_) => Err("timeoutSeconds must be a number from 0 to 300".into()),
+    }
+}
+
+fn absolute_optional(value: Option<String>, label: &str) -> Result<Option<String>, String> {
+    let value = present(value);
+    if value
+        .as_deref()
+        .is_some_and(|path| !std::path::Path::new(path).is_absolute())
+    {
+        return Err(format!("{label} must be an absolute path"));
+    }
+    Ok(value)
+}
+
 /// Optional strings: empty means absent.
 fn present(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
@@ -188,6 +386,58 @@ fn present(value: Option<String>) -> Option<String> {
 /// Returns the message the model sees for an unknown tool or invalid arguments.
 pub fn parse(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
     match tool {
+        DELEGATE_TASK => {
+            let arguments: DelegateArguments = decode(tool, arguments)?;
+            if arguments.prompt.trim().is_empty() {
+                return Err("prompt must not be empty".into());
+            }
+            let provider = match present(arguments.provider) {
+                Some(provider) => Some(
+                    ProviderId::parse(&provider)
+                        .ok_or_else(|| format!("unknown agent provider: {provider}"))?,
+                ),
+                None => None,
+            };
+            let workspace = match arguments.workspace {
+                None => WorkspaceRequest::Inherit { cwd: None },
+                Some(WorkspaceArguments::Inherit { cwd }) => WorkspaceRequest::Inherit {
+                    cwd: absolute_optional(cwd, "workspace.cwd")?,
+                },
+                Some(WorkspaceArguments::SharedReadOnly { cwd }) => {
+                    WorkspaceRequest::SharedReadOnly {
+                        cwd: absolute_optional(cwd, "workspace.cwd")?,
+                    }
+                }
+                Some(WorkspaceArguments::IsolatedWrite { source_workspace }) => {
+                    WorkspaceRequest::IsolatedWrite {
+                        source_workspace: absolute_optional(
+                            source_workspace,
+                            "workspace.sourceWorkspace",
+                        )?,
+                    }
+                }
+            };
+            Ok(ToolRequest::Delegate(DelegateRequest {
+                prompt: arguments.prompt,
+                wait_mode: arguments.wait_mode,
+                provider,
+                model: present(arguments.model),
+                name: present(arguments.name),
+                permission_profile: present(arguments.permission_profile),
+                workspace,
+            }))
+        }
+        WAIT_TASK => {
+            let arguments: TaskWaitArguments = decode(tool, arguments)?;
+            Ok(ToolRequest::WaitTask(TaskWaitRequest {
+                task_id: task(&arguments.task_id)?,
+                timeout: timeout(arguments.timeout_seconds)?,
+            }))
+        }
+        CANCEL_TASK => {
+            let arguments: TaskArguments = decode(tool, arguments)?;
+            Ok(ToolRequest::CancelTask(task(&arguments.task_id)?))
+        }
         SPAWN_AGENT => {
             let arguments: SpawnArguments = decode(tool, arguments)?;
             if arguments.prompt.trim().is_empty() {
@@ -200,13 +450,7 @@ pub fn parse(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
                 ),
                 None => None,
             };
-            let cwd = present(arguments.cwd);
-            if cwd
-                .as_deref()
-                .is_some_and(|cwd| !std::path::Path::new(cwd).is_absolute())
-            {
-                return Err("cwd must be an absolute path".into());
-            }
+            let cwd = absolute_optional(arguments.cwd, "cwd")?;
             Ok(ToolRequest::Spawn(SpawnRequest {
                 prompt: arguments.prompt,
                 provider,
@@ -218,16 +462,9 @@ pub fn parse(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
         }
         WAIT_AGENT => {
             let arguments: WaitArguments = decode(tool, arguments)?;
-            let timeout = match arguments.timeout_seconds {
-                None => DEFAULT_WAIT,
-                Some(seconds) if seconds.is_finite() && seconds >= 0.0 => {
-                    Duration::from_secs_f64(seconds.min(MAX_WAIT.as_secs_f64()))
-                }
-                Some(_) => return Err("timeoutSeconds must be a number from 0 to 300".into()),
-            };
             Ok(ToolRequest::Wait(WaitRequest {
                 child: child(&arguments.agent_thread_id)?,
-                timeout,
+                timeout: timeout(arguments.timeout_seconds)?,
             }))
         }
         SEND_AGENT => {
@@ -306,6 +543,8 @@ pub struct CancelResult {
 #[serde(rename_all = "camelCase")]
 pub struct ListedAgent {
     pub agent_thread_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     pub provider: String,
     pub model: String,
     /// The provider's name of `model` (`Opus 5.5`), when it names it.
@@ -335,6 +574,9 @@ mod tests {
         assert_eq!(
             names,
             [
+                DELEGATE_TASK,
+                WAIT_TASK,
+                CANCEL_TASK,
                 SPAWN_AGENT,
                 WAIT_AGENT,
                 SEND_AGENT,

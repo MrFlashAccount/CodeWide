@@ -20,11 +20,11 @@ export function projectPortList(
       .filter((key): key is string => key !== null),
   );
   const configuredPorts = new Set(currentProfiles.map((profile) => profile.remotePort));
+  // A port without a profile is not forwarded, even one forwarded by default:
+  // the phone gives automatic forwards no profile beyond its capacity.
   const availableCandidates = props.discoveredPorts.filter(
     (candidate) =>
-      !candidate.defaultForwardingEnabled &&
-      !configuredKeys.has(candidate.forwardingKey) &&
-      !configuredPorts.has(candidate.port),
+      !configuredKeys.has(candidate.forwardingKey) && !configuredPorts.has(candidate.port),
   );
   const activeEntries = currentProfileEntries.filter(
     ({ profile }) => profile.preference !== "excluded" && profile.status !== "unavailable",

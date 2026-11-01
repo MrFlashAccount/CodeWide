@@ -5,24 +5,13 @@ import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
 import { ServerIcon } from "../connections/ServerIcon";
 import { InlineIcon } from "../../ui/InlineIcon";
+import { overflowMenuIcon } from "../../ui/overflowMenuIcon";
 import { AppText as Text } from "../../ui/Typography";
-import { SECTION_HEIGHT, styles } from "./SidebarProjects.styles";
+import { styles } from "./SidebarProjects.styles";
 import type { ProjectManagementState } from "./projectManagement";
 import type { ProjectManagementProps, ProjectManagerItem } from "./projectManagementContract";
 import type { SidebarProject } from "./sidebarProjects";
 
-function projectManagerItemHeight(item: ProjectManagerItem): number | undefined {
-  switch (item.kind) {
-    case "section":
-      return SECTION_HEIGHT;
-    case "project":
-      return listRowHeight.double;
-    case "message":
-      return undefined;
-    default:
-      throw new Error("Unsupported project manager item");
-  }
-}
 function projectLocation(project: SidebarProject, serverName: string | undefined): string {
   const path = project.path;
   return serverName === undefined ? path : `${serverName} · ${path}`;
@@ -58,7 +47,6 @@ function projectActions(
   }
   return actions;
 }
-export { projectManagerItemHeight };
 export function ProjectManagementRow({
   index,
   item,
@@ -172,7 +160,7 @@ export function ProjectManagementRow({
           : {
               trailingIcon: {
                 color: colors.textMuted,
-                name: "ellipsis-horizontal",
+                name: overflowMenuIcon,
                 size: rowIconSize,
               },
             })}

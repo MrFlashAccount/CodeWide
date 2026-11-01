@@ -28,14 +28,14 @@ use super::{
 use crate::{
     agent::{
         client_wire::{gateway::ClientWireGateway, results},
-        model::Capability,
+        model::{Capability, thread_not_found_message},
         orchestration::lineage,
         provider::{NativeSurface, NativeThreadStore},
     },
     store::IndexStore,
     thread_list::{
-        HELLO_FIELD, JournaledRow, LIST_STREAM_CLOSE_CODE, Seed, Subscription, ThreadListRows,
-        frame_visibility, hello_visibility,
+        AbsentReason, HELLO_FIELD, JournaledRow, LIST_STREAM_CLOSE_CODE, RowRead, Seed,
+        Subscription, ThreadListRows, frame_visibility, hello_visibility,
         materialize::{Materializer, RowReader, now_secs},
     },
     thread_pins::{self, ThreadPinRequest},
@@ -43,6 +43,9 @@ use crate::{
 
 /// Provider field marking a thread the ordinary catalog hides.
 const CATALOG_EXCLUDED_FIELD: &str = "codewideCatalogExcluded";
+/// `RpcFailure` code of an unreadable thread binding: a transient failure,
+/// never proof that no provider owns the thread.
+const THREAD_BINDING_UNAVAILABLE_CODE: i64 = -32_020;
 
 /// The sync layer's connection to the row hub: decorated rows and committed
 /// batches in, subscriptions out. Cheap to clone.
@@ -276,27 +279,43 @@ impl ListRowDecorator {
         lineage::annotate_thread(&self.store, row).map_err(|error| error.to_string())
     }
 
-    async fn read_thread(&self, thread_id: &str) -> Result<Option<Value>, String> {
-        let Ok(target) = self.gateway.resolve_thread(thread_id, None).await else {
-            // No provider owns the thread: it cannot be listed.
-            return Ok(None);
+    async fn read_thread(&self, thread_id: &str) -> Result<RowRead, String> {
+        let target = match self.gateway.resolve_thread(thread_id, None).await {
+            Ok(target) => target,
+            Err(failure) if failure.code == THREAD_BINDING_UNAVAILABLE_CODE => {
+                return Err(format!(
+                    "thread binding lookup failed with code {}",
+                    failure.code
+                ));
+            }
+            // No enabled provider owns the thread: it cannot be listed.
+            Err(_) => return Ok(RowRead::Absent(AbsentReason::NotOwned)),
         };
         let params = json!({"threadId": thread_id, "includeTurns": false});
         let Some(native) = target.native() else {
             let result = results::execute(&target, "thread/read", &params)
                 .await
                 .map_err(|failure| format!("thread/read failed with code {}", failure.code))?;
-            return Ok(result.get("thread").cloned());
+            return Ok(result
+                .get("thread")
+                .cloned()
+                .map_or(RowRead::Absent(AbsentReason::Missing), RowRead::Row));
         };
         let response = native
             .request(json!({"id": "thread-list-row", "method": "thread/read", "params": params}))
             .await
             .map_err(|error| error.to_string())?;
         if let Some(code) = response.pointer("/error/code") {
+            // The exact provider rejection proves the thread is unknown to it.
+            if response.pointer("/error/message").and_then(Value::as_str)
+                == Some(thread_not_found_message(thread_id).as_str())
+            {
+                return Ok(RowRead::Absent(AbsentReason::Missing));
+            }
             return Err(format!("thread/read failed with code {code}"));
         }
         let Some(mut thread) = response.pointer("/result/thread").cloned() else {
-            return Ok(None);
+            return Ok(RowRead::Absent(AbsentReason::Missing));
         };
         if let Some(thread_store) = self.thread_store() {
             let page = thread_store
@@ -310,7 +329,10 @@ impl ListRowDecorator {
         target
             .wire
             .attach_to_native_result("thread/read", &mut result);
-        Ok(result.get("thread").cloned())
+        Ok(result
+            .get("thread")
+            .cloned()
+            .map_or(RowRead::Absent(AbsentReason::Missing), RowRead::Row))
     }
 }
 
@@ -324,14 +346,18 @@ impl RowReader for ListRowDecorator {
             .map_err(|error| error.to_string())
     }
 
-    async fn read_row(&self, thread_id: &str) -> Result<Option<Value>, String> {
-        let Some(mut row) = self.read_thread(thread_id).await? else {
-            return Ok(None);
+    async fn read_row(&self, thread_id: &str) -> Result<RowRead, String> {
+        let mut row = match self.read_thread(thread_id).await? {
+            RowRead::Row(row) => row,
+            absent @ RowRead::Absent(_) => return Ok(absent),
         };
-        if self.excluded(&mut row) || self.is_continuation(&row) {
-            return Ok(None);
+        if self.excluded(&mut row) {
+            return Ok(RowRead::Absent(AbsentReason::CatalogHidden));
+        }
+        if self.is_continuation(&row) {
+            return Ok(RowRead::Absent(AbsentReason::Continuation));
         }
         self.annotate_row(&mut row)?;
-        Ok(Some(row))
+        Ok(RowRead::Row(row))
     }
 }

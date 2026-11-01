@@ -1,18 +1,18 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRecyclingState } from "@legendapp/list/react-native";
-import { createElement, useContext, useState } from "react";
+import { createElement, useContext, useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
-import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
 import { colors, iconSize } from "../../../theme";
 import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
 import { AnchoredMenuList, AnchoredMenuRow } from "../../../ui/AnchoredMenuList";
 import { ContentMenu } from "../../../ui/ContentMenu";
 import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
-import { useLayoutWidth } from "../../../ui/useLayoutWidth";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "./AgentChip.styles";
+import { isBackgroundLaunch, type TaskLineEntry } from "./backgroundLaunches";
 import {
+  launchDetail,
   reportDetails,
   reportLineSummary,
   reportName,
@@ -20,66 +20,47 @@ import {
 } from "./taskNotificationPresentation";
 import { BackgroundTaskContext, SubagentNavigationContext } from "./turnContexts";
 
-/** The pill takes at most this share of the conversation's width. */
-const PILL_WIDTH_SHARE = 0.5;
+/** How often a running background command's elapsed time advances. */
+const ELAPSED_TICK_MS = 15_000;
 
 /**
- * Background task reports drawn outside a bubble as one short pill: the
- * reports that woke a turn, or those that arrived while it answered. A single
- * report's pill opens it directly (an agent's thread or a command's output);
- * several open a plain list centered on the pill. Each report's status is the
- * dot on its avatar.
+ * Background tasks drawn outside a bubble as one short pill: the reports that
+ * woke a turn or arrived while it answered, and the commands a turn started
+ * in the background (their state follows the command item live, from running
+ * to its end, with its time). A single entry's pill opens it directly (an
+ * agent's thread or a command's output); several open a plain list centered
+ * on the pill. Each entry's status is the dot on its avatar.
  */
 export function TaskNotificationLine({
   reports,
 }: {
-  readonly reports: readonly TaskNotificationReport[];
+  readonly reports: readonly TaskLineEntry[];
 }): React.JSX.Element | null {
-  const layout = useLayoutWidth();
   if (reports.length === 0) {
     return null;
   }
-  // WHY numeric: Compose measures the anchored pill intrinsically (a
-  // percentage bound collapses its label), so the pill is bounded by the
-  // line's laid-out width. Until it is laid out, the line keeps its height.
-  const lineWidth = layout.width;
-  if (lineWidth === null) {
-    return (
-      <View
-        onLayout={layout.onLayout}
-        style={[styles.lineRow, styles.unmeasuredLine]}
-        testID="task-notification-line-row"
-      />
-    );
-  }
   const [only] = reports;
   return (
-    <View onLayout={layout.onLayout} style={styles.lineRow} testID="task-notification-line-row">
+    <View style={styles.lineRow} testID="task-notification-line-row">
       {reports.length === 1 && only !== undefined ? (
-        <SingleReportPill lineWidth={lineWidth} report={only} />
+        <SingleReportPill report={only} />
       ) : (
-        <ReportListPill lineWidth={lineWidth} reports={reports} />
+        <ReportListPill reports={reports} />
       )}
     </View>
   );
 }
 
 /** One report: the pill is the report's own link, without a list. */
-function SingleReportPill({
-  lineWidth,
-  report,
-}: {
-  readonly lineWidth: number;
-  readonly report: TaskNotificationReport;
-}): React.JSX.Element {
+function SingleReportPill({ report }: { readonly report: TaskLineEntry }): React.JSX.Element {
   // The pill lives in a recycled list cell.
   const [opening, setOpening] = useRecyclingState<OpeningState>(NOT_OPENING);
   const target = useReportTarget(report, [opening, setOpening], noop);
   return (
     <>
       <TaskNotificationPill
+        bounded
         loading={target.loading}
-        maxWidth={lineWidth * PILL_WIDTH_SHARE}
         onPress={target.kind === "none" ? null : target.press}
         open={null}
         reports={[report]}
@@ -95,11 +76,9 @@ function SingleReportPill({
 
 /** Several reports: the pill opens their list centered on it, above or below. */
 function ReportListPill({
-  lineWidth,
   reports,
 }: {
-  readonly lineWidth: number;
-  readonly reports: readonly TaskNotificationReport[];
+  readonly reports: readonly TaskLineEntry[];
 }): React.JSX.Element {
   const [open, setOpen] = useRecyclingState(false);
   const menu = useAnchoredMenuSize();
@@ -110,8 +89,8 @@ function ReportListPill({
     setOpen(false);
   });
   const trigger = createElement(TaskNotificationPill, {
+    bounded: false,
     loading: false,
-    maxWidth: lineWidth * PILL_WIDTH_SHARE,
     onPress: toggleOpen,
     open,
     reports,
@@ -119,11 +98,12 @@ function ReportListPill({
   return (
     <ContentMenu
       align="center"
+      anchorStyle={styles.pillBound}
       onOpenChange={setOpen}
       open={open}
       placement="bottom"
       trigger={trigger}
-      width={Math.min(menu.width, lineWidth)}
+      width={menu.width}
     >
       <AnchoredMenuList testID="task-notification-list">
         {reports.map((report) => (
@@ -137,29 +117,39 @@ function ReportListPill({
 /**
  * The pill itself. `open` is the list's state for a pill that opens one and
  * `null` for a single report's link; `onPress` is `null` when nothing opens.
+ * A `bounded` pill sits directly in its line and carries the line's width
+ * bound itself; a menu's pill fills the anchor box that carries it.
  */
 function TaskNotificationPill({
+  bounded,
   loading,
-  maxWidth,
   onPress,
   open,
   reports,
 }: {
+  readonly bounded: boolean;
   readonly loading: boolean;
-  readonly maxWidth: number;
   readonly onPress: (() => void) | null;
   readonly open: boolean | null;
-  readonly reports: readonly TaskNotificationReport[];
+  readonly reports: readonly TaskLineEntry[];
 }): React.JSX.Element {
   const summary = reportLineSummary(reports);
+  const [only] = reports;
+  const now = useNow(reports.some((report) => report.status === "running"));
+  // A single background command shows its own state and time on the pill.
+  const detail = reports.length === 1 && only !== undefined ? launchDetail(only, now) : null;
   return (
     <Pressable
-      accessibilityLabel={`${summary.label} ${summary.phrase}`}
+      accessibilityLabel={`${summary.label} ${detail ?? summary.phrase}`}
       accessibilityRole="button"
       accessibilityState={open === null ? { busy: loading } : { expanded: open }}
       disabled={onPress === null}
       onPress={onPress ?? undefined}
-      style={({ pressed }) => [styles.trigger, { maxWidth }, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.trigger,
+        bounded && styles.pillBound,
+        pressed && styles.pressed,
+      ]}
       testID="task-notification-line"
     >
       <AgentAvatarStack
@@ -171,6 +161,11 @@ function TaskNotificationPill({
       <Text ellipsizeMode="tail" numberOfLines={1} shimmering={loading} style={styles.label}>
         {summary.label}
       </Text>
+      {detail === null ? null : (
+        <Text numberOfLines={1} style={styles.phrase}>
+          {detail}
+        </Text>
+      )}
     </Pressable>
   );
 }
@@ -180,12 +175,13 @@ function ReportRow({
   report,
 }: {
   readonly onNavigate: () => void;
-  readonly report: TaskNotificationReport;
+  readonly report: TaskLineEntry;
 }): React.JSX.Element {
   // The list renders in the anchored popover, outside any recycled list cell.
   const [opening, setOpening] = useState<OpeningState>(NOT_OPENING);
   const target = useReportTarget(report, [opening, setOpening], onNavigate);
-  const details = reportDetails(report);
+  const now = useNow(isBackgroundLaunch(report) && report.status === "running");
+  const details = reportDetails(report, now);
   return (
     <AnchoredMenuRow
       accessibilityLabel={`${reportName(report)}, ${reportOutcome(report).phrase}, ${details}`}
@@ -232,7 +228,7 @@ function failedOpening(error: unknown): OpeningState {
  * (loaded on press); without either it opens nothing.
  */
 function useReportTarget(
-  report: TaskNotificationReport,
+  report: TaskLineEntry,
   [opening, setOpening]: readonly [OpeningState, (next: OpeningState) => void],
   onNavigate: () => void,
 ) {
@@ -288,4 +284,25 @@ function ReportRowText({
       </Text>
     </View>
   );
+}
+
+/**
+ * The wall clock, advancing every `ELAPSED_TICK_MS` while `ticking` (a
+ * running task's elapsed time on screen); a timer is the external system
+ * this effect follows.
+ */
+function useNow(ticking: boolean): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!ticking) {
+      return undefined;
+    }
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, ELAPSED_TICK_MS);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [ticking]);
+  return now;
 }

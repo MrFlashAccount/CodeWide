@@ -35,17 +35,24 @@ use agent_core::{
 };
 use async_trait::async_trait;
 use serde_json::Value;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
     indexer::NativeSessions,
-    runtime::recorded_model::last_recorded_model,
+    runtime::{
+        open_elsewhere::{OpenElsewhere, SessionActivity},
+        recorded_model::{last_recorded_effort, last_recorded_model},
+        running_sessions::RunningProcess,
+    },
     transcript::{
         agents::SubagentRuns,
         chain::active_branch,
+        entries::stored_task_reports_of_rows,
         json::{JsonRecord, str_of},
         reconstruct::{
             HistoryContext, reconstruct_subagent_turns, reconstruct_turns, record_transcript_runs,
-            running_agents, settle_subagent_items,
+            running_agents, settle_named_orphaned_subagent_items, settle_orphaned_subagent_items,
+            settle_subagent_items,
         },
         turn_index::TurnRecord,
     },
@@ -74,17 +81,73 @@ pub struct LocalSessions {
 struct Paths {
     projects_root: PathBuf,
     journal_directory: PathBuf,
+    activity: Arc<OpenElsewhere>,
 }
 
 impl LocalSessions {
     #[must_use]
-    pub fn new(projects_root: PathBuf, journal_directory: PathBuf) -> Self {
+    pub fn new(
+        projects_root: PathBuf,
+        journal_directory: PathBuf,
+        activity: Arc<OpenElsewhere>,
+    ) -> Self {
         Self {
             inner: Arc::new(Paths {
                 projects_root,
                 journal_directory,
+                activity,
             }),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        projects_root: PathBuf,
+        journal_directory: PathBuf,
+        running_sessions: HashSet<String>,
+    ) -> Self {
+        let running_sessions = running_sessions
+            .into_iter()
+            .map(|session_id| (session_id, RunningProcess::StartUnknown))
+            .collect();
+        Self::for_test_processes(projects_root, journal_directory, running_sessions)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_processes(
+        projects_root: PathBuf,
+        journal_directory: PathBuf,
+        running_sessions: crate::runtime::running_sessions::RunningSessionMap,
+    ) -> Self {
+        use crate::runtime::open_elsewhere::OpenElsewhereDeps;
+
+        let sessions = Arc::new(TestRunningSessions { running_sessions });
+        let activity = Arc::new(OpenElsewhere::new(OpenElsewhereDeps {
+            running: sessions,
+            owns_live: Arc::new(|_| false),
+            changed: Arc::new(|_| {}),
+            activity_changed: Arc::new(|_| {}),
+            poll: std::time::Duration::from_mins(1),
+        }));
+        Self::new(projects_root, journal_directory, activity)
+    }
+}
+
+#[cfg(test)]
+struct TestRunningSessions {
+    running_sessions: crate::runtime::running_sessions::RunningSessionMap,
+}
+
+#[cfg(test)]
+#[async_trait]
+impl crate::runtime::running_sessions::RunningSessions for TestRunningSessions {
+    async fn list(
+        &self,
+    ) -> Result<
+        crate::runtime::running_sessions::RunningSessionMap,
+        crate::runtime::running_sessions::RunningSessionsError,
+    > {
+        Ok(self.running_sessions.clone())
     }
 }
 
@@ -116,9 +179,14 @@ impl NativeSessions for LocalSessions {
     }
 
     async fn read(&self, session_id: &str) -> Result<NativeSessionReadResult, ProviderError> {
+        let Some(activity) = self.inner.activity.activity(session_id).await else {
+            return Err(ProviderError::Disconnected(
+                "Claude running-session state is unavailable".into(),
+            ));
+        };
         let paths = self.inner.clone();
         let session_id = session_id.to_owned();
-        tokio::task::spawn_blocking(move || read(&paths, &session_id))
+        tokio::task::spawn_blocking(move || read(&paths, &session_id, activity))
             .await
             .map_err(|error| worker_error(&error))?
     }
@@ -223,7 +291,11 @@ fn native_session(
     })
 }
 
-fn read(paths: &Paths, session_id: &str) -> Result<NativeSessionReadResult, ProviderError> {
+fn read(
+    paths: &Paths,
+    session_id: &str,
+    activity: SessionActivity,
+) -> Result<NativeSessionReadResult, ProviderError> {
     let file = files::find_session(&paths.projects_root, session_id)
         .ok_or_else(|| not_found(session_id))?;
     let (head, tail) = files::head_and_tail(&file.path).map_err(|error| io_error(&error))?;
@@ -253,9 +325,14 @@ fn read(paths: &Paths, session_id: &str) -> Result<NativeSessionReadResult, Prov
         records,
     );
     let transcripts = subagent_transcripts(&file);
-    let runs = session_runs(&messages, &transcripts);
+    let runs = session_runs(&rows, &messages, &transcripts);
     let turns = settle_subagent_items(turns, &runs);
-    let subagents = native_subagents(&transcripts, &turns, &context, &runs);
+    let orphaned = orphaned_agents(&transcripts, activity);
+    let turns = match activity {
+        SessionActivity::Stopped => settle_orphaned_subagent_items(turns),
+        SessionActivity::Running(_) => settle_named_orphaned_subagent_items(turns, &orphaned),
+    };
+    let subagents = native_subagents(&transcripts, &turns, &context, &runs, activity, &orphaned);
     let session = native_session(&file, meta, owner).ok_or_else(|| not_found(session_id))?;
     Ok(NativeSessionReadResult {
         session,
@@ -310,6 +387,33 @@ struct SubagentTranscript {
     sidecar: files::SubagentSidecar,
 }
 
+fn recorded_at_ms(row: &Value) -> Option<i64> {
+    let text = row.get("timestamp")?.as_str()?;
+    let timestamp = OffsetDateTime::parse(text, &Rfc3339).ok()?;
+    i64::try_from(timestamp.unix_timestamp_nanos().div_euclid(1_000_000)).ok()
+}
+
+fn transcript_updated_at_ms(transcript: &SubagentTranscript) -> Option<i64> {
+    transcript.rows.iter().filter_map(recorded_at_ms).max()
+}
+
+/// Unfinished transcripts written only by an earlier process generation.
+fn orphaned_agents(
+    transcripts: &[SubagentTranscript],
+    activity: SessionActivity,
+) -> HashSet<String> {
+    let SessionActivity::Running(RunningProcess::StartedAt(started_at_ms)) = activity else {
+        return HashSet::new();
+    };
+    transcripts
+        .iter()
+        .filter(|transcript| {
+            transcript_updated_at_ms(transcript).is_some_and(|updated| updated < started_at_ms)
+        })
+        .map(|transcript| transcript.agent_id.clone())
+        .collect()
+}
+
 fn subagent_transcripts(session: &SessionFile) -> Vec<SubagentTranscript> {
     files::subagents(session)
         .into_iter()
@@ -328,8 +432,18 @@ fn subagent_transcripts(session: &SessionFile) -> Vec<SubagentTranscript> {
 /// The sub-agent runs recorded anywhere in the session: a report reaches
 /// whichever conversation was there to take it, not always the one that
 /// spawned its agent, and any conversation may resume an agent.
-fn session_runs(messages: &[&JsonRecord], transcripts: &[SubagentTranscript]) -> SubagentRuns {
+fn session_runs(
+    rows: &[Value],
+    messages: &[&JsonRecord],
+    transcripts: &[SubagentTranscript],
+) -> SubagentRuns {
     let mut runs = SubagentRuns::default();
+    // The active branch omits reports stored before a compaction or on an
+    // abandoned branch, yet the sub-agent transcripts keep the spawning items
+    // those reports settle.
+    for (report, timestamp_ms) in stored_task_reports_of_rows(rows) {
+        runs.record(&report, timestamp_ms);
+    }
     record_transcript_runs(&mut runs, messages);
     for transcript in transcripts {
         let rows = transcript
@@ -342,23 +456,29 @@ fn session_runs(messages: &[&JsonRecord], transcripts: &[SubagentTranscript]) ->
     runs
 }
 
-/// Each sub-agent transcript as neutral turns with the model it last answered
-/// with; a sub-agent its spawning item
+/// Each sub-agent transcript as neutral turns with the model and effort it
+/// last answered with; a sub-agent its spawning item
 /// (in the main conversation or another sub-agent) reports `running` keeps
 /// its last turn in progress. A spawning item is running until a report
-/// anywhere in the session settles it, and again while a resume of its agent
-/// is unreported.
+/// anywhere in the session settles it, and again when a resume is the newest
+/// status fact for its agent.
 fn native_subagents(
     transcripts: &[SubagentTranscript],
     turns: &[AgentTurn],
     context: &HistoryContext,
     runs: &SubagentRuns,
+    activity: SessionActivity,
+    orphaned: &HashSet<String>,
 ) -> Vec<NativeSubagent> {
     let subagent_turns = |transcript: &SubagentTranscript, running: bool| {
-        settle_subagent_items(
+        let turns = settle_subagent_items(
             reconstruct_subagent_turns(&transcript_rows(&transcript.rows), context, running),
             runs,
-        )
+        );
+        match activity {
+            SessionActivity::Stopped => settle_orphaned_subagent_items(turns),
+            SessionActivity::Running(_) => settle_named_orphaned_subagent_items(turns, orphaned),
+        }
     };
     let settled = transcripts
         .iter()
@@ -375,10 +495,14 @@ fn native_subagents(
             agent_id: transcript.agent_id.clone(),
             // Stored sidecar rows name no `parent_tool_use_id`, so every
             // assistant row of the transcript is the sub-agent's own answer.
+            effort: last_recorded_effort(&transcript.rows).map(ToOwned::to_owned),
             model: last_recorded_model(&transcript.rows).map(ToOwned::to_owned),
             parent_agent_id: transcript.sidecar.parent_agent_id.clone(),
             parent_tool_use_id: transcript.sidecar.tool_use_id.clone(),
-            turns: if running.contains(&transcript.agent_id) {
+            turns: if matches!(activity, SessionActivity::Running(_))
+                && !orphaned.contains(&transcript.agent_id)
+                && running.contains(&transcript.agent_id)
+            {
                 subagent_turns(transcript, true)
             } else {
                 settled

@@ -18,7 +18,7 @@ export function ContentMenu(props: ContentMenuProps): React.JSX.Element {
   );
 
   return (
-    <View collapsable={false}>
+    <View collapsable={false} style={props.anchorStyle}>
       {props.trigger}
       <ContentMenuModal
         close={close}

@@ -21,6 +21,23 @@ export type UserMessageAttachment = {
   source: UserMessageAttachmentSource;
 };
 
+/** Stable preview identity shared by a gallery tile and any semantic opener for that image. */
+export function imageAttachmentPreviewId(
+  source: UserMessageAttachmentSource,
+  index: number,
+): string {
+  if (source.type === "content") {
+    return `user-private-image:${source.asset.id}`;
+  }
+  if (source.type === "url") {
+    return `user-image:${String(index)}:${source.url}`;
+  }
+  if (source.type === "path") {
+    return `user-local-image:${String(index)}:${source.path}`;
+  }
+  return `user-scoped-image:${source.rootId}:${source.path}`;
+}
+
 /**
  * Reconstructs user attachments from the authoritative Codex userMessage.
  * `codewideAttachments` is a bounded companion projection of that same

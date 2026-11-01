@@ -25,6 +25,7 @@ import { AppText as Text } from "../../../ui/Typography";
 import { Card } from "../turns/Card";
 import { styles } from "./ImageProtocolBlock.styles";
 import { protocolCopyText } from "./protocolCopyText";
+import { useImageProtocolPreview } from "./useImageProtocolPreview";
 
 export function OpenableImage({
   containerStyle,
@@ -111,14 +112,18 @@ function resolveImageDetail(
 }
 
 export function ImageProtocolBlock(props: ImageProtocolBlockInput) {
+  const preview = useImageProtocolPreview({
+    block: props.block,
+    getTransferAccess: props.getTransferAccess,
+  });
   return (
     <Card
       icon="image-outline"
+      onOpen={preview.onOpen}
+      openLabel={preview.openLabel}
       title={props.block.title}
       {...(props.block.status === null ? {} : { status: props.block.status })}
-      collapsible
       copyText={() => protocolCopyText(props.block)}
-      initiallyExpanded={props.block.status === "inProgress" || props.block.status === "running"}
     >
       <ImageProtocolContent
         block={props.block}

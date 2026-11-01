@@ -1,0 +1,870 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CodeWide PR onboarding prototype</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, Roboto, Arial, sans-serif;
+        background: #080808;
+        color: #f4f4f4;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; background: #080808; }
+      button { color: inherit; font: inherit; }
+
+      .device {
+        --rail-width: 35%;
+        min-height: 100vh;
+        overflow: hidden;
+        background: #0d0d0d;
+      }
+
+      .system-bar {
+        height: 52px;
+        padding: 0 30px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 20px;
+        background: #0d0d0d;
+      }
+
+      .performance-bar {
+        height: 40px;
+        padding: 0 18px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: #929292;
+        font-size: 14px;
+        background: #090909;
+      }
+
+      .performance-bar i { width: 10px; height: 10px; border-radius: 50%; background: #35c778; }
+
+      .workspace {
+        min-height: calc(100vh - 188px);
+        display: grid;
+        grid-template-columns: var(--rail-width) 1fr;
+      }
+
+      .onboarding-pane {
+        position: relative;
+        min-width: 0;
+        padding: 28px;
+        border-right: 1px solid #252525;
+        background: #0f0f0f;
+      }
+
+      .onboarding-pane h1 { margin: 0; font-size: 30px; line-height: 1.2; }
+
+      .onboarding-copy {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: min(408px, calc(100% - 72px));
+        transform: translate(-50%, -54%);
+        text-align: center;
+      }
+
+      .onboarding-copy h2 { margin: 0 0 20px; font-size: 34px; line-height: 1.12; }
+      .onboarding-copy p { margin: 0; color: #b4b4b4; font-size: 18px; line-height: 1.55; }
+
+      .connect-button {
+        width: 100%;
+        min-height: 70px;
+        margin-top: 44px;
+        border: 0;
+        border-radius: 999px;
+        background: #ededed;
+        color: #111;
+        font-size: 20px;
+        font-weight: 700;
+      }
+
+      .trust-note {
+        margin-top: 34px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        color: #8d8d8d;
+        font-size: 14px;
+      }
+
+      .shield {
+        position: relative;
+        width: 26px;
+        height: 31px;
+        border: 2px solid #777;
+        border-radius: 14px 14px 18px 18px;
+        clip-path: polygon(50% 0, 100% 18%, 90% 72%, 50% 100%, 10% 72%, 0 18%);
+      }
+
+      .shield::after {
+        content: "";
+        position: absolute;
+        left: 7px;
+        top: 8px;
+        width: 8px;
+        height: 5px;
+        border-left: 2px solid #777;
+        border-bottom: 2px solid #777;
+        transform: rotate(-45deg);
+      }
+
+      .catalog-tabs {
+        position: absolute;
+        left: 22px;
+        right: 22px;
+        bottom: 20px;
+        height: 80px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        padding: 8px;
+        border-radius: 999px;
+        background: #171717;
+      }
+
+      .catalog-tabs button { border: 0; border-radius: 999px; background: transparent; color: #8d8d8d; font-weight: 650; }
+      .catalog-tabs button.active { background: #ededed; color: #111; }
+
+      .illustration-pane {
+        --motion-distance: 96px;
+        --motion-diagonal: 67.88px;
+        --motion-duration: 1130ms;
+        --motion-easing: cubic-bezier(.05, .7, .1, 1);
+        position: relative;
+        min-width: 0;
+        overflow: hidden;
+        isolation: isolate;
+        background: radial-gradient(circle at 50% 49%, #222 0, #1a1a1a 36%, #171717 68%);
+      }
+
+      .ambient-ring {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        border: 1px solid #292929;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+      }
+
+      .ring-one { width: 72%; aspect-ratio: 1; }
+      .ring-two { width: 52%; aspect-ratio: 1; border-color: #242424; }
+
+      .card-slot { position: absolute; }
+      .slot-left { z-index: 1; left: 5%; top: 21%; width: 40%; height: 58%; }
+      .slot-right { z-index: 1; right: 5%; top: 21%; width: 40%; height: 58%; }
+      .slot-center { z-index: 2; left: 50%; top: 15%; width: 55%; height: 70%; transform: translateX(-50%); }
+
+      .visual-card {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        border: 2px solid #414141;
+        border-radius: 28px;
+        background: #292929;
+        box-shadow: 0 26px 56px rgb(0 0 0 / 52%);
+        will-change: transform, opacity;
+      }
+
+      .card-art { display: block; width: 100%; height: 100%; shape-rendering: geometricPrecision; }
+
+      .overview-card { transform: rotate(-8deg); background: #252525; }
+      .guide-card { transform: rotate(8deg); background: #252525; }
+
+      .mode-reveal.is-animating .overview-card { animation: enter-left var(--motion-duration) var(--motion-easing) both; }
+      .mode-reveal.is-animating .guide-card { animation: enter-right var(--motion-duration) var(--motion-easing) both; }
+      .mode-reveal.is-animating .changes-card { animation: enter-center var(--motion-duration) var(--motion-easing) both; }
+
+      .mode-depth.is-animating .overview-card { animation: depth-left 520ms cubic-bezier(.2, .8, .2, 1) both; }
+      .mode-depth.is-animating .guide-card { animation: depth-right 520ms 60ms cubic-bezier(.2, .8, .2, 1) both; }
+      .mode-depth.is-animating .changes-card { animation: depth-center 180ms ease-out both; }
+
+      .mode-semantic.is-animating .semantic-check { animation: semantic-check 220ms cubic-bezier(.2, .9, .25, 1.25) both; transform-box: fill-box; transform-origin: center; }
+      .mode-semantic.is-animating .semantic-wipe { animation: semantic-wipe 240ms cubic-bezier(.2, .8, .2, 1) both; transform-box: fill-box; transform-origin: left center; }
+      .mode-semantic.is-animating .semantic-rise { animation: semantic-rise 240ms cubic-bezier(.2, .8, .2, 1) both; transform-box: fill-box; transform-origin: center; }
+      .mode-semantic.is-animating .semantic-delay-1 { animation-delay: 80ms; }
+      .mode-semantic.is-animating .semantic-delay-2 { animation-delay: 160ms; }
+      .mode-semantic.is-animating .semantic-delay-3 { animation-delay: 240ms; }
+      .mode-semantic.is-animating .semantic-delay-4 { animation-delay: 320ms; }
+
+      @keyframes enter-left {
+        from { opacity: .3; transform: translate(var(--motion-diagonal), var(--motion-diagonal)) rotate(-8deg); }
+        to { opacity: 1; transform: translate(0, 0) rotate(-8deg); }
+      }
+
+      @keyframes enter-right {
+        from { opacity: .3; transform: translate(calc(-1 * var(--motion-diagonal)), var(--motion-diagonal)) rotate(8deg); }
+        to { opacity: 1; transform: translate(0, 0) rotate(8deg); }
+      }
+
+      @keyframes enter-center {
+        from { opacity: .45; transform: translateY(var(--motion-distance)); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @keyframes depth-left {
+        from { opacity: .18; clip-path: inset(0 0 0 82% round 28px); }
+        to { opacity: 1; clip-path: inset(0 0 0 0 round 28px); }
+      }
+
+      @keyframes depth-right {
+        from { opacity: .18; clip-path: inset(0 82% 0 0 round 28px); }
+        to { opacity: 1; clip-path: inset(0 0 0 0 round 28px); }
+      }
+
+      @keyframes depth-center {
+        from { opacity: .78; }
+        to { opacity: 1; }
+      }
+
+      @keyframes semantic-check {
+        from { opacity: 0; transform: scale(.68); }
+        to { opacity: 1; transform: scale(1); }
+      }
+
+      @keyframes semantic-wipe {
+        from { opacity: .2; transform: scaleX(.06); }
+        to { opacity: 1; transform: scaleX(1); }
+      }
+
+      @keyframes semantic-rise {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      .chrome {
+        height: 68px;
+        padding: 0 24px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        background: #303030;
+      }
+
+      .chrome > i { width: 22px; height: 22px; border-radius: 50%; background: #3a3a3a; }
+      .chrome-title { width: 42%; height: 10px; border-radius: 5px; background: #d4d4d4; opacity: .74; }
+      .chrome-meta { width: 24%; height: 7px; border-radius: 4px; background: #898989; opacity: .42; }
+      .center-chrome > b { margin-left: auto; width: 5px; height: 28px; background: radial-gradient(circle, #aaa 2px, transparent 3px) 0 0 / 5px 9px; }
+
+      .tab-line { width: 74%; height: 3px; margin: 48px auto 0; border-radius: 2px; background: #e0e0e0; opacity: .84; }
+      .status-cluster { margin: 38px 28px 0; display: flex; align-items: center; gap: 10px; }
+      .status-cluster i { width: 12px; height: 12px; border-radius: 50%; background: #35c778; box-shadow: 0 0 0 12px #173526; }
+      .status-cluster span { height: 20px; border-radius: 10px; background: #373737; }
+      .status-cluster span:nth-of-type(1) { width: 26%; margin-left: 12px; }
+      .status-cluster span:nth-of-type(2) { width: 42%; }
+
+      .headline-lines { margin: 44px 28px 0; display: grid; gap: 14px; }
+      .headline-lines b { width: 74%; height: 14px; border-radius: 7px; background: #d2d2d2; opacity: .8; }
+      .headline-lines i { width: 48%; height: 8px; border-radius: 4px; background: #8b8b8b; opacity: .35; }
+      .headline-lines i + i { width: 62%; }
+
+      .metric-block { position: relative; height: 14%; margin: 24px 28px 0; padding: 24px 26px 22px 66px; border-radius: 18px; background: #1d1d1d; border: 1px solid #373737; }
+      .metric-block > i { position: absolute; left: 26px; top: 28px; width: 22px; height: 22px; border-radius: 50%; background: #17472d; }
+      .metric-block > i::after { content: ""; position: absolute; left: 6px; top: 5px; width: 8px; height: 5px; border-left: 2px solid #43d17c; border-bottom: 2px solid #43d17c; transform: rotate(-45deg); }
+      .metric-block span { display: block; height: 9px; margin-bottom: 12px; border-radius: 5px; background: #aaa; opacity: .52; }
+      .metric-block span:nth-of-type(1) { width: 65%; }
+      .metric-block span:nth-of-type(2) { width: 45%; opacity: .25; }
+      .metric-block.linked > i { background: #3d3d3d; }
+      .metric-block.linked > i::after { border-color: #aaa; }
+      .metric-block.linked b { display: block; width: 38%; height: 8px; border-radius: 4px; background: #43d17c; opacity: .8; }
+
+      .progress { display: flex; gap: 8px; margin: 42px 28px 0; }
+      .progress i { flex: 1; height: 5px; border-radius: 3px; background: #d9d9d9; }
+      .progress i:last-child { background: #3d3d3d; }
+      .mini-diff { position: relative; height: 32%; margin: 32px 28px 0; padding: 26px; border: 1px solid #373737; border-radius: 18px; background: #1b1b1b; }
+      .mini-diff i { display: block; width: 38%; height: 8px; margin-bottom: 18px; border-radius: 4px; background: #777; opacity: .42; }
+      .mini-diff b { display: block; height: 30px; margin-top: 8px; background: #3b1d25; }
+      .mini-diff b + b { background: #123923; }
+      .mini-diff span { display: block; width: 76%; height: 8px; margin-top: 18px; border-radius: 4px; background: #777; opacity: .23; }
+      .mini-diff span + span { width: 58%; margin-top: 12px; }
+      .guide-actions { margin: 26px 28px; display: flex; justify-content: flex-end; gap: 10px; }
+      .guide-actions i { width: 25%; height: 40px; border-radius: 20px; background: #343434; }
+      .guide-actions i.primary { width: 22%; background: #ededed; }
+
+      .section-tabs { height: 72px; display: grid; grid-template-columns: 1fr 1fr; align-items: end; gap: 32px; padding: 0 44px; }
+      .section-tabs i { height: 9px; margin-bottom: 24px; border-radius: 5px; background: #858585; opacity: .38; }
+      .section-tabs i.selected { position: relative; background: #d8d8d8; opacity: .8; }
+      .section-tabs i.selected::after { content: ""; position: absolute; left: 0; right: 0; bottom: -26px; height: 3px; border-radius: 2px; background: #ededed; }
+      .mode-switch { position: absolute; left: 4%; top: 17%; width: 42%; height: 48px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 4px; border: 1px solid #3b3b3b; border-radius: 15px; background: #212121; }
+      .mode-switch i { border-radius: 11px; }
+      .mode-switch i.selected { background: #454545; }
+      .review-progress { position: absolute; right: 4%; top: 18%; width: 24%; display: flex; align-items: center; gap: 8px; }
+      .review-progress i { flex: 1; height: 6px; border-radius: 3px; background: linear-gradient(90deg, #ddd 42%, #3c3c3c 42%); }
+      .review-progress span { width: 8px; height: 8px; border-radius: 50%; background: #888; }
+
+      .change-layout { position: absolute; left: 4%; right: 4%; top: 25%; bottom: 8%; display: grid; grid-template-columns: 31% 1fr; gap: 18px; }
+      .file-list, .diff-view { border: 1px solid #3a3a3a; border-radius: 20px; background: #202020; overflow: hidden; }
+      .file-list { padding: 14px; }
+      .file-list div { position: relative; height: 20%; padding: 18px 12px; border-bottom: 1px solid #373737; }
+      .file-list div.selected { border: 0; border-radius: 13px; background: #3a3a3a; }
+      .file-list i, .file-list span { display: block; height: 8px; border-radius: 4px; background: #aaa; opacity: .5; }
+      .file-list i { width: 72%; }
+      .file-list span { width: 48%; margin-top: 14px; opacity: .25; }
+      .file-list b { position: absolute; right: 10px; top: 18px; width: 17%; height: 7px; border-radius: 4px; background: #5cd18d; }
+
+      .diff-view { position: relative; padding: 64px 16px 16px; background: #1b1b1b; }
+      .diff-header { position: absolute; left: 0; right: 0; top: 0; height: 52px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; background: #2d2d2d; }
+      .diff-header i { width: 42%; height: 9px; border-radius: 5px; background: #aaa; opacity: .56; }
+      .diff-header span { width: 12%; height: 8px; border-radius: 4px; background: #61d492; }
+      .hunk, .removed, .added, .code-line { height: 30px; margin-top: 8px; }
+      .hunk { background: #302b21; }
+      .removed { background: #3b1d25; }
+      .added { background: #123c25; }
+      .added.short { width: 86%; }
+      .code-line { width: 58%; height: 8px; margin: 28px 10px 12px; border-radius: 4px; background: #777; opacity: .32; }
+      .draft-card { position: absolute; left: 16px; right: 16px; bottom: 18px; height: 28%; padding: 22px; border: 1px solid #4a4a4a; border-radius: 16px; background: #343434; }
+      .draft-card > i, .draft-card > span { display: block; height: 8px; border-radius: 4px; background: #aaa; opacity: .4; }
+      .draft-card > i { width: 35%; margin-bottom: 20px; opacity: .28; }
+      .draft-card > span { width: 86%; margin-bottom: 12px; }
+      .draft-card > span + span { width: 62%; }
+      .draft-card div { position: absolute; left: 22px; bottom: 18px; display: flex; gap: 8px; }
+      .draft-card b { width: 48px; height: 22px; border-radius: 11px; background: #4a4a4a; }
+      .draft-card b.active { background: #ededed; }
+      .submit-bar { position: absolute; left: 4%; right: 4%; bottom: 2.5%; height: 40px; border-radius: 20px; background: #ededed; }
+
+      .motion-panel {
+        position: absolute;
+        right: 22px;
+        top: 22px;
+        z-index: 8;
+        width: 310px;
+        overflow: hidden;
+        border: 1px solid #414141;
+        border-radius: 18px;
+        background: rgb(25 25 25 / 96%);
+        box-shadow: 0 18px 44px rgb(0 0 0 / 45%);
+        backdrop-filter: blur(18px);
+      }
+
+      .motion-panel header {
+        height: 48px;
+        padding: 0 14px 0 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #353535;
+      }
+
+      .motion-panel header strong { font-size: 14px; letter-spacing: .01em; }
+      .motion-panel button { border: 0; cursor: pointer; }
+      .panel-toggle { width: 30px; height: 30px; border-radius: 15px; background: #303030; color: #aaa; }
+      .motion-panel.is-collapsed .motion-panel-body { display: none; }
+      .motion-panel.is-collapsed header { border-bottom: 0; }
+
+      .motion-panel-body { padding: 14px 16px 16px; }
+      .mode-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+      .mode-row button { min-height: 34px; border-radius: 9px; background: #303030; color: #9a9a9a; font-size: 11px; }
+      .mode-row button.active { background: #ededed; color: #151515; font-weight: 700; }
+      .mode-description { min-height: 34px; margin: 10px 2px 13px; color: #8f8f8f; font-size: 11px; line-height: 1.45; }
+      .reveal-controls[hidden] { display: none; }
+      .motion-control + .motion-control { margin-top: 13px; }
+      .motion-control-label { margin-bottom: 7px; display: flex; align-items: center; justify-content: space-between; color: #b9b9b9; font-size: 12px; }
+      .motion-control-label output { color: #f0f0f0; font-variant-numeric: tabular-nums; }
+      .motion-control-line { display: grid; grid-template-columns: 1fr 64px; gap: 10px; align-items: center; }
+
+      .motion-panel input[type="range"] { width: 100%; accent-color: #efefef; }
+      .motion-panel input[type="number"], .motion-config {
+        width: 100%;
+        border: 1px solid #3c3c3c;
+        border-radius: 8px;
+        background: #202020;
+        color: #ededed;
+        font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+
+      .motion-panel input[type="number"] { height: 30px; padding: 0 8px; }
+      .easing-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+      .easing-grid label { color: #7f7f7f; font-size: 10px; text-transform: uppercase; }
+      .easing-grid input { margin-top: 4px; }
+      .preset-row { margin-top: 9px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+      .preset-row button { min-height: 30px; border-radius: 8px; background: #303030; color: #aaa; font-size: 11px; }
+      .preset-row button:hover { background: #3a3a3a; color: #eee; }
+      .motion-config { height: 72px; margin-top: 13px; padding: 9px; resize: none; }
+      .motion-actions { margin-top: 9px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .motion-actions button { min-height: 36px; border-radius: 10px; background: #353535; color: #ddd; font-size: 12px; font-weight: 650; }
+      .motion-actions button:last-child { background: #ededed; color: #151515; }
+      .copy-status { min-height: 16px; margin-top: 7px; color: #6fd99a; font-size: 11px; text-align: right; }
+
+      .replay-button {
+        position: absolute;
+        right: 28px;
+        bottom: 28px;
+        z-index: 4;
+        width: 56px;
+        height: 56px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #444;
+        border-radius: 50%;
+        background: #252525;
+        box-shadow: 0 12px 28px rgb(0 0 0 / 40%);
+      }
+
+      .replay-button span { width: 18px; height: 18px; border: 3px solid #eee; border-left-color: transparent; border-radius: 50%; position: relative; }
+      .replay-button span::after { content: ""; position: absolute; left: -4px; top: -5px; border: 5px solid transparent; border-right-color: #eee; transform: rotate(32deg); }
+      .replay-button:active { transform: scale(.94); }
+
+      .system-navigation { height: 96px; display: flex; align-items: center; justify-content: center; background: #0d0d0d; }
+      .system-navigation i:first-child { width: 20px; height: 20px; border-radius: 50%; background: #f0f0f0; }
+      .system-navigation i:last-child { position: absolute; right: 7%; width: 20px; height: 20px; border-radius: 2px; background: #f0f0f0; }
+
+      @media (max-width: 799px) {
+        .device { --rail-width: 100%; }
+        .workspace { grid-template-columns: 1fr; }
+        .illustration-pane { display: none; }
+        .onboarding-pane { min-height: calc(100vh - 188px); border-right: 0; }
+        .onboarding-copy { width: min(604px, calc(100% - 72px)); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .is-animating .visual-card { animation: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="device" data-prototype>
+      <header class="system-bar">
+        <strong>00:32&nbsp;&nbsp; Fri, Oct 23</strong>
+        <span>4G+&nbsp;&nbsp; 16%</span>
+      </header>
+      <div class="performance-bar">
+        <i aria-hidden="true"></i>
+        <span>76 fps · CPU 25.9% · RSS 491 MB</span>
+      </div>
+
+      <section class="workspace">
+        <aside class="onboarding-pane">
+          <h1>Pull requests</h1>
+          <div class="onboarding-copy">
+            <h2>Your review inbox</h2>
+            <p>Connect a code host to review changes,<br />work with agents, and ship from one place.</p>
+            <button class="connect-button" type="button">+&nbsp;&nbsp; Connect a provider</button>
+            <div class="trust-note">
+              <span class="shield" aria-hidden="true"></span>
+              <span>Credentials stay on your Companion.</span>
+            </div>
+          </div>
+          <nav class="catalog-tabs" aria-label="Catalog">
+            <button type="button">Threads</button>
+            <button class="active" type="button">Pull requests</button>
+          </nav>
+        </aside>
+
+        <section class="illustration-pane mode-semantic is-animating" aria-label="Pull request feature illustration">
+          <div class="ambient-ring ring-one" aria-hidden="true"></div>
+          <div class="ambient-ring ring-two" aria-hidden="true"></div>
+
+          <div class="card-slot slot-left">
+            <article class="visual-card overview-card" aria-label="Overview illustration">
+              <svg class="card-art" viewBox="0 0 440 720" aria-hidden="true">
+                <rect width="440" height="68" fill="#303030" />
+                <circle cx="30" cy="34" r="12" fill="#3b3b3b" />
+                <rect x="54" y="22" width="126" height="10" rx="5" fill="#d8d8d8" opacity=".72" />
+                <rect x="54" y="40" width="82" height="7" rx="3.5" fill="#929292" opacity=".38" />
+                <rect x="390" y="22" width="5" height="5" rx="2.5" fill="#aaa" />
+                <rect x="390" y="32" width="5" height="5" rx="2.5" fill="#aaa" />
+                <rect x="390" y="42" width="5" height="5" rx="2.5" fill="#aaa" />
+                <rect x="44" y="108" width="352" height="3" rx="1.5" fill="#e5e5e5" opacity=".84" />
+                <rect x="28" y="144" width="84" height="28" rx="14" fill="#173526" />
+                <circle cx="48" cy="158" r="5" fill="#35c778" />
+                <rect x="64" y="153" width="30" height="9" rx="4.5" fill="#72dfa1" opacity=".82" />
+                <rect x="122" y="144" width="154" height="28" rx="14" fill="#373737" />
+                <rect x="140" y="154" width="118" height="8" rx="4" fill="#8a8a8a" opacity=".42" />
+                <rect x="28" y="210" width="286" height="14" rx="7" fill="#d6d6d6" opacity=".82" />
+                <rect x="28" y="238" width="184" height="8" rx="4" fill="#929292" opacity=".32" />
+                <rect x="28" y="282" width="384" height="108" rx="18" fill="#1d1d1d" stroke="#393939" />
+                <circle class="semantic-check semantic-delay-1" cx="56" cy="336" r="13" fill="#17472d" />
+                <path class="semantic-check semantic-delay-1" d="M50 336l4 4 8-10" fill="none" stroke="#43d17c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                <rect x="82" y="316" width="174" height="11" rx="5.5" fill="#b8b8b8" opacity=".62" />
+                <rect x="82" y="343" width="128" height="8" rx="4" fill="#888" opacity=".28" />
+                <rect x="28" y="408" width="384" height="94" rx="18" fill="#1d1d1d" stroke="#393939" />
+                <circle class="semantic-check semantic-delay-2" cx="56" cy="455" r="13" fill="#17472d" />
+                <path class="semantic-check semantic-delay-2" d="M50 455l4 4 8-10" fill="none" stroke="#43d17c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                <rect x="82" y="435" width="154" height="11" rx="5.5" fill="#b8b8b8" opacity=".62" />
+                <rect x="82" y="462" width="188" height="8" rx="4" fill="#888" opacity=".28" />
+                <rect x="28" y="520" width="384" height="132" rx="18" fill="#1d1d1d" stroke="#393939" />
+                <circle cx="56" cy="574" r="13" fill="#3d3d3d" />
+                <path d="M49 574h14" fill="none" stroke="#aaa" stroke-width="2.5" stroke-linecap="round" />
+                <rect x="82" y="550" width="168" height="11" rx="5.5" fill="#b8b8b8" opacity=".62" />
+                <rect x="82" y="577" width="132" height="8" rx="4" fill="#888" opacity=".28" />
+                <rect class="semantic-wipe semantic-delay-3" x="82" y="610" width="116" height="8" rx="4" fill="#43d17c" opacity=".82" />
+              </svg>
+            </article>
+          </div>
+
+          <div class="card-slot slot-right">
+            <article class="visual-card guide-card" aria-label="Guide illustration">
+              <svg class="card-art" viewBox="0 0 440 720" aria-hidden="true">
+                <rect width="440" height="68" fill="#303030" />
+                <circle cx="30" cy="34" r="12" fill="#3b3b3b" />
+                <rect x="54" y="22" width="126" height="10" rx="5" fill="#d8d8d8" opacity=".72" />
+                <rect x="54" y="40" width="82" height="7" rx="3.5" fill="#929292" opacity=".38" />
+                <rect x="390" y="22" width="5" height="5" rx="2.5" fill="#aaa" />
+                <rect x="390" y="32" width="5" height="5" rx="2.5" fill="#aaa" />
+                <rect x="390" y="42" width="5" height="5" rx="2.5" fill="#aaa" />
+                <rect x="44" y="108" width="352" height="3" rx="1.5" fill="#e5e5e5" opacity=".84" />
+                <rect class="semantic-wipe semantic-delay-1" x="28" y="148" width="120" height="5" rx="2.5" fill="#dcdcdc" />
+                <rect class="semantic-wipe semantic-delay-2" x="160" y="148" width="120" height="5" rx="2.5" fill="#dcdcdc" />
+                <rect class="semantic-wipe semantic-delay-3" x="292" y="148" width="120" height="5" rx="2.5" fill="#404040" />
+                <rect x="28" y="202" width="260" height="14" rx="7" fill="#d6d6d6" opacity=".82" />
+                <rect x="28" y="232" width="344" height="8" rx="4" fill="#929292" opacity=".34" />
+                <rect x="28" y="252" width="294" height="8" rx="4" fill="#929292" opacity=".28" />
+                <rect x="28" y="292" width="384" height="190" rx="18" fill="#1b1b1b" stroke="#393939" />
+                <rect x="50" y="316" width="128" height="8" rx="4" fill="#777" opacity=".42" />
+                <rect class="semantic-wipe semantic-delay-2" x="50" y="348" width="340" height="30" fill="#3b1d25" />
+                <rect class="semantic-wipe semantic-delay-2" x="66" y="359" width="162" height="8" rx="4" fill="#ef8d9c" opacity=".7" />
+                <rect class="semantic-wipe semantic-delay-3" x="50" y="386" width="340" height="30" fill="#123923" />
+                <rect class="semantic-wipe semantic-delay-3" x="66" y="397" width="214" height="8" rx="4" fill="#70dfa0" opacity=".72" />
+                <rect x="50" y="438" width="270" height="8" rx="4" fill="#777" opacity=".24" />
+                <rect x="50" y="458" width="206" height="8" rx="4" fill="#777" opacity=".2" />
+                <rect x="28" y="524" width="112" height="42" rx="21" fill="#343434" />
+                <rect x="158" y="524" width="138" height="42" rx="21" fill="#343434" />
+                <rect class="semantic-rise semantic-delay-4" x="314" y="524" width="98" height="42" rx="21" fill="#ededed" />
+                <circle cx="84" cy="545" r="5" fill="#888" />
+                <rect x="96" y="541" width="24" height="8" rx="4" fill="#888" opacity=".72" />
+                <circle cx="186" cy="545" r="5" fill="#888" />
+                <rect x="198" y="541" width="76" height="8" rx="4" fill="#888" opacity=".72" />
+                <path d="M340 545l6 6 12-15" fill="none" stroke="#1b1b1b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                <rect x="364" y="541" width="28" height="8" rx="4" fill="#1b1b1b" opacity=".72" />
+              </svg>
+            </article>
+          </div>
+
+          <div class="card-slot slot-center">
+            <article class="visual-card changes-card" aria-label="Changes illustration">
+              <svg class="card-art" viewBox="0 0 600 870" aria-hidden="true">
+                <rect width="600" height="72" fill="#303030" />
+                <path d="M50 27L40 36l10 9M40 36h24" fill="none" stroke="#bbb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                <rect x="82" y="22" width="208" height="11" rx="5.5" fill="#dedede" opacity=".76" />
+                <rect x="82" y="42" width="132" height="8" rx="4" fill="#909090" opacity=".4" />
+                <circle cx="558" cy="26" r="3" fill="#aaa" />
+                <circle cx="558" cy="36" r="3" fill="#aaa" />
+                <circle cx="558" cy="46" r="3" fill="#aaa" />
+                <rect x="74" y="104" width="152" height="9" rx="4.5" fill="#858585" opacity=".38" />
+                <rect x="374" y="104" width="152" height="9" rx="4.5" fill="#d8d8d8" opacity=".82" />
+                <rect x="328" y="128" width="244" height="3" rx="1.5" fill="#ededed" />
+                <rect x="26" y="158" width="266" height="48" rx="15" fill="#212121" stroke="#3b3b3b" />
+                <rect x="30" y="162" width="126" height="40" rx="12" fill="#454545" />
+                <circle class="semantic-check semantic-delay-1" cx="64" cy="182" r="7" fill="#d8d8d8" opacity=".68" />
+                <path class="semantic-check semantic-delay-1" d="M60 182l3 3 6-7" fill="none" stroke="#2c2c2c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <rect x="82" y="178" width="48" height="8" rx="4" fill="#d4d4d4" opacity=".68" />
+                <rect x="194" y="178" width="56" height="8" rx="4" fill="#898989" opacity=".38" />
+                <rect x="434" y="176" width="112" height="6" rx="3" fill="#3c3c3c" />
+                <rect x="434" y="176" width="48" height="6" rx="3" fill="#d8d8d8" />
+                <circle cx="556" cy="179" r="4" fill="#888" />
+                <rect x="26" y="228" width="176" height="568" rx="20" fill="#202020" stroke="#3a3a3a" />
+                <rect x="38" y="246" width="152" height="82" rx="13" fill="#3a3a3a" />
+                <rect x="50" y="262" width="88" height="9" rx="4.5" fill="#bbb" opacity=".58" />
+                <rect x="50" y="282" width="58" height="7" rx="3.5" fill="#8c8c8c" opacity=".3" />
+                <rect x="154" y="262" width="24" height="7" rx="3.5" fill="#61d492" />
+                <rect x="50" y="302" width="86" height="7" rx="3.5" fill="#8c8c8c" opacity=".26" />
+                <rect x="48" y="354" width="94" height="9" rx="4.5" fill="#bbb" opacity=".52" />
+                <rect x="48" y="375" width="72" height="7" rx="3.5" fill="#8c8c8c" opacity=".28" />
+                <rect x="158" y="354" width="20" height="7" rx="3.5" fill="#61d492" />
+                <line x1="44" y1="408" x2="184" y2="408" stroke="#383838" />
+                <rect x="48" y="434" width="102" height="9" rx="4.5" fill="#bbb" opacity=".52" />
+                <rect x="48" y="455" width="62" height="7" rx="3.5" fill="#8c8c8c" opacity=".28" />
+                <rect x="158" y="434" width="20" height="7" rx="3.5" fill="#61d492" />
+                <line x1="44" y1="488" x2="184" y2="488" stroke="#383838" />
+                <rect x="48" y="514" width="92" height="9" rx="4.5" fill="#bbb" opacity=".52" />
+                <rect x="48" y="535" width="52" height="7" rx="3.5" fill="#8c8c8c" opacity=".28" />
+                <rect x="158" y="514" width="20" height="7" rx="3.5" fill="#61d492" />
+                <rect x="222" y="228" width="352" height="568" rx="20" fill="#1b1b1b" stroke="#393939" />
+                <path d="M242 228h312a20 20 0 0 1 20 20v32H222v-32a20 20 0 0 1 20-20z" fill="#2d2d2d" />
+                <rect x="244" y="250" width="112" height="9" rx="4.5" fill="#bbb" opacity=".58" />
+                <rect x="524" y="250" width="28" height="7" rx="3.5" fill="#61d492" />
+                <rect x="238" y="300" width="320" height="28" fill="#302b21" />
+                <rect x="250" y="310" width="238" height="8" rx="4" fill="#8b8578" opacity=".38" />
+                <rect class="semantic-wipe semantic-delay-1" x="238" y="340" width="320" height="31" fill="#3b1d25" />
+                <rect class="semantic-wipe semantic-delay-1" x="250" y="351" width="150" height="8" rx="4" fill="#ef8b9b" opacity=".72" />
+                <rect class="semantic-wipe semantic-delay-2" x="238" y="377" width="320" height="31" fill="#123c25" />
+                <rect class="semantic-wipe semantic-delay-2" x="250" y="388" width="248" height="8" rx="4" fill="#72e0a2" opacity=".72" />
+                <rect class="semantic-wipe semantic-delay-3" x="238" y="414" width="320" height="31" fill="#123c25" />
+                <rect class="semantic-wipe semantic-delay-3" x="250" y="425" width="198" height="8" rx="4" fill="#72e0a2" opacity=".72" />
+                <rect x="248" y="474" width="174" height="8" rx="4" fill="#777" opacity=".3" />
+                <rect class="semantic-wipe semantic-delay-4" x="238" y="496" width="320" height="31" fill="#123c25" />
+                <rect class="semantic-wipe semantic-delay-4" x="250" y="507" width="224" height="8" rx="4" fill="#72e0a2" opacity=".72" />
+                <rect x="238" y="560" width="320" height="168" rx="16" fill="#343434" stroke="#4a4a4a" />
+                <rect x="256" y="582" width="92" height="7" rx="3.5" fill="#aaa" opacity=".28" />
+                <rect x="256" y="616" width="260" height="9" rx="4.5" fill="#b8b8b8" opacity=".5" />
+                <rect x="256" y="638" width="224" height="9" rx="4.5" fill="#b8b8b8" opacity=".5" />
+                <rect x="256" y="680" width="48" height="24" rx="12" fill="#4a4a4a" />
+                <rect x="312" y="680" width="62" height="24" rx="12" fill="#4a4a4a" />
+                <rect class="semantic-rise semantic-delay-4" x="382" y="680" width="56" height="24" rx="12" fill="#ededed" />
+                <circle cx="280" cy="692" r="4" fill="#999" />
+                <circle cx="343" cy="692" r="4" fill="#999" />
+                <path class="semantic-rise semantic-delay-4" d="M402 692l4 4 8-10" fill="none" stroke="#222" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                <rect class="semantic-rise semantic-delay-4" x="26" y="816" width="548" height="40" rx="20" fill="#ededed" />
+                <circle class="semantic-rise semantic-delay-4" cx="278" cy="836" r="5" fill="#222" />
+                <rect class="semantic-rise semantic-delay-4" x="292" y="831" width="74" height="10" rx="5" fill="#222" opacity=".72" />
+              </svg>
+            </article>
+          </div>
+
+          <aside class="motion-panel" data-motion-panel aria-label="Animation controls">
+            <header>
+              <strong>Motion lab</strong>
+              <button class="panel-toggle" type="button" data-panel-toggle aria-label="Collapse controls">−</button>
+            </header>
+            <div class="motion-panel-body">
+              <div class="mode-row" aria-label="Motion mode">
+                <button type="button" data-motion-mode="reveal">Reveal</button>
+                <button type="button" data-motion-mode="depth">Depth settle</button>
+                <button class="active" type="button" data-motion-mode="semantic">Semantic</button>
+              </div>
+              <div class="mode-description" data-mode-description>
+                Cards stay still; checks, diff and guide progress tell the story.
+              </div>
+              <div class="reveal-controls" data-reveal-controls hidden>
+                <div class="motion-control">
+                  <label class="motion-control-label" for="motion-distance">
+                    <span>Distance</span><output data-distance-output>96 px</output>
+                  </label>
+                  <div class="motion-control-line">
+                    <input id="motion-distance" data-distance-range type="range" min="0" max="240" step="1" value="96" />
+                    <input data-distance-number aria-label="Distance in pixels" type="number" min="0" max="240" step="1" value="96" />
+                  </div>
+                </div>
+                <div class="motion-control">
+                  <label class="motion-control-label" for="motion-duration">
+                    <span>Duration</span><output data-duration-output>1130 ms</output>
+                  </label>
+                  <div class="motion-control-line">
+                    <input id="motion-duration" data-duration-range type="range" min="100" max="2000" step="10" value="1130" />
+                    <input data-duration-number aria-label="Duration in milliseconds" type="number" min="100" max="2000" step="10" value="1130" />
+                  </div>
+                </div>
+                <div class="motion-control">
+                  <div class="motion-control-label"><span>Cubic bezier</span></div>
+                  <div class="easing-grid">
+                    <label>x1<input data-easing="x1" type="number" min="0" max="1" step="0.01" value="0.05" /></label>
+                    <label>y1<input data-easing="y1" type="number" min="-2" max="2" step="0.01" value="0.7" /></label>
+                    <label>x2<input data-easing="x2" type="number" min="0" max="1" step="0.01" value="0.1" /></label>
+                    <label>y2<input data-easing="y2" type="number" min="-2" max="2" step="0.01" value="1" /></label>
+                  </div>
+                  <div class="preset-row">
+                    <button type="button" data-easing-preset="long">Long tail</button>
+                    <button type="button" data-easing-preset="soft">Soft</button>
+                    <button type="button" data-easing-preset="linear">Linear</button>
+                  </div>
+                </div>
+              </div>
+              <textarea class="motion-config" data-motion-config readonly aria-label="Animation configuration"></textarea>
+              <div class="motion-actions">
+                <button type="button" data-panel-replay>Replay</button>
+                <button type="button" data-copy-config>Copy config</button>
+              </div>
+              <div class="copy-status" data-copy-status aria-live="polite"></div>
+            </div>
+          </aside>
+
+          <button class="replay-button" type="button" data-replay aria-label="Replay animation">
+            <span aria-hidden="true"></span>
+          </button>
+        </section>
+      </section>
+      <footer class="system-navigation"><i></i><i></i></footer>
+    </main>
+    <script>
+      const prototype = document.querySelector("[data-prototype]");
+      const illustration = prototype?.querySelector(".illustration-pane");
+      const replay = document.querySelector("[data-replay]");
+      const panelReplay = document.querySelector("[data-panel-replay]");
+      const panel = document.querySelector("[data-motion-panel]");
+      const panelToggle = document.querySelector("[data-panel-toggle]");
+      const configOutput = document.querySelector("[data-motion-config]");
+      const copyButton = document.querySelector("[data-copy-config]");
+      const copyStatus = document.querySelector("[data-copy-status]");
+      const distanceRange = document.querySelector("[data-distance-range]");
+      const distanceNumber = document.querySelector("[data-distance-number]");
+      const durationRange = document.querySelector("[data-duration-range]");
+      const durationNumber = document.querySelector("[data-duration-number]");
+      const distanceOutput = document.querySelector("[data-distance-output]");
+      const durationOutput = document.querySelector("[data-duration-output]");
+      const easingInputs = [...document.querySelectorAll("[data-easing]")];
+      const modeButtons = [...document.querySelectorAll("[data-motion-mode]")];
+      const modeDescription = document.querySelector("[data-mode-description]");
+      const revealControls = document.querySelector("[data-reveal-controls]");
+      const easingPresets = {
+        linear: [0, 0, 1, 1],
+        long: [0.05, 0.7, 0.1, 1],
+        soft: [0.2, 0.72, 0.28, 1],
+      };
+      const motion = {
+        distance: 96,
+        duration: 1130,
+        easing: [...easingPresets.long],
+      };
+      const modeConfigs = {
+        reveal: {
+          description: "Cards travel apart using the tuned distance, duration and easing.",
+          value: () => ({
+            mode: "reveal",
+            distance: motion.distance,
+            duration: motion.duration,
+            easing: easingValue(),
+          }),
+        },
+        depth: {
+          description: "Center stays put; side cards uncover from behind with a short stagger.",
+          value: () => ({
+            mode: "depth-settle",
+            duration: 520,
+            easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
+            sideStagger: 60,
+            cardTravel: 0,
+          }),
+        },
+        semantic: {
+          description: "Cards stay still; checks, diff and guide progress tell the story.",
+          value: () => ({
+            mode: "semantic",
+            totalDuration: 560,
+            elementDuration: 240,
+            stagger: 80,
+            cardTravel: 0,
+          }),
+        },
+      };
+      let selectedMode = "semantic";
+      let replayTimer;
+
+      function replayIllustration() {
+        if (!(illustration instanceof HTMLElement)) return;
+        illustration.classList.remove("is-animating");
+        void illustration.offsetWidth;
+        illustration.classList.add("is-animating");
+      }
+
+      function easingValue() {
+        return `cubic-bezier(${motion.easing.join(", ")})`;
+      }
+
+      function configValue() {
+        return JSON.stringify(modeConfigs[selectedMode].value(), null, 2);
+      }
+
+      function selectMode(mode) {
+        if (!(illustration instanceof HTMLElement) || !(mode in modeConfigs)) return;
+        selectedMode = mode;
+        illustration.classList.remove("mode-reveal", "mode-depth", "mode-semantic");
+        illustration.classList.add(`mode-${mode}`);
+        modeButtons.forEach((button) => {
+          button.classList.toggle("active", button.dataset.motionMode === mode);
+        });
+        if (revealControls instanceof HTMLElement) revealControls.hidden = mode !== "reveal";
+        if (modeDescription instanceof HTMLElement) {
+          modeDescription.textContent = modeConfigs[mode].description;
+        }
+        publishMotion();
+      }
+
+      function scheduleReplay() {
+        window.clearTimeout(replayTimer);
+        replayTimer = window.setTimeout(replayIllustration, 80);
+      }
+
+      function publishMotion() {
+        if (!(illustration instanceof HTMLElement)) return;
+        illustration.style.setProperty("--motion-distance", `${motion.distance}px`);
+        illustration.style.setProperty(
+          "--motion-diagonal",
+          `${(motion.distance / Math.SQRT2).toFixed(2)}px`,
+        );
+        illustration.style.setProperty("--motion-duration", `${motion.duration}ms`);
+        illustration.style.setProperty("--motion-easing", easingValue());
+        if (distanceOutput instanceof HTMLOutputElement) {
+          distanceOutput.value = `${motion.distance} px`;
+        }
+        if (durationOutput instanceof HTMLOutputElement) {
+          durationOutput.value = `${motion.duration} ms`;
+        }
+        if (configOutput instanceof HTMLTextAreaElement) {
+          configOutput.value = configValue();
+        }
+        if (copyStatus instanceof HTMLElement) copyStatus.textContent = "";
+        scheduleReplay();
+      }
+
+      function bindNumericPair(range, number, key) {
+        if (!(range instanceof HTMLInputElement) || !(number instanceof HTMLInputElement)) return;
+        const update = (source, target) => {
+          const minimum = Number(source.min);
+          const maximum = Number(source.max);
+          const next = Math.min(maximum, Math.max(minimum, Number(source.value)));
+          motion[key] = next;
+          source.value = String(next);
+          target.value = String(next);
+          publishMotion();
+        };
+        range.addEventListener("input", () => update(range, number));
+        number.addEventListener("input", () => update(number, range));
+      }
+
+      function setEasing(values) {
+        motion.easing = [...values];
+        easingInputs.forEach((input, index) => {
+          if (input instanceof HTMLInputElement) input.value = String(values[index]);
+        });
+        publishMotion();
+      }
+
+      async function copyConfig() {
+        const value = configValue();
+        try {
+          await navigator.clipboard.writeText(value);
+        } catch {
+          if (configOutput instanceof HTMLTextAreaElement) {
+            configOutput.focus();
+            configOutput.select();
+            document.execCommand("copy");
+          }
+        }
+        if (copyStatus instanceof HTMLElement) copyStatus.textContent = "Copied";
+      }
+
+      replay?.addEventListener("click", replayIllustration);
+      panelReplay?.addEventListener("click", replayIllustration);
+      copyButton?.addEventListener("click", () => void copyConfig());
+      panelToggle?.addEventListener("click", () => {
+        panel?.classList.toggle("is-collapsed");
+        if (panelToggle instanceof HTMLButtonElement) {
+          const collapsed = panel?.classList.contains("is-collapsed") === true;
+          panelToggle.textContent = collapsed ? "+" : "−";
+          panelToggle.setAttribute("aria-label", collapsed ? "Expand controls" : "Collapse controls");
+        }
+      });
+      bindNumericPair(distanceRange, distanceNumber, "distance");
+      bindNumericPair(durationRange, durationNumber, "duration");
+      easingInputs.forEach((input, index) => {
+        input.addEventListener("input", () => {
+          if (!(input instanceof HTMLInputElement)) return;
+          motion.easing[index] = Number(input.value);
+          publishMotion();
+        });
+      });
+      document.querySelectorAll("[data-easing-preset]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (!(button instanceof HTMLButtonElement)) return;
+          const preset = easingPresets[button.dataset.easingPreset];
+          if (preset !== undefined) setEasing(preset);
+        });
+      });
+      modeButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const mode = button.dataset.motionMode;
+          if (mode !== undefined) selectMode(mode);
+        });
+      });
+      selectMode("semantic");
+    </script>
+  </body>
+</html>

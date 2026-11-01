@@ -228,10 +228,24 @@ pub enum Priority {
     Now,
 }
 
+/// Who a user message speaks for. `Adapter` is a message the adapter
+/// composes for Claude, not a person's prompt (`isSynthetic`): Claude stores
+/// it as a meta message, which its transcript readers hide.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Author {
+    Person,
+    Adapter,
+}
+
 /// A user message: `content` is a string or Messages API content blocks;
 /// `uuid` is the id Claude persists it under (a fresh one when `None`).
 #[must_use]
-pub fn user_message_line(content: &Value, uuid: Option<&str>, priority: Priority) -> String {
+pub fn user_message_line(
+    content: &Value,
+    uuid: Option<&str>,
+    priority: Priority,
+    author: Author,
+) -> String {
     let mut message = json!({
         "type": "user",
         "message": {"role": "user", "content": content},
@@ -242,6 +256,9 @@ pub fn user_message_line(content: &Value, uuid: Option<&str>, priority: Priority
     }
     if priority == Priority::Now {
         message["priority"] = json!("now");
+    }
+    if author == Author::Adapter {
+        message["isSynthetic"] = json!(true);
     }
     message.to_string()
 }
@@ -328,16 +345,31 @@ mod tests {
             &json!("hi"),
             Some("u1"),
             Priority::Queued,
+            Author::Person,
         ))
         .unwrap_or_default();
         assert_eq!(user["message"]["content"], "hi");
         assert_eq!(user["uuid"], "u1");
         assert!(user.get("priority").is_none());
+        assert!(user.get("isSynthetic").is_none());
+        let resume: Value = serde_json::from_str(&user_message_line(
+            &json!("go on"),
+            Some("u2"),
+            Priority::Queued,
+            Author::Adapter,
+        ))
+        .unwrap_or_default();
+        assert_eq!(resume["isSynthetic"], true);
+        assert_eq!(resume["uuid"], "u2");
         // The Agent SDK leaves the session to the process: no `session_id`.
         assert!(user.get("session_id").is_none());
-        let steer: Value =
-            serde_json::from_str(&user_message_line(&json!("now"), None, Priority::Now))
-                .unwrap_or_default();
+        let steer: Value = serde_json::from_str(&user_message_line(
+            &json!("now"),
+            None,
+            Priority::Now,
+            Author::Person,
+        ))
+        .unwrap_or_default();
         assert_eq!(steer["priority"], "now");
         assert!(steer.get("uuid").is_none());
         let scoped = session_scoped(&[json!({"type": "addRules", "destination": "localSettings"})]);

@@ -45,6 +45,7 @@ export function LiveTurnPlanMenu({ plan }: { readonly plan: LiveTurnPlan }): Rea
   return (
     <ContentMenu
       align="center"
+      anchorStyle={styles.anchor}
       onOpenChange={setOpen}
       open={open}
       placement="top"
@@ -244,6 +245,12 @@ function LiveTurnPlanStepText({
 }
 
 const styles = StyleSheet.create({
+  /** The chip shrinks to its line and ellipsizes its step beyond this share. */
+  anchor: {
+    flexShrink: 1,
+    maxWidth: "92%",
+    minWidth: 0,
+  },
   completedStep: { color: colors.textMuted },
   content: {
     gap: spacing.sm,
@@ -297,15 +304,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     elevation: TRIGGER_ELEVATION,
     flexDirection: "row",
-    flexShrink: 1,
     gap: spacing.xxs,
-    maxWidth: "92%",
     minHeight: controlSize.compact,
     paddingHorizontal: spacing.inputInset,
   },
   triggerCurrent: {
     color: colors.textMuted,
-    flex: 1,
+    flexShrink: 1,
     minWidth: 0,
     ...typeScale.label,
   },

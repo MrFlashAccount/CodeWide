@@ -1,0 +1,674 @@
+//! Pull request lists: the GraphQL search per category, check rollups and
+//! the open pull requests of a branch.
+
+use forge_protocol::{
+    ByBranchResult, CheckRollup, CheckSummary, ForgePrRef, ListResult, PluginError,
+    PullRequestCategory, PullRequestReviewState, PullRequestSearchQuery, PullRequestSortField,
+    PullRequestState, SearchValues, SortDirection,
+};
+use serde_json::{Value, json};
+
+use crate::{api::Api, repo::Repo};
+
+const LIST_QUERY: &str = r"
+query($q: String!, $n: Int!, $after: String) {
+  search(query: $q, type: ISSUE, first: $n, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      ... on PullRequest {
+        number title url isDraft state updatedAt
+        author { login }
+        repository { nameWithOwner }
+        reviewRequests(first: 25) { nodes { requestedReviewer { ... on User { login } } } }
+        commits(last: 1) { nodes { commit { statusCheckRollup {
+          contexts(first: 1) {
+            checkRunCountsByState { state count }
+            statusContextCountsByState { state count }
+          }
+        } } } }
+      }
+    }
+  }
+}";
+
+/// `forge.pullRequests.list`: one GraphQL search per call.
+///
+/// # Errors
+///
+/// Returns the mapped GitHub failure.
+pub async fn list(
+    api: &Api,
+    host: &str,
+    login: &str,
+    category: PullRequestCategory,
+    repository: Option<&str>,
+    cursor: Option<String>,
+    limit: u32,
+) -> Result<ListResult, PluginError> {
+    let mut query = match category {
+        PullRequestCategory::Involved => format!("involves:{login}"),
+        PullRequestCategory::ReviewRequested => format!("review-requested:{login}"),
+        PullRequestCategory::Authored => format!("author:{login}"),
+        PullRequestCategory::Assigned => format!("assignee:{login}"),
+        PullRequestCategory::Mentioned => format!("mentions:{login}"),
+        PullRequestCategory::Drafts => format!("draft:true author:{login}"),
+        PullRequestCategory::All => String::new(),
+    };
+    query.push_str(" is:pr is:open archived:false sort:updated-desc");
+    if let Some(repository) = repository {
+        query.push_str(" repo:");
+        query.push_str(&Repo::parse(repository)?.full());
+    }
+    let data = api
+        .graphql(
+            LIST_QUERY,
+            json!({ "q": query, "n": limit.clamp(1, forge_protocol::MAX_LIST_LIMIT), "after": cursor }),
+        )
+        .await?;
+    let search = data
+        .get("search")
+        .ok_or_else(|| PluginError::internal("GitHub returned no search result"))?;
+    let rows = search
+        .get("nodes")
+        .and_then(Value::as_array)
+        .map(|nodes| {
+            nodes
+                .iter()
+                .filter_map(|node| list_row(node, host, login))
+                .collect()
+        })
+        .unwrap_or_default();
+    let next_cursor = (search.pointer("/pageInfo/hasNextPage") == Some(&Value::Bool(true)))
+        .then(|| {
+            search
+                .pointer("/pageInfo/endCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .flatten();
+    Ok(ListResult {
+        supported_categories: vec![
+            PullRequestCategory::Involved,
+            PullRequestCategory::ReviewRequested,
+            PullRequestCategory::Authored,
+            PullRequestCategory::Assigned,
+            PullRequestCategory::Mentioned,
+            PullRequestCategory::Drafts,
+        ],
+        rows,
+        next_cursor,
+    })
+}
+
+/// `forge.pullRequests.search`: compiles the provider-neutral query to GitHub
+/// search syntax and applies every field.
+///
+/// # Errors
+///
+/// Returns invalid params for an invalid repository or an oversized query,
+/// and the mapped GitHub failure otherwise.
+pub async fn search(
+    api: &Api,
+    host: &str,
+    login: &str,
+    query: &PullRequestSearchQuery,
+    cursor: Option<String>,
+    limit: u32,
+) -> Result<ListResult, PluginError> {
+    let compiled = compile_search(login, query)?;
+    run_search(api, host, login, compiled, query, cursor, limit).await
+}
+
+fn compile_search(login: &str, query: &PullRequestSearchQuery) -> Result<String, PluginError> {
+    if query.text.len() > 512 {
+        return Err(PluginError::invalid_params("search text is too long"));
+    }
+    let mut terms = vec!["is:pr".to_owned(), "archived:false".to_owned()];
+    let text = query.text.trim();
+    if !text.is_empty() {
+        terms.push(text.to_owned());
+    }
+    match query.category {
+        PullRequestCategory::Involved => terms.push(format!("involves:{}", quoted(login))),
+        PullRequestCategory::ReviewRequested => {
+            terms.push(format!("review-requested:{}", quoted(login)));
+        }
+        PullRequestCategory::Authored => terms.push(format!("author:{}", quoted(login))),
+        PullRequestCategory::Assigned => terms.push(format!("assignee:{}", quoted(login))),
+        PullRequestCategory::Mentioned => terms.push(format!("mentions:{}", quoted(login))),
+        PullRequestCategory::Drafts => {
+            terms.push(format!("author:{}", quoted(login)));
+            terms.push("draft:true".to_owned());
+        }
+        PullRequestCategory::All => {}
+    }
+    push_repository_values(&mut terms, &query.repositories)?;
+    push_text_values(&mut terms, "author", &query.authors);
+    push_text_values(&mut terms, "assignee", &query.assignees);
+    push_text_values(&mut terms, "reviewed-by", &query.reviewers);
+    push_values(&mut terms, &query.review, |state| match state {
+        PullRequestReviewState::None => "review:none".to_owned(),
+        PullRequestReviewState::Required => "review:required".to_owned(),
+        PullRequestReviewState::Approved => "review:approved".to_owned(),
+        PullRequestReviewState::ChangesRequested => "review:changes_requested".to_owned(),
+    });
+    push_state_values(&mut terms, &query.states)?;
+    push_check_values(&mut terms, &query.checks);
+    push_text_values(&mut terms, "label", &query.labels);
+    push_text_values(&mut terms, "base", &query.base_branches);
+    push_text_values(&mut terms, "head", &query.head_branches);
+    let field = match query.sort.field {
+        PullRequestSortField::Updated => "updated",
+        PullRequestSortField::Created => "created",
+    };
+    let direction = match query.sort.direction {
+        SortDirection::Descending => "desc",
+        SortDirection::Ascending => "asc",
+    };
+    terms.push(format!("sort:{field}-{direction}"));
+    Ok(terms.join(" "))
+}
+
+fn push_repository_values(
+    terms: &mut Vec<String>,
+    values: &SearchValues<String>,
+) -> Result<(), PluginError> {
+    let include = values
+        .include
+        .iter()
+        .map(|value| Repo::parse(value).map(|repo| format!("repo:{}", quoted(&repo.full()))))
+        .collect::<Result<Vec<_>, _>>()?;
+    let exclude = values
+        .exclude
+        .iter()
+        .map(|value| Repo::parse(value).map(|repo| format!("repo:{}", quoted(&repo.full()))))
+        .collect::<Result<Vec<_>, _>>()?;
+    push_group(terms, include);
+    push_negative_values(terms, exclude);
+    Ok(())
+}
+
+fn push_text_values(terms: &mut Vec<String>, qualifier: &str, values: &SearchValues<String>) {
+    let render = |value: &String| format!("{qualifier}:{}", quoted(value));
+    push_group(terms, values.include.iter().map(render).collect());
+    push_negative_values(terms, values.exclude.iter().map(render).collect());
+}
+
+fn push_check_values(terms: &mut Vec<String>, values: &SearchValues<CheckRollup>) {
+    push_group(
+        terms,
+        values
+            .include
+            .iter()
+            .map(|state| match state {
+                CheckRollup::Passing => "status:success".to_owned(),
+                CheckRollup::Failing => "status:failure".to_owned(),
+                CheckRollup::Pending => "status:pending".to_owned(),
+                CheckRollup::None => "no:status".to_owned(),
+            })
+            .collect(),
+    );
+    // `status:pending` also matches PRs without statuses on GitHub. Exact
+    // include/exclude semantics are therefore enforced on decoded rows below.
+}
+
+fn push_values<T>(terms: &mut Vec<String>, values: &SearchValues<T>, render: fn(&T) -> String) {
+    push_group(terms, values.include.iter().map(render).collect());
+    push_negative_values(terms, values.exclude.iter().map(render).collect());
+}
+
+fn push_group(terms: &mut Vec<String>, values: Vec<String>) {
+    match values.len() {
+        0 => {}
+        1 => terms.extend(values),
+        _ => terms.push(format!("({})", values.join(" OR "))),
+    }
+}
+
+fn push_negative_values(terms: &mut Vec<String>, values: Vec<String>) {
+    terms.extend(values.into_iter().map(|value| format!("-{value}")));
+}
+
+fn push_state_values(
+    terms: &mut Vec<String>,
+    values: &SearchValues<PullRequestState>,
+) -> Result<(), PluginError> {
+    const OPEN: u8 = 1;
+    const DRAFT: u8 = 1 << 1;
+    const MERGED: u8 = 1 << 2;
+    const CLOSED: u8 = 1 << 3;
+    const ALL: u8 = OPEN | DRAFT | MERGED | CLOSED;
+    const OPEN_AND_DRAFT: u8 = OPEN | DRAFT;
+    const MERGED_AND_CLOSED: u8 = MERGED | CLOSED;
+    const OPEN_AND_CLOSED: u8 = OPEN | CLOSED;
+    const ALL_EXCEPT_MERGED: u8 = OPEN | DRAFT | CLOSED;
+    const ALL_EXCEPT_DRAFT: u8 = OPEN | MERGED | CLOSED;
+
+    let mut allowed = if values.include.is_empty() {
+        ALL
+    } else {
+        values
+            .include
+            .iter()
+            .fold(0, |mask, state| mask | state_bit(*state))
+    };
+    for state in &values.exclude {
+        allowed &= !state_bit(*state);
+    }
+
+    // GitHub search treats adjacent qualifiers as conjunctions. Its textual
+    // `AND`/`OR` groups do not preserve qualifier semantics, so only exact
+    // single-query projections are accepted here; every other combination is
+    // rejected instead of returning a silently incomplete result.
+    match allowed {
+        ALL => {}
+        OPEN => terms.extend(["is:open".to_owned(), "draft:false".to_owned()]),
+        DRAFT => terms.push("is:draft".to_owned()),
+        MERGED => terms.push("is:merged".to_owned()),
+        CLOSED => terms.extend(["is:closed".to_owned(), "-is:merged".to_owned()]),
+        OPEN_AND_DRAFT => terms.push("is:open".to_owned()),
+        MERGED_AND_CLOSED => terms.push("is:closed".to_owned()),
+        OPEN_AND_CLOSED => terms.extend(["-is:draft".to_owned(), "-is:merged".to_owned()]),
+        ALL_EXCEPT_MERGED => terms.push("-is:merged".to_owned()),
+        ALL_EXCEPT_DRAFT => terms.push("-is:draft".to_owned()),
+        _ => {
+            return Err(PluginError::invalid_params(
+                "GitHub cannot represent the selected pull request states in one search",
+            ));
+        }
+    }
+    Ok(())
+}
+
+const fn state_bit(state: PullRequestState) -> u8 {
+    match state {
+        PullRequestState::Open => 1,
+        PullRequestState::Draft => 1 << 1,
+        PullRequestState::Merged => 1 << 2,
+        PullRequestState::Closed => 1 << 3,
+    }
+}
+
+fn quoted(value: &str) -> String {
+    format!("\"{}\"", value.replace(['\\', '"'], ""))
+}
+
+async fn run_search(
+    api: &Api,
+    host: &str,
+    login: &str,
+    query: String,
+    search_query: &PullRequestSearchQuery,
+    cursor: Option<String>,
+    limit: u32,
+) -> Result<ListResult, PluginError> {
+    let data = api
+        .graphql(
+            LIST_QUERY,
+            json!({ "q": query, "n": limit.clamp(1, forge_protocol::MAX_LIST_LIMIT), "after": cursor }),
+        )
+        .await?;
+    let search = data
+        .get("search")
+        .ok_or_else(|| PluginError::internal("GitHub returned no search result"))?;
+    let rows = search
+        .get("nodes")
+        .and_then(Value::as_array)
+        .map(|nodes| {
+            nodes
+                .iter()
+                .filter_map(|node| list_row(node, host, login))
+                .filter(|row| matches_check_values(&row.checks, &search_query.checks))
+                .collect()
+        })
+        .unwrap_or_default();
+    let next_cursor = (search.pointer("/pageInfo/hasNextPage") == Some(&Value::Bool(true)))
+        .then(|| {
+            search
+                .pointer("/pageInfo/endCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .flatten();
+    Ok(ListResult {
+        supported_categories: vec![
+            PullRequestCategory::Involved,
+            PullRequestCategory::ReviewRequested,
+            PullRequestCategory::Authored,
+            PullRequestCategory::Assigned,
+            PullRequestCategory::Mentioned,
+            PullRequestCategory::Drafts,
+            PullRequestCategory::All,
+        ],
+        rows,
+        next_cursor,
+    })
+}
+
+fn matches_check_values(summary: &CheckSummary, values: &SearchValues<CheckRollup>) -> bool {
+    if values.include.is_empty() && values.exclude.is_empty() {
+        return true;
+    }
+    let CheckSummary::Counted { state, .. } = summary else {
+        return false;
+    };
+    (values.include.is_empty() || values.include.contains(state)) && !values.exclude.contains(state)
+}
+
+fn list_row(node: &Value, host: &str, login: &str) -> Option<forge_protocol::ListRow> {
+    let number = node.get("number")?.as_u64()?.to_string();
+    let repository = node
+        .pointer("/repository/nameWithOwner")?
+        .as_str()?
+        .to_owned();
+    let draft = node.get("isDraft").and_then(Value::as_bool) == Some(true);
+    let state = graphql_state(node.get("state")?.as_str()?, draft);
+    let review_requested_from_me = node
+        .pointer("/reviewRequests/nodes")
+        .and_then(Value::as_array)
+        .is_some_and(|nodes| {
+            nodes.iter().any(|request| {
+                request
+                    .pointer("/requestedReviewer/login")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reviewer| reviewer.eq_ignore_ascii_case(login))
+            })
+        });
+    let contexts = node.pointer("/commits/nodes/0/commit/statusCheckRollup/contexts");
+    let updated_at = node.get("updatedAt")?.as_str()?.to_owned();
+    Some(forge_protocol::ListRow {
+        pr_ref: ForgePrRef {
+            host: host.to_owned(),
+            repository: repository.clone(),
+            number: number.clone(),
+        },
+        repository,
+        number,
+        title: node.get("title")?.as_str()?.to_owned(),
+        author: node
+            .pointer("/author/login")
+            .and_then(Value::as_str)
+            .unwrap_or("ghost")
+            .to_owned(),
+        state,
+        review_requested_from_me,
+        checks: contexts.map_or(
+            CheckSummary::Counted {
+                state: CheckRollup::None,
+                passed: 0,
+                failing: 0,
+                pending: 0,
+            },
+            rollup_counts,
+        ),
+        activity_revision: Some(updated_at.clone()),
+        updated_at,
+        web_url: node.get("url")?.as_str()?.to_owned(),
+    })
+}
+
+fn graphql_state(state: &str, draft: bool) -> PullRequestState {
+    match state {
+        "MERGED" => PullRequestState::Merged,
+        "CLOSED" => PullRequestState::Closed,
+        _ if draft => PullRequestState::Draft,
+        _ => PullRequestState::Open,
+    }
+}
+
+/// Counts of `checkRunCountsByState` and `statusContextCountsByState`.
+fn rollup_counts(contexts: &Value) -> CheckSummary {
+    let mut tally = Tally::default();
+    for (field, map) in [
+        ("checkRunCountsByState", run_bucket as fn(&str) -> Bucket),
+        ("statusContextCountsByState", status_bucket),
+    ] {
+        for entry in contexts
+            .get(field)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let count = entry
+                .get("count")
+                .and_then(Value::as_u64)
+                .and_then(|count| u32::try_from(count).ok())
+                .unwrap_or(0);
+            let state = entry.get("state").and_then(Value::as_str).unwrap_or("");
+            tally.add(map(&state.to_ascii_lowercase()), count);
+        }
+    }
+    tally.summary()
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Bucket {
+    Passed,
+    Failing,
+    Pending,
+}
+
+#[derive(Default)]
+pub(crate) struct Tally {
+    passed: u32,
+    failing: u32,
+    pending: u32,
+}
+
+impl Tally {
+    pub(crate) fn add(&mut self, bucket: Bucket, count: u32) {
+        let slot = match bucket {
+            Bucket::Passed => &mut self.passed,
+            Bucket::Failing => &mut self.failing,
+            Bucket::Pending => &mut self.pending,
+        };
+        *slot = slot.saturating_add(count);
+    }
+
+    pub(crate) fn summary(&self) -> CheckSummary {
+        let state = if self.failing > 0 {
+            CheckRollup::Failing
+        } else if self.pending > 0 {
+            CheckRollup::Pending
+        } else if self.passed > 0 {
+            CheckRollup::Passing
+        } else {
+            CheckRollup::None
+        };
+        CheckSummary::Counted {
+            state,
+            passed: self.passed,
+            failing: self.failing,
+            pending: self.pending,
+        }
+    }
+}
+
+/// Check run states and conclusions (both lower-cased).
+pub(crate) fn run_bucket(state: &str) -> Bucket {
+    match state {
+        "success" | "neutral" | "skipped" => Bucket::Passed,
+        "failure" | "timed_out" | "cancelled" | "action_required" | "startup_failure" | "error"
+        | "stale" => Bucket::Failing,
+        _ => Bucket::Pending,
+    }
+}
+
+pub(crate) fn status_bucket(state: &str) -> Bucket {
+    match state {
+        "success" => Bucket::Passed,
+        "failure" | "error" => Bucket::Failing,
+        _ => Bucket::Pending,
+    }
+}
+
+const BY_BRANCH_QUERY: &str = r"
+query($owner: String!, $name: String!, $branch: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(headRefName: $branch, states: OPEN, first: 20) { nodes { number } }
+  }
+}";
+
+/// `forge.pullRequests.byBranch`: open pull requests whose head branch is
+/// `branch`, including ones from forks.
+///
+/// # Errors
+///
+/// Returns the mapped GitHub failure.
+pub async fn by_branch(
+    api: &Api,
+    host: &str,
+    repository: &str,
+    branch: &str,
+) -> Result<ByBranchResult, PluginError> {
+    let repo = Repo::parse(repository)?;
+    if branch.is_empty() || branch.len() > 255 {
+        return Err(PluginError::invalid_params("invalid branch"));
+    }
+    let data = api
+        .graphql(
+            BY_BRANCH_QUERY,
+            json!({ "owner": repo.owner, "name": repo.name, "branch": branch }),
+        )
+        .await?;
+    let refs = data
+        .pointer("/repository/pullRequests/nodes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|node| node.get("number").and_then(Value::as_u64))
+        .map(|number| ForgePrRef {
+            host: host.to_owned(),
+            repository: repo.full(),
+            number: number.to_string(),
+        })
+        .collect();
+    Ok(ByBranchResult { refs })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn values<T>(include: Vec<T>, exclude: Vec<T>) -> SearchValues<T> {
+        SearchValues { exclude, include }
+    }
+
+    #[test]
+    fn rollup_counts_map_run_and_status_states() {
+        let contexts = json!({
+            "checkRunCountsByState": [
+                {"state": "SUCCESS", "count": 3}, {"state": "FAILURE", "count": 1},
+                {"state": "IN_PROGRESS", "count": 2}
+            ],
+            "statusContextCountsByState": [{"state": "SUCCESS", "count": 1}]
+        });
+        assert_eq!(
+            rollup_counts(&contexts),
+            CheckSummary::Counted {
+                state: CheckRollup::Failing,
+                passed: 4,
+                failing: 1,
+                pending: 2
+            }
+        );
+    }
+
+    #[test]
+    fn structured_search_applies_every_filter_and_preserves_or_groups() -> Result<(), PluginError> {
+        let query = PullRequestSearchQuery {
+            text: "parser".into(),
+            category: PullRequestCategory::ReviewRequested,
+            repositories: values(vec!["team/one".into(), "team/two".into()], Vec::new()),
+            authors: values(vec!["alice".into()], vec!["bot".into()]),
+            assignees: SearchValues::default(),
+            reviewers: SearchValues::default(),
+            review: values(vec![PullRequestReviewState::ChangesRequested], Vec::new()),
+            states: values(
+                vec![PullRequestState::Open, PullRequestState::Draft],
+                Vec::new(),
+            ),
+            checks: values(vec![CheckRollup::Failing], Vec::new()),
+            labels: values(vec!["bug".into()], Vec::new()),
+            base_branches: values(vec!["main".into()], Vec::new()),
+            head_branches: SearchValues::default(),
+            sort: forge_protocol::PullRequestSort {
+                field: PullRequestSortField::Updated,
+                direction: SortDirection::Descending,
+            },
+        };
+
+        let compiled = compile_search("sergey", &query)?;
+
+        assert!(compiled.contains("review-requested:\"sergey\""));
+        assert!(compiled.contains("(repo:\"team/one\" OR repo:\"team/two\")"));
+        assert!(compiled.contains("author:\"alice\""));
+        assert!(compiled.contains("-author:\"bot\""));
+        assert!(compiled.contains("review:changes_requested"));
+        assert!(compiled.contains("is:open"));
+        assert!(!compiled.contains("draft:false"));
+        assert!(compiled.contains("status:failure"));
+        assert!(compiled.contains("label:\"bug\""));
+        assert!(compiled.contains("base:\"main\""));
+        assert!(compiled.ends_with("sort:updated-desc"));
+        Ok(())
+    }
+
+    #[test]
+    fn open_state_uses_github_qualifier_conjunction() -> Result<(), PluginError> {
+        let query = PullRequestSearchQuery {
+            text: String::new(),
+            category: PullRequestCategory::All,
+            repositories: SearchValues::default(),
+            authors: SearchValues::default(),
+            assignees: SearchValues::default(),
+            reviewers: SearchValues::default(),
+            review: SearchValues::default(),
+            states: values(vec![PullRequestState::Open], Vec::new()),
+            checks: SearchValues::default(),
+            labels: SearchValues::default(),
+            base_branches: SearchValues::default(),
+            head_branches: SearchValues::default(),
+            sort: forge_protocol::PullRequestSort {
+                field: PullRequestSortField::Updated,
+                direction: SortDirection::Descending,
+            },
+        };
+
+        // This exact string is an external GitHub search compatibility
+        // contract: explicit `AND` makes qualifier queries return no matches.
+        assert_eq!(
+            compile_search("sergey", &query)?,
+            "is:pr archived:false is:open draft:false sort:updated-desc"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn involved_category_is_scoped_to_the_authenticated_user() -> Result<(), PluginError> {
+        let query = PullRequestSearchQuery {
+            text: String::new(),
+            category: PullRequestCategory::Involved,
+            repositories: SearchValues::default(),
+            authors: SearchValues::default(),
+            assignees: SearchValues::default(),
+            reviewers: SearchValues::default(),
+            review: SearchValues::default(),
+            states: values(vec![PullRequestState::Open], Vec::new()),
+            checks: SearchValues::default(),
+            labels: SearchValues::default(),
+            base_branches: SearchValues::default(),
+            head_branches: SearchValues::default(),
+            sort: forge_protocol::PullRequestSort {
+                field: PullRequestSortField::Updated,
+                direction: SortDirection::Descending,
+            },
+        };
+
+        assert_eq!(
+            compile_search("sergey", &query)?,
+            "is:pr archived:false involves:\"sergey\" is:open draft:false sort:updated-desc"
+        );
+        Ok(())
+    }
+}

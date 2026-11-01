@@ -1,9 +1,10 @@
 // WHY: This shared layout suite has no Expo runtime. The V1 row-menu suite runs
 // the real native popup; here retain the row without loading Android Compose.
 jest.mock("../src/ui/RowActionMenu", () => jest.requireActual("../src/ui/RowActionMenu.tsx"));
-jest.mock("../src/ui/RowActionTrigger", () => jest.requireActual("../src/ui/RowActionTrigger.web.tsx"));
+jest.mock("../src/ui/RowActionTrigger", () =>
+  jest.requireActual("../src/ui/RowActionTrigger.web.tsx"),
+);
 
-import { LegendList } from "@legendapp/list/react-native";
 import { act, fireEvent, within } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 import { useState } from "react";
@@ -14,6 +15,7 @@ import {
   SidebarProjectsSheet,
 } from "../src/features/projects/SidebarProjectViews";
 import { AppListRow } from "../src/ui/AppListRow";
+import { AppList } from "../src/ui/AppList";
 import { listRowHeight } from "../src/ui/AppListRow.types";
 import { colors } from "../src/theme";
 import { management, project, render } from "./sidebar-projects.fixture";
@@ -275,16 +277,8 @@ it("virtualizes each project independently instead of mounting an expanded secti
       onClose={jest.fn()}
     />,
   );
-  // WHY: Per-project list entries are the virtualization contract. The Node
-  // native-list adapter cannot simulate viewport clipping or recycled views.
-  const list = view.UNSAFE_getByType(LegendList);
-  for (const item of list.props.data) {
-    const height = list.props.getFixedItemSize(item);
-    if (item.kind === "project") expect(height).toBe(listRowHeight.double);
-    if (item.kind === "section") {
-      expect(view.getByTestId(`project-section:${item.section.title}`)).toHaveStyle({ height });
-    }
-  }
+  const list = view.UNSAFE_getByType(AppList);
+  expect(list.props.virtualized).toBe(true);
   for (const row of view.UNSAFE_getAllByType(AppListRow)) {
     expect(row.props.fixedHeight).toBe(listRowHeight.double);
   }
@@ -292,7 +286,7 @@ it("virtualizes each project independently instead of mounting an expanded secti
     8,
   );
   fireEvent.press(view.getByLabelText("Other projects, 92"));
-  const expandedItems = view.UNSAFE_getByType(LegendList).props.data;
+  const expandedItems = view.UNSAFE_getByType(AppList).props.data;
   expect(expandedItems.filter((item: { kind: string }) => item.kind === "project")).toHaveLength(
     100,
   );
@@ -300,7 +294,7 @@ it("virtualizes each project independently instead of mounting an expanded secti
   fireEvent.press(view.getByLabelText("Other projects, 92"));
   expect(
     view
-      .UNSAFE_getByType(LegendList)
+      .UNSAFE_getByType(AppList)
       .props.data.filter((item: { kind: string }) => item.kind === "project"),
   ).toHaveLength(8);
 });
@@ -369,7 +363,7 @@ it("prevents another project mutation until the current pin request settles", as
   fireEvent.press(view.getByLabelText("Actions for Repo, /repo"));
   fireEvent.press(view.getByLabelText("Actions for Repo, /repo: Pin project"));
   expect(view.getByLabelText("Actions for Repo, /repo")).toBeDisabled();
-  expect(view.queryByText("ellipsis-horizontal")).toBeNull();
+  expect(view.queryByText("ellipsis-vertical")).toBeNull();
   expect(view.getByLabelText("Add project")).toBeDisabled();
   fireEvent.press(view.getByLabelText("Actions for Repo, /repo: Pin project"));
   expect(toggle).toHaveBeenCalledTimes(1);
@@ -378,7 +372,7 @@ it("prevents another project mutation until the current pin request settles", as
     await promise;
   });
   expect(view.getByLabelText("Actions for Repo, /repo")).toBeEnabled();
-  expect(view.getByText("ellipsis-horizontal")).toBeVisible();
+  expect(view.getByText("ellipsis-vertical")).toBeVisible();
 });
 
 it("browses the chosen server without changing the active conversation project", () => {

@@ -1,7 +1,7 @@
 //! The owner's handle on a session actor: commands with their answers, and
 //! the latest published state and status.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use agent_core::{
     model::{AgentTurn, NativeRequestId, RuntimeResponse, ThreadSettings, TurnId, TurnStartResult},
@@ -15,6 +15,7 @@ use super::{
     turn::{SteerMessage, TurnRequest},
 };
 use crate::{background_tasks::LiveTaskState, state::thread_state::ThreadState};
+use agent_core::model::BackgroundCommandState;
 
 /// Whether a turn runs and whether a query is open.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -69,6 +70,9 @@ pub(super) enum Command {
     BackgroundTask {
         task_id: String,
         reply: oneshot::Sender<Option<LiveTaskState>>,
+    },
+    BackgroundCommands {
+        reply: oneshot::Sender<Option<HashMap<String, BackgroundCommandState>>>,
     },
     Dispose {
         reply: oneshot::Sender<()>,
@@ -233,6 +237,19 @@ impl SessionHandle {
         task_id: String,
     ) -> Result<Option<LiveTaskState>, SessionGone> {
         self.ask(|reply| Command::BackgroundTask { task_id, reply })
+            .await
+    }
+
+    /// The state of every background command the open query launched, by
+    /// task id; `None` without an open query.
+    ///
+    /// # Errors
+    ///
+    /// The session ended.
+    pub async fn background_commands(
+        &self,
+    ) -> Result<Option<HashMap<String, BackgroundCommandState>>, SessionGone> {
+        self.ask(|reply| Command::BackgroundCommands { reply })
             .await
     }
 

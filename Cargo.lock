@@ -61,6 +61,7 @@ dependencies = [
  "notify",
  "rand 0.9.5",
  "redb",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
@@ -869,6 +870,7 @@ dependencies = [
  "codewide-relay",
  "companion-core",
  "flate2",
+ "forge-protocol",
  "fs2",
  "futures-util",
  "hex",
@@ -897,6 +899,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.20",
+ "tikv-jemallocator",
  "time",
  "tokio",
  "tokio-rustls",
@@ -908,6 +911,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "vcs-git",
  "walkdir",
  "webp",
  "x509-parser",
@@ -1029,8 +1033,8 @@ dependencies = [
  "codewide-host-update",
  "codewide-relay",
  "companion-host",
- "dotenvy",
  "flate2",
+ "forge-protocol",
  "fs2",
  "futures-util",
  "hex",
@@ -1437,12 +1441,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenvy"
-version = "0.15.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
-
-[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1693,6 +1691,49 @@ name = "foreign-types-shared"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
+
+[[package]]
+name = "forge-fixture"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "companion-core",
+ "forge-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "forge-github"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "forge-protocol",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "time",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "forge-protocol"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
 
 [[package]]
 name = "form_urlencoded"
@@ -4273,6 +4314,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "tikv-jemalloc-sys"
+version = "0.7.1+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a2825c78386b4ae0314074867860ba9577875de945f05992c38815cbec327f0"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "249f09e49ab1609436f34c776e84231bead18d6a955f119f939bdc1d847561bd"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
 name = "time"
 version = "0.3.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4869,6 +4930,17 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "vcs-git"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "companion-host",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
 
 [[package]]
 name = "version_check"

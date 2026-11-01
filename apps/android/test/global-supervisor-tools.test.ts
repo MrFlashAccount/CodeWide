@@ -913,6 +913,33 @@ describe("GlobalSupervisorToolCapabilities", () => {
     expect(rpcAfterAttach).toHaveBeenCalledTimes(1);
   });
 
+  it("continues a read from a cursor issued before the codewide_ tool rename", async () => {
+    const rpcAfterAttach = vi.fn(async () => historyPage([historyEntry("message-2", "second")]));
+    const lower = capabilities({ rpcAfterAttach });
+    // The exact format earlier builds returned to the model and its history retained.
+    const issued = JSON.stringify({
+      itemOffset: 0,
+      kind: "readChat",
+      remoteCursor: "next-turn",
+      target: { connectionId: TARGET.connectionId, threadId: TARGET.threadId },
+      version: 1,
+    });
+
+    const page = await lower.value.readChat({
+      cursor: issued,
+      limit: 1,
+      maxBytes: 262_144,
+      target: TARGET,
+    });
+
+    expect(page.items.map((item) => item.text)).toEqual(["second"]);
+    expect(rpcAfterAttach).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      expect.objectContaining({ cursor: "next-turn" }),
+    );
+  });
+
   it("rejects a catalog continuation after enabled connection order changes", async () => {
     let connections: StoredConnection[] = [connection("server-a"), connection("server-b")];
     const rpcAfterAttach = vi.fn(async () => ({ data: [], nextCursor: null }));

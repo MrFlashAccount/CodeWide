@@ -21,9 +21,8 @@ use crate::{
             gateway::{ClientWireGateway, RpcFailure},
             history::{self as provider_history, Anchor},
         },
-        fork::{ForkRequest, ForkService},
+        fork::ForkRequest,
         model::{Capability, ProviderId},
-        orchestration::OrchestrationService,
         provider::{
             HistoryPageError, NativeThreadResources, NativeThreadStore, ProviderError,
             ProviderEvent, ProviderStatus,
@@ -55,28 +54,27 @@ use crate::{
     workspaces::WorkspaceService,
 };
 
+mod agent_composition;
+mod forge_rpc;
 pub mod interest;
 mod list_rows;
-mod outbox;
-mod outbox_state;
 mod provider_rpc;
 mod queue;
 mod replay;
 mod search_routing;
 
+#[cfg(test)]
+use crate::turn_delivery::turn_with_client_message;
+use crate::turn_delivery::{ClaimResolution, retry_delay_ms, rpc_error_message};
+use crate::turn_delivery::{PumpContext, reconcile_direct_turn_start, run_outbox_pump};
+use agent_composition::{AgentComposition, AgentObservers};
+pub use forge_rpc::ForgeHostConfig;
 use interest::{
     INTEREST_CLOSE_CODE, INTEREST_FIELD, SharedInterest, apply_interest_frame, lock_interest,
 };
 use list_rows::RowFeed;
-use outbox::{PumpContext, reconcile_direct_turn_start, run_outbox_pump};
-#[cfg(test)]
-use outbox_state::turn_with_client_message;
-use outbox_state::{
-    OwnedClaimResolution, emit_queue_changed, resolve_outbox_claim, retry_delay_ms,
-    rpc_error_message,
-};
 use provider_rpc::{RpcResultObservers, forward_rpc_response};
-use queue::{queue_changed_thread_id, queue_command, queue_rpc};
+use queue::{queue_command, queue_rpc};
 use replay::{ReplayDeliveryError, ReplayProjector, deliver_replay_page};
 
 /// `companion/thread/sync` of a thread that does not exist (deleted, or never
@@ -112,6 +110,7 @@ pub struct SyncHub {
     recent_turn_starts: Arc<tokio::sync::Mutex<RecentTurnStarts>>,
     mutation_mode: MutationMode,
     outbox_wakeup: Arc<tokio::sync::Notify>,
+    turn_delivery: crate::turn_delivery::TurnDelivery,
     content_projector: Arc<std::sync::RwLock<Option<Arc<ContentProjector>>>>,
     dictation: Arc<std::sync::RwLock<Option<Arc<DictationService>>>>,
     files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
@@ -119,24 +118,6 @@ pub struct SyncHub {
     workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
     agents: AgentObservers,
     list_feed: RowFeed,
-}
-
-/// The agent-layer services that observe every provider's client-wire
-/// events: orchestration tools (active mutation mode only) and
-/// cross-provider forks.
-#[derive(Clone)]
-struct AgentObservers {
-    orchestration: Option<Arc<OrchestrationService>>,
-    fork: Arc<ForkService>,
-}
-
-impl AgentObservers {
-    fn observe_event(&self, payload: &Value) {
-        if let Some(orchestration) = &self.orchestration {
-            orchestration.observe_event(payload);
-        }
-        self.fork.observe_event(payload);
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -465,6 +446,26 @@ impl SyncHub {
         self.port_inventory = Some(inventory);
         self
     }
+
+    /// Applies the host-owned rollout switch for new durable delegation.
+    /// Existing task wait/cancel and all direct agent controls remain enabled.
+    #[must_use]
+    pub fn with_delegate_task_enabled(self, enabled: bool) -> Self {
+        if let Some(orchestration) = &self.agents.orchestration {
+            orchestration.set_delegate_task_enabled(enabled);
+        }
+        self
+    }
+
+    /// Applies the host-owned limit on agent nesting (`maxAgentDepth`) to new
+    /// `codewide_spawn_agent` and `codewide_delegate_task` admission.
+    #[must_use]
+    pub fn with_max_agent_depth(self, depth: usize) -> Self {
+        if let Some(orchestration) = &self.agents.orchestration {
+            orchestration.set_max_agent_depth(depth);
+        }
+        self
+    }
     /// Creates a companion over a provider registry. `mutations` enables
     /// authenticated RPC execution and durable command delivery; without it
     /// the hub is a passive event/replay shadow that never executes RPC.
@@ -492,7 +493,9 @@ impl SyncHub {
         let usage_pricing = registry.usage_pricing();
         let gateway = Arc::new(ClientWireGateway::new(registry, bindings.clone()));
         let registry = gateway.registry().clone();
-        let thread_view = ThreadViewService::new(gateway.clone());
+        let permission_profiles =
+            Arc::new(crate::agent::permission_profiles::ProfileObservations::default());
+        let thread_view = ThreadViewService::new(gateway.clone(), permission_profiles.clone());
         // The durable replay journal owns payload bytes. The live channel is
         // only a wake-up edge; tokio broadcast retains its full ring even
         // after every receiver has consumed an entry, so putting JSON Values
@@ -504,6 +507,11 @@ impl SyncHub {
         let live_channels = Arc::new(LiveChannelRegistry::default());
         let recent_turn_starts = Arc::new(tokio::sync::Mutex::new(RecentTurnStarts::default()));
         let outbox_wakeup = Arc::new(tokio::sync::Notify::new());
+        let turn_delivery = crate::turn_delivery::TurnDelivery::new(
+            store.clone(),
+            outbox_wakeup.clone(),
+            local_events.clone(),
+        );
         let content_projector = Arc::new(std::sync::RwLock::new(None));
         let dictation = Arc::new(std::sync::RwLock::new(None));
         let files = Arc::new(std::sync::RwLock::new(None));
@@ -512,32 +520,19 @@ impl SyncHub {
         let usage_projector = Arc::new(std::sync::Mutex::new(
             crate::usage::LiveUsageProjector::new(store.clone(), usage_pricing),
         ));
-        let permission_profiles =
-            Arc::new(crate::agent::permission_profiles::ProfileObservations::default());
         // A passive shadow never executes requests, so it declares no tools
         // and answers no tool call.
-        let orchestration = (mutation_mode == MutationMode::Active).then(|| {
-            let service = OrchestrationService::new(
-                gateway.clone(),
-                store.clone(),
-                local_events.clone(),
-                permission_profiles.clone(),
-            );
-            for provider in registry.enabled() {
-                let host: Arc<dyn agent_core::provider::ClientToolHost> = service.clone();
-                provider.install_client_tools(Arc::downgrade(&host));
-            }
-            service
-        });
-        let agents = AgentObservers {
-            orchestration,
-            fork: ForkService::new(
-                gateway.clone(),
-                store.clone(),
-                local_events.clone(),
-                permission_profiles,
-            ),
-        };
+        let agents = AgentComposition {
+            active: mutation_mode == MutationMode::Active,
+            registry: &registry,
+            gateway: &gateway,
+            store: &store,
+            local_events: &local_events,
+            permission_profiles,
+            turn_delivery: turn_delivery.clone(),
+            workspaces: workspaces.clone(),
+        }
+        .compose();
         // One ordered forwarder per provider; each keeps its own fence order.
         for provider in registry.enabled() {
             tokio::spawn(forward_provider_events(
@@ -622,9 +617,8 @@ impl SyncHub {
             tokio::spawn(run_outbox_pump(
                 PumpContext {
                     gateway: gateway.clone(),
-                    store: store.clone(),
+                    turn_delivery: turn_delivery.clone(),
                     thread_view: thread_view.clone(),
-                    local_events: local_events.clone(),
                     files: files.clone(),
                     workspaces: workspaces.clone(),
                     fork: agents.fork.clone(),
@@ -646,6 +640,7 @@ impl SyncHub {
             recent_turn_starts,
             mutation_mode,
             outbox_wakeup,
+            turn_delivery,
             content_projector,
             dictation,
             files,
@@ -731,6 +726,9 @@ impl SyncHub {
         match self.workspaces.write() {
             Ok(mut slot) => *slot = Some(workspaces),
             Err(poisoned) => *poisoned.into_inner() = Some(workspaces),
+        }
+        if let Some(orchestration) = &self.agents.orchestration {
+            orchestration.start_recovery();
         }
         self
     }
@@ -1441,6 +1439,12 @@ impl SyncHub {
             // Only threads whose provider declares `history.threadResources`
             // reach a resource store.
             resources.prewarm(thread_id);
+        }
+        if self
+            .try_handle_forge_rpc(socket, &id, &method, &params)
+            .await?
+        {
+            return Ok(());
         }
         if self
             .try_handle_local_service_rpc(socket, &id, &method, &params, authorization)
@@ -2288,27 +2292,22 @@ impl SyncHub {
         {
             return send_rpc_error(socket, id, -32010, &error.to_string()).await;
         }
-        let changed_thread_id = queue_changed_thread_id(&self.store, method, params);
-        let store = self.store.clone();
-        let params = params.clone();
-        let method = method.to_owned();
-        let result = tokio::task::spawn_blocking(move || queue_rpc(&store, &method, &params)).await;
+        let result = queue_rpc(&self.turn_delivery, method, params).await;
         match result {
-            Ok(Ok(result)) => {
+            Ok(result) => {
                 send_json(
                     socket,
-                    &json!({"type": "rpc", "response": {"id": id, "result": result}}),
+                    &json!({"type": "rpc", "response": {"id": id, "result": result.value}}),
                 )
                 .await
                 .map_err(|_| ())?;
-                if let Some(thread_id) = changed_thread_id {
-                    emit_queue_changed(&self.store, &self.local_events, &thread_id).await;
+                if let Some(thread_id) = result.changed_thread_id {
+                    self.turn_delivery.emit_changed(&thread_id).await;
                 }
-                self.outbox_wakeup.notify_one();
+                self.turn_delivery.wake();
                 Ok(())
             }
-            Ok(Err(error)) => send_rpc_error(socket, id, -32010, &error.to_string()).await,
-            Err(error) => send_rpc_error(socket, id, -32020, &error.to_string()).await,
+            Err(error) => send_rpc_error(socket, id, -32010, &error.to_string()).await,
         }
     }
 
@@ -2324,14 +2323,20 @@ impl SyncHub {
         let Some(expected_turn_id) = params.get("expectedTurnId").and_then(Value::as_str) else {
             return send_rpc_error(socket, id, -32602, "expectedTurnId is required").await;
         };
-        let command = match self.store.outbox_list(None).and_then(|commands| {
-            commands
-                .into_iter()
-                .find(|command| command.command_id == command_id)
-                .ok_or_else(|| {
-                    crate::store::StoreError::CorruptedIndex("queued command not found".into())
-                })
-        }) {
+        // A hidden child-result notice is not a client command: it is never
+        // steered into a running turn.
+        let command = match self
+            .turn_delivery
+            .client_list(None)
+            .await
+            .and_then(|commands| {
+                commands
+                    .into_iter()
+                    .find(|command| command.command_id == command_id)
+                    .ok_or_else(|| {
+                        crate::store::StoreError::CorruptedIndex("queued command not found".into())
+                    })
+            }) {
             Ok(command) if command.state == OutboxState::Queued => command,
             Ok(_) => {
                 return send_rpc_error(
@@ -2352,15 +2357,13 @@ impl SyncHub {
                 Err(error) => return send_rpc_error(socket, id, -32602, &error.to_string()).await,
             };
         let operation_id = legacy_steer_operation_id(&id, &command.command_id, expected_turn_id);
-        let claim_store = Arc::clone(&self.store);
-        let claim_command_id = command.command_id.clone();
-        let claim = tokio::task::spawn_blocking(move || {
-            claim_store.outbox_claim_steer(&claim_command_id, &operation_id)
-        })
-        .await;
-        let (claimed, claim_token) = match claim {
-            Ok(Ok(OutboxClaimOutcome::Acquired { command, token })) => (command, token),
-            Ok(Ok(OutboxClaimOutcome::Duplicate(_) | OutboxClaimOutcome::Unavailable(_))) => {
+        let (claimed, claim_token) = match self
+            .turn_delivery
+            .claim_steer(&command.command_id, &operation_id)
+            .await
+        {
+            Ok(OutboxClaimOutcome::Acquired { command, token }) => (command, token),
+            Ok(OutboxClaimOutcome::Duplicate(_) | OutboxClaimOutcome::Unavailable(_)) => {
                 return send_rpc_error(
                     socket,
                     id,
@@ -2369,12 +2372,10 @@ impl SyncHub {
                 )
                 .await;
             }
-            Ok(Err(error)) => {
+            Err(error) => {
                 return send_rpc_error(socket, id, -32010, &error.to_string()).await;
             }
-            Err(error) => return send_rpc_error(socket, id, -32020, &error.to_string()).await,
         };
-        emit_queue_changed(&self.store, &self.local_events, &claimed.remote_thread_id).await;
         if claimed.params != command.params {
             prepared = match prepare_remote_file_inputs(
                 "turn/steer",
@@ -2385,15 +2386,14 @@ impl SyncHub {
             {
                 Ok(prepared) => prepared,
                 Err(error) => {
-                    resolve_outbox_claim(
-                        &self.store,
-                        &self.local_events,
-                        &claimed.remote_thread_id,
-                        &claimed.command_id,
-                        claim_token,
-                        OwnedClaimResolution::Rejected(error.to_string()),
-                    )
-                    .await;
+                    self.turn_delivery
+                        .resolve_claim(
+                            &claimed.remote_thread_id,
+                            &claimed.command_id,
+                            claim_token,
+                            ClaimResolution::Rejected(error.to_string()),
+                        )
+                        .await;
                     return send_rpc_error(socket, id, -32602, &error.to_string()).await;
                 }
             };
@@ -2426,35 +2426,33 @@ impl SyncHub {
         let response = match provider_rpc::send_steer(&self.gateway, request).await {
             Ok(response) => response,
             Err(error) => {
-                resolve_outbox_claim(
-                    &self.store,
-                    &self.local_events,
-                    &claimed.remote_thread_id,
-                    &claimed.command_id,
-                    claim_token,
-                    OwnedClaimResolution::Indeterminate {
-                        error: error.to_string(),
-                        retry_after_ms: retry_delay_ms(claimed.attempts),
-                    },
-                )
-                .await;
+                self.turn_delivery
+                    .resolve_claim(
+                        &claimed.remote_thread_id,
+                        &claimed.command_id,
+                        claim_token,
+                        ClaimResolution::Indeterminate {
+                            error: error.to_string(),
+                            retry_after_ms: retry_delay_ms(claimed.attempts),
+                        },
+                    )
+                    .await;
                 return Err(error);
             }
         };
         let resolution = response
             .get("error")
-            .map_or(OwnedClaimResolution::Delivered, |_| {
-                OwnedClaimResolution::Rejected(rpc_error_message(&response))
+            .map_or(ClaimResolution::Delivered(None), |_| {
+                ClaimResolution::Rejected(rpc_error_message(&response))
             });
-        resolve_outbox_claim(
-            &self.store,
-            &self.local_events,
-            &claimed.remote_thread_id,
-            &claimed.command_id,
-            claim_token,
-            resolution,
-        )
-        .await;
+        self.turn_delivery
+            .resolve_claim(
+                &claimed.remote_thread_id,
+                &claimed.command_id,
+                claim_token,
+                resolution,
+            )
+            .await;
         Ok(response)
     }
 }
@@ -2560,7 +2558,7 @@ async fn forward_provider_events(
                     if payload.get("method").and_then(Value::as_str) == Some("turn/completed") {
                         outbox_wakeup.notify_one();
                     }
-                    agents.observe_event(&payload);
+                    agents.observe_event(&provider_id, &payload);
                     let input = IngestInput::ProviderPayload {
                         payload,
                         resources: resources.clone(),
@@ -3278,7 +3276,7 @@ fn agent_stream_key(payload: &Value) -> Option<AgentStreamKey> {
 // Scheduling and diagnostic hints only: unknown methods are forwarded too,
 // but conservatively share the ordered lane when they target a thread.
 fn rpc_is_known_read(method: &str) -> bool {
-    matches!(
+    let known = matches!(
         method,
         "account/rateLimits/read"
             | "companion/agentProviders/read"
@@ -3321,7 +3319,8 @@ fn rpc_is_known_read(method: &str) -> bool {
             | "thread/searchOccurrences"
             | "thread/turns/list"
             | "threadSection/list"
-    )
+    );
+    known || crate::forge::ForgeService::is_known_read(method)
 }
 
 fn rpc_requires_ordered_lane(method: &str) -> bool {
@@ -3774,11 +3773,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn queue_list_keeps_delivered_explicit_queue_handoff_receipts()
+    #[tokio::test]
+    async fn queue_list_keeps_delivered_explicit_queue_handoff_receipts()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
-        let store = IndexStore::open(directory.path().join("index.redb"))?;
+        let store = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
         let params = |command_id: &str| {
             json!({
                 "threadId": "thread",
@@ -3803,14 +3802,21 @@ mod tests {
         )?;
         store.outbox_set_state("direct-receipt", OutboxState::Delivered, None)?;
 
+        let (events, _events_rx) = tokio::sync::mpsc::channel(1);
+        let delivery = crate::turn_delivery::TurnDelivery::new(
+            store,
+            Arc::new(tokio::sync::Notify::new()),
+            events,
+        );
         let listed = queue_rpc(
-            &store,
+            &delivery,
             "companion/queue/list",
             &json!({"threadId": "thread"}),
-        )?;
-        assert_eq!(listed["data"].as_array().map(Vec::len), Some(2));
-        assert_eq!(listed["data"][0]["commandId"], "queued-receipt");
-        assert_eq!(listed["data"][1]["commandId"], "direct-receipt");
+        )
+        .await?;
+        assert_eq!(listed.value["data"].as_array().map(Vec::len), Some(2));
+        assert_eq!(listed.value["data"][0]["commandId"], "queued-receipt");
+        assert_eq!(listed.value["data"][1]["commandId"], "direct-receipt");
         Ok(())
     }
 

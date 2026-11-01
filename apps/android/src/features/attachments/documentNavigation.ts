@@ -6,7 +6,7 @@ import {
 } from "../../rendering/DocumentPreviewHost";
 
 import type { GetTransferAccess } from "../../data/private-transfer";
-import { isAttachmentVideo } from "../../rendering/AttachmentVideoPreview";
+import { isAttachmentVideo } from "../../rendering/videoPreview";
 import { resolvePreviewableDocumentLink } from "../../rendering/document-preview";
 import { parseLoopbackLink, type LoopbackLinkTarget } from "../../rendering/loopback-link";
 import { useAppDialog } from "../../ui/AppDialog";

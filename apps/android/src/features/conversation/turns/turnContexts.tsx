@@ -2,7 +2,24 @@
 import type { ActivityMetrics, TurnUsageProjection } from "@codewide/sync-client";
 import { createContext } from "react";
 
-export const ForceExpandCardsContext = createContext(false);
+/**
+ * Where a tool card draws. In a bubble it is the one-line row of the step, never
+ * its body: a tool's output belongs to the activity sheet or its semantic
+ * viewer, so the row opens one of them. Activity rows never disclose inline;
+ * a row without a semantic destination stays informational.
+ */
+export type ToolCardPlacement =
+  | { readonly kind: "bubble"; readonly openActivity: (() => void) | null }
+  | {
+      readonly description: string;
+      readonly kind: "sheet";
+      readonly openDetail: () => void;
+    }
+  | { readonly kind: "sheetDetail" };
+
+const BUBBLE_ROW: ToolCardPlacement = { kind: "bubble", openActivity: null };
+
+export const ToolCardPlacementContext = createContext<ToolCardPlacement>(BUBBLE_ROW);
 
 export const ActiveToolCallContext = createContext(false);
 

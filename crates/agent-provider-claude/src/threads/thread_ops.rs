@@ -229,6 +229,34 @@ impl ThreadService {
     /// # Errors
     /// `-32602` for an invalid cursor.
     pub async fn list(&self, params: ThreadListParams) -> Result<ThreadListResult, ProviderError> {
+        crate::catalog::list(self.list_rows().await?, &params).map_err(ProviderError::Rejected)
+    }
+
+    /// Every currently listed thread with its authoritative lifecycle status.
+    ///
+    /// This is published once when the provider event stream starts. A client
+    /// can otherwise retain a pre-restart `active` status forever: catalog
+    /// pages intentionally cannot overwrite live lifecycle state, while the
+    /// restarted provider has no transition edge to replay for an already
+    /// stopped process.
+    ///
+    /// # Errors
+    /// When Claude's process registry or session catalog cannot be read.
+    pub async fn status_snapshot(&self) -> Result<Vec<AgentThread>, ProviderError> {
+        if !self.inner.open_elsewhere.refresh_confirmed().await {
+            return Err(ProviderError::Disconnected(
+                "Claude running-session authority is unavailable".into(),
+            ));
+        }
+        Ok(self
+            .list_rows()
+            .await?
+            .into_iter()
+            .map(|row| row.thread)
+            .collect())
+    }
+
+    async fn list_rows(&self) -> Result<Vec<crate::catalog::ListRow>, ProviderError> {
         let inner = &self.inner;
         let snapshot = inner.catalog.snapshot().await?;
         let mut rows = Vec::new();
@@ -273,11 +301,12 @@ impl ThreadService {
                 }));
             }
         }
-        crate::catalog::list(rows, &params).map_err(ProviderError::Rejected)
+        Ok(rows)
     }
 
-    /// `thread.turns`: the stored history with the in-flight turn, paged;
-    /// `fenced` adds the stream position after every event before the read.
+    /// `thread.turns`: the stored history with the in-flight turn and what
+    /// the live session knows of its background commands, paged; `fenced`
+    /// adds the stream position after every event before the read.
     ///
     /// # Errors
     /// `-32600` for an unknown thread, `-32602` for an invalid cursor.
@@ -301,10 +330,10 @@ impl ThreadService {
                     .map_err(|err| session_gone(&err))?;
                 let source = HistorySource::Thread(Arc::clone(&state));
                 let stored = stored_turns(inner.projects_root.clone(), source).await?;
-                (
-                    crate::native::with_active_turn(stored, active, &state.turns),
-                    fence,
-                )
+                let mut turns = crate::native::with_active_turn(stored, active, &state.turns);
+                self.overlay_live_background_commands(&params.app_thread_id, &mut turns)
+                    .await?;
+                (turns, fence)
             }
             Listed::Discovered(session) => {
                 let source = HistorySource::Session {

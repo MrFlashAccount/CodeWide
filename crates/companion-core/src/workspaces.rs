@@ -97,7 +97,7 @@ impl WorkspaceService {
                 let workspace = required_absolute_path(params, "workspace")?;
                 let request_id = required_request_id(params)?;
                 let operation = self
-                    .start_or_observe(workspace, request_id.to_owned())
+                    .create_or_observe(workspace, request_id.to_owned())
                     .await?;
                 if operation.phase == WorkspacePhase::Failed {
                     return Err(WorkspaceError::OperationFailed(
@@ -158,7 +158,13 @@ impl WorkspaceService {
         Ok(Some(operation))
     }
 
-    async fn start_or_observe(
+    /// Starts an idempotent workspace creation by host-issued claim id, or
+    /// observes the durable result of the same claim. Internal callers use
+    /// this instead of reconstructing the public RPC.
+    ///
+    /// # Errors
+    /// Returns validation, durable checkpoint or VCS-provider failures.
+    pub(crate) async fn create_or_observe(
         &self,
         workspace: PathBuf,
         request_id: String,
@@ -396,6 +402,106 @@ fn unix_time_ms() -> u64 {
         })
 }
 
+/// Workspace admission for threads the companion creates on a client's
+/// behalf (`companion/review/guide/request`, and the canonical review chat
+/// that `companion/pullRequest/chat/ensure` or
+/// `companion/pullRequest/scenario/start` creates).
+///
+/// A workspace is admitted only when its canonical path exactly equals a
+/// project root or the `cwd` of a thread in the companion thread index. No
+/// workspace (`null`) means the companion home and is always admitted.
+/// Anything else is rejected and no thread is created.
+pub struct WorkspaceAdmission {
+    projects: Arc<crate::projects::ProjectService>,
+    store: Arc<crate::store::IndexStore>,
+    home: PathBuf,
+}
+
+impl WorkspaceAdmission {
+    #[must_use]
+    pub fn new(
+        projects: Arc<crate::projects::ProjectService>,
+        store: Arc<crate::store::IndexStore>,
+        home: PathBuf,
+    ) -> Self {
+        Self {
+            projects,
+            store,
+            home,
+        }
+    }
+
+    /// The admitted working directory for `workspace`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a reason when the workspace is neither a project root nor a
+    /// known thread cwd.
+    pub async fn admit(&self, workspace: Option<&str>) -> Result<String, String> {
+        let Some(workspace) = workspace else {
+            return Ok(self.home.display().to_string());
+        };
+        let rejected = || "the workspace is not a project or a known thread directory".to_owned();
+        let requested = std::path::Path::new(workspace);
+        if !requested.is_absolute() {
+            return Err(rejected());
+        }
+        let canonical = tokio::fs::canonicalize(requested)
+            .await
+            .map_err(|_| rejected())?;
+        for root in self.projects.project_roots().await {
+            if tokio::fs::canonicalize(&root).await.ok().as_deref() == Some(canonical.as_path()) {
+                return Ok(canonical.display().to_string());
+            }
+        }
+        let store = self.store.clone();
+        let candidates = [workspace.to_owned(), canonical.display().to_string()];
+        let known = tokio::task::spawn_blocking(move || {
+            candidates
+                .iter()
+                .any(|candidate| store.has_thread_cwd(candidate).unwrap_or(false))
+        })
+        .await
+        .unwrap_or(false);
+        if known {
+            Ok(canonical.display().to_string())
+        } else {
+            Err(rejected())
+        }
+    }
+
+    /// Every project root, most recently used first; each is admitted.
+    pub async fn project_roots(&self) -> Vec<String> {
+        self.projects.project_roots().await
+    }
+
+    /// Up to `limit` distinct indexed thread working directories, most
+    /// recently updated first; each is admitted by definition. An unreadable
+    /// index yields none.
+    pub async fn recent_thread_cwds(&self, limit: usize) -> Vec<String> {
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            store.recent_thread_cwds(limit).unwrap_or_else(|error| {
+                tracing::warn!(err = %error, "thread working directories are unreadable");
+                Vec::new()
+            })
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    /// The indexed working directory of a thread; admitted by definition.
+    #[must_use]
+    pub fn thread_cwd(&self, thread_id: &str) -> Option<String> {
+        self.store
+            .thread_metadata(thread_id)
+            .ok()
+            .flatten()
+            .map(|metadata| metadata.cwd)
+            .filter(|cwd| !cwd.is_empty())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,7 +537,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let service = WorkspaceService::new(
-            Arc::new(VcsService::new(directory.path().join("plugins.json"))),
+            Arc::new(VcsService::new(directory.path().join("plugins.json"), None)),
             directory.path().join("workspaces"),
         );
         let workspace = WorkspaceCreateResult {
@@ -452,7 +558,7 @@ mod tests {
             .await?;
 
         let operation = service
-            .start_or_observe(PathBuf::from("/source"), "request-1".into())
+            .create_or_observe(PathBuf::from("/source"), "request-1".into())
             .await?;
         assert_eq!(operation.phase, WorkspacePhase::Ready);
         assert!(service.operations.lock().await.is_empty());
@@ -464,7 +570,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let service = WorkspaceService::new(
-            Arc::new(VcsService::new(directory.path().join("plugins.json"))),
+            Arc::new(VcsService::new(directory.path().join("plugins.json"), None)),
             directory.path().join("workspaces"),
         );
         service

@@ -138,25 +138,29 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
             threadId: scope.activeRemoteThreadId,
           }
         : null;
+  const draftAdmission = props.destination.kind === "draft" ? props.destination.admission : null;
   const conversationActions = createConversationScopeBindings(
     props.features,
     props.destination.kind === "draft"
       ? {
           draft: props.destination.draft,
           kind: "draft",
-          onSend: createNewChatSubmission({
-            catalogModels: () =>
-              props.runtime.resources?.turnControls.get(activeControlsResourceId ?? "")?.value
-                ?.models ?? [],
-            closeDraft: props.onDraftAdmitted,
-            commands: {
-              sendText: props.features.composer.sendText,
-              startThread: props.features.projects.startThread,
-              startThreadInWorkspace: props.features.projects.startThreadInWorkspace,
-            },
-            draftChat: props.destination.draft,
-            setActiveThreadId: props.destination.openAdmittedThread,
-          }),
+          onSend:
+            props.destination.admission.kind === "hosted"
+              ? (props.destination.admission.send ?? undefined)
+              : createNewChatSubmission({
+                  catalogModels: () =>
+                    props.runtime.resources?.turnControls.get(activeControlsResourceId ?? "")?.value
+                      ?.models ?? [],
+                  closeDraft: props.onDraftAdmitted,
+                  commands: {
+                    sendText: props.features.composer.sendText,
+                    startThread: props.features.projects.startThread,
+                    startThreadInWorkspace: props.features.projects.startThreadInWorkspace,
+                  },
+                  draftChat: props.destination.draft,
+                  setActiveThreadId: props.destination.admission.openAdmittedThread,
+                }),
         }
       : scope.activeRemoteThreadId === null
         ? { kind: "empty" }
@@ -192,6 +196,7 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
     conversationActions,
     desktop: props.desktop,
     destination: props.destination,
+    draftAdmission,
     features: props.features,
     fileTransferController: props.fileTransferController,
     forkCurrentThread,
@@ -201,23 +206,28 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
     newChatPicker:
       scope.newChatDraft === null
         ? null
-        : {
-            connections: props.connections,
-            current: { connectionId: scope.newChatDraft.connectionId, cwd: scope.newChatDraft.cwd },
-            initialConnectionId: scope.newChatDraft.connectionId,
-            native: props.native,
-            onSelect: async (destination) => {
-              if (scope.newChatDraft !== null) {
-                await changeNewChatDestination({
-                  composer: props.features.composer,
-                  destination,
-                  draft: scope.newChatDraft,
-                });
-              }
+        : draftAdmission?.kind === "hosted"
+          ? draftAdmission.picker
+          : {
+              connections: props.connections,
+              current: {
+                connectionId: scope.newChatDraft.connectionId,
+                cwd: scope.newChatDraft.cwd,
+              },
+              initialConnectionId: scope.newChatDraft.connectionId,
+              native: props.native,
+              onSelect: async (destination) => {
+                if (scope.newChatDraft !== null) {
+                  await changeNewChatDestination({
+                    composer: props.features.composer,
+                    destination,
+                    draft: scope.newChatDraft,
+                  });
+                }
+              },
+              remote: props.features.projects,
+              servers: props.servers,
             },
-            remote: props.features.projects,
-            servers: props.servers,
-          },
     onChangeDraftWorkspaceMode: props.onChangeDraftWorkspaceMode,
     onFixUnsupportedBlock: props.onFixUnsupportedBlock,
     onManageProjects: props.onManageProjects,

@@ -1,0 +1,222 @@
+//! Admission planning and deterministic delegation identities.
+//!
+//! This module owns the pure host-policy plan assembled before durable task
+//! admission. Runtime child creation and recovery remain in the coordinator.
+
+use super::CallIdentity;
+use crate::agent::{
+    client_wire::gateway::default_model,
+    model::{AppThreadId, Capability, ThreadSettings},
+};
+
+use crate::agent::orchestration::{
+    Caller, OrchestrationService, ToolError,
+    admission::{self, AdmissionRejection, RejectionCode},
+    task::{PermissionEnvelope, WorkspaceClaimState, WorkspaceMode},
+    tools::{DelegateRequest, WorkspaceRequest},
+};
+
+pub(super) struct DelegatePlan {
+    pub(super) wire: crate::agent::client_wire::WireProvider,
+    pub(super) settings: ThreadSettings,
+    pub(super) workspace_mode: WorkspaceMode,
+    pub(super) claim_state: WorkspaceClaimState,
+    pub(super) permission: PermissionEnvelope,
+    pub(super) root_thread_id: AppThreadId,
+}
+
+impl OrchestrationService {
+    pub(super) async fn plan_delegate(
+        &self,
+        caller: &Caller,
+        request: &DelegateRequest,
+    ) -> Result<DelegatePlan, ToolError> {
+        let root_thread_id = self.admit_depth(&caller.thread).await?;
+        let parent = caller
+            .provider
+            .thread_read(&caller.thread)
+            .await
+            .map_err(|error| {
+                ToolError::admission(AdmissionRejection::new(
+                    RejectionCode::ProviderUnavailable,
+                    format!("cannot read the calling thread: {error}"),
+                ))
+            })?
+            .thread;
+        let target = match &request.provider {
+            Some(id) => self.gateway.registry().get(id).cloned().ok_or_else(|| {
+                ToolError::admission(AdmissionRejection::new(
+                    RejectionCode::ProviderUnavailable,
+                    format!("unknown or disabled agent provider: {id}"),
+                ))
+            })?,
+            None => caller.provider.clone(),
+        };
+        if !matches!(&request.workspace, WorkspaceRequest::AgentSpawn { .. })
+            && !target
+                .capabilities()
+                .supports(Capability::OrchestrationTools)
+        {
+            return Err(ToolError::admission(AdmissionRejection::new(
+                RejectionCode::CapabilityUnavailable,
+                "the target provider cannot install orchestration tools",
+            )));
+        }
+        let wire = self.gateway.wire(&target);
+        let same_provider = wire.descriptor.id == caller.provider.descriptor().id;
+        let model = match &request.model {
+            Some(model) => model.clone(),
+            None if same_provider && !parent.settings.model.is_empty() => {
+                parent.settings.model.clone()
+            }
+            None => default_model(&target).await.map_err(|failure| {
+                ToolError::admission(AdmissionRejection::new(
+                    RejectionCode::ProviderUnavailable,
+                    format!("no default model: {}", failure.message),
+                ))
+            })?,
+        };
+        let inherited = self
+            .inherited_permissions(caller, &parent.settings.permission_profile, request)
+            .await?;
+        let parent_profile = inherited
+            .as_ref()
+            .map(|permissions| permissions.profile.as_str());
+        let workspace = admission::workspace(
+            &request.workspace,
+            &parent.cwd,
+            parent_profile,
+            request.permission_profile.as_deref(),
+        )
+        .map_err(ToolError::admission)?;
+        if workspace.mode == WorkspaceMode::IsolatedWrite && self.workspaces().is_none() {
+            return Err(ToolError::admission(AdmissionRejection::new(
+                RejectionCode::WorkspaceUnavailable,
+                "workspace.create@1 is unavailable on this host",
+            )));
+        }
+        let translated_profile = crate::agent::permission_profiles::for_provider(
+            &target,
+            workspace.target_profile.clone(),
+        )
+        .await
+        .map_err(|message| {
+            ToolError::admission(AdmissionRejection::new(
+                RejectionCode::PermissionDenied,
+                message,
+            ))
+        })?;
+        let mut permission = admission::permission_envelope(
+            parent_profile,
+            request.permission_profile.as_deref(),
+            translated_profile.clone(),
+        );
+        permission.execution_policy = inherited.and_then(|permissions| permissions.execution);
+        Ok(DelegatePlan {
+            wire,
+            settings: ThreadSettings {
+                model,
+                effort: None,
+                permission_profile: translated_profile,
+                service_tier: None,
+            },
+            workspace_mode: workspace.mode,
+            claim_state: workspace.claim_state,
+            permission,
+            root_thread_id,
+        })
+    }
+
+    async fn inherited_permissions(
+        &self,
+        caller: &Caller,
+        fallback: &str,
+        request: &DelegateRequest,
+    ) -> Result<Option<crate::agent::permission_profiles::ObservedPermissions>, ToolError> {
+        let requested = request.permission_profile.as_deref();
+        let Some(mut permissions) = self
+            .profiles
+            .resolve(&caller.provider, &caller.thread, fallback)
+            .await
+        else {
+            return Ok(None);
+        };
+        // Only native settings report an authoritative OS sandbox. Projected
+        // settings from other adapters are UI compatibility values.
+        if !caller
+            .provider
+            .capabilities()
+            .supports(Capability::CodexNative)
+            || requested.is_some_and(|requested| requested != permissions.profile)
+        {
+            permissions.execution = None;
+        }
+        Ok(Some(permissions))
+    }
+
+    /// Checks the host nesting limit before any provider read or write and
+    /// returns the caller's root thread.
+    async fn admit_depth(&self, caller: &AppThreadId) -> Result<AppThreadId, ToolError> {
+        let (root_thread_id, caller_depth) = self.lineage(caller).await?;
+        admission::depth(
+            caller_depth,
+            self.max_agent_depth
+                .load(std::sync::atomic::Ordering::Acquire),
+        )
+        .map_err(ToolError::admission)?;
+        Ok(root_thread_id)
+    }
+
+    /// The root of `thread`'s agent tree and `thread`'s depth in it (a root
+    /// is depth 0), walked through the durable parent links.
+    async fn lineage(&self, thread: &AppThreadId) -> Result<(AppThreadId, usize), ToolError> {
+        let mut root = thread.clone();
+        let mut depth = 0_usize;
+        let mut seen = std::collections::HashSet::from([root.as_str().to_owned()]);
+        while let Some(parent) = self
+            .links
+            .parent_of(root.as_str())
+            .await
+            .map_err(|error| ToolError::message(error.to_string()))?
+        {
+            if !seen.insert(parent.clone()) {
+                break;
+            }
+            let Some(parent) = AppThreadId::parse(&parent) else {
+                break;
+            };
+            root = parent;
+            depth = depth.saturating_add(1);
+        }
+        Ok((root, depth))
+    }
+}
+
+pub(super) fn call_key(identity: &CallIdentity) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for part in [
+        identity.provider.as_str(),
+        identity.thread.as_str(),
+        identity.turn.as_str(),
+        identity.call_id.as_str(),
+        identity.tool.as_str(),
+    ] {
+        hasher.update(part.as_bytes());
+        hasher.update(&[0]);
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
+pub(super) fn request_hash(request: &DelegateRequest) -> Result<String, ToolError> {
+    let encoded = serde_json::to_vec(request)
+        .map_err(|error| ToolError::message(format!("request encoding failed: {error}")))?;
+    Ok(blake3::hash(&encoded).to_hex().to_string())
+}
+
+pub(super) fn unix_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}

@@ -55,6 +55,7 @@ export default function V1SettingsRoute(): React.JSX.Element {
       onClose={() => {
         recoverUnavailableRoute(router, "/");
       }}
+      onConsumeProviderRateLimitReset={features.accounts.consumeProviderRateLimitReset}
       onDelete={resources.connectionActions.deleteSavedConnection}
       onPreviewGlobalVoice={globalVoicePreviewRuntime.play}
       onReconnect={resources.connectionActions.reconnectSavedConnection}

@@ -2,22 +2,20 @@
 //! parent's effective profile as the client wire reports it.
 //!
 //! The built-in profiles are ordered `:read-only` < `:workspace` <
-//! `:full-access` < `:danger-full-access`. A child never gets more than its
+//! `:full-access` = `:danger-full-access`. A child never gets more than its
 //! parent. When the parent's profile is unknown (a Codex thread whose
-//! settings were not observed since the companion started), only
-//! `:read-only` is allowed: the rule fails closed.
+//! settings were not observed since the companion started), inheritance fails
+//! explicitly instead of silently lowering the child to read-only.
 
 use crate::agent::permission_profiles::READ_ONLY;
 
-const ORDER: [&str; 4] = [
-    READ_ONLY,
-    ":workspace",
-    ":full-access",
-    ":danger-full-access",
-];
-
 fn rank(profile: &str) -> Option<usize> {
-    ORDER.iter().position(|known| *known == profile)
+    match profile {
+        READ_ONLY => Some(0),
+        ":workspace" => Some(1),
+        ":full-access" | ":danger-full-access" => Some(2),
+        _ => None,
+    }
 }
 
 /// The child's profile: the request, else the parent's, never above the
@@ -27,8 +25,13 @@ fn rank(profile: &str) -> Option<usize> {
 /// Returns the message the model sees for an unknown or escalating profile.
 pub fn child_profile(parent: Option<&str>, requested: Option<&str>) -> Result<String, String> {
     let Some(requested) = requested else {
-        return Ok(parent.unwrap_or(READ_ONLY).to_owned());
+        return parent.map(str::to_owned).ok_or_else(|| {
+            "cannot inherit permissions: the parent thread's effective profile is unknown".into()
+        });
     };
+    if parent == Some(requested) {
+        return Ok(requested.to_owned());
+    }
     let Some(requested_rank) = rank(requested) else {
         return Err(format!("unknown permission profile: {requested}"));
     };
@@ -66,7 +69,10 @@ mod tests {
             Ok(":read-only".into())
         );
         assert!(child_profile(Some(":workspace"), Some(":full-access")).is_err());
-        assert!(child_profile(Some(":full-access"), Some(":danger-full-access")).is_err());
+        assert_eq!(
+            child_profile(Some(":full-access"), Some(":danger-full-access")),
+            Ok(":danger-full-access".into())
+        );
         assert_eq!(
             child_profile(Some(":danger-full-access"), Some(":full-access")),
             Ok(":full-access".into())
@@ -76,9 +82,10 @@ mod tests {
 
     #[test]
     fn an_unknown_parent_profile_fails_closed() {
-        assert_eq!(child_profile(None, None), Ok(READ_ONLY.into()));
+        assert!(child_profile(None, None).is_err());
         assert!(child_profile(None, Some(":workspace")).is_err());
         assert_eq!(child_profile(Some("team"), None), Ok("team".into()));
+        assert_eq!(child_profile(Some("team"), Some("team")), Ok("team".into()));
         assert!(child_profile(Some("team"), Some(":workspace")).is_err());
         assert_eq!(
             child_profile(Some("team"), Some(READ_ONLY)),

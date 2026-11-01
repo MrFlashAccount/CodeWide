@@ -98,8 +98,24 @@ export function OperationalMetrics({ metrics }: { metrics: OperationalMetricsSna
         <Text style={styles.counterText}>
           thread detail resident rows {integer(metrics.gauges.threadDetailResidentRows)}
         </Text>
+        <PaneMotionFrames timing={metrics.timings.pane_motion_frame_ms} />
       </View>
     </View>
+  );
+}
+
+type TimingSummary = NonNullable<OperationalMetricsSnapshot["timings"]["pane_motion_frame_ms"]>;
+
+/** UI-thread frame intervals while panes rearrange, recorded only with Data for geeks on. */
+function PaneMotionFrames({ timing }: { readonly timing: TimingSummary | undefined }) {
+  if (timing === undefined) {
+    return null;
+  }
+  return (
+    <Text style={styles.counterText}>
+      pane motion frames {integer(timing.totalCount)} / p50 {decimal(timing.p50Ms)} ms / p95{" "}
+      {decimal(timing.p95Ms)} ms / max {decimal(timing.maxMs)} ms
+    </Text>
   );
 }
 

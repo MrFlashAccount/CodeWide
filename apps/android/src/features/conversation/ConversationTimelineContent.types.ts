@@ -26,6 +26,7 @@ export type CreateConversationTimelineContentProps = {
   conversationInsets: ReturnType<typeof useSafeAreaInsets>;
   cwd: Exclude<ConversationSurfaceCapabilities["cwd"], undefined>;
   draftConnectionId: string | null;
+  draftNotice: ConversationSurfaceCapabilities["draftNotice"];
   draftThreadId: string | null;
   historyActivityModel: Exclude<MainThreadReadCapabilities["historyActivityModel"], undefined>;
   historyActivityResourceId: Exclude<

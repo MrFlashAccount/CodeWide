@@ -530,6 +530,26 @@
     {
       "respondsTo": null,
       "message": {
+        "id": 26,
+        "method": "turn.continue",
+        "params": {
+          "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e"
+        }
+      }
+    },
+    {
+      "respondsTo": "turn.continue",
+      "message": {
+        "id": 26,
+        "result": {
+          "type": "started",
+          "turnId": "0199a3c4-8000-7000-8000-000000000002"
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
         "id": 23,
         "method": "turn.steer",
         "params": {

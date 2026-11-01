@@ -20,12 +20,13 @@
 use std::collections::{HashMap, HashSet};
 
 use agent_core::model::{
-    AgentItem, AgentTurn, AppThreadId, ClientMessageId, MessagePhase, TurnId, TurnOrigin,
-    TurnStatus, UserContent,
+    AgentItem, AgentTurn, AppThreadId, ClientMessageId, MessagePhase, SubagentStatus, TurnId,
+    TurnOrigin, TurnStatus, UserContent,
 };
 
 use super::{
-    agents::{SubagentItem, SubagentRuns, is_send_message_tool, resumed_agent_id},
+    agents::{SubagentItem, SubagentRuns, is_send_message_tool, resumed_agent_id, with_status},
+    background_commands::{BackgroundCommandRuns, settle_background_commands},
     builder::{TurnBuilder, TurnBuilderContext, UserMessage},
     entries::{HistoryEntry, history_entries},
     frames::{AssistantBlock, ClaudeFrame},
@@ -235,7 +236,9 @@ impl SegmentReplay {
                     uuid: Some(uuid.clone()),
                 });
             }
-            HistoryEntry::Interrupt { .. } | HistoryEntry::Wake { .. } => {}
+            HistoryEntry::Interrupt { .. }
+            | HistoryEntry::Resume { .. }
+            | HistoryEntry::Wake { .. } => {}
         }
     }
 
@@ -326,20 +329,44 @@ fn replay_running_segment(segment: &HistorySegment, context: &HistoryContext) ->
 /// Sub-agent items carry the status of their agent's latest run at the same
 /// conversation level: the final status a later task report reported (a
 /// background agent finishes after the turn that started it), or running
-/// again while a resume is unreported.
+/// again when a resume is its newest status fact.
 fn with_subagent_runs(turns: Vec<AgentTurn>, entries: &[HistoryEntry]) -> Vec<AgentTurn> {
     let mut runs = SubagentRuns::default();
     record_runs(&mut runs, entries);
     settle_subagent_items(turns, &runs)
 }
 
+/// Background command items carry the state the stored final report of
+/// their task settles (a background task finishes after the turn that
+/// launched it), else `unknown`; see `background_commands`.
+fn with_background_command_runs(turns: Vec<AgentTurn>, entries: &[HistoryEntry]) -> Vec<AgentTurn> {
+    let mut runs = BackgroundCommandRuns::default();
+    for entry in entries {
+        if let HistoryEntry::Wake {
+            reports,
+            timestamp_ms,
+            ..
+        } = entry
+        {
+            for report in reports {
+                runs.record(report, *timestamp_ms);
+            }
+        }
+    }
+    settle_background_commands(turns, &runs)
+}
+
 fn record_runs(runs: &mut SubagentRuns, entries: &[HistoryEntry]) {
     let mut send_message_calls = HashSet::new();
     for entry in entries {
         match entry {
-            HistoryEntry::Wake { reports, .. } => {
+            HistoryEntry::Wake {
+                reports,
+                timestamp_ms,
+                ..
+            } => {
                 for report in reports {
-                    runs.record(report);
+                    runs.record(report, *timestamp_ms);
                 }
             }
             HistoryEntry::Frame {
@@ -356,13 +383,14 @@ fn record_runs(runs: &mut SubagentRuns, entries: &[HistoryEntry]) {
             }
             HistoryEntry::Frame {
                 frame: ClaudeFrame::User(user),
+                timestamp_ms,
                 ..
             } => {
                 for result in &user.tool_results {
                     if send_message_calls.contains(result.tool_use_id.as_str())
                         && let Some(agent_id) = resumed_agent_id(result, &user.tool_use_result)
                     {
-                        runs.record_resume(&result.tool_use_id, &agent_id);
+                        runs.record_resume(&result.tool_use_id, &agent_id, *timestamp_ms);
                     }
                 }
             }
@@ -380,9 +408,16 @@ fn record_runs(runs: &mut SubagentRuns, entries: &[HistoryEntry]) {
 /// that one is busy or done, to the main conversation.
 pub fn record_transcript_runs(runs: &mut SubagentRuns, rows: &[&JsonRecord]) {
     record_runs(runs, &history_entries(rows, subagent_parent(rows)));
-    for prompt in rows.iter().filter_map(|row| queued_task_notification(row)) {
+    for row in rows {
+        let Some(prompt) = queued_task_notification(row) else {
+            continue;
+        };
+        let Some(timestamp_ms) = str_of(row, "timestamp").and_then(super::entries::timestamp_ms)
+        else {
+            continue;
+        };
         for report in stored_task_reports(prompt) {
-            runs.record(&report);
+            runs.record(&report, timestamp_ms);
         }
     }
 }
@@ -417,6 +452,68 @@ pub fn settle_subagent_items(turns: Vec<AgentTurn>, runs: &SubagentRuns) -> Vec<
         .collect()
 }
 
+/// Turns after the Claude process that owned their still-running sub-agents
+/// is known to be gone. An unresolved transcript is historical evidence, not
+/// a live execution lease.
+#[must_use]
+pub fn settle_orphaned_subagent_items(turns: Vec<AgentTurn>) -> Vec<AgentTurn> {
+    turns
+        .into_iter()
+        .map(|mut turn| {
+            for item in &mut turn.items {
+                let Some(subagent) = SubagentItem::from_item(item) else {
+                    continue;
+                };
+                if subagent.status != SubagentStatus::Running {
+                    continue;
+                }
+                let provenance = item.provenance().cloned();
+                let mut updated = with_status(subagent, SubagentStatus::Stopped).into_item();
+                if let Some(provenance) = provenance {
+                    updated.stamp(&provenance);
+                }
+                *item = updated;
+            }
+            turn
+        })
+        .collect()
+}
+
+/// Stops only still-running sub-agents whose transcript belongs to an earlier
+/// process generation. Items without a resolved child id remain untouched
+/// because the transcript store cannot assign them to a generation.
+#[must_use]
+pub fn settle_named_orphaned_subagent_items<S: std::hash::BuildHasher>(
+    turns: Vec<AgentTurn>,
+    orphaned: &HashSet<String, S>,
+) -> Vec<AgentTurn> {
+    turns
+        .into_iter()
+        .map(|mut turn| {
+            for item in &mut turn.items {
+                let Some(subagent) = SubagentItem::from_item(item) else {
+                    continue;
+                };
+                let is_orphaned = subagent
+                    .agent_thread_id
+                    .as_ref()
+                    .and_then(super::agents::agent_id_of)
+                    .is_some_and(|agent_id| orphaned.contains(agent_id));
+                if subagent.status != SubagentStatus::Running || !is_orphaned {
+                    continue;
+                }
+                let provenance = item.provenance().cloned();
+                let mut updated = with_status(subagent, SubagentStatus::Stopped).into_item();
+                if let Some(provenance) = provenance {
+                    updated.stamp(&provenance);
+                }
+                *item = updated;
+            }
+            turn
+        })
+        .collect()
+}
+
 /// Rebuilds the turns of a thread from the stored messages of its session
 /// chain (oldest first) and the companion's turn index.
 #[must_use]
@@ -431,7 +528,7 @@ pub fn reconstruct_turns(
         .iter()
         .map(|segment| replay_segment(segment, records, context))
         .collect();
-    with_subagent_runs(turns, &entries)
+    with_background_command_runs(with_subagent_runs(turns, &entries), &entries)
 }
 
 /// Where one rebuilt turn ends in the stored messages.
@@ -499,7 +596,7 @@ pub fn reconstruct_subagent_turns(
     } else {
         with_cut_off_last_turn_interrupted(turns)
     };
-    with_subagent_runs(turns, &entries)
+    with_background_command_runs(with_subagent_runs(turns, &entries), &entries)
 }
 
 /// A sub-agent that no longer runs answers its spawner with a final message

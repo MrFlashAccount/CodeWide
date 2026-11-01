@@ -2,7 +2,7 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../theme";
 import { threadListLayout } from "../../ui/thread-list-layout";
 
-export const SECTION_HEIGHT = controlSize.touch + spacing.sm;
+const SECTION_HEIGHT = controlSize.touch + spacing.sm;
 
 export const styles = StyleSheet.create({
   archiveCrumb: {

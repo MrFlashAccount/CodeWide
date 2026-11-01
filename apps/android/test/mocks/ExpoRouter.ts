@@ -10,28 +10,21 @@ import {
 } from "react";
 import { View } from "react-native";
 
-type MockRoute = {
-  readonly params: Readonly<Record<string, string>>;
-  readonly pathname: string;
-};
-
-type MockHref =
-  | string
-  | {
-      readonly params?: Readonly<Record<string, string | number>>;
-      readonly pathname: string;
-    };
+import { createMockRouteRegistry } from "./ExpoRouterRegistry";
+import {
+  createMockNavigationSnapshot,
+  isCatalogEntry,
+  routeFromHref,
+  type MockHref,
+  type MockNavigationState,
+  type MockRoute,
+} from "./ExpoRouterState";
 
 let entries: MockRoute[] = [{ params: {}, pathname: "/" }];
 let currentIndex = 0;
 let localParamsOverride: Readonly<Record<string, string>> | null = null;
 const listeners = new Set<() => void>();
-const routeComponents = new Map<string, React.ComponentType>();
-const retainedRoutes = new Set<string>();
-const layouts = new Map<
-  string,
-  { readonly paths: readonly string[]; readonly component: React.ComponentType }
->();
+const registry = createMockRouteRegistry();
 const NestedRoutes = createContext<readonly MockRoute[] | null>(null);
 const LocalRouteParams = createContext<Readonly<Record<string, string>> | null>(null);
 
@@ -45,49 +38,8 @@ function keyFor(entry: MockRoute): string {
   }
   return key;
 }
-function catalogEntry(entry: MockRoute): boolean {
-  return entry.pathname === "/" || entry.pathname === "/project/[sessionId]";
-}
 function navigationSnapshot() {
-  const history = entries.slice(0, currentIndex + 1);
-  const catalog = history.filter(catalogEntry);
-  const catalogRoutes =
-    catalog.length === 0
-      ? [{ key: "initial-catalog", name: "index", params: {} }]
-      : catalog.map((entry) => ({
-          key: keyFor(entry),
-          name: entry.pathname === "/" ? "index" : "project/[sessionId]",
-          params: entry.params,
-        }));
-  const other = history.filter((entry) => !catalogEntry(entry));
-  const workspaceRoutes = [
-    {
-      key: "catalog",
-      name: "(lists)",
-      params: {},
-      state: { key: "catalog-stack", index: catalogRoutes.length - 1, routes: catalogRoutes },
-    },
-    ...other.map((entry) => ({
-      key: keyFor(entry),
-      name: entry.pathname.slice(1),
-      params: entry.params,
-    })),
-  ];
-  return {
-    key: "app",
-    index: 0,
-    routes: [
-      {
-        key: "workspace",
-        name: "(workspace)",
-        state: {
-          key: "workspace-stack",
-          index: catalogEntry(current()) ? 0 : workspaceRoutes.length - 1,
-          routes: workspaceRoutes,
-        },
-      },
-    ],
-  };
+  return createMockNavigationSnapshot(entries.slice(0, currentIndex + 1), current(), keyFor);
 }
 let navigationState = navigationSnapshot();
 const navigationRef = {
@@ -104,15 +56,18 @@ const navigationRef = {
     const history = entries
       .slice(0, currentIndex + 1)
       .filter((entry) => entry.pathname !== "/project/[sessionId]");
-    if (!history.some((entry) => entry.pathname === "/")) history.unshift(route("/"));
+    if (!history.some((entry) => entry.pathname === "/")) history.unshift(routeFromHref("/"));
     const rootIndex = history.findIndex((entry) => entry.pathname === "/");
     let destination = history[rootIndex];
     if (action.type !== "POP_TO_TOP") {
-      destination = route({ pathname: "/project/[sessionId]", params: action.payload?.params });
+      destination = routeFromHref({
+        pathname: "/project/[sessionId]",
+        params: action.payload?.params,
+      });
       history.splice(rootIndex + 1, 0, destination);
     }
     entries = history;
-    currentIndex = catalogEntry(active) ? entries.indexOf(destination) : entries.indexOf(active);
+    currentIndex = isCatalogEntry(active) ? entries.indexOf(destination) : entries.indexOf(active);
     publish();
   },
 };
@@ -125,17 +80,6 @@ export function useRootNavigationState() {
     () => navigationState,
     () => navigationState,
   );
-}
-
-function route(href: MockHref): MockRoute {
-  if (typeof href === "string") {
-    return { params: {}, pathname: href };
-  }
-  const params: Record<string, string> = {};
-  for (const [key, value] of Object.entries(href.params ?? {})) {
-    params[key] = String(value);
-  }
-  return { params, pathname: href.pathname };
 }
 
 function current(): MockRoute {
@@ -201,7 +145,7 @@ export const router = {
     return currentIndex > 0;
   },
   dismissTo(href: MockHref): void {
-    const destination = route(href);
+    const destination = routeFromHref(href);
     let match = -1;
     for (let index = currentIndex; index >= 0; index -= 1) {
       if (entries[index]?.pathname === destination.pathname) {
@@ -219,7 +163,7 @@ export const router = {
     publish();
   },
   navigate(href: MockHref): void {
-    const destination = route(href);
+    const destination = routeFromHref(href);
     if (current().pathname === destination.pathname) {
       updateDestination(destination);
       publish();
@@ -227,12 +171,12 @@ export const router = {
   },
   prefetch(_href: MockHref): void {},
   push(href: MockHref): void {
-    entries = [...entries.slice(0, currentIndex + 1), route(href)];
+    entries = [...entries.slice(0, currentIndex + 1), routeFromHref(href)];
     currentIndex += 1;
     publish();
   },
   replace(href: MockHref): void {
-    entries[currentIndex] = route(href);
+    entries[currentIndex] = routeFromHref(href);
     publish();
   },
   setParams(params: Readonly<Record<string, string | undefined>>): void {
@@ -250,7 +194,7 @@ export const router = {
 };
 
 export function resetMockRouter(initial: MockHref = "/"): void {
-  entries = [route(initial)];
+  entries = [routeFromHref(initial)];
   currentIndex = 0;
   localParamsOverride = null;
   publish();
@@ -270,8 +214,7 @@ export function registerMockRoute(
   component: React.ComponentType,
   options: { readonly retainWhenCovered?: boolean } = {},
 ): void {
-  routeComponents.set(pathname, component);
-  if (options.retainWhenCovered) retainedRoutes.add(pathname);
+  registry.registerRoute(pathname, component, options.retainWhenCovered === true);
 }
 
 export function registerMockLayout(
@@ -279,13 +222,11 @@ export function registerMockLayout(
   paths: readonly string[],
   component: React.ComponentType,
 ): void {
-  layouts.set(id, { paths, component });
+  registry.registerLayout(id, paths, component);
 }
 
 export function clearMockRoutes(): void {
-  routeComponents.clear();
-  retainedRoutes.clear();
-  layouts.clear();
+  registry.clear();
 }
 
 export function useRouter() {
@@ -317,8 +258,8 @@ export function useGlobalSearchParams(): Readonly<Record<string, string>> {
 }
 
 function scene(entry: MockRoute, active: boolean, key: string): React.JSX.Element | null {
-  const Component = routeComponents.get(entry.pathname);
-  if (Component === undefined || (!active && !retainedRoutes.has(entry.pathname))) return null;
+  const Component = registry.component(entry.pathname);
+  if (Component === undefined || (!active && !registry.retains(entry.pathname))) return null;
   return createElement(
     View,
     { key, style: { display: active ? "flex" : "none" } },
@@ -338,14 +279,15 @@ export function Slot(): React.JSX.Element {
       ),
     );
   }
-  if (layouts.size > 0) {
+  const rootLayouts = registry.rootLayouts();
+  if (rootLayouts.length > 0) {
     const history = entries.slice(0, currentIndex + 1);
-    const layoutScenes = [...layouts].map(([id, layout]) => {
+    const layoutScenes = rootLayouts.map(([id, layout]) => {
       const routes = history.filter((entry) => layout.paths.includes(entry.pathname));
       const active = routes.at(-1) === routeSnapshot;
       if (
         routes.length === 0 ||
-        (!active && !routes.some((entry) => retainedRoutes.has(entry.pathname)))
+        (!active && !routes.some((entry) => registry.retains(entry.pathname)))
       )
         return null;
       return createElement(
@@ -355,13 +297,12 @@ export function Slot(): React.JSX.Element {
       );
     });
     const otherScenes = history.map((entry, index) => {
-      if ([...layouts.values()].some((layout) => layout.paths.includes(entry.pathname)))
-        return null;
+      if (registry.layoutContains(entry.pathname)) return null;
       return scene(entry, entry === routeSnapshot, `${index}:${entry.pathname}`);
     });
     return createElement(Fragment, null, ...layoutScenes, ...otherScenes);
   }
-  if (retainedRoutes.size > 0) {
+  if (registry.hasRetainedRoutes()) {
     return createElement(
       Fragment,
       null,
@@ -370,14 +311,14 @@ export function Slot(): React.JSX.Element {
         .map((entry, index) => scene(entry, entry === routeSnapshot, `${index}:${entry.pathname}`)),
     );
   }
-  const RouteComponent = routeComponents.get(routeSnapshot.pathname);
+  const RouteComponent = registry.component(routeSnapshot.pathname);
   return RouteComponent === undefined ? createElement(Fragment) : createElement(RouteComponent);
 }
 
 type MockScreen = { key: string; name: string; params: Readonly<Record<string, string>> };
 type MockStackProps = {
   layout?: (props: {
-    state: ReturnType<typeof navigationSnapshot>["routes"][number]["state"];
+    state: MockNavigationState;
     descriptors: Record<string, { render: () => React.JSX.Element }>;
     children: React.ReactNode;
   }) => React.JSX.Element;
@@ -386,17 +327,20 @@ type MockStackProps = {
 export const Stack = Object.assign(
   function MockStack(props: MockStackProps): React.JSX.Element {
     useRootNavigationState();
-    const nested = useContext(NestedRoutes);
-    if (!props.layout || nested !== null) return createElement(Slot);
-    const state = navigationState.routes[0].state;
+    useContext(NestedRoutes);
+    if (!props.layout) return createElement(Slot);
+    const workspaceState = navigationState.routes[0].state;
+    const tabsState = workspaceState.routes.find((entry) => entry.name === "(tabs)")?.state;
+    const state = tabsState?.routes.find((entry) => entry.name === "(threads)")?.state;
+    if (state === undefined) return createElement(Slot);
     const history = entries.slice(0, currentIndex + 1);
     const descriptors: Record<string, { render: () => React.JSX.Element }> = {};
     for (const entry of state.routes) {
       descriptors[entry.key] = {
         render() {
-          const catalog = layouts.get("lists");
+          const catalog = registry.layout("lists");
           const original = history.find((candidate) => keyFor(candidate) === entry.key);
-          const catalogRoutes = history.filter(catalogEntry);
+          const catalogRoutes = history.filter(isCatalogEntry);
           const children =
             entry.name === "(lists)" && catalog
               ? createElement(

@@ -168,6 +168,19 @@ async fn lists_interactive_sessions_next_to_codewide_threads_and_hides_other_sdk
 }
 
 #[tokio::test]
+async fn startup_status_snapshot_includes_a_stopped_external_session() -> TestResult {
+    let harness = harness(Options::default())?;
+    store_with_terminal_session(&harness)?;
+
+    let snapshot = harness.service.status_snapshot().await?;
+
+    assert_eq!(ids(&snapshot), [TERMINAL]);
+    assert_eq!(snapshot[0].status, ThreadStatus::NotLoaded);
+    harness.close().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn reads_owns_and_returns_the_history_of_a_session_by_its_id() -> TestResult {
     let harness = harness(Options::default())?;
     store_with_terminal_session(&harness)?;

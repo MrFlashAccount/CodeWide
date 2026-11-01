@@ -6,6 +6,7 @@
 //! `thread_ops.rs` and `turn_ops.rs`; the output stream in `outputs.rs`.
 
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicUsize},
     time::Duration,
@@ -84,6 +85,9 @@ pub struct ServiceDeps {
 pub enum ServiceOutput {
     /// An event for clients, `thread.updated` included.
     Event(Box<AgentEvent>),
+    /// Sessions whose execution lease changed; consumed by the adapter's
+    /// index and never projected onto the client wire.
+    SessionActivityChanged(HashSet<String>),
     /// A fenced read's position: answer with the stream position after
     /// every event published before it.
     Fence(oneshot::Sender<Result<u64, ProviderError>>),
@@ -100,7 +104,7 @@ pub(super) struct ServiceInner {
     pub registry: Arc<ThreadRegistry>,
     pub catalog: SessionCatalog,
     pub recorded: RecordedModelCache,
-    pub open_elsewhere: OpenElsewhere,
+    pub open_elsewhere: Arc<OpenElsewhere>,
     pub live_prompts: LivePrompts,
     pub outputs: mpsc::Sender<SessionOutput>,
     pub projects_root: PathBuf,
@@ -109,6 +113,10 @@ pub(super) struct ServiceInner {
     /// Serializes the check-then-add of a new thread, so a repeated create,
     /// fork or adoption finds the first one.
     pub adding: tokio::sync::Mutex<()>,
+    /// When this companion first saw the process of a background task gone,
+    /// by thread and task id (Unix seconds): that task's stop time, the same
+    /// on every read.
+    pub background_losses: std::sync::Mutex<std::collections::HashMap<(String, String), i64>>,
 }
 
 /// A thread id resolved against the service's metadata and Claude's store.
@@ -180,8 +188,9 @@ impl ThreadService {
         });
         let registry = Arc::new(ThreadRegistry::new(store, index, session_deps));
         let (notices, notice_queue) = mpsc::unbounded_channel();
+        let activity_notices = notices.clone();
         let owner = registry.clone();
-        let open_elsewhere = OpenElsewhere::new(OpenElsewhereDeps {
+        let open_elsewhere = Arc::new(OpenElsewhere::new(OpenElsewhereDeps {
             running: deps.running_sessions,
             owns_live: Arc::new(move |session_id| {
                 owner.owner_of(session_id).is_some_and(|handle| {
@@ -191,8 +200,12 @@ impl ThreadService {
             changed: Arc::new(move |sessions| {
                 let _ = notices.send(Notice::HeldChanged(sessions.iter().cloned().collect()));
             }),
+            activity_changed: Arc::new(move |sessions| {
+                let _ = activity_notices
+                    .send(Notice::ActivityChanged(sessions.iter().cloned().collect()));
+            }),
             poll: deps.open_elsewhere_poll,
-        });
+        }));
         let inner = Arc::new(ServiceInner {
             registry,
             catalog: SessionCatalog::new(deps.projects_root.clone()),
@@ -204,9 +217,19 @@ impl ThreadService {
             clock: deps.clock,
             model_id_for: deps.model_id_for,
             adding: tokio::sync::Mutex::new(()),
+            background_losses: std::sync::Mutex::default(),
         });
         let stream = ServiceOutputs::new(&inner, session_outputs, notice_queue);
         Ok((Self { inner }, stream))
+    }
+
+    /// Shared, cached authority for whether a Claude session has a live
+    /// process. Native history reconstruction uses the same snapshot as the
+    /// open-elsewhere guard instead of inferring liveness from transcript
+    /// completeness.
+    #[must_use]
+    pub fn session_activity(&self) -> Arc<OpenElsewhere> {
+        self.inner.open_elsewhere.clone()
     }
 
     /// Loads every stored thread (converting v1 journals), finalizes turns a

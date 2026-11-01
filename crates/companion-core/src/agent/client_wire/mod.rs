@@ -15,6 +15,7 @@
 pub mod catalog;
 pub mod decode;
 pub mod events;
+pub(crate) mod execution;
 pub mod gateway;
 pub mod history;
 pub mod items;

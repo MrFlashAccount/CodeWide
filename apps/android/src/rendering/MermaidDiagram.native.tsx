@@ -1,9 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useSelector } from "@legendapp/state/react";
 import * as Clipboard from "expo-clipboard";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
+import { peleDiagramRendererEnabled$ } from "../data/peleDiagramRendererPreference";
 import {
   colors,
   radii,
@@ -31,6 +33,11 @@ import { NativeCodeBlock } from "./NativeCodeBlock";
 import { NativeRevealSurface } from "./NativeRevealSurface";
 import { FluidLayoutFrame } from "./FluidLayoutFrame";
 import { DiagramSvgPreview } from "./DiagramSvgPreview.native";
+import {
+  PeleDiagramFullscreenSurface,
+  PeleDiagramPreview,
+  type PeleDiagramZoomCommand,
+} from "./PeleDiagramSurface.native";
 import {
   INLINE_MEDIA_PREVIEW_HEIGHT,
   MAX_INLINE_DIAGRAM_SOURCE_CHARS,
@@ -69,6 +76,7 @@ type MermaidRendererMessage = {
 };
 
 type DiagramStatus = "loading" | "rendered" | "error";
+type DiagramRenderer = "legacy" | "pele";
 const EMPTY_REVIEW_POINTS: readonly ContentReviewPoint[] = [];
 
 function parseRendererMessage(value: string): MermaidRendererMessage | null {
@@ -113,9 +121,11 @@ export function MermaidDiagram({
   reviewTarget?: ContentReviewTarget;
   source: string;
 }) {
+  const peleEnabled = useSelector(peleDiagramRendererEnabled$);
   return (
     <LocalDiagram
       engine={MERMAID_ENGINE}
+      renderer={peleEnabled ? "pele" : "legacy"}
       reveal={reveal}
       source={source}
       {...(reviewTarget === undefined ? {} : { reviewTarget })}
@@ -125,18 +135,20 @@ export function MermaidDiagram({
 }
 
 export function AsciiDiagram({ source }: { source: string }) {
-  return <LocalDiagram engine={ASCII_ENGINE} source={source} />;
+  return <LocalDiagram engine={ASCII_ENGINE} renderer="legacy" source={source} />;
 }
 
 function LocalDiagram({
   diagramId,
   engine,
+  renderer,
   reveal = false,
   reviewTarget,
   source,
 }: {
   diagramId?: string;
   engine: DiagramEngine;
+  renderer: DiagramRenderer;
   reveal?: boolean;
   reviewTarget?: ContentReviewTarget;
   source: string;
@@ -147,7 +159,7 @@ function LocalDiagram({
   const [renderedKey, setRenderedKey] = useState<string | null>(null);
   const tooLarge = source.length > MAX_INLINE_DIAGRAM_SOURCE_CHARS;
   const boundedSource = tooLarge ? "" : source;
-  const renderKey = `${engine.kind}:${boundedSource}`;
+  const renderKey = `${renderer}:${engine.kind}:${boundedSource}`;
 
   const copySource = () => {
     Clipboard.setStringAsync(source).then(
@@ -166,6 +178,7 @@ function LocalDiagram({
         engine={engine}
         onClose={close}
         onCopy={copySource}
+        renderer={renderer}
         source={boundedSource}
         {...(reviewTarget === undefined || diagramId === undefined
           ? {}
@@ -208,14 +221,24 @@ function LocalDiagram({
               onPress={openFullscreen}
             />
           </View>
-          <DiagramSvgPreview
-            engine={engine.kind}
-            onOpen={openFullscreen}
-            onSettled={() => {
-              setRenderedKey(renderKey);
-            }}
-            source={boundedSource}
-          />
+          {renderer === "pele" ? (
+            <PeleDiagramPreview
+              onOpen={openFullscreen}
+              onSettled={() => {
+                setRenderedKey(renderKey);
+              }}
+              source={boundedSource}
+            />
+          ) : (
+            <DiagramSvgPreview
+              engine={engine.kind}
+              onOpen={openFullscreen}
+              onSettled={() => {
+                setRenderedKey(renderKey);
+              }}
+              source={boundedSource}
+            />
+          )}
         </View>
       </NativeRevealSurface>
       {reveal && renderedKey !== renderKey && (
@@ -232,6 +255,7 @@ function FullscreenDiagram({
   engine,
   onClose,
   onCopy,
+  renderer,
   reviewTarget,
   source,
 }: {
@@ -239,6 +263,7 @@ function FullscreenDiagram({
   engine: DiagramEngine;
   onClose: () => void;
   onCopy: () => void;
+  renderer: DiagramRenderer;
   reviewTarget?: ContentReviewTarget;
   source: string;
 }) {
@@ -246,11 +271,20 @@ function FullscreenDiagram({
   const fullscreenWebView = useRef<WebView>(null);
   const beginReview = useContentReview();
   const [annotating, setAnnotating] = useState(false);
+  const [zoomCommand, setZoomCommand] = useState<PeleDiagramZoomCommand>({
+    id: 0,
+    kind: "reset",
+  });
   const reviewPoints = useContentReviewPoints(reviewTarget?.id ?? "", diagramId ?? "");
   const toggleAnnotating = () => {
     const next = !annotating;
     setAnnotating(next);
-    inject(fullscreenWebView, `window.diagramSetAnnotationMode(${next ? "true" : "false"});true;`);
+    if (renderer === "legacy") {
+      inject(
+        fullscreenWebView,
+        `window.diagramSetAnnotationMode(${next ? "true" : "false"});true;`,
+      );
+    }
   };
   const reviewPoint = (x: number, y: number) => {
     if (reviewTarget === undefined || diagramId === undefined) {
@@ -260,18 +294,29 @@ function FullscreenDiagram({
   };
   return (
     <View style={styles.fullscreen}>
-      <DiagramSurface
-        annotationEnabled={annotating}
-        enabled={fullscreenReady}
-        engine={engine}
-        key={`${engine.kind}:fullscreen:${source}`}
-        mode="fullscreen"
-        onReviewPoint={reviewPoint}
-        reviewPoints={reviewPoints}
-        source={source}
-        style={styles.fullscreenSurface}
-        webViewRef={fullscreenWebView}
-      />
+      {renderer === "pele" ? (
+        <PeleDiagramFullscreenSurface
+          annotationEnabled={annotating}
+          enabled={fullscreenReady}
+          onReviewPoint={reviewPoint}
+          reviewPoints={reviewPoints}
+          source={source}
+          zoomCommand={zoomCommand}
+        />
+      ) : (
+        <DiagramSurface
+          annotationEnabled={annotating}
+          enabled={fullscreenReady}
+          engine={engine}
+          key={`${engine.kind}:fullscreen:${source}`}
+          mode="fullscreen"
+          onReviewPoint={reviewPoint}
+          reviewPoints={reviewPoints}
+          source={source}
+          style={styles.fullscreenSurface}
+          webViewRef={fullscreenWebView}
+        />
+      )}
       <View pointerEvents="box-none" style={styles.fullscreenTopBar}>
         <DiagramIconButton
           accessibilityLabel="Close diagram"
@@ -310,7 +355,11 @@ function FullscreenDiagram({
           emphasized
           icon="remove"
           onPress={() => {
-            inject(fullscreenWebView, "window.diagramZoom(.8,-1);true;");
+            if (renderer === "pele") {
+              setZoomCommand((current) => ({ id: current.id + 1, kind: "out" }));
+            } else {
+              inject(fullscreenWebView, "window.diagramZoom(.8,-1);true;");
+            }
           }}
         />
         <DiagramIconButton
@@ -318,7 +367,11 @@ function FullscreenDiagram({
           emphasized
           icon="scan-outline"
           onPress={() => {
-            inject(fullscreenWebView, "window.diagramReset(-1);true;");
+            if (renderer === "pele") {
+              setZoomCommand((current) => ({ id: current.id + 1, kind: "reset" }));
+            } else {
+              inject(fullscreenWebView, "window.diagramReset(-1);true;");
+            }
           }}
         />
         <DiagramIconButton
@@ -326,7 +379,11 @@ function FullscreenDiagram({
           emphasized
           icon="add"
           onPress={() => {
-            inject(fullscreenWebView, "window.diagramZoom(1.25,-1);true;");
+            if (renderer === "pele") {
+              setZoomCommand((current) => ({ id: current.id + 1, kind: "in" }));
+            } else {
+              inject(fullscreenWebView, "window.diagramZoom(1.25,-1);true;");
+            }
           }}
         />
       </View>

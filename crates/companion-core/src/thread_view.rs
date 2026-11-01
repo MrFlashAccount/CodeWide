@@ -12,10 +12,12 @@ use crate::agent::{
         ItemsView, SortDirection, ThreadSettings, ThreadStatus, ThreadTurnsParams,
         thread_not_found_message,
     },
+    permission_profiles::ProfileObservations,
     provider::{
         HistorySyncRequest, NativeSurface, NativeThreadStore, ProviderError, ProviderFence,
     },
 };
+use crate::unmaterialized_threads::{self, UnmaterializedThread, is_rollout_not_found};
 
 pub const READ_MODEL_VERSION: u64 = 4;
 
@@ -29,6 +31,9 @@ enum ThreadShellAccess {
         execution_settings: ThreadExecutionSettingsSnapshot,
     },
     UnloadedSubagent,
+    /// Loaded in App Server but without a rollout before its first user
+    /// message: `thread/resume` is unavailable and there is no history.
+    Unmaterialized,
 }
 
 struct ThreadShellRead {
@@ -66,6 +71,7 @@ struct ThreadExecutionSettingsSnapshot {
 #[derive(Clone)]
 pub struct ThreadViewService {
     gateway: Arc<ClientWireGateway>,
+    profiles: Arc<ProfileObservations>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -105,8 +111,8 @@ impl ThreadViewError {
 
 impl ThreadViewService {
     #[must_use]
-    pub fn new(gateway: Arc<ClientWireGateway>) -> Self {
-        Self { gateway }
+    pub fn new(gateway: Arc<ClientWireGateway>, profiles: Arc<ProfileObservations>) -> Self {
+        Self { gateway, profiles }
     }
 
     async fn target(&self, thread_id: &str) -> Result<Target, ThreadViewError> {
@@ -151,9 +157,30 @@ impl ThreadViewService {
         queue_activity(&result)
     }
 
+    /// Publishes one provider-proven resume snapshot to the shared backend
+    /// authority and projects that exact effective profile to the client.
+    fn observe_execution_authority(
+        &self,
+        target: &Target,
+        access: &mut ThreadShellAccess,
+        result: &Value,
+    ) {
+        let ThreadShellAccess::Observed { execution_settings } = access else {
+            return;
+        };
+        if let Some(permissions) =
+            self.profiles
+                .observe_rpc_result(&target.wire.descriptor.id, "thread/resume", result)
+        {
+            execution_settings.permissions = Some(permissions.profile);
+        }
+    }
+
     /// Synchronizes immutable indexed history and the mutable App Server head,
     /// then leaves the single Companion transport observing resumable threads.
     /// Unloaded multi-agent children remain inspectable without reviving a parent.
+    /// A loaded thread without its first user message reads as an empty
+    /// conversation; once no runtime holds it either, it reads as missing.
     ///
     /// # Errors
     ///
@@ -171,11 +198,7 @@ impl ThreadViewService {
             .filter(|value| !value.is_null())
             .map(|value| value.as_str().ok_or(ThreadViewError::InvalidRequest))
             .transpose()?;
-        let limit = params
-            .get("limit")
-            .and_then(Value::as_u64)
-            .and_then(|value| usize::try_from(value).ok())
-            .unwrap_or(36);
+        let limit = sync_limit(params);
 
         let target = self.target(thread_id).await?;
         let Some(native) = target.native() else {
@@ -187,10 +210,11 @@ impl ThreadViewService {
             ThreadViewError::History("Thread history storage is unavailable".into())
         })?;
         let ThreadShellRead {
-            access,
+            mut access,
             fence: shell_fence,
             result,
         } = Self::read_thread_shell(native, thread_id).await?;
+        self.observe_execution_authority(&target, &mut access, &result);
         let mut thread = result
             .get("thread")
             .cloned()
@@ -229,7 +253,7 @@ impl ThreadViewService {
                 };
                 (Some(execution_settings), active_turn, fence)
             }
-            ThreadShellAccess::UnloadedSubagent => {
+            ThreadShellAccess::UnloadedSubagent | ThreadShellAccess::Unmaterialized => {
                 let (active_turn, fence) = if active {
                     Self::read_active_turn(native, thread_id).await?
                 } else {
@@ -295,6 +319,30 @@ impl ThreadViewService {
                     fence: stored_fence,
                     result: rpc_result(&stored)?,
                 })
+            }
+            Err(ThreadViewError::Rpc(message)) if is_rollout_not_found(&message, thread_id) => {
+                // App Server resumes only rollout-backed threads, even while it
+                // holds a just-started one loaded. Its live metadata read is the
+                // shell of that empty conversation; a thread neither stored nor
+                // loaded can never be read again and is reported as missing.
+                let (stored, stored_fence) = native
+                    .request_fenced(unmaterialized_threads::read_request(
+                        "thread-view-read-unmaterialized",
+                        thread_id,
+                    ))
+                    .await?;
+                match unmaterialized_threads::classify_read(&stored, thread_id)
+                    .map_err(ThreadViewError::Rpc)?
+                {
+                    UnmaterializedThread::Loaded(result) => Ok(ThreadShellRead {
+                        access: ThreadShellAccess::Unmaterialized,
+                        fence: stored_fence,
+                        result,
+                    }),
+                    UnmaterializedThread::Gone => {
+                        Err(ThreadViewError::Rpc(thread_not_found_message(thread_id)))
+                    }
+                }
             }
             Err(ThreadViewError::Rpc(message))
                 if is_active_writer_conflict(&message, thread_id) =>
@@ -379,6 +427,14 @@ impl ThreadViewService {
             .ok_or(ThreadViewError::InvalidActiveTurn)?;
         Ok((turn, fence))
     }
+}
+
+fn sync_limit(params: &serde_json::Map<String, Value>) -> usize {
+    params
+        .get("limit")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(36)
 }
 
 fn is_active_writer_conflict(message: &str, thread_id: &str) -> bool {

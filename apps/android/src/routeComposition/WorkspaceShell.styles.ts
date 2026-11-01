@@ -12,11 +12,18 @@ export const v1WorkspaceShellStyles = StyleSheet.create({
     overflow: "hidden",
     position: "relative",
   },
-  flex: { flex: 1 },
-  hidden: { display: "none" },
+  flex: {
+    flex: 1,
+  },
+  hidden: {
+    display: "none",
+  },
   listScenes: {
     flex: 1,
     overflow: "hidden",
+  },
+  paneFrame: {
+    backgroundColor: colors.threadListSurface,
   },
   root: {
     backgroundColor: colors.background,
@@ -55,6 +62,13 @@ export const v1MobileRouteScreenOptions = {
 export const v1ProjectListScreenOptions = {
   ...v1MobileRouteScreenOptions,
   contentStyle: { backgroundColor: colors.threadListSurface },
+} as const;
+
+/** Replaces the whole catalog route atomically, without exposing either route's chrome mid-frame. */
+export const v1CatalogRootScreenOptions = {
+  animation: "none",
+  contentStyle: { backgroundColor: colors.threadListSurface },
+  headerShown: false,
 } as const;
 
 /** Keeps the desktop sidebar visible beside the empty destination pane. */

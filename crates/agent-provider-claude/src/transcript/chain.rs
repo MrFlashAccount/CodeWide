@@ -13,7 +13,11 @@
 //! - a boundary without a parent continues the message the compacted
 //!   conversation ended with (the original parent of the first preserved
 //!   message, else `logicalParentUuid`), so the history before a compaction
-//!   stays part of the conversation shown to a person.
+//!   stays part of the conversation shown to a person;
+//! - a row whose parent Claude never stored (a lost write: a full disk, or
+//!   a message Claude sent without persisting it) continues the conversation
+//!   message stored before it at its level, so one missing row does not cut
+//!   the history before it.
 //!
 //! Rows on the branch are returned as stored; side-chain rows, team rows,
 //! progress rows and rows without a uuid never are. Pure.
@@ -127,7 +131,46 @@ fn linked_parents<'a>(nodes: &HashMap<&'a str, Node<'a>>) -> HashMap<&'a str, Op
             }
         }
     }
+    bridge_missing_parents(nodes, &original, &mut parents);
     parents
+}
+
+/// Relinks each row whose stored parent is in no row (and that no
+/// compaction relinked) to the conversation message stored before it at
+/// its level.
+fn bridge_missing_parents<'a>(
+    nodes: &HashMap<&'a str, Node<'a>>,
+    original: &HashMap<&'a str, Option<&'a str>>,
+    parents: &mut HashMap<&'a str, Option<&'a str>>,
+) {
+    let dangling = original
+        .iter()
+        .filter(|(id, parent)| {
+            parent.is_some_and(|parent| !nodes.contains_key(parent))
+                && parents.get(*id) == Some(*parent)
+        })
+        .map(|(id, _)| *id)
+        .collect::<Vec<_>>();
+    if dangling.is_empty() {
+        return;
+    }
+    let mut conversation = nodes
+        .iter()
+        .filter(|(_, node)| is_conversation(node.kind))
+        .collect::<Vec<_>>();
+    conversation.sort_by_key(|(_, node)| node.index);
+    for id in dangling {
+        let node = &nodes[id];
+        let before = conversation.partition_point(|(_, other)| other.index < node.index);
+        let previous = conversation[..before]
+            .iter()
+            .rev()
+            .find(|(_, other)| same_level(node, other))
+            .map(|(uuid, _)| **uuid);
+        if previous.is_some() {
+            parents.insert(id, previous);
+        }
+    }
 }
 
 /// The conversation message that ends the active branch.
@@ -711,6 +754,23 @@ mod tests {
             row("a1", Some("r2"), "assistant"),
         ];
         assert_eq!(ids(&rows), ["p1", "t1", "t2", "r1", "r2", "a1"]);
+    }
+
+    #[test]
+    fn a_message_claude_never_stored_does_not_cut_the_history_before_it() {
+        let mut side = row("x", Some("i2"), "assistant");
+        side["isSidechain"] = json!(true);
+        let rows = [
+            row("p1", None, "user"),
+            row("a1", Some("p1"), "assistant"),
+            row("p2", Some("a1"), "user"),
+            row("i2", Some("p2"), "user"),
+            side,
+            // Claude answered a message it sent without storing it.
+            row("a3", Some("lost"), "assistant"),
+            row("a4", Some("a3"), "assistant"),
+        ];
+        assert_eq!(ids(&rows), ["p1", "a1", "p2", "i2", "a3", "a4"]);
     }
 
     #[test]

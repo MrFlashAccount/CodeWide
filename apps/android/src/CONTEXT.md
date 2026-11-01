@@ -4,15 +4,23 @@
 
 This context owns V1 source placement and composition boundaries under `apps/android/src`. TypeScript/TSX implements the application; comments and ownership documentation use English. V1 calls a saved runtime identity `connectionId`; do not replace it with V2 `savedServerId` terminology. Expo Router owns application destinations; conversation activation remains a mounted-owner token, not just a connection/thread key.
 
-The [approved feature architecture](../../../docs/android-v1-feature-architecture.md) and [feature migration ledger](../../../docs/android-v1-feature-migration.md) record the M0–M8 capability extraction. The current application-navigation contract and source closure are in [route architecture](../../../docs/android-v1-route-architecture.md) and the [route migration ledger](../../../docs/android-v1-route-migration.md). Feature owners remain for connections, accounts, settings, threadList, projects, search, requests, goal, queue, turnActions, attachments, changes, review, drawing, ports, terminal, agents, composer and conversation. `features/navigation/**` was removed after Router assumed destination ownership. Device-only scenarios remain explicitly unverified in the ledgers.
+The [approved feature architecture](../../../docs/android-v1-feature-architecture.md) and [feature migration ledger](../../../docs/android-v1-feature-migration.md) record the M0–M8 capability extraction. The current application-navigation contract and migration status are in [route architecture](../../../docs/android-v1-route-architecture.md) and the [route migration ledger](../../../docs/android-v1-route-migration.md). Feature owners remain for connections, accounts, settings, threadList, projects, search, requests, goal, queue, turnActions, attachments, changes, review, drawing, ports, terminal, agents, composer and conversation. `features/navigation/**` was removed after Router assumed destination ownership. Device-only scenarios remain explicitly unverified in the ledgers.
 
 ## Current and target placement
 
-Interaction policy lives in cohesive owners under `features/`: workspace, threadList, projects, connections, settings, accounts, search, globalSupervisor, conversation, composer, queue, requests, goal, turnActions, attachments, changes, review, drawing, agents, terminal, ports, browser and diagnostics. Destination screens and layouts live under `app/(workspace)/**`; navigation composition helpers live under `routeComposition/**`; cross-route identity and private resource sessions live under `services/**`.
+Interaction policy lives in cohesive owners under `features/`: workspace, threadList, projects, connections, settings, accounts, search, globalSupervisor, conversation, composer, queue, requests, goal, turnActions, attachments, changes, review, drawing, agents, terminal, ports, browser, diagnostics, pullRequests, pullRequestDetail and messageContent (the forge-independent authored-message model and renderers). Destination screens and layouts live under `app/(workspace)/**`; navigation composition helpers live under `routeComposition/**`; cross-route identity and private resource sessions live under `services/**`.
 
 A feature owns its policy, narrow public contracts, read/action binding, local state, pending/errors, retained callbacks, cleanup and styles. Conversation has separate detail, timeline, turns, protocol and content owners; composer separates draft, submission, settings, attachments, queue editing, voice binding, input and skills. No generic `useConversation` or `WorkspaceController` may replace the current monolith.
 
-`app/(workspace)/_layout.tsx` is the stable V1 route entry. Its composition, model, thread-list adapter and shell are split by responsibility under `routeComposition/**`, outside Expo route discovery. `features/workspace` retains stable feature/runtime bindings without owning destinations. `CodeWideScreen`, `WorkspaceScreen`, `WorkspaceOverlays` and the navigation feature are deleted. Existing deep [data/runtime owners](data/CONTEXT.md), native/platform mechanisms and shared render primitives retain their authority.
+`app/(workspace)/_layout.tsx` is the stable V1 route entry. It registers one URL-invisible `(tabs)`
+group plus root settings, browser and drawing surfaces. `(tabs)` owns the standard parent Tabs
+navigator; `(tabs)/(threads)` and `(tabs)/(pull-requests)` own separate retained nested Stacks
+without changing public URLs. Its composition, topology adapter, model, thread-list adapter and
+shell are split by responsibility under `routeComposition/**`, outside Expo route discovery.
+`features/workspace` retains stable feature/runtime bindings without owning destinations.
+`CodeWideScreen`, `WorkspaceScreen`, `WorkspaceOverlays` and the navigation feature are deleted.
+Existing deep [data/runtime owners](data/CONTEXT.md), native/platform mechanisms and shared render
+primitives retain their authority.
 
 The approved Global Voice Mode extension adds `features/globalSupervisor/**` without adding an application route. The feature owns its render resource, activation state, action settlement and typed recovery. Route composition receives the already-created feature contract and passes one app-level start/stop control into the persistent thread-list header; the control owns no persistence, App Server RPC, connection discovery, native module access or transport subscription. The nearest [global-supervisor context](features/globalSupervisor/CONTEXT.md) is binding for its public surface and internal source placement. The source implementation is present; physical-device background WebRTC proof remains pending until its recorded gates pass.
 
@@ -33,6 +41,9 @@ Binding target rules, including type imports:
 - V1 must not import `v2/**`, `@codewide/sync-client/v2` or V2 storage. The versioned upstream `@codewide/codex-protocol/v0.155.1/v2` DTO path is not the V2 sync runtime.
 - Data/native must not import features or `app/**`. Generic UI/rendering must not depend on feature internals; move actual feature policy or inject a narrow capability instead.
 - Feature internals must not import root composition, another feature's private model/adapter/style, or the legacy facade after their unit closes. Public entry modules must be explicit; broad barrels and type cycles are forbidden.
+- `routeComposition/**` may import Expo Router and feature public surfaces. Features, data, services,
+  native owners and child layouts must not import the parent `(tabs)` layout or its presentation
+  owner. Catalog mode is derived from exact route names, never numeric position or a mirrored store.
 - `features/globalSupervisor/**` must not import raw native modules, SQLite implementations, transport implementations, Expo Router, another feature's private implementation or V2. It accepts only validated qualified V1 references and injected binding, visibility, session, tool, event, media and delivery capabilities. Existing catalog/history/delivery/request owners must not import it.
 - Conversation detail/timeline/turns/protocol/content cannot import full ConversationWorkspace, composer, agents or tool implementations. Agents may consume only public detail/read/navigation capabilities. Composer emits intents rather than navigating or importing queue/review/drawing/tool internals.
 - `presentation/**` accepts display props and typed capabilities only; no V1/V2 model, store, route, transport, persistence or native imports.
@@ -43,11 +54,17 @@ Main-chat selection publishes immediately, while the transcript prepares cached 
 
 Keep the native conversation shell mounted across chat switches. Existing activation guards reset local state before commit and reject stale completions, including unmount/remount of the same scope. `useEvent` serves escaping latest-value callbacks; captured activation capabilities retain their distinct semantics. Queue-edit upload scope remains distinct from the ordinary draft. Feature hide/unmount is not automatic native controller/terminal/tunnel disposal.
 
+Workspace tab blur is not a lifecycle signal. Both nested Stack descriptors stay mounted across tab
+switches; `unmountOnBlur`, `popToTopOnBlur`, root replacement and a second navigation container are
+forbidden. Inactive scenes must be display-hidden, pointer-inert and absent from accessibility
+traversal in both native-screen and plain-`View` paths. Search-session retention follows the retained
+Threads route chain, while explicit route close and workspace teardown remain cleanup authorities.
+
 `AppFullscreenOverlayHost` is the single presentation owner, not a single-window container. Each logical fullscreen entry owns its own native modal window, and earlier entries stay mounted beneath newer ones so Android's window stack orders fullscreen surfaces against sheets and dialogs. Do not substitute React `zIndex`/`elevation`, collapse entries into one modal, or close a feature-owned sheet as a presentation workaround. Back closes the top window first and preserves the surviving parent workspace.
 
 Main and subagent conversations share `useThreadChatWindow` and `projectThreadChatWindow`. The shared projector owns sealed-history plus mutable-live-head merging and summary enrichment; nested or read-only conversation surfaces must not rematerialize database rows through a parallel path.
 
-Stable Legend resources own render data and Promise identity; no effect-triggered fetch, per-render cache construction, broad snapshot mirror or graph clone. The [runtime context](data/CONTEXT.md) preserves module-started JS startup separately from the native boot handle.
+TanStack Query owns remote render data and Promise identity; Legend owns local and interaction models. No effect-triggered fetch, per-render cache construction, duplicate remote-state mirror or graph clone is allowed. The [runtime context](data/CONTEXT.md) preserves module-started JS startup separately from the native boot handle.
 
 Global Voice Mode adds one process-lifetime `GlobalVoiceActivation`, not another runtime. It may own transient realtime transcript/activity state only while active and remains live across navigation and ordinary app backgrounding until explicit Stop or terminal failure. When biometric app lock is enabled, closing the privacy boundary suspends its live transport without ending the logical activation; successful foreground authentication resumes it. It shares one neutral, generation-fenced V1 microphone lease with existing dictation and holds Android microphone foreground authority while interactive WebRTC capture is active. Realtime control notifications, live event signals and activation state are never persisted or replayed; WebRTC media never enters the application transport. Separately, the lower data owner persists content-free supervisor/worker relations and bounded attention/ack rows projected from the existing Companion journal. It stores no transcript or tool output and exposes only a count plus speech-idle delivery to the feature.
 
@@ -55,6 +72,6 @@ The native Voice Aura is one non-interactive window attached to the current Code
 
 ## Migration and validation
 
-Use the M0–M8 owner units, platform siblings and lifetime checks in the [feature ledger](../../../docs/android-v1-feature-migration.md), followed by the implemented route disposition in the [route ledger](../../../docs/android-v1-route-migration.md). Feature-local CONTEXT files describe their current public capabilities and dependency boundaries.
+Use the M0–M8 owner units, platform siblings and lifetime checks in the [feature ledger](../../../docs/android-v1-feature-migration.md), followed by the closed R0–R8 source and automated route migration in the [route ledger](../../../docs/android-v1-route-migration.md). Device-only R8 scenarios remain explicitly unverified. Feature-local CONTEXT files describe their current public capabilities and dependency boundaries.
 
 Every application unit runs `pnpm validate:android:v1`. Check actual native/web/type/dynamic/test consumers atomically with each move. `app/(workspace)/**` is an unversioned URL tree and belongs to the Android formatter, TypeScript, render, lint, Knip and dependency gates. The retained sync-client/Companion V2 protocol has its own gate; Android has no V2 frontend tooling. Docs must distinguish planned paths from implemented code until each unit closes.

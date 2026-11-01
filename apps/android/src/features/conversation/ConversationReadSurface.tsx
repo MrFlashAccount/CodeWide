@@ -126,6 +126,7 @@ export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
       dismissComposerKeyboardForOverlay={props.overlay.dismissComposerKeyboardForOverlay}
       draftConnectionId={read.connectionId}
       draftThreadId={props.thread.id}
+      identitySubtitle={props.headerSubtitle}
       onBack={props.onBack}
       remoteThread={props.remoteThread}
       server={props.server}

@@ -8,7 +8,9 @@ const storage = vi.hoisted(() => ({
   files: new Map<string, Uint8Array>(),
   failWrite: false,
   writes: 0,
-  open: vi.fn(() => { throw new Error("FileChannel must not be used for SAF downloads"); }),
+  open: vi.fn(() => {
+    throw new Error("FileChannel must not be used for SAF downloads");
+  }),
 }));
 
 // WHY: Expo's SAF objects require Android. The real download adapter, HTTP
@@ -16,9 +18,15 @@ const storage = vi.hoisted(() => ({
 vi.mock("expo-file-system", () => {
   class File {
     constructor(readonly uri: string) {}
-    get name() { return this.uri.slice(this.uri.lastIndexOf("/") + 1); }
-    get size() { return storage.files.get(this.uri)?.length ?? 0; }
-    get exists() { return storage.files.has(this.uri); }
+    get name() {
+      return this.uri.slice(this.uri.lastIndexOf("/") + 1);
+    }
+    get size() {
+      return storage.files.get(this.uri)?.length ?? 0;
+    }
+    get exists() {
+      return storage.files.has(this.uri);
+    }
     open = storage.open;
     write(bytes: Uint8Array, options: { append: boolean }) {
       if (storage.failWrite) throw new Error("Storage write failed");
@@ -31,12 +39,18 @@ vi.mock("expo-file-system", () => {
       storage.files.set(this.uri, joined);
       storage.writes += 1;
     }
-    delete() { storage.files.delete(this.uri); }
+    delete() {
+      storage.files.delete(this.uri);
+    }
   }
   class Directory {
-    static async pickDirectoryAsync() { return new Directory(); }
+    static async pickDirectoryAsync() {
+      return new Directory();
+    }
     name = "Downloads";
-    list() { return [...storage.files.keys()].map((uri) => new File(uri)); }
+    list() {
+      return [...storage.files.keys()].map((uri) => new File(uri));
+    }
     createFile(name: string) {
       const file = new File(`content://downloads/${name}`);
       storage.files.set(file.uri, new Uint8Array());
@@ -55,41 +69,72 @@ vi.mock("react-native", async () => {
     if (bytes === undefined) throw new Error("File not found");
     return { bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
   }
-  return { Linking: {}, NativeModules: { CodeWideNative: {
-    async hashContentDocument(uri: string) { return digest(uri); },
-    async copyContentDocument(source: string, target: string) {
-      const bytes = storage.files.get(source);
-      if (bytes === undefined) throw new Error("File not found");
-      storage.files.set(target, bytes);
-      return digest(target);
+  return {
+    Linking: {},
+    NativeModules: {
+      CodeWideNative: {
+        async hashContentDocument(uri: string) {
+          return digest(uri);
+        },
+        async copyContentDocument(source: string, target: string) {
+          const bytes = storage.files.get(source);
+          if (bytes === undefined) throw new Error("File not found");
+          storage.files.set(target, bytes);
+          return digest(target);
+        },
+      },
     },
-  } } };
+  };
 });
 
-const getAccess = async () => ({ baseUrl: "https://example.test", transport: urlTransport, authorization: "test" });
+const getAccess = async () => ({
+  baseUrl: "https://example.test",
+  transport: urlTransport,
+  authorization: "test",
+});
 const filename = "image.png";
 
 function serve(bytes: Uint8Array, beforeBody: () => void = () => undefined, hashOverride?: string) {
   const hash = hashOverride ?? createHash("sha256").update(bytes).digest("hex");
   const requests: string[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
-    const headers = { "x-content-sha256": hash, "content-length": String(bytes.length), "content-type": "image/png" };
-    if (init.method === "HEAD") return new Response(null, { headers });
-    const range = new Headers(init.headers).get("range") ?? "";
-    requests.push(range);
-    const match = /^bytes=(\d+)-(\d+)$/.exec(range);
-    if (match === null) throw new Error("Missing range");
-    const start = Number(match[1]);
-    const end = Number(match[2]);
-    beforeBody();
-    return new Response(bytes.slice(start, end + 1), { status: 206, headers: {
-      ...headers, "content-range": `bytes ${start}-${end}/${bytes.length}`,
-    } });
-  }));
-  return { hash, requests, partialUri: `content://downloads/.codex-part-${hash.slice(0, 16)}-${filename}` };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init: RequestInit) => {
+      const headers = {
+        "x-content-sha256": hash,
+        "content-length": String(bytes.length),
+        "content-type": "image/png",
+      };
+      if (init.method === "HEAD") return new Response(null, { headers });
+      const range = new Headers(init.headers).get("range") ?? "";
+      requests.push(range);
+      const match = /^bytes=(\d+)-(\d+)$/.exec(range);
+      if (match === null) throw new Error("Missing range");
+      const start = Number(match[1]);
+      const end = Number(match[2]);
+      beforeBody();
+      return new Response(bytes.slice(start, end + 1), {
+        status: 206,
+        headers: {
+          ...headers,
+          "content-range": `bytes ${start}-${end}/${bytes.length}`,
+        },
+      });
+    }),
+  );
+  return {
+    hash,
+    requests,
+    partialUri: `content://downloads/.codex-part-${hash.slice(0, 16)}-${filename}`,
+  };
 }
 
-beforeEach(() => { storage.files.clear(); storage.failWrite = false; storage.writes = 0; storage.open.mockClear(); });
+beforeEach(() => {
+  storage.files.clear();
+  storage.failWrite = false;
+  storage.writes = 0;
+  storage.open.mockClear();
+});
 afterEach(() => vi.unstubAllGlobals());
 
 describe("SAF streamed downloads", () => {
@@ -98,11 +143,19 @@ describe("SAF streamed downloads", () => {
     const served = serve(bytes);
     storage.files.set(served.partialUri, bytes.slice(0, 2));
     const directory = await pickDownloadDirectory();
-    const result = await startPreviewDownload(getAccess, directory, `/${filename}`, () => undefined).promise;
-    expect(result).toMatchObject({ bytes: bytes.length, sha256: served.hash, uri: `content://downloads/${filename}` });
+    const result = await startPreviewDownload(getAccess, directory, `/${filename}`, () => undefined)
+      .promise;
+    expect(result).toMatchObject({
+      bytes: bytes.length,
+      sha256: served.hash,
+      uri: `content://downloads/${filename}`,
+    });
     expect(Buffer.from(storage.files.get(result.uri ?? "") ?? []).equals(bytes)).toBe(true);
     expect(storage.files.has(served.partialUri)).toBe(false);
-    expect(served.requests).toEqual([`bytes=2-${4 * 1024 * 1024 + 1}`, `bytes=${4 * 1024 * 1024 + 2}-${bytes.length - 1}`]);
+    expect(served.requests).toEqual([
+      `bytes=2-${4 * 1024 * 1024 + 1}`,
+      `bytes=${4 * 1024 * 1024 + 2}-${bytes.length - 1}`,
+    ]);
     expect(storage.writes).toBe(served.requests.length);
     expect(storage.open).not.toHaveBeenCalled();
   });
@@ -123,7 +176,12 @@ describe("SAF streamed downloads", () => {
   it("does not append a response arriving after cancellation", async () => {
     let cancel: () => void = () => undefined;
     const served = serve(new Uint8Array([1, 2, 3]), () => cancel());
-    const transfer = startPreviewDownload(getAccess, await pickDownloadDirectory(), `/${filename}`, () => undefined);
+    const transfer = startPreviewDownload(
+      getAccess,
+      await pickDownloadDirectory(),
+      `/${filename}`,
+      () => undefined,
+    );
     cancel = transfer.cancel;
     await expect(transfer.promise).rejects.toThrow("Transfer cancelled");
     expect(storage.files.get(served.partialUri)).toHaveLength(0);
@@ -134,16 +192,28 @@ describe("SAF streamed downloads", () => {
     const served = serve(new Uint8Array([1, 2, 3]));
     storage.files.set(served.partialUri, new Uint8Array([1]));
     storage.failWrite = true;
-    await expect(startPreviewDownload(getAccess, await pickDownloadDirectory(), `/${filename}`, () => undefined).promise)
-      .rejects.toThrow("Storage write failed");
+    await expect(
+      startPreviewDownload(
+        getAccess,
+        await pickDownloadDirectory(),
+        `/${filename}`,
+        () => undefined,
+      ).promise,
+    ).rejects.toThrow("Storage write failed");
     expect(storage.files.get(served.partialUri)).toEqual(new Uint8Array([1]));
     expect(storage.files.has(`content://downloads/${filename}`)).toBe(false);
   });
 
   it("never publishes bytes that fail the final integrity check", async () => {
     serve(new Uint8Array([1, 2, 3]), () => undefined, "0".repeat(64));
-    await expect(startPreviewDownload(getAccess, await pickDownloadDirectory(), `/${filename}`, () => undefined).promise)
-      .rejects.toThrow("SHA-256 integrity verification");
+    await expect(
+      startPreviewDownload(
+        getAccess,
+        await pickDownloadDirectory(),
+        `/${filename}`,
+        () => undefined,
+      ).promise,
+    ).rejects.toThrow("SHA-256 integrity verification");
     expect(storage.files.size).toBe(0);
   });
 });

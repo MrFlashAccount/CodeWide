@@ -1,10 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LegendList } from "@legendapp/list/react-native";
 import { View } from "react-native";
 import { AppButton as Button } from "../../presentation/controls/AppButton";
 import { joinDirectoryPath } from "../../data/remote-projects";
 import { colors, iconSize } from "../../theme";
-import { listRowHeight, listRowPosition } from "../../ui/AppListRow.types";
+import { AppList } from "../../ui/AppList";
+import { useAppListItemState } from "../../ui/appListItemContext";
 import { AppSheetScrollView } from "../../ui/AppSheet";
 import { AppText as Text } from "../../ui/Typography";
 import type { ScopedProjectPickerProps } from "./projectPickerContract";
@@ -80,35 +80,55 @@ export function ProjectDirectoryContent({
       </Text>
     </View>
   ) : (
-    <LegendList
+    <AppList
       contentContainerStyle={styles.listContent}
       data={visibleDirectories}
-      drawDistance={360}
-      getFixedItemSize={() => listRowHeight.single}
-      keyboardShouldPersistTaps="handled"
-      keyExtractor={(entry) => entry.fileName}
-      ListEmptyComponent={
+      empty={
         <EmptyState
           icon="folder-open-outline"
           text={normalizedQuery === "" ? "This folder has no subfolders" : "No matching folders"}
         />
       }
-      recycleItems
-      renderItem={({ index, item }) => (
-        <PickerRow
-          chevron
-          disabled={adding}
-          icon="folder"
-          onPress={() => {
-            navigate(joinDirectoryPath(directoryPath, item.fileName));
-          }}
-          position={listRowPosition(index, visibleDirectories.length)}
-          selected={false}
-          title={item.fileName}
+      keyboardShouldPersistTaps="handled"
+      keyExtractor={(entry) => entry.fileName}
+      renderItem={({ item }) => (
+        <ProjectDirectoryRow
+          adding={adding}
+          directoryPath={directoryPath}
+          fileName={item.fileName}
+          navigate={navigate}
         />
       )}
-      renderScrollComponent={AppSheetScrollView}
+      scrollComponent={AppSheetScrollView}
       style={styles.projectScroll}
+      virtualized
+    />
+  );
+}
+
+function ProjectDirectoryRow({
+  adding,
+  directoryPath,
+  fileName,
+  navigate,
+}: {
+  readonly adding: boolean;
+  readonly directoryPath: string;
+  readonly fileName: string;
+  readonly navigate: (directory: string | null) => void;
+}): React.JSX.Element {
+  const { position } = useAppListItemState();
+  return (
+    <PickerRow
+      chevron
+      disabled={adding}
+      icon="folder"
+      onPress={() => {
+        navigate(joinDirectoryPath(directoryPath, fileName));
+      }}
+      position={position}
+      selected={false}
+      title={fileName}
     />
   );
 }

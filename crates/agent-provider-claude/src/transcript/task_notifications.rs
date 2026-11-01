@@ -41,6 +41,8 @@ const LOST_SUMMARY: &str = "didn't finish before the previous session ended";
 const INTERIM_NOTE: &str = "may be interim";
 /// The `task_started` task type of a sub-agent.
 const AGENT_TASK_TYPE: &str = "local_agent";
+/// The task type of a shell task: a background `Bash` command or a `Monitor`.
+pub const SHELL_TASK_TYPE: &str = "local_bash";
 
 /// What reported.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -1,4 +1,5 @@
 /** V1 ThreadResourceContextChips owner, extracted without changing interaction or resource lifetime. */
+import type { ReactNode } from "react";
 import { Pressable } from "react-native";
 import { useEvent } from "../../react/useEvent";
 import type { ThreadResourcesModel } from "../../data/thread-resources-model";
@@ -20,6 +21,7 @@ import { selectChangePresentation, type ChangesPreferences } from "./changePrese
 import { styles } from "./ThreadResourceContextChips.styles";
 
 export function ThreadResourceContextChips({
+  afterChanges,
   load,
   model,
   onOpen,
@@ -28,6 +30,8 @@ export function ThreadResourceContextChips({
   resourceId,
   revision,
 }: {
+  /** A sibling chip the strip places between Changes (the branch) and Attachments. */
+  afterChanges?: ReactNode;
   load: (
     scope?: ThreadChangeScope,
     kind?: "all" | "changes" | "attachments",
@@ -172,6 +176,7 @@ export function ThreadResourceContextChips({
           )}
         </Pressable>
       </ActionMenu>
+      {afterChanges}
       {!attachmentsUnavailable && (
         <Pressable
           accessibilityLabel={attachmentsLabel}

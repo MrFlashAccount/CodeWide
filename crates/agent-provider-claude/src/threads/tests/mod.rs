@@ -14,7 +14,6 @@ mod task_reports;
 mod threads;
 
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, PoisonError,
@@ -37,10 +36,12 @@ use crate::{
     cli::{
         command::{QueryOptions, SessionIdentity},
         process::{ProcessError, ProcessEvent},
-        protocol::ControlRequest,
+        protocol::{Author, ControlRequest},
     },
     native::{files, write::project_dir_name},
-    runtime::running_sessions::{RunningSessions, RunningSessionsError},
+    runtime::running_sessions::{
+        RunningProcess, RunningSessionMap, RunningSessions, RunningSessionsError,
+    },
     session::{
         ports::{ClientTools, RateLimitSink, SessionConfig},
         query::{BoxFuture, Offer, Query, QueryRuntime},
@@ -208,11 +209,14 @@ impl FakeQuery {
 
 impl Query for FakeQuery {
     fn offer(&self, offer: Offer) {
-        self.persist(
-            json!({"type": "user", "uuid": offer.uuid, "sessionId": self.session_id,
+        let mut row = json!({"type": "user", "uuid": offer.uuid, "sessionId": self.session_id,
             "cwd": self.options.cwd.to_string_lossy(), "timestamp": "2026-10-01T10:00:00.000Z",
-            "entrypoint": "cli", "message": {"role": "user", "content": offer.content}}),
-        );
+            "entrypoint": "cli", "message": {"role": "user", "content": offer.content}});
+        // Claude stores an adapter message as a meta message.
+        if offer.author == Author::Adapter {
+            row["isMeta"] = json!(true);
+        }
+        self.persist(row);
         lock(&self.offers).push(offer);
     }
 
@@ -300,21 +304,37 @@ impl QueryRuntime for FakeRuntime {
 
 /// What `claude agents --json` lists, set by the test.
 #[derive(Default)]
-pub(super) struct FakeRunning(Mutex<HashSet<String>>);
+pub(super) struct FakeRunning(Mutex<RunningSessionMap>, AtomicBool);
 
 impl FakeRunning {
     pub fn add(&self, session_id: &str) {
-        lock(&self.0).insert(session_id.to_owned());
+        lock(&self.0).insert(session_id.to_owned(), RunningProcess::StartUnknown);
     }
 
     pub fn remove(&self, session_id: &str) {
         lock(&self.0).remove(session_id);
     }
+
+    /// Makes every read fail (`true`) or succeed again.
+    pub fn fail(&self, failing: bool) {
+        self.1.store(failing, Ordering::SeqCst);
+    }
+
+    /// Lists `session_id` as held by a process that started at `started_at_ms`.
+    pub fn add_started(&self, session_id: &str, started_at_ms: i64) {
+        lock(&self.0).insert(
+            session_id.to_owned(),
+            RunningProcess::StartedAt(started_at_ms),
+        );
+    }
 }
 
 #[async_trait]
 impl RunningSessions for FakeRunning {
-    async fn list(&self) -> Result<HashSet<String>, RunningSessionsError> {
+    async fn list(&self) -> Result<RunningSessionMap, RunningSessionsError> {
+        if self.1.load(Ordering::SeqCst) {
+            return Err(RunningSessionsError::NotAnArray);
+        }
         Ok(lock(&self.0).clone())
     }
 }
@@ -477,6 +497,7 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
                 ServiceOutput::Fence(fence) => {
                     let _ = fence.send(Ok(position));
                 }
+                ServiceOutput::SessionActivityChanged(_) => {}
             }
         }
     });

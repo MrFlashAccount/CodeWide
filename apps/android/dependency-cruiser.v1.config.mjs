@@ -52,6 +52,8 @@ const featurePublicModules = {
     "ReadOnlyComposerContext",
     "composerTypes",
     "composerWorkspaceCapabilities",
+    "input/ComposerMarkdownInput",
+    "ComposerPullRequestContextChip",
   ],
   projects: [
     "newChatSubmission",
@@ -119,12 +121,35 @@ const featurePublicModules = {
   review: [
     "ReviewFeature",
     "ReviewTargetSheet",
+    "comments/CommentSheet",
+    "comments/DraftCard",
+    "comments/destinationPolicy",
     "comments/reviewComment",
+    "editor/CodeReviewEditor",
+    "editor/editorBridge",
+    "guide/GuidePanel",
+    "reviewTargetAdapter",
+    "reviewTargetCapabilities",
     "comments/reviewSubmission",
     "conversationReviewCapabilities",
     "resources/reviewFiles",
     "workspace/CodeReviewWorkspace",
     "workspaceCapabilities",
+  ],
+  pullRequests: [
+    "PullRequestsFeature",
+    "CatalogModeBar",
+    "PullRequestsHeader",
+    "pullRequestListModel",
+  ],
+  pullRequestDetail: ["PullRequestScreen", "pullRequestScreenContract"],
+  messageContent: [
+    "messageContent",
+    "MessageAuthorName",
+    "MessageAvatar",
+    "MessageBody",
+    "MessageCard",
+    "MessageReplyInput",
   ],
   changes: [
     "ChangesFeature",
@@ -176,6 +201,7 @@ const featurePublicModules = {
     "threadConversationCapabilities",
     "forkTargets",
     "forkTargetPicker",
+    "threadHeaderContract",
   ],
   search: [
     "GlobalSearchScreen",
@@ -254,6 +280,65 @@ export default {
       severity: "error",
       from: { path: `^src/features/(?:${Object.keys(featurePublicModules).join("|")})/` },
       to: { path: "^src/data/use-remote-workspace[.]" },
+    },
+    {
+      name: "v1-review-does-not-import-pull-request-features",
+      severity: "error",
+      comment:
+        "Review targets are forge-independent; pull-request features depend on review, never the reverse.",
+      from: { path: "^src/features/review/" },
+      to: { path: "^src/features/pullRequest" },
+    },
+    {
+      name: "v1-thread-list-does-not-import-pull-requests",
+      severity: "error",
+      comment:
+        "Thread rows read PR badges from data/pullRequestLinkResources and render ui/ForgeIcon.",
+      from: { path: "^src/features/threadList/" },
+      to: { path: "^src/features/pullRequests/" },
+    },
+    {
+      name: "v1-pull-request-features-meet-only-in-route-composition",
+      severity: "error",
+      comment:
+        "The PR catalog and PR screen reach each other only through routeComposition navigation intents.",
+      from: { path: "^src/features/pullRequests/" },
+      to: { path: "^src/features/pullRequestDetail/" },
+    },
+    {
+      name: "v1-pull-request-detail-does-not-import-catalog",
+      severity: "error",
+      comment:
+        "The PR catalog and PR screen reach each other only through routeComposition navigation intents.",
+      from: { path: "^src/features/pullRequestDetail/" },
+      to: { path: "^src/features/pullRequests/" },
+    },
+    {
+      name: "v1-message-content-is-forge-independent",
+      severity: "error",
+      comment:
+        "Message content imports only rendering, ui, theme, data content/image primitives and the composer's public Markdown input.",
+      from: { path: "^src/features/messageContent/" },
+      to: {
+        path: "^src/features/|^src/data/forge|^src/data/review",
+        pathNot:
+          "^src/features/messageContent/|^src/features/composer/input/ComposerMarkdownInput(?:[.](?:native|web))?[.]tsx?$",
+      },
+    },
+    {
+      name: "v1-composer-is-forge-independent",
+      severity: "error",
+      comment:
+        "The composer shows a route-supplied linked pull request capability; it never reads forge data or imports PR features.",
+      from: { path: "^src/features/composer/" },
+      to: { path: "^src/features/pullRequest|^src/data/forge|^src/data/pullRequest" },
+    },
+    {
+      name: "v1-forge-icon-is-a-pure-render-primitive",
+      severity: "error",
+      comment: "ForgeIcon holds no data: it renders an already validated plugin icon or the neutral icon.",
+      from: { path: "^src/ui/ForgeIcon[.]tsx$" },
+      to: { path: "^src/(?:data|features)/" },
     },
     {
       name: "v1-lower-owners-do-not-import-features",

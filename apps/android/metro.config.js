@@ -1,4 +1,5 @@
 const { getDefaultConfig } = require("expo/metro-config");
+const { getBundleModeMetroConfig } = require("react-native-worklets/bundleMode");
 const { realpathSync } = require("node:fs");
 const path = require("node:path");
 
@@ -14,4 +15,4 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   return context.resolveRequest(context, moduleName, platform);
 };
 
-module.exports = config;
+module.exports = getBundleModeMetroConfig(config);

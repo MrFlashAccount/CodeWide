@@ -9,12 +9,12 @@
 ## React data loading
 
 - Never start data fetching or hydration from `useEffect` or `useLayoutEffect`. This prohibition includes network requests, SQLite reads, filesystem reads, native-bridge reads, query hydration, and promise creation whose purpose is to load render data. An effect-triggered fetch necessarily starts after commit and creates an avoidable empty or stale commit followed by another render.
-- Components obtain asynchronous render data from a stable model-owned Legend resource during render. Navigation-critical resources expose their cached Promise through `useSelector(resource$, { suspense: true })`, which delegates to `React.use`; progressive or streaming surfaces may instead read the resource's Legend-owned `{ status, value, error }` snapshot so already-published data stays visible. Never create a fresh Promise on every render or mirror the resource into component-local loading/data state.
-- The Promise cache may live in a dedicated global Legend State store or in an equivalent model-owned resource cache. Legend State owns the live resolved state; the resource layer owns Promise identity, request deduplication, invalidation, cancellation, and error state. Do not add component-local `useQuery` or parallel loading state merely to coordinate the same resource.
+- TanStack Query owns remote request data, Promise identity, request deduplication, staleness, retries, invalidation and periodic resynchronization. Components read those process-owned queries during render through the resource's shared `QueryClient`; navigation-critical queries preload through that same client and suspend on the same cache entry. Never create a `QueryClient` per render or mirror query data into component-local or Legend loading state.
+- Legend State owns durable/local models and frequently changing interaction state, not a second copy of TanStack Query server state. A WebSocket or native event invalidates or patches the owning query; it does not maintain a parallel remote snapshot store. TanStack DB remains for data whose collection/index/live-query model is actually required and must not be introduced merely to fetch an RPC result.
 - Choose the loading boundary according to the interaction:
   - Navigation should preload the complete atomic destination resource and reveal the new screen in a Transition. Keep the previous screen visible until the destination snapshot is ready; do not commit a blank intermediate destination.
   - Lazy or incremental loading should use a stable range/resource key and the smallest local Suspense boundary, or explicit intent/viewport preloading. Preserve the currently visible data and anchor while the adjacent range loads.
-  - Background refreshes and WebSocket/native events update the global model outside React effects and publish resolved changes to Legend State atomically. When React-owned navigation, range, or Promise-selection state changes, schedule that state change in a Transition; do not assume that merely wrapping an external-store mutation makes it deferred.
+  - Background refreshes and WebSocket/native events invalidate or patch the process-owned query outside React effects. Local model events continue to publish to their owning Legend State model. When React-owned navigation, range, or Promise-selection state changes, schedule that state change in a Transition; do not assume that merely wrapping an external-store mutation makes it deferred.
 - Effects remain valid only for synchronizing with external systems after commit: subscriptions, timers, native listeners, imperative handles, and cleanup/retention. They must not be used as a data-loading scheduler. If retention is required, prefer hiding it behind the store subscription lifecycle rather than coupling it to a component fetch effect.
 
 ## Frequently changing interaction state
@@ -39,6 +39,15 @@
 - Respect Reduce Transparency, Increase Contrast and Reduce Motion. Preserve native keyboard focus, accessibility labels and meaningful pending labels.
 - Menu-bar managers can move a status-item window offscreen while its menu is open. Keep the last visible screen anchor when content resizes; never follow an offscreen anchor. Test repeated disclosure, native action-menu tracking and mouse-versus-keyboard focus using a running AppKit event loop, not only static view measurements.
 - Verify changed screens in both appearances, including unavailable, pending, empty and populated states. Fixture rendering is visual evidence, not a passed native interaction test.
+
+## Pane surfaces and chrome
+
+- The workspace pane frame owns surface color by position: left and right panes sit on the frame color, the center on the destination surface. Components inside a pane never set an opaque background for the pane area; a component that needs the matching color (fade, ring, sticky header, mask, skeleton) reads it from `ui/surfaceTone`.
+- Pane content reads its position, frame variant, chrome, surface tone and neighbouring content from `ThreePanelsContext` (`ui/threePanels.ts`), never from props or position assumptions, and renders its header through `ThreePanelsHeader`, which alone decides Back versus `×` and the fullscreen toggle. The contract is in [apps/android/src/routeComposition/CONTEXT.md](apps/android/src/routeComposition/CONTEXT.md).
+
+## Overflow menus
+
+- Every `⋮` actions menu uses `ui/OverflowMenu` (or `ui/OverflowMenuButton` when another owner opens the menu): vertical dots only, never a hand-rolled `Ionicons` ellipsis trigger. `codewide-v1/overflow-menu-trigger` enforces it; the contract is in [apps/android/src/ui/CONTEXT.md](apps/android/src/ui/CONTEXT.md).
 
 ## Android V1 feature boundary
 
@@ -71,6 +80,9 @@
 
 Use only the repository-owned one-shot release commands:
 
+- Replace the locally running Companion from the release-candidate checkout: `./scripts/release-candidate-companion`
+- Build and publish the standalone Android Preview plus its signed OTA baseline to the stable local zrok-backed download/update origin (`https://codewide-rc-download-p4186.zrok-safe-share.garin.dev/` by default): `./scripts/release-candidate-android [--version-code N]`
+- Publish a JS-only update to the currently published Android Preview runtime: `./scripts/release-candidate-android-ota`
 - Build and publish an Android APK: only from CI, through `Release Affected Products` or the `Android APK Release` workflow (`.github/workflows/android-release.yml`), which uploads the signed APK to a GitHub Release
 - Build, sign, and validate the release APK locally without publishing it: `./scripts/build-android-apk [--version X.Y.Z] [--version-code N]`
 - Build, validate, and publish Companion: `./scripts/release-companion`
@@ -84,9 +96,13 @@ Use only the repository-owned one-shot release commands:
 
 Rules:
 
+- In the local `integration/release-candidate` context, Sergey's unqualified instruction to publish, release, deploy, or make the current test build available means a complete Preview release: run exactly `./scripts/release-candidate-companion` and then `./scripts/release-candidate-android`. It never means a production release. For an explicitly requested Preview OTA, run exactly `./scripts/release-candidate-android-ota`. Agents must not manually run their lower-level build, validation, Gradle, install, restart, artifact-copy, bundle-signing, manifest, page, or zrok steps. Diagnose and fix a failed one-shot, then rerun that same one-shot.
+- Each release-candidate one-shot is the sole validator and publisher for its path. Do not run separate preflight or postflight commands, including Git status/diff checks, tests, service checks, HTTP requests, manifest reads, checksum verification, or a second successful release for independent confirmation. Start the documented one-shot, wait silently on that same process until it exits, then report its final JSON. Run diagnostics only after that one-shot itself fails, and only to identify and fix the reported failing stage before rerunning the same one-shot.
+- The Preview OTA one-shot is only for JavaScript, TypeScript and bundled asset changes compatible with the runtime already named by the published Preview manifest. Any change to `apps/android/android/**`, native dependencies or patches, the update certificate, application configuration that changes native output, or a required native module must use `./scripts/release-candidate-android` and a new version code instead.
+- The release-candidate rule does not authorize a production publish. Production release commands still require Sergey to name or explicitly authorize the production release.
 - Publishing is an external action. Run a non-dry release only after the user explicitly asks to publish or release it.
 - Do not manually export signing variables, locate keys, bump Android versions, copy artifacts, or reconstruct the release sequence when the one-shot command is available.
-- There is no local Android publishing path and no OTA publishing. Do not call Gradle `assembleRelease` directly as the normal build path; it is a low-level implementation detail reserved for diagnosing the APK build itself.
+- Production Android has no local publishing path and no OTA publishing. The only exception is the separate `dev.codexremote.app.preview` release-candidate application, whose one-shot owns its local APK and signed OTA baseline. Do not call Gradle `assembleRelease` directly as the normal build path; it is a low-level implementation detail reserved for diagnosing the APK build itself.
 - The APK build command owns `versionName`, `versionCode`, and `runtimeVersion` for the build and restores the checked-in values afterwards. Do not update them separately before invoking it.
 - Never bypass a failed release gate. Report the exact failed stage and fix the cause, then rerun the same one-shot command.
 - Treat the final JSON printed by the command as the release result. Include its version, runtime, hash, and public download URL when reporting completion.

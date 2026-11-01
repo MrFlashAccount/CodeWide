@@ -319,6 +319,23 @@ final class RuntimeConnection: ObservableObject {
         await refresh()
     }
 
+    func httpProxySettings() async throws -> CompanionHttpProxySettings {
+        let json = try await requestHttpProxySettings()
+        return try JSONDecoder().decode(
+            CompanionHttpProxySettings.self,
+            from: Data(json.utf8)
+        )
+    }
+
+    func setHttpProxySettings(_ settings: CompanionHttpProxySettings) async throws {
+        let json = String(decoding: try JSONEncoder().encode(settings), as: UTF8.self)
+        _ = try await requestSetHttpProxySettings(json)
+        stateRevision += 1
+        status = "Applying proxy settings"
+        health = nil
+        disconnect()
+    }
+
     func checkRelayUpdate() async throws {
         guard !isRelayUpdateWorking else { return }
         isRelayUpdateWorking = true
@@ -690,6 +707,30 @@ final class RuntimeConnection: ObservableObject {
                 return
             }
             proxy.setRelayEnabled(enabled) { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestHttpProxySettings() async throws -> String {
+        try await XPCReplyGate.perform { gate in
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.httpProxySettings { payload, error in
+                gate.resume(with: Self.result(payload: payload, error: error))
+            }
+        }
+    }
+
+    private func requestSetHttpProxySettings(_ json: String) async throws -> String {
+        try await XPCReplyGate.perform { gate in
+            guard let proxy = proxy(errorHandler: { gate.resume(with: .failure($0)) }) else {
+                gate.resume(with: .failure(RuntimeConnectionError.invalidProxy))
+                return
+            }
+            proxy.setHttpProxySettings(json: json) { payload, error in
                 gate.resume(with: Self.result(payload: payload, error: error))
             }
         }

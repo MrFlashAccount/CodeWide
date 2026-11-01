@@ -5,6 +5,8 @@ import { TurnChangesContext } from "../../rendering/TurnChangesContext";
 import { conversationHeaderChromeHeight } from "../../ui/conversation-chrome-layout";
 import { ConversationPanelUnderlay } from "../../ui/ConversationPanelUnderlay";
 import { MessageActionMenuProvider } from "../../ui/MessageActionMenu";
+import { PaneChrome } from "../../ui/PaneChrome";
+import { surfaceToneCanvasStyle, useSurfaceTone } from "../../ui/surfaceTone";
 import { CostBreakdownMenuProvider } from "../accounts/CostBreakdownMenu";
 import { styles } from "./ConversationLayout.styles";
 import type { ConversationLayoutProps } from "./ConversationLayoutContract";
@@ -12,7 +14,6 @@ import { ThreadCwdContext } from "./turns/turnContexts";
 
 export function ConversationLayout({
   bottomChrome,
-  compact,
   conversationInsets,
   cwd,
   headerContent,
@@ -31,6 +32,8 @@ export function ConversationLayout({
   threadSearchVisible,
   timelineSurface,
 }: ConversationLayoutProps) {
+  // A host pane on the recessed workspace frame paints the conversation in the frame color.
+  const canvas = surfaceToneCanvasStyle(useSurfaceTone());
   return (
     <ThreadCodeDocumentContext.Provider value={openCodeDocument}>
       <View
@@ -41,14 +44,14 @@ export function ConversationLayout({
           const next = paneWidth < 520;
           setNarrowConversationPane((current) => (current === next ? current : next));
         }}
-        style={[styles.conversation, compact ? undefined : styles.conversationRaised]}
+        style={[styles.conversation, canvas]}
         testID="thread-detail-pane-shell"
       >
-        <View style={styles.conversationKeyboard} testID="thread-detail-pane">
+        <View style={[styles.conversationKeyboard, canvas]} testID="thread-detail-pane">
           <View pointerEvents="box-none" style={styles.conversationHeaderChrome}>
             {headerContent}
 
-            {threadSearchVisible && searchContent}
+            {threadSearchVisible && <PaneChrome>{searchContent}</PaneChrome>}
           </View>
 
           <View style={styles.conversationContentSurface}>
@@ -59,7 +62,7 @@ export function ConversationLayout({
               onTouchStart={() => {
                 setComposerTrayVisible(false);
               }}
-              style={styles.conversationKeyboardBody}
+              style={[styles.conversationKeyboardBody, canvas]}
             >
               <ThreadCwdContext.Provider value={cwd}>
                 <TurnChangesContext.Provider value={presentTurnChanges}>
@@ -84,7 +87,10 @@ export function ConversationLayout({
             style={styles.composerSticky}
           >
             <ConversationPanelUnderlay style={StyleSheet.absoluteFill} />
-            {jumpContent}
+            {/* The floating jump control keeps its inset from the pane's visible edge. */}
+            <PaneChrome pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+              {jumpContent}
+            </PaneChrome>
 
             {bottomChrome}
           </KeyboardStickyView>

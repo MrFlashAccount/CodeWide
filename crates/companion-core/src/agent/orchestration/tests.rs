@@ -26,6 +26,25 @@ use crate::{
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[path = "compatibility_tests.rs"]
+mod compatibility_tests;
+#[path = "history_reconcile_tests.rs"]
+mod history_reconcile_tests;
+#[path = "inheritance_tests.rs"]
+mod inheritance_tests;
+#[path = "notification_journal_tests.rs"]
+mod notification_journal_tests;
+#[path = "notification_tests.rs"]
+mod notification_tests;
+#[path = "rework_tests.rs"]
+mod rework_tests;
+#[path = "spawn_authority_tests.rs"]
+mod spawn_authority_tests;
+#[path = "task_tests.rs"]
+mod task_tests;
+#[path = "test_support.rs"]
+mod test_support;
+
 const PARENT: &str = "parent-thread";
 const CLAUDE_PARENT: &str = "claude-parent-thread";
 /// The built-in profiles each provider lists (Codex 0.162 and the Claude host).
@@ -56,19 +75,42 @@ struct Harness {
 }
 
 async fn harness(parent_profile: &str) -> Result<Harness, Box<dyn std::error::Error>> {
+    harness_with_pump(parent_profile, true).await
+}
+
+async fn harness_without_pump(parent_profile: &str) -> Result<Harness, Box<dyn std::error::Error>> {
+    harness_with_pump(parent_profile, false).await
+}
+
+async fn harness_with_pump(
+    parent_profile: &str,
+    start_pump: bool,
+) -> Result<Harness, Box<dyn std::error::Error>> {
+    harness_at(parent_profile, start_pump, "/repo").await
+}
+
+async fn harness_at(
+    parent_profile: &str,
+    start_pump: bool,
+    cwd: &str,
+) -> Result<Harness, Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let mut parent = thread("codex", PARENT, 5);
-    parent.cwd = "/repo".into();
+    parent.cwd = cwd.into();
     parent.settings.model = "gpt-parent".into();
     parent.settings.permission_profile = parent_profile.into();
     let codex = Arc::new(
-        ScriptedProvider::new("codex", capabilities(false))
-            .with_profiles(&CODEX_PROFILES)
-            .with_thread(parent),
+        ScriptedProvider::new("codex", {
+            let mut value = capabilities(false);
+            value.codex_native = true;
+            value
+        })
+        .with_profiles(&CODEX_PROFILES)
+        .with_thread(parent),
     );
     let mut claude_parent = thread("claude", CLAUDE_PARENT, 5);
-    claude_parent.cwd = "/repo".into();
+    claude_parent.cwd = cwd.into();
     claude_parent.settings.permission_profile = ":full-access".into();
     let claude = Arc::new(
         ScriptedProvider::new("claude", capabilities(true))
@@ -99,12 +141,48 @@ async fn harness(parent_profile: &str) -> Result<Harness, Box<dyn std::error::Er
         .await?;
     let gateway = Arc::new(ClientWireGateway::new(registry, bindings));
     let (journal_tx, journal) = tokio::sync::mpsc::channel(16);
-    let service = OrchestrationService::new(
+    let (pump_tx, pump_events) = tokio::sync::mpsc::channel(32);
+    let profiles = Arc::new(ProfileObservations::default());
+    let outbox_wakeup = Arc::new(tokio::sync::Notify::new());
+    let workspaces = Arc::new(std::sync::RwLock::new(None));
+    let service = OrchestrationService::with_turn_delivery(
+        gateway.clone(),
+        &store,
+        journal_tx,
+        profiles.clone(),
+        crate::turn_delivery::TurnDelivery::new(
+            store.clone(),
+            outbox_wakeup.clone(),
+            pump_tx.clone(),
+        ),
+        workspaces.clone(),
+    );
+    tokio::task::yield_now().await;
+    let recovery = service.recovery_gate.lock().await;
+    drop(recovery);
+    let fork = crate::agent::fork::ForkService::new(
         gateway.clone(),
         store.clone(),
-        journal_tx,
-        Arc::new(ProfileObservations::default()),
+        pump_tx.clone(),
+        profiles.clone(),
     );
+    if start_pump {
+        tokio::spawn(crate::turn_delivery::run_outbox_pump(
+            crate::turn_delivery::PumpContext {
+                gateway: gateway.clone(),
+                turn_delivery: service.turn_delivery.clone(),
+                thread_view: crate::thread_view::ThreadViewService::new(
+                    gateway.clone(),
+                    profiles.clone(),
+                ),
+                files: Arc::new(std::sync::RwLock::new(None)),
+                workspaces,
+                fork,
+            },
+            outbox_wakeup,
+        ));
+        test_support::observe_pump_events(service.clone(), pump_events);
+    }
     Ok(Harness {
         service,
         codex,
@@ -264,109 +342,6 @@ async fn spawn_defaults_to_the_parent_provider_model_and_never_escalates() -> Te
 }
 
 #[tokio::test]
-async fn an_unknown_parent_profile_allows_only_read_only_children() -> TestResult {
-    let harness = harness("").await?;
-    let (success, _) = call(
-        &harness.service,
-        "codex",
-        PARENT,
-        "codewide_spawn_agent",
-        json!({"prompt": "p", "permissionProfile": ":workspace"}),
-    )
-    .await;
-    assert!(!success);
-    let (success, _) = call(
-        &harness.service,
-        "codex",
-        PARENT,
-        "codewide_spawn_agent",
-        json!({"prompt": "p"}),
-    )
-    .await;
-    assert!(success);
-    assert_eq!(
-        harness.codex.created()[0].settings.permission_profile,
-        ":read-only"
-    );
-    // An observed effective profile replaces the unknown one.
-    harness.service.observe_rpc_result(
-        "thread/resume",
-        &json!({"thread": {"id": PARENT}, "activePermissionProfile": {"id": ":full-access"}}),
-    );
-    let (success, _) = call(
-        &harness.service,
-        "codex",
-        PARENT,
-        "codewide_spawn_agent",
-        json!({"prompt": "p", "permissionProfile": ":workspace"}),
-    )
-    .await;
-    assert!(success);
-    Ok(())
-}
-
-/// A Codex thread on its configured sandbox mode reports no named profile,
-/// only its sandbox policy; a Claude agent it spawns inherits that access.
-#[tokio::test]
-async fn a_codex_parent_on_its_configured_sandbox_passes_its_access_to_a_claude_agent() -> TestResult
-{
-    let harness = harness("").await?;
-    harness.service.observe_rpc_result(
-        "thread/resume",
-        &json!({"thread": {"id": PARENT}, "activePermissionProfile": null,
-            "sandbox": {"type": "dangerFullAccess"}}),
-    );
-    let (success, spawned) = call(
-        &harness.service,
-        "codex",
-        PARENT,
-        "codewide_spawn_agent",
-        json!({"prompt": "p", "provider": "claude"}),
-    )
-    .await;
-    assert!(success, "{spawned}");
-    assert_eq!(
-        harness.claude.created()[0].settings.permission_profile,
-        ":danger-full-access"
-    );
-    Ok(())
-}
-
-/// Claude spells full access `:full-access`; Codex has only
-/// `:danger-full-access`, which a Codex agent of a full-access Claude thread gets.
-#[tokio::test]
-async fn a_full_access_claude_parent_gives_a_codex_agent_codex_full_access() -> TestResult {
-    let harness = harness(":workspace").await?;
-    let (success, spawned) = call(
-        &harness.service,
-        "claude",
-        CLAUDE_PARENT,
-        "codewide_spawn_agent",
-        json!({"prompt": "p", "provider": "codex"}),
-    )
-    .await;
-    assert!(success, "{spawned}");
-    assert_eq!(
-        harness.codex.created()[0].settings.permission_profile,
-        ":danger-full-access"
-    );
-    let (success, spawned) = call(
-        &harness.service,
-        "claude",
-        CLAUDE_PARENT,
-        "codewide_spawn_agent",
-        json!({"prompt": "p", "provider": "codex", "permissionProfile": ":workspace"}),
-    )
-    .await;
-    assert!(success, "{spawned}");
-    assert_eq!(
-        harness.codex.created()[1].settings.permission_profile,
-        ":workspace"
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn wait_wakes_on_the_childs_turn_end_and_reports_the_final_message() -> TestResult {
     let harness = harness(":workspace").await?;
     let (_, spawned) = call(
@@ -387,12 +362,14 @@ async fn wait_wakes_on_the_childs_turn_end_and_reports_the_final_message() -> Te
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(!wait_task.is_finished(), "wait blocks while the child runs");
     let turn_id = "claude-turn-1";
-    harness
-        .service
-        .observe_event(&final_answer(child, turn_id, "all good"));
-    harness
-        .service
-        .observe_event(&completed(child, turn_id, "completed"));
+    harness.service.observe_event(
+        &ProviderId::from_static("claude"),
+        &final_answer(child, turn_id, "all good"),
+    );
+    harness.service.observe_event(
+        &ProviderId::from_static("claude"),
+        &completed(child, turn_id, "completed"),
+    );
     let (success, waited) = tokio::time::timeout(Duration::from_secs(5), wait_task).await??;
     assert!(success);
     assert_eq!(
@@ -525,9 +502,10 @@ async fn send_queues_while_running_and_delivers_on_the_turn_end() -> TestResult 
     assert_eq!(steer.len(), 1);
     assert_eq!(steer[0].expected_turn_id.as_str(), "claude-turn-1");
 
-    harness
-        .service
-        .observe_event(&completed(child, "claude-turn-1", "completed"));
+    harness.service.observe_event(
+        &ProviderId::from_static("claude"),
+        &completed(child, "claude-turn-1", "completed"),
+    );
     tokio::time::timeout(Duration::from_secs(5), async {
         while harness.claude.started().len() < 2 {
             tokio::task::yield_now().await;
@@ -549,9 +527,10 @@ async fn send_queues_while_running_and_delivers_on_the_turn_end() -> TestResult 
     assert_eq!(state["status"], "running");
 
     // An idle agent gets a new turn at once.
-    harness
-        .service
-        .observe_event(&completed(child, "claude-turn-2", "completed"));
+    harness.service.observe_event(
+        &ProviderId::from_static("claude"),
+        &completed(child, "claude-turn-2", "completed"),
+    );
     let (_, sent) = call(
         &harness.service,
         "codex",
@@ -593,9 +572,10 @@ async fn cancel_interrupts_the_running_turn_and_is_idempotent() -> TestResult {
         interrupts[0].turn_id.as_ref().map(TurnId::as_str),
         Some("claude-turn-1")
     );
-    harness
-        .service
-        .observe_event(&completed(child, "claude-turn-1", "interrupted"));
+    harness.service.observe_event(
+        &ProviderId::from_static("claude"),
+        &completed(child, "claude-turn-1", "interrupted"),
+    );
     let (success, again) = call(
         &harness.service,
         "codex",
@@ -611,6 +591,37 @@ async fn cancel_interrupts_the_running_turn_and_is_idempotent() -> TestResult {
         1,
         "an idle agent is not interrupted again"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancel_reports_an_unconfirmed_interrupt_instead_of_hanging() -> TestResult {
+    let harness = harness(":workspace").await?;
+    let (_, spawned) = call(
+        &harness.service,
+        "codex",
+        PARENT,
+        "codewide_spawn_agent",
+        json!({"prompt": "p", "provider": "claude"}),
+    )
+    .await;
+    let child = agent_id(&spawned)?;
+    harness.claude.hang_interrupts();
+    for _ in 0..2 {
+        let (success, answer) = call(
+            &harness.service,
+            "codex",
+            PARENT,
+            "codewide_cancel_agent",
+            json!({"agentThreadId": child.as_str()}),
+        )
+        .await;
+        assert!(!success, "an unconfirmed interrupt is an error: {answer}");
+        assert!(
+            answer.to_string().contains("not confirmed"),
+            "the error names the unconfirmed interrupt: {answer}"
+        );
+    }
     Ok(())
 }
 
@@ -649,11 +660,17 @@ async fn links_and_status_survive_a_restart() -> TestResult {
     );
     // A new service over the same store: the tracker starts empty.
     let (journal, _journal_rx) = tokio::sync::mpsc::channel(1);
-    let restarted = OrchestrationService::new(
+    let restarted = OrchestrationService::with_turn_delivery(
         harness.gateway.clone(),
-        harness.store.clone(),
-        journal,
+        &harness.store,
+        journal.clone(),
         Arc::new(ProfileObservations::default()),
+        crate::turn_delivery::TurnDelivery::new(
+            harness.store.clone(),
+            Arc::new(tokio::sync::Notify::new()),
+            journal,
+        ),
+        Arc::new(std::sync::RwLock::new(None)),
     );
     let (_, listed) = call(
         &restarted,
@@ -663,11 +680,12 @@ async fn links_and_status_survive_a_restart() -> TestResult {
         json!({}),
     )
     .await;
-    assert_eq!(
-        listed,
-        json!({"agents": [{"agentThreadId": child, "provider": "claude", "model": "claude-default",
-            "name": "r", "status": "completed"}]})
-    );
+    assert_eq!(listed["agents"][0]["agentThreadId"], child);
+    assert_eq!(listed["agents"][0]["provider"], "claude");
+    assert_eq!(listed["agents"][0]["model"], "claude-default");
+    assert_eq!(listed["agents"][0]["name"], "r");
+    assert_eq!(listed["agents"][0]["status"], "completed");
+    assert!(listed["agents"][0]["taskId"].as_str().is_some());
     let (_, waited) = call(
         &restarted,
         "codex",
@@ -699,82 +717,5 @@ async fn invalid_arguments_and_unknown_tools_are_unsuccessful_results() -> TestR
         assert!(!success, "{tool}");
     }
     assert!(harness.codex.created().is_empty() && harness.claude.created().is_empty());
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_busy_provider_keeps_the_message_queued_for_after_its_turn() -> TestResult {
-    let harness = harness(":workspace").await?;
-    let (_, spawned) = call(
-        &harness.service,
-        "codex",
-        PARENT,
-        "codewide_spawn_agent",
-        json!({"prompt": "p", "provider": "claude"}),
-    )
-    .await;
-    let child = agent_id(&spawned)?;
-    let child = child.as_str();
-    harness
-        .service
-        .observe_event(&completed(child, "claude-turn-1", "completed"));
-    // The host started a turn of its own (a wake turn) the tracker missed.
-    harness.claude.set_busy(Some("wake-turn"));
-    let (_, sent) = call(
-        &harness.service,
-        "codex",
-        PARENT,
-        "codewide_send_agent",
-        json!({"agentThreadId": child, "message": "later"}),
-    )
-    .await;
-    assert_eq!(sent, json!({"status": "queued"}));
-    harness.claude.set_busy(None);
-    harness
-        .service
-        .observe_event(&completed(child, "wake-turn", "completed"));
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while harness.claude.started().len() < 3 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await?;
-    assert_eq!(
-        serde_json::to_value(&harness.claude.started()[2].input)?,
-        json!([{"type": "text", "text": "later"}])
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_wait_ends_with_the_calling_turn() -> TestResult {
-    let harness = harness(":workspace").await?;
-    let (_, spawned) = call(
-        &harness.service,
-        "codex",
-        PARENT,
-        "codewide_spawn_agent",
-        json!({"prompt": "p", "provider": "claude"}),
-    )
-    .await;
-    let child = agent_id(&spawned)?;
-    let service = harness.service.clone();
-    let arguments = json!({"agentThreadId": child, "timeoutSeconds": 300});
-    let wait_task = tokio::spawn(async move {
-        call(&service, "codex", PARENT, "codewide_wait_agent", arguments).await
-    });
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    // Another thread's turn end does not release it; the caller's does.
-    harness
-        .service
-        .observe_event(&completed("elsewhere", "parent-turn", "completed"));
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    assert!(!wait_task.is_finished());
-    harness
-        .service
-        .observe_event(&completed(PARENT, "parent-turn", "interrupted"));
-    let (success, waited) = tokio::time::timeout(Duration::from_secs(5), wait_task).await??;
-    assert!(success);
-    assert_eq!(waited["status"], "running");
     Ok(())
 }

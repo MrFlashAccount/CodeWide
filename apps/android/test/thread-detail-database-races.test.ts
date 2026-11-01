@@ -5,8 +5,10 @@ import {
   authoritativeTimelineRowId,
   type ThreadDetailRow,
 } from "../src/data/thread-detail-projection";
+import { parseHostQueueSnapshot } from "../src/data/queue-event";
 import { residentThreadWindow } from "../src/data/resident-thread-window";
 import { ThreadSyncLane } from "../src/data/thread-cursor-sync";
+import { turnBackgroundCommands } from "../src/features/conversation/protocol/backgroundCommand";
 
 const harness = vi.hoisted(() => ({
   persisted: [] as Array<{ type: string; key?: string; value?: { id: string } }>,
@@ -1625,6 +1627,43 @@ describe("thread detail ownership races", () => {
     await details.close();
   });
 
+  it("never projects a model-only notice from a companion queue event as a queued or pending prompt", async () => {
+    const details = createThreadDetailDatabase();
+    await details.prepare();
+    await details.importThreadSnapshot("server", authoritativeThread("canonical"), "initial");
+    const commands = parseHostQueueSnapshot([
+      {
+        commandId: "child-result",
+        remoteThreadId: "thread",
+        params: { threadId: "thread", input: [{ type: "text", text: "<child agent result>" }] },
+        presentation: "notice",
+        state: "queued",
+        order: 1,
+        createdAt: 1_000_000,
+        lastError: null,
+      },
+      {
+        commandId: "queued-prompt",
+        remoteThreadId: "thread",
+        params: { threadId: "thread", input: [{ type: "text", text: "next prompt" }] },
+        presentation: "queue",
+        state: "queued",
+        order: 2,
+        createdAt: 1_000_001,
+        lastError: null,
+      },
+    ]);
+    expect(commands).not.toBeNull();
+
+    await details.replaceQueued("server", "thread", commands!);
+
+    expect(details.hasPendingDelivery("server", "thread", "child-result")).toBe(false);
+    expect(details.listQueued("server", "thread").map(({ commandId, text }) => [commandId, text])).toEqual([
+      ["queued-prompt", "next prompt"],
+    ]);
+    await details.close();
+  });
+
   it("hands a delivered explicit queue entry to the optimistic chat projection", async () => {
     const details = createThreadDetailDatabase();
     await details.prepare();
@@ -2946,5 +2985,70 @@ describe("thread detail ownership races", () => {
     await closed;
 
     expect(harness.persisted.some((change) => change.value?.id === pending.id)).toBe(true);
+  });
+  describe("background command states", () => {
+    /** The thread's one turn, whose `dev` command started task `bdev00001` in `state`. */
+    function backgroundThread(state: Record<string, unknown>): Thread {
+      const turn = {
+        ...completedTurn("remote-turn", "command"),
+        items: [
+          ...completedTurn("remote-turn", "command").items,
+          {
+            type: "commandExecution",
+            id: "dev",
+            command: "npm run dev",
+            status: "completed",
+            codewideBackgroundTask: { taskId: "bdev00001", ...state },
+          },
+        ],
+      } as unknown as Turn;
+      return { ...authoritativeThread("command"), turns: [turn] };
+    }
+
+    async function chipStates(
+      details: ReturnType<typeof createThreadDetailDatabase>,
+    ): Promise<string[]> {
+      const turn = details.getThread("server", "thread")!.turns[0]!;
+      return turnBackgroundCommands(turn).map(({ task }) => task.status);
+    }
+
+    it("repairs a sealed turn's chip from a read after its live event was lost", async () => {
+      const details = mountedThreadDetailDatabase();
+      await details.prepare();
+      await details.importThreadSnapshot("server", backgroundThread({ status: "running" }), "initial");
+      expect(await chipStates(details)).toEqual(["running"]);
+
+      // No live event arrived; the next read carries the provider's state.
+      const read = backgroundThread({ endedAt: 20, exitCode: null, status: "completed" });
+      await details.appendTurns("server", "thread", read.turns);
+      expect(await chipStates(details)).toEqual(["completed"]);
+      await details.close();
+    });
+
+    it("lets a read's end replace a stale running state", async () => {
+      const details = mountedThreadDetailDatabase();
+      await details.prepare();
+      await details.importThreadSnapshot("server", backgroundThread({ status: "running" }), "initial");
+      await details.appendTurns(
+        "server",
+        "thread",
+        backgroundThread({ endedAt: 21, exitCode: 2, status: "failed" }).turns,
+      );
+      expect(await chipStates(details)).toEqual(["failed"]);
+      await details.close();
+    });
+
+    it("keeps a known end when a later read still says running", async () => {
+      const details = mountedThreadDetailDatabase();
+      await details.prepare();
+      await details.importThreadSnapshot(
+        "server",
+        backgroundThread({ endedAt: 20, exitCode: null, status: "completed" }),
+        "initial",
+      );
+      await details.appendTurns("server", "thread", backgroundThread({ status: "running" }).turns);
+      expect(await chipStates(details)).toEqual(["completed"]);
+      await details.close();
+    });
   });
 });

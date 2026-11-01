@@ -9,6 +9,8 @@ pub use agent_provider_codex as codex;
 mod codex_golden_tests;
 pub mod codex_hub;
 #[cfg(test)]
+mod codex_subscription_tests;
+#[cfg(test)]
 mod codex_tools_tests;
 
 use std::{

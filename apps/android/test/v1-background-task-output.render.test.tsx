@@ -1,43 +1,25 @@
-import type { RenderBlock } from "@codewide/renderers";
 import { act, fireEvent, render, within } from "@testing-library/react-native";
 import * as Clipboard from "expo-clipboard";
 import type { BackgroundTaskOutputPage } from "../src/data/backgroundTaskOutput";
-import { BackgroundTaskOutputButton } from "../src/features/conversation/protocol/BackgroundTaskOutputButton";
 import {
   ConversationRouteNavigationContext,
   type ConversationRouteNavigation,
 } from "../src/features/conversation/conversationRouteNavigation";
 import { BackgroundTaskOutputHost } from "../src/features/conversation/turns/BackgroundTaskOutputHost";
 import { BackgroundTaskOutputScreen } from "../src/features/conversation/turns/BackgroundTaskOutputScreen";
+import { CommandOutputScreen } from "../src/features/conversation/turns/CommandOutputScreen";
 import type { TaskOutputRouteRequest } from "../src/services/backgroundTasks/taskOutputRouteSession";
+import { colors, radii, spacing } from "../src/theme";
+import { AppText } from "../src/ui/AppText";
 import { TaskNotificationLine } from "../src/features/conversation/turns/TaskNotificationLine";
 import type { TaskNotificationReport } from "../src/rendering/taskNotifications";
+import {
+  terminalClearSearch,
+  terminalFindNext,
+  terminalFindPrevious,
+} from "./mocks/ExpoLibghostty";
 
-// The Ghostty view is native: this double keeps what the screen writes into it.
-jest.mock("expo-libghostty", () => {
-  const React = jest.requireActual<typeof import("react")>("react");
-  const { Text } = jest.requireActual<typeof import("react-native")>("react-native");
-  return {
-    TerminalView: function TerminalView(props: {
-      readonly readOnly?: boolean;
-      readonly ref?: React.Ref<unknown>;
-    }) {
-      const [written, setWritten] = React.useState("");
-      React.useImperativeHandle(props.ref, () => ({
-        finish: async () => undefined,
-        write: async () => undefined,
-        writeText: async (text: string) => {
-          setWritten((current) => current + text);
-        },
-      }));
-      return (
-        <Text testID="terminal-grid" accessibilityHint={props.readOnly === true ? "read-only" : ""}>
-          {written}
-        </Text>
-      );
-    },
-  };
-});
+jest.mock("expo-libghostty", () => jest.requireActual("./mocks/ExpoLibghostty"));
 
 const report: TaskNotificationReport = {
   agentThreadId: null,
@@ -155,9 +137,15 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
 
   // The task's name titles the screen; its command is a prompt line above the output.
   expect(view.getByRole("header")).toHaveTextContent("Wait for CI");
-  const command = view.getByTestId("background-task-command");
+  const command = view.getByTestId("command-output-command");
+  expect(command).toHaveStyle({
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.medium,
+    marginHorizontal: spacing.md,
+    paddingHorizontal: spacing.md,
+  });
   expect(within(command).getByText("❯")).toBeOnTheScreen();
-  expect(within(command).getByText(COMMAND)).toBeOnTheScreen();
+  expect(within(command).getByText(COMMAND).props.selectable).toBeUndefined();
   // The command copies on its own, apart from the whole output.
   const copy = jest.spyOn(Clipboard, "setStringAsync");
   fireEvent.press(within(command).getByLabelText("Copy"));
@@ -170,16 +158,37 @@ it("shows the output in a read-only terminal, reads the rest by itself and close
   expect(grid).toHaveTextContent("first page\r\nsecond\r\n[exited with code 0]", {
     normalizeWhitespace: false,
   });
+  expect(grid).toHaveStyle({
+    marginHorizontal: spacing.md,
+    marginVertical: spacing.xs,
+  });
   expect(grid.props.accessibilityHint).toBe("read-only");
   // The header copies everything like a terminal: the prompt line, then the output.
-  fireEvent.press(within(view.getByTestId("background-task-output-header")).getByLabelText("Copy"));
+  const header = within(view.getByTestId("command-output-header"));
+  const headerCopy = header.getByLabelText("Copy");
+  const headerSearch = header.getByLabelText("Search command output");
+  const headerActionStyle = headerSearch.props.style;
+  expect(headerCopy.props.style).toEqual(headerSearch.props.style);
+  fireEvent.press(headerCopy);
   expect(copy).toHaveBeenLastCalledWith(`❯ ${COMMAND}\nfirst page\nsecond\n[exited with code 0]`);
-  // The footer reads the result; nothing asks to load more.
-  expect(view.getByText("Finished")).toBeOnTheScreen();
-  expect(view.getByText("· exit 0 · 12 B")).toBeOnTheScreen();
+  // The raw terminal owns the remaining surface; there is no duplicate status footer.
+  expect(view.queryByText("Finished")).toBeNull();
+  expect(view.queryByText("· exit 0 · 12 B")).toBeNull();
   expect(view.queryByText(/load more|read new output/iu)).toBeNull();
 
-  fireEvent.press(view.getByLabelText("Close task output"));
+  fireEvent.press(view.getByLabelText("Search command output"));
+  fireEvent.changeText(view.getByLabelText("Find in command output"), "second");
+  expect(view.getByLabelText("Previous match").props.style).toEqual(headerActionStyle);
+  expect(view.getByLabelText("Next match").props.style).toEqual(headerActionStyle);
+  expect(view.getByLabelText("Close output search").props.style).toEqual(headerActionStyle);
+  fireEvent.press(view.getByLabelText("Next match"));
+  fireEvent.press(view.getByLabelText("Previous match"));
+  expect(terminalFindNext).toHaveBeenLastCalledWith("second");
+  expect(terminalFindPrevious).toHaveBeenLastCalledWith("second");
+  fireEvent.press(view.getByLabelText("Close output search"));
+  expect(terminalClearSearch).toHaveBeenCalled();
+
+  fireEvent.press(view.getByLabelText("Close command output"));
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
@@ -200,44 +209,71 @@ it("shows no prompt line when the Companion does not know the command", async ()
   await act(async () => undefined);
 
   expect(view.getByRole("header")).toHaveTextContent("Wait for CI");
-  expect(view.queryByTestId("background-task-command")).toBeNull();
+  expect(view.queryByTestId("command-output-command")).toBeNull();
 });
 
-it("opens a background Bash call's output from its command block", async () => {
-  const read = jest.fn(async () => page("building…", null));
-  const { navigation, opened } = navigationRecorder();
-  // WHY: the button reads only `raw` of the generated render block union.
-  const block = {
-    raw: { codewideBackgroundTaskId: "bd3cb8oli", type: "commandExecution" },
-  } as unknown as RenderBlock;
+it("collapses a long command to three lines and keeps its prompt on the first line", () => {
+  const longCommand = "pnpm --filter @codewide/android run a-command-that-wraps-across-four-lines";
   const view = render(
-    <ConversationRouteNavigationContext.Provider value={navigation}>
-      <BackgroundTaskOutputHost read={read}>
-        <BackgroundTaskOutputButton block={block} />
-      </BackgroundTaskOutputHost>
-    </ConversationRouteNavigationContext.Provider>,
+    <CommandOutputScreen
+      command={longCommand}
+      error={null}
+      loading={false}
+      onClose={jest.fn()}
+      output={{ headOmitted: false, text: "", totalChars: 0 }}
+      outputSource="long-command"
+      status="finished"
+      title="Command"
+    />,
   );
+  const command = view.getByTestId("command-output-command");
+  const commandText = within(command).getByText(longCommand);
+  expect(command).toHaveStyle({ alignItems: "flex-start" });
+  expect(commandText.props.numberOfLines).toBe(3);
 
-  await act(async () => {
-    fireEvent.press(view.getByTestId("background-task-output-open"));
-  });
-  expect(read).toHaveBeenCalledWith("bd3cb8oli", 0);
-  expect(opened[0]).toMatchObject({ name: "Background command", taskId: "bd3cb8oli" });
+  fireEvent(commandText, "textLayout", { nativeEvent: { lines: [{}, {}, {}, {}] } });
+  fireEvent.press(view.getByLabelText("Expand command"));
+  expect(within(command).getByText(longCommand).props.numberOfLines).toBeUndefined();
+
+  fireEvent.press(view.getByLabelText("Collapse command"));
+  expect(within(command).getByText(longCommand).props.numberOfLines).toBe(3);
 });
 
-it("offers nothing to open where the thread cannot read task output", () => {
-  const { navigation } = navigationRecorder();
-  // WHY: the button reads only `raw` of the generated render block union.
-  const block = {
-    raw: { codewideBackgroundTaskId: "bd3cb8oli", type: "commandExecution" },
-  } as unknown as RenderBlock;
-  const view = render(
-    <ConversationRouteNavigationContext.Provider value={navigation}>
-      <BackgroundTaskOutputHost read={undefined}>
-        <BackgroundTaskOutputButton block={block} />
-      </BackgroundTaskOutputHost>
-    </ConversationRouteNavigationContext.Provider>,
+it("shimmers only the command text while it is running and puts failure on that row", () => {
+  const running = render(
+    <CommandOutputScreen
+      command={COMMAND}
+      error={null}
+      loading={false}
+      onClose={jest.fn()}
+      output={{ headOmitted: false, text: "building", totalChars: 8 }}
+      outputSource="running"
+      status="running"
+      title="Command"
+    />,
   );
+  const runningCommand = running
+    .UNSAFE_getAllByType(AppText)
+    .find((node) => node.props.children === COMMAND);
+  expect(runningCommand?.props.shimmering).toBe(true);
+  expect(running.queryByTestId("command-output-error")).toBeNull();
+  running.unmount();
 
-  expect(view.queryByTestId("background-task-output-open")).toBeNull();
+  const failed = render(
+    <CommandOutputScreen
+      command={COMMAND}
+      error="Output reader failed"
+      loading={false}
+      onClose={jest.fn()}
+      output={{ headOmitted: false, text: "failed", totalChars: 6 }}
+      outputSource="failed"
+      status="failed"
+      title="Command"
+    />,
+  );
+  const failedCommand = failed
+    .UNSAFE_getAllByType(AppText)
+    .find((node) => node.props.children === COMMAND);
+  expect(failedCommand?.props.shimmering).toBe(false);
+  expect(failed.getByLabelText("Output reader failed")).toBeOnTheScreen();
 });

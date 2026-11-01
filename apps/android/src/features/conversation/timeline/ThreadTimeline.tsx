@@ -157,6 +157,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                       requestPrompt={
                         timelineRow.item.turn.status === "inProgress" ? requestPrompt : null
                       }
+                      trailingTasks={timelineRow.trailingTasks}
                       turn={timelineRow.item}
                       usage={usage}
                       {...(props.getTransferAccess === undefined
@@ -206,7 +207,9 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                             : item.status === "interrupted"
                               ? "stop"
                               : item.status === "inProgress"
-                                ? "ellipsis-horizontal"
+                                ? // WHY: in-progress turn status glyph, not a menu trigger.
+                                  // oxlint-disable-next-line codewide-v1/overflow-menu-trigger
+                                  "ellipsis-horizontal"
                                 : "checkmark"
                         }
                         size={iconSize.inline}

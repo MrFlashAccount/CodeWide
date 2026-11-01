@@ -8,8 +8,9 @@
 //! an index of Claude's session store: a watcher notices changed session
 //! files, the indexer reads them and the index answers `thread.list`,
 //! `thread.turns`, `thread.owns`, message search and thread resources. The
-//! adapter never reads, stores or logs Claude credentials or tokens and
-//! never emits client-wire JSON.
+//! adapter never stores or logs Claude credentials or tokens and never emits
+//! client-wire JSON. The reset capability reads Claude's current OAuth token
+//! only for the duration of one user-confirmed reset request.
 
 pub mod background_tasks;
 pub mod catalog;
@@ -40,6 +41,7 @@ pub mod user_text;
 pub mod uuid;
 pub mod watcher;
 
+use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
@@ -52,9 +54,10 @@ use agent_core::{
         ProviderRateLimits, ProviderThreadRef, RequestRespondParams, RpcError, RpcErrorData,
         SortDirection, StartWhileActiveMode, ThreadCreateParams, ThreadForkParams,
         ThreadListParams, ThreadListResult, ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult,
-        ThreadUpdateParams, ThreadUpdateResult, TurnInterruptParams, TurnStartParams,
-        TurnStartResult, TurnSteerParams, TurnSteerResult, background_task_not_found_message,
-        capability_unsupported_message, thread_not_found_message,
+        ThreadUpdateParams, ThreadUpdateResult, TurnContinueParams, TurnInterruptParams,
+        TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+        background_task_not_found_message, capability_unsupported_message,
+        thread_not_found_message,
         turns::{MAX_TURNS_PAGE, page_turns},
     },
     naming::{CatalogNames, ModelNaming},
@@ -65,6 +68,7 @@ use agent_core::{
     usage::{CatalogPricing, ModelPricing},
 };
 use async_trait::async_trait;
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
@@ -78,8 +82,11 @@ use crate::{
     runtime::{
         account::{Account, ProbeTarget},
         companion_tools::CompanionTools,
-        proxy_environment::{read_user_proxy_environment, user_settings_path},
+        proxy_environment::{
+            ProxyEnvironment, ProxyVariable, read_user_proxy_environment, user_settings_path,
+        },
         published_limits::{PublishedLimits, now_ms},
+        rate_limit_reset::{RateLimitResetClient, ResetConsumeError},
         running_sessions::CliRunningSessions,
     },
     session::{ports::SessionConfig, query::CliRuntime},
@@ -92,6 +99,59 @@ const PROVIDER_DISABLED_CODE: i64 = -32_070;
 const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(5);
 const OPEN_ELSEWHERE_POLL: Duration = Duration::from_secs(10);
 const BACKGROUND_DEFER_MAX: Duration = Duration::from_hours(4);
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResetConsumeParams {
+    grant_id: String,
+    provider_id: ProviderId,
+}
+
+fn proxy_value<'value>(
+    environment: &'value ProxyEnvironment,
+    precedence: &[ProxyVariable],
+) -> Option<&'value str> {
+    precedence.iter().find_map(|selected| {
+        environment
+            .variables()
+            .iter()
+            .find(|(variable, _)| variable == selected)
+            .map(|(_, value)| value.as_str())
+    })
+}
+
+fn reset_client(
+    config: &ClaudeConfig,
+    config_directory: &Path,
+    home: Option<&Path>,
+    proxy: &ProxyEnvironment,
+) -> Result<RateLimitResetClient, String> {
+    let state_root = config
+        .environment
+        .claude_config_dir
+        .clone()
+        .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from))
+        .or_else(|| home.map(Path::to_path_buf))
+        .ok_or("Claude's state directory is unknown (no HOME)")?;
+    RateLimitResetClient::new(
+        config_directory.join(".credentials.json"),
+        state_root.join(".claude.json"),
+        proxy_value(
+            proxy,
+            &[
+                ProxyVariable::HttpsProxy,
+                ProxyVariable::HttpsProxyLower,
+                ProxyVariable::HttpProxy,
+                ProxyVariable::HttpProxyLower,
+            ],
+        ),
+        proxy_value(
+            proxy,
+            &[ProxyVariable::NoProxy, ProxyVariable::NoProxyLower],
+        ),
+    )
+    .map_err(|err| format!("the Claude reset client cannot be configured: {err}"))
+}
 
 /// The Claude column of the capability table. With host storage the adapter
 /// adds `history.messageSearch`, `history.threadResources` and
@@ -126,20 +186,24 @@ pub const CAPABILITIES: CapabilitySet = CapabilitySet {
     orchestration_tools: true,
     threads_cross_provider_fork: true,
     threads_background_task_output: true,
+    orchestration_external_delivery: false,
+    accounts_rate_limit_resets: true,
     turns_start_while_active: StartWhileActiveMode::Busy,
 };
 
-/// The loaded threads' events and the service's output, until taken.
+/// The loaded threads' events, initial status snapshot and service output,
+/// until taken.
 type PendingOutputs = (Arc<Mutex<Vec<AgentEvent>>>, ServiceOutputs);
 
 /// The thread service once its stored threads are loaded.
 struct Running {
     service: ThreadService,
     account: Arc<Account>,
+    reset_client: RateLimitResetClient,
     /// Set once the stored threads are loaded.
     ready: watch::Receiver<bool>,
-    /// The loaded threads' `turn.completed` events and then the service's
-    /// output, taken once by `take_events`.
+    /// The loaded threads' `turn.completed` events, initial status snapshot
+    /// and then the service's output, taken once by `take_events`.
     outputs: Mutex<Option<PendingOutputs>>,
 }
 
@@ -206,8 +270,8 @@ impl ClaudeProvider {
         };
         match provider.start_service(config) {
             Ok(()) => {
-                if let Some(storage) = &provider.storage {
-                    storage.start(status_rx);
+                if let (Some(storage), Some(running)) = (&provider.storage, &provider.running) {
+                    storage.start(status_rx, running.service.session_activity());
                 }
             }
             Err(reason) => {
@@ -234,6 +298,7 @@ impl ClaudeProvider {
         // configuration they require.
         let proxy = read_user_proxy_environment(&settings)
             .map_err(|err| format!("the Claude proxy environment cannot be read: {err}"))?;
+        let reset_client = reset_client(config, &config_directory, home.as_deref(), &proxy)?;
         environment.extend(proxy.environment());
         let limits = Arc::new(PublishedLimits::new(self.rate_limits.clone()));
         let account = Arc::new(Account::new(
@@ -299,6 +364,7 @@ impl ClaudeProvider {
         self.running = Some(Running {
             service,
             account,
+            reset_client,
             ready,
             outputs: Mutex::new(Some((loaded, outputs))),
         });
@@ -325,6 +391,27 @@ impl ClaudeProvider {
             .await
             .map_err(|_| ProviderError::Disconnected("Claude thread service has stopped".into()))?;
         Ok(running)
+    }
+
+    /// Gives an indexed page the background command states the thread
+    /// service gives its own (`ThreadService::overlay_live_background_commands`).
+    /// Without the live session's knowledge the page keeps what history says.
+    async fn overlay_live_background_commands(
+        &self,
+        thread: &AppThreadId,
+        result: &mut ThreadTurnsResult,
+    ) {
+        let overlaid = match self.service().await {
+            Ok(service) => {
+                service
+                    .overlay_live_background_commands(thread, &mut result.turns)
+                    .await
+            }
+            Err(err) => Err(err),
+        };
+        if let Err(err) = overlaid {
+            warn!(thread_id = %thread, err = %err, "Claude live background commands are unavailable");
+        }
     }
 
     fn stamp_turns(&self, thread: &AppThreadId, result: &mut ThreadTurnsResult) {
@@ -451,6 +538,7 @@ fn optional_fence(fence: Option<FenceReceiver>) -> Result<ProviderFence, Provide
 async fn forward_events(
     ready: watch::Receiver<bool>,
     loaded: Arc<Mutex<Vec<AgentEvent>>>,
+    service: ThreadService,
     mut outputs: ServiceOutputs,
     events: mpsc::Sender<ProviderEvent>,
     storage: Option<Arc<ClaudeStorage>>,
@@ -473,10 +561,32 @@ async fn forward_events(
             return;
         }
     }
+    match service.status_snapshot().await {
+        Ok(threads) => {
+            let thread_count = threads.len();
+            for thread in threads {
+                if events
+                    .send(forward(AgentEvent::ThreadUpdated { thread }))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            info!(thread_count, "Claude startup status snapshot published");
+        }
+        Err(err) => warn!(err = %err, "Claude startup status snapshot failed"),
+    }
     while let Some(output) = outputs.recv().await {
         let forwarded = match output {
             ServiceOutput::Event(event) => forward(*event),
             ServiceOutput::Fence(fence) => ProviderEvent::Fence(fence),
+            ServiceOutput::SessionActivityChanged(sessions) => {
+                if let Some(storage) = &storage {
+                    storage.observe_session_activity(&sessions);
+                }
+                continue;
+            }
         };
         if events.send(forwarded).await.is_err() {
             return;
@@ -516,6 +626,39 @@ fn stamp_event(event: &mut AgentEvent, provider: &ProviderId) {
             ..
         } => item.stamp(&provenance(provider, app_thread_id)),
         _ => {}
+    }
+}
+
+impl ClaudeProvider {
+    async fn consume_rate_limit_reset(&self, params: Value) -> Result<Value, ProviderError> {
+        let request: ResetConsumeParams = serde_json::from_value(params).map_err(|_| {
+            ProviderError::Rejected(RpcError::new(
+                ERROR_INVALID_PARAMS,
+                "providerId and grantId must identify a provider reset grant",
+            ))
+        })?;
+        if request.provider_id.as_str() != PROVIDER_ID {
+            return Err(ProviderError::Rejected(RpcError::new(
+                ERROR_INVALID_PARAMS,
+                "providerId does not identify the Claude provider",
+            )));
+        }
+        let running = self.running().await?;
+        // Claude owns refresh-token rotation. A probe makes it refresh and
+        // persist the access token before the adapter borrows that token.
+        running.account.probe(None).await;
+        let result = running
+            .reset_client
+            .consume(&request.grant_id, &uuid::random_uuid())
+            .await
+            .map_err(|err| reset_consume_error(&err))?;
+        // Re-read the authoritative inventory before answering. The limits
+        // watch publishes the resulting provider-status change to clients.
+        running.account.probe(None).await;
+        serde_json::to_value(result).map_err(|err| {
+            error!(err = %err, "Claude reset result could not be serialized");
+            ProviderError::Protocol("Claude reset result could not be serialized".into())
+        })
     }
 }
 
@@ -573,12 +716,13 @@ impl AgentProvider for ClaudeProvider {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .take();
-            outputs.map(|outputs| (running.ready.clone(), outputs))
+            outputs.map(|outputs| (running.ready.clone(), running.service.clone(), outputs))
         });
-        if let Some((ready, (loaded, outputs))) = taken {
+        if let Some((ready, service, (loaded, outputs))) = taken {
             tokio::spawn(forward_events(
                 ready,
                 loaded,
+                service,
                 outputs,
                 sender,
                 self.storage.clone(),
@@ -673,7 +817,13 @@ impl AgentProvider for ClaudeProvider {
             .as_ref()
             .and_then(|storage| storage.turns(&params))
         {
-            Some(indexed) => indexed.map_err(ProviderError::Rejected)?,
+            Some(indexed) => {
+                let mut indexed = indexed.map_err(ProviderError::Rejected)?;
+                self.overlay_live_background_commands(&params.app_thread_id, &mut indexed)
+                    .await;
+                indexed
+            }
+            // The service adds the live background command states itself.
             None => self.service().await?.turns(params.clone(), false).await?.0,
         };
         self.stamp_turns(&params.app_thread_id, &mut result);
@@ -720,6 +870,13 @@ impl AgentProvider for ClaudeProvider {
 
     async fn turn_start(&self, params: TurnStartParams) -> Result<TurnStartResult, ProviderError> {
         self.service().await?.turn_start(params).await
+    }
+
+    async fn turn_continue(
+        &self,
+        params: TurnContinueParams,
+    ) -> Result<TurnStartResult, ProviderError> {
+        self.service().await?.turn_continue(params).await
     }
 
     /// Reads only `<a session of the thread>/tasks/<task id>.output` of a
@@ -798,6 +955,11 @@ impl AgentProvider for ClaudeProvider {
         &self,
         params: CapabilityInvokeParams,
     ) -> Result<Value, ProviderError> {
+        if params.capability == "accounts.rateLimitResets"
+            && params.method == "companion/providerRateLimits/reset/consume"
+        {
+            return self.consume_rate_limit_reset(params.params).await;
+        }
         Err(ProviderError::Rejected(RpcError {
             code: ERROR_CAPABILITY_UNSUPPORTED,
             message: capability_unsupported_message(&params.capability),
@@ -830,5 +992,17 @@ impl AgentProvider for ClaudeProvider {
         &self,
     ) -> Option<tokio::sync::mpsc::Receiver<agent_core::provider::SubagentsChange>> {
         self.storage.as_ref()?.take_subagent_changes()
+    }
+}
+
+fn reset_consume_error(error: &ResetConsumeError) -> ProviderError {
+    match error {
+        ResetConsumeError::InvalidGrant => {
+            ProviderError::Rejected(RpcError::new(ERROR_INVALID_PARAMS, error.to_string()))
+        }
+        ResetConsumeError::CredentialsUnavailable | ResetConsumeError::OrganizationUnavailable => {
+            ProviderError::Rejected(RpcError::new(ERROR_INVALID_REQUEST, error.to_string()))
+        }
+        ResetConsumeError::Request(_) => ProviderError::Protocol(error.to_string()),
     }
 }

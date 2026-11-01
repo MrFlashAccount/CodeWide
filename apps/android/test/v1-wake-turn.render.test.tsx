@@ -1,4 +1,4 @@
-import { fireEvent, render, within, type RenderResult } from "@testing-library/react-native";
+import { fireEvent, render, within } from "@testing-library/react-native";
 import { StyleSheet, View } from "react-native";
 import { projectTimelineRows } from "../src/features/conversation/timeline/timelineRows";
 import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
@@ -139,6 +139,7 @@ function timelineSurface(turns: readonly TurnItem[]) {
             key={row.key}
             parts={row.parts}
             placement={row.placement}
+            trailingTasks={row.trailingTasks}
             presentation={projectTurnPresentation(row.item, null, false, false)}
             requestPrompt={null}
             turn={row.item}
@@ -147,13 +148,6 @@ function timelineSurface(turns: readonly TurnItem[]) {
       )}
     </View>
   );
-}
-
-/** Lays out the rows that size an anchored line or chip by their container. */
-function layOut(view: RenderResult, testID: string, width: number) {
-  for (const row of view.getAllByTestId(testID)) {
-    fireEvent(row, "layout", { nativeEvent: { layout: { height: 40, width, x: 0, y: 0 } } });
-  }
 }
 
 function slicesOf(turns: readonly TurnItem[], turn: TurnItem) {
@@ -249,7 +243,6 @@ it("draws the reports that woke a turn as one line before its bubble", () => {
     answer("woken-answer", "Both are back."),
   ]);
   const view = render(timelineSurface([woken]));
-  layOut(view, "task-notification-line-row", 600);
 
   expect(view.getByTestId("task-notification-line")).toBeOnTheScreen();
   expect(view.getByText("2 agents")).toBeOnTheScreen();
@@ -271,7 +264,6 @@ it("draws a person's mid-turn report after the answer it arrived during", () => 
     answer("person-answer", "Deployed."),
   ]);
   const view = render(timelineSurface([person]));
-  layOut(view, "task-notification-line-row", 600);
 
   expect(view.getAllByTestId("task-notification-line")).toHaveLength(1);
   expect(view.getByText("Build")).toBeOnTheScreen();
@@ -283,7 +275,6 @@ it("draws a background task that is not an agent with a terminal icon, not an ag
     answer("monitor-answer", "The stream ended."),
   ]);
   const view = render(timelineSurface([woken]));
-  layOut(view, "task-notification-line-row", 600);
 
   expect(view.getByText("terminal-outline")).toBeOnTheScreen();
 });
@@ -294,28 +285,40 @@ it("draws an agent's report with its avatar, not a terminal icon", () => {
     answer("agent-answer", "Mapped."),
   ]);
   const view = render(timelineSurface([woken]));
-  layOut(view, "task-notification-line-row", 600);
 
   expect(view.queryByText("terminal-outline")).toBeNull();
 });
 
-it("bounds a report pill to half its container, not the window, and reserves its height before", () => {
+it("renders a report pill content-sized at once, bounded by half its line in layout, not by a measured width", () => {
   const woken = completedTurn("narrow", [
     taskReport("long", "wake", "Reuse backend images, build the frontend and bring the stand up"),
     answer("narrow-answer", "Done."),
   ]);
   const view = render(timelineSurface([woken]));
 
-  // A split layout gives the conversation part of the window: before layout
-  // the row holds the line's height without a width-dependent pill.
-  expect(view.queryByTestId("task-notification-line")).toBeNull();
-  expect(view.getByTestId("task-notification-line-row")).toHaveStyle({ minHeight: 40 });
+  // The pill is there on the first render, before any layout event: no
+  // placeholder waits for a width, and nothing in the line measures one.
+  const pill = StyleSheet.flatten(view.getByTestId("task-notification-line").props.style);
+  expect(pill.maxWidth).toBe("50%");
+  expect(pill.width).toBeUndefined();
+  const row = view.getByTestId("task-notification-line-row");
+  expect(row.props.onLayout).toBeUndefined();
+});
 
-  layOut(view, "task-notification-line-row", 320);
-  expect(view.getByTestId("task-notification-line")).toHaveStyle({ maxWidth: 160 });
+it("bounds a list pill through its menu anchor, which the pill fills", () => {
+  const woken = completedTurn("listed-bound", [
+    taskReport("a", "wake", "Map sources"),
+    taskReport("b", "wake", "Review spec"),
+    answer("listed-bound-answer", "Both are back."),
+  ]);
+  const view = render(timelineSurface([woken]));
 
-  layOut(view, "task-notification-line-row", 280);
-  expect(view.getByTestId("task-notification-line")).toHaveStyle({ maxWidth: 140 });
+  // The anchor box carries the bound and Yoga sizes it around the pill.
+  const anchor = view.getByTestId("content-menu-anchor");
+  expect(anchor).toHaveStyle({ maxWidth: "50%" });
+  const pill = StyleSheet.flatten(within(anchor).getByTestId("task-notification-line").props.style);
+  expect(pill.maxWidth).toBeUndefined();
+  expect(pill.width).toBeUndefined();
 });
 
 it("opens a plain list of reports sized by the anchored menu", () => {
@@ -325,7 +328,6 @@ it("opens a plain list of reports sized by the anchored menu", () => {
     answer("listed-answer", "Both are back."),
   ]);
   const view = render(timelineSurface([woken]));
-  layOut(view, "task-notification-line-row", 900);
 
   fireEvent.press(view.getByTestId("task-notification-line"));
   layOutContentMenus(view, 120);
@@ -396,4 +398,62 @@ it("folds a running turn's current tool calls into one row showing only the runn
   expect(current.queryAllByText(/printf done/u)).toHaveLength(0);
   // The progress text before the tool calls stays visible.
   expect(view.getAllByText("Rendered Markdown block").length).toBeGreaterThan(0);
+});
+
+it("draws an interrupted child agent's result notice as a quiet line, not a user bubble", () => {
+  const woken = completedTurn("interrupted", [
+    {
+      agentThreadId: "child-1",
+      delivery: "wake",
+      durationMs: null,
+      id: "m1",
+      kind: "agent",
+      name: "Review",
+      requestId: "r1",
+      result: null,
+      status: "interrupted",
+      taskId: "t1",
+      toolUses: null,
+      turnId: "turn-1",
+      type: "codewideTaskNotification",
+    },
+    answer("interrupted-answer", "The review was interrupted."),
+  ]);
+  const view = render(timelineSurface([woken]));
+
+  expect(view.getByTestId("task-notification-line")).toBeOnTheScreen();
+  expect(view.getByLabelText("Review was interrupted")).toBeOnTheScreen();
+  expect(view.queryByTestId("user-bubble")).toBeNull();
+});
+
+it("draws a batched result notice as one line counting each child agent", () => {
+  const woken = completedTurn("batched", [
+    {
+      agentThreadId: null,
+      delivery: "wake",
+      durationMs: null,
+      id: "m2",
+      kind: "agent",
+      name: "2 agent results",
+      reports: [
+        { agentThreadId: "child-1", id: "m2:0", name: "Review", requestId: "r1", status: "completed", taskId: "t1", turnId: "turn-1" },
+        { agentThreadId: "child-2", id: "m2:1", name: "Tests", requestId: "r2", status: "failed", taskId: "r2", turnId: "turn-9" },
+      ],
+      requestId: null,
+      result: null,
+      status: "failed",
+      taskId: "t1",
+      toolUses: null,
+      turnId: null,
+      type: "codewideTaskNotification",
+    },
+    answer("batched-answer", "One passed, one failed."),
+  ]);
+  const view = render(timelineSurface([woken]));
+
+  expect(view.getAllByTestId("task-notification-line")).toHaveLength(1);
+  expect(view.getByText("2 agents")).toBeOnTheScreen();
+  expect(view.getByLabelText("2 agents some failed")).toBeOnTheScreen();
+  expect(view.queryByText("2 agent results")).toBeNull();
+  expect(view.queryByTestId("user-bubble")).toBeNull();
 });

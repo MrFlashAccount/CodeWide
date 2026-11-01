@@ -54,8 +54,17 @@ const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// stayed finished). 10: each sub-agent's own model ([`IndexedSubagent::model`]).
 /// 11: every background agent a report naming several tasks stopped (only
 /// the first one stopped; the others stayed running forever), and a
-/// sub-agent cut off before its answer is interrupted, not completed.
-pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 11;
+/// sub-agent cut off before its answer is interrupted, not completed. 12:
+/// `Monitor` calls and `TaskStop` calls that stopped a shell task are
+/// `command` items (they were generic tool calls). 13: the newest status fact
+/// wins for a resumed sub-agent (an older unreported resume no longer keeps
+/// a later finished run working forever). 14: each sub-agent's recorded
+/// effort ([`IndexedSubagent::effort`]). 15: a background command item
+/// carries its task and state (`background`, which replaced
+/// `backgroundTaskId`), settled by its stored report. 16: that `background`
+/// carries its required `startedAt` (rows an earlier build stored under 15
+/// lack it and fail to decode).
+pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 16;
 
 /// The Claude tables' schema in the host index.
 pub const CLAUDE_INDEX_SCHEMA: ClaudeIndexSchema = ClaudeIndexSchema;
@@ -655,6 +664,7 @@ mod tests {
         }
         read.subagents.push(agent_core::model::NativeSubagent {
             agent_id: "a0001".into(),
+            effort: None,
             model: None,
             parent_agent_id: None,
             parent_tool_use_id: Some("toolu_spawn".into()),
@@ -846,6 +856,51 @@ mod tests {
                 ),
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn rows_stored_before_background_carried_its_start_are_rebuilt()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("index.redb");
+        let thread = AppThreadId::parse("thread").ok_or("thread id")?;
+        {
+            let (store, _threads) = open(&path)?;
+            store.replace_session(&session_read("session", "thread", 10, &["one"]))?;
+            // A logic-15 row: a background command item without `startedAt`.
+            let mut turn = serde_json::to_value(
+                store
+                    .thread_turns(&thread)?
+                    .and_then(|turns| turns.into_iter().next()),
+            )?;
+            turn["items"] = json!([{
+                "type": "command",
+                "itemId": "toolu_bg",
+                "command": "sleep 60",
+                "cwd": "/repo",
+                "status": "completed",
+                "output": null,
+                "exitCode": null,
+                "durationMs": null,
+                "background": {"taskId": "b1", "status": "completed", "endedAt": 7, "exitCode": 0}
+            }]);
+            let write = store.database.begin_write()?;
+            write.open_table(SESSION_TURNS)?.insert(
+                turn_key("session", 0).as_slice(),
+                serde_json::to_vec(&turn)?.as_slice(),
+            )?;
+            write.open_table(META)?.insert(LOGIC_VERSION_KEY, 15)?;
+            write.commit()?;
+            let undecodable = store
+                .thread_turns(&thread)
+                .err()
+                .map(|error| error.to_string());
+            assert!(undecodable.is_some_and(|message| message.contains("startedAt")));
+        }
+        let (store, _threads) = open(&path)?;
+        assert!(store.session_ids()?.is_empty());
+        assert!(store.thread_turns(&thread)?.is_none());
         Ok(())
     }
 

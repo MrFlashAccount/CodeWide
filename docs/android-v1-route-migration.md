@@ -1,6 +1,7 @@
 # Android V1 route migration ledger
 
-Status: **R0–R7 source and test migration implemented and validated on 2026-09-16**.
+Status: **R0–R8 source and automated repository checks closed; latest accepted validation completed
+on 2026-10-25. Device-only R8 scenarios remain explicitly unverified**.
 Baseline: `368f4699a19c3f9c3edd1875739c799720dc7095`.
 
 This ledger records the implemented ownership move described by
@@ -113,6 +114,20 @@ owner and duplicate agent/Terminal wrappers are deleted. Behavioral tests now re
 service and feature owners and assert preserved outcomes rather than deleted filenames or obsolete
 local-state calls.
 
+### R8 — retained workspace tabs: source and automated checks closed
+
+R8 moves the two URL-invisible route groups beneath one URL-invisible `(tabs)` group backed by the
+standard `expo-router/js-tabs` navigator. `(tabs)/(threads)` and `(tabs)/(pull-requests)` retain
+separate nested Stack route records and public URLs. Switching tabs changes focus and TabRouter
+history without replacing or unmounting either Stack.
+
+The accepted automated evidence covers exact named-route mapping, retained PR Details/Changes
+identity, named Threads topology lookup, Search lease retention, Back/reselect reducer behavior,
+compact linked-chat handoff, one parent-owned floating bar, native and plain-`View` inactive-scene
+isolation, and the Reacticx source/generated/type boundary. The old sibling group paths and child
+replacement helpers are absent. This closes source and automated repository proof only; it does not
+close hardware Back, TalkBack, native detach, fold/unfold or modal-ordering scenarios.
+
 ## Test migration
 
 | Former proof | Implemented proof |
@@ -124,6 +139,9 @@ local-state calls.
 | document and changes tests | typed document/change session dispatch, real review surface and nested document behavior |
 | Terminal/browser/drawing/content tests | route-session lifetime, Back separation and retained native/resource ownership |
 | broad native contracts | actual route and feature owner contracts after deleted screen/navigation modules |
+| catalog subtree replacement and physical-removal assertions | real parent Tabs retention, exact named mapping, active/inactive scene isolation and nested Stack identity |
+| pathname-only catalog checks | generated `(workspace) -> (tabs) -> child Stack` state plus real Tabs/Stacks production rendering |
+| active-path Search lease | retained Threads route-chain lease with explicit-close and workspace-teardown release checks |
 
 Tests continue to assert loading, errors, cancellation, selection identity, command admission,
 resource bounds and observable rendering semantics. Representation-only assertions were updated only
@@ -149,11 +167,26 @@ Final automated evidence on 2026-09-16:
   dependencies were cruised;
 - full `pnpm test`: 305 files and 2,217 tests passed.
 
+Latest accepted post-fix R8 automated evidence on 2026-10-25:
+
+- 4 focused tab-reselect and linked-chat race suites passed all 26 tests;
+- `pnpm validate:android:v1` passed with 138 V1 suites / 805 tests and 41 shared suites / 164 tests;
+- `pnpm --filter @codewide/android compile:android` passed after Metro bundled 4,812 modules and
+  copied 210 assets;
+- deterministic Reacticx synchronization passed: repeated generation preserved `masked-tab-bar.js`
+  SHA-256 `670bd6c2088daa0d6c8f413f04b479cc8b82bd8d4cad275303b0b220b3414c21`; the declaration
+  remains separately maintained;
+- `git diff --check` passed.
+
+These results are source, reducer, render, type, lint and bundle evidence. They do not establish the
+device-only scenarios below.
+
 ## Unverified device scenarios
 
 No Android device is attached. Camera pairing, external sign-in handoff, biometric settings,
 microphone, native gesture/keyboard behavior, retained native views, Terminal input, WebView/drawing
-interaction, startup/failure/retry and relative same-device performance remain unverified. Source,
-type, model and Node render tests do not establish those device behaviors.
+interaction, startup/failure/retry, hardware Back through catalog switches, fold/unfold retention,
+native overlay ordering, TalkBack focus traversal and relative same-device performance remain
+unverified. Source, type, model and Node render tests do not establish those device behaviors.
 
 No commit, push, release, deployment or external mutation is part of this migration.

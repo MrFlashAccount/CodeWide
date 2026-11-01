@@ -8,7 +8,10 @@ import type { useActiveConversationScope } from "./activeConversationScope";
 import { ConversationDestination } from "./ConversationDestination";
 import type { ConversationDestinationProps } from "./ConversationDetail";
 import type { createConversationScopeBindings } from "./conversationScopeBindings";
-import type { ActiveWorkspaceConversationProps } from "./ConversationWorkspace.types";
+import type {
+  ActiveWorkspaceConversationProps,
+  DraftAdmission,
+} from "./ConversationWorkspace.types";
 import { renderConversationWorkspaceContent } from "./ConversationWorkspaceContent";
 
 /** Presents the selected destination under local recovery while its data publishes progressively. */
@@ -31,6 +34,7 @@ export function renderConversationDestinationSurface(props: {
   conversationActions: ReturnType<typeof createConversationScopeBindings>;
   desktop: ActiveWorkspaceConversationProps["desktop"];
   destination: ActiveWorkspaceConversationProps["destination"];
+  draftAdmission: DraftAdmission | null;
   features: ActiveWorkspaceConversationProps["features"];
   fileTransferController: ActiveWorkspaceConversationProps["fileTransferController"];
   forkCurrentThread: ReturnType<typeof useActiveThreadActions>["forkCurrentThread"];
@@ -80,6 +84,7 @@ export function renderConversationDestinationSurface(props: {
               closeActiveConversation: props.scope.closeActiveConversation,
               conversationActions: props.conversationActions,
               desktop: props.desktop,
+              draftAdmission: props.draftAdmission,
               features: props.features,
               fileTransferController: props.fileTransferController,
               forkCurrentThread: props.forkCurrentThread,

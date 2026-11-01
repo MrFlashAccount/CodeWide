@@ -9,10 +9,10 @@ index e5690606e9e50870850b4af15d4be92cc734bb79..23f3b5976f7714b3699a1308e5f94550
 -target_link_libraries(expolibghostty ghostty-vt log)
 +target_link_libraries(expolibghostty ghostty-vt jnigraphics log)
 diff --git a/android/src/main/cpp/ghostty_jni.cpp b/android/src/main/cpp/ghostty_jni.cpp
-index b9c118ee074ba100136c20cc6fd5896b15c4bb33..ce79ceacc95967ff61da0d99cde95e6b6948d8cb 100644
+index b9c118ee074ba100136c20cc6fd5896b15c4bb33..15b2de4b232b2b6e33092a87cdbf1074a812e1cd 100644
 --- a/android/src/main/cpp/ghostty_jni.cpp
 +++ b/android/src/main/cpp/ghostty_jni.cpp
-@@ -26,12 +26,16 @@
+@@ -26,12 +26,17 @@
  //     u16 text[textUnits], zero-padded to a 4-byte boundary
  
  #include <jni.h>
@@ -26,10 +26,11 @@ index b9c118ee074ba100136c20cc6fd5896b15c4bb33..ce79ceacc95967ff61da0d99cde95e6b
  #include <cstring>
 +#include <limits>
 +#include <mutex>
++#include <string>
  #include <vector>
  
  #include <ghostty/vt.h>
-@@ -58,14 +62,117 @@ constexpr size_t kRowHeaderBytes = 4 * sizeof(int32_t);
+@@ -58,17 +63,136 @@ constexpr size_t kRowHeaderBytes = 4 * sizeof(int32_t);
  constexpr size_t kCellRecordBytes = 16;
  // Cap per-cell grapheme text; anything longer is truncated (degenerate input).
  constexpr uint32_t kMaxCellTextUnits = 32;
@@ -147,7 +148,135 @@ index b9c118ee074ba100136c20cc6fd5896b15c4bb33..ce79ceacc95967ff61da0d99cde95e6b
    // Query responses emitted by the terminal during vt_write; forwarded to the
    // PTY by the caller after each write.
    std::vector<uint8_t> ptyOut;
-@@ -125,8 +232,11 @@ bool parseColor(JNIEnv* env, jstring str, GhosttyColorRgb* out) {
++  // Search stays inside the terminal owner. React only supplies a query and a
++  // direction; libghostty grid refs remain the source of matching and selection.
++  std::u32string searchQuery;
++  size_t searchIndex = std::numeric_limits<size_t>::max();
++  bool searchSelectionActive = false;
++};
++
++struct SearchCell {
++  uint32_t codepoint;
++  GhosttyGridRef ref;
++};
++
++struct SearchMatch {
++  GhosttyGridRef start;
++  GhosttyGridRef end;
++  uint32_t row;
+ };
+
+ void writePtyCallback(GhosttyTerminal, void* userdata, const uint8_t* data, size_t len) {
+@@ -88,6 +212,108 @@ bool viewportGridRef(Session* session, jint col, jint row, GhosttyGridRef* out)
+   return ghostty_terminal_grid_ref(session->term, point, out) == GHOSTTY_SUCCESS;
+ }
+
++uint32_t foldSearchCodepoint(uint32_t codepoint) {
++  return codepoint >= 'A' && codepoint <= 'Z' ? codepoint + ('a' - 'A') : codepoint;
++}
++
++bool searchQuery(JNIEnv* env, jstring text, std::u32string* out) {
++  if (text == nullptr || out == nullptr) return false;
++  const jsize length = env->GetStringLength(text);
++  const jchar* units = env->GetStringChars(text, nullptr);
++  if (units == nullptr) return false;
++  out->clear();
++  out->reserve(static_cast<size_t>(length));
++  for (jsize index = 0; index < length; index++) {
++    uint32_t codepoint = units[index];
++    if (codepoint >= 0xD800 && codepoint <= 0xDBFF && index + 1 < length) {
++      const uint32_t trail = units[index + 1];
++      if (trail >= 0xDC00 && trail <= 0xDFFF) {
++        codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (trail - 0xDC00);
++        index++;
++      }
++    }
++    out->push_back(foldSearchCodepoint(codepoint));
++  }
++  env->ReleaseStringChars(text, units);
++  return !out->empty();
++}
++
++bool screenGridRef(Session* session, uint16_t col, uint32_t row, GhosttyGridRef* out) {
++  GhosttyPoint point{};
++  point.tag = GHOSTTY_POINT_TAG_SCREEN;
++  point.value.coordinate.x = col;
++  point.value.coordinate.y = row;
++  return ghostty_terminal_grid_ref(session->term, point, out) == GHOSTTY_SUCCESS;
++}
++
++bool isWideSpacer(const GhosttyGridRef* ref) {
++  GhosttyCell cell{};
++  if (ghostty_grid_ref_cell(ref, &cell) != GHOSTTY_SUCCESS) return false;
++  GhosttyCellWide wide = GHOSTTY_CELL_WIDE_NARROW;
++  return ghostty_cell_get(cell, GHOSTTY_CELL_DATA_WIDE, &wide) == GHOSTTY_SUCCESS &&
++      (wide == GHOSTTY_CELL_WIDE_SPACER_HEAD || wide == GHOSTTY_CELL_WIDE_SPACER_TAIL);
++}
++
++void appendCellText(const GhosttyGridRef& ref, std::vector<SearchCell>* row) {
++  size_t length = 0;
++  GhosttyResult result = ghostty_grid_ref_graphemes(&ref, nullptr, 0, &length);
++  if (result == GHOSTTY_SUCCESS && length == 0) {
++    if (!isWideSpacer(&ref)) row->push_back({' ', ref});
++    return;
++  }
++  if (result != GHOSTTY_OUT_OF_SPACE || length == 0) return;
++  std::vector<uint32_t> codepoints(length);
++  result = ghostty_grid_ref_graphemes(&ref, codepoints.data(), codepoints.size(), &length);
++  if (result != GHOSTTY_SUCCESS) return;
++  for (size_t index = 0; index < length; index++) {
++    row->push_back({foldSearchCodepoint(codepoints[index]), ref});
++  }
++}
++
++void collectSearchMatches(Session* session, const std::u32string& query,
++                          std::vector<SearchMatch>* matches) {
++  uint16_t cols = 0;
++  size_t totalRows = 0;
++  const GhosttyTerminalData keys[] = {
++      GHOSTTY_TERMINAL_DATA_COLS,
++      GHOSTTY_TERMINAL_DATA_TOTAL_ROWS,
++  };
++  void* values[] = {&cols, &totalRows};
++  if (ghostty_terminal_get_multi(session->term, 2, keys, values, nullptr) != GHOSTTY_SUCCESS) {
++    return;
++  }
++  std::vector<SearchCell> row;
++  row.reserve(cols);
++  for (size_t rowIndex = 0; rowIndex < totalRows; rowIndex++) {
++    row.clear();
++    for (uint16_t col = 0; col < cols; col++) {
++      GhosttyGridRef ref{};
++      ref.size = sizeof(ref);
++      if (screenGridRef(session, col, static_cast<uint32_t>(rowIndex), &ref)) {
++        appendCellText(ref, &row);
++      }
++    }
++    while (!row.empty() && row.back().codepoint == ' ') row.pop_back();
++    if (row.size() < query.size()) continue;
++    for (size_t offset = 0; offset + query.size() <= row.size(); offset++) {
++      bool equal = true;
++      for (size_t queryIndex = 0; queryIndex < query.size(); queryIndex++) {
++        if (row[offset + queryIndex].codepoint != query[queryIndex]) {
++          equal = false;
++          break;
++        }
++      }
++      if (equal) {
++        matches->push_back({
++            row[offset].ref,
++            row[offset + query.size() - 1].ref,
++            static_cast<uint32_t>(rowIndex),
++        });
++      }
++    }
++  }
++}
++
+ // Selection changes don't reliably mark rows dirty for our snapshot; force a
+ // full re-emit so the per-row selection ranges refresh everywhere.
+ void markRenderDirtyFull(Session* session) {
+@@ -125,8 +351,11 @@ bool parseColor(JNIEnv* env, jstring str, GhosttyColorRgb* out) {
  
  void destroySession(Session* session) {
    if (session == nullptr) return;
@@ -159,7 +288,7 @@ index b9c118ee074ba100136c20cc6fd5896b15c4bb33..ce79ceacc95967ff61da0d99cde95e6b
    ghostty_render_state_row_cells_free(session->cells);
    ghostty_render_state_row_iterator_free(session->rowIter);
    ghostty_render_state_free(session->renderState);
-@@ -232,6 +342,7 @@ extern "C" {
+@@ -232,6 +461,7 @@ extern "C" {
  JNIEXPORT jlong JNICALL
  Java_expo_modules_libghostty_GhosttyVt_nativeCreate(
      JNIEnv*, jobject, jint cols, jint rows, jlong maxScrollback) {
@@ -167,7 +296,7 @@ index b9c118ee074ba100136c20cc6fd5896b15c4bb33..ce79ceacc95967ff61da0d99cde95e6b
    auto* session = new Session();
    GhosttyTerminalOptions opts{};
    opts.cols = static_cast<uint16_t>(cols);
-@@ -242,8 +353,12 @@ Java_expo_modules_libghostty_GhosttyVt_nativeCreate(
+@@ -242,8 +472,12 @@ Java_expo_modules_libghostty_GhosttyVt_nativeCreate(
        ghostty_render_state_new(nullptr, &session->renderState) != GHOSTTY_SUCCESS ||
        ghostty_render_state_row_iterator_new(nullptr, &session->rowIter) != GHOSTTY_SUCCESS ||
        ghostty_render_state_row_cells_new(nullptr, &session->cells) != GHOSTTY_SUCCESS ||
@@ -181,7 +310,7 @@ index b9c118ee074ba100136c20cc6fd5896b15c4bb33..ce79ceacc95967ff61da0d99cde95e6b
      __android_log_print(ANDROID_LOG_ERROR, kLogTag, "failed to create terminal session");
      destroySession(session);
      return 0;
-@@ -253,6 +368,26 @@ Java_expo_modules_libghostty_GhosttyVt_nativeCreate(
+@@ -253,6 +487,26 @@ Java_expo_modules_libghostty_GhosttyVt_nativeCreate(
    ghostty_terminal_set(session->term, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                         reinterpret_cast<const void*>(&writePtyCallback));
  
@@ -208,7 +337,7 @@ index b9c118ee074ba100136c20cc6fd5896b15c4bb33..ce79ceacc95967ff61da0d99cde95e6b
    GhosttyColorRgb bg{0x00, 0x00, 0x00};
    GhosttyColorRgb fg{0xFF, 0xFF, 0xFF};
    ghostty_terminal_set(session->term, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &bg);
-@@ -303,6 +438,13 @@ Java_expo_modules_libghostty_GhosttyVt_nativeResize(
+@@ -303,6 +557,13 @@ Java_expo_modules_libghostty_GhosttyVt_nativeResize(
    ghostty_terminal_resize(session->term, static_cast<uint16_t>(cols),
                            static_cast<uint16_t>(rows), static_cast<uint32_t>(cellWidthPx),
                            static_cast<uint32_t>(cellHeightPx));
@@ -222,7 +351,7 @@ index b9c118ee074ba100136c20cc6fd5896b15c4bb33..ce79ceacc95967ff61da0d99cde95e6b
    // The renderer discards its bitmap on every resize; a same-grid resize
    // (font-size change landing on identical cols/rows) would otherwise leave
    // no dirty rows to repaint it with.
-@@ -399,6 +541,201 @@ Java_expo_modules_libghostty_GhosttyVt_nativeScrollbar(
+@@ -399,6 +660,201 @@ Java_expo_modules_libghostty_GhosttyVt_nativeScrollbar(
    return out;
  }
  
@@ -424,7 +553,108 @@ index b9c118ee074ba100136c20cc6fd5896b15c4bb33..ce79ceacc95967ff61da0d99cde95e6b
  JNIEXPORT jint JNICALL
  Java_expo_modules_libghostty_GhosttyVt_nativeSnapshot(
      JNIEnv* env, jobject, jlong handle, jobject buffer) {
-@@ -826,4 +1163,65 @@ Java_expo_modules_libghostty_GhosttyVt_nativeEncodeKey(
+@@ -644,6 +1100,7 @@ Java_expo_modules_libghostty_GhosttyVt_nativeSelectWord(
+   if (ghostty_terminal_select_word(session->term, &options, &selection) != GHOSTTY_SUCCESS) {
+     return JNI_FALSE;
+   }
++  session->searchSelectionActive = false;
+   return installSelection(session, &selection) ? JNI_TRUE : JNI_FALSE;
+ }
+
+@@ -656,6 +1113,7 @@ Java_expo_modules_libghostty_GhosttyVt_nativeSelectAll(JNIEnv*, jobject, jlong h
+   if (ghostty_terminal_select_all(session->term, &selection) != GHOSTTY_SUCCESS) {
+     return JNI_FALSE;
+   }
++  session->searchSelectionActive = false;
+   return installSelection(session, &selection) ? JNI_TRUE : JNI_FALSE;
+ }
+
+@@ -677,6 +1135,7 @@ Java_expo_modules_libghostty_GhosttyVt_nativeSetSelection(
+   selection.start = start;
+   selection.end = end;
+   selection.rectangle = false;
++  session->searchSelectionActive = false;
+   return installSelection(session, &selection) ? JNI_TRUE : JNI_FALSE;
+ }
+
+@@ -684,10 +1143,76 @@ JNIEXPORT void JNICALL
+ Java_expo_modules_libghostty_GhosttyVt_nativeClearSelection(JNIEnv*, jobject, jlong handle) {
+   auto* session = fromHandle(handle);
+   if (session == nullptr) return;
++  session->searchSelectionActive = false;
+   ghostty_terminal_set(session->term, GHOSTTY_TERMINAL_OPT_SELECTION, nullptr);
+   markRenderDirtyFull(session);
+ }
+
++JNIEXPORT jboolean JNICALL
++Java_expo_modules_libghostty_GhosttyVt_nativeFind(
++    JNIEnv* env, jobject, jlong handle, jstring text, jboolean forward) {
++  auto* session = fromHandle(handle);
++  if (session == nullptr) return JNI_FALSE;
++  std::u32string query;
++  if (!searchQuery(env, text, &query)) return JNI_FALSE;
++  if (query != session->searchQuery) {
++    session->searchQuery = query;
++    session->searchIndex = std::numeric_limits<size_t>::max();
++  }
++
++  std::vector<SearchMatch> matches;
++  collectSearchMatches(session, query, &matches);
++  if (matches.empty()) {
++    ghostty_terminal_set(session->term, GHOSTTY_TERMINAL_OPT_SELECTION, nullptr);
++    session->searchIndex = std::numeric_limits<size_t>::max();
++    session->searchSelectionActive = false;
++    markRenderDirtyFull(session);
++    return JNI_FALSE;
++  }
++
++  if (session->searchIndex >= matches.size()) {
++    session->searchIndex = forward == JNI_TRUE ? 0 : matches.size() - 1;
++  } else if (forward == JNI_TRUE) {
++    session->searchIndex = (session->searchIndex + 1) % matches.size();
++  } else {
++    session->searchIndex = session->searchIndex == 0 ? matches.size() - 1 : session->searchIndex - 1;
++  }
++  const SearchMatch& match = matches[session->searchIndex];
++  GhosttySelection selection{};
++  selection.size = sizeof(selection);
++  selection.start = match.start;
++  selection.end = match.end;
++  selection.rectangle = false;
++  if (!installSelection(session, &selection)) return JNI_FALSE;
++  session->searchSelectionActive = true;
++
++  uint16_t viewportRows = 0;
++  size_t totalRows = 0;
++  ghostty_terminal_get(session->term, GHOSTTY_TERMINAL_DATA_ROWS, &viewportRows);
++  ghostty_terminal_get(session->term, GHOSTTY_TERMINAL_DATA_TOTAL_ROWS, &totalRows);
++  const size_t centered = match.row > viewportRows / 2 ? match.row - viewportRows / 2 : 0;
++  const size_t maximum = totalRows > viewportRows ? totalRows - viewportRows : 0;
++  GhosttyTerminalScrollViewport scroll{};
++  scroll.tag = GHOSTTY_SCROLL_VIEWPORT_ROW;
++  scroll.value.row = centered < maximum ? centered : maximum;
++  ghostty_terminal_scroll_viewport(session->term, scroll);
++  markRenderDirtyFull(session);
++  return JNI_TRUE;
++}
++
++JNIEXPORT void JNICALL
++Java_expo_modules_libghostty_GhosttyVt_nativeClearSearch(JNIEnv*, jobject, jlong handle) {
++  auto* session = fromHandle(handle);
++  if (session == nullptr) return;
++  session->searchQuery.clear();
++  session->searchIndex = std::numeric_limits<size_t>::max();
++  if (session->searchSelectionActive) {
++    session->searchSelectionActive = false;
++    ghostty_terminal_set(session->term, GHOSTTY_TERMINAL_OPT_SELECTION, nullptr);
++    markRenderDirtyFull(session);
++  }
++}
++
+ // Returns the active selection as UTF-8 bytes (plain, unwrapped, trimmed —
+ // Ghostty's copy semantics), or null when there is no selection.
+ JNIEXPORT jbyteArray JNICALL
+@@ -826,4 +1351,65 @@ Java_expo_modules_libghostty_GhosttyVt_nativeEncodeKey(
    return outArray;
  }
  
@@ -491,7 +721,7 @@ index b9c118ee074ba100136c20cc6fd5896b15c4bb33..ce79ceacc95967ff61da0d99cde95e6b
 +
  }  // extern "C"
 diff --git a/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyModule.kt b/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyModule.kt
-index 1516400296a26128222f73aa35b79104d5a12fb0..74704211c2a335cd66eaa672b0881e4b4d4a0105 100644
+index 1516400296a26128222f73aa35b79104d5a12fb0..44848bf123ec8ca45ac8c17d38672df56ea4cd1f 100644
 --- a/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyModule.kt
 +++ b/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyModule.kt
 @@ -2,6 +2,7 @@ package expo.modules.libghostty
@@ -524,10 +754,23 @@ index 1516400296a26128222f73aa35b79104d5a12fb0..74704211c2a335cd66eaa672b0881e4b
        // Theme colors (ghostty config syntax); null clears to the defaults.
        Prop("theme") { view: ExpoLibghosttyView, theme: TerminalThemeRecord? ->
          view.setTheme(theme)
-@@ -44,10 +55,19 @@ class ExpoLibghosttyModule : Module() {
+@@ -44,10 +55,32 @@ class ExpoLibghosttyModule : Module() {
          view.finish(exitCode)
        }
  
++      // Search the native terminal grid; output text never crosses the bridge.
++      AsyncFunction("findNext") { view: ExpoLibghosttyView, text: String ->
++        view.findNext(text)
++      }
++
++      AsyncFunction("findPrevious") { view: ExpoLibghosttyView, text: String ->
++        view.findPrevious(text)
++      }
++
++      AsyncFunction("clearSearch") { view: ExpoLibghosttyView ->
++        view.clearSearch()
++      }
++
 +      // Reconcile retained geometry after the host modal reaches final bounds.
 +      AsyncFunction("reconcileLayout") { view: ExpoLibghosttyView ->
 +        view.reconcileLayout()
@@ -545,7 +788,7 @@ index 1516400296a26128222f73aa35b79104d5a12fb0..74704211c2a335cd66eaa672b0881e4b
  }
  
 diff --git a/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyView.kt b/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyView.kt
-index 2d3ed62314e39fd1ade0fa5d3d007d414c948600..df414dd460326e2045812cfcf8237141c3490ee9 100644
+index 2d3ed62314e39fd1ade0fa5d3d007d414c948600..2423e4728b33b650f3511ff27be5a63c33a15200 100644
 --- a/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyView.kt
 +++ b/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyView.kt
 @@ -3,6 +3,7 @@ package expo.modules.libghostty
@@ -761,11 +1004,17 @@ index 2d3ed62314e39fd1ade0fa5d3d007d414c948600..df414dd460326e2045812cfcf8237141
    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
      super.onSizeChanged(w, h, oldw, oldh)
      val rootInsets = rootWindowInsets ?: return
-@@ -98,5 +243,14 @@ class ExpoLibghosttyView(context: Context, appContext: AppContext) :
+@@ -98,5 +243,20 @@ class ExpoLibghosttyView(context: Context, appContext: AppContext) :
    /** Mark the underlying PTY as exited (terminal.exit on the wire). */
    fun finish(exitCode: Int) = terminal.finish(exitCode)
  
 -  internal fun destroy() = terminal.destroy()
++  fun findNext(text: String): Boolean = terminal.find(text, true)
++
++  fun findPrevious(text: String): Boolean = terminal.find(text, false)
++
++  fun clearSearch() = terminal.clearSearch()
++
 +  internal fun destroy() {
 +    unbindTerminal(terminal)
 +    terminal.destroyRenderer()
@@ -824,7 +1073,7 @@ index 0000000000000000000000000000000000000000..a85b40458976a3f2b464f8e54acb2440
 +  val palette: Array<String?>? = null,
 +)
 diff --git a/android/src/main/java/expo/modules/libghostty/GhosttyTerminalView.kt b/android/src/main/java/expo/modules/libghostty/GhosttyTerminalView.kt
-index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a9b647118 100644
+index 9d6ad1671c843b7cd75e08639906a9065b984210..a8e2623ed09bf9b52f595886547e31dbb9a6cbef 100644
 --- a/android/src/main/java/expo/modules/libghostty/GhosttyTerminalView.kt
 +++ b/android/src/main/java/expo/modules/libghostty/GhosttyTerminalView.kt
 @@ -6,12 +6,16 @@ import android.content.ClipboardManager
@@ -1063,17 +1312,32 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
      scheduleFrame()
    }
  
-@@ -351,7 +449,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -351,7 +449,23 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
      finished = true
    }
  
 -  fun destroy() {
++  /** Select and reveal one native terminal-grid match without exporting output text. */
++  fun find(text: String, forward: Boolean): Boolean {
++    if (handle == 0L || text.isEmpty()) return false
++    val found = GhosttyVt.nativeFind(handle, text, forward)
++    scheduleFrame()
++    return found
++  }
++
++  /** Remove only the selection installed by command-output search. */
++  fun clearSearch() {
++    if (handle == 0L) return
++    GhosttyVt.nativeClearSearch(handle)
++    scheduleFrame()
++  }
++
 +  /** Releases only view-owned render resources, preserving the VT session. */
 +  fun destroyRenderer() {
      if (framePending) {
        Choreographer.getInstance().removeFrameCallback(frameCallback)
        framePending = false
-@@ -361,14 +460,44 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -361,14 +475,44 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
      scroller.abortAnimation()
      removeCallbacks(flingRunnable)
      actionMode?.finish()
@@ -1123,7 +1387,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
        if (selectionMode) clearSelection()
        // Typing while scrolled into history jumps back to the live view.
        if (handle != 0L && scrollbarOffset + scrollbarLen < scrollbarTotal) {
-@@ -419,6 +548,26 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -419,6 +563,26 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
    /** Paste the clipboard, same confirmation flow as the selection menu. */
    fun requestPaste() = pasteFromClipboard()
  
@@ -1150,7 +1414,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
    private fun charToKeyCode(char: Char): Int {
      val lower = char.lowercaseChar()
      return when (lower) {
-@@ -442,6 +591,18 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -442,6 +606,18 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
  
    // ── Layout / resize ──
  
@@ -1169,7 +1433,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
      super.onSizeChanged(w, h, oldw, oldh)
      updateGridGeometry(force = false)
-@@ -454,7 +615,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -454,7 +630,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
      val changed = newCols != cols || newRows != rows
      cols = newCols
      rows = newRows
@@ -1178,7 +1442,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
        GhosttyVt.nativeResize(handle, cols, rows, cellWidth.roundToInt(), cellHeight)
        allocateGridBuffers()
        onGridResize?.invoke(cols, rows)
-@@ -465,9 +626,15 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -465,9 +641,15 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
    private fun allocateGridBuffers() {
      val widthPx = max(1, ceil(cols * cellWidth).toInt())
      val heightPx = max(1, rows * cellHeight)
@@ -1197,7 +1461,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
      }
      val capacity = HEADER_BYTES +
        rows * (ROW_HEADER_BYTES + cols * CELL_RECORD_BYTES + cols * MAX_CELL_TEXT_UNITS * 2 + 4)
-@@ -493,7 +660,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -493,7 +675,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
  
    private fun renderFrame() {
      val buf = snapshotBuf ?: return
@@ -1207,7 +1471,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
      if (handle == 0L) return
  
      val rowCount = GhosttyVt.nativeSnapshot(handle, buf)
-@@ -520,12 +688,133 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -520,12 +703,133 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
      cursorColor = buf.int
      syncBlinkTimer()
  
@@ -1343,7 +1607,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
    // ── Selection ──
  
    /** Top-left / bottom-right cells of the rendered selection, or null. */
-@@ -585,7 +874,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -585,7 +889,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
    }
  
    private fun pasteFromClipboard() {
@@ -1352,7 +1616,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
      val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
      val clip = clipboard.primaryClip?.takeIf { it.itemCount > 0 } ?: return
      val text = clip.getItemAt(0).coerceToText(context)?.toString()
-@@ -627,6 +916,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -627,6 +931,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
  
          override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean {
            menu.findItem(MENU_COPY)?.isVisible = selectionMode
@@ -1360,7 +1624,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
            return true
          }
  
-@@ -777,7 +1067,12 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -777,7 +1082,12 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
      syncBlinkTimer()
    }
  
@@ -1374,7 +1638,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
      val rowIndex = buf.int
      val selStart = buf.int
      val selEnd = buf.int
-@@ -841,25 +1136,28 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -841,25 +1151,28 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
  
      // Background pass: row clear, then per-cell backgrounds.
      fillPaint.color = defaultBg
@@ -1407,7 +1671,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
            symbolsPaint
          flags and FLAG_BOLD != 0 && flags and FLAG_ITALIC != 0 -> boldItalicPaint
          flags and FLAG_BOLD != 0 -> boldPaint
-@@ -869,14 +1167,20 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -869,14 +1182,20 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
        paint.color = cellFg[col]
        if (flags and FLAG_FAINT != 0) paint.alpha = 160
        val x = col * cellWidth
@@ -1431,7 +1695,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
        }
        paint.alpha = 255
      }
-@@ -884,7 +1188,11 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -884,7 +1203,11 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
  
    override fun onDraw(canvas: Canvas) {
      canvas.drawColor(defaultBg)
@@ -1444,7 +1708,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
      drawCursor(canvas)
      drawSelectionHandles(canvas)
      drawScrollIndicator(canvas)
-@@ -941,7 +1249,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -941,7 +1264,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
    }
  
    private fun drawCursor(canvas: Canvas) {
@@ -1453,7 +1717,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
      if (cursorBlinks && blinkScheduled && !blinkPhaseOn) return
      val x = cursorX * cellWidth
      val top = (cursorY * cellHeight).toFloat()
-@@ -1011,7 +1319,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -1011,7 +1334,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
      return gestureDetector.onTouchEvent(event) || super.onTouchEvent(event)
    }
  
@@ -1462,7 +1726,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
  
    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
      // Visible-password + no-suggestions keeps IMEs in send-as-you-type mode
-@@ -1095,16 +1403,15 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -1095,16 +1418,15 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
    }
  
    private companion object {
@@ -1481,7 +1745,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
  
      // Nerd Font glyph ranges: BMP private-use area plus the supplementary
      // private-use planes (material icons live at U+F0000+ since v3).
-@@ -1135,6 +1442,13 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+@@ -1135,6 +1457,13 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
      const val CELL_RECORD_BYTES = 16
      const val MAX_CELL_TEXT_UNITS = 32
  
@@ -1496,7 +1760,7 @@ index 9d6ad1671c843b7cd75e08639906a9065b984210..10c6a4d5b6e0cf03acd67d3aa7cf609a
  
      const val CURSOR_STYLE_BAR = 0
 diff --git a/android/src/main/java/expo/modules/libghostty/GhosttyVt.kt b/android/src/main/java/expo/modules/libghostty/GhosttyVt.kt
-index 8cfe86e9277f7a773b1749be2dbd9f9921354ae7..8395076acf58444554113a29fc5b5116a5d95363 100644
+index 8cfe86e9277f7a773b1749be2dbd9f9921354ae7..4f353859ca8598cbac1e109506f252845eb559bb 100644
 --- a/android/src/main/java/expo/modules/libghostty/GhosttyVt.kt
 +++ b/android/src/main/java/expo/modules/libghostty/GhosttyVt.kt
 @@ -51,6 +51,20 @@ internal object GhosttyVt {
@@ -1538,6 +1802,19 @@ index 8cfe86e9277f7a773b1749be2dbd9f9921354ae7..8395076acf58444554113a29fc5b5116
    /** Select the word at a viewport cell; false when there is nothing there. */
    external fun nativeSelectWord(handle: Long, col: Int, row: Int): Boolean
  
+@@ -88,6 +113,12 @@ internal object GhosttyVt {
+
+   external fun nativeClearSelection(handle: Long)
+
++  /** Select and reveal the next or previous case-insensitive text match. */
++  external fun nativeFind(handle: Long, text: String, forward: Boolean): Boolean
++
++  /** Clear the search-owned selection and traversal cursor. */
++  external fun nativeClearSearch(handle: Long)
++
+   /** Active selection as UTF-8 (plain, unwrapped, trimmed), or null if none. */
+   external fun nativeSelectionText(handle: Long): ByteArray?
+
 diff --git a/android/src/main/java/expo/modules/libghostty/PersistentTerminalRegistry.kt b/android/src/main/java/expo/modules/libghostty/PersistentTerminalRegistry.kt
 new file mode 100644
 index 0000000000000000000000000000000000000000..b9904bb0006f2dc5bfc2fe679db781c0455377da
@@ -1614,10 +1891,10 @@ index 37c1702466e889572ed7f13fed5d38c62861b4c3..b8d8b4b6ee99b6ebdd4df921fe73730a
      addKey("⇥") { onKey?.invoke(KeyEvent.KEYCODE_TAB) }
      ctrlButton = addKey("⌃") { toggleCtrl() }
 diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
-index 0969f137ea5482158fb577ef3eee6c9192b1da2e..ae40c5a3e46416db2775eef51345956014937b9a 100644
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..7e81f171b207437a1254b8ed3392321e79f853fe 100644
 --- a/build/ExpoLibghostty.types.d.ts
 +++ b/build/ExpoLibghostty.types.d.ts
-@@ -12,6 +12,8 @@ export type TerminalResizeEvent = {
+@@ -12,12 +12,20 @@ export type TerminalResizeEvent = {
      rows: number;
  };
  export type TerminalViewRef = {
@@ -1626,7 +1903,19 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..ae40c5a3e46416db2775eef513459560
      /** Feed base64-encoded PTY output into the terminal grid. */
      write(base64: string): Promise<void>;
      /** Feed PTY output as UTF-8 text, for string-based wires. */
-@@ -39,6 +41,11 @@ export type TerminalTheme = {
+     writeText(text: string): Promise<void>;
+     /** Mark the underlying PTY as exited. */
+     finish(exitCode: number): Promise<void>;
++    /** Android-only native terminal-grid search. */
++    findNext?(text: string): Promise<boolean>;
++    /** Android-only native terminal-grid reverse search. */
++    findPrevious?(text: string): Promise<boolean>;
++    /** Android-only: clear the search-owned selection. */
++    clearSearch?(): Promise<void>;
+ };
+ export type TerminalTheme = {
+     /**
+@@ -39,6 +47,11 @@ export type TerminalTheme = {
      palette?: (string | null)[];
  };
  export type TerminalViewProps = {
@@ -1638,7 +1927,7 @@ index 0969f137ea5482158fb577ef3eee6c9192b1da2e..ae40c5a3e46416db2775eef513459560
      /**
       * Base font size in density-independent units (default 14, clamped to
       * 4–64); pinch-to-zoom steps from this value. Android applies changes
-@@ -52,6 +59,12 @@ export type TerminalViewProps = {
+@@ -52,6 +65,12 @@ export type TerminalViewProps = {
       * pass undefined fields to keep ghostty's defaults.
       */
      theme?: TerminalTheme;
@@ -1677,10 +1966,10 @@ index 0000000000000000000000000000000000000000..fa0c2bb3d6e8913c9721b7a6678566e7
 +}
 +//# sourceMappingURL=ExpoLibghosttyModule.js.map
 diff --git a/build/ExpoLibghosttyView.js b/build/ExpoLibghosttyView.js
-index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..b616cdaa84b6688cd4c1a29838a07922fe6efbdd 100644
+index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..d6eaa369a7e4fbee365362308843fe988ec27eb7 100644
 --- a/build/ExpoLibghosttyView.js
 +++ b/build/ExpoLibghosttyView.js
-@@ -19,6 +19,9 @@ export default function TerminalView({ ref, onResize, ...props }) {
+@@ -19,9 +19,15 @@ export default function TerminalView({ ref, onResize, ...props }) {
              });
          };
          return {
@@ -1690,6 +1979,12 @@ index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..b616cdaa84b6688cd4c1a29838a07922
              write: whenReady((base64) => native.current.write(base64)),
              writeText: whenReady((text) => native.current.writeText(text)),
              finish: whenReady((exitCode) => native.current.finish(exitCode)),
++            findNext: whenReady((text) => native.current.findNext(text)),
++            findPrevious: whenReady((text) => native.current.findPrevious(text)),
++            clearSearch: whenReady(() => native.current.clearSearch()),
+         };
+     }, []);
+     return (<NativeView {...props} ref={native} onResize={(event) => {
 diff --git a/build/index.d.ts b/build/index.d.ts
 index ddce6e63f0b4e87b5e3f38af27b05b57ad32fdd8..b3eaec70bc75de62b5ee161a271c1f7fc41ff3ce 100644
 --- a/build/index.d.ts
@@ -1711,10 +2006,10 @@ index 2a5471a9fcdf4691e6a1bcbeb03d67e12ecb48f9..9f1d2212a89bf62fa637b7af54ffc247
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
 diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
-index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..38c54f4e80af825cb3c7aa0ade4ecb3267b2fbce 100644
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..f624eaf3da9c9af50ab29a0087a2924f6fe81e4c 100644
 --- a/src/ExpoLibghostty.types.ts
 +++ b/src/ExpoLibghostty.types.ts
-@@ -15,6 +15,8 @@ export type TerminalResizeEvent = {
+@@ -15,12 +15,20 @@ export type TerminalResizeEvent = {
  };
  
  export type TerminalViewRef = {
@@ -1723,7 +2018,19 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..38c54f4e80af825cb3c7aa0ade4ecb32
    /** Feed base64-encoded PTY output into the terminal grid. */
    write(base64: string): Promise<void>;
    /** Feed PTY output as UTF-8 text, for string-based wires. */
-@@ -44,6 +46,11 @@ export type TerminalTheme = {
+   writeText(text: string): Promise<void>;
+   /** Mark the underlying PTY as exited. */
+   finish(exitCode: number): Promise<void>;
++  /** Android-only native terminal-grid search. */
++  findNext?(text: string): Promise<boolean>;
++  /** Android-only native terminal-grid reverse search. */
++  findPrevious?(text: string): Promise<boolean>;
++  /** Android-only: clear the search-owned selection. */
++  clearSearch?(): Promise<void>;
+ };
+
+ export type TerminalTheme = {
+@@ -44,6 +52,11 @@ export type TerminalTheme = {
  };
  
  export type TerminalViewProps = {
@@ -1735,7 +2042,7 @@ index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..38c54f4e80af825cb3c7aa0ade4ecb32
    /**
     * Base font size in density-independent units (default 14, clamped to
     * 4–64); pinch-to-zoom steps from this value. Android applies changes
-@@ -57,6 +64,12 @@ export type TerminalViewProps = {
+@@ -57,6 +70,12 @@ export type TerminalViewProps = {
     * pass undefined fields to keep ghostty's defaults.
     */
    theme?: TerminalTheme;
@@ -1769,10 +2076,10 @@ index 0000000000000000000000000000000000000000..abaaeb28232b13c9199f76e8949ae953
 +  await nativeModule.releasePersistentSession(id);
 +}
 diff --git a/src/ExpoLibghosttyView.tsx b/src/ExpoLibghosttyView.tsx
-index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..e34b6f09dff06a6e00560c946fb663039b6b16d2 100644
+index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..c4ed82e2b0fa804fefa5c641687977860d2e6cf9 100644
 --- a/src/ExpoLibghosttyView.tsx
 +++ b/src/ExpoLibghosttyView.tsx
-@@ -25,6 +25,9 @@ export default function TerminalView({ ref, onResize, ...props }: TerminalViewPr
+@@ -25,9 +25,15 @@ export default function TerminalView({ ref, onResize, ...props }: TerminalViewPr
          });
        };
      return {
@@ -1782,6 +2089,12 @@ index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..e34b6f09dff06a6e00560c946fb66303
        write: whenReady((base64: string) => native.current!.write(base64)),
        writeText: whenReady((text: string) => native.current!.writeText(text)),
        finish: whenReady((exitCode: number) => native.current!.finish(exitCode)),
++      findNext: whenReady((text: string) => native.current!.findNext!(text)),
++      findPrevious: whenReady((text: string) => native.current!.findPrevious!(text)),
++      clearSearch: whenReady(() => native.current!.clearSearch!()),
+     };
+   }, []);
+
 diff --git a/src/index.ts b/src/index.ts
 index d79c69b25d82e796253a904cd2572d6ce8d4f40d..cbf9d59c75235bed2fdbb1902bf0f83009d823e1 100644
 --- a/src/index.ts

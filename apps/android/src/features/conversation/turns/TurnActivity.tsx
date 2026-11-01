@@ -5,7 +5,7 @@ import type { ActivityFootprint } from "@codewide/sync-client";
 import { useContext, useState, type ReactElement } from "react";
 import { Pressable, View } from "react-native";
 import { useInsideBubbleSurface } from "../../../rendering/Bubble";
-import { TimelineMotionContext } from "../../../rendering/FluidLayoutFrame";
+import { TimelineMotionContext } from "../../../rendering/TimelineMotionContext";
 import { NativeRevealSurface } from "../../../rendering/NativeRevealSurface";
 import type { TurnSequencePart } from "../../../rendering/turn-sequence";
 import { colors } from "../../../theme";
@@ -15,14 +15,12 @@ import { AppText as Text } from "../../../ui/Typography";
 import { WaveText } from "../../../ui/WaveText";
 import { OutputFootprintMetric } from "../protocol/CommandOutput";
 import { ProtocolBlock } from "../protocol/ProtocolBlock";
-import { usePersistentExpansion } from "./Card";
 import { ActivityDetailSheet } from "./ActivityDetailSheet";
 import { styles } from "./TurnActivity.styles";
 import {
   ActiveToolCallContext,
   TurnActivityMetricsContext,
   ExpansionItemKeyContext,
-  ForceExpandCardsContext,
   TurnActivityContentContext,
 } from "./turnContexts";
 import { activitySegmentKind } from "./activitySegmentKind";
@@ -32,7 +30,6 @@ import type { TransferAccess } from "../../../data/private-transfer";
 export function TurnActivitySegment({
   animateNew,
   compact,
-  forceExpanded,
   getTransferAccess,
   onFixUnsupportedBlock,
   part,
@@ -41,7 +38,6 @@ export function TurnActivitySegment({
 }: {
   animateNew: boolean;
   compact: boolean;
-  forceExpanded: boolean;
   getTransferAccess?: () => Promise<TransferAccess>;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
   part: Extract<TurnSequencePart, { kind: "activity" }>;
@@ -59,7 +55,6 @@ export function TurnActivitySegment({
   const outputFootprint = summary?.outputFootprint ?? null;
   const props = {
     animateNew,
-    forceExpanded,
     label,
     outputFootprint,
     part,
@@ -68,7 +63,7 @@ export function TurnActivitySegment({
     ...(getTransferAccess === undefined ? {} : { getTransferAccess }),
     ...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock }),
   };
-  return opensActivitySheet({ forceExpanded, insideActivity, part, turnStatus }) ? (
+  return opensActivitySheet(insideActivity, part) ? (
     <SheetActivitySegment {...props} />
   ) : (
     <InlineActivitySegment {...props} />
@@ -76,36 +71,19 @@ export function TurnActivitySegment({
 }
 
 /**
- * Groups nested in another activity, and the finished tool groups of a running
- * turn, open the activity sheet instead of growing the live conversation.
+ * Every group of tool calls opens the activity sheet, and so does any group
+ * nested in another activity: a tool's output never draws in the bubble. Only
+ * thinking and subagent navigation rows stay in place.
  */
-function opensActivitySheet({
-  forceExpanded,
-  insideActivity,
-  part,
-  turnStatus,
-}: {
-  forceExpanded: boolean;
-  insideActivity: boolean;
-  part: Extract<TurnSequencePart, { kind: "activity" }>;
-  turnStatus: ActivitySegmentProps["turnStatus"];
-}): boolean {
-  if (forceExpanded) {
-    return false;
-  }
-  if (insideActivity) {
-    return true;
-  }
-  return (
-    turnStatus === "inProgress" &&
-    part.followedByAgent &&
-    activitySegmentKind(part.blocks) === "disclosure"
-  );
+function opensActivitySheet(
+  insideActivity: boolean,
+  part: Extract<TurnSequencePart, { kind: "activity" }>,
+): boolean {
+  return insideActivity || activitySegmentKind(part.blocks) === "disclosure";
 }
 
 type ActivitySegmentProps = {
   animateNew: boolean;
-  forceExpanded: boolean;
   getTransferAccess?: () => Promise<TransferAccess>;
   label: string;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
@@ -151,15 +129,13 @@ function SheetActivitySegment(props: ActivitySegmentProps): ReactElement {
   );
 }
 
+/** A group drawn in place: a thinking line or subagent navigation rows. */
 function InlineActivitySegment(props: ActivitySegmentProps): ReactElement {
-  const kind = activitySegmentKind(props.part.blocks);
-  if (kind === "thinking") {
-    return <ThinkingActivitySegment {...props} />;
-  }
-  if (kind === "agentNavigation") {
-    return <AgentNavigationActivitySegment {...props} />;
-  }
-  return <DisclosureActivitySegment {...props} />;
+  return activitySegmentKind(props.part.blocks) === "thinking" ? (
+    <ThinkingActivitySegment {...props} />
+  ) : (
+    <AgentNavigationActivitySegment {...props} />
+  );
 }
 
 function ThinkingActivitySegment(props: ActivitySegmentProps): ReactElement {
@@ -216,55 +192,6 @@ function AgentNavigationActivitySegment(props: ActivitySegmentProps): ReactEleme
   );
 }
 
-function DisclosureActivitySegment(props: ActivitySegmentProps): ReactElement {
-  const motionAllowed = useContext(TimelineMotionContext);
-  const shouldAutoExpand = props.turnStatus === "inProgress" && !props.part.followedByAgent;
-  const [expanded, setExpanded] = usePersistentExpansion(
-    `${props.turnKey}:${props.part.key}`,
-    false,
-  );
-  const visiblyExpanded = props.forceExpanded || shouldAutoExpand || expanded;
-  const toggle = useEvent(() => {
-    setExpanded((value) => !value);
-  });
-  return (
-    <TurnActivity
-      expanded={visiblyExpanded}
-      forceExpandCards={props.forceExpanded}
-      label={props.label}
-      onToggle={toggle}
-      outputFootprint={props.outputFootprint}
-      showToggle={!shouldAutoExpand}
-    >
-      {props.part.blocks.map((block, index) => (
-        <ActiveDisclosureBlock
-          active={shouldAutoExpand && index === props.part.blocks.length - 1}
-          animate={props.animateNew && motionAllowed && props.turnStatus === "inProgress"}
-          block={block}
-          key={block.key}
-          turnKey={props.turnKey}
-          {...(props.getTransferAccess === undefined
-            ? {}
-            : { getTransferAccess: props.getTransferAccess })}
-          {...(props.onFixUnsupportedBlock === undefined
-            ? {}
-            : { onFixUnsupportedBlock: props.onFixUnsupportedBlock })}
-        />
-      ))}
-    </TurnActivity>
-  );
-}
-
-function ActiveDisclosureBlock(
-  props: Parameters<typeof RevealedActivityBlock>[0] & { active: boolean },
-): ReactElement {
-  return (
-    <ActiveToolCallContext.Provider value={props.active}>
-      <RevealedActivityBlock {...props} />
-    </ActiveToolCallContext.Provider>
-  );
-}
-
 function RevealedActivityBlock({
   animate,
   block,
@@ -298,7 +225,6 @@ export interface TurnActivityProps {
   children: React.ReactNode;
   compactHeader?: boolean;
   expanded: boolean;
-  forceExpandCards?: boolean;
   label: string;
   loading?: boolean;
   onToggle: () => void;
@@ -349,10 +275,7 @@ function renderExpandedActivity(props: TurnActivityProps): ReactElement | null {
     return null;
   }
   return (
-    <ExpandedActivityContent
-      forceExpandCards={props.forceExpandCards ?? false}
-      showToggle={props.showToggle ?? true}
-    >
+    <ExpandedActivityContent showToggle={props.showToggle ?? true}>
       {props.children}
     </ExpandedActivityContent>
   );
@@ -433,11 +356,9 @@ const LABEL_ICON_PROPS = { role: "label" } as const;
 
 function ExpandedActivityContent({
   children,
-  forceExpandCards,
   showToggle,
 }: {
   children: React.ReactNode;
-  forceExpandCards: boolean;
   showToggle: boolean;
 }): ReactElement {
   const insideBubbleSurface = useInsideBubbleSurface();
@@ -453,12 +374,5 @@ function ExpandedActivityContent({
       {children}
     </View>
   );
-  const activity = (
-    <TurnActivityContentContext.Provider value>{content}</TurnActivityContentContext.Provider>
-  );
-  return (
-    <ForceExpandCardsContext.Provider value={forceExpandCards}>
-      {activity}
-    </ForceExpandCardsContext.Provider>
-  );
+  return <TurnActivityContentContext.Provider value>{content}</TurnActivityContentContext.Provider>;
 }

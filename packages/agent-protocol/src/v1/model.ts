@@ -193,6 +193,37 @@ export interface TaskNotificationFields {
   readonly type: "taskNotification";
 }
 
+/**
+ * What a provider knows of a background command's process (added within v1).
+ * `running` until it ends; an ended state always carries the Unix time in
+ * seconds it ended (`endedAt`), and `completed` / `failed` the exit code when
+ * the provider reports one. `stopped`: killed or stopped before it finished,
+ * or ended with the process that ran it. `unknown`: the provider cannot tell
+ * (kept for providers without live process evidence; Claude settles a task
+ * whose process is gone as `stopped`). Clients render it as ended, neutrally.
+ * A provider never moves an ended state back to `running`.
+ */
+export type BackgroundCommandState =
+  | { readonly status: "running" }
+  | {
+      readonly endedAt: number;
+      readonly exitCode: number | null;
+      readonly status: "completed" | "failed";
+    }
+  | { readonly endedAt: number; readonly status: "stopped" }
+  | { readonly status: "unknown" };
+
+/**
+ * The background task a command started: `taskId` (the provider's own id),
+ * `startedAt` (Unix seconds), the agent's short `description` of it when it
+ * gave one, and its state.
+ */
+export type BackgroundCommand = BackgroundCommandState & {
+  readonly description: string | null;
+  readonly startedAt: number;
+  readonly taskId: string;
+};
+
 export type FileChangeKind = "add" | "delete" | "update";
 
 export interface FileChange {
@@ -235,11 +266,11 @@ export type AgentItemBody =
     }
   | {
       /**
-       * The provider's id of the background task the command started (added
+       * The background task the command started and its current state (added
        * within v1); absent for a command that ran in the foreground.
        * `thread.backgroundTask.read` reads its output.
        */
-      readonly backgroundTaskId?: string;
+      readonly background?: BackgroundCommand;
       readonly command: string;
       readonly cwd: string;
       readonly durationMs: number | null;
@@ -495,6 +526,12 @@ export interface NativeSessionCodewide {
 /** The turns of one sub-agent of a native session. */
 export interface NativeSubagent {
   readonly agentId: string;
+  /**
+   * The reasoning effort recorded on the answer `model` names (the effective
+   * value, whatever set it); absent when the transcript records none. Added
+   * within v1.
+   */
+  readonly effort?: string;
   /**
    * The model of the sub-agent's newest answer in its own transcript; absent
    * when the transcript records none. Added within v1.

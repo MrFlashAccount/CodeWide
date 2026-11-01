@@ -709,12 +709,13 @@ fn load(path: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
         .collect()
 }
 
-const TIME_FIELDS: [&str; 5] = [
+const TIME_FIELDS: [&str; 6] = [
     "startedAt",
     "completedAt",
     "durationMs",
     "createdAt",
     "updatedAt",
+    "endedAt",
 ];
 
 /// Blanks the clock's readings: they depend on how often each

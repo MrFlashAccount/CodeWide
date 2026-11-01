@@ -5,11 +5,11 @@ import { readInteractiveTerminalWorkspace } from "../../data/interactive-termina
 import { useNativeTerminalInventory } from "../../data/nativeTerminalInventory";
 import type { NativeTerminalSession } from "../../native/native-transport";
 import { useEvent } from "../../react/useEvent";
-import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
+import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { AppListRow } from "../../ui/AppListRow";
-import { AppListRowMenuTrigger } from "../../ui/AppListRowMenuTrigger";
 import { listRowHeight, listRowPosition } from "../../ui/AppListRow.types";
 import { AppSheet, AppSheetScrollView } from "../../ui/AppSheet";
+import { OverflowMenu } from "../../ui/OverflowMenu";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ManageTerminalsSheet.styles";
 
@@ -140,9 +140,12 @@ function ManagedTerminalMenu({
   readonly onSelect: (id: string) => void;
 }): React.JSX.Element {
   return (
-    <ActionMenu accessibilityLabel={menuLabel} actions={CLOSE_ACTIONS} onSelect={onSelect}>
-      <AppListRowMenuTrigger accessibilityLabel={menuLabel} />
-    </ActionMenu>
+    <OverflowMenu
+      accessibilityLabel={menuLabel}
+      actions={CLOSE_ACTIONS}
+      onSelect={onSelect}
+      tone="dim"
+    />
   );
 }
 

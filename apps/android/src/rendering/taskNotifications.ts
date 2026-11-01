@@ -13,6 +13,7 @@ const STATUSES = [
   "killed",
   "stopped",
   "interim",
+  "interrupted",
   "lost",
   "unknown",
 ] as const;
@@ -23,8 +24,9 @@ type TaskNotificationStatus = (typeof STATUSES)[number];
 
 /**
  * A background task's report to the agent: a subagent or background command
- * finished, stopped or reported progress. `wake` reports started a turn
- * nobody asked for; `midTurn` reports arrived while a turn was running.
+ * finished, stopped, was interrupted or reported progress. `wake` reports
+ * started a turn nobody asked for; `midTurn` reports arrived while a turn was
+ * running.
  */
 export type TaskNotificationReport = {
   /** The subagent's thread, for navigation; `null` for commands and unknown agents. */
@@ -47,7 +49,8 @@ export type TurnTaskNotifications = {
 };
 
 const EMPTY: TurnTaskNotifications = { midTurn: [], wake: [] };
-const reportCache = new WeakMap<TurnItem, TaskNotificationReport | null>();
+const NO_REPORTS: readonly TaskNotificationReport[] = [];
+const reportCache = new WeakMap<TurnItem, readonly TaskNotificationReport[]>();
 const turnCache = new WeakMap<Turn["items"], TurnTaskNotifications>();
 
 /** Whether a turn item is a background task report rather than turn activity. */
@@ -66,8 +69,10 @@ export function turnTaskNotifications(turn: Turn): TurnTaskNotifications {
   const wake: TaskNotificationReport[] = [];
   const midTurn: TaskNotificationReport[] = [];
   for (const item of turn.items) {
-    const report = isTaskNotificationItem(item) ? taskNotificationReport(item) : null;
-    if (report !== null) {
+    if (!isTaskNotificationItem(item)) {
+      continue;
+    }
+    for (const report of itemReports(item)) {
       (report.delivery === "wake" ? wake : midTurn).push(report);
     }
   }
@@ -76,43 +81,104 @@ export function turnTaskNotifications(turn: Turn): TurnTaskNotifications {
   return value;
 }
 
-function taskNotificationReport(item: TurnItem): TaskNotificationReport | null {
+function itemReports(item: TurnItem): readonly TaskNotificationReport[] {
   const cached = reportCache.get(item);
   if (cached !== undefined) {
     return cached;
   }
-  const report = parseReport(unknownRecord(item));
-  reportCache.set(item, report);
-  return report;
+  const raw = unknownRecord(item);
+  const reports = raw === null ? NO_REPORTS : parseItem(raw);
+  reportCache.set(item, reports);
+  return reports;
 }
 
-function parseReport(raw: Record<string, unknown> | null): TaskNotificationReport | null {
-  const identity = raw === null ? null : reportIdentity(raw);
-  if (raw === null || identity === null) {
+/**
+ * One notice item carries either one report or, as a batch, several in
+ * `reports`. A batch's top-level fields only summarise it for older apps, so
+ * its valid entries replace them; a batch without one valid entry degrades to
+ * that summary.
+ */
+function parseItem(raw: Record<string, unknown>): readonly TaskNotificationReport[] {
+  const kind = oneOf(KINDS, raw.kind);
+  const delivery = oneOf(DELIVERIES, raw.delivery);
+  if (kind === null || delivery === null) {
+    return NO_REPORTS;
+  }
+  const batch = Array.isArray(raw.reports) ? batchReports(raw.reports, delivery, kind) : NO_REPORTS;
+  if (batch.length > 0) {
+    return batch;
+  }
+  const single = singleReport(raw, delivery, kind);
+  return single === null ? NO_REPORTS : [single];
+}
+
+function singleReport(
+  raw: Record<string, unknown>,
+  delivery: TaskNotificationReport["delivery"],
+  kind: TaskNotificationReport["kind"],
+): TaskNotificationReport | null {
+  const id = nonEmptyString(raw.id);
+  const taskId = nonEmptyString(raw.taskId);
+  if (id === null || taskId === null) {
     return null;
   }
+  // Both wire shapes build their reports with one property order.
   return {
-    ...identity,
     agentThreadId: nonEmptyString(raw.agentThreadId),
+    delivery,
     durationMs: nonNegativeNumber(raw.durationMs),
+    id,
+    kind,
     name: nonEmptyString(raw.name) ?? "Background task",
     result: nonEmptyString(raw.result),
     status: oneOf(STATUSES, raw.status) ?? "unknown",
+    taskId,
     toolUses: nonNegativeNumber(raw.toolUses),
   };
 }
 
-/** The fields a report cannot exist without; anything else degrades to unknown. */
-function reportIdentity(
-  raw: Record<string, unknown>,
-): Pick<TaskNotificationReport, "delivery" | "id" | "kind" | "taskId"> | null {
-  const id = nonEmptyString(raw.id);
-  const taskId = nonEmptyString(raw.taskId);
-  const kind = oneOf(KINDS, raw.kind);
-  const delivery = oneOf(DELIVERIES, raw.delivery);
-  return id === null || taskId === null || kind === null || delivery === null
-    ? null
-    : { delivery, id, kind, taskId };
+/** A batch's entries share the item's delivery and kind; invalid and repeated ones are skipped. */
+function batchReports(
+  entries: readonly unknown[],
+  delivery: TaskNotificationReport["delivery"],
+  kind: TaskNotificationReport["kind"],
+): TaskNotificationReport[] {
+  const reports: TaskNotificationReport[] = [];
+  const ids = new Set<string>();
+  for (const entry of entries) {
+    const report = batchEntry(unknownRecord(entry), delivery, kind);
+    // Entry ids key rendered rows: a repeated one cannot be told apart.
+    if (report !== null && !ids.has(report.id)) {
+      ids.add(report.id);
+      reports.push(report);
+    }
+  }
+  return reports;
+}
+
+/** One batch entry carries no totals or result of its own. */
+function batchEntry(
+  raw: Record<string, unknown> | null,
+  delivery: TaskNotificationReport["delivery"],
+  kind: TaskNotificationReport["kind"],
+): TaskNotificationReport | null {
+  const id = raw === null ? null : nonEmptyString(raw.id);
+  const taskId = raw === null ? null : nonEmptyString(raw.taskId);
+  if (raw === null || id === null || taskId === null) {
+    return null;
+  }
+  return {
+    agentThreadId: nonEmptyString(raw.agentThreadId),
+    delivery,
+    durationMs: null,
+    id,
+    kind,
+    name: nonEmptyString(raw.name) ?? "Background task",
+    result: null,
+    status: oneOf(STATUSES, raw.status) ?? "unknown",
+    taskId,
+    toolUses: null,
+  };
 }
 
 function oneOf<const Values extends readonly string[]>(

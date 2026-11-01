@@ -8,71 +8,167 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use serde_json::Value;
-use tracing::warn;
-
 use crate::agent::{
-    client_wire::observe, model::PermissionProfileCatalog, provider::AgentProvider,
+    client_wire::{execution, observe},
+    model::{AppThreadId, PermissionProfileCatalog, ProviderId},
+    provider::{AgentProvider, ExecutionPolicy},
 };
+use serde_json::Value;
 
 /// Full access under each provider's name for it: Claude has both,
 /// Codex only `:danger-full-access`. Both lift every check.
 const FULL_ACCESS: [&str; 2] = [":full-access", ":danger-full-access"];
-/// The least privileged built-in profile and the safe fallback when a
-/// source thread's effective profile is unknown.
+/// The least privileged built-in profile, available as an explicit request.
 pub const READ_ONLY: &str = ":read-only";
 /// Bound of the observed-profile map; a full map starts over.
 const MAX_OBSERVED_THREADS: usize = 4_096;
 
-/// Effective profiles of threads, observed on the client wire. This covers a
-/// Codex thread whose configured sandbox has no named profile in
-/// `thread/read` but whose start, resume or settings event reports the policy
-/// it actually runs under.
+/// The backend authority for effective thread permissions.
+///
+/// Provider events and RPC results, including the internal `thread/resume`
+/// used for the Composer snapshot, update this one map. Admission resolves a
+/// cold entry from provider-owned durable state or the current thread
+/// projection and retains it here. Clients only receive a projection; they
+/// never supply authority.
 #[derive(Default)]
 pub struct ProfileObservations {
-    profiles: Mutex<HashMap<String, String>>,
+    profiles: Mutex<HashMap<(ProviderId, String), ObservedPermissions>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ObservedPermissions {
+    pub(crate) profile: String,
+    pub(crate) execution: Option<ExecutionPolicy>,
 }
 
 impl ProfileObservations {
-    fn record(&self, thread_id: &str, profile: &str) {
+    fn record(
+        &self,
+        provider: &ProviderId,
+        thread_id: &str,
+        profile: &str,
+        execution: Option<ExecutionPolicy>,
+    ) -> ObservedPermissions {
+        let observed = ObservedPermissions {
+            profile: profile.to_owned(),
+            execution,
+        };
         let mut profiles = self
             .profiles
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if profiles.len() >= MAX_OBSERVED_THREADS && !profiles.contains_key(thread_id) {
+        let key = (provider.clone(), thread_id.to_owned());
+        if profiles.len() >= MAX_OBSERVED_THREADS && !profiles.contains_key(&key) {
             profiles.clear();
         }
-        profiles.insert(thread_id.to_owned(), profile.to_owned());
+        profiles.insert(key, observed.clone());
+        observed
+    }
+
+    /// Records the policy applied when the host created a child. Later native
+    /// settings notifications replace this snapshot with the effective policy.
+    pub fn record_created(
+        &self,
+        provider: &ProviderId,
+        thread_id: &str,
+        profile: &str,
+        execution: Option<ExecutionPolicy>,
+    ) {
+        self.record(provider, thread_id, profile, execution);
     }
 
     /// Observes a provider notification.
-    pub fn observe_event(&self, payload: &Value) {
+    pub fn observe_event(&self, provider: &ProviderId, payload: &Value) {
         if let Some((thread_id, profile)) = observe::settings_profile(payload) {
-            self.record(thread_id, profile);
+            self.record(
+                provider,
+                thread_id,
+                profile,
+                execution::event_policy(payload),
+            );
         }
     }
 
     /// Observes an RPC result.
-    pub fn observe_rpc_result(&self, method: &str, result: &Value) {
-        if let Some((thread_id, profile)) = observe::result_profile(method, result) {
-            self.record(thread_id, profile);
-        }
+    pub(crate) fn observe_rpc_result(
+        &self,
+        provider: &ProviderId,
+        method: &str,
+        result: &Value,
+    ) -> Option<ObservedPermissions> {
+        let (thread_id, profile) = observe::result_profile(method, result)?;
+        Some(self.record(
+            provider,
+            thread_id,
+            profile,
+            execution::result_policy(method, result),
+        ))
     }
 
     /// Returns the most recently observed effective profile of `thread_id`.
     #[must_use]
-    pub fn get(&self, thread_id: &str) -> Option<String> {
+    pub fn get(&self, provider: &ProviderId, thread_id: &str) -> Option<String> {
         self.profiles
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(thread_id)
+            .get(&(provider.clone(), thread_id.to_owned()))
+            .map(|observed| observed.profile.clone())
+    }
+
+    /// Captures profile and execution together, so a settings event cannot mix
+    /// policies while admission awaits a target catalog.
+    pub(crate) fn snapshot(
+        &self,
+        provider: &ProviderId,
+        thread_id: &str,
+    ) -> Option<ObservedPermissions> {
+        self.profiles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(provider.clone(), thread_id.to_owned()))
             .cloned()
+    }
+
+    /// Resolves and retains the single backend authority used for child
+    /// admission. Live provider observations win, then provider-owned durable
+    /// state, then the provider's current thread projection. No client or
+    /// model input participates in this decision.
+    pub(crate) async fn resolve(
+        &self,
+        provider: &Arc<dyn AgentProvider>,
+        thread: &AppThreadId,
+        projected_profile: &str,
+    ) -> Option<ObservedPermissions> {
+        let provider_id = &provider.descriptor().id;
+        if let Some(observed) = self.snapshot(provider_id, thread.as_str()) {
+            return Some(observed);
+        }
+        if let Ok(Some(authority)) = provider.thread_execution_authority(thread).await {
+            return Some(self.record(
+                provider_id,
+                thread.as_str(),
+                &authority.permission_profile,
+                authority.policy,
+            ));
+        }
+        (!projected_profile.is_empty())
+            .then(|| self.record(provider_id, thread.as_str(), projected_profile, None))
+    }
+
+    /// The effective native execution policy observed with that profile.
+    #[must_use]
+    pub fn execution(&self, provider: &ProviderId, thread_id: &str) -> Option<ExecutionPolicy> {
+        self.profiles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(provider.clone(), thread_id.to_owned()))
+            .and_then(|observed| observed.execution.clone())
     }
 }
 
-/// Expresses `profile` in `target`'s own permission-profile catalog. A
-/// provider whose catalog is unavailable receives the selected id unchanged
-/// and remains the authority that accepts or rejects it.
+/// Expresses `profile` in `target`'s own permission-profile catalog. Missing,
+/// empty, unknown and unsupported catalogs fail closed because the host cannot
+/// prove that a target id is no stronger than the authenticated parent ceiling.
 ///
 /// # Errors
 /// Returns a message when the target catalog has no equivalent profile.
@@ -82,22 +178,19 @@ pub async fn for_provider(
 ) -> Result<String, String> {
     match target.catalog_permission_profiles().await {
         Ok(catalog) => for_catalog(&profile, &catalog),
-        Err(err) => {
-            warn!(
-                err = %err,
-                provider = %target.descriptor().id,
-                "agent provider's permission profiles are unavailable"
-            );
-            Ok(profile)
-        }
+        Err(error) => Err(format!(
+            "the target provider's permission profiles are unavailable: {error}"
+        )),
     }
 }
 
 /// The profile in the target catalog: the same id when the target has it,
-/// else the target's id for the same full-access level. An empty catalog
-/// (the provider lists none) keeps the id.
+/// else the target's id for the same full-access level.
 fn for_catalog(profile: &str, catalog: &PermissionProfileCatalog) -> Result<String, String> {
-    if catalog.profiles.is_empty() || catalog.profiles.iter().any(|row| row.id == profile) {
+    if catalog.profiles.is_empty() {
+        return Err("the target provider offers no permission profiles".into());
+    }
+    if catalog.profiles.iter().any(|row| row.id == profile) {
         return Ok(profile.to_owned());
     }
     if FULL_ACCESS.contains(&profile)
@@ -126,7 +219,7 @@ fn for_catalog(profile: &str, catalog: &PermissionProfileCatalog) -> Result<Stri
 mod tests {
     use serde_json::json;
 
-    use crate::agent::model::{PermissionProfileCatalog, PermissionProfileEntry};
+    use crate::agent::model::{PermissionProfileCatalog, PermissionProfileEntry, ProviderId};
 
     use super::{ProfileObservations, for_catalog};
 
@@ -161,7 +254,7 @@ mod tests {
             for_catalog(":full-access", &claude),
             Ok(":full-access".into())
         );
-        assert_eq!(for_catalog("team", &catalog(&[])), Ok("team".into()));
+        assert!(for_catalog("team", &catalog(&[])).is_err());
         assert!(for_catalog("team", &codex).is_err());
         assert!(for_catalog(":workspace", &catalog(&[":read-only"])).is_err());
     }
@@ -169,34 +262,49 @@ mod tests {
     #[test]
     fn a_thread_on_its_configured_sandbox_has_the_matching_built_in_profile() {
         let observed = ProfileObservations::default();
+        let codex = ProviderId::from_static("codex");
         observed.observe_rpc_result(
+            &codex,
             "thread/resume",
             &json!({"thread": {"id": "t"}, "activePermissionProfile": null,
                 "sandbox": {"type": "dangerFullAccess"}}),
         );
-        assert_eq!(observed.get("t").as_deref(), Some(":danger-full-access"));
-        observed.observe_event(&json!({"method": "thread/settings/updated", "params": {
+        assert_eq!(
+            observed.get(&codex, "t").as_deref(),
+            Some(":danger-full-access")
+        );
+        observed.observe_event(&codex, &json!({"method": "thread/settings/updated", "params": {
             "threadId": "t", "threadSettings": {"activePermissionProfile": null,
                 "sandboxPolicy": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false}}}}));
-        assert_eq!(observed.get("t").as_deref(), Some(":workspace"));
+        assert_eq!(observed.get(&codex, "t").as_deref(), Some(":workspace"));
         observed.observe_rpc_result(
+            &codex,
             "thread/start",
             &json!({"thread": {"id": "u"}, "activePermissionProfile": null,
                 "sandbox": {"type": "externalSandbox", "networkAccess": "restricted"}}),
         );
-        assert_eq!(observed.get("u"), None, "an external sandbox stays unknown");
+        assert_eq!(
+            observed.get(&codex, "u"),
+            None,
+            "an external sandbox stays unknown"
+        );
     }
 
     #[test]
     fn observes_profiles_from_notifications_and_results() {
         let observed = ProfileObservations::default();
+        let codex = ProviderId::from_static("codex");
         observed.observe_rpc_result(
+            &codex,
             "thread/start",
             &json!({"thread": {"id": "t"}, "activePermissionProfile": {"id": ":workspace"}}),
         );
-        assert_eq!(observed.get("t").as_deref(), Some(":workspace"));
-        observed.observe_event(&json!({"method": "thread/settings/updated", "params": {
-            "threadId": "t", "threadSettings": {"activePermissionProfile": {"id": ":read-only"}}}}));
-        assert_eq!(observed.get("t").as_deref(), Some(":read-only"));
+        assert_eq!(observed.get(&codex, "t").as_deref(), Some(":workspace"));
+        observed.observe_event(
+            &codex,
+            &json!({"method": "thread/settings/updated", "params": {
+            "threadId": "t", "threadSettings": {"activePermissionProfile": {"id": ":read-only"}}}}),
+        );
+        assert_eq!(observed.get(&codex, "t").as_deref(), Some(":read-only"));
     }
 }

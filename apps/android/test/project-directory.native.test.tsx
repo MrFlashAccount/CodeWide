@@ -1,7 +1,7 @@
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
-import { LegendList } from "@legendapp/list/react-native";
 import type { ReactNode } from "react";
 import { ProjectPickerSheet } from "../src/features/projects/ProjectPickerSheet";
+import { AppList } from "../src/ui/AppList";
 import { AppListRow } from "../src/ui/AppListRow";
 import { listRowHeight } from "../src/ui/AppListRow.types";
 
@@ -91,9 +91,7 @@ it("opens the server filesystem root, navigates folders and adds only the select
     { wrapper: TestProvider },
   );
   await waitFor(() => expect(view.getByText("Projects")).toBeVisible());
-  expect(view.UNSAFE_getByType(LegendList).props.recycleItems).toBe(true);
-  const folders = view.UNSAFE_getByType(LegendList);
-  expect(folders.props.getFixedItemSize(folders.props.data[0], 0)).toBe(listRowHeight.single);
+  expect(view.UNSAFE_getByType(AppList).props.virtualized).toBe(true);
   expect(view.UNSAFE_getByType(AppListRow).props.fixedHeight).toBe(listRowHeight.single);
   expect(readDirectory).toHaveBeenCalledWith("/");
   expect(readDirectory).not.toHaveBeenCalledWith(defaults.cwd);
@@ -116,12 +114,8 @@ it("virtualizes every project as an independent recyclable row", () => {
   const view = render(<ProjectPickerSheet {...defaults} browseOnly={false} projects={projects} />, {
     wrapper: TestProvider,
   });
-  const list = view.UNSAFE_getByType(LegendList);
-  expect(list.props.recycleItems).toBe(true);
-  for (const item of list.props.data) {
-    if (item.kind === "project")
-      expect(list.props.getFixedItemSize(item)).toBe(listRowHeight.double);
-  }
+  const list = view.UNSAFE_getByType(AppList);
+  expect(list.props.virtualized).toBe(true);
   for (const row of view.UNSAFE_getAllByType(AppListRow)) {
     expect(row.props.fixedHeight).toBe(listRowHeight.double);
     expect(row.props.multiline).not.toBe(true);

@@ -7,6 +7,8 @@ import { Pressable, View, type StyleProp, type ViewStyle } from "react-native";
 import type { StoredDraftAttachment } from "../../../data/thread-ui-state-types";
 import { MessageAttachmentCard } from "../../../rendering/MessageAttachmentCard";
 import { MessageAttachmentGrid } from "../../../rendering/MessageAttachmentTile";
+import { MessageVideoGallery } from "../../../rendering/MessageVideoGallery";
+import { isAttachmentVideo } from "../../../rendering/videoPreview";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import { SearchHighlightQuery } from "../../../rendering/SearchMessageFocus";
 import { TwoRowHorizontalScroller } from "../../../rendering/TwoRowHorizontalScroller";
@@ -49,7 +51,10 @@ export function UserMessageContent(props: UserMessageContentProps) {
     localAttachments,
   );
   const imageAttachments = attachments.filter((attachment) => attachment.kind === "image");
-  const otherAttachments = attachments.filter((attachment) => attachment.kind !== "image");
+  const videoAttachments = attachments.filter((attachment) => isAttachmentVideo(attachment.name));
+  const otherAttachments = attachments.filter(
+    (attachment) => attachment.kind !== "image" && !isAttachmentVideo(attachment.name),
+  );
   const bodyParts = parts.filter(
     (part) =>
       !["image", "localImage", "audio", "localAudio", "mention"].includes(
@@ -92,6 +97,17 @@ export function UserMessageContent(props: UserMessageContentProps) {
           </View>
         );
       })}
+      {videoAttachments.length > 0 && (
+        <MessageVideoGallery style={userMessageAttachmentGridStyle(bodyParts.length)}>
+          {videoAttachments.map((attachment) => (
+            <MessageAttachmentCard
+              attachment={attachment}
+              key={`${attachment.kind}:${attachment.name}:${userMessageAttachmentReference(attachment)}`}
+              {...(getTransferAccess === undefined ? {} : { getAccess: getTransferAccess })}
+            />
+          ))}
+        </MessageVideoGallery>
+      )}
       {otherAttachments.length > 0 && (
         <MessageAttachmentGrid style={userMessageAttachmentGridStyle(bodyParts.length)}>
           {otherAttachments.map((attachment) => (

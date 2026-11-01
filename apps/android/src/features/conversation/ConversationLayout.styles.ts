@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native";
-import { colors, radii } from "../../theme";
+import { colors } from "../../theme";
 
 export const styles = StyleSheet.create({
   composerSticky: {
@@ -44,10 +44,5 @@ export const styles = StyleSheet.create({
     backgroundColor: colors.conversationSurface,
     flex: 1,
     minHeight: 0,
-  },
-  conversationRaised: {
-    borderBottomLeftRadius: radii.composer,
-    borderTopLeftRadius: radii.composer,
-    overflow: "hidden",
   },
 });

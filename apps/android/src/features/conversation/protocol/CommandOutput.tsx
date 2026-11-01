@@ -30,11 +30,12 @@ import { Card } from "../turns/Card";
 import { CopyButton } from "../turns/MessageActionRail";
 import {
   ActiveToolCallContext,
+  BackgroundTaskContext,
   TurnActivityMetricsContext,
   TurnTargetContext,
 } from "../turns/turnContexts";
 import { styles } from "./CommandOutput.styles";
-import { BackgroundTaskOutputButton } from "./BackgroundTaskOutputButton";
+import { BACKGROUND_COMMAND_NAME, commandBackgroundTask } from "./backgroundCommand";
 import { ProtocolBody, TOOL_RESULT_MAX_HEIGHT } from "./ToolContent";
 
 export function CommandExecutionProtocolBlock({
@@ -50,15 +51,13 @@ export function CommandExecutionProtocolBlock({
   const running = activeToolCall || block.status === "inProgress" || block.status === "running";
   const metrics = useContext(TurnActivityMetricsContext);
   const outputFootprint = commandOutputFootprint(block.raw, metrics);
-  const outputAction = useCommandOutputAction(block, title, getTransferAccess ?? null);
+  const outputAction = useCommandOutputAction(block, command, getTransferAccess ?? null);
   return (
     <Card
       icon="terminal-outline"
       title={title}
       {...(block.status === null ? {} : { status: block.status })}
-      collapsible
       headerMeta={<OutputFootprintMetric footprint={outputFootprint} />}
-      initiallyExpanded={false}
       onOpen={outputAction.open}
       openEnabled={outputAction.enabled}
       openLabel={`Open output for ${title}`}
@@ -81,12 +80,12 @@ export function CommandExecutionProtocolBlock({
         running={running}
         {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       />
-      <BackgroundTaskOutputButton block={block} />
       {block.durationMs !== null && (
         <Text style={styles.turnMetaText}>{formatDuration(block.durationMs)}</Text>
       )}
       <LargeContentControls
         block={block}
+        omitCommandOutput
         {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       />
     </Card>
@@ -97,29 +96,42 @@ function ignoreContentRequest(): void {}
 
 function useCommandOutputAction(
   block: RenderBlock,
-  title: string,
+  command: string,
   getTransferAccess: GetTransferAccess | null,
 ): { readonly enabled: boolean; readonly open: () => void } {
   const openContent = useContext(LargeContentViewerContext);
+  const openTask = useContext(BackgroundTaskContext);
   const turnTarget = useContext(TurnTargetContext);
   const dispatchOutput = openContent ?? ignoreContentRequest;
   const itemId = typeof block.raw.id === "string" ? block.raw.id : block.key;
-  const open = useEvent(() => {
+  const taskId = commandBackgroundTask(block.raw)?.taskId ?? null;
+  const openItemOutput = useEvent(() => {
     if (turnTarget === null) {
       return;
     }
     dispatchOutput({
+      command,
       fallbackOutput: block.body ?? "",
       getTransferAccess,
       itemId,
       kind: "command",
       references: commandOutputReferences(block.raw),
       threadId: turnTarget.threadId,
-      title,
       turnId: turnTarget.turnId,
     });
   });
-  return { enabled: openContent !== null && turnTarget !== null, open };
+  // A background command's own result only says that the task started; its
+  // output is the task's, which the task output screen follows while it runs.
+  // A failed task read falls back to the item's own output.
+  const open = useEvent(() => {
+    if (openTask === null || taskId === null) {
+      openItemOutput();
+      return;
+    }
+    openTask({ name: BACKGROUND_COMMAND_NAME, taskId }).catch(openItemOutput);
+  });
+  const opensTask = openTask !== null && taskId !== null;
+  return { enabled: opensTask || (openContent !== null && turnTarget !== null), open };
 }
 
 interface LazyCommandOutputProps {
