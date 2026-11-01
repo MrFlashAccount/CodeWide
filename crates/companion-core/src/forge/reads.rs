@@ -434,7 +434,11 @@ fn append_listed(
                 linked_thread_count: count,
                 review_thread_id,
                 updated_at: row.updated_at,
-                web_url: super::wire::page_on_host(row.web_url, &link.host),
+                web_url: super::wire::page_on_host(
+                    row.web_url,
+                    &link.host,
+                    &context.declarations.web_hosts(plugin_id),
+                ),
                 attention,
             })
         })
@@ -586,7 +590,11 @@ pub async fn load_overview(
         title: read.title,
         author: read.author,
         state: read.state,
-        web_url: super::wire::page_on_host(read.web_url, &identity.pr_ref.host),
+        web_url: super::wire::page_on_host(
+            read.web_url,
+            &identity.pr_ref.host,
+            &context.declarations.web_hosts(&identity.plugin_id),
+        ),
         fetched_at: now_rfc3339(),
         catalog: catalog_wire(head_revision.clone(), &actions),
         head_revision,

@@ -183,6 +183,15 @@ async fn run_in_session(
             let value = json!({
                 "runId": record.run_id,
                 "message": result.message.map(|message| message.chars().take(300).collect::<String>()),
+                "openUrl": result
+                    .open_url
+                    .filter(|url| {
+                        super::wire::https_on_page_host(
+                            url,
+                            &addressed.identity.pr_ref.host,
+                            &context.declarations.web_hosts(&addressed.identity.plugin_id),
+                        )
+                    }),
                 "catalog": refreshed,
             });
             finish(

@@ -126,6 +126,12 @@ hosts, other than its accounts' hosts and their subdomains, whose media `forge.m
 when empty. The same hosts bound the direct URLs a conversation page may hand to a client
 (`Comment.media[].url`, `Author.avatarDirect`); see [forge-conversation.md](forge-conversation.md).
 
+The result may also carry `webHosts: string[]`: exact lowercase hosts, other than its accounts'
+hosts, that serve the forge's web pages (Arcanum answers its API on `arcanum.yandex.net` and its
+pages on `a.yandex-team.ru`). It is optional and omitted when empty. A pull request's `webUrl`,
+a comment `url`, a review's `reviewUrl` and an action's `openUrl` reach a client only as `https`
+on the account host or one of these; anything else is dropped.
+
 ## Capabilities
 
 Required: `forge.auth@1`, `forge.list@1`, `forge.read@1`, `forge.diff@1`, `forge.actions@1`,
@@ -177,7 +183,7 @@ known and takes only the remotes.
 | `forge.pullRequest.checks` | `forge.checks@1` | `{ account, ref, headRevision }` → `{ summary: CheckSummary, items: CheckItem[] }` |
 | `forge.pullRequest.files` | `forge.diff@1` | `{ account, ref, headRevision, cursor \| null }` → `{ headRevision, files, truncated, nextCursor }`; a file's `patch` is `{ state: "present", text }`, `tooLarge`, `binary` or `notProvided` (the companion adds hunks), and `viewed: boolean \| null` |
 | `forge.pullRequest.actions` | `forge.actions@1` | `{ account, ref }` → `ActionCatalog` |
-| `forge.pullRequest.action.run` | `forge.actions@1` | `{ account, ref, actionId, headRevision, input, idempotencyKey }` → `{ message \| null }` |
+| `forge.pullRequest.action.run` | `forge.actions@1` | `{ account, ref, actionId, headRevision, input, idempotencyKey }` → `{ message \| null, openUrl? }` |
 | `forge.pullRequest.review.submit` | `forge.review@1` | `{ account, ref, headRevision, verdictActionId, body \| null, comments: { draftId, path, side, startLine, endLine, body }[], idempotencyKey }` → `{ reviewUrl \| null, comments: { draftId, state: "published" \| "failed" \| "outdated", error \| null }[] }` |
 | `forge.pullRequest.viewed.set` | `forge.viewed@1` | `{ account, ref, headRevision, path, viewed }` → `{}` |
 | `forge.pullRequest.conversation` | `forge.conversation@1` | `{ account, ref, cursor \| null }` → `ConversationPage` (see [forge-conversation.md](forge-conversation.md)); comments may carry credential-free direct image URLs in `media`, which the companion keeps only on declared `mediaHosts` |
@@ -276,6 +282,11 @@ scenario to a target the companion did not judge. The companion derives `fixCi` 
   one whole-PR `fixCi` (`codewide.scenario.fixCi`, no anchor) is offered instead.
 
 A plugin must therefore give each `CheckItem` a `checkId` unique within its pull request.
+
+An action the forge accepts only from its own web page answers `openUrl`: the pull request's page
+for the person to finish it there, with a `message` saying so. The companion keeps it only as
+`https` on the pull request's host (anything else becomes `null`) and Android opens it once the
+run succeeds; an older companion omits it.
 
 Kind floors can only raise the plugin's `confirm` level. Both the companion and Android apply
 them:

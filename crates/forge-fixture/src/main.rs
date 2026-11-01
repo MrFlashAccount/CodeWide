@@ -34,6 +34,8 @@ struct Fixture {
     checks_credential: Option<bool>,
     submit_mode: Option<String>,
     action_mode: Option<String>,
+    /// The forge page an action run asks the person to finish on.
+    action_open_url: Option<String>,
     open_by_branch: Vec<BranchPulls>,
     claim_host: Option<String>,
     no_resolve: bool,
@@ -583,7 +585,10 @@ impl Fixtures {
             return Err(PluginError::new(code::FORGE_REJECTED, "Merging is blocked"));
         }
         self.record_write(methods::PULL_REQUEST_ACTION_RUN, params);
-        Ok(json!({"message": "Merged"}))
+        Ok(match &fixture.action_open_url {
+            Some(url) => json!({"message": "Finish on the forge", "openUrl": url}),
+            None => json!({"message": "Merged"}),
+        })
     }
 
     fn submit(&self, fixture: &Fixture, params: &Value) -> Result<Value, PluginError> {

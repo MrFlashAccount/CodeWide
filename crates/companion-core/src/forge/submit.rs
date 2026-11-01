@@ -258,10 +258,15 @@ async fn claimed_submit(
     };
     Ok(outcome_value(
         &record.run_id,
-        settled
-            .review_url
-            .as_deref()
-            .filter(|url| super::wire::https_on_host(url, &addressed.identity.pr_ref.host)),
+        settled.review_url.as_deref().filter(|url| {
+            super::wire::https_on_page_host(
+                url,
+                &addressed.identity.pr_ref.host,
+                &context
+                    .declarations
+                    .web_hosts(&addressed.identity.plugin_id),
+            )
+        }),
         &ids,
         &settled.per_draft,
         &agent,

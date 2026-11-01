@@ -19,6 +19,8 @@ pub struct Declaration {
     pub capabilities: Vec<String>,
     /// Lowercase host names only; anything else a plugin sends is dropped.
     pub media_hosts: Vec<String>,
+    /// Hosts of the forge's web pages besides the account host, sanitized the same way.
+    pub web_hosts: Vec<String>,
 }
 
 impl Declaration {
@@ -33,15 +35,19 @@ impl Declaration {
     pub fn from_info(info: &InitializeResult) -> Self {
         Self {
             capabilities: info.capabilities.clone(),
-            media_hosts: info
-                .media_hosts
-                .iter()
-                .map(|host| host.to_ascii_lowercase())
-                .filter(|host| valid_host(host))
-                .take(MAX_MEDIA_HOSTS)
-                .collect(),
+            media_hosts: sanitized_hosts(&info.media_hosts),
+            web_hosts: sanitized_hosts(&info.web_hosts),
         }
     }
+}
+
+fn sanitized_hosts(hosts: &[String]) -> Vec<String> {
+    hosts
+        .iter()
+        .map(|host| host.to_ascii_lowercase())
+        .filter(|host| valid_host(host))
+        .take(MAX_MEDIA_HOSTS)
+        .collect()
 }
 
 fn valid_host(host: &str) -> bool {
@@ -70,6 +76,14 @@ impl Declarations {
     pub fn get(&self, plugin_id: &str) -> Option<Declaration> {
         self.entries.lock().ok()?.get(plugin_id).cloned()
     }
+
+    /// The provider's declared web hosts; none before its first session.
+    #[must_use]
+    pub fn web_hosts(&self, plugin_id: &str) -> Vec<String> {
+        self.get(plugin_id)
+            .map(|declaration| declaration.web_hosts)
+            .unwrap_or_default()
+    }
 }
 
 #[cfg(test)]
@@ -92,9 +106,11 @@ mod tests {
                 "https://x.example.com".into(),
                 ".example.com".into(),
             ],
+            web_hosts: vec!["A.Yandex-Team.ru".into(), "https://evil.test".into()],
         };
         let declaration = Declaration::from_info(&info);
         assert_eq!(declaration.media_hosts, ["media.example.com"]);
+        assert_eq!(declaration.web_hosts, ["a.yandex-team.ru"]);
         assert!(declaration.supports("forge.conversation@1"));
     }
 }

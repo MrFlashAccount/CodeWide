@@ -267,6 +267,7 @@ mod tests {
             provider_icon: icon,
             capabilities: Vec::new(),
             media_hosts: Vec::new(),
+            web_hosts: Vec::new(),
         }
     }
 

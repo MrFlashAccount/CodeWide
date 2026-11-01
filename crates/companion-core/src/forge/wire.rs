@@ -116,11 +116,17 @@ pub fn https_on_host(candidate: &str, host: &str) -> bool {
     })
 }
 
-/// A plugin-reported page of a pull request on `host`; anything else
-/// becomes empty so a client never opens it.
+/// `https` on the account `host` or one of the provider's declared web hosts.
 #[must_use]
-pub fn page_on_host(candidate: String, host: &str) -> String {
-    if https_on_host(&candidate, host) {
+pub fn https_on_page_host(candidate: &str, host: &str, web_hosts: &[String]) -> bool {
+    https_on_host(candidate, host) || web_hosts.iter().any(|web| https_on_host(candidate, web))
+}
+
+/// A plugin-reported page of a pull request on `host` or a declared web
+/// host; anything else becomes empty so a client never opens it.
+#[must_use]
+pub fn page_on_host(candidate: String, host: &str, web_hosts: &[String]) -> String {
+    if https_on_page_host(&candidate, host, web_hosts) {
         candidate
     } else {
         String::new()
@@ -370,10 +376,30 @@ mod tests {
         assert!(https_on_host("https://ghe.test:8443/a", "ghe.test:8443"));
         assert!(!https_on_host("https://ghe.test:8443/a", "ghe.test"));
         assert!(!https_on_host("https://ghe.test/a", "ghe.test:8443"));
-        assert_eq!(page_on_host("javascript:alert(1)".into(), "github.com"), "");
         assert_eq!(
-            page_on_host("https://github.com/o/r/pull/1".into(), "github.com"),
+            page_on_host("javascript:alert(1)".into(), "github.com", &[]),
+            ""
+        );
+        assert_eq!(
+            page_on_host("https://github.com/o/r/pull/1".into(), "github.com", &[]),
             "https://github.com/o/r/pull/1"
+        );
+        let web = ["a.yandex-team.ru".to_owned()];
+        assert_eq!(
+            page_on_host(
+                "https://a.yandex-team.ru/review/1".into(),
+                "arcanum.yandex.net",
+                &web
+            ),
+            "https://a.yandex-team.ru/review/1"
+        );
+        assert_eq!(
+            page_on_host(
+                "https://evil.test/review/1".into(),
+                "arcanum.yandex.net",
+                &web
+            ),
+            ""
         );
     }
 }

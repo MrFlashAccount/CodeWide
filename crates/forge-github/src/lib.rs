@@ -160,6 +160,7 @@ impl GithubPlugin {
                 .iter()
                 .map(|&host| host.to_owned())
                 .collect(),
+            web_hosts: Vec::new(),
         })
     }
 

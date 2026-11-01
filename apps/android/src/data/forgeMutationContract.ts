@@ -130,6 +130,8 @@ export function parseAttentionSeen(value: unknown): SupportedPullRequestAttentio
 export type ActionRunResult = {
   readonly catalog: ActionCatalog;
   readonly message: string | null;
+  /** The forge page to finish the action on; the Companion keeps only `https` on the PR's host. */
+  readonly openUrl: string | null;
   readonly runId: string;
 };
 
@@ -143,6 +145,8 @@ export function parseActionRun(
     return {
       catalog: actionCatalog(result.catalog, "catalog", reportDropped),
       message: optionalText(result.message, "message"),
+      // An older Companion omits it.
+      openUrl: result.openUrl === undefined ? null : optionalText(result.openUrl, "openUrl"),
       runId: nonEmptyText(result.runId, "runId"),
     };
   });

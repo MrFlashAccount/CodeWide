@@ -334,6 +334,7 @@ pub async fn run(
     };
     Ok(ActionRunResult {
         message: Some(message.to_owned()),
+        open_url: None,
     })
 }
 

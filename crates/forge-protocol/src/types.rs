@@ -84,6 +84,12 @@ pub struct InitializeResult {
     /// plugin; the plugin still decides per account and URL.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media_hosts: Vec<String>,
+    /// Exact lowercase hosts, other than its accounts' own hosts, that serve
+    /// the forge's web pages (Arcanum's API host is not its web host, for
+    /// example). The companion lets a pull request page, a comment link or
+    /// an action's `openUrl` point only at an account's host or one of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub web_hosts: Vec<String>,
 }
 
 /// The largest icon image, in decoded bytes, the companion accepts.
@@ -788,6 +794,11 @@ pub struct ActionRunParams {
 #[serde(rename_all = "camelCase")]
 pub struct ActionRunResult {
     pub message: Option<String>,
+    /// A page of the pull request on the forge for the person to finish the
+    /// action there, when the forge allows it only from its web interface.
+    /// The companion keeps it only as `https` on the pull request's host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_url: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]

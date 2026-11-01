@@ -5,6 +5,7 @@ import { parseActionCatalog } from "../src/data/forgeActionCatalog";
 import { parseAuthStart, parseForgeAccounts, parseSubmitToken } from "../src/data/forgeContract";
 import { classifyForgeError, ForgeContractViolation } from "../src/data/forgeErrors";
 import {
+  parseActionRun,
   parseFilesPage,
   parseReviewChatEnsure,
   parseScenarioStart,
@@ -118,7 +119,10 @@ describe("forge accounts contract", () => {
       ...arcanumProvider,
       icon: { glyph: { path: ARCANUM_GLYPH, viewBox: "0 0 24 24" }, iconKey: "arcanum" },
     };
-    const unsafe = { ...arcanumProvider, icon: { kind: "glyph", path: "<script/>", viewBox: "0 0 24 24" } };
+    const unsafe = {
+      ...arcanumProvider,
+      icon: { kind: "glyph", path: "<script/>", viewBox: "0 0 24 24" },
+    };
     const { icon: _omitted, ...missing } = arcanumProvider;
     const snapshot = parseForgeAccounts({
       ...onboardingAccounts,
@@ -174,7 +178,11 @@ describe("provider icon decoder", () => {
 
   it("keeps an image of exactly 64 KiB and drops one byte more", () => {
     const encode = (bytes: number): string => Buffer.alloc(bytes, 7).toString("base64");
-    const image = (bytes: number) => ({ dataBase64: encode(bytes), kind: "image", mimeType: "image/png" });
+    const image = (bytes: number) => ({
+      dataBase64: encode(bytes),
+      kind: "image",
+      mimeType: "image/png",
+    });
     expect(providerIcon(image(64 * 1024))).not.toBeNull();
     expect(providerIcon(image(64 * 1024 + 1))).toBeNull();
   });
@@ -190,11 +198,21 @@ describe("provider icon decoder", () => {
     ["a zero box", { kind: "glyph", path: "M0 0", viewBox: "0 0 0 24" }],
     ["a box over 1024", { kind: "glyph", path: "M0 0", viewBox: "0 0 1025 24" }],
     ["a fractional box", { kind: "glyph", path: "M0 0", viewBox: "0 0 24.5 24" }],
-    ["an unsupported mime type", { dataBase64: GITHUB_ICON_PNG, kind: "image", mimeType: "image/gif" }],
+    [
+      "an unsupported mime type",
+      { dataBase64: GITHUB_ICON_PNG, kind: "image", mimeType: "image/gif" },
+    ],
     ["url-safe base64", { dataBase64: "ab-_", kind: "image", mimeType: "image/png" }],
     ["unpadded base64", { dataBase64: "abc", kind: "image", mimeType: "image/png" }],
     ["empty data", { dataBase64: "", kind: "image", mimeType: "image/png" }],
-    ["a data uri", { dataBase64: `data:image/png;base64,${GITHUB_ICON_PNG}`, kind: "image", mimeType: "image/png" }],
+    [
+      "a data uri",
+      {
+        dataBase64: `data:image/png;base64,${GITHUB_ICON_PNG}`,
+        kind: "image",
+        mimeType: "image/png",
+      },
+    ],
     ["a string", "M0 0"],
     ["null", null],
   ])("reads %s as the neutral icon", (_name, icon) => {
@@ -234,7 +252,9 @@ describe("pull request links read", () => {
 
   it("reads badges of an older Companion with neutral icons", () => {
     const links = parsePullRequestLinks({
-      threads: [{ pullRequests: [{ ...badge(undefined, "7"), icon: githubProvider.icon }], threadId: "t" }],
+      threads: [
+        { pullRequests: [{ ...badge(undefined, "7"), icon: githubProvider.icon }], threadId: "t" },
+      ],
     });
     expect(links?.["t"]?.map((entry) => [entry.number, entry.icon])).toEqual([["7", null]]);
   });
@@ -329,6 +349,23 @@ describe("pull request reads", () => {
       "published",
       "outdated",
     ]);
+  });
+
+  it("reads the forge page an action run asks to finish on, absent from an older Companion", () => {
+    const catalog = { actions: [], headRevision: "head-1" };
+    const handOff = parseActionRun(
+      {
+        catalog,
+        message: "Start CI in Arcanum",
+        openUrl: "https://a.yandex-team.ru/review/1",
+        runId: "r1",
+      },
+      () => undefined,
+    );
+    expect(handOff?.openUrl).toBe("https://a.yandex-team.ru/review/1");
+    expect(
+      parseActionRun({ catalog, message: null, runId: "r2" }, () => undefined)?.openUrl,
+    ).toBeNull();
   });
 });
 

@@ -449,6 +449,34 @@ async fn pages_off_the_pull_request_host_are_never_returned() {
 }
 
 #[tokio::test]
+async fn an_action_run_opens_only_a_page_on_the_pull_request_host() {
+    for (url, kept) in [
+        ("https://forge.test/octo/repo/7", true),
+        ("https://evil.example/octo/repo/7", false),
+        ("http://forge.test/octo/repo/7", false),
+    ] {
+        let mut fixture = base_fixture();
+        fixture["actionOpenUrl"] = json!(url);
+        let harness = Harness::start(&fixture);
+        harness.link().await;
+        let key = harness.pull_request().await;
+        let ran = harness
+            .ok(
+                "companion/pullRequest/action/run",
+                json!({"pullRequest": key, "actionId": "merge", "headRevision": "head-1", "input": null,
+                       "confirmation": "destructive", "idempotencyKey": format!("open-{url}")}),
+            )
+            .await;
+        assert_eq!(ran["message"], "Finish on the forge");
+        assert_eq!(
+            ran["openUrl"],
+            if kept { json!(url) } else { Value::Null },
+            "{url}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn submit_rejects_a_repeated_draft_without_writing() {
     let harness = Harness::start(&base_fixture());
     harness.link().await;

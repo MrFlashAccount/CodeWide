@@ -1,5 +1,6 @@
 import type { Observable } from "@legendapp/state";
 import { randomUUID } from "expo-crypto";
+import { Linking } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import { classifyForgeError, type ForgeFailure } from "../../../data/forgeErrors";
@@ -33,7 +34,8 @@ function failureNotice(action: ActionDescriptor, failure: ForgeFailure): ActionN
 /**
  * Runs one catalog action: confirmation at the effective level, an
  * idempotency key per user intent (kept across a retry after a transport
- * failure), pending state in the screen model, and typed recovery — a moved
+ * failure), pending state in the screen model, the forge page a run asks to
+ * finish on, and typed recovery — a moved
  * head shows the stale banner and refreshes, a forge refusal restores the
  * previous state and shows its reason.
  */
@@ -74,6 +76,10 @@ export function useActionRunner({
           model.notice.set(
             result.message === null ? null : { kind: "message", text: result.message },
           );
+          // The forge accepts this action only on its web page: the person finishes it there.
+          if (result.openUrl !== null) {
+            Linking.openURL(result.openUrl).catch(() => undefined);
+          }
         },
         (error: unknown) => {
           const failure = classifyForgeError(error);

@@ -21,7 +21,7 @@ use super::{
     ids::{PullRequestIdentity, PullRequestKey, ReviewThreadId, valid_forge_id},
     limits, params,
     plugin_client::PluginSession,
-    wire::https_on_host,
+    wire::https_on_page_host,
 };
 
 #[derive(Deserialize)]
@@ -86,6 +86,7 @@ pub async fn read_page(
         PageOrigin {
             host: &identity.pr_ref.host,
             media_hosts: &declaration.media_hosts,
+            web_hosts: &declaration.web_hosts,
         },
     )
 }
@@ -97,6 +98,8 @@ pub struct PageOrigin<'a> {
     pub host: &'a str,
     /// Sanitized lowercase hosts from the provider's `initialize`.
     pub media_hosts: &'a [String],
+    /// Declared hosts of the forge's web pages besides `host`.
+    pub web_hosts: &'a [String],
 }
 
 /// Pages through the conversation, at most
@@ -362,7 +365,9 @@ pub fn comment_of(comment: Comment, origin: PageOrigin<'_>) -> Option<Comment> {
     }
     Some(Comment {
         author: author_of(comment.author, origin),
-        url: comment.url.filter(|url| https_on_host(url, origin.host)),
+        url: comment
+            .url
+            .filter(|url| https_on_page_host(url, origin.host, origin.web_hosts)),
         media: media_of(comment.media, origin.media_hosts),
         reactions: comment
             .reactions
@@ -454,6 +459,7 @@ mod tests {
     const ORIGIN: PageOrigin<'static> = PageOrigin {
         host: "forge.test",
         media_hosts: MEDIA_HOSTS,
+        web_hosts: MEDIA_HOSTS,
     };
 
     #[test]
@@ -525,6 +531,7 @@ mod tests {
             PageOrigin {
                 host: "forge.test",
                 media_hosts: &media_hosts,
+                web_hosts: &[],
             },
         )
         .expect("valid");
@@ -574,6 +581,7 @@ mod tests {
             PageOrigin {
                 host: "forge.test",
                 media_hosts: &[],
+                web_hosts: &[],
             },
         )
         .expect("valid");

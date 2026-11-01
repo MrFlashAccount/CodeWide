@@ -183,6 +183,7 @@ async fn publish(
     let origin = PageOrigin {
         host: &identity.pr_ref.host,
         media_hosts: &declaration.media_hosts,
+        web_hosts: &declaration.web_hosts,
     };
     let outcome = settle(called, &write, origin, &record);
     let (state, stored, error) = match &outcome {

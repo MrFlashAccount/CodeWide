@@ -184,6 +184,7 @@ impl PluginSession {
                 provider_icon: None,
                 capabilities: Vec::new(),
                 media_hosts: Vec::new(),
+                web_hosts: Vec::new(),
             },
             poisoned: false,
             _permit: permit,
