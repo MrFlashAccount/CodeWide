@@ -16,7 +16,12 @@ function catalog(actions: readonly Record<string, unknown>[]): readonly ActionDe
 
 const phone: SlotLayout = { availableWidth: 1000, gap: 8, measure: () => 100, tablet: false };
 const tablet: SlotLayout = { ...phone, tablet: true };
-const noTargets: SlotTargets = { checkIds: new Set(), conflict: false, reviewThreadIds: new Set() };
+const noTargets: SlotTargets = {
+  checkIds: new Set(),
+  checksSection: false,
+  conflict: false,
+  reviewThreadIds: new Set(),
+};
 const ids = (actions: readonly ActionDescriptor[]): readonly string[] =>
   actions.map((item) => item.actionId);
 
@@ -78,24 +83,38 @@ describe("action slotting", () => {
       action("fix", { anchor: { checkId: "c1", kind: "checks" }, kind: "fixCi" }),
       action("rebase", { anchor: { kind: "conflict" }, kind: "rebase" }),
       action("reply", { anchor: { kind: "reviewThread", reviewThreadId: "rt" } }),
+      action("start-ci", { anchor: { kind: "checksSection" }, placement: "primary" }),
     ]);
     const present = slotActions(
       anchored,
-      { checkIds: new Set(["c1"]), conflict: true, reviewThreadIds: new Set(["rt"]) },
+      {
+        checkIds: new Set(["c1"]),
+        checksSection: true,
+        conflict: true,
+        reviewThreadIds: new Set(["rt"]),
+      },
       phone,
     );
     expect(ids(present.anchored.checks.get("c1") ?? [])).toEqual(["fix"]);
     expect(ids(present.anchored.conflict)).toEqual(["rebase"]);
     expect(ids(present.anchored.reviewThreads.get("rt") ?? [])).toEqual(["reply"]);
+    // A Checks section action never takes the header row, even when the plugin asks for primary.
+    expect(ids(present.anchored.checksSection)).toEqual(["start-ci"]);
+    expect(ids(present.primary)).toEqual([]);
     const missing = slotActions(anchored, noTargets, phone);
-    expect(ids(missing.overflow)).toEqual(["fix", "rebase", "reply"]);
+    expect(ids(missing.overflow)).toEqual(["fix", "rebase", "reply", "start-ci"]);
   });
 
   it("places every action exactly once", () => {
     const actions = catalog(overview91.catalog.actions);
     const slots = slotActions(
       actions,
-      { checkIds: new Set(["c-android"]), conflict: false, reviewThreadIds: new Set() },
+      {
+        checkIds: new Set(["c-android"]),
+        checksSection: true,
+        conflict: false,
+        reviewThreadIds: new Set(),
+      },
       phone,
     );
     const placed = [
@@ -107,6 +126,7 @@ describe("action slotting", () => {
       ...slots.verdicts,
       ...(slots.autoMerge === null ? [] : [slots.autoMerge]),
       ...[...slots.anchored.checks.values()].flat(),
+      ...slots.anchored.checksSection,
     ];
     expect(ids(placed).toSorted()).toEqual(ids(actions).toSorted());
   });

@@ -40,6 +40,11 @@ export type PullRequestScreenState = {
   readonly pending: Readonly<Record<string, true>>;
   /** Requested toggle values while their run is pending (shown disabled, label shimmering). */
   readonly pendingToggles: Readonly<Record<string, boolean>>;
+  /**
+   * The verdict the Details Submit review sheet is open with (its opaque `actionId`); `null`
+   * while the sheet is closed. Opened from the Details verdict button or the app bar menu.
+   */
+  readonly reviewVerdict: string | null;
   readonly selectedPath: string | null;
 };
 
@@ -54,6 +59,7 @@ export function createPullRequestScreenModel(
     notice: null,
     pending: {},
     pendingToggles: {},
+    reviewVerdict: null,
     selectedPath: null,
   });
 }

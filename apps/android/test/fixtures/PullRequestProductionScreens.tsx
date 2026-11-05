@@ -20,6 +20,7 @@ export function useProductionPullRequestScreen() {
     // The production overview is a stub, so it offers no floating Comment button.
     conversation: { status: "unsupported" },
     draftCount: 0,
+    drafts: [],
     listRow: null,
     loadMoreActivity: null,
     model: pullRequestModel,
@@ -34,6 +35,7 @@ export function useProductionPullRequestScreen() {
     params: { connectionId: "server", pullRequest: "fpr1.github-91" },
     setRowWidth: jest.fn(),
     slots: { anchored: { files: [] }, overflow: [], verdicts: [] },
+    verdictChoice: { kind: "none" },
     writes: { comment: jest.fn(), reply: jest.fn() },
   };
 }

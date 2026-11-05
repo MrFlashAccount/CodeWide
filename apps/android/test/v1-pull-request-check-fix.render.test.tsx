@@ -72,6 +72,7 @@ function renderSheet(
     actions,
     {
       checkIds: new Set(CHECKS.map((item) => item.checkId)),
+      checksSection: true,
       conflict: false,
       reviewThreadIds: new Set(),
     },

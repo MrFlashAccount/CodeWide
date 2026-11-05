@@ -28,6 +28,7 @@ import { ActionRow } from "./ActionRow";
 import { ActivitySection } from "./ActivitySection";
 import { AgentSection } from "./AgentSection";
 import { DescriptionSection } from "./DescriptionSection";
+import { DetailsReview, type DetailsReviewProps } from "./DetailsReview";
 import { ReviewLinks } from "./ReviewLinks";
 import { StatusHeader } from "./StatusHeader";
 
@@ -60,6 +61,8 @@ export type OverviewTabProps = {
   readonly pendingToggles: Readonly<Record<string, boolean>>;
   /** A pull refresh is running; the indicator stays until its reads settle. */
   readonly pullRefreshing: boolean;
+  /** Submit review from Details: the verdict button, its outcome and the Submit sheet. */
+  readonly review: DetailsReviewProps;
   readonly slots: ActionSlots;
   readonly writes: ConversationWrites;
 };
@@ -147,7 +150,7 @@ function ChangesSection(props: OverviewTabProps): React.JSX.Element {
   );
 }
 
-/** Status, the forge action row, the Agent section and the action notices. */
+/** Status, the verdict button, the forge action row, the Agent section and the action notices. */
 function WorkHeader(props: OverviewTabProps): React.JSX.Element {
   const run = (action: ActionDescriptor): void => {
     props.onRun(action, null);
@@ -155,6 +158,7 @@ function WorkHeader(props: OverviewTabProps): React.JSX.Element {
   return (
     <View style={[styles.inset, styles.header, styles.lead]}>
       <StatusHeader listRow={props.listRow} nowMs={props.nowMs} overview={props.overview} />
+      <DetailsReview {...props.review} />
       <ActionRow
         onLayoutWidth={props.onActionRowWidth}
         onRun={run}

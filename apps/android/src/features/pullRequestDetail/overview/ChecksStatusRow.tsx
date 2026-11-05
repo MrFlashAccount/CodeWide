@@ -7,6 +7,7 @@ import type { CheckItem } from "../../../data/forgePullRequestContract";
 import { colors, controlSize, iconSize, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import type { ActionSlots } from "../actions/actionSlotting";
+import { CatalogActionButton } from "../actions/CatalogActionButton";
 import { StatusRow } from "../sections/StatusRow";
 import { CHECK_STATE_GLYPHS } from "./checkPresentation";
 import { ChecksSheet } from "./ChecksSheet";
@@ -19,7 +20,9 @@ const ATTENTION: ReadonlySet<CheckItem["state"]> = new Set(["cancelled", "failed
  * The Status section's Checks row: `2 failing, 7 successful`; expanded, the
  * failing, cancelled and pending checks with their outcome, and "All checks",
  * which opens the sheet with every check, its anchored actions (Fix in agent)
- * and its details page. Owns the expansion and the sheet's visibility.
+ * and its details page. The actions anchored to the Checks section (Start CI)
+ * stay under the summary whether or not the row is expanded. Owns the
+ * expansion and the sheet's visibility.
  */
 export function ChecksStatusRow({
   checks,
@@ -62,9 +65,24 @@ export function ChecksStatusRow({
       summary={checks.detail}
     />
   ) : null;
+  const sectionActions =
+    slots.anchored.checksSection.length === 0 ? undefined : (
+      <View style={styles.actions} testID="pull-request-status-checks-actions">
+        {slots.anchored.checksSection.map((action) => (
+          <CatalogActionButton
+            action={action}
+            key={action.actionId}
+            onPress={onRun}
+            pending={pending[action.actionId] === true}
+            variant="compact"
+          />
+        ))}
+      </View>
+    );
   return (
     <>
       <StatusRow
+        actions={sectionActions}
         detail={checks.detail}
         detailTone="muted"
         disclosure={
@@ -151,6 +169,12 @@ function CheckLine({ check }: { readonly check: CheckItem }): React.JSX.Element 
 }
 
 const styles = StyleSheet.create({
+  actions: {
+    columnGap: spacing.xs,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    rowGap: spacing.xs,
+  },
   all: {
     ...typeScale.body,
     color: colors.textMuted,

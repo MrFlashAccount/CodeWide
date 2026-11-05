@@ -33,13 +33,19 @@ export type StatusSectionProps = {
  * The Status band, GitHub Mobile style: one expandable row per fact that
  * decides merging. Issues (open forge issues, Address in agent and View
  * code), Reviews (standing verdicts on the loaded conversation), Checks (the
- * failing ones inline, every check in its sheet), then the merge state with
+ * failing ones inline, every check in its sheet, and the plugin's Checks
+ * section actions such as Start CI, which keep the row even when the forge
+ * reports no checks), then the merge state with
  * its conflict actions, merge method and auto-merge. A row exists only when
  * its data does; without any row there is no band. Every row after the
  * first draws an inset divider.
  */
 export function StatusSection(props: StatusSectionProps): React.JSX.Element | null {
-  const rows = statusRows(props.overview, props.discussion);
+  const rows = statusRows(
+    props.overview,
+    props.discussion,
+    props.slots.anchored.checksSection.length > 0,
+  );
   const first = firstStatusRow(rows);
   if (first === null) {
     return null;

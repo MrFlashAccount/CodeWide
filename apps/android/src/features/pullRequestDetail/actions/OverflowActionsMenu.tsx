@@ -4,7 +4,7 @@ import { OverflowMenu } from "../../../ui/OverflowMenu";
 
 const NO_EXTRA_ITEMS: readonly ExtraMenuItem[] = [];
 
-/** Extra menu entries that are not catalog actions, such as Open on forge. */
+/** Menu entries that are not catalog actions, such as Copy link or Open in the forge. */
 export type ExtraMenuItem = {
   readonly id: string;
   readonly label: string;
@@ -12,8 +12,9 @@ export type ExtraMenuItem = {
 };
 
 /**
- * `⋮` menu of overflowed actions in plugin order. A disabled action keeps its
- * reason as the description; destructive kinds are marked destructive.
+ * `⋮` menu: the `extra` entries first, then the overflowed actions in plugin order. A disabled
+ * action keeps its reason as the description; destructive kinds (Close, a plugin's Discard) are
+ * marked destructive and still confirm through the runner's destructive floor.
  */
 export function OverflowActionsMenu({
   accessibilityLabel,
@@ -32,6 +33,7 @@ export function OverflowActionsMenu({
     return null;
   }
   const items: ActionMenuItem[] = [
+    ...extra.map((item) => ({ id: `extra:${item.id}`, label: item.label })),
     ...actions.map((action) => ({
       ...(action.availability.state === "disabled"
         ? { description: action.availability.reason, disabled: true }
@@ -42,7 +44,6 @@ export function OverflowActionsMenu({
       id: `action:${action.actionId}`,
       label: action.label,
     })),
-    ...extra.map((item) => ({ id: `extra:${item.id}`, label: item.label })),
   ];
   return (
     <OverflowMenu

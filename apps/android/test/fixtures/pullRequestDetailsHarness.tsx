@@ -32,12 +32,16 @@ export const REVIEW_CHAT = threadId("thread-review-chat", "threadId");
 
 export type Capabilities = PullRequestDetailWorkspaceCapabilities;
 
+/** An overview wire answer; the app's own parser validates it. */
+export type WireOverview = Readonly<Record<string, unknown>> & { readonly activity: unknown };
+
 /** A companion that answers the PR reads until `goOffline` makes it unreachable. */
 export function companion({
   conversation,
   conversationDeclared,
   extraCapabilities,
   olderConversation,
+  overview = overview91,
 }: {
   readonly conversation: unknown;
   readonly conversationDeclared: boolean;
@@ -45,6 +49,8 @@ export function companion({
   readonly extraCapabilities: readonly string[];
   /** The page answered for a non-null cursor. */
   readonly olderConversation: unknown;
+  /** The overview wire answer; #91 unless a test changes its catalog or checks. */
+  readonly overview?: WireOverview;
 }) {
   const reads: string[] = [];
   let reachable = true;
@@ -62,10 +68,10 @@ export function companion({
         },
       ],
     },
-    "companion/pullRequest/activity/read": overview91.activity,
+    "companion/pullRequest/activity/read": overview.activity,
     "companion/pullRequest/conversation/read": conversation,
     "companion/pullRequest/files/read": { files: [], headRevision: "head-1", nextCursor: null },
-    "companion/pullRequest/read": overview91,
+    "companion/pullRequest/read": overview,
     "companion/review/drafts/read": { drafts: [] },
   };
   const cursors: unknown[] = [];
@@ -151,6 +157,7 @@ export function renderScreen({
   olderConversation = null,
   openChanges = jest.fn(),
   openThread = jest.fn(),
+  overview = overview91,
 }: {
   readonly capabilityOverrides?: Partial<Capabilities>;
   readonly conversation?: unknown;
@@ -159,6 +166,7 @@ export function renderScreen({
   readonly olderConversation?: unknown;
   readonly openChanges?: (view: "files" | "guide") => void;
   readonly openThread?: (id: string) => void;
+  readonly overview?: WireOverview;
 }) {
   if (PULL_REQUEST === null) {
     throw new Error("the pull request key fixture must parse");
@@ -168,6 +176,7 @@ export function renderScreen({
     conversationDeclared,
     extraCapabilities,
     olderConversation,
+    overview,
   });
   const wrap = (children: ReactNode) => (
     <SafeAreaProvider

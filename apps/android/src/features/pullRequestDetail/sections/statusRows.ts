@@ -22,15 +22,29 @@ export type StatusRows = {
 /** One Status row, named in display order. */
 export type StatusRowName = "checks" | "issues" | "merge" | "reviews";
 
-/** Projects the rows from the overview and, once loaded, the conversation. */
+/**
+ * A Checks row that only hosts the plugin's Checks section actions (Start CI) while the forge
+ * reports no checks: without `forge.checks@1` or before any check ran.
+ */
+const NO_CHECKS_ROW: MergeBoxRow = {
+  detail: "No checks reported",
+  title: "Checks",
+  tone: "neutral",
+};
+
+/**
+ * Projects the rows from the overview and, once loaded, the conversation. `checksActions` says
+ * the catalog anchors actions to the Checks section, which keeps a Checks row on an open PR.
+ */
 export function statusRows(
   overview: PullRequestOverview,
   discussion: Discussion | null,
+  checksActions: boolean,
 ): StatusRows {
   const box = mergeBox(overview);
   const open = box.kind === "open";
   return {
-    checks: open ? box.checks : null,
+    checks: open ? (box.checks ?? (checksActions ? NO_CHECKS_ROW : null)) : null,
     issues: discussion === null ? null : discussion.issueSummary,
     merge: open,
     reviews: discussion === null ? null : reviewsSummary(discussion.reviewers),

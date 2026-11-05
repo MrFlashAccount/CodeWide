@@ -6,7 +6,8 @@
  *   as fit one line by measured width; excess degrades primary → secondary → ⋯;
  * - verdicts never enter the action row: they feed the review dock, default first;
  * - merge and auto-merge feed the native merge card;
- * - anchored actions sit on their target; a missing target goes to ⋯.
+ * - anchored actions sit on their target (a check, the Checks section, the conflict, a review
+ *   thread, a file); a missing target goes to ⋯.
  * Placement never changes confirmation.
  */
 import type { ActionAnchor, ActionDescriptor } from "../../../data/forgeActionCatalog";
@@ -25,6 +26,8 @@ export type SlotLayout = {
 /** Targets that exist on screen right now. */
 export type SlotTargets = {
   readonly checkIds: ReadonlySet<string>;
+  /** The Status section shows a Checks row (an open or draft PR). */
+  readonly checksSection: boolean;
   readonly conflict: boolean;
   readonly reviewThreadIds: ReadonlySet<string>;
 };
@@ -35,6 +38,8 @@ export type ActionSlots = {
   readonly agent: readonly ActionDescriptor[];
   readonly anchored: {
     readonly checks: ReadonlyMap<string, readonly ActionDescriptor[]>;
+    /** Actions on the Checks row as a whole, such as Start CI, in plugin order. */
+    readonly checksSection: readonly ActionDescriptor[];
     readonly conflict: readonly ActionDescriptor[];
     readonly files: ReadonlyMap<string, readonly ActionDescriptor[]>;
     readonly reviewThreads: ReadonlyMap<string, readonly ActionDescriptor[]>;
@@ -82,6 +87,7 @@ const TABLET_SECONDARY_SLOTS = 3;
 type MutableSlots = {
   readonly agent: ActionDescriptor[];
   readonly checks: Map<string, ActionDescriptor[]>;
+  readonly checksSection: ActionDescriptor[];
   readonly conflict: ActionDescriptor[];
   readonly files: Map<string, ActionDescriptor[]>;
   readonly merge: ActionDescriptor[];
@@ -91,32 +97,40 @@ type MutableSlots = {
   readonly verdicts: ActionDescriptor[];
 };
 
-/** Where an anchored action goes: a keyed target, the conflict banner, the row, or ⋯. */
+/** Where an anchored action goes: a keyed target, the Checks row, the conflict, the row, or ⋯. */
 type AnchorTarget =
   | {
       readonly key: string;
       readonly slot: "checks" | "files" | "reviewThreads";
     }
-  | { readonly slot: "conflict" | "overflow" | "row" };
+  | { readonly slot: "checksSection" | "conflict" | "overflow" | "row" };
+
+const OVERFLOW: AnchorTarget = { slot: "overflow" };
+
+/** A keyed target while it is on screen, else ⋯. */
+function keyed(
+  shown: ReadonlySet<string>,
+  key: string,
+  slot: "checks" | "reviewThreads",
+): AnchorTarget {
+  return shown.has(key) ? { key, slot } : OVERFLOW;
+}
 
 function anchorTarget(anchor: ActionAnchor, targets: SlotTargets): AnchorTarget {
   if (anchor.kind === "checks") {
-    return targets.checkIds.has(anchor.checkId)
-      ? { key: anchor.checkId, slot: "checks" }
-      : { slot: "overflow" };
+    return keyed(targets.checkIds, anchor.checkId, "checks");
   }
   if (anchor.kind === "reviewThread") {
-    return targets.reviewThreadIds.has(anchor.reviewThreadId)
-      ? { key: anchor.reviewThreadId, slot: "reviewThreads" }
-      : { slot: "overflow" };
+    return keyed(targets.reviewThreadIds, anchor.reviewThreadId, "reviewThreads");
   }
   if (anchor.kind === "file") {
     return { key: anchor.path, slot: "files" };
   }
-  if (anchor.kind === "conflict") {
-    return { slot: targets.conflict ? "conflict" : "overflow" };
+  if (anchor.kind === "header") {
+    return { slot: "row" };
   }
-  return { slot: "row" };
+  // The conflict state and the Checks section: their own slot while the page shows them.
+  return targets[anchor.kind] ? { slot: anchor.kind } : OVERFLOW;
 }
 
 /**
@@ -168,6 +182,7 @@ export function slotActions(
   const slots: MutableSlots = {
     agent: [],
     checks: new Map(),
+    checksSection: [],
     conflict: [],
     files: new Map(),
     merge: [],
@@ -186,6 +201,7 @@ export function slotActions(
     agent: slots.agent,
     anchored: {
       checks: slots.checks,
+      checksSection: slots.checksSection,
       conflict: slots.conflict,
       files: slots.files,
       reviewThreads: slots.reviewThreads,

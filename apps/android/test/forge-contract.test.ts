@@ -411,6 +411,24 @@ describe("action catalog parsing rules", () => {
       placement: "overflow",
     });
   });
+
+  it("keeps a Checks section anchor and the placement the plugin asked for", () => {
+    const catalog = parseActionCatalog(
+      {
+        actions: [
+          action("start-ci", { anchor: { kind: "checksSection" }, placement: "primary" }),
+          action("checks-without-id", { anchor: { kind: "checks" }, placement: "primary" }),
+        ],
+        headRevision: "3fa9e12",
+      },
+      () => undefined,
+    );
+    expect(catalog?.actions).toMatchObject([
+      { actionId: "start-ci", anchor: { kind: "checksSection" }, placement: "primary" },
+      // An anchor missing its target id is unknown, so the action goes to ⋯.
+      { actionId: "checks-without-id", anchor: null, placement: "overflow" },
+    ]);
+  });
 });
 
 describe("forge error classification", () => {

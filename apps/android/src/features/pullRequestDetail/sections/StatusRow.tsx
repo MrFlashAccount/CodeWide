@@ -14,6 +14,8 @@ type Disclosure =
 
 /** One Status row: a toned glyph, the fact, the reason and, when it opens, what lies below. */
 type StatusRowProps = {
+  /** Shown below the text whether or not the row is expanded, such as the row's actions. */
+  readonly actions?: ReactNode;
   /** Shown below the text while the row is fixed or expanded. */
   readonly children?: ReactNode;
   readonly detail: string;
@@ -39,6 +41,8 @@ export function StatusRow(props: StatusRowProps): React.JSX.Element {
     open && props.children !== undefined ? (
       <View style={styles.children}>{props.children}</View>
     ) : null;
+  const actions =
+    props.actions === undefined ? null : <View style={styles.children}>{props.actions}</View>;
   return (
     <View testID={props.testID}>
       {props.divided ? <View style={styles.divider} /> : null}
@@ -58,6 +62,7 @@ export function StatusRow(props: StatusRowProps): React.JSX.Element {
           <RowContent {...props} expanded={disclosure.expanded} />
         </Pressable>
       )}
+      {actions}
       {children}
     </View>
   );

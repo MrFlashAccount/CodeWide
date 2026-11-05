@@ -13,8 +13,10 @@ import type { ThreePanelsBack } from "../../ui/ThreePanelsHeader";
 import { ExtensionInputSheet } from "./actions/ExtensionInputSheet";
 import { FloatingActions } from "./FloatingActions";
 import { alertOfflineWrite } from "./actions/offlineRefusal";
-import { openOnForge } from "./actions/openOnForge";
+import { linkMenuItems } from "./actions/linkMenuItems";
+import type { ExtraMenuItem } from "./actions/OverflowActionsMenu";
 import { usePullRequestActions } from "./actions/usePullRequestActions";
+import type { VerdictChoice } from "./overview/verdictChoice";
 import { PullRequestChanges } from "./changes/PullRequestChanges";
 import { OverviewPane } from "./OverviewPane";
 import { PullRequestAppBar } from "./PullRequestAppBar";
@@ -78,7 +80,33 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
   const openAgentChat = useEvent((threadId: ThreadId | null): void => {
     props.navigation.openReviewChat(threadId ?? data.agentThread?.threadId ?? null);
   });
-  const extra = openOnForge(overview.webUrl, host);
+  // The Details Submit sheet opens with one verdict; offline it is refused like every forge write.
+  const openReview = useEvent((actionId: string): void => {
+    if (data.offline) {
+      alertOfflineWrite(dialog);
+    } else {
+      model.reviewVerdict.set(actionId);
+    }
+  });
+  const closeReview = useEvent((): void => {
+    model.reviewVerdict.set(null);
+  });
+  const staleReview = useEvent((kind: "outcomeUnknown" | "stale"): void => {
+    model.notice.set({ kind });
+    refresh();
+  });
+  const reportLinkError = useEvent((title: string, error: unknown): void => {
+    dialog.error(title, error);
+  });
+  const extra = [
+    ...linkMenuItems({
+      forgeName: data.providerName,
+      host,
+      onError: reportLinkError,
+      webUrl: overview.webUrl,
+    }),
+    ...submitReviewMenuItem(props.tab, data.verdictChoice, openReview),
+  ];
   const appBar = (section: string | null, trailing: React.ReactNode): React.JSX.Element => (
     <PullRequestAppBar
       back={backFor(props)}
@@ -108,13 +136,17 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
         {props.tab === "overview" ? appBar(null, null) : null}
         {props.tab === "overview" ? (
           <OverviewPane
+            capabilities={props.capabilities}
             data={data}
             nowMs={nowMs}
             onAddressThread={addressThread}
+            onCloseReview={closeReview}
             onOpenChanges={props.navigation.openChanges}
+            onOpenReview={openReview}
             onOpenReviewChat={openAgentChat}
             onPullRefresh={pullRefresh}
             onRun={run}
+            onStale={staleReview}
             pullRefreshing={pullRefreshing}
             state={state}
           />
@@ -134,10 +166,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
             onRun={(action) => {
               run(action, null);
             }}
-            onStale={(kind) => {
-              model.notice.set({ kind });
-              refresh();
-            }}
+            onStale={staleReview}
             overview={overview}
             ownPullRequest={overview.author === overview.account.login}
             providerCapabilities={data.providerCapabilities}
@@ -166,6 +195,30 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
       </View>
     </PrivateImageAccessProvider>
   );
+}
+
+/**
+ * Details offers Submit review in the app bar menu when only one verdict can be submitted (no
+ * prominent verdict button); Changes has its own Submit control in the toolbar.
+ */
+function submitReviewMenuItem(
+  tab: PullRequestScreenProps["tab"],
+  choice: VerdictChoice,
+  openReview: (actionId: string) => void,
+): readonly ExtraMenuItem[] {
+  if (tab !== "overview" || choice.kind !== "menu") {
+    return [];
+  }
+  const { lead } = choice;
+  return [
+    {
+      id: "submitReview",
+      label: "Submit review",
+      onSelect: () => {
+        openReview(lead.actionId);
+      },
+    },
+  ];
 }
 
 /**

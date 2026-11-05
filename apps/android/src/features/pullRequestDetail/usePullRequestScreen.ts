@@ -16,6 +16,7 @@ import { forgeQueryRemoteValue, useForgeQuery } from "../../data/forgeQueryResou
 import { remoteValue } from "../../data/forgeRemoteValue";
 import { notePullRequestAttentionDisplayed } from "../../data/pullRequestAttention";
 import type { ThreadId } from "../../data/reviewContract";
+import type { DraftComment } from "../../data/reviewDraftContract";
 import { useConstant } from "../../react/useConstant";
 import { useEvent } from "../../react/useEvent";
 import { spacing } from "../../theme";
@@ -37,6 +38,7 @@ import {
   usePullRequestConversation,
   type PullRequestConversation,
 } from "./conversation/usePullRequestConversation";
+import { verdictChoice, type VerdictChoice } from "./overview/verdictChoice";
 import type { PullRequestScreenProps } from "./pullRequestScreenContract";
 import {
   createPullRequestScreenModel,
@@ -53,6 +55,8 @@ export type PullRequestScreenData = {
   /** The conversation that replaces the activity list, or `unsupported`. */
   readonly conversation: PullRequestConversation;
   readonly draftCount: number;
+  /** The PR's review drafts; Submit review from Details publishes the same ones as Changes. */
+  readonly drafts: readonly DraftComment[];
   /** The PR's row from a loaded list, for the review request and age; `null` on a cold deep link. */
   readonly listRow: PullRequestRow | null;
   readonly loadMoreActivity: (() => void) | null;
@@ -64,6 +68,8 @@ export type PullRequestScreenData = {
   readonly providerCapabilities: readonly string[];
   /** The PR account's provider mark from the accounts snapshot; `null` until it loads. */
   readonly providerIcon: ProviderIcon | null;
+  /** The forge name the PR account's plugin declares (`Arcanum`); `null` until it loads. */
+  readonly providerName: string | null;
   /** The first scenario whose run failed at the shown head, with the real reason. */
   readonly scenarioFailure: {
     readonly label: string;
@@ -73,6 +79,8 @@ export type PullRequestScreenData = {
   readonly scenarioViews: ScenarioViews;
   readonly setRowWidth: (width: number) => void;
   readonly slots: ActionSlots;
+  /** How Details offers the verdict group: a prominent split button, the app bar menu, or nothing. */
+  readonly verdictChoice: VerdictChoice;
   readonly writes: ConversationWrites;
 };
 
@@ -125,6 +133,12 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
   );
   const outsideAgentRows = withoutAgentRows(overview.catalog.actions, scenarios);
   const labelled = withScenarioLabels(overview.catalog.actions, outsideAgentRows, useMinuteClock());
+  const drafts = useDrafts(props);
+  const slots = pullRequestSlots(labelled, overview, {
+    reviewThreadIds: visibleReviewThreadIds(overview, conversation),
+    rowWidth,
+    tablet: props.tablet,
+  });
   return {
     activity,
     agentThread:
@@ -135,7 +149,8 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
             title: props.describeThread(agentLink.threadId)?.title ?? "Linked thread",
           },
     conversation,
-    draftCount: useDraftCount(props),
+    draftCount: dockCounts(drafts).total,
+    drafts,
     listRow: useLoadedListRow(props.forge.lists, props.connectionId, props.pullRequest),
     loadMoreActivity,
     model,
@@ -144,14 +159,12 @@ export function usePullRequestScreen(props: PullRequestScreenProps): PullRequest
     params,
     providerCapabilities: capabilitiesOf(provider),
     providerIcon: provider?.icon ?? null,
+    providerName: forgeNameOf(provider),
     scenarioFailure: scenarioFailure(overview.catalog.actions, outsideAgentRows),
     scenarioViews: scenarios,
     setRowWidth,
-    slots: pullRequestSlots(labelled, overview, {
-      reviewThreadIds: visibleReviewThreadIds(overview, conversation),
-      rowWidth,
-      tablet: props.tablet,
-    }),
+    slots,
+    verdictChoice: verdictChoice(slots.verdicts),
     writes,
   };
 }
@@ -186,14 +199,21 @@ function capabilitiesOf(provider: ForgeProvider | null): readonly string[] {
   return provider === null ? [] : provider.capabilities;
 }
 
-function useDraftCount(props: PullRequestScreenProps): number {
+/** The forge name the PR account's plugin declares; `null` until the accounts snapshot names it. */
+function forgeNameOf(provider: ForgeProvider | null): string | null {
+  return provider === null ? null : provider.forgeName;
+}
+
+function useDrafts(props: PullRequestScreenProps): readonly DraftComment[] {
   const params = {
     connectionId: props.connectionId,
     source: { kind: "pullRequest" as const, pullRequest: props.pullRequest },
   };
   const drafts = useForgeQuery(props.review.drafts, params);
-  return dockCounts(remoteValue(drafts)?.drafts ?? []).total;
+  return remoteValue(drafts)?.drafts ?? NO_DRAFTS;
 }
+
+const NO_DRAFTS: readonly DraftComment[] = [];
 
 function useActivity(
   props: PullRequestScreenProps,
@@ -273,6 +293,7 @@ function pullRequestSlots(
     actions,
     {
       checkIds: new Set(overview.checkItems.map((item) => item.checkId)),
+      checksSection: overview.state === "open" || overview.state === "draft",
       conflict: overview.merge.state === "conflicts",
       reviewThreadIds: layout.reviewThreadIds,
     },

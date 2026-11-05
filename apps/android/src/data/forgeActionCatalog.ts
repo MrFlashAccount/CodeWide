@@ -40,10 +40,14 @@ export type ConfirmLevel = "confirm" | "destructive" | "none";
 /** Where the plugin asks for the action; it never changes the confirmation. */
 type ActionPlacement = "overflow" | "primary" | "secondary";
 
-/** Anchor that places an action next to the problem it fixes. */
+/**
+ * Anchor that places an action next to the problem it fixes. `checksSection` is the PR's Checks
+ * row as a whole (for example Start CI); an older client treats it as unknown, so it lands in ⋯.
+ */
 export type ActionAnchor =
   | { readonly kind: "header" }
   | { readonly checkId: string; readonly kind: "checks" }
+  | { readonly kind: "checksSection" }
   | { readonly kind: "conflict" }
   | { readonly kind: "reviewThread"; readonly reviewThreadId: string }
   | { readonly kind: "file"; readonly path: string };
@@ -93,6 +97,7 @@ function anchor(value: unknown): ActionAnchor | null | undefined {
   }
   switch (entry.kind) {
     case "header":
+    case "checksSection":
     case "conflict": {
       return { kind: entry.kind };
     }
