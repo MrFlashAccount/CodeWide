@@ -35,7 +35,7 @@ patchedDependencies:
     hash: 6472dd7dbc197c7c00d2cc34886c98fce069dc878a9b5c4bff7489c6758e40e6
     path: patches/expo-video@57.0.3.patch
   react-native-enriched-markdown@1.0.2:
-    hash: 0fb6e4ec3b5f52ef932710d5650ed8e92eb74e79e990532d48b4ecadf719066b
+    hash: 9dbf4f21fcb4e3633851f0000ff7f6f8a66fe0843450217c1ad61a9206cbe78a
     path: patches/react-native-enriched-markdown@1.0.2.patch
   react-native-keyboard-controller@1.21.9:
     hash: 5bae966e544621cb6b89b3a7898a4850ef61d7ebb0704312bcf3cd2143f4d3c9
@@ -239,7 +239,7 @@ importers:
         version: 0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3)
       react-native-enriched-markdown:
         specifier: 1.0.2
-        version: 1.0.2(patch_hash=0fb6e4ec3b5f52ef932710d5650ed8e92eb74e79e990532d48b4ecadf719066b)(katex@0.16.47)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
+        version: 1.0.2(patch_hash=9dbf4f21fcb4e3633851f0000ff7f6f8a66fe0843450217c1ad61a9206cbe78a)(katex@0.16.47)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       react-native-gesture-handler:
         specifier: ~2.32.0
         version: 2.32.0(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
@@ -270,6 +270,9 @@ importers:
       react-native-worklets:
         specifier: 0.10.4
         version: 0.10.4(@babel/core@7.29.7)(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
+      react-native-zoom-toolkit:
+        specifier: 5.1.1
+        version: 5.1.1(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       svgbob-wasm:
         specifier: 1.0.0
         version: 1.0.0
@@ -7252,6 +7255,12 @@ packages:
       '@react-native/metro-config': '*'
       react: '*'
       react-native: 0.83 - 0.86
+
+  react-native-zoom-toolkit@5.1.1:
+    resolution: {integrity: sha512-45noyE+V8zNQJdTdHjUXWjN2HpF/DucWsNOr8l4DNHsaV1+0ZXiMz055sJKuArrt/NqjHoQk8qIWx0sWjgTQUA==}
+    peerDependencies:
+      react: '*'
+      react-native: '*'
 
   react-native@0.86.2:
     resolution: {integrity: sha512-zbJXGZpwfZGA79Z9ob6Atvfx4nAQL8yJBa35s58E4Oo+khPykfQP2sTeumkKbjwajFYfVayg8pj7Il9nIfTk7A==}
@@ -16503,7 +16512,7 @@ snapshots:
       react-native-reanimated: 4.5.1(react-native-worklets@0.10.4(@babel/core@7.29.7)(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       use-latest-callback: 0.2.6(react@19.2.3)
 
-  react-native-enriched-markdown@1.0.2(patch_hash=0fb6e4ec3b5f52ef932710d5650ed8e92eb74e79e990532d48b4ecadf719066b)(katex@0.16.47)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3):
+  react-native-enriched-markdown@1.0.2(patch_hash=9dbf4f21fcb4e3633851f0000ff7f6f8a66fe0843450217c1ad61a9206cbe78a)(katex@0.16.47)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3):
     dependencies:
       react: 19.2.3
       react-native: 0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3)
@@ -16609,6 +16618,11 @@ snapshots:
       semver: 7.8.5
     transitivePeerDependencies:
       - supports-color
+
+  react-native-zoom-toolkit@5.1.1(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3):
+    dependencies:
+      react: 19.2.3
+      react-native: 0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3)
 
   react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3):
     dependencies:
