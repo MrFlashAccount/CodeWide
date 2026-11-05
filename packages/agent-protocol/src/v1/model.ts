@@ -224,6 +224,27 @@ export type BackgroundCommand = BackgroundCommandState & {
   readonly taskId: string;
 };
 
+/**
+ * A background command that still runs (`thread.backgroundTasks.list`), in
+ * the provider's own model: a `task` the turn's `command` item launched
+ * (Claude), whose output `thread.backgroundTask.read` reads; or a `terminal`
+ * the provider keeps open for a `command` item (Codex), named by its process.
+ */
+export type RunningBackgroundTask =
+  | {
+      readonly background: BackgroundCommand;
+      readonly command: string;
+      readonly itemId: ItemId;
+      readonly kind: "task";
+      readonly turnId: TurnId;
+    }
+  | {
+      readonly command: string;
+      readonly itemId: ItemId;
+      readonly kind: "terminal";
+      readonly processId: string;
+    };
+
 export type FileChangeKind = "add" | "delete" | "update";
 
 export interface FileChange {

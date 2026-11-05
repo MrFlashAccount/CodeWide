@@ -22,7 +22,9 @@
 
 use std::collections::HashMap;
 
-use agent_core::model::{AgentItem, BackgroundCommandState, TaskNotificationStatus, TurnId};
+use agent_core::model::{
+    AgentItem, BackgroundCommandState, RunningBackgroundTask, TaskNotificationStatus, TurnId,
+};
 
 use crate::{
     background_tasks::LiveTaskState,
@@ -169,6 +171,49 @@ impl LiveTaskReports {
     }
 
     /// The state of every background command the open query launched, by task id.
+    /// The launches whose command still runs, oldest first.
+    pub(super) fn running_launches(&self) -> Vec<RunningBackgroundTask> {
+        let mut running = self
+            .launches
+            .values()
+            .filter_map(|launch| {
+                let AgentItem::Command {
+                    item_id,
+                    command,
+                    background: Some(background),
+                    ..
+                } = &launch.item
+                else {
+                    return None;
+                };
+                (background.state == BackgroundCommandState::Running).then(|| {
+                    (
+                        background.clone(),
+                        launch.turn_id.clone(),
+                        item_id.clone(),
+                        command.clone(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        running.sort_by(|(left, ..), (right, ..)| {
+            left.started_at
+                .cmp(&right.started_at)
+                .then_with(|| left.task_id.cmp(&right.task_id))
+        });
+        running
+            .into_iter()
+            .map(
+                |(background, turn_id, item_id, command)| RunningBackgroundTask::Task {
+                    turn_id,
+                    item_id,
+                    command,
+                    background,
+                },
+            )
+            .collect()
+    }
+
     pub(super) fn launch_states(&self) -> HashMap<String, BackgroundCommandState> {
         self.launches
             .iter()

@@ -54,7 +54,7 @@ fn can_lead(node: &Node<'_>) -> bool {
 }
 
 /// The uuids a compaction preserved, oldest first, with the summary they follow.
-fn preserved(row: &JsonRecord) -> Option<(Vec<&str>, &str)> {
+pub(crate) fn preserved(row: &JsonRecord) -> Option<(Vec<&str>, &str)> {
     let metadata = record_of(row, "compactMetadata")?;
     if let Some(messages) = record_of(metadata, "preservedMessages") {
         let anchor = str_of(messages, "anchorUuid")?;
@@ -483,7 +483,7 @@ fn with_sibling_rows<'a, 'n>(
     merged
 }
 
-fn queued_command(row: &JsonRecord) -> Option<&JsonRecord> {
+pub(crate) fn queued_command(row: &JsonRecord) -> Option<&JsonRecord> {
     (str_of(row, "type") == Some("attachment"))
         .then(|| record_of(row, "attachment"))
         .flatten()
@@ -586,7 +586,7 @@ fn with_queued_prompts<'a>(
 
 /// The user message of a queued prompt, or `None` when its source message
 /// is stored already or it carries no prompt.
-fn queued_prompt<'a>(
+pub(crate) fn queued_prompt<'a>(
     row: &'a JsonRecord,
     attachment: &'a JsonRecord,
     uuids: &mut HashSet<&'a str>,

@@ -181,21 +181,6 @@ pub fn head_and_tail(path: &Path) -> Result<(String, String), std::io::Error> {
     Ok((head, String::from_utf8_lossy(&tail).into_owned()))
 }
 
-/// Every JSON row of a transcript; malformed lines and a partial last line
-/// are skipped.
-///
-/// # Errors
-///
-/// Returns an error when the file cannot be read.
-pub fn rows(path: &Path) -> Result<Vec<serde_json::Value>, std::io::Error> {
-    let text = std::fs::read(path)?;
-    Ok(text
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-        .filter_map(|line| serde_json::from_slice(line).ok())
-        .collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,12 +227,10 @@ mod tests {
     }
 
     #[test]
-    fn reads_rows_skipping_malformed_lines_and_a_partial_tail()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn reads_the_head_and_tail_of_a_small_file_as_one() -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("s.jsonl");
         std::fs::write(&path, "{\"a\":1}\nnot json\n{\"b\":2}\n{\"partial\":")?;
-        assert_eq!(rows(&path)?.len(), 2);
         let (head, tail) = head_and_tail(&path)?;
         assert_eq!(head, tail);
         Ok(())

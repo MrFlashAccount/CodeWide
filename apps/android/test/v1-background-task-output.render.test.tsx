@@ -231,9 +231,17 @@ it("collapses a long command to three lines and keeps its prompt on the first li
   expect(command).toHaveStyle({ alignItems: "flex-start" });
   expect(commandText.props.numberOfLines).toBe(3);
 
-  fireEvent(commandText, "textLayout", { nativeEvent: { lines: [{}, {}, {}, {}] } });
+  expect(view.queryByText(/more line/)).toBeNull();
+  expect(view.queryByTestId("command-output-fade")).toBeNull();
+
+  fireEvent(commandText, "textLayout", { nativeEvent: { lines: [{}, {}, {}, {}, {}] } });
+  // The last visible line fades above a count of the hidden lines.
+  expect(view.getByText("2 more lines")).toBeOnTheScreen();
+  expect(view.getByTestId("command-output-fade")).toBeOnTheScreen();
   fireEvent.press(view.getByLabelText("Expand command"));
   expect(within(command).getByText(longCommand).props.numberOfLines).toBeUndefined();
+  expect(view.getByText("Show less")).toBeOnTheScreen();
+  expect(view.queryByTestId("command-output-fade")).toBeNull();
 
   fireEvent.press(view.getByLabelText("Collapse command"));
   expect(within(command).getByText(longCommand).props.numberOfLines).toBe(3);

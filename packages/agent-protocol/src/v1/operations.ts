@@ -16,6 +16,7 @@ import type {
   JsonValue,
   NativeSession,
   NativeSubagent,
+  RunningBackgroundTask,
   RuntimeResponse,
   ThreadSettings,
   UserContent,
@@ -289,6 +290,17 @@ export interface OperationMap {
       readonly text: string;
     };
   };
+  /**
+   * The background commands of the thread that still run, as the provider's
+   * live session knows them, each with the turn and item that launched it.
+   * Empty when no session of the thread runs. Optional, gated by
+   * `threads.backgroundTaskOutput` like `thread.backgroundTask.read`; added
+   * within v1.
+   */
+  readonly "thread.backgroundTasks.list": {
+    readonly params: { readonly appThreadId: AppThreadId };
+    readonly result: { readonly tasks: readonly RunningBackgroundTask[] };
+  };
   readonly "thread.compact": {
     readonly params: { readonly appThreadId: AppThreadId };
     readonly result: Record<string, never>;
@@ -418,6 +430,7 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   "thread.owns",
   "thread.compact",
   "thread.backgroundTask.read",
+  "thread.backgroundTasks.list",
   "turn.start",
   "turn.continue",
   "turn.steer",

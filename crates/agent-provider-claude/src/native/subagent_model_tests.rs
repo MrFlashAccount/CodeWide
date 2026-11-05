@@ -125,7 +125,10 @@ async fn each_sub_agent_reports_the_model_of_its_own_transcript()
         [("pinned", Some("claude-haiku-4-5")), ("unrecorded", None)]
     );
     // The index keeps what the read reports.
-    let indexed = crate::subagents::index(&read)
+    let (projects, journal) = fixture_paths(root.path());
+    let indexed = LocalSessions::for_test(projects, journal, HashSet::from([SESSION.to_owned()]))
+        .indexed_subagents(SESSION)
+        .await?
         .into_iter()
         .map(|subagent| subagent.model)
         .collect::<Vec<_>>();
@@ -226,10 +229,14 @@ async fn each_sub_agent_reports_the_effort_of_its_own_transcript()
     );
     // The index keeps what the read reports, and the unknown effort is not
     // replaced by the main conversation's `high`.
-    let mut indexed = crate::subagents::index(&read)
-        .into_iter()
-        .map(|subagent| (subagent.agent_id, subagent.effort))
-        .collect::<Vec<_>>();
+    let (projects, journal) = fixture_paths(root.path());
+    let mut indexed =
+        LocalSessions::for_test(projects, journal, HashSet::from([SESSION.to_owned()]))
+            .indexed_subagents(SESSION)
+            .await?
+            .into_iter()
+            .map(|subagent| (subagent.agent_id, subagent.effort))
+            .collect::<Vec<_>>();
     indexed.sort_unstable();
     assert_eq!(
         indexed,

@@ -7,6 +7,7 @@ import { threadIdFromEvent, threadProjectionPatchFromEvent } from "@codewide/syn
 import { appLogger } from "../observability/logger";
 import type { AccountPoolSnapshot } from "./account-pool";
 import { AGENT_PROVIDERS_CHANGED_METHOD } from "./agentProviders";
+import { backgroundTaskInvalidationBus } from "./backgroundTaskInvalidationBus";
 import { forgeInvalidationBus } from "./forgeInvalidationBus";
 import type { AgentProvidersResource } from "./agentProvidersResource";
 import type { AccountRateLimitsDatabase } from "./account-rate-limits-database";
@@ -87,6 +88,8 @@ export function createThreadSyncProjection({
         }
         // Content-free forge/review invalidations; resource owners re-read their own data.
         forgeInvalidationBus.publish(connectionId, event.payload.method, event.payload.params);
+        // Content-free: a thread whose running background commands may have changed.
+        backgroundTaskInvalidationBus.publish(connectionId, event.payload.params);
         if (
           event.payload.method === "companion/queue/changed" &&
           params !== null &&

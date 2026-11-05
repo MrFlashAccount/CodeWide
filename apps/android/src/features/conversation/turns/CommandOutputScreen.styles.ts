@@ -15,12 +15,15 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
   },
-  commandAction: {
-    alignItems: "center",
-    flexShrink: 0,
-    height: controlSize.compact,
-    justifyContent: "center",
-    width: controlSize.compact,
+  commandBody: {
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.xs,
+    minWidth: 0,
+  },
+  commandColumn: {
+    flex: 1,
+    minWidth: 0,
   },
   commandError: {
     alignItems: "center",
@@ -29,15 +32,30 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     width: controlSize.compact,
   },
+  commandFade: {
+    bottom: 0,
+    height: typeScale.code.lineHeight,
+    left: 0,
+    position: "absolute",
+    right: 0,
+  },
   commandPrompt: {
     color: colors.textDim,
     ...typeScale.code,
   },
   commandText: {
     color: colors.text,
-    flex: 1,
-    minWidth: 0,
     ...typeScale.code,
+  },
+  commandToggle: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xxs,
+    paddingTop: spacing.xxs,
+  },
+  commandToggleLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
   },
   details: {
     color: colors.textMuted,

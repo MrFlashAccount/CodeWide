@@ -14,6 +14,7 @@ use tokio::{
     io::AsyncWriteExt,
     sync::Mutex,
 };
+use workspace_io::WorkspaceIo;
 
 const PROJECT_REGISTRY_VERSION: u8 = 1;
 
@@ -211,10 +212,13 @@ impl ProjectService {
                 "path must be an absolute directory".into(),
             ));
         }
-        let canonical = fs::canonicalize(requested)
+        let io = WorkspaceIo::shared();
+        let canonical = io
+            .canonicalize(requested)
             .await
             .map_err(|error| ProjectError::InvalidDirectory(error.to_string()))?;
-        let metadata = fs::metadata(&canonical)
+        let metadata = io
+            .metadata(&canonical)
             .await
             .map_err(|error| ProjectError::InvalidDirectory(error.to_string()))?;
         if !metadata.is_dir() {

@@ -9,7 +9,7 @@ use std::{collections::HashMap, os::unix::fs::MetadataExt, path::PathBuf, sync::
 
 use agent_core::model::{
     AgentEvent, AgentItem, BackgroundCommandState, BackgroundTaskReadResult, BackgroundTaskStatus,
-    ERROR_BACKGROUND_TASK_UNAVAILABLE, RpcError, SortDirection,
+    ERROR_BACKGROUND_TASK_UNAVAILABLE, RpcError, RunningBackgroundTask, SortDirection,
 };
 use serde_json::json;
 
@@ -561,5 +561,76 @@ async fn an_unreadable_process_list_keeps_a_launch_running_until_it_can_be_read(
     assert_eq!(read_state(&restarted).await?, stopped);
     assert_eq!(read_state(&restarted).await?, stopped);
     restarted.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_running_list_holds_a_launch_until_its_report_ends_it() -> TestResult {
+    let harness = harness(Options::default())?;
+    let query = launch(&harness).await?;
+    let running = harness
+        .service
+        .running_background_tasks(&id(THREAD)?)
+        .await?;
+    let listed = running
+        .iter()
+        .filter_map(|task| match task {
+            RunningBackgroundTask::Task {
+                item_id,
+                command,
+                background,
+                ..
+            } => Some((
+                item_id.as_str().to_owned(),
+                command.clone(),
+                background.task_id.clone(),
+                background.description.clone(),
+                background.state,
+            )),
+            RunningBackgroundTask::Terminal { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        listed,
+        [(
+            "toolu_bg".to_owned(),
+            "npm test".to_owned(),
+            TASK.to_owned(),
+            None,
+            BackgroundCommandState::Running,
+        )]
+    );
+    let launch_turn = harness
+        .events()
+        .into_iter()
+        .find_map(|event| match event {
+            AgentEvent::ItemCompleted { turn_id, item, .. }
+                if item.item_id().as_str() == "toolu_bg" =>
+            {
+                Some(turn_id)
+            }
+            _ => None,
+        })
+        .ok_or("launch item")?;
+    assert!(matches!(
+        running.first(),
+        Some(RunningBackgroundTask::Task { turn_id, .. }) if *turn_id == launch_turn
+    ));
+
+    query
+        .push(
+            json!({"type": "system", "subtype": "task_notification", "task_id": TASK,
+            "tool_use_id": "toolu_bg", "status": "completed"}),
+        )
+        .await;
+    settle().await;
+    assert!(
+        harness
+            .service
+            .running_background_tasks(&id(THREAD)?)
+            .await?
+            .is_empty()
+    );
+    harness.close().await;
     Ok(())
 }

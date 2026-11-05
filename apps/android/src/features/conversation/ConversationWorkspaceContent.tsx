@@ -81,6 +81,11 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         onRefreshSubagents: async (rootThreadId: string) => {
           await props.features.agents.refreshSubagents(props.activeConnectionId, rootThreadId);
         },
+        onRunningBackgroundTasks:
+          props.activeConnectionId === ""
+            ? undefined
+            : (threadId: string) =>
+                props.features.agents.runningBackgroundTasks(props.activeConnectionId, threadId),
         subagentSummaryDatabase: props.snapshot.subagentSummaryDatabase,
         subagentThreadDetails: props.runtime.threadDetails,
       }}

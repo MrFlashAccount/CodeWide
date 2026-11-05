@@ -61,7 +61,9 @@ impl VcsService {
         let failed = |error: super::plugin::PluginCallError| {
             VcsError::Plugin(format!("{}: {error}", plugin.id))
         };
-        let mut session = PluginSession::spawn(&plugin, workspace).map_err(failed)?;
+        let mut session = PluginSession::spawn(&plugin, workspace)
+            .await
+            .map_err(failed)?;
         let initialized = session
             .request(
                 1,

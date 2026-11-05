@@ -151,8 +151,15 @@ async fn continues_with_claudes_resume_prompt_as_a_turn_without_a_user_message()
     );
     assert_eq!(offer.uuid.as_deref(), Some(continued.as_str()));
     query.push(frames::text("m2", "the rest")).await;
-    query.push(frames::result()).await;
+    // Claude names the adapter message's origin on the result it answers.
+    let mut own_result = frames::result();
+    own_result["origin"] = json!({"kind": "unclassified"});
+    query.push(own_result).await;
     settle().await;
+    let completed = harness.completions();
+    let finished = completed.last().ok_or("the resuming turn did not finish")?;
+    assert_eq!(finished.turn_id, continued);
+    assert_eq!(finished.status, TurnStatus::Completed);
     let (turns, _) = harness.service.turns(turns_params(THREAD)?, false).await?;
     let last = turns.turns.last().ok_or("no turns")?;
     assert_eq!(last.turn_id, continued);

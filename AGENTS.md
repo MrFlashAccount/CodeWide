@@ -76,6 +76,10 @@
 - Run `pnpm validate:agents` (format check, type-aware hygiene lint, tests) before handing off any change under `packages/agent-protocol/**`. The package uses the shared `@sergeigarin/hygene` preset with no baseline: fix every finding; a narrow exception names one rule on one line with an adjacent `WHY` comment.
 - Run `pnpm test:companion` (`cargo test --workspace`), `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all --check` for changes under `crates/agent-core/**`, `crates/agent-index/**`, `crates/agent-transport/**`, `crates/agent-search/**`, `crates/agent-resources/**`, `crates/companion-host/**`, `crates/agent-provider-codex/**`, `crates/agent-provider-claude/**` or `crates/companion-core/src/agent/**`.
 
+## Workspace filesystem access
+
+- Agents' working directories, projects and Git trees can live on FUSE or network mounts (Arcadia `arc`) that stop answering. Every companion access to such a user workspace path goes through `crates/workspace-io` (`WorkspaceIo::shared()`): its own threads, a deadline, a per-mount circuit breaker. No `std::fs`, `tokio::fs` or `spawn_blocking` on a workspace path outside it, no subprocess spawned with a workspace `current_dir` outside it, and no shared lock or serial owner held while such an operation is awaited. The contract is in [crates/workspace-io/CONTEXT.md](crates/workspace-io/CONTEXT.md).
+
 ## Releases
 
 Use only the repository-owned one-shot release commands:

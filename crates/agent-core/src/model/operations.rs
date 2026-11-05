@@ -8,8 +8,10 @@ use serde_json::Value;
 
 use super::{
     capabilities::CapabilitySet,
-    ids::{AppThreadId, ClientMessageId, NativeRequestId, ProviderId, TurnId},
-    thread::{AgentThread, AgentTurn, RuntimeResponse, ThreadSettings, UserContent},
+    ids::{AppThreadId, ClientMessageId, ItemId, NativeRequestId, ProviderId, TurnId},
+    thread::{
+        AgentThread, AgentTurn, BackgroundCommand, RuntimeResponse, ThreadSettings, UserContent,
+    },
     tools::{ClientToolSpec, ToolCallParams},
 };
 
@@ -561,6 +563,45 @@ pub struct RequestRespondParams {
     pub response: RuntimeResponse,
 }
 
+/// `thread.backgroundTasks.list` (optional, `threads.backgroundTaskOutput`):
+/// the thread's background commands that still run.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundTaskListParams {
+    pub app_thread_id: AppThreadId,
+}
+
+/// A background command that still runs, in the provider's own model: a
+/// `Task` the turn's `command` item launched (Claude), whose output
+/// `thread.backgroundTask.read` reads; or a `Terminal` the provider keeps
+/// open for a `command` item (Codex), named by its process.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RunningBackgroundTask {
+    Task {
+        turn_id: TurnId,
+        item_id: ItemId,
+        command: String,
+        background: BackgroundCommand,
+    },
+    Terminal {
+        item_id: ItemId,
+        process_id: String,
+        command: String,
+    },
+}
+
+/// The thread's running background commands, as its provider's live session
+/// knows them; empty when no session of the thread runs.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BackgroundTaskListResult {
+    pub tasks: Vec<RunningBackgroundTask>,
+}
+
 /// The largest page of `thread.backgroundTask.read`, in bytes.
 pub const MAX_BACKGROUND_TASK_PAGE_BYTES: u32 = 65_536;
 
@@ -647,6 +688,8 @@ pub enum OperationCall {
     ThreadCompact(ThreadRef),
     #[serde(rename = "thread.backgroundTask.read")]
     ThreadBackgroundTaskRead(BackgroundTaskReadParams),
+    #[serde(rename = "thread.backgroundTasks.list")]
+    ThreadBackgroundTasksList(BackgroundTaskListParams),
     #[serde(rename = "turn.start")]
     TurnStart(TurnStartParams),
     #[serde(rename = "turn.continue")]

@@ -146,6 +146,12 @@ export function createConversationSurfaceAssembly(props: {
     conversationPaneGeometryBinding: props.scoped.activation.conversationPaneGeometryBinding,
     draftConnectionId: props.scoped.activation.draftConnectionId,
     draftThreadId: props.scoped.activation.draftThreadId,
+    openTerminals:
+      props.terminalInputs.onListTerminals === undefined
+        ? null
+        : () => {
+            props.composerCommands.composerControlActionsBinding.openControls("runtime");
+          },
     overlayScrollOwnershipBinding: props.scoped.overlayScrollOwnershipBinding,
     surfaceInputs: props.surfaceInputs,
     threadRenameBinding: props.scoped.threadRenameBinding,

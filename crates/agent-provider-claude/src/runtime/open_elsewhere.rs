@@ -44,7 +44,8 @@ pub type SessionsChanged = Arc<dyn Fn(&HashSet<String>) + Send + Sync>;
 /// Authoritative process activity for one session after a successful CLI
 /// read. The outer `Option` returned by [`OpenElsewhere::activity`] means the
 /// read itself is unavailable.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "activity", content = "running", rename_all = "camelCase")]
 pub enum SessionActivity {
     Stopped,
     Running(RunningProcess),

@@ -23,7 +23,7 @@ use tracing::warn;
 
 use super::{
     errors::{internal, session_gone},
-    history::StoredHistoryLines,
+    history::{IndexSlot, StoredHistoryLines},
     live_prompts::{LivePrompts, turn_prompt},
     outputs::{Notice, ServiceOutputs},
     projection::{ThreadView, discovered_settings, project_thread},
@@ -33,6 +33,7 @@ use super::{
     startup::load_threads,
 };
 use crate::{
+    index::sessions::SessionIndex,
     live::usage::{ThreadCost, UsageBaseline, ZERO_USAGE},
     native::{SessionLocation, files::is_session_id, write},
     runtime::{
@@ -108,6 +109,8 @@ pub(super) struct ServiceInner {
     pub live_prompts: LivePrompts,
     pub outputs: mpsc::Sender<SessionOutput>,
     pub projects_root: PathBuf,
+    /// The offset index history is read from.
+    pub index: IndexSlot,
     pub clock: Arc<dyn Fn() -> i64 + Send + Sync>,
     pub model_id_for: Arc<dyn Fn(&str) -> String + Send + Sync>,
     /// Serializes the check-then-add of a new thread, so a repeated create,
@@ -171,6 +174,7 @@ impl ThreadService {
         let store = ThreadStateStore::open(deps.state_directory)?;
         let (persistence, index) = ThreadRegistry::persistence(store.clone());
         let (outputs, session_outputs) = mpsc::channel(OUTPUT_CAPACITY);
+        let history_index = IndexSlot::default();
         let session_deps = Arc::new(SessionDeps {
             runtime: deps.runtime,
             executable: deps.executable,
@@ -180,7 +184,7 @@ impl ThreadService {
             outputs: outputs.clone(),
             client_tools: deps.client_tools,
             history: Arc::new(StoredHistoryLines {
-                projects_root: deps.projects_root.clone(),
+                index: history_index.clone(),
             }),
             rate_limits: deps.rate_limits,
             config: deps.session_config,
@@ -209,11 +213,12 @@ impl ThreadService {
         let inner = Arc::new(ServiceInner {
             registry,
             catalog: SessionCatalog::new(deps.projects_root.clone()),
-            recorded: RecordedModelCache::new(deps.projects_root.clone()),
+            recorded: RecordedModelCache::new(history_index.clone()),
             open_elsewhere,
             live_prompts: LivePrompts::default(),
             outputs,
             projects_root: deps.projects_root,
+            index: history_index,
             clock: deps.clock,
             model_id_for: deps.model_id_for,
             adding: tokio::sync::Mutex::new(()),
@@ -221,6 +226,13 @@ impl ThreadService {
         });
         let stream = ServiceOutputs::new(&inner, session_outputs, notice_queue);
         Ok((Self { inner }, stream))
+    }
+
+    /// Attaches the offset index every history read goes through; once,
+    /// before the service serves reads. The caller keeps `index` alive for
+    /// as long as the service serves.
+    pub fn attach_index(&self, index: &Arc<SessionIndex>) {
+        let _ = self.inner.index.set(Arc::downgrade(index));
     }
 
     /// Shared, cached authority for whether a Claude session has a live

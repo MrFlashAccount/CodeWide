@@ -13,10 +13,7 @@ use super::{
     LocalSessions, files, fixture_paths, meta,
     write::{self, ForkError, Removal, RenameError, SessionLocation},
 };
-use crate::{
-    indexer::NativeSessions,
-    transcript::{chain::active_branch, json::str_of},
-};
+use crate::transcript::{chain::active_branch, json::str_of};
 
 const SESSION: &str = "11111111-1111-4111-8111-111111111111";
 const OTHER: &str = "22222222-2222-4222-8222-222222222222";
@@ -80,9 +77,18 @@ fn local(root: &Path) -> LocalSessions {
     )
 }
 
+/// Every JSON row of a file (malformed lines skipped).
+fn rows(path: &Path) -> Result<Vec<Value>, std::io::Error> {
+    Ok(std::fs::read(path)?
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| serde_json::from_slice(line).ok())
+        .collect())
+}
+
 /// The stored rows of a session, as objects.
 fn stored(path: &Path) -> Result<Vec<serde_json::Map<String, Value>>, std::io::Error> {
-    Ok(files::rows(path)?
+    Ok(rows(path)?
         .into_iter()
         .filter_map(|row| match row {
             Value::Object(row) => Some(row),
@@ -93,7 +99,7 @@ fn stored(path: &Path) -> Result<Vec<serde_json::Map<String, Value>>, std::io::E
 
 /// The source uuids of a fork's active branch.
 fn forked_branch(path: &Path) -> Result<Vec<String>, std::io::Error> {
-    let rows = files::rows(path)?;
+    let rows = rows(path)?;
     Ok(active_branch(&rows)
         .iter()
         .filter_map(|row| {

@@ -8,7 +8,7 @@
 use std::{collections::HashMap, sync::PoisonError, time::Duration};
 
 use agent_core::{
-    model::{AgentTurn, AppThreadId, BackgroundCommandState},
+    model::{AgentTurn, AppThreadId, BackgroundCommandState, RunningBackgroundTask},
     provider::ProviderError,
 };
 
@@ -101,6 +101,27 @@ impl ThreadService {
                 Ok((live, handle.state().current_session_id().to_owned()))
             }
             Some(Listed::Discovered(session)) => Ok((None, session.session_id)),
+            None => Err(not_found(id)),
+        }
+    }
+
+    /// `thread.backgroundTasks.list`: the background commands the thread's
+    /// open query launched that still run; empty for a discovered session or
+    /// without an open query.
+    ///
+    /// # Errors
+    /// `-32600` for an unknown or deleted thread.
+    pub async fn running_background_tasks(
+        &self,
+        app_thread_id: &AppThreadId,
+    ) -> Result<Vec<RunningBackgroundTask>, ProviderError> {
+        let id = app_thread_id.as_str();
+        match self.inner.resolve(id).await?.listed() {
+            Some(Listed::Entry(handle)) => handle
+                .running_background_tasks()
+                .await
+                .map_err(|err| session_gone(&err)),
+            Some(Listed::Discovered(_)) => Ok(Vec::new()),
             None => Err(not_found(id)),
         }
     }

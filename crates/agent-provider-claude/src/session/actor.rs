@@ -235,6 +235,13 @@ impl Session {
             Command::BackgroundTask { task_id, reply } => {
                 let _ = reply.send(self.task_reports.state(&task_id));
             }
+            Command::RunningBackgroundTasks { reply } => {
+                let _ = reply.send(if self.query.is_some() {
+                    self.task_reports.running_launches()
+                } else {
+                    Vec::new()
+                });
+            }
             Command::BackgroundCommands { reply } => {
                 let _ = reply.send(
                     self.query
@@ -395,6 +402,13 @@ impl Session {
     pub(super) fn ensure_query(&mut self) -> Option<Arc<dyn Query>> {
         if let Some(query) = &self.query {
             return Some(query.handle.clone());
+        }
+        // A mount known to be hung is never entered: spawning would block this
+        // actor's thread until the mount answers.
+        if workspace_io::WorkspaceIo::shared().is_unavailable(std::path::Path::new(&self.state.cwd))
+        {
+            warn!(app_thread_id = %self.app_thread_id, "claude session not started: its working directory does not respond");
+            return None;
         }
         let settings = self.state.settings.clone();
         let profile = profile_of(&settings.permission_profile).options();

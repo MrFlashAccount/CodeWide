@@ -16,7 +16,7 @@ use std::{
 use agent_core::{
     model::{
         AgentEvent, AgentThread, AppThreadId, ProviderId, RpcError, ThreadListParams,
-        ThreadListResult, ThreadStatus, ThreadTurnsParams, ThreadTurnsResult, turns::page_turns,
+        ThreadListResult, ThreadStatus, ThreadTurnsParams, ThreadTurnsResult,
     },
     provider::{HistoryChange, ProviderStatus, SubagentsChange},
 };
@@ -30,7 +30,13 @@ use tracing::warn;
 
 use crate::{
     catalog,
-    indexer::{ClaudeIndexer, NativeSessions},
+    index::sessions::SessionIndex,
+    index::{
+        history::{IndexedHistory, PageRequest},
+        read::ReadError,
+    },
+    indexer::ClaudeIndexer,
+    native::{LocalSessions, host_state::HostStateCache},
     resources::{ClaudeResources, IndexedProjections},
     runtime::open_elsewhere::OpenElsewhere,
     search::{ClaudeSearch, ClaudeSearchError},
@@ -171,6 +177,9 @@ impl Freshness {
 /// The Claude adapter's storage services.
 pub struct ClaudeStorage {
     store: Arc<ClaudeStore>,
+    /// The owner of session passes, once [`Self::start`] ran.
+    index: std::sync::OnceLock<Arc<SessionIndex>>,
+    history: Arc<IndexedHistory>,
     search: Arc<ClaudeSearch>,
     resources: Arc<ClaudeResources>,
     freshness: Arc<Freshness>,
@@ -191,9 +200,19 @@ impl ClaudeStorage {
     /// Returns an error when either index cannot be opened.
     pub fn open(host: ClaudeStorageHost) -> Result<Self, ClaudeStorageError> {
         let store = Arc::new(ClaudeStore::attach(host.database, host.threads)?);
-        let search = Arc::new(ClaudeSearch::open(&host.search_path, store.clone())?);
-        let mut resources =
-            ThreadResources::new(Arc::new(IndexedProjections::new(store.clone())), host.files);
+        let history = Arc::new(IndexedHistory::new(
+            store.clone(),
+            Arc::new(HostStateCache::new(host.journal_directory.clone())),
+        ));
+        let search = Arc::new(ClaudeSearch::open(
+            &host.search_path,
+            store.clone(),
+            history.clone(),
+        )?);
+        let mut resources = ThreadResources::new(
+            Arc::new(IndexedProjections::new(history.clone())),
+            host.files,
+        );
         if let Some(vcs) = host.vcs {
             resources = resources.with_vcs(vcs);
         }
@@ -201,6 +220,8 @@ impl ClaudeStorage {
         let (subagent_changes, subagent_changes_rx) = mpsc::channel(HISTORY_CHANGE_CAPACITY);
         Ok(Self {
             store,
+            index: std::sync::OnceLock::new(),
+            history,
             search,
             resources: Arc::new(ClaudeResources::new(resources)),
             freshness: Arc::new(Freshness::default()),
@@ -223,11 +244,7 @@ impl ClaudeStorage {
             warn!("Claude's session store is unknown; Claude sessions are not indexed");
             return;
         };
-        let sessions = Arc::new(crate::native::LocalSessions::new(
-            root.clone(),
-            self.journal_directory.clone(),
-            activity,
-        ));
+        let sessions = LocalSessions::new(root.clone(), self.journal_directory.clone(), activity);
         self.start_with(sessions, status);
     }
 
@@ -235,7 +252,7 @@ impl ClaudeStorage {
     /// over `sessions`.
     pub(crate) fn start_with(
         &self,
-        sessions: Arc<dyn NativeSessions>,
+        sessions: LocalSessions,
         status: watch::Receiver<ProviderStatus>,
     ) {
         let (finished, finished_rx) = mpsc::channel(FINISHED_CHANNEL_CAPACITY);
@@ -246,14 +263,16 @@ impl ClaudeStorage {
             Some(root) => watcher::spawn(root.clone(), RESCAN_INTERVAL),
             None => mpsc::channel(1).1,
         };
-        let indexer = ClaudeIndexer::new(
+        let index = Arc::new(SessionIndex::new(
             self.store.clone(),
-            self.search.clone(),
+            self.history.clone(),
+            Some(self.search.clone()),
             sessions,
             self.freshness.clone(),
-        )
-        .with_history_changes(self.history_changes.clone())
-        .with_subagent_changes(self.subagent_changes.clone());
+        ));
+        index.publish_to(self.history_changes.clone(), self.subagent_changes.clone());
+        let _ = self.index.set(index.clone());
+        let indexer = ClaudeIndexer::new(index, self.freshness.clone());
         tokio::spawn(indexer.run(changes, finished_rx, relist_rx, status));
     }
 
@@ -426,29 +445,48 @@ impl ClaudeStorage {
     }
 
     /// `thread.turns` from the index, when the thread is indexed and fresh;
-    /// `None` sends the call to the host.
-    #[must_use]
-    pub fn turns(&self, params: &ThreadTurnsParams) -> Option<Result<ThreadTurnsResult, RpcError>> {
+    /// `None` sends the call to the thread service. A page reads only its
+    /// own turns' byte ranges, off the async runtime.
+    pub async fn turns(
+        &self,
+        params: &ThreadTurnsParams,
+    ) -> Option<Result<ThreadTurnsResult, RpcError>> {
         if !self.freshness.is_fresh(&params.app_thread_id) {
             return None;
         }
         if !self.owns(&params.app_thread_id) {
             return None;
         }
-        let turns = match self.store.thread_turns(&params.app_thread_id) {
-            Ok(turns) => turns?,
-            Err(err) => {
-                warn!(err = %err, "Claude session index cannot be read; asking the host");
-                return None;
+        let history = self.history.clone();
+        let params = params.clone();
+        let page = tokio::task::spawn_blocking(move || {
+            history.page(
+                &params.app_thread_id,
+                &PageRequest {
+                    cursor: params.cursor.as_deref(),
+                    limit: params.limit,
+                    direction: params.sort_direction,
+                    view: params.items_view,
+                },
+            )
+        })
+        .await;
+        match page {
+            Ok(Ok(Some(page))) => Some(Ok(page)),
+            Ok(Ok(None)) => None,
+            Ok(Err(ReadError::InvalidParams(message))) => Some(Err(RpcError::new(
+                agent_core::model::ERROR_INVALID_PARAMS,
+                message,
+            ))),
+            Ok(Err(err)) => {
+                warn!(err = %err, "Claude session index cannot be read; asking the thread service");
+                None
             }
-        };
-        Some(page_turns(
-            &turns,
-            params.cursor.as_deref(),
-            params.limit,
-            params.sort_direction,
-            params.items_view,
-        ))
+            Err(err) => {
+                warn!(err = %err, "Claude session index read failed; asking the thread service");
+                None
+            }
+        }
     }
 
     /// Whether the index knows the thread.
@@ -474,25 +512,77 @@ impl ClaudeStorage {
     pub fn store(&self) -> Arc<ClaudeStore> {
         self.store.clone()
     }
+
+    /// The owner of session passes; `None` before [`Self::start`].
+    #[must_use]
+    pub fn session_index(&self) -> Option<Arc<SessionIndex>> {
+        self.index.get().cloned()
+    }
+
+    /// Reads of indexed history (pages, child threads, windows).
+    #[must_use]
+    pub fn history(&self) -> Arc<IndexedHistory> {
+        self.history.clone()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use agent_core::model::{ItemsView, SortDirection};
+    use agent_core::model::{ItemsView, SortDirection, ThreadSortKey};
 
     use super::*;
-    use crate::test_support::{MemoryThreadIndex, session_read, turn};
+    use crate::test_support::{MemoryThreadIndex, session_id, turn};
 
-    fn storage(directory: &std::path::Path) -> Result<ClaudeStorage, Box<dyn std::error::Error>> {
-        Ok(ClaudeStorage::open(ClaudeStorageHost {
-            database: companion_host::database::open(directory.join("index.redb"), "test")?,
-            threads: Arc::new(MemoryThreadIndex::default()),
-            search_path: directory.join("search.sqlite"),
-            projects_root: None,
-            journal_directory: directory.join("journal"),
-            files: Arc::new(crate::test_support::RecordingPreviewFiles),
-            vcs: None,
-        })?)
+    const CWD: &str = "/work";
+
+    struct Fixture {
+        files: crate::test_support::StoreFixture,
+        storage: ClaudeStorage,
+    }
+
+    impl Fixture {
+        fn new() -> Result<Self, Box<dyn std::error::Error>> {
+            let files = crate::test_support::StoreFixture::new()?;
+            let storage = ClaudeStorage::open(ClaudeStorageHost {
+                database: companion_host::database::open(
+                    files.directory.path().join("storage.redb"),
+                    "test",
+                )?,
+                threads: Arc::new(MemoryThreadIndex::default()),
+                search_path: files.directory.path().join("storage-search.sqlite"),
+                projects_root: None,
+                journal_directory: files.journal(),
+                files: Arc::new(crate::test_support::RecordingPreviewFiles),
+                vcs: None,
+            })?;
+            Ok(Self { files, storage })
+        }
+
+        /// Writes one exchange per prompt and indexes the session into the storage.
+        fn session(
+            &self,
+            session: &str,
+            prompts: &[&str],
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            self.files.exchange(session, CWD, 1, prompts)?;
+            let threads = self.storage.history.host().threads();
+            let (file, listed) = self
+                .files
+                .sessions()
+                .listed_session(session, &threads)
+                .ok_or("listed session")?;
+            let changes = crate::index::session::index_session(
+                &self.storage.store,
+                &crate::index::session::ListedSession {
+                    file: &file,
+                    session: listed,
+                    owner: threads.owner_of(session),
+                },
+                crate::runtime::open_elsewhere::SessionActivity::Stopped,
+            )?;
+            self.storage.search.apply(&changes)?;
+            Ok(())
+        }
     }
 
     fn params(thread: &str) -> ThreadTurnsParams {
@@ -506,65 +596,53 @@ mod tests {
         }
     }
 
-    #[test]
-    fn indexed_history_answers_only_while_no_turn_runs() -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let storage = storage(directory.path())?;
-        assert!(storage.turns(&params("thread")).is_none());
-        storage
-            .store
-            .replace_session(&session_read("session", "thread", 10, &["one", "two"]))?;
-        let page = storage
-            .turns(&params("thread"))
+    #[tokio::test]
+    async fn indexed_history_answers_only_while_no_turn_runs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let session = session_id(1);
+        assert!(fixture.storage.turns(&params(&session)).await.is_none());
+        fixture.session(&session, &["one", "two"])?;
+        let page = fixture
+            .storage
+            .turns(&params(&session))
+            .await
             .ok_or("served")?
             .map_err(|error| error.message)?;
         assert_eq!(page.turns.len(), 2);
-        assert!(storage.owns(&AppThreadId::from_static("thread")));
+        let thread = AppThreadId::parse(&session).ok_or("thread id")?;
+        assert!(fixture.storage.owns(&thread));
 
-        let thread = AppThreadId::from_static("thread");
-        storage.observe_event(&AgentEvent::TurnStarted {
+        fixture.storage.observe_event(&AgentEvent::TurnStarted {
             app_thread_id: thread.clone(),
             turn: turn("session", "three", 30),
         });
-        assert!(storage.turns(&params("thread")).is_none());
-        storage.observe_event(&AgentEvent::TurnCompleted {
+        assert!(fixture.storage.turns(&params(&session)).await.is_none());
+        fixture.storage.observe_event(&AgentEvent::TurnCompleted {
             app_thread_id: thread.clone(),
             turn: turn("session", "three", 30),
         });
-        // Still stale until the finished turn is re-indexed.
-        assert!(storage.turns(&params("thread")).is_none());
-        storage.freshness.mark_fresh(&thread);
-        assert!(storage.turns(&params("thread")).is_some());
+        // Still stale until the finished turn is indexed.
+        assert!(fixture.storage.turns(&params(&session)).await.is_none());
+        fixture.storage.freshness.mark_fresh(&thread);
+        assert!(fixture.storage.turns(&params(&session)).await.is_some());
+
+        // An activity change of the session makes it stale again.
+        fixture
+            .storage
+            .observe_session_activity(&HashSet::from([session.clone()]));
+        assert!(fixture.storage.turns(&params(&session)).await.is_none());
         Ok(())
     }
 
-    #[test]
-    fn a_session_activity_change_invalidates_its_indexed_thread()
+    #[tokio::test]
+    async fn the_catalog_answers_only_while_it_matches_the_listing()
     -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let storage = storage(directory.path())?;
-        storage
-            .store
-            .replace_session(&session_read("terminal", "thread", 10, &["one"]))?;
-        assert!(storage.turns(&params("thread")).is_some());
-
-        storage.observe_session_activity(&HashSet::from(["terminal".to_owned()]));
-
-        assert!(storage.turns(&params("thread")).is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn the_catalog_answers_only_while_it_matches_the_host() -> Result<(), Box<dyn std::error::Error>>
-    {
-        use agent_core::model::{SortDirection, ThreadSortKey};
-        let directory = tempfile::tempdir()?;
-        let storage = storage(directory.path())?;
-        storage
-            .store
-            .replace_session(&session_read("terminal", "terminal", 10, &["hello"]))?;
+        let fixture = Fixture::new()?;
+        let session = session_id(2);
+        fixture.session(&session, &["hello"])?;
         let provider = ProviderId::from_static("claude");
-        let params = ThreadListParams {
+        let list = ThreadListParams {
             archived: false,
             cwd: None,
             search_term: None,
@@ -575,151 +653,53 @@ mod tests {
             limit: 10,
         };
         assert!(
-            storage.list(&params, &provider).is_none(),
+            fixture.storage.list(&list, &provider).is_none(),
             "before the first listing"
         );
-        storage.freshness.set_catalog_current(true);
-        let page = storage
-            .list(&params, &provider)
+        fixture.storage.freshness.set_catalog_current(true);
+        let page = fixture
+            .storage
+            .list(&list, &provider)
             .ok_or("served")?
             .map_err(|error| error.message)?;
         assert_eq!(page.threads.len(), 1);
+        // The preview is the newest message, not the first prompt.
+        assert_eq!(page.threads[0].preview, "answer to hello");
 
-        // The host reports the thread as the index lists it: still fresh.
         let mut reported = page.threads[0].clone();
         reported.status = ThreadStatus::Idle;
-        storage.observe_event(&AgentEvent::ThreadUpdated {
+        reported.preview = "hello".into();
+        fixture.storage.observe_event(&AgentEvent::ThreadUpdated {
             thread: reported.clone(),
         });
-        let page = storage
-            .list(&params, &provider)
-            .ok_or("served")?
-            .map_err(|error| error.message)?;
-        assert_eq!(page.threads[0].status, ThreadStatus::Idle);
+        assert!(fixture.storage.list(&list, &provider).is_some());
 
-        // The host's first-prompt preview is not a listing difference.
-        let mut first_prompt = reported.clone();
-        first_prompt.preview = "hello".into();
-        storage.observe_event(&AgentEvent::ThreadUpdated {
-            thread: first_prompt,
-        });
-        assert!(storage.list(&params, &provider).is_some());
-
-        // A replacement Claude process keeps the same visible held status,
-        // but its generation change must still trigger the indexing pass
-        // that settles transcripts left by the previous process.
-        let mut held = reported.clone();
-        held.status = ThreadStatus::OpenElsewhere;
-        storage.observe_event(&AgentEvent::ThreadUpdated { thread: held });
-        assert!(storage.list(&params, &provider).is_none());
-
-        // A rename the index has not seen falls back to the host.
-        storage.freshness.set_catalog_current(true);
         reported.name = Some("Renamed".into());
-        storage.observe_event(&AgentEvent::ThreadUpdated { thread: reported });
-        assert!(storage.list(&params, &provider).is_none());
-
-        // A running turn also falls back.
-        storage.freshness.set_catalog_current(true);
-        storage.observe_event(&AgentEvent::TurnStarted {
-            app_thread_id: AppThreadId::from_static("terminal"),
-            turn: turn("terminal", "next", 20),
-        });
-        assert!(storage.list(&params, &provider).is_none());
+        fixture
+            .storage
+            .observe_event(&AgentEvent::ThreadUpdated { thread: reported });
+        assert!(fixture.storage.list(&list, &provider).is_none());
         Ok(())
-    }
-
-    #[test]
-    fn host_projected_threads_show_the_indexed_newest_message()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let storage = storage(directory.path())?;
-        let indexed = session_read("terminal", "terminal", 10, &["hello", "again"]);
-        storage.store.replace_session(&indexed)?;
-        let host_row = |id: &'static str, preview: &str| AgentThread {
-            app_thread_id: AppThreadId::from_static(id),
-            provider: ProviderId::from_static("claude"),
-            cwd: "/work".into(),
-            name: None,
-            preview: preview.into(),
-            created_at: 1,
-            updated_at: 1,
-            recency_at: None,
-            archived: false,
-            origin: agent_core::model::ThreadOrigin::External,
-            status: ThreadStatus::Active,
-            settings: agent_core::model::ThreadSettings {
-                model: "default".into(),
-                effort: None,
-                permission_profile: ":read-only".into(),
-                service_tier: None,
-            },
-            spawn: None,
-        };
-        let mut threads = vec![
-            host_row("terminal", "hello"),
-            host_row("fresh", "new prompt"),
-        ];
-        storage.overlay_previews(&mut threads);
-        assert_eq!(threads[0].preview, "answer to again");
-        assert_eq!(
-            threads[1].preview, "new prompt",
-            "a thread not indexed yet keeps the host's preview"
-        );
-        Ok(())
-    }
-
-    /// The Claude host's listing of this machine's store: every session,
-    /// interactive or not, as `nativeSession.list` returns it.
-    struct ListedSessions(Vec<agent_core::model::NativeSessionReadResult>);
-
-    #[async_trait::async_trait]
-    impl NativeSessions for ListedSessions {
-        async fn list(
-            &self,
-            _params: agent_core::model::NativeSessionListParams,
-        ) -> Result<agent_core::model::NativeSessionListResult, agent_core::provider::ProviderError>
-        {
-            Ok(agent_core::model::NativeSessionListResult {
-                next_cursor: None,
-                sessions: self.0.iter().map(|read| read.session.clone()).collect(),
-            })
-        }
-
-        async fn read(
-            &self,
-            session_id: &str,
-        ) -> Result<agent_core::model::NativeSessionReadResult, agent_core::provider::ProviderError>
-        {
-            self.0
-                .iter()
-                .find(|read| read.session.session_id == session_id)
-                .cloned()
-                .ok_or_else(|| {
-                    agent_core::provider::ProviderError::Rejected(RpcError {
-                        code: agent_core::model::ERROR_INVALID_REQUEST,
-                        message: format!("native session not found: {session_id}"),
-                        data: None,
-                    })
-                })
-        }
     }
 
     #[tokio::test]
-    async fn started_storage_lists_a_terminal_session_from_the_host_listing()
+    async fn started_storage_indexes_the_store_and_hides_programmatic_sessions()
     -> Result<(), Box<dyn std::error::Error>> {
-        use agent_core::model::{SortDirection, ThreadOrigin, ThreadSortKey};
-        let directory = tempfile::tempdir()?;
-        let storage = storage(directory.path())?;
-        let terminal = session_read("terminal", "terminal", 20, &["hello"]);
-        let mut programmatic = session_read("sdk", "sdk", 30, &["probe"]);
-        programmatic.session.interactive = false;
+        let fixture = Fixture::new()?;
+        let terminal = session_id(3);
+        fixture.files.exchange(&terminal, CWD, 1, &["hello"])?;
+        fixture.files.append(
+            &session_id(4),
+            "/other",
+            &[
+                serde_json::json!({"type": "user", "uuid": "q1", "parentUuid": null,
+                "timestamp": crate::test_support::timestamp(9), "entrypoint": "sdk-ts",
+                "cwd": "/other", "message": {"role": "user", "content": "Programmatic"}}),
+            ],
+        )?;
         let (_status, status) = watch::channel(ProviderStatus::Live);
-        storage.start_with(
-            Arc::new(ListedSessions(vec![terminal, programmatic])),
-            status,
-        );
-        let params = ThreadListParams {
+        fixture.storage.start_with(fixture.files.sessions(), status);
+        let list = ThreadListParams {
             archived: false,
             cwd: None,
             search_term: None,
@@ -732,7 +712,7 @@ mod tests {
         let provider = ProviderId::from_static("claude");
         let page = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                if let Some(page) = storage.list(&params, &provider) {
+                if let Some(page) = fixture.storage.list(&list, &provider) {
                     return page;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -745,11 +725,18 @@ mod tests {
             .iter()
             .map(|thread| thread.app_thread_id.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(listed, ["terminal"], "programmatic sessions stay hidden");
-        let thread = &page.threads[0];
-        assert_eq!(thread.origin, ThreadOrigin::External);
-        assert_eq!((thread.recency_at, thread.updated_at), (None, 20));
-        assert!(storage.owns(&AppThreadId::from_static("terminal")));
+        assert_eq!(
+            listed,
+            [terminal.as_str()],
+            "programmatic sessions stay hidden"
+        );
+        let turns = fixture
+            .storage
+            .turns(&params(&terminal))
+            .await
+            .ok_or("served")?
+            .map_err(|error| error.message)?;
+        assert_eq!(turns.turns.len(), 1);
         Ok(())
     }
 }

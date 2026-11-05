@@ -553,6 +553,7 @@ fn a_continue_resumes_the_interrupted_turn_as_a_turn_without_a_user_message() {
     // provenance line before it.
     let resume = json!({"type": "user", "uuid": "0199a3c4-8000-7000-8000-00000000000c",
         "timestamp": at(4), "parent_tool_use_id": null, "isMeta": true,
+        "origin": {"kind": "unclassified"},
         "message": {"role": "user", "content": [{"type": "text",
             "text": "[MESSAGE FROM NON-USER SOURCE - NOT USER INPUT]\nContinue from where you left off."}]}});
     let messages = [
@@ -600,6 +601,47 @@ fn a_continue_resumes_the_interrupted_turn_as_a_turn_without_a_user_message() {
         assert_eq!(turns[1].turn_id.as_str(), continued);
         assert_eq!(user_texts(&turns), ["question"]);
     }
+}
+
+#[test]
+fn a_steer_before_a_wake_turns_first_answer_stays_in_that_turn() {
+    let at = |second: u32| format!("2026-10-01T10:00:{second:02}.000Z");
+    let wake = json!({"type": "user", "uuid": "w1", "timestamp": at(1), "parent_tool_use_id": null,
+        "origin": {"kind": "task-notification"},
+        "message": {"role": "user", "content": "<task-notification>\n<task-id>t1</task-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>"}});
+    let steer = json!({"type": "user", "uuid": "s1", "timestamp": at(2), "parent_tool_use_id": null,
+        "message": {"role": "user", "content": [{"type": "text", "text": "waiting for approval"}]}});
+    let answer = json!({"type": "assistant", "uuid": "a1", "timestamp": at(3), "parent_tool_use_id": null,
+        "message": {"id": "msg_a1", "model": "claude-opus-5-5", "role": "assistant",
+            "content": [{"type": "text", "text": "Forwarded."}]}});
+    let turn_id = "0199a3c4-8000-7000-8000-00000000000d";
+    let record = TurnRecord {
+        anchors: vec!["s1".to_owned(), "a1".to_owned()],
+        completed_at: None,
+        origin: TurnOrigin::Provider,
+        outcome: TurnOutcomeRecord::Completed,
+        prompts: vec![PromptRecord {
+            client_message_id: None,
+            role: PromptRole::Steer,
+            uuid: Some("s1".to_owned()),
+        }],
+        started_at: 1_791_542_401,
+        turn_id: turn_id.to_owned(),
+        usage: None,
+    };
+    let turns = reconstruct_turns(&[wake, steer, answer], &[record], &context());
+    let ids = turns
+        .iter()
+        .map(|turn| turn.turn_id.as_str().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, [turn_id]);
+    assert_eq!(
+        types(&turns[0])
+            .into_iter()
+            .filter(|kind| *kind != "reasoning")
+            .collect::<Vec<_>>(),
+        ["taskNotification", "userMessage", "agentMessage"]
+    );
 }
 
 fn fixture_subagent(name: &str, agent_id: &str) -> Result<Vec<Value>, Box<dyn std::error::Error>> {

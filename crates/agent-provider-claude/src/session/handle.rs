@@ -15,7 +15,7 @@ use super::{
     turn::{SteerMessage, TurnRequest},
 };
 use crate::{background_tasks::LiveTaskState, state::thread_state::ThreadState};
-use agent_core::model::BackgroundCommandState;
+use agent_core::model::{BackgroundCommandState, RunningBackgroundTask};
 
 /// Whether a turn runs and whether a query is open.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -73,6 +73,9 @@ pub(super) enum Command {
     },
     BackgroundCommands {
         reply: oneshot::Sender<Option<HashMap<String, BackgroundCommandState>>>,
+    },
+    RunningBackgroundTasks {
+        reply: oneshot::Sender<Vec<RunningBackgroundTask>>,
     },
     Dispose {
         reply: oneshot::Sender<()>,
@@ -250,6 +253,19 @@ impl SessionHandle {
         &self,
     ) -> Result<Option<HashMap<String, BackgroundCommandState>>, SessionGone> {
         self.ask(|reply| Command::BackgroundCommands { reply })
+            .await
+    }
+
+    /// The background commands the open query launched that still run;
+    /// empty without an open query.
+    ///
+    /// # Errors
+    ///
+    /// The session ended.
+    pub async fn running_background_tasks(
+        &self,
+    ) -> Result<Vec<RunningBackgroundTask>, SessionGone> {
+        self.ask(|reply| Command::RunningBackgroundTasks { reply })
             .await
     }
 

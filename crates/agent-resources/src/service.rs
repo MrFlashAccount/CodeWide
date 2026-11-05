@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use workspace_io::WorkspaceIo;
 
 use async_trait::async_trait;
 use companion_host::{
@@ -327,7 +328,7 @@ impl<S: ProjectionSource> ThreadResources<S> {
         let mut changes =
             futures_util::stream::iter(selected_data.changes.values().cloned().enumerate())
                 .map(|(index, change)| async move {
-                    let availability = match tokio::fs::metadata(&change.path).await {
+                    let availability = match WorkspaceIo::shared().metadata(&change.path).await {
                         Ok(metadata) if metadata.is_file() => "available",
                         Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound) => {
                             "deleted"
@@ -506,7 +507,12 @@ impl<S: ProjectionSource> ThreadResources<S> {
         };
         // Live attachments are usable as soon as their item is observed; the
         // UI must not need to open the resource sheet first to grant access.
-        self.files.observe_preview_paths(preview_paths).await;
+        // The paths are resolved off the caller: this runs in the live event
+        // loop of every thread, which must not wait on one thread's mount.
+        if !preview_paths.is_empty() {
+            let files = self.files.clone();
+            tokio::spawn(async move { files.observe_preview_paths(preview_paths).await });
+        }
         if let Some(turn_id) = completed_turn {
             self.schedule_completed_turn_eviction(thread_id.to_owned(), turn_id);
         }
@@ -674,7 +680,7 @@ pub(crate) async fn thread_resources_from_vcs(
         .map(|(index, file)| {
             let snapshot_id = snapshot_id.clone();
             async move {
-                let availability = match tokio::fs::metadata(&file.path).await {
+                let availability = match WorkspaceIo::shared().metadata(&file.path).await {
                     Ok(metadata) if metadata.is_file() => "available",
                     Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound) => "deleted",
                     Ok(_) | Err(_) => "unavailable",

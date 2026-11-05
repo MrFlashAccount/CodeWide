@@ -30,6 +30,7 @@ fn round_trip_result(operation: &str, result: &Value) -> Result<Value, String> {
         "thread.update" => round_trip::<ThreadUpdateResult>(result),
         "thread.owns" => round_trip::<ThreadOwnsResult>(result),
         "thread.backgroundTask.read" => round_trip::<BackgroundTaskReadResult>(result),
+        "thread.backgroundTasks.list" => round_trip::<BackgroundTaskListResult>(result),
         "thread.compact" | "turn.interrupt" | "request.respond" => round_trip::<Empty>(result),
         "turn.start" | "turn.continue" => round_trip::<TurnStartResult>(result),
         "turn.steer" => round_trip::<TurnSteerResult>(result),

@@ -93,6 +93,7 @@ it("opens exact command output without offering a competing inline disclosure", 
       references: [],
       threadId: "thread",
       command: "pnpm test",
+      commandReference: null,
       turnId: "turn",
     },
   ]);
@@ -545,6 +546,7 @@ it("shows command output that the Companion moved into private content", async (
         references: [reference],
         threadId: "thread",
         command: "pnpm test",
+        commandReference: null,
         turnId: "turn",
       }}
       resourceKey="server:thread:item-command"
@@ -583,6 +585,7 @@ it("reads the output it was opened with when the thread holds the item no longer
         references: [outputReference],
         threadId: "thread:agent:a1",
         command: "pnpm test",
+        commandReference: null,
         turnId: "turn",
       }}
       resourceKey="server:thread:agent:a1:item-command"
@@ -629,4 +632,90 @@ it("opens an unclassified tool result in the generic content viewer", () => {
   expect(opened).toHaveLength(1);
   expect(opened[0]).toMatchObject({ kind: "inline", presentation: "text", title: "Custom tool" });
   expect(opened[0]?.kind === "inline" ? opened[0].text : "").toContain('"contentItems"');
+});
+
+it("reads a command the Companion moved into private content in place of its preview", async () => {
+  const commandReference = {
+    byteLength: 40,
+    contentType: "text/plain; charset=utf-8",
+    encoding: "utf-8",
+    id: "c".repeat(64),
+  };
+  const whole = "pnpm test --filter one --filter two\nexit";
+  mockReadCommandOutput.mockImplementation(async (request: { references: unknown[] }) =>
+    request.references[0] === commandReference
+      ? { hasMore: false, text: whole }
+      : { hasMore: false, text: "ok\n" },
+  );
+  const view = render(
+    <CommandItemOutputViewer
+      current={null}
+      onClose={jest.fn()}
+      request={{
+        command: "pnpm test --filter one",
+        commandReference,
+        fallbackOutput: "ok\n",
+        getTransferAccess: jest.fn(),
+        itemId: "item-command",
+        kind: "command",
+        references: [],
+        threadId: "thread",
+        turnId: "turn",
+      }}
+      resourceKey="server:thread:item-command"
+    />,
+  );
+
+  await view.findByText(whole);
+  expect(within(view.getByTestId("command-output-command")).getByText(whole)).toBeOnTheScreen();
+  expect(mockReadCommandOutput).toHaveBeenCalledWith(
+    expect.objectContaining({ byteLimit: 40, references: [commandReference] }),
+    expect.anything(),
+  );
+});
+
+it("hands the command's reference to its output screen instead of a full-content button", () => {
+  const commandReference = {
+    byteLength: 20_000,
+    contentType: "text/plain; charset=utf-8",
+    encoding: "utf-8",
+    id: "c".repeat(64),
+  };
+  const opened: LargeContentRouteRequest[] = [];
+  const raw = {
+    aggregatedOutput: "",
+    codewideContent: {
+      fields: { "/aggregatedOutput": outputReference, "/command": commandReference },
+      version: 1,
+    },
+    command: "pnpm test",
+    id: "item-command",
+  };
+  const block: RenderBlock = {
+    body: "",
+    collapsible: true,
+    content: { fields: raw.codewideContent.fields, whole: null },
+    durationMs: null,
+    key: "command:item-command",
+    kind: "commandExecution",
+    raw,
+    status: "completed",
+    title: "pnpm test",
+    tone: "info",
+  };
+  const view = render(
+    <TurnTargetContext.Provider value={target}>
+      <LargeContentViewerContext.Provider
+        value={(request) => {
+          opened.push(request);
+        }}
+      >
+        <CommandExecutionProtocolBlock block={block} />
+      </LargeContentViewerContext.Provider>
+    </TurnTargetContext.Provider>,
+  );
+
+  expect(view.queryByText(/^Open (full content|command)$/)).toBeNull();
+  fireEvent.press(view.getByLabelText("Open output for pnpm test"));
+  expect(opened).toEqual([expect.objectContaining({ commandReference })]);
 });

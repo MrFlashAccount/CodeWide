@@ -1,6 +1,7 @@
 /** V1 turnContexts owner, extracted without changing interaction or resource lifetime. */
 import type { ActivityMetrics, TurnUsageProjection } from "@codewide/sync-client";
 import { createContext } from "react";
+import type { RunningBackgroundTasksQuery } from "../../../data/runningBackgroundTaskResource";
 
 /**
  * Where a tool card draws. In a bubble it is the one-line row of the step, never
@@ -54,3 +55,18 @@ export type OpenableBackgroundTask = { readonly name: string; readonly taskId: s
 export const BackgroundTaskContext = createContext<
   ((task: OpenableBackgroundTask) => Promise<void>) | null
 >(null);
+
+/**
+ * The query of the shown thread's running background commands, for the
+ * quick-access panel at the bottom of the conversation; `null` when the
+ * thread cannot list them.
+ */
+export const RunningBackgroundTasksContext = createContext<RunningBackgroundTasksQuery | null>(
+  null,
+);
+
+/**
+ * Opens the thread's background terminals (list and stop); `null` where the
+ * thread has none to open.
+ */
+export const BackgroundTerminalsContext = createContext<(() => void) | null>(null);

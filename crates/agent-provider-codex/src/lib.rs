@@ -47,13 +47,14 @@ use std::sync::{Arc, RwLock, Weak};
 
 use agent_core::{
     model::{
-        AgentEvent, AgentThread, AppThreadId, Capability, CapabilityInvokeParams, CapabilitySet,
-        ClientMessageId, ModelCatalog, PermissionProfileCatalog, Provenance, ProviderDescriptor,
-        ProviderId, ProviderThreadRef, RequestRespondParams, RpcError, RuntimeResponse,
-        StartWhileActiveMode, ThreadCreateParams, ThreadListParams, ThreadListResult,
-        ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams,
-        ThreadUpdateResult, TurnContinueParams, TurnId, TurnInterruptParams, TurnStartParams,
-        TurnStartResult, TurnSteerParams, TurnSteerResult, thread_not_found_message,
+        AgentEvent, AgentThread, AppThreadId, BackgroundTaskListParams, BackgroundTaskListResult,
+        Capability, CapabilityInvokeParams, CapabilitySet, ClientMessageId, ModelCatalog,
+        PermissionProfileCatalog, Provenance, ProviderDescriptor, ProviderId, ProviderThreadRef,
+        RequestRespondParams, RpcError, RuntimeResponse, StartWhileActiveMode, ThreadCreateParams,
+        ThreadListParams, ThreadListResult, ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult,
+        ThreadUpdateParams, ThreadUpdateResult, TurnContinueParams, TurnId, TurnInterruptParams,
+        TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+        thread_not_found_message,
     },
     naming::{CatalogNames, ModelNaming},
     provider::{
@@ -78,6 +79,9 @@ use crate::{
 
 pub const PROVIDER_ID: &str = "codex";
 const EVENT_CHANNEL_CAPACITY: usize = 2_048;
+/// Pages of `thread/backgroundTerminals/list` one running list reads: a
+/// thread keeps few terminals, so the bound only stops a cursor loop.
+const BACKGROUND_TERMINAL_PAGES: usize = 8;
 
 /// The Codex column of the capability table.
 pub const CAPABILITIES: CapabilitySet = CapabilitySet {
@@ -771,6 +775,34 @@ impl AgentProvider for CodexProvider {
             }
         };
         self.respond(response).await
+    }
+
+    async fn thread_background_tasks(
+        &self,
+        params: BackgroundTaskListParams,
+    ) -> Result<BackgroundTaskListResult, ProviderError> {
+        let mut tasks = Vec::new();
+        let mut cursor = Value::Null;
+        for _ in 0..BACKGROUND_TERMINAL_PAGES {
+            let page = self
+                .rpc(
+                    "thread/backgroundTerminals/list",
+                    json!({"threadId": params.app_thread_id.as_str(), "cursor": cursor}),
+                )
+                .await?;
+            tasks.extend(
+                page.get("data")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(mapping::background_terminal),
+            );
+            cursor = page.get("nextCursor").cloned().unwrap_or(Value::Null);
+            if !cursor.is_string() {
+                break;
+            }
+        }
+        Ok(BackgroundTaskListResult { tasks })
     }
 
     async fn capability_invoke(

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::sync::{Mutex, watch};
+use workspace_io::WorkspaceIo;
 
 use crate::vcs::{VcsError, VcsService, WorkspaceCreateResult};
 
@@ -446,11 +447,10 @@ impl WorkspaceAdmission {
         if !requested.is_absolute() {
             return Err(rejected());
         }
-        let canonical = tokio::fs::canonicalize(requested)
-            .await
-            .map_err(|_| rejected())?;
+        let io = WorkspaceIo::shared();
+        let canonical = io.canonicalize(requested).await.map_err(|_| rejected())?;
         for root in self.projects.project_roots().await {
-            if tokio::fs::canonicalize(&root).await.ok().as_deref() == Some(canonical.as_path()) {
+            if io.canonicalize(&root).await.ok().as_deref() == Some(canonical.as_path()) {
                 return Ok(canonical.display().to_string());
             }
         }

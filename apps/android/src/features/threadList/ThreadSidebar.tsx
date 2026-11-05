@@ -3,7 +3,8 @@ import { ThreadSidebarHeader } from "./ThreadSidebarHeader";
 import { useThreadListViewportPaging } from "./threadListViewportPaging";
 import { LegendList } from "@legendapp/list/react-native";
 import { useState } from "react";
-import { Animated, View } from "react-native";
+import { useEvent } from "../../react/useEvent";
+import { Animated, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { GestureDetector } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
 import { usePerformanceExperiment } from "../../data/performance-experiments";
@@ -95,6 +96,10 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     project === null ? onLoadMore : projectSource.loadMore,
   );
   const pullSearch = useThreadListPullGesture(props.onOpenSearch, initialOffset, listKey);
+  const handleListScroll = useEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    pullSearch.onScroll(event);
+    scroll.onScroll();
+  });
 
   return (
     <View style={[styles.threadSidebar, { width }]} testID="thread-list-pane">
@@ -150,7 +155,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
                   onLayout={paging.onLayout}
                   onMomentumScrollBegin={scroll.onMomentumScrollBegin}
                   onMomentumScrollEnd={scroll.onMomentumScrollEnd}
-                  onScroll={pullSearch.onScroll}
+                  onScroll={handleListScroll}
                   onScrollBeginDrag={scroll.onScrollBeginDrag}
                   onScrollEndDrag={scroll.onScrollEndDrag}
                   recycleItems

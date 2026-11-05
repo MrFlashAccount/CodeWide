@@ -7,6 +7,9 @@ use agent_core::model::{
 };
 use serde_json::{Value, json};
 
+use agent_core::model::{ERROR_INVALID_REQUEST, NativeSessionReadResult};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
 use super::*;
 
 const SESSION: &str = "11111111-1111-4111-8111-111111111111";
@@ -805,7 +808,9 @@ async fn a_nested_background_agent_settles_on_a_report_in_any_transcript()
             ("Inner two".to_owned(), SubagentStatus::Completed),
         ]
     );
-    let running = crate::subagents::index(&read)
+    let running = sessions(root.path())
+        .indexed_subagents(SESSION)
+        .await?
         .into_iter()
         .filter(|subagent| subagent.running)
         .map(|subagent| subagent.agent_id)
@@ -832,8 +837,9 @@ async fn a_report_off_the_active_branch_still_settles_its_nested_agent()
     stored.extend(rewound.iter().map(row));
     std::fs::write(&main, stored)?;
 
-    let read = sessions(root.path()).read(SESSION).await?;
-    let running = crate::subagents::index(&read)
+    let running = sessions(root.path())
+        .indexed_subagents(SESSION)
+        .await?
         .into_iter()
         .filter(|subagent| subagent.running)
         .map(|subagent| subagent.agent_id)
@@ -978,7 +984,9 @@ async fn agent_state(root: &Path) -> Result<(SubagentStatus, bool), Box<dyn std:
             _ => None,
         })
         .ok_or("spawn item")?;
-    let running = crate::subagents::index(&read)
+    let running = sessions(root)
+        .indexed_subagents(SESSION)
+        .await?
         .iter()
         .any(|subagent| subagent.agent_id == "agent1" && subagent.running);
     Ok((status, running))

@@ -19,6 +19,7 @@ import {
   workspaceThreadResources,
   workspaceThreadSync,
 } from "../../data/workspace-runtime";
+import { runningBackgroundTaskResource } from "../../data/backgroundTaskRuntime";
 import { forgeResources, reportDroppedForgeAction, reviewResources } from "../../data/forgeRuntime";
 import { createAccountsWorkspaceAdapter } from "../accounts/workspaceAdapter";
 import { createComposerWorkspaceAdapter } from "../composer/workspaceAdapter";
@@ -153,6 +154,7 @@ function createWorkspaceFeatures() {
       return readBackgroundTaskOutput(session, request);
     },
     refreshSubagents: workspaceCatalog.refreshSubagents,
+    runningBackgroundTasks: runningBackgroundTaskResource.query,
   };
   const attachments = { transferAccess: transferAccess };
   const changes = {

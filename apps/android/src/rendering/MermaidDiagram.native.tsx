@@ -805,9 +805,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(35, 39, 44, .88)",
     borderRadius: radii.medium,
     flex: 1,
+    // The title bubble matches the round buttons beside it.
+    height: touchTarget,
+    justifyContent: "center",
     minWidth: 0,
     paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xxs,
   },
   fullscreenTitleText: {
     color: colors.text,

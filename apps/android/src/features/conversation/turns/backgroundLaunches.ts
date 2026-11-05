@@ -49,22 +49,36 @@ export function turnBackgroundLaunches(turn: Turn): readonly BackgroundLaunchEnt
       item.type === "commandExecution" ? [[item.id, item.command] as const] : [],
     ),
   );
-  const launches = turnBackgroundCommands(turn).map(({ itemId, task }): BackgroundLaunchEntry => ({
+  const launches = turnBackgroundCommands(turn).map(({ itemId, task }) =>
+    backgroundLaunchEntry(itemId, commands.get(itemId) ?? "", task),
+  );
+  const value = launches.length === 0 ? NO_LAUNCHES : launches;
+  launchCache.set(turn, value);
+  return value;
+}
+
+/**
+ * One background command as a task-line pill: named by the agent's
+ * description, else by its shortened command.
+ */
+export function backgroundLaunchEntry(
+  itemId: string,
+  command: string,
+  task: BackgroundCommandProjection,
+): BackgroundLaunchEntry {
+  return {
     agentThreadId: null,
     delivery: "midTurn",
     durationMs: runDurationMs(task),
     id: itemId,
     kind: "command",
     launch: task,
-    name: task.description ?? commandTitle(commands.get(itemId) ?? ""),
+    name: task.description ?? commandTitle(command),
     result: null,
     status: task.status,
     taskId: task.taskId,
     toolUses: null,
-  }));
-  const value = launches.length === 0 ? NO_LAUNCHES : launches;
-  launchCache.set(turn, value);
-  return value;
+  };
 }
 
 /** The task ids of every background command `turns` started. */
@@ -103,7 +117,8 @@ function runDurationMs(task: BackgroundCommandProjection): number | null {
   return Math.max(0, task.endedAt - task.startedAt) * MS_PER_SECOND;
 }
 
-function commandTitle(command: string): string {
+/** A command's first line, shortened, as the name of a command without a description. */
+export function commandTitle(command: string): string {
   const line = command.trim().split("\n")[0] ?? "";
   if (line === "") {
     return "Background command";

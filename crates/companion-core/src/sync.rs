@@ -1565,7 +1565,11 @@ impl SyncHub {
             let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
             return provider_rpc::handle_neutral_fork(self, socket, &target, &params, id).await;
         }
-        if target.native().is_none() {
+        // The running list is neutral on every provider: a native one answers
+        // it through the trait, not its pass-through.
+        if target.native().is_none()
+            || method == crate::agent::client_wire::decode::BACKGROUND_TASKS_LIST_METHOD
+        {
             return provider_rpc::handle_neutral_thread_rpc(
                 self,
                 socket,
@@ -3289,6 +3293,7 @@ fn rpc_is_known_read(method: &str) -> bool {
             | "companion/thread/history/after"
             | "companion/thread/history/before"
             | "companion/thread/backgroundTask/read"
+            | "companion/thread/backgroundTasks/list"
             | "companion/threadSubagents/read"
             | "config/read"
             | "fs/readDirectory"
@@ -3335,6 +3340,7 @@ fn rpc_requires_ordered_lane(method: &str) -> bool {
                 "companion/accountPool/list"
                     | "companion/project/list"
                     | "companion/thread/backgroundTask/read"
+                    | "companion/thread/backgroundTasks/list"
                     | "companion/queue/list"
                     | "companion/threadAttachments/read"
                     | "companion/threadChange/read"

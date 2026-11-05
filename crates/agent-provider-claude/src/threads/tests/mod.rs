@@ -212,9 +212,11 @@ impl Query for FakeQuery {
         let mut row = json!({"type": "user", "uuid": offer.uuid, "sessionId": self.session_id,
             "cwd": self.options.cwd.to_string_lossy(), "timestamp": "2026-10-01T10:00:00.000Z",
             "entrypoint": "cli", "message": {"role": "user", "content": offer.content}});
-        // Claude stores an adapter message as a meta message.
+        // Claude stores an adapter message as a meta message with a
+        // non-person origin.
         if offer.author == Author::Adapter {
             row["isMeta"] = json!(true);
+            row["origin"] = json!({"kind": "unclassified"});
         }
         self.persist(row);
         lock(&self.offers).push(offer);
@@ -391,6 +393,8 @@ pub(super) struct Harness {
     pub events: Arc<Mutex<Vec<AgentEvent>>>,
     pub root: Arc<tempfile::TempDir>,
     collector: tokio::task::JoinHandle<()>,
+    /// The index the service reads history from (it holds it weakly).
+    _history_index: Arc<crate::index::sessions::SessionIndex>,
 }
 
 impl Harness {
@@ -455,6 +459,7 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
     let clock = Arc::new(AtomicI64::new(1_760_000_000_000));
     let ticking = options.ticking_clock;
     let ids = AtomicU64::new(0);
+    let index_projects = projects.clone();
     let (service, mut outputs) = ThreadService::new(ServiceDeps {
         projects_root: projects,
         state_directory: root.path().join("journal"),
@@ -484,6 +489,14 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
         open_elsewhere_poll: options.poll,
         model_id_for: options.model_id_for,
     })?;
+    let history_index = Arc::new(crate::index::sessions::SessionIndex::in_memory(
+        crate::native::LocalSessions::new(
+            index_projects,
+            root.path().join("journal"),
+            service.session_activity(),
+        ),
+    )?);
+    service.attach_index(&history_index);
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
     let collector = tokio::spawn(async move {
@@ -508,6 +521,7 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
         events,
         root,
         collector,
+        _history_index: history_index,
     })
 }
 

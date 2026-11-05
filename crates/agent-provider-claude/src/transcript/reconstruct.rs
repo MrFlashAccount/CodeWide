@@ -52,7 +52,7 @@ pub struct HistoryContext {
     pub cwd: String,
 }
 
-fn segment_hints(records: &[TurnRecord]) -> SegmentHints {
+pub(crate) fn segment_hints(records: &[TurnRecord]) -> SegmentHints {
     let mut hints = SegmentHints::default();
     for record in records {
         if let Some(start) = record.start_anchor() {
@@ -309,7 +309,7 @@ fn replay_entries(
     replay
 }
 
-fn replay_segment(
+pub(crate) fn replay_segment(
     segment: &HistorySegment,
     records: &[TurnRecord],
     context: &HistoryContext,
@@ -322,7 +322,10 @@ fn replay_segment(
 }
 
 /// The last turn of a sub-agent that still works: open items stay open.
-fn replay_running_segment(segment: &HistorySegment, context: &HistoryContext) -> AgentTurn {
+pub(crate) fn replay_running_segment(
+    segment: &HistorySegment,
+    context: &HistoryContext,
+) -> AgentTurn {
     replay_entries(segment, None, context).snapshot()
 }
 
@@ -531,7 +534,9 @@ pub fn reconstruct_turns(
     with_background_command_runs(with_subagent_runs(turns, &entries), &entries)
 }
 
-/// Where one rebuilt turn ends in the stored messages.
+/// Where one rebuilt turn ends in the stored messages (tests: the index
+/// reads it per turn, `index::project::read_turn_end`).
+#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TurnEnd {
     /// Uuid of the turn's last stored top-level message.
@@ -539,9 +544,9 @@ pub struct TurnEnd {
     pub turn_id: TurnId,
 }
 
-/// The turns of a thread in order, each with its last stored message: the
-/// point a fork through that turn copies the session to. Same segmentation
-/// and identities as [`reconstruct_turns`].
+/// The turns of a thread in order, each with its last stored message; same
+/// segmentation and identities as [`reconstruct_turns`].
+#[cfg(test)]
 #[must_use]
 pub fn turn_ends(messages: &[&JsonRecord], records: &[TurnRecord]) -> Vec<TurnEnd> {
     let hints = segment_hints(records);
@@ -602,7 +607,7 @@ pub fn reconstruct_subagent_turns(
 /// A sub-agent that no longer runs answers its spawner with a final message
 /// before it ends. A last turn without one was cut off (its process ended
 /// mid-step), so it did not complete.
-fn with_cut_off_last_turn_interrupted(mut turns: Vec<AgentTurn>) -> Vec<AgentTurn> {
+pub(crate) fn with_cut_off_last_turn_interrupted(mut turns: Vec<AgentTurn>) -> Vec<AgentTurn> {
     if let Some(last) = turns.last_mut()
         && last.status == TurnStatus::Completed
         && !last.items.iter().any(|item| {

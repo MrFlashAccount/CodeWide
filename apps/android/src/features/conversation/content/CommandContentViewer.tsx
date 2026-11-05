@@ -1,6 +1,10 @@
 import { useSelector } from "@legendapp/state/react";
 import type { ThreadItem } from "@codewide/codex-protocol/v0.155.1/v2";
-import { commandOutputReferences, type CommandOutputReference } from "@codewide/sync-client";
+import {
+  commandOutputField,
+  commandOutputReferences,
+  type CommandOutputReference,
+} from "@codewide/sync-client";
 import type { GetTransferAccess } from "../../../data/private-transfer";
 import type { ThreadDetailDatabase } from "../../../data/thread-detail-database";
 import {
@@ -11,7 +15,11 @@ import {
   followCommandOutput,
   type FollowedCommandOutput,
 } from "../../../rendering/commandOutputFollow";
-import { commandOutputRevision } from "../../../rendering/command-output-resource";
+import {
+  commandOutputRevision,
+  readCommandOutput,
+  type CommandOutputPage,
+} from "../../../rendering/command-output-resource";
 import { usePrivateFileAccessScope } from "../../../rendering/use-private-image-uri";
 import type { CommandContentRouteRequest } from "../../../services/content/contentRouteSession";
 import { formatByteSize } from "../../../ui/number-format";
@@ -69,9 +77,13 @@ export function CommandItemOutputViewer({
   const resource = useReferencedCommandOutput(references, request.getTransferAccess, resourceKey);
   const output = commandOutputText(resource.value, current, request.fallbackOutput);
   const facts = commandFacts(current, request.command);
+  const commandReference =
+    current === null ? request.commandReference : commandOutputField(current, "/command");
+  const whole = useReferencedCommand(commandReference, request.getTransferAccess, resourceKey);
   return (
     <CommandOutputScreen
-      command={facts.command}
+      command={whole.value?.text ?? facts.command}
+      commandLoading={whole.status === "loading"}
       details={commandOutputDetails(facts.exitCode, outputByteLength(output, references))}
       error={resource.error}
       loading={output.text === "" && resource.value === null && resource.status === "loading"}
@@ -192,6 +204,33 @@ function useReferencedCommandOutput(
         throw new Error("Command output connection is unavailable");
       }
       return followCommandOutput({ getTransferAccess, key, publish, references, scope, signal });
+    },
+    (value) => value.text.length * UTF16_BYTES_PER_UNIT,
+    true,
+  );
+}
+
+/**
+ * The whole command when the Companion externalized it: the item keeps only a
+ * bounded preview, which the screen shows until the read completes.
+ */
+function useReferencedCommand(
+  reference: CommandOutputReference | null,
+  getTransferAccess: GetTransferAccess | null,
+  resourceKey: string,
+): AsyncResourceSnapshot<CommandOutputPage> {
+  const scope = usePrivateFileAccessScope();
+  return useEphemeralAsyncResource<CommandOutputPage>(
+    reference === null ? null : `command-viewer-command:${scope}:${resourceKey}`,
+    reference?.id ?? "",
+    async (_publish, signal) => {
+      if (getTransferAccess === null || reference === null) {
+        throw new Error("Command connection is unavailable");
+      }
+      return readCommandOutput(
+        { byteLimit: reference.byteLength, getTransferAccess, references: [reference], scope },
+        signal,
+      );
     },
     (value) => value.text.length * UTF16_BYTES_PER_UNIT,
     true,

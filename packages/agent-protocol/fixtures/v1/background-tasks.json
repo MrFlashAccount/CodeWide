@@ -114,6 +114,37 @@
     {
       "respondsTo": null,
       "message": {
+        "id": "codewide-stdio:39",
+        "method": "thread.backgroundTasks.list",
+        "params": { "appThreadId": "0199a3c4-7a8e-7b2c-9d1e-2f3a4b5c6d7e" }
+      }
+    },
+    {
+      "respondsTo": "thread.backgroundTasks.list",
+      "message": {
+        "id": "codewide-stdio:39",
+        "result": {
+          "tasks": [
+            {
+              "kind": "task",
+              "turnId": "0199a3c4-8000-7000-8000-000000000001",
+              "itemId": "toolu_01bg",
+              "command": "npm test",
+              "background": { "taskId": "bd3cb8oli", "startedAt": 1760000100, "description": "Run the test suite", "status": "running" }
+            },
+            {
+              "kind": "terminal",
+              "itemId": "call_01exec",
+              "processId": "1042",
+              "command": "pnpm dev"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "respondsTo": null,
+      "message": {
         "id": "codewide-stdio:40",
         "method": "thread.backgroundTask.read",
         "params": {

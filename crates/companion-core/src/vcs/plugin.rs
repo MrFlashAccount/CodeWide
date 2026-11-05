@@ -11,6 +11,7 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout, Command},
     time::timeout,
 };
+use workspace_io::WorkspaceIo;
 
 use super::{
     CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, INSPECT_CAPABILITY, VcsDiff,
@@ -55,7 +56,7 @@ pub async fn inspect(
     workspace: &Path,
     scope: VcsScope,
 ) -> Result<(), PluginCallError> {
-    let mut session = PluginSession::spawn(plugin, workspace)?;
+    let mut session = PluginSession::spawn(plugin, workspace).await?;
     let initialized = session
         .request(
             1,
@@ -107,7 +108,7 @@ pub async fn changes(
     workspace: &Path,
     scope: VcsScope,
 ) -> Result<VcsSnapshot, PluginCallError> {
-    let mut session = PluginSession::spawn(plugin, workspace)?;
+    let mut session = PluginSession::spawn(plugin, workspace).await?;
     let initialized = session
         .request(
             1,
@@ -163,7 +164,7 @@ pub async fn diff(
     snapshot_id: &str,
     scope: VcsScope,
 ) -> Result<VcsDiff, PluginCallError> {
-    let mut session = PluginSession::spawn(plugin, workspace)?;
+    let mut session = PluginSession::spawn(plugin, workspace).await?;
     let initialized = session
         .request(
             1,
@@ -230,7 +231,7 @@ pub async fn diff_page(
     offset: usize,
     limit: usize,
 ) -> Result<VcsDiffPage, PluginCallError> {
-    let mut session = PluginSession::spawn(plugin, workspace)?;
+    let mut session = PluginSession::spawn(plugin, workspace).await?;
     let initialized = session
         .request(
             1,
@@ -299,7 +300,7 @@ pub async fn workspace_support(
     plugin: &VcsPluginConfig,
     workspace: &Path,
 ) -> Result<WorkspaceSupport, PluginCallError> {
-    let mut session = PluginSession::spawn(plugin, workspace)?;
+    let mut session = PluginSession::spawn(plugin, workspace).await?;
     let initialized = session
         .request(
             1,
@@ -333,7 +334,7 @@ pub async fn workspace_create(
     storage_root: &Path,
     progress: tokio::sync::mpsc::UnboundedSender<WorkspaceCreateResult>,
 ) -> Result<WorkspaceCreateResult, PluginCallError> {
-    let mut session = PluginSession::spawn(plugin, workspace)?;
+    let mut session = PluginSession::spawn(plugin, workspace).await?;
     let initialized = session
         .request(
             1,
@@ -476,19 +477,25 @@ pub(super) struct PluginSession {
 }
 
 impl PluginSession {
-    pub(super) fn spawn(
+    /// Starts the plugin in `workspace`. Spawning waits until the child has
+    /// entered the directory, so it runs through [`WorkspaceIo`]: a hung
+    /// workspace mount fails this call instead of blocking a runtime worker.
+    pub(super) async fn spawn(
         plugin: &VcsPluginConfig,
         workspace: &Path,
     ) -> Result<Self, PluginCallError> {
-        let mut child = Command::new(&plugin.executable)
+        let mut command = Command::new(&plugin.executable);
+        command
             .args(&plugin.args)
             .current_dir(workspace)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(PluginCallError::Start)?;
+            .kill_on_drop(true);
+        let mut child = WorkspaceIo::shared()
+            .run(workspace, move || command.spawn())
+            .await
+            .map_err(|error| PluginCallError::Start(error.into()))?;
         let stdin = child
             .stdin
             .take()
@@ -573,7 +580,9 @@ impl PluginSession {
             .is_err()
         {
             let _ = self.child.start_kill();
-            let _ = self.child.wait().await;
+            // A child stuck in an uninterruptible syscall cannot be reaped
+            // until it returns; `kill_on_drop` finishes the job later.
+            let _ = timeout(Duration::from_secs(1), self.child.wait()).await;
         }
     }
 }

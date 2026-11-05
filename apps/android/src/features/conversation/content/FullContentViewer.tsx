@@ -109,12 +109,12 @@ export function LargeContentViewerSession({
 export function LargeContentControls({
   block,
   getTransferAccess,
-  omitCommandOutput = false,
+  omitCommandFields = false,
 }: {
   block: RenderBlock;
   getTransferAccess?: (forceRefresh?: boolean) => Promise<TransferAccess>;
-  /** Leaves out the command output, which its own command output screen reads whole. */
-  omitCommandOutput?: boolean;
+  /** Leaves out the command and its output, which the command output screen reads whole. */
+  omitCommandFields?: boolean;
 }) {
   const open = useContext(LargeContentViewerContext);
   const references = (() => {
@@ -122,7 +122,7 @@ export function LargeContentControls({
       return [];
     }
     const entries = Object.entries(block.content.fields).filter(
-      ([pointer]) => !omitCommandOutput || !isCommandOutputPointer(pointer),
+      ([pointer]) => !omitCommandFields || !isCommandScreenPointer(pointer),
     );
     if (block.content.whole !== null) {
       entries.push(["/", block.content.whole]);
@@ -178,6 +178,11 @@ function largeContentPresentation(
     return "terminal";
   }
   return "text";
+}
+
+/** A field the command output screen shows whole: the command or its output. */
+function isCommandScreenPointer(pointer: string): boolean {
+  return pointer === "/command" || isCommandOutputPointer(pointer);
 }
 
 function isCommandOutputPointer(pointer: string): boolean {

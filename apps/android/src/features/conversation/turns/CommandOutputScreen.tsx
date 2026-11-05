@@ -1,12 +1,15 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { setStringAsync } from "expo-clipboard";
-import { useRef, useState, type ReactElement, type RefObject } from "react";
+import { useId, useRef, useState, type ReactElement, type RefObject } from "react";
 import {
   Pressable,
+  ScrollView,
   View,
+  useWindowDimensions,
   type TextInput as NativeTextInput,
   type TextLayoutEvent,
 } from "react-native";
+import Svg, { LinearGradient, Rect, Stop } from "react-native-svg";
 import { useEvent } from "../../../react/useEvent";
 import { stripTerminalControlSequences } from "../../../rendering/native-code-block";
 import { colors, controlHitSlop, iconSize } from "../../../theme";
@@ -33,6 +36,9 @@ const PROMPT = "❯";
 
 /** Long commands keep the terminal visible until the reader asks for the rest. */
 const COLLAPSED_COMMAND_LINES = 3;
+
+/** An expanded command scrolls within this share of the window, above the output. */
+const EXPANDED_COMMAND_SCREEN_SHARE = 0.4;
 
 /** Terminal states whose command row needs the one semantic failure accent. */
 const FAILED_STATUS: ReadonlySet<CommandOutputStatus> = new Set(["declined", "failed", "lost"]);
@@ -65,6 +71,7 @@ const STATUS_DOT: Record<CommandOutputStatus, string> = {
  */
 export function CommandOutputScreen({
   command,
+  commandLoading = false,
   details,
   error,
   loading,
@@ -76,6 +83,8 @@ export function CommandOutputScreen({
 }: {
   /** The command as launched; null when the Companion does not know it. */
   readonly command: string | null;
+  /** True while the whole command is read in place of the preview `command` shows. */
+  readonly commandLoading?: boolean;
   /** Exit code, size and similar facts after the status word. */
   readonly details?: readonly string[];
   readonly error: string | null;
@@ -145,6 +154,7 @@ export function CommandOutputScreen({
             error={error}
             failed={FAILED_STATUS.has(status)}
             key={command}
+            loading={commandLoading}
             running={status === "running"}
           />
         )}
@@ -325,25 +335,35 @@ function SearchAction({
 /**
  * The complete command as a prompt line on the terminal's surface, wrapped
  * rather than cut, pinned while the output scrolls under it, with its own copy.
+ * A command longer than three lines collapses: its last visible line fades
+ * into the plate above a count of the hidden lines, and the whole plate
+ * expands it. Expanded, it scrolls within a bounded height so the output
+ * stays on screen.
  */
 function CommandPromptLine({
   command,
   error,
   failed,
+  loading,
   running,
 }: {
   readonly command: string;
   readonly error: string | null;
   readonly failed: boolean;
+  /** True while the whole command is read in place of its preview. */
+  readonly loading: boolean;
   readonly running: boolean;
 }): ReactElement {
   const showsFailure = failed || error !== null;
-  const [canExpand, setCanExpand] = useState(false);
+  const [lineCount, setLineCount] = useState(0);
   const [expanded, setExpanded] = useState(false);
+  const { height } = useWindowDimensions();
+  const hiddenLines = lineCount - COLLAPSED_COMMAND_LINES;
+  const canExpand = hiddenLines > 0;
   const updateLineCount = useEvent((event: TextLayoutEvent) => {
-    const nextCanExpand = event.nativeEvent.lines.length > COLLAPSED_COMMAND_LINES;
-    setCanExpand(nextCanExpand);
-    if (!nextCanExpand) {
+    const lines = event.nativeEvent.lines.length;
+    setLineCount(lines);
+    if (lines <= COLLAPSED_COMMAND_LINES) {
       setExpanded(false);
     }
   });
@@ -352,32 +372,90 @@ function CommandPromptLine({
   });
   return (
     <View style={styles.command} testID="command-output-command">
-      <Text style={styles.commandPrompt}>{PROMPT}</Text>
-      <Text
-        ellipsizeMode="tail"
-        numberOfLines={expanded ? undefined : COLLAPSED_COMMAND_LINES}
-        onTextLayout={updateLineCount}
-        shimmering={running}
-        style={styles.commandText}
+      <Pressable
+        accessibilityLabel={expanded ? "Collapse command" : "Expand command"}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        disabled={!canExpand}
+        onPress={toggleExpanded}
+        style={styles.commandBody}
       >
-        {command}
-      </Text>
-      {canExpand ? (
-        <Pressable
-          accessibilityLabel={expanded ? "Collapse command" : "Expand command"}
-          accessibilityRole="button"
-          accessibilityState={{ expanded }}
-          hitSlop={controlHitSlop.compact}
-          onPress={toggleExpanded}
-          style={styles.commandAction}
-        >
-          <Ionicons
-            color={colors.textMuted}
-            name={expanded ? "chevron-up" : "chevron-down"}
-            size={iconSize.action}
-          />
-        </Pressable>
-      ) : null}
+        <Text style={styles.commandPrompt}>{PROMPT}</Text>
+        <CommandText
+          command={command}
+          expanded={expanded}
+          hiddenLines={hiddenLines}
+          maxHeight={height * EXPANDED_COMMAND_SCREEN_SHARE}
+          onTextLayout={updateLineCount}
+          shimmering={running || loading}
+        />
+      </Pressable>
+      <CommandStatusActions command={command} error={error} showsFailure={showsFailure} />
+    </View>
+  );
+}
+
+/**
+ * The command text above its toggle: collapsed with its last line fading, or
+ * scrolling within `maxHeight`.
+ */
+function CommandText({
+  command,
+  expanded,
+  hiddenLines,
+  maxHeight,
+  onTextLayout,
+  shimmering,
+}: {
+  readonly command: string;
+  readonly expanded: boolean;
+  /** Lines beyond the collapsed three; none hides the toggle. */
+  readonly hiddenLines: number;
+  readonly maxHeight: number;
+  readonly onTextLayout: (event: TextLayoutEvent) => void;
+  readonly shimmering: boolean;
+}): ReactElement {
+  const text = (
+    <Text
+      ellipsizeMode="clip"
+      numberOfLines={expanded ? undefined : COLLAPSED_COMMAND_LINES}
+      onTextLayout={onTextLayout}
+      shimmering={shimmering}
+      style={styles.commandText}
+    >
+      {command}
+    </Text>
+  );
+  const body = expanded ? (
+    <ScrollView nestedScrollEnabled style={{ maxHeight }}>
+      {text}
+    </ScrollView>
+  ) : (
+    <View>
+      {text}
+      {hiddenLines > 0 ? <CommandFade /> : null}
+    </View>
+  );
+  return (
+    <View style={styles.commandColumn}>
+      {body}
+      {hiddenLines > 0 ? <CommandToggle expanded={expanded} hiddenLines={hiddenLines} /> : null}
+    </View>
+  );
+}
+
+/** The failure mark and the command's own copy, beside the prompt line. */
+function CommandStatusActions({
+  command,
+  error,
+  showsFailure,
+}: {
+  readonly command: string;
+  readonly error: string | null;
+  readonly showsFailure: boolean;
+}): ReactElement {
+  return (
+    <>
       {showsFailure ? (
         <View
           accessibilityLabel={error ?? "Command failed"}
@@ -389,7 +467,56 @@ function CommandPromptLine({
         </View>
       ) : null}
       <CopyButton compact text={command} />
+    </>
+  );
+}
+
+/** How much of the command is hidden, and that the plate expands it. */
+function CommandToggle({
+  expanded,
+  hiddenLines,
+}: {
+  readonly expanded: boolean;
+  readonly hiddenLines: number;
+}): ReactElement {
+  return (
+    <View style={styles.commandToggle}>
+      <Ionicons
+        color={colors.textMuted}
+        name={expanded ? "chevron-up" : "chevron-down"}
+        size={iconSize.inline}
+      />
+      <Text style={styles.commandToggleLabel}>
+        {expanded ? "Show less" : hiddenLinesLabel(hiddenLines)}
+      </Text>
     </View>
+  );
+}
+
+function hiddenLinesLabel(count: number): string {
+  return count === 1 ? "1 more line" : `${String(count)} more lines`;
+}
+
+/** The last collapsed line dissolves into the plate instead of ending in an ellipsis. */
+function CommandFade(): ReactElement {
+  const id = useId();
+  return (
+    <View pointerEvents="none" style={styles.commandFade} testID="command-output-fade">
+      <Svg height="100%" width="100%">
+        <PlateFadeGradient id={id} />
+        <Rect fill={`url(#${id})`} height="100%" width="100%" />
+      </Svg>
+    </View>
+  );
+}
+
+/** Transparent at the top to the plate's own color at the bottom. */
+function PlateFadeGradient({ id }: { readonly id: string }): ReactElement {
+  return (
+    <LinearGradient id={id} x1="0" x2="0" y1="0" y2="1">
+      <Stop offset="0" stopColor={colors.surfaceRaised} stopOpacity={0} />
+      <Stop offset="1" stopColor={colors.surfaceRaised} stopOpacity={1} />
+    </LinearGradient>
   );
 }
 

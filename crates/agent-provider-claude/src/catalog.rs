@@ -471,7 +471,7 @@ mod tests {
 
     fn stored(session: &str, thread: &str, size: i64, prompts: &[&str]) -> StoredSession {
         let read = session_read(session, thread, size, prompts);
-        StoredSession::from_read(&read).unwrap_or_else(|_| unreachable!("a fixture fits"))
+        crate::test_support::stored_session(&read)
     }
 
     fn codewide(

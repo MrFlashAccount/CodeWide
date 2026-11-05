@@ -9,8 +9,8 @@
 //! `subagent` item and `companion/threadSubagents/read`.
 
 use agent_core::model::{
-    AgentItem, AgentThread, AgentTurn, AppThreadId, NativeSessionReadResult, ProviderId,
-    SubagentStatus, ThreadOrigin, ThreadSettings, ThreadSpawn, ThreadStatus, TurnStatus,
+    AgentThread, AppThreadId, ProviderId, ThreadOrigin, ThreadSettings, ThreadSpawn, ThreadStatus,
+    TurnId,
 };
 use companion_host::thread_index::IndexedThreadMetadata;
 use serde::{Deserialize, Serialize};
@@ -62,75 +62,6 @@ pub struct IndexedSubagent {
     pub effort: Option<String>,
 }
 
-struct Spawn<'a> {
-    description: &'a str,
-    agent_type: Option<&'a str>,
-    status: SubagentStatus,
-}
-
-/// The spawning `subagent` item with id `tool_use_id` in any of `turns`.
-fn find_spawn<'a>(
-    turns: impl Iterator<Item = &'a AgentTurn>,
-    tool_use_id: &str,
-) -> Option<Spawn<'a>> {
-    turns
-        .flat_map(|turn| turn.items.iter())
-        .find_map(|item| match item {
-            AgentItem::Subagent {
-                item_id,
-                description,
-                agent_type,
-                status,
-                ..
-            } if item_id.as_str() == tool_use_id => Some(Spawn {
-                description,
-                agent_type: agent_type.as_deref(),
-                status: *status,
-            }),
-            _ => None,
-        })
-}
-
-/// The index facts of every sub-agent of a fresh session read, in the read's order.
-#[must_use]
-pub fn index(read: &NativeSessionReadResult) -> Vec<IndexedSubagent> {
-    read.subagents
-        .iter()
-        .map(|subagent| {
-            let all_turns = || {
-                read.turns
-                    .iter()
-                    .chain(read.subagents.iter().flat_map(|other| other.turns.iter()))
-            };
-            let spawn = subagent
-                .parent_tool_use_id
-                .as_deref()
-                .and_then(|tool_use_id| find_spawn(all_turns(), tool_use_id));
-            let last = subagent.turns.last();
-            IndexedSubagent {
-                agent_id: subagent.agent_id.clone(),
-                parent_agent_id: subagent.parent_agent_id.clone(),
-                parent_tool_use_id: subagent.parent_tool_use_id.clone(),
-                description: spawn
-                    .as_ref()
-                    .map(|spawn| spawn.description.to_owned())
-                    .filter(|description| !description.is_empty()),
-                agent_type: spawn
-                    .as_ref()
-                    .and_then(|spawn| spawn.agent_type.map(ToOwned::to_owned)),
-                started_at: subagent.turns.first().map(|turn| turn.started_at),
-                updated_at: last.map(|turn| turn.completed_at.unwrap_or(turn.started_at)),
-                running: spawn
-                    .as_ref()
-                    .is_some_and(|spawn| spawn.status == SubagentStatus::Running)
-                    || last.is_some_and(|turn| turn.status == TurnStatus::InProgress),
-                model: subagent.model.clone(),
-                effort: subagent.effort.clone(),
-            }
-        })
-        .collect()
-}
-
 /// Whether two indexed sub-agent sets of one session list differently: an
 /// agent appeared or left, or its running state, nickname, role or parent
 /// changed. Activity timestamps alone do not count, so a working agent's
@@ -160,7 +91,10 @@ pub struct ChildThread {
     pub parent: AppThreadId,
     pub cwd: String,
     pub subagent: IndexedSubagent,
-    pub turns: Vec<AgentTurn>,
+    /// The preview of its newest turn ([`crate::preview::newest_message`]).
+    pub preview: Option<String>,
+    /// The id of its newest turn while that turn still runs.
+    pub active_turn_id: Option<TurnId>,
     /// The parent thread's settings, as its own thread reports them
     /// (`catalog::thread_settings`).
     pub parent_settings: ThreadSettings,
@@ -177,7 +111,7 @@ impl ChildThread {
             cwd: self.cwd.clone(),
             name: self.subagent.description.clone(),
             // The newest conversation message, as every thread's list preview.
-            preview: crate::preview::newest_message(&self.turns).unwrap_or_default(),
+            preview: self.preview.clone().unwrap_or_default(),
             created_at,
             updated_at: self.subagent.updated_at.unwrap_or(created_at),
             recency_at: None,
@@ -234,10 +168,8 @@ impl ChildThread {
 
     /// The turn still running in the transcript, if any.
     #[must_use]
-    pub fn active_turn(&self) -> Option<&AgentTurn> {
-        self.turns
-            .last()
-            .filter(|turn| turn.status == TurnStatus::InProgress)
+    pub const fn active_turn_id(&self) -> Option<&TurnId> {
+        self.active_turn_id.as_ref()
     }
 }
 
@@ -378,7 +310,8 @@ mod tests {
                 model: model.map(Into::into),
                 effort: effort.map(Into::into),
             },
-            turns: Vec::new(),
+            preview: None,
+            active_turn_id: None,
             parent_settings,
         }
     }

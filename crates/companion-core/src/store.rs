@@ -254,7 +254,8 @@ impl IndexStore {
         path: impl AsRef<Path>,
         derived: &[&dyn DerivedIndexSchema],
     ) -> Result<Self, StoreError> {
-        let database = companion_host::database::open(path, "index")?;
+        let path = path.as_ref();
+        let mut database = companion_host::database::open_owned(path)?;
         let write = database.begin_write()?;
         let rebuild_derived = {
             let mut meta = write.open_table(META)?;
@@ -294,8 +295,16 @@ impl IndexStore {
             turn_delivery_tables::create(&write)?;
         }
         write.commit()?;
+        // A migration that dropped large derived tables leaves their pages
+        // free inside the file; reclaim them while nothing else holds the
+        // database. A failed compaction leaves a consistent file and is not
+        // fatal: the free pages stay reusable.
+        if let Err(err) = companion_host::database::compact_if_sparse(&mut database, path, "index")
+        {
+            tracing::error!(err = %err, "index database compaction failed; continuing uncompacted");
+        }
         Ok(Self {
-            database,
+            database: companion_host::database::share(database, "index"),
             receipt_observer: std::sync::RwLock::new(None),
         })
     }

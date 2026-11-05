@@ -45,7 +45,7 @@ use super::{
 /// The prompt that opens a replacement session's history prefix; it is not
 /// the person's first prompt.
 pub const HISTORY_HEADER: &str = "[Historical conversation from this thread]";
-const INTERRUPT_MARKER: &str = "[Request interrupted by user";
+pub(crate) const INTERRUPT_MARKER: &str = "[Request interrupted by user";
 /// The prompt Claude resumes an interrupted turn with, as a meta message.
 pub const RESUME_PROMPT: &str = "Continue from where you left off.";
 
@@ -114,7 +114,7 @@ impl HistoryEntry {
 }
 
 /// Command echoes, local command output and injected reminders start with a tag.
-fn is_markup(text: &str) -> bool {
+pub(crate) fn is_markup(text: &str) -> bool {
     let trimmed = text.trim_start();
     let mut characters = trimmed.chars();
     if characters.next() != Some('<') {
@@ -255,6 +255,15 @@ fn user_entry(message: &StoredMessage<'_>) -> Option<HistoryEntry> {
     }
     let content = user_blocks(body);
     let text = first_text(&content);
+    let meta = is_true2(message.raw, "isMeta", "is_meta");
+    // Claude stamps an adapter message with a non-person origin; the resume
+    // prompt among them resumes the conversation instead of waking it.
+    if meta && is_resume(&content) {
+        return Some(HistoryEntry::Resume {
+            timestamp_ms: message.timestamp_ms,
+            uuid: message.uuid.to_owned(),
+        });
+    }
     if let Some(wake) = wake_entry(message, text) {
         return Some(wake);
     }
@@ -264,13 +273,7 @@ fn user_entry(message: &StoredMessage<'_>) -> Option<HistoryEntry> {
             uuid: message.uuid.to_owned(),
         });
     }
-    if is_true2(message.raw, "isMeta", "is_meta") {
-        return is_resume(&content).then(|| HistoryEntry::Resume {
-            timestamp_ms: message.timestamp_ms,
-            uuid: message.uuid.to_owned(),
-        });
-    }
-    if is_true(message.raw, "isVisibleInTranscriptOnly") || is_markup(text) {
+    if meta || is_true(message.raw, "isVisibleInTranscriptOnly") || is_markup(text) {
         return None;
     }
     let prompt = content
@@ -318,8 +321,20 @@ pub fn history_entries(
     messages: &[&JsonRecord],
     parent_tool_use_id: Option<&str>,
 ) -> Vec<HistoryEntry> {
+    history_entries_after(messages, parent_tool_use_id, None)
+}
+
+/// [`history_entries`] of messages that follow a system message with uuid
+/// `previous_system` (a read that starts inside a history): a compaction
+/// summary first among them is anchored on that system message.
+#[must_use]
+pub fn history_entries_after(
+    messages: &[&JsonRecord],
+    parent_tool_use_id: Option<&str>,
+    previous_system: Option<String>,
+) -> Vec<HistoryEntry> {
     let mut entries = Vec::new();
-    let mut previous_system: Option<String> = None;
+    let mut previous_system = previous_system;
     for value in messages {
         let Some(message) = stored_message(value, parent_tool_use_id) else {
             continue;

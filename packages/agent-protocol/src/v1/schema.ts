@@ -602,6 +602,17 @@ const operationChecks: Readonly<
       text: str,
     }),
   },
+  "thread.backgroundTasks.list": {
+    params: obj({ appThreadId: str }),
+    result: obj({
+      tasks: arr(
+        tagged("kind", {
+          task: { background: backgroundCommand, command: str, itemId: str, turnId: str },
+          terminal: { command: str, itemId: str, processId: str },
+        }),
+      ),
+    }),
+  },
   "thread.compact": { params: obj({ appThreadId: str }), result: emptyObject },
   "thread.create": {
     params: obj({ appThreadId: nullable(str), clientTools, cwd: str, settings }),

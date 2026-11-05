@@ -109,6 +109,9 @@ pub struct SteerMessage {
 }
 
 pub const EXPECTED_TURN_NOT_ACTIVE: &str = "expected turn is not active";
+/// The `origin.kind` Claude stamps on an adapter (`isSynthetic`) message and
+/// on the result of the Claude turn that answers it.
+const ADAPTER_ORIGIN: &str = "unclassified";
 /// The session's id generator produced a value that is not an id.
 const INVALID_UUID: &str = "the session's uuid generator produced an invalid id";
 
@@ -671,7 +674,15 @@ impl Session {
             active.pending_steer_aborts -= 1;
             return true;
         }
-        active.builder.origin() == TurnOrigin::User && frame.origin.is_some()
+        // A result names the origin of the message its Claude turn answered.
+        // A user turn's own result has none, except a resuming turn's, whose
+        // first offer is an adapter message Claude stamps `unclassified`.
+        let own_adapter_result = frame.origin.as_deref() == Some(ADAPTER_ORIGIN)
+            && active
+                .first_offer
+                .as_ref()
+                .is_some_and(|offer| offer.author == Author::Adapter);
+        active.builder.origin() == TurnOrigin::User && frame.origin.is_some() && !own_adapter_result
     }
 
     async fn on_result(&mut self, frame: &ResultFrame) {

@@ -14,13 +14,19 @@ use agent_core::{
 
 use super::{
     errors::{OPEN_ELSEWHERE_MESSAGE, internal, invalid_request, not_found, session_gone},
-    history::{HistorySource, stored_turns},
+    history::caught_up,
     service::{Listed, ServiceInner, ThreadService},
 };
+use workspace_io::WorkspaceIo;
+
 use crate::session::{
     handle::SessionHandle,
     turn::{SteerMessage, TurnRequest},
 };
+
+/// A turn refused because its working directory's mount does not answer.
+const WORKSPACE_UNAVAILABLE_MESSAGE: &str =
+    "the working directory of this thread does not respond (its mount is unavailable)";
 
 impl ServiceInner {
     /// The session a turn can run in: listed, with a working directory, not
@@ -35,6 +41,14 @@ impl ServiceInner {
             return Err(invalid_request(
                 "the Claude session has no working directory",
             ));
+        }
+        // Starting `claude` enters the working directory synchronously inside
+        // the thread's session actor; its mount is asked first, off the
+        // runtime, so a hung mount refuses only this thread's turn.
+        if let Err(error) = WorkspaceIo::shared().metadata(&state.cwd).await
+            && error.kind() == std::io::ErrorKind::TimedOut
+        {
+            return Err(invalid_request(WORKSPACE_UNAVAILABLE_MESSAGE));
         }
         // A session that never started cannot be held; a live one is this companion's.
         if state.session_started
@@ -78,8 +92,13 @@ impl ServiceInner {
         {
             return Ok(true);
         }
-        let turns = stored_turns(self.projects_root.clone(), HistorySource::Thread(state)).await?;
-        Ok(turns.iter().any(|turn| turn.turn_id == *turn_id))
+        let index = caught_up(&self.index, state.session_ids.iter()).await?;
+        let thread = state.app_thread_id.clone();
+        let turn_id = turn_id.as_str().to_owned();
+        tokio::task::spawn_blocking(move || index.history().contains_turn(&thread, &turn_id))
+            .await
+            .map_err(|err| super::errors::internal("history read", &err))?
+            .map_err(|err| super::errors::internal("history read", &err))
     }
 }
 

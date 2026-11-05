@@ -198,7 +198,10 @@ impl ManagedRuntime {
         let upstream = UpstreamHandle::spawn(config.app_server_socket.clone());
         let store = Arc::new(IndexStore::open_with(
             config.state_directory.join("state.redb"),
-            &[&ROLLOUT_INDEX_SCHEMA],
+            &[
+                &ROLLOUT_INDEX_SCHEMA,
+                &agent_provider_claude::store::CLAUDE_INDEX_SCHEMA,
+            ],
         )?);
         let rollout_store = Arc::new(RolloutStore::attach(store.database(), store.clone())?);
         let telemetry = Arc::new(TelemetryStore::open_with_jsonl(

@@ -26,7 +26,8 @@ pub enum RunningSessionsError {
 }
 
 /// The process generation that currently owns a Claude session.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "process", content = "startedAt", rename_all = "camelCase")]
 pub enum RunningProcess {
     /// The CLI reported when this process started, in Unix milliseconds.
     StartedAt(i64),

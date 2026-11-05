@@ -43,6 +43,8 @@ module.exports = {
     // WHY: Reanimated's native worklet runtime cannot initialize in the Node render-test process.
     "^react-native-reanimated$": "<rootDir>/test/mocks/Reanimated.ts",
     "^react-native-worklets$": "<rootDir>/test/mocks/Worklets.ts",
+    // WHY: The zoom toolkit's gestures need Reanimated's UI runtime; tests drive their outcomes.
+    "^react-native-zoom-toolkit$": "<rootDir>/test/mocks/ZoomToolkit.tsx",
     "^react-native-keyboard-controller$": "<rootDir>/test/mocks/KeyboardController.tsx",
     "^(?:.*/rendering/|\\./)RichMarkdown$": "<rootDir>/test/mocks/RichMarkdown.tsx",
     "^.*/surfaces/PresentationSheetView$": "<rootDir>/test/mocks/PresentationSheetView.tsx",

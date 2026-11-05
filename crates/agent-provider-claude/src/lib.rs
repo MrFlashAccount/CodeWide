@@ -17,6 +17,7 @@ pub mod catalog;
 pub mod cli;
 pub mod config;
 pub mod discovery;
+pub mod index;
 pub mod indexer;
 pub mod legacy_install;
 pub mod live;
@@ -47,18 +48,17 @@ use std::time::Duration;
 
 use agent_core::{
     model::{
-        AgentEvent, AgentThread, AppThreadId, BackgroundTaskReadParams, BackgroundTaskReadResult,
-        CapabilityInvokeParams, CapabilitySet, ERROR_BACKGROUND_TASK_UNAVAILABLE,
-        ERROR_CAPABILITY_UNSUPPORTED, ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ItemsView,
-        ModelCatalog, PermissionProfileCatalog, Provenance, ProviderDescriptor, ProviderId,
-        ProviderRateLimits, ProviderThreadRef, RequestRespondParams, RpcError, RpcErrorData,
-        SortDirection, StartWhileActiveMode, ThreadCreateParams, ThreadForkParams,
-        ThreadListParams, ThreadListResult, ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult,
-        ThreadUpdateParams, ThreadUpdateResult, TurnContinueParams, TurnInterruptParams,
-        TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
-        background_task_not_found_message, capability_unsupported_message,
-        thread_not_found_message,
-        turns::{MAX_TURNS_PAGE, page_turns},
+        AgentEvent, AgentThread, AppThreadId, BackgroundTaskListParams, BackgroundTaskListResult,
+        BackgroundTaskReadParams, BackgroundTaskReadResult, CapabilityInvokeParams, CapabilitySet,
+        ERROR_BACKGROUND_TASK_UNAVAILABLE, ERROR_CAPABILITY_UNSUPPORTED, ERROR_INVALID_PARAMS,
+        ERROR_INVALID_REQUEST, ItemsView, ModelCatalog, PermissionProfileCatalog, Provenance,
+        ProviderDescriptor, ProviderId, ProviderRateLimits, ProviderThreadRef,
+        RequestRespondParams, RpcError, RpcErrorData, SortDirection, StartWhileActiveMode,
+        ThreadCreateParams, ThreadForkParams, ThreadListParams, ThreadListResult, ThreadReadResult,
+        ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult,
+        TurnContinueParams, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
+        TurnSteerResult, background_task_not_found_message, capability_unsupported_message,
+        thread_not_found_message, turns::MAX_TURNS_PAGE,
     },
     naming::{CatalogNames, ModelNaming},
     provider::{
@@ -221,6 +221,9 @@ pub struct ClaudeProvider {
     names: Arc<CatalogNames>,
     /// The `claude` version, once read.
     version: Arc<std::sync::OnceLock<String>>,
+    /// The session index the thread service reads history from (the
+    /// service holds it weakly).
+    history_index: std::sync::OnceLock<Arc<index::sessions::SessionIndex>>,
 }
 
 impl ClaudeProvider {
@@ -267,11 +270,15 @@ impl ClaudeProvider {
             pricing,
             names,
             version,
+            history_index: std::sync::OnceLock::new(),
         };
         match provider.start_service(config) {
             Ok(()) => {
-                if let (Some(storage), Some(running)) = (&provider.storage, &provider.running) {
-                    storage.start(status_rx, running.service.session_activity());
+                if let Some(running) = &provider.running {
+                    if let Some(storage) = &provider.storage {
+                        storage.start(status_rx, running.service.session_activity());
+                    }
+                    provider.attach_history_index(config);
                 }
             }
             Err(reason) => {
@@ -280,6 +287,43 @@ impl ClaudeProvider {
             }
         }
         provider
+    }
+
+    /// Attaches the offset index the thread service reads history from:
+    /// the storage's, else one kept in memory, so no read takes a session
+    /// whole either way.
+    fn attach_history_index(&self, config: &ClaudeConfig) {
+        // The storage keeps its own index alive; an in-memory one lives in
+        // `history_index`.
+        let Some(running) = &self.running else {
+            return;
+        };
+        let index = if let Some(index) = self
+            .storage
+            .as_ref()
+            .and_then(|storage| storage.session_index())
+        {
+            index
+        } else {
+            let Some(projects_root) = config.config_directory().map(|root| root.join("projects"))
+            else {
+                return;
+            };
+            let sessions = native::LocalSessions::new(
+                projects_root,
+                config.journal_directory.clone(),
+                running.service.session_activity(),
+            );
+            match index::sessions::SessionIndex::in_memory(sessions) {
+                Ok(index) => Arc::new(index),
+                Err(err) => {
+                    error!(err = %err, "Claude in-memory session index cannot be created");
+                    return;
+                }
+            }
+        };
+        running.service.attach_index(&index);
+        let _ = self.history_index.set(index);
     }
 
     /// The `claude` children's environment, the probe, the account and the
@@ -427,7 +471,7 @@ impl ClaudeProvider {
     fn child_thread(&self, thread: &AppThreadId) -> Option<Result<ChildThread, ProviderError>> {
         subagents::parse_child_thread_id(thread)?;
         let found = match &self.storage {
-            Some(storage) => storage.store().child_thread(thread).map_err(|err| {
+            Some(storage) => storage.history().child(thread).map_err(|err| {
                 warn!(err = %err, "Claude sub-agent index cannot be read");
                 ProviderError::Protocol(err.to_string())
             }),
@@ -460,7 +504,7 @@ impl ClaudeProvider {
         }
         ThreadReadResult {
             thread,
-            active_turn_id: child.active_turn().map(|turn| turn.turn_id.clone()),
+            active_turn_id: child.active_turn_id().cloned(),
         }
     }
 
@@ -469,14 +513,32 @@ impl ClaudeProvider {
         child: &ChildThread,
         params: &ThreadTurnsParams,
     ) -> Result<ThreadTurnsResult, ProviderError> {
-        let mut result = page_turns(
-            &child.turns,
-            params.cursor.as_deref(),
-            params.limit,
-            params.sort_direction,
-            params.items_view,
-        )
-        .map_err(ProviderError::Rejected)?;
+        let Some(storage) = &self.storage else {
+            return Ok(ThreadTurnsResult {
+                turns: Vec::new(),
+                next_cursor: None,
+            });
+        };
+        let mut result = storage
+            .history()
+            .child_page(
+                child,
+                &index::history::PageRequest {
+                    cursor: params.cursor.as_deref(),
+                    limit: params.limit,
+                    direction: params.sort_direction,
+                    view: params.items_view,
+                },
+            )
+            .map_err(|err| match err {
+                index::read::ReadError::InvalidParams(message) => {
+                    ProviderError::Rejected(RpcError::new(ERROR_INVALID_PARAMS, message))
+                }
+                err => {
+                    warn!(err = %err, "Claude sub-agent index cannot be read");
+                    ProviderError::Protocol(err.to_string())
+                }
+            })?;
         self.stamp_turns(&params.app_thread_id, &mut result);
         Ok(result)
     }
@@ -812,11 +874,11 @@ impl AgentProvider for ClaudeProvider {
         if let Some(child) = self.child_thread(&params.app_thread_id) {
             return self.child_turns(&child?, &params);
         }
-        let mut result = match self
-            .storage
-            .as_ref()
-            .and_then(|storage| storage.turns(&params))
-        {
+        let indexed = match &self.storage {
+            Some(storage) => storage.turns(&params).await,
+            None => None,
+        };
+        let mut result = match indexed {
             Some(indexed) => {
                 let mut indexed = indexed.map_err(ProviderError::Rejected)?;
                 self.overlay_live_background_commands(&params.app_thread_id, &mut indexed)
@@ -877,6 +939,18 @@ impl AgentProvider for ClaudeProvider {
         params: TurnContinueParams,
     ) -> Result<TurnStartResult, ProviderError> {
         self.service().await?.turn_continue(params).await
+    }
+
+    async fn thread_background_tasks(
+        &self,
+        params: BackgroundTaskListParams,
+    ) -> Result<BackgroundTaskListResult, ProviderError> {
+        let tasks = self
+            .service()
+            .await?
+            .running_background_tasks(&params.app_thread_id)
+            .await?;
+        Ok(BackgroundTaskListResult { tasks })
     }
 
     /// Reads only `<a session of the thread>/tasks/<task id>.output` of a

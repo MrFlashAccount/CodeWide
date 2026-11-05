@@ -323,6 +323,54 @@ impl SubagentRuns {
         }
     }
 
+    /// Every status fact: by agent id (`by_tool_use` false) or spawning
+    /// call, with its time.
+    pub(crate) fn facts(&self) -> impl Iterator<Item = (bool, &str, i64, SubagentStatus)> {
+        self.by_agent
+            .iter()
+            .map(|(key, status)| (false, key.as_str(), status.timestamp_ms, status.status))
+            .chain(
+                self.by_tool_use
+                    .iter()
+                    .map(|(key, status)| (true, key.as_str(), status.timestamp_ms, status.status)),
+            )
+    }
+
+    /// Adds one status fact recorded elsewhere (the session index).
+    pub(crate) fn insert(
+        &mut self,
+        by_tool_use: bool,
+        key: &str,
+        timestamp_ms: i64,
+        status: SubagentStatus,
+    ) {
+        let statuses = if by_tool_use {
+            &mut self.by_tool_use
+        } else {
+            &mut self.by_agent
+        };
+        Self::record_status(statuses, key, timestamp_ms, status);
+    }
+
+    /// The status a spawning item with `status` carries once settled, as
+    /// [`Self::apply`] settles it.
+    pub(crate) fn status_of(
+        &self,
+        agent_id: Option<&str>,
+        item_id: &str,
+        status: SubagentStatus,
+    ) -> SubagentStatus {
+        let recorded = agent_id
+            .and_then(|agent_id| self.by_agent.get(agent_id))
+            .or_else(|| self.by_tool_use.get(item_id))
+            .map(|recorded| recorded.status);
+        match recorded {
+            Some(SubagentStatus::Running) => SubagentStatus::Running,
+            Some(recorded) if status == SubagentStatus::Running => recorded,
+            _ => status,
+        }
+    }
+
     /// The item with the latest status recorded for its agent or spawning call.
     #[must_use]
     pub fn apply(&self, item: SubagentItem) -> SubagentItem {

@@ -85,29 +85,28 @@ impl RecordedModels {
     }
 
     /// The session's model: the cached one when the cached read saw the
-    /// same file (`last_modified_ms`), else a new read of its messages
-    /// through `read`, which is then cached.
+    /// same file (`last_modified_ms`), else the model `read` reports for the
+    /// changed file, which is then cached.
     ///
     /// # Errors
     ///
     /// Returns the error of `read`; the cache is left unchanged.
-    pub async fn load<Read, Messages, Error>(
+    pub async fn load<Read, Answer, Error>(
         &mut self,
         session_id: &str,
         last_modified_ms: i64,
         read: Read,
     ) -> Result<Option<&str>, Error>
     where
-        Read: FnOnce() -> Messages,
-        Messages: Future<Output = Result<Vec<Value>, Error>>,
+        Read: FnOnce() -> Answer,
+        Answer: Future<Output = Result<Option<String>, Error>>,
     {
         let fresh = self
             .recorded
             .get(session_id)
             .is_some_and(|known| known.last_modified_ms == last_modified_ms);
         if !fresh {
-            let messages = read().await?;
-            let model = last_recorded_model(&messages).map(str::to_owned);
+            let model = read().await?;
             self.recorded.insert(
                 session_id.to_owned(),
                 Recorded {
@@ -196,8 +195,7 @@ mod tests {
             let reads = &reads;
             move || {
                 reads.set(reads.get() + 1);
-                let messages = vec![assistant(model, None)];
-                async move { Ok::<_, Infallible>(messages) }
+                async move { Ok::<_, Infallible>(Some(model.to_owned())) }
             }
         };
         assert_eq!(
@@ -228,13 +226,13 @@ mod tests {
         let mut models = RecordedModels::default();
         let first = models
             .load("s1", 1, || async {
-                Ok::<_, &str>(vec![assistant("claude-opus-5-5", None)])
+                Ok::<_, &str>(Some("claude-opus-5-5".to_owned()))
             })
             .await
             .map(|model| model.map(str::to_owned));
         assert_eq!(first, Ok(Some("claude-opus-5-5".to_owned())));
         let failed = models
-            .load("s1", 2, || async { Err::<Vec<Value>, _>("unreadable") })
+            .load("s1", 2, || async { Err::<Option<String>, _>("unreadable") })
             .await
             .map(|model| model.map(str::to_owned));
         assert_eq!(failed, Err("unreadable"));

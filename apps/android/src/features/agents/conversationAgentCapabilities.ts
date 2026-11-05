@@ -1,4 +1,5 @@
 import type { BackgroundTaskOutputPage } from "../../data/backgroundTaskOutput";
+import type { RunningBackgroundTasksQuery } from "../../data/runningBackgroundTaskResource";
 import type { ThreadDetailDatabase } from "../../data/thread-detail-database";
 import type { ThreadSummaryDatabase } from "../../data/thread-summary-database";
 /** Qualified capabilities consumed by the agents owner in conversation composition. */
@@ -9,6 +10,8 @@ export type ConversationAgentCapabilities = {
     | ((threadId: string, taskId: string, offset: number) => Promise<BackgroundTaskOutputPage>)
     | undefined;
   onRefreshSubagents: ((rootThreadId: string) => Promise<void>) | undefined;
+  /** The query of a thread's running background commands. */
+  onRunningBackgroundTasks: ((threadId: string) => RunningBackgroundTasksQuery) | undefined;
   subagentSummaryDatabase: ThreadSummaryDatabase | null;
   subagentThreadDetails: ThreadDetailDatabase | null;
 };

@@ -18,6 +18,7 @@ members = [
     "crates/host-resolver",
     "crates/host-update",
     "crates/vcs-git",
+    "crates/workspace-io",
 ]
 exclude = ["openai-codex/codex-rs"]
 resolver = "2"

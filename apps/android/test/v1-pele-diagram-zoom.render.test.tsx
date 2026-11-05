@@ -1,10 +1,7 @@
-import {
-  peleDiagramTextureTransform,
-  peleDiagramViewBox,
-} from "../src/rendering/peleDiagramViewBox";
+import { supersampling } from "../src/rendering/peleDiagramSupersampling";
 import { parsePeleDiagramSvg } from "../src/rendering/peleDiagramSvg";
 
-it("parses the SVG root before the animated native host mounts", () => {
+it("parses the SVG root before the native host mounts", () => {
   const content = parsePeleDiagramSvg(
     '<svg viewBox="0 0 100 50" fill="#fff" font-family="sans-serif" font-size="16"><rect width="100" height="50" /></svg>',
   );
@@ -16,56 +13,18 @@ it("parses the SVG root before the animated native host mounts", () => {
   expect(content.children).toHaveLength(1);
 });
 
-it("zooms by narrowing the SVG viewBox instead of scaling rendered pixels", () => {
-  expect(
-    peleDiagramViewBox({
-      fitHeight: 500,
-      fitWidth: 1000,
-      scale: 1,
-      sourceHeight: 500,
-      sourceWidth: 1000,
-      translateX: 0,
-      translateY: 0,
-    }),
-  ).toBe("0 0 1000 500");
-  expect(
-    peleDiagramViewBox({
-      fitHeight: 500,
-      fitWidth: 1000,
-      scale: 2,
-      sourceHeight: 500,
-      sourceWidth: 1000,
-      translateX: 0,
-      translateY: 0,
-    }),
-  ).toBe("250 125 500 250");
+it("draws a small diagram sharp up to the maximum zoom", () => {
+  expect(supersampling({ height: 200, width: 300 }, 2)).toBe(5);
 });
 
-it("maps screen-space panning into the narrowed source-space viewBox", () => {
-  expect(
-    peleDiagramViewBox({
-      fitHeight: 500,
-      fitWidth: 1000,
-      scale: 2,
-      sourceHeight: 500,
-      sourceWidth: 1000,
-      translateX: 100,
-      translateY: -50,
-    }),
-  ).toBe("200 150 500 250");
+it("keeps a large diagram's bitmap within the GPU texture limit", () => {
+  const fit = { height: 700, width: 1000 };
+  const factor = supersampling(fit, 3);
+  expect(Math.max(fit.width, fit.height) * 3 * factor).toBeLessThanOrEqual(4096);
+  expect(factor).toBeGreaterThan(1);
 });
 
-it("composes the committed vector viewport into one transient texture transform", () => {
-  const texture = peleDiagramTextureTransform({
-    committedScale: 2,
-    committedTranslateX: 100,
-    committedTranslateY: -40,
-    scale: 3,
-    translateX: 80,
-    translateY: 10,
-  });
-
-  expect(texture).toEqual({ scale: 1.5, translateX: -70, translateY: 70 });
-  expect(texture.translateX + texture.scale * 100).toBe(80);
-  expect(texture.translateY + texture.scale * -40).toBe(10);
+it("never draws a diagram smaller than its fitted size", () => {
+  expect(supersampling({ height: 3000, width: 4000 }, 3)).toBe(1);
+  expect(supersampling({ height: 0, width: 0 }, 3)).toBe(1);
 });

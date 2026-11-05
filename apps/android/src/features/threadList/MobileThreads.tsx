@@ -2,7 +2,8 @@ import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { MobileThreadsHeader } from "./MobileThreadsHeader";
 import { useThreadListViewportPaging } from "./threadListViewportPaging";
 import { LegendList } from "@legendapp/list/react-native";
-import { Animated, View } from "react-native";
+import { Animated, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { useEvent } from "../../react/useEvent";
 import { GestureDetector } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
 import { usePerformanceExperiment } from "../../data/performance-experiments";
@@ -94,6 +95,10 @@ export function MobileThreads(props: MobileThreadsProps) {
     project === null ? onLoadMore : projectSource.loadMore,
   );
   const pullSearch = useThreadListPullGesture(props.onOpenSearch, initialOffset, listKey);
+  const handleListScroll = useEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    pullSearch.onScroll(event);
+    scroll.onScroll();
+  });
 
   return (
     <View style={[styles.mobileList, searchContent !== null && styles.searchOverlayList]}>
@@ -146,7 +151,7 @@ export function MobileThreads(props: MobileThreadsProps) {
                   onLayout={paging.onLayout}
                   onMomentumScrollBegin={scroll.onMomentumScrollBegin}
                   onMomentumScrollEnd={scroll.onMomentumScrollEnd}
-                  onScroll={pullSearch.onScroll}
+                  onScroll={handleListScroll}
                   onScrollBeginDrag={scroll.onScrollBeginDrag}
                   onScrollEndDrag={scroll.onScrollEndDrag}
                   recycleItems

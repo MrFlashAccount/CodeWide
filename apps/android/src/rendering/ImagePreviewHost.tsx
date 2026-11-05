@@ -9,18 +9,19 @@ import {
   useState,
 } from "react";
 import { ActivityIndicator, Linking, Pressable, StyleSheet, View } from "react-native";
-import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { retainCachedAttachment } from "../native/attachment-cache/cached-transfer";
 import { useConstant } from "../react/useConstant";
 import { useEvent } from "../react/useEvent";
 import Animated, {
   Easing,
-  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
+import { Gallery, type GalleryRefType, type TapGestureEvent } from "react-native-zoom-toolkit";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -48,7 +49,6 @@ import {
   useContentReview,
   useImageReviewPoints,
 } from "./ContentReviewHost";
-import { imageReviewPoint } from "./image-review-point";
 import { ImagePreviewContext, type ImagePreviewController } from "./imagePreviewController";
 import type {
   ImageAnnotationHandler,
@@ -306,18 +306,12 @@ function ImageViewer({
       style={[styles.root, { paddingBottom: bottomInset, paddingTop: topInset }]}
       testID="image-preview-surface"
     >
-      <ZoomableImage
-        canGoNext={session.index < session.items.length - 1}
-        canGoPrevious={session.index > 0}
-        item={item}
-        key={item.id}
+      <ImageGallery
+        activeItem={item}
+        index={session.index}
+        items={session.items}
+        onChangeIndex={onChangeIndex}
         onClose={onClose}
-        onNext={() => {
-          onChangeIndex(session.index + 1);
-        }}
-        onPrevious={() => {
-          onChangeIndex(session.index - 1);
-        }}
         pinMode={pinMode}
       />
       <View
@@ -354,6 +348,21 @@ function ImageViewer({
               size={iconSize.action}
             />
           </Pressable>
+          {onAnnotate !== undefined && (
+            <Pressable
+              accessibilityLabel="Annotate image in QuickDraw"
+              accessibilityRole="button"
+              disabled={annotationPreparing}
+              onPress={onAnnotate}
+              style={[styles.roundButton, annotationPreparing && styles.disabled]}
+            >
+              {annotationPreparing ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <Ionicons color="#ffffff" name="brush-outline" size={iconSize.action} />
+              )}
+            </Pressable>
+          )}
           {imageActions.length > 0 && (
             <OverflowMenu
               accessibilityLabel="Image actions"
@@ -379,244 +388,71 @@ function ImageViewer({
               tone="media"
             />
           )}
-          {onAnnotate !== undefined && (
-            <Pressable
-              accessibilityLabel="Annotate image in QuickDraw"
-              accessibilityRole="button"
-              disabled={annotationPreparing}
-              onPress={onAnnotate}
-              style={[styles.roundButton, annotationPreparing && styles.disabled]}
-            >
-              {annotationPreparing ? (
-                <ActivityIndicator color="#ffffff" size="small" />
-              ) : (
-                <Ionicons color="#ffffff" name="brush-outline" size={iconSize.action} />
-              )}
-            </Pressable>
-          )}
         </View>
       </View>
     </View>
   );
 }
 
-function ZoomableImage({
-  canGoNext,
-  canGoPrevious,
-  item,
+/** Dismisses a pulled image past this share of the viewport or this velocity. */
+const DISMISS_DISTANCE_SHARE = 0.14;
+const DISMISS_VELOCITY = 820;
+const DISMISS_FADE_SHARE = 0.55;
+const DISMISS_MIN_OPACITY = 0.35;
+const DISMISS_MS = 130;
+const MAX_IMAGE_ZOOM = 5;
+
+/**
+ * The session's images as one zoomable gallery: pinch and double tap zoom
+ * under the fingers, paging between images, and a vertical pull that
+ * dismisses the preview. In pin mode a tap pins a review comment instead of
+ * paging.
+ */
+function ImageGallery({
+  activeItem,
+  index,
+  items,
+  onChangeIndex,
   onClose,
-  onNext,
-  onPrevious,
   pinMode,
 }: {
-  canGoNext: boolean;
-  canGoPrevious: boolean;
-  item: ImagePreviewItem;
+  activeItem: ImagePreviewItem;
+  index: number;
+  items: ImagePreviewItem[];
+  onChangeIndex: (index: number) => void;
   onClose: () => void;
-  onNext: () => void;
-  onPrevious: () => void;
   pinMode: boolean;
 }) {
-  const reviewTargetId = `image:${item.draft?.scope ?? ""}:${item.id}`;
   const review = useContentReview();
-  const points = useImageReviewPoints(reviewTargetId);
-  const placePin = useEvent((x: number, y: number) => {
+  const gallery = useRef<GalleryRefType>(null);
+  const [viewport, setViewport] = useState({ height: 0, width: 0 });
+  const dismissOpacity = useSharedValue(1);
+  const dismissing = useSharedValue(false);
+  const placePin = useEvent((event: TapGestureEvent, itemIndex: number) => {
+    const item = items[itemIndex];
+    const state = gallery.current?.getState();
+    if (!pinMode || item === undefined || state === undefined) {
+      return;
+    }
+    // The tap lands on the active image itself, in its own unscaled frame.
+    const x = event.x / state.childSize.width;
+    const y = event.y / state.childSize.height;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) {
+      return;
+    }
     review({
       kind: "image",
-      target: { id: reviewTargetId, label: item.label, reference: item.reference ?? null },
+      target: {
+        id: imageReviewTargetId(item),
+        label: item.label,
+        reference: item.reference ?? null,
+      },
       x,
       y,
     });
   });
-  const [viewport, setViewport] = useState({ height: 0, width: 0 });
-  const [intrinsic, setIntrinsic] = useState({ height: 0, width: 0 });
-  const [decodeState, setDecodeState] = useState<"loading" | "ready" | "error">("loading");
-  const scale = useSharedValue(1);
-  const savedScale = useSharedValue(1);
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
-  const savedX = useSharedValue(0);
-  const savedY = useSharedValue(0);
-  const pageOffset = useSharedValue(0);
-  const dismissOpacity = useSharedValue(1);
-  const gestureAxis = useSharedValue<0 | 1 | 2 | 3>(0);
-  const fit = containSize(intrinsic.width, intrinsic.height, viewport.width, viewport.height);
-
-  const navigate = (direction: -1 | 1) => {
-    if (direction < 0) onPrevious();
-    else onNext();
-  };
-
-  const pan = Gesture.Pan()
-    .minDistance(4)
-    .averageTouches(true)
-    .onBegin(() => {
-      savedX.set(translateX.get());
-      savedY.set(translateY.get());
-      gestureAxis.set(scale.get() > 1.01 ? 3 : 0);
-    })
-    .onUpdate((event) => {
-      if (scale.get() > 1.01 || event.numberOfPointers > 1) {
-        gestureAxis.set(3);
-        const maxX = Math.max(0, (fit.width * scale.get() - viewport.width) / 2);
-        const maxY = Math.max(0, (fit.height * scale.get() - viewport.height) / 2);
-        translateX.set(Math.max(-maxX, Math.min(maxX, savedX.get() + event.translationX)));
-        translateY.set(Math.max(-maxY, Math.min(maxY, savedY.get() + event.translationY)));
-        return;
-      }
-      if (gestureAxis.get() === 0) {
-        const horizontalDistance = Math.abs(event.translationX);
-        const verticalDistance = Math.abs(event.translationY);
-        if (Math.max(horizontalDistance, verticalDistance) < 8) return;
-        gestureAxis.set(horizontalDistance > verticalDistance ? 1 : 2);
-      }
-      if (gestureAxis.get() === 1) {
-        translateY.set(0);
-        dismissOpacity.set(1);
-        pageOffset.set(event.translationX);
-      } else if (gestureAxis.get() === 2) {
-        pageOffset.set(0);
-        translateY.set(event.translationY);
-        dismissOpacity.set(
-          Math.max(0.35, 1 - Math.abs(event.translationY) / Math.max(1, viewport.height * 0.55)),
-        );
-      }
-    })
-    .onEnd((event) => {
-      if (gestureAxis.get() === 3 || scale.get() > 1.01) {
-        gestureAxis.set(0);
-        return;
-      }
-      if (gestureAxis.get() === 1) {
-        const direction = event.translationX < 0 ? 1 : -1;
-        const allowed = direction > 0 ? canGoNext : canGoPrevious;
-        if (
-          allowed &&
-          (Math.abs(event.translationX) > viewport.width * 0.16 || Math.abs(event.velocityX) > 720)
-        ) {
-          pageOffset.set(
-            withTiming(
-              direction > 0 ? -viewport.width : viewport.width,
-              { duration: 120, easing: Easing.out(Easing.cubic) },
-              (finished) => {
-                if (finished === true) runOnJS(navigate)(direction);
-              },
-            ),
-          );
-          gestureAxis.set(0);
-          return;
-        }
-        pageOffset.set(withTiming(0, { duration: 110, easing: Easing.out(Easing.cubic) }));
-        gestureAxis.set(0);
-        return;
-      }
-      if (
-        gestureAxis.get() === 2 &&
-        (Math.abs(event.translationY) > viewport.height * 0.14 || Math.abs(event.velocityY) > 820)
-      ) {
-        translateY.set(
-          withTiming(
-            event.translationY < 0 ? -viewport.height : viewport.height,
-            { duration: 130, easing: Easing.out(Easing.cubic) },
-            (finished) => {
-              if (finished === true) runOnJS(onClose)();
-            },
-          ),
-        );
-        dismissOpacity.set(withTiming(0, { duration: 130, easing: Easing.out(Easing.cubic) }));
-      } else {
-        translateY.set(withTiming(0, { duration: 110, easing: Easing.out(Easing.cubic) }));
-        dismissOpacity.set(withTiming(1, { duration: 110, easing: Easing.out(Easing.cubic) }));
-      }
-      gestureAxis.set(0);
-    });
-
-  const pinch = Gesture.Pinch()
-    .onBegin(() => {
-      savedScale.set(scale.get());
-    })
-    .onUpdate((event) => {
-      scale.set(Math.max(1, Math.min(5, savedScale.get() * event.scale)));
-    })
-    .onEnd(() => {
-      if (scale.get() < 1.04) {
-        scale.set(withTiming(1, { duration: 100, easing: Easing.out(Easing.cubic) }));
-        translateX.set(withTiming(0, { duration: 100, easing: Easing.out(Easing.cubic) }));
-        translateY.set(withTiming(0, { duration: 100, easing: Easing.out(Easing.cubic) }));
-        return;
-      }
-      const maxX = Math.max(0, (fit.width * scale.get() - viewport.width) / 2);
-      const maxY = Math.max(0, (fit.height * scale.get() - viewport.height) / 2);
-      translateX.set(
-        withTiming(Math.max(-maxX, Math.min(maxX, translateX.get())), {
-          duration: 100,
-          easing: Easing.out(Easing.cubic),
-        }),
-      );
-      translateY.set(
-        withTiming(Math.max(-maxY, Math.min(maxY, translateY.get())), {
-          duration: 100,
-          easing: Easing.out(Easing.cubic),
-        }),
-      );
-    });
-
-  const doubleTap = Gesture.Tap()
-    .numberOfTaps(2)
-    .maxDuration(260)
-    .onEnd((event, success) => {
-      if (!success) return;
-      const zoomed = scale.get() > 1.01;
-      const targetScale = zoomed ? 1 : 2.5;
-      scale.set(withTiming(targetScale, { duration: 150, easing: Easing.out(Easing.cubic) }));
-      if (zoomed) {
-        translateX.set(withTiming(0, { duration: 150, easing: Easing.out(Easing.cubic) }));
-        translateY.set(withTiming(0, { duration: 150, easing: Easing.out(Easing.cubic) }));
-      } else {
-        const nextX = (viewport.width / 2 - event.x) * (targetScale - 1);
-        const nextY = (viewport.height / 2 - event.y) * (targetScale - 1);
-        const maxX = Math.max(0, (fit.width * targetScale - viewport.width) / 2);
-        const maxY = Math.max(0, (fit.height * targetScale - viewport.height) / 2);
-        translateX.set(
-          withTiming(Math.max(-maxX, Math.min(maxX, nextX)), {
-            duration: 150,
-            easing: Easing.out(Easing.cubic),
-          }),
-        );
-        translateY.set(
-          withTiming(Math.max(-maxY, Math.min(maxY, nextY)), {
-            duration: 150,
-            easing: Easing.out(Easing.cubic),
-          }),
-        );
-      }
-    });
-
-  const pinTap = Gesture.Tap()
-    .withTestId("image-review-pin-tap")
-    .enabled(pinMode && decodeState === "ready")
-    .onEnd((event, success) => {
-      if (!success) return;
-      const point = imageReviewPoint(event, {
-        height: fit.height,
-        scale: scale.get(),
-        translateX: translateX.get() + pageOffset.get(),
-        translateY: translateY.get(),
-        viewportHeight: viewport.height,
-        viewportWidth: viewport.width,
-        width: fit.width,
-      });
-      if (point !== null) runOnJS(placePin)(point.x, point.y);
-    });
-  const gestures = Gesture.Simultaneous(pan, pinch, Gesture.Exclusive(doubleTap, pinTap));
-  const imageStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.get() + pageOffset.get() },
-      { translateY: translateY.get() },
-      { scale: scale.get() },
-    ],
-  }));
   const backdropStyle = useAnimatedStyle(() => ({ opacity: dismissOpacity.get() }));
+  const viewportHeight = viewport.height;
 
   return (
     <Animated.View
@@ -629,54 +465,112 @@ function ZoomableImage({
       style={[styles.viewer, backdropStyle]}
       testID="image-preview-viewport"
     >
-      <GestureDetector gesture={gestures}>
-        <View style={styles.gestureSurface}>
-          {decodeState === "loading" && (
-            <View pointerEvents="none" style={styles.imageStatus}>
-              <ActivityIndicator color="#ffffff" />
-            </View>
-          )}
-          {decodeState === "error" && (
-            <View pointerEvents="none" style={styles.imageStatus}>
-              <Ionicons color="#ffffff" name="image-outline" size={iconSize.illustration} />
-              <Text style={styles.imageError}>Image decode failed</Text>
-            </View>
-          )}
-          <Animated.View
-            style={[styles.imageLayer, { height: fit.height, width: fit.width }, imageStyle]}
-            testID="image-preview-frame"
-          >
-            {viewport.width > 0 && viewport.height > 0 && (
-              <ProgressiveImageLayer
-                detail={item.detail}
-                label={item.label}
-                onDecodeStateChange={setDecodeState}
-                onDimensions={setIntrinsic}
-                preview={item.source}
-              />
-            )}
-            {points.map((point, index) => (
-              <View
-                key={point.id}
-                pointerEvents="none"
-                style={[
-                  styles.pin,
-                  {
-                    left: percentageDimension(point.x * 100),
-                    opacity: point.pending ? 0.6 : 1,
-                    top: percentageDimension(point.y * 100),
-                  },
-                ]}
-              >
-                <Text style={styles.pinText}>{index + 1}</Text>
-              </View>
-            ))}
-          </Animated.View>
-        </View>
-      </GestureDetector>
-      <ContentReviewComments presentation="overlay" targetId={reviewTargetId} />
-      <ContentReviewComposer anchorKind="image" targetId={reviewTargetId} />
+      {viewport.width > 0 && viewport.height > 0 && (
+        <Gallery
+          data={items}
+          initialIndex={index}
+          keyExtractor={(item) => item.id}
+          maxScale={MAX_IMAGE_ZOOM}
+          onIndexChange={onChangeIndex}
+          onTap={placePin}
+          onVerticalPull={({ released, translateY, velocityY }) => {
+            "worklet";
+            if (!released) {
+              dismissing.set(false);
+              dismissOpacity.set(
+                Math.max(
+                  DISMISS_MIN_OPACITY,
+                  1 - Math.abs(translateY) / Math.max(1, viewportHeight * DISMISS_FADE_SHARE),
+                ),
+              );
+              return;
+            }
+            if (dismissing.get()) {
+              return;
+            }
+            dismissing.set(true);
+            if (
+              Math.abs(translateY) > viewportHeight * DISMISS_DISTANCE_SHARE ||
+              Math.abs(velocityY) > DISMISS_VELOCITY
+            ) {
+              dismissOpacity.set(
+                withTiming(0, { duration: DISMISS_MS, easing: Easing.out(Easing.cubic) }, () => {
+                  scheduleOnRN(onClose);
+                }),
+              );
+              return;
+            }
+            dismissOpacity.set(
+              withTiming(1, { duration: DISMISS_MS, easing: Easing.out(Easing.cubic) }),
+            );
+          }}
+          ref={gallery}
+          renderItem={(item) => <GalleryImage item={item} viewport={viewport} />}
+          tapOnEdgeToItem={!pinMode}
+        />
+      )}
+      <ContentReviewComments presentation="overlay" targetId={imageReviewTargetId(activeItem)} />
+      <ContentReviewComposer anchorKind="image" targetId={imageReviewTargetId(activeItem)} />
     </Animated.View>
+  );
+}
+
+function imageReviewTargetId(item: ImagePreviewItem): string {
+  return `image:${item.draft?.scope ?? ""}:${item.id}`;
+}
+
+/** One gallery cell: the image fitted to the viewport, its decode state and its pins. */
+function GalleryImage({
+  item,
+  viewport,
+}: {
+  item: ImagePreviewItem;
+  viewport: { height: number; width: number };
+}) {
+  const points = useImageReviewPoints(imageReviewTargetId(item));
+  const [intrinsic, setIntrinsic] = useState({ height: 0, width: 0 });
+  const [decodeState, setDecodeState] = useState<"loading" | "ready" | "error">("loading");
+  const fit = containSize(intrinsic.width, intrinsic.height, viewport.width, viewport.height);
+  return (
+    <View
+      style={[styles.imageLayer, { height: fit.height, width: fit.width }]}
+      testID="image-preview-frame"
+    >
+      {decodeState === "loading" && (
+        <View pointerEvents="none" style={styles.imageStatus}>
+          <ActivityIndicator color="#ffffff" />
+        </View>
+      )}
+      {decodeState === "error" && (
+        <View pointerEvents="none" style={styles.imageStatus}>
+          <Ionicons color="#ffffff" name="image-outline" size={iconSize.illustration} />
+          <Text style={styles.imageError}>Image decode failed</Text>
+        </View>
+      )}
+      <ProgressiveImageLayer
+        detail={item.detail}
+        label={item.label}
+        onDecodeStateChange={setDecodeState}
+        onDimensions={setIntrinsic}
+        preview={item.source}
+      />
+      {points.map((point, index) => (
+        <View
+          key={point.id}
+          pointerEvents="none"
+          style={[
+            styles.pin,
+            {
+              left: percentageDimension(point.x * 100),
+              opacity: point.pending ? 0.6 : 1,
+              top: percentageDimension(point.y * 100),
+            },
+          ]}
+        >
+          <Text style={styles.pinText}>{index + 1}</Text>
+        </View>
+      ))}
+    </View>
   );
 }
 

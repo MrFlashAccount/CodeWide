@@ -154,6 +154,14 @@ impl ThreadDirectory {
         &self.app_thread_id
     }
 
+    /// The size and modification time of `state.json`; `None` when the
+    /// directory has none.
+    #[must_use]
+    pub fn state_stamp(&self) -> Option<(u64, std::time::SystemTime)> {
+        let metadata = std::fs::metadata(self.path.join(STATE_FILE)).ok()?;
+        Some((metadata.len(), metadata.modified().ok()?))
+    }
+
     /// Reads `state.json`; `None` when the directory has none.
     ///
     /// # Errors

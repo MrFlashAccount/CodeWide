@@ -1,22 +1,25 @@
 //! The last answering model of sessions `CodeWide` never configured
-//! (`host/src/threads/recordedModels.ts`) for the thread service: read from
-//! Claude's store through [`RecordedModels`] and kept until the session file
-//! changes; projections read the cache without I/O.
+//! (`host/src/threads/recordedModels.ts`) for the thread service: the index
+//! keeps each session file's newest main-loop answer with its checkpoint, so
+//! a change only catches the index up; [`RecordedModels`] keeps the answer
+//! until the session file changes, and projections read it without I/O.
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
     sync::{Mutex, PoisonError},
 };
 
 use tracing::warn;
 
-use super::{history::session_values, session_catalog::CatalogSession};
+use super::{
+    history::{IndexSlot, caught_up},
+    session_catalog::CatalogSession,
+};
 use crate::runtime::recorded_model::RecordedModels;
 
 /// The recorded models of discovered sessions.
 pub struct RecordedModelCache {
-    projects_root: PathBuf,
+    index: IndexSlot,
     /// Serializes reads, so one session file is read at most once per change.
     loader: tokio::sync::Mutex<RecordedModels>,
     /// The latest read per session, for synchronous projections.
@@ -25,9 +28,9 @@ pub struct RecordedModelCache {
 
 impl RecordedModelCache {
     #[must_use]
-    pub fn new(projects_root: PathBuf) -> Self {
+    pub fn new(index: IndexSlot) -> Self {
         Self {
-            projects_root,
+            index,
             loader: tokio::sync::Mutex::new(RecordedModels::default()),
             latest: Mutex::new(HashMap::new()),
         }
@@ -48,12 +51,16 @@ impl RecordedModelCache {
     /// A failed read is logged and keeps the previous answer.
     pub async fn load(&self, session: &CatalogSession) {
         let mut loader = self.loader.lock().await;
-        let root = self.projects_root.clone();
+        let slot = self.index.clone();
         let session_id = session.session_id.clone();
         let read = || async move {
-            tokio::task::spawn_blocking(move || session_values(&root, &session_id))
+            let index = caught_up(&slot, [session_id.as_str()])
+                .await
+                .map_err(std::io::Error::other)?;
+            tokio::task::spawn_blocking(move || index.history().recorded_model(&session_id))
                 .await
                 .map_err(std::io::Error::other)?
+                .map_err(std::io::Error::other)
         };
         let model = match loader
             .load(&session.session_id, session.last_modified_ms, read)

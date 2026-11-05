@@ -26,14 +26,14 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::model::{
-    AgentEvent, AgentThread, AppThreadId, BackgroundTaskReadParams, BackgroundTaskReadResult,
-    Capability, CapabilityInvokeParams, CapabilitySet, ClientToolSpec,
-    ERROR_CAPABILITY_UNSUPPORTED, ModelCatalog, PermissionProfileCatalog, ProviderDescriptor,
-    ProviderId, ProviderRateLimits, RequestRespondParams, RpcError, ThreadCreateParams,
-    ThreadForkParams, ThreadListParams, ThreadListResult, ThreadReadResult, ThreadTurnsParams,
-    ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult, ToolCallParams, ToolCallResult,
-    TurnContinueParams, TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams,
-    TurnSteerResult,
+    AgentEvent, AgentThread, AppThreadId, BackgroundTaskListParams, BackgroundTaskListResult,
+    BackgroundTaskReadParams, BackgroundTaskReadResult, Capability, CapabilityInvokeParams,
+    CapabilitySet, ClientToolSpec, ERROR_CAPABILITY_UNSUPPORTED, ModelCatalog,
+    PermissionProfileCatalog, ProviderDescriptor, ProviderId, ProviderRateLimits,
+    RequestRespondParams, RpcError, ThreadCreateParams, ThreadForkParams, ThreadListParams,
+    ThreadListResult, ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams,
+    ThreadUpdateResult, ToolCallParams, ToolCallResult, TurnContinueParams, TurnInterruptParams,
+    TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
 };
 
 pub use execution::{ExecutionApproval, ExecutionPolicy, ExecutionReviewer, ExecutionSandbox};
@@ -363,6 +363,23 @@ pub trait AgentProvider: Send + Sync {
         &self,
         params: BackgroundTaskReadParams,
     ) -> Result<BackgroundTaskReadResult, ProviderError> {
+        let _ = params;
+        Err(ProviderError::Rejected(RpcError::new(
+            ERROR_CAPABILITY_UNSUPPORTED,
+            crate::model::capability_unsupported_message(
+                Capability::ThreadsBackgroundTaskOutput.name(),
+            ),
+        )))
+    }
+
+    /// The thread's background commands that still run
+    /// (`thread.backgroundTasks.list`), as the provider's live session knows
+    /// them; empty when no session of the thread runs. Only providers
+    /// declaring `threads.backgroundTaskOutput` implement it.
+    async fn thread_background_tasks(
+        &self,
+        params: BackgroundTaskListParams,
+    ) -> Result<BackgroundTaskListResult, ProviderError> {
         let _ = params;
         Err(ProviderError::Rejected(RpcError::new(
             ERROR_CAPABILITY_UNSUPPORTED,

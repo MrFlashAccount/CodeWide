@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use workspace_io::WorkspaceIo;
+
 mod bundled;
 mod plugin;
 mod registry;
@@ -113,6 +115,7 @@ impl VcsService {
             .await
             .map_err(|error| VcsError::Plugin(format!("{}: {error}", plugin.id)))?;
         let file = find_snapshot_file(&snapshot, path)
+            .await
             .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
         plugin::diff(&plugin, workspace, file, &snapshot.snapshot_id, scope)
             .await
@@ -146,6 +149,7 @@ impl VcsService {
             .await
             .map_err(|error| VcsError::Plugin(format!("{}: {error}", provider.id)))?;
         let file = find_snapshot_file(&snapshot, path)
+            .await
             .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
         plugin::diff_page(
             &provider,
@@ -172,7 +176,7 @@ impl VcsService {
         workspace: &Path,
     ) -> Result<Option<WorkspaceSupport>, VcsError> {
         validate_workspace(workspace)?;
-        validate_existing_workspace(workspace)?;
+        validate_existing_workspace(workspace).await?;
         let mut start_error = None;
         for plugin in self.registry.enabled_plugins()? {
             match plugin::workspace_support(&plugin, workspace).await {
@@ -240,7 +244,7 @@ impl VcsService {
         validate_workspace(workspace)?;
         validate_workspace(storage_root)?;
         validate_workspace_request_id(request_id)?;
-        validate_existing_workspace(workspace)?;
+        validate_existing_workspace(workspace).await?;
         let mut start_error = None;
         for plugin in self.registry.enabled_plugins()? {
             match plugin::workspace_support(&plugin, workspace).await {
@@ -276,7 +280,7 @@ impl VcsService {
         workspace: &Path,
         scope: VcsScope,
     ) -> Result<VcsPluginConfig, VcsError> {
-        validate_existing_workspace(workspace)?;
+        validate_existing_workspace(workspace).await?;
         let mut start_error = None;
         for candidate in self.registry.enabled_plugins()? {
             match plugin::inspect(&candidate, workspace, scope).await {
@@ -296,16 +300,22 @@ impl VcsService {
     }
 }
 
-fn find_snapshot_file<'a>(snapshot: &'a VcsSnapshot, path: &Path) -> Option<&'a VcsFile> {
+async fn find_snapshot_file<'a>(snapshot: &'a VcsSnapshot, path: &Path) -> Option<&'a VcsFile> {
     if let Some(file) = snapshot.files.iter().find(|file| file.path == path) {
         return Some(file);
     }
-    let canonical = path.canonicalize().ok()?;
-    snapshot.files.iter().find(|file| {
-        file.path
-            .canonicalize()
+    let io = WorkspaceIo::shared();
+    let canonical = io.canonicalize(path).await.ok()?;
+    for file in &snapshot.files {
+        if io
+            .canonicalize(&file.path)
+            .await
             .is_ok_and(|candidate| candidate == canonical)
-    })
+        {
+            return Some(file);
+        }
+    }
+    None
 }
 
 fn validate_workspace(workspace: &Path) -> Result<(), VcsError> {
@@ -316,8 +326,8 @@ fn validate_workspace(workspace: &Path) -> Result<(), VcsError> {
     }
 }
 
-fn validate_existing_workspace(workspace: &Path) -> Result<(), VcsError> {
-    match std::fs::metadata(workspace) {
+async fn validate_existing_workspace(workspace: &Path) -> Result<(), VcsError> {
+    match WorkspaceIo::shared().metadata(workspace).await {
         Ok(metadata) if metadata.is_dir() => Ok(()),
         Ok(_) => Err(VcsError::UnsupportedWorkspace(workspace.to_path_buf())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

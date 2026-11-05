@@ -1,6 +1,10 @@
 /** V1 CommandOutput owner, extracted without changing interaction or resource lifetime. */
 import type { RenderBlock } from "@codewide/renderers";
-import { commandOutputReferences, type ActivityFootprint } from "@codewide/sync-client";
+import {
+  commandOutputField,
+  commandOutputReferences,
+  type ActivityFootprint,
+} from "@codewide/sync-client";
 import { useContext, useState } from "react";
 import { Pressable, View } from "react-native";
 import type { GetTransferAccess, TransferAccess } from "../../../data/private-transfer";
@@ -85,7 +89,7 @@ export function CommandExecutionProtocolBlock({
       )}
       <LargeContentControls
         block={block}
-        omitCommandOutput
+        omitCommandFields
         {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
       />
     </Card>
@@ -93,6 +97,9 @@ export function CommandExecutionProtocolBlock({
 }
 
 function ignoreContentRequest(): void {}
+
+/** The command's own field, which the output screen reads whole. */
+const COMMAND_POINTER = "/command";
 
 function useCommandOutputAction(
   block: RenderBlock,
@@ -111,6 +118,7 @@ function useCommandOutputAction(
     }
     dispatchOutput({
       command,
+      commandReference: commandOutputField(block.raw, COMMAND_POINTER),
       fallbackOutput: block.body ?? "",
       getTransferAccess,
       itemId,

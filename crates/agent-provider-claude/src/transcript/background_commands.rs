@@ -67,6 +67,18 @@ pub struct BackgroundCommandRuns {
 }
 
 impl BackgroundCommandRuns {
+    /// Every ended state, by task id.
+    pub(crate) fn ended(&self) -> impl Iterator<Item = (&str, BackgroundCommandState)> {
+        self.ended
+            .iter()
+            .map(|(task, state)| (task.as_str(), *state))
+    }
+
+    /// Adds an ended state recorded elsewhere (the session index).
+    pub(crate) fn insert(&mut self, task_id: &str, state: BackgroundCommandState) {
+        self.ended.entry(task_id.to_owned()).or_insert(state);
+    }
+
     /// Records a stored report that arrived at `timestamp_ms`; reports are
     /// recorded in the order they were stored.
     pub fn record(&mut self, report: &TaskReport, timestamp_ms: i64) {
