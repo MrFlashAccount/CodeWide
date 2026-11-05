@@ -12,6 +12,7 @@ import {
 
 import { colors, controlHitSlop, controlSize, disabledOpacity, iconSize, radii } from "../theme";
 import { overflowMenuIcon } from "./overflowMenuIcon";
+import { ProgressRing } from "./ProgressRing";
 
 /**
  * Glyph colour and backdrop. `filled` matches toolbar neighbours drawn on the
@@ -25,6 +26,9 @@ export type OverflowMenuSize = keyof typeof controlSize;
 /** Trigger contract shared with `OverflowMenu`; menu owners inject `onPress`. */
 export type OverflowMenuButtonProps = {
   readonly accessibilityLabel: string;
+  /** Background work the menu leads to, drawn as a progress ring in place of the dots;
+   * `progress` is 0..1, or `null` while its size is unknown. */
+  readonly activity?: { readonly progress: number | null } | undefined;
   /** Replaces the glyph with a spinner and disables the trigger. */
   readonly busy?: boolean | undefined;
   readonly disabled?: boolean | undefined;
@@ -51,6 +55,7 @@ const GLYPH_COLOR: Readonly<Record<OverflowMenuTone, string>> = {
  */
 export function OverflowMenuButton({
   accessibilityLabel,
+  activity,
   busy = false,
   disabled = false,
   onPress,
@@ -81,15 +86,37 @@ export function OverflowMenuButton({
       ]}
       testID={testID}
     >
-      {busy ? (
-        <ActivityIndicator color={GLYPH_COLOR[tone]} size="small" />
-      ) : (
-        <Ionicons color={GLYPH_COLOR[tone]} name={overflowMenuIcon} size={iconSize.action} />
-      )}
+      <OverflowMenuGlyph activity={activity} busy={busy} tone={tone} />
     </Pressable>
   );
 }
 
+function OverflowMenuGlyph({
+  activity,
+  busy,
+  tone,
+}: {
+  readonly activity: OverflowMenuButtonProps["activity"];
+  readonly busy: boolean;
+  readonly tone: OverflowMenuTone;
+}): React.JSX.Element {
+  if (busy) {
+    return <ActivityIndicator color={GLYPH_COLOR[tone]} size="small" />;
+  }
+  if (activity !== undefined) {
+    return (
+      <ProgressRing
+        progress={activity.progress}
+        size={iconSize.action}
+        strokeWidth={ACTIVITY_RING_STROKE}
+        testID="overflow-menu-activity-ring"
+      />
+    );
+  }
+  return <Ionicons color={GLYPH_COLOR[tone]} name={overflowMenuIcon} size={iconSize.action} />;
+}
+
+const ACTIVITY_RING_STROKE = 2.5;
 const PRESSED_OPACITY = 0.68;
 
 const styles = StyleSheet.create({

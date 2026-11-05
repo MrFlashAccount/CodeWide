@@ -22,6 +22,7 @@ export type ThreadSidebarProps = {
   onModeChange: (mode: ThreadListMode) => void;
   onNewThread: () => void;
   onOffsetChange: (offset: number) => void;
+  onOpenDownloads: () => void;
   onOpenSearch: () => void;
   onRefreshAccountRateLimits?: () => Promise<unknown>;
   onSelectServer: (scope: ServerScope) => void;

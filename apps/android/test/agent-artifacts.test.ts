@@ -111,6 +111,21 @@ describe("bubble attachment projections", () => {
       })[0]?.source,
     ).toEqual({ type: "path", path: "/mnt/data/report.pdf" });
   });
+  it("attaches host file URLs as the paths they name", () => {
+    expect(
+      projectAgentArtifacts({
+        items: [
+          {
+            type: "agentMessage",
+            text: "[Repro](file:///srv/out/My%20Repro.mp4) [Frame](file://localhost/srv/out/frame.png) [Remote](file://build-host/srv/report.pdf)",
+          },
+        ],
+      }),
+    ).toEqual([
+      { kind: "file", name: "My Repro.mp4", source: { path: "/srv/out/My Repro.mp4", type: "path" } },
+      { kind: "image", name: "frame.png", source: { path: "/srv/out/frame.png", type: "path" } },
+    ]);
+  });
   it("projects an SVG artifact into the image gallery", () => {
     expect(
       projectAgentArtifacts({

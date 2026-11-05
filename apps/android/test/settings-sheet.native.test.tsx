@@ -100,6 +100,7 @@ function setup() {
     servers: [server("buddy", "Buddy", "Personal account"), server("work", "Work", "Work account")],
     security: <Text>Biometric Lock setting</Text>,
     chats: <Text>Chat controls</Text>,
+    downloads: <Text>Download controls</Text>,
     advanced: <Text>Advanced controls</Text>,
     version: <Text>Version test</Text>,
     onAddServer: jest.fn(),

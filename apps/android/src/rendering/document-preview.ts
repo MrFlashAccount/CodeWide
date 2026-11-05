@@ -109,8 +109,30 @@ export function remoteFileKind(name: string, path: string): DocumentPreviewKind 
   return "download";
 }
 
-export function isRemoteFileHref(value: string): boolean {
+/** A `file:` URL without an authority, or with `localhost`, names a path on the
+ * agent's host, the same path a bare absolute link names. Any other authority
+ * names another machine and stays a URL. */
+const HOST_FILE_URL_PREFIX = /^file:(?:\/\/(?:localhost)?(?=\/)|(?=\/(?!\/)))/iu;
+
+function withoutHostFileScheme(value: string): string {
+  return value.replace(HOST_FILE_URL_PREFIX, "");
+}
+
+/** The decoded absolute host path a `file:` URL names, or `null` for any other link. */
+export function hostFileUrlPath(value: string): string | null {
   const raw = value.trim();
+  if (!HOST_FILE_URL_PREFIX.test(raw)) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(withoutHostFileScheme(raw));
+  } catch {
+    return null;
+  }
+}
+
+export function isRemoteFileHref(value: string): boolean {
+  const raw = withoutHostFileScheme(value.trim());
   const sourceReference = parseTextDocumentLocation(raw).path !== raw;
   return (
     raw !== "" &&
@@ -133,7 +155,7 @@ export function resolveRemoteDocumentLocation(
   value: string,
   cwd: string,
 ): RemoteDocumentLocation | null {
-  const raw = value.trim();
+  const raw = withoutHostFileScheme(value.trim());
   if (!isRemoteFileHref(raw)) {
     return null;
   }

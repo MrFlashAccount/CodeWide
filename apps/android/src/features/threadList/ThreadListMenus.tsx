@@ -9,6 +9,7 @@ import type { ServerScope } from "../../services/servers/serverScope";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { OverflowMenuButton } from "../../ui/OverflowMenuButton";
 import { WorkspaceAccountUsageMenu } from "../accounts/WorkspaceAccountUsageMenu";
+import { useDownloadsActivity } from "../downloads/useDownloadsActivity";
 import type { ThreadListServer } from "../connections/connectionPresentation";
 import { threadFilterLabel, threadFilterOptions, type ThreadListFilter } from "./threadListFilters";
 import { styles } from "./ThreadListMenus.styles";
@@ -21,6 +22,7 @@ export function ThreadListMenu({
   archived,
   onManageProjects,
   onManageTerminals,
+  onOpenDownloads,
   onRefreshAccountRateLimits,
   onSettings,
   onToggleArchive,
@@ -31,10 +33,13 @@ export function ThreadListMenu({
   archived: boolean;
   onManageProjects: () => void;
   onManageTerminals: () => void;
+  onOpenDownloads: () => void;
   onRefreshAccountRateLimits?: () => Promise<unknown>;
   onSettings: () => void;
   onToggleArchive: () => void;
 }) {
+  const downloads = useDownloadsActivity();
+  const menuLabel = threadListMenuLabel(downloads);
   return (
     <WorkspaceAccountUsageMenu
       agentProviders={agentProviders}
@@ -57,6 +62,12 @@ export function ThreadListMenu({
           onPress: onManageTerminals,
         },
         {
+          icon: "download-outline",
+          id: "downloads",
+          label: "Downloads",
+          onPress: onOpenDownloads,
+        },
+        {
           icon: archived ? "chatbubbles-outline" : "archive-outline",
           id: "archived",
           label: archived ? "Active threads" : "Archived threads",
@@ -67,9 +78,23 @@ export function ThreadListMenu({
       align="end"
       placement="bottom"
     >
-      <OverflowMenuButton accessibilityLabel="Thread list menu" />
+      <OverflowMenuButton
+        accessibilityLabel={menuLabel}
+        activity={downloads.status === "running" ? { progress: downloads.progress } : undefined}
+      />
     </WorkspaceAccountUsageMenu>
   );
+}
+
+const PERCENT = 100;
+
+function threadListMenuLabel(downloads: ReturnType<typeof useDownloadsActivity>): string {
+  if (downloads.status !== "running") {
+    return "Thread list menu";
+  }
+  return downloads.progress === null
+    ? "Thread list menu, downloading"
+    : `Thread list menu, downloading ${String(Math.round(downloads.progress * PERCENT))}%`;
 }
 
 export function ThreadFilterMenu({

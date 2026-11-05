@@ -23,6 +23,7 @@ import { globalVoiceOrbStateForPhase } from "../features/globalSupervisor/global
 import { useBrowserFeedbackSubmission } from "../features/browser/feedbackSubmission";
 import { usePendingRequests } from "../features/requests/pendingRequests";
 import { GlobalSearchScreen } from "../features/search/GlobalSearchScreen";
+import { DownloadsSheet } from "../features/downloads/DownloadsSheet";
 import { ManageTerminalsSheet } from "../features/terminal/ManageTerminalsSheet";
 import { useThreadListActions } from "../features/threadList/threadListActions";
 import type { ThreadListSources } from "../features/threadList/threadListSources";
@@ -182,6 +183,7 @@ function sidebarSearchContent({
 /** Composes the mounted V1 route resources, list chrome, and active destination slot. */
 export function WorkspaceRouteComposition(): React.JSX.Element {
   const [terminalsVisible, setTerminalsVisible] = useState(false);
+  const [downloadsOpenedAt, setDownloadsOpenedAt] = useState<number | null>(null);
   const [desktopSearchSessionId, setDesktopSearchSessionId] = useState<string | null | undefined>(
     undefined,
   );
@@ -274,6 +276,12 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
   });
   const closeTerminals = useEvent((): void => {
     setTerminalsVisible(false);
+  });
+  const openDownloads = useEvent((): void => {
+    setDownloadsOpenedAt(Date.now());
+  });
+  const closeDownloads = useEvent((): void => {
+    setDownloadsOpenedAt(null);
   });
   const selectTerminal = useEvent((terminal: NativeTerminalSession): void => {
     const params = v1ThreadRouteParams({
@@ -437,6 +445,7 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     globalVoice,
     list,
     listActions,
+    openDownloads,
     openGlobalSearch,
     openProjects: () => {
       route.router.push("/projects");
@@ -463,6 +472,7 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
         threads={list.scopedThreads}
         visible={terminalsVisible}
       />
+      <DownloadsSheet onClose={closeDownloads} openedAt={downloadsOpenedAt} />
     </>
   );
 }

@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { useState } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -10,7 +10,11 @@ import type { DocumentPreviewRequest } from "../src/rendering/DocumentPreviewHos
 import { ImagePreviewHost } from "../src/rendering/ImagePreviewHost";
 import { RouteAttachmentVideoPreview } from "../src/rendering/AttachmentVideoPreview";
 import { ThreadCodeDocumentContext } from "../src/rendering/ThreadCodeDocumentContext";
+import { DownloadManagerProvider } from "../src/data/DownloadManagerProvider";
+import type { DownloadManager } from "../src/data/downloadManager";
+import { createTestDownloadManager } from "./downloads.fixture";
 import { touchTarget } from "../src/theme";
+import { ActionMenu } from "../src/ui/ActionMenu";
 import { AppDialogProvider } from "../src/ui/AppDialog.tsx";
 import { AppFullscreenOverlayProvider } from "../src/ui/AppFullscreenOverlay";
 import { AppNoticeProvider } from "../src/ui/AppNotice";
@@ -107,15 +111,17 @@ it("renders MP4 as an image-sized paused preview in the message", async () => {
         insets: { bottom: 0, left: 0, right: 0, top: 24 },
       }}
     >
-      <AppNoticeProvider>
-        <AppFullscreenOverlayProvider>
-          <ImagePreviewHost>
-            <DocumentPreviewHost>
-              <RoutedMessageVideo />
-            </DocumentPreviewHost>
-          </ImagePreviewHost>
-        </AppFullscreenOverlayProvider>
-      </AppNoticeProvider>
+      <DownloadManagerProvider manager={createTestDownloadManager()}>
+        <AppNoticeProvider>
+          <AppFullscreenOverlayProvider>
+            <ImagePreviewHost>
+              <DocumentPreviewHost>
+                <RoutedMessageVideo />
+              </DocumentPreviewHost>
+            </ImagePreviewHost>
+          </AppFullscreenOverlayProvider>
+        </AppNoticeProvider>
+      </DownloadManagerProvider>
     </SafeAreaProvider>,
   );
 
@@ -131,26 +137,50 @@ it("renders MP4 as an image-sized paused preview in the message", async () => {
   });
 });
 
+function FullscreenProviders({
+  children,
+  downloads = createTestDownloadManager(),
+}: {
+  readonly children: React.ReactNode;
+  readonly downloads?: DownloadManager;
+}): React.JSX.Element {
+  return (
+    <DownloadManagerProvider manager={downloads}>
+      <SafeAreaProvider
+        initialMetrics={{
+          frame: { height: 800, width: 400, x: 0, y: 0 },
+          insets: { bottom: 0, left: 0, right: 0, top: 24 },
+        }}
+      >
+        <AppDialogProvider>
+          <AppNoticeProvider>
+            <AppFullscreenOverlayProvider>
+              <ImagePreviewHost>
+                <DocumentPreviewHost>
+                  <ContentReviewHost>
+                    <ReviewRuntime />
+                    {children}
+                  </ContentReviewHost>
+                </DocumentPreviewHost>
+              </ImagePreviewHost>
+            </AppFullscreenOverlayProvider>
+          </AppNoticeProvider>
+        </AppDialogProvider>
+      </SafeAreaProvider>
+    </DownloadManagerProvider>
+  );
+}
+
 it("uses image-style fullscreen controls and starts a timestamped point review", async () => {
   const view = render(
-    <SafeAreaProvider
-      initialMetrics={{
-        frame: { height: 800, width: 400, x: 0, y: 0 },
-        insets: { bottom: 0, left: 0, right: 0, top: 24 },
-      }}
-    >
-      <AppDialogProvider>
-        <ContentReviewHost>
-          <ReviewRuntime />
-          <RouteAttachmentVideoPreview
-            getAccess={access}
-            name="comparison.mp4"
-            onClose={() => undefined}
-            path="/tmp/comparison.mp4"
-          />
-        </ContentReviewHost>
-      </AppDialogProvider>
-    </SafeAreaProvider>,
+    <FullscreenProviders>
+      <RouteAttachmentVideoPreview
+        getAccess={access}
+        name="comparison.mp4"
+        onClose={() => undefined}
+        path="/tmp/comparison.mp4"
+      />
+    </FullscreenProviders>,
   );
 
   await waitFor(() => {
@@ -173,4 +203,72 @@ it("uses image-style fullscreen controls and starts a timestamped point review",
 
   expect(view.getByPlaceholderText("What should change here?")).toBeTruthy();
   expect(view.getByText("Video · 25.0%, 50.0%")).toBeTruthy();
+});
+
+it("downloads a host video from its actions menu", async () => {
+  const directory = { name: "Downloads", native: {}, uri: "content://downloads" };
+  const pickDirectory = jest.fn(async () => directory);
+  const start = jest.fn(() => ({
+    cancel: () => undefined,
+    pause: () => undefined,
+    promise: Promise.resolve({
+      bytes: 1,
+      mimeType: "video/mp4",
+      sha256: "0".repeat(64),
+      uri: "content://downloads/comparison.mp4",
+    }),
+  }));
+  const view = render(
+    <FullscreenProviders downloads={createTestDownloadManager({ pickDirectory, start })}>
+      <RouteAttachmentVideoPreview
+        getAccess={access}
+        name="comparison.mp4"
+        onClose={() => undefined}
+        path="/tmp/comparison.mp4"
+      />
+    </FullscreenProviders>,
+  );
+  await waitFor(() => {
+    expect(view.getByLabelText("Close video")).toBeTruthy();
+  });
+  const menus = view.UNSAFE_getAllByType(ActionMenu);
+  expect(menus).toHaveLength(1);
+  const menu = menus[0];
+  expect(menu?.props.accessibilityLabel).toBe("Video actions");
+  expect(menu?.props.actions.map((action: { label: string }) => action.label)).toEqual([
+    "Download",
+  ]);
+
+  await act(async () => {
+    menu?.props.onSelect("download");
+  });
+
+  await waitFor(() => {
+    expect(start).toHaveBeenCalledWith({
+      directory,
+      getAccess: access,
+      onProgress: expect.any(Function),
+      source: { kind: "path", path: "/tmp/comparison.mp4" },
+    });
+  });
+  expect(pickDirectory).toHaveBeenCalledTimes(1);
+  expect(view.getByText("File saved")).toBeTruthy();
+});
+
+it("offers no download for a video without a direct download route", async () => {
+  const view = render(
+    <FullscreenProviders>
+      <RouteAttachmentVideoPreview
+        getAccess={access}
+        name="comparison.mp4"
+        onClose={() => undefined}
+        path="comparison.mp4"
+        source={{ id: "upload-1", kind: "content" }}
+      />
+    </FullscreenProviders>,
+  );
+  await waitFor(() => {
+    expect(view.getByLabelText("Close video")).toBeTruthy();
+  });
+  expect(view.UNSAFE_queryAllByType(ActionMenu)).toHaveLength(0);
 });

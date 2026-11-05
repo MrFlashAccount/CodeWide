@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { pickDownloadDirectory, startPreviewDownload } from "../src/native/file-transfer.native";
+import {
+  discardPartialDownload,
+  pickDownloadDirectory,
+  startPreviewDownload,
+} from "../src/native/file-transfer.native";
 import { urlTransport } from "../src/native/urlTransport";
 
 const storage = vi.hoisted(() => ({
@@ -48,6 +52,7 @@ vi.mock("expo-file-system", () => {
       return new Directory();
     }
     name = "Downloads";
+    uri = "content://downloads";
     list() {
       return [...storage.files.keys()].map((uri) => new File(uri));
     }
@@ -173,9 +178,25 @@ describe("SAF streamed downloads", () => {
     expect(storage.files.get(result.uri ?? "")).toEqual(bytes);
   });
 
-  it("does not append a response arriving after cancellation", async () => {
+  it("pauses without appending a late response and keeps the partial file for resume", async () => {
+    let pause: () => void = () => undefined;
+    const served = serve(new Uint8Array([1, 2, 3]), () => pause());
+    const transfer = startPreviewDownload(
+      getAccess,
+      await pickDownloadDirectory(),
+      `/${filename}`,
+      () => undefined,
+    );
+    pause = transfer.pause;
+    await expect(transfer.promise).rejects.toThrow("Transfer cancelled");
+    expect(storage.files.get(served.partialUri)).toHaveLength(0);
+    expect(storage.writes).toBe(0);
+  });
+
+  it("cancels without appending a late response and discards the partial file", async () => {
     let cancel: () => void = () => undefined;
     const served = serve(new Uint8Array([1, 2, 3]), () => cancel());
+    storage.files.set(served.partialUri, new Uint8Array([1]));
     const transfer = startPreviewDownload(
       getAccess,
       await pickDownloadDirectory(),
@@ -184,8 +205,20 @@ describe("SAF streamed downloads", () => {
     );
     cancel = transfer.cancel;
     await expect(transfer.promise).rejects.toThrow("Transfer cancelled");
-    expect(storage.files.get(served.partialUri)).toHaveLength(0);
     expect(storage.writes).toBe(0);
+    expect(storage.files.has(served.partialUri)).toBe(false);
+    expect(storage.files.has(`content://downloads/${filename}`)).toBe(false);
+  });
+
+  it("discards a paused download's partial file and leaves finished and unrelated files", async () => {
+    const partial = `content://downloads/.codex-part-${"a".repeat(16)}-${filename}`;
+    const unrelatedPartial = `content://downloads/.codex-part-${"b".repeat(16)}-other.png`;
+    const finished = `content://downloads/${filename}`;
+    for (const uri of [partial, unrelatedPartial, finished]) {
+      storage.files.set(uri, new Uint8Array([1]));
+    }
+    discardPartialDownload(await pickDownloadDirectory(), `/thread/${filename}`);
+    expect([...storage.files.keys()].toSorted()).toEqual([unrelatedPartial, finished].toSorted());
   });
 
   it("preserves the partial file and original write error for retry", async () => {

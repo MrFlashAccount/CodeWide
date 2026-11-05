@@ -27,7 +27,10 @@ import {
   typeScale,
   typeWeight,
 } from "../theme";
+import type { ActionMenuItem } from "../ui/ActionMenu";
+import { useAppDialog } from "../ui/AppDialog";
 import { useAppFullscreenOverlay } from "../ui/AppFullscreenOverlay";
+import { OverflowMenu } from "../ui/OverflowMenu";
 import { useOverlaySurface } from "../ui/OverlaySurfaceContext";
 import { percentageDimension } from "../ui/percentageDimension";
 import { AppText as Text } from "../ui/Typography";
@@ -39,6 +42,7 @@ import {
   useVideoReviewPoints,
   type ContentReviewPoint,
 } from "./ContentReviewHost";
+import { useDocumentDownload, type DocumentPreviewRequest } from "./DocumentPreviewHost";
 import { materializePrivateAsset } from "./private-asset";
 import { usePrivateFileAccessScope } from "./use-private-image-uri";
 import { MESSAGE_VIDEO_PREVIEW_HEIGHT, MESSAGE_VIDEO_PREVIEW_WIDTH } from "./videoPreview";
@@ -54,7 +58,11 @@ type VideoPreviewSource =
   | { readonly fallbackPath: string; readonly source?: undefined }
   | { readonly fallbackPath?: undefined; readonly source: PrivateAssetSource };
 
+/** Saves the original video file; absent when its source has no download route. */
+type VideoDownload = (() => Promise<void>) | undefined;
+
 type VideoPreviewProps = VideoPreviewSource & {
+  readonly download: VideoDownload;
   readonly getAccess: GetTransferAccess;
   readonly name: string;
   onClose: () => void;
@@ -71,13 +79,43 @@ type VideoSize = { readonly height: number; readonly width: number };
 const REVIEW_POINT_PERCENT = 100;
 const PENDING_POINT_OPACITY = 0.6;
 const HALF = 2;
+const VIDEO_ACTIONS: readonly ActionMenuItem[] = [
+  { icon: "download-outline", id: "download", label: "Download" },
+];
+
+/** Host paths and scoped roots have a direct download route; content uploads
+ * and remote URLs do not, so their preview offers no Download action. */
+function videoDownload(
+  downloadDocument: (request: DocumentPreviewRequest) => Promise<void>,
+  request: Omit<VideoRequest, "reference">,
+): VideoDownload {
+  const { source } = request;
+  if (source.kind !== "path" && source.kind !== "scoped") {
+    return undefined;
+  }
+  return async () =>
+    downloadDocument({
+      getTransferAccess: request.getAccess,
+      kind: "download",
+      name: request.name,
+      path: source.path,
+      source,
+    });
+}
 
 export function useAttachmentVideoPreview(): (request: VideoRequest) => void {
   const overlay = useAppFullscreenOverlay();
   const scope = usePrivateFileAccessScope();
+  const downloadDocument = useDocumentDownload();
   return useEvent((request: VideoRequest) => {
+    const download = videoDownload(downloadDocument, request);
     overlay.present((controls) => (
-      <AttachmentVideoPreview {...request} onClose={controls.close} scope={scope} />
+      <AttachmentVideoPreview
+        {...request}
+        download={download}
+        onClose={controls.close}
+        scope={scope}
+      />
     ));
   });
 }
@@ -157,9 +195,16 @@ export function RouteAttachmentVideoPreview({
   readonly source?: PrivateAssetSource;
 }): React.JSX.Element {
   const scope = usePrivateFileAccessScope();
+  const downloadDocument = useDocumentDownload();
+  const download = videoDownload(downloadDocument, {
+    getAccess,
+    name,
+    source: source ?? { kind: "path", path },
+  });
   if (source === undefined) {
     return (
       <AttachmentVideoPreview
+        download={download}
         fallbackPath={path}
         getAccess={getAccess}
         name={name}
@@ -171,6 +216,7 @@ export function RouteAttachmentVideoPreview({
   }
   return (
     <AttachmentVideoPreview
+      download={download}
       getAccess={getAccess}
       name={name}
       onClose={onClose}
@@ -196,6 +242,7 @@ function AttachmentVideoPreview(props: VideoPreviewProps): React.JSX.Element {
   return (
     <View style={styles.fullscreenRoot} testID="video-preview-surface">
       <FullscreenVideoResource
+        download={props.download}
         key={revision}
         name={props.name}
         onClose={props.onClose}
@@ -209,6 +256,7 @@ function AttachmentVideoPreview(props: VideoPreviewProps): React.JSX.Element {
 }
 
 function FullscreenVideoResource({
+  download,
   name,
   onClose,
   onRetry,
@@ -216,6 +264,7 @@ function FullscreenVideoResource({
   resource,
   reviewTargetId,
 }: {
+  readonly download: VideoDownload;
   readonly name: string;
   onClose: () => void;
   onRetry: () => void;
@@ -226,6 +275,7 @@ function FullscreenVideoResource({
   if (resource.value === null) {
     return (
       <FullscreenVideoPending
+        download={download}
         error={resource.status === "error" ? resource.error : null}
         name={name}
         onClose={onClose}
@@ -235,6 +285,7 @@ function FullscreenVideoResource({
   }
   return (
     <FullscreenVideoPlayer
+      download={download}
       name={name}
       onClose={onClose}
       onRetry={onRetry}
@@ -246,11 +297,13 @@ function FullscreenVideoResource({
 }
 
 function FullscreenVideoPending({
+  download,
   error,
   name,
   onClose,
   onRetry,
 }: {
+  readonly download: VideoDownload;
   readonly error: string | null;
   readonly name: string;
   onClose: () => void;
@@ -258,7 +311,7 @@ function FullscreenVideoPending({
 }): React.JSX.Element {
   return (
     <>
-      <FullscreenVideoToolbar name={name} onClose={onClose} pinMode={false} />
+      <FullscreenVideoToolbar download={download} name={name} onClose={onClose} pinMode={false} />
       <View style={styles.fullscreenStatus}>
         <FullscreenVideoPendingState error={error} onRetry={onRetry} />
       </View>
@@ -324,6 +377,7 @@ function InlineVideoSurface({ source }: { readonly source: VideoSource }): React
 }
 
 function FullscreenVideoPlayer({
+  download,
   name,
   onClose,
   onRetry,
@@ -331,6 +385,7 @@ function FullscreenVideoPlayer({
   reviewTargetId,
   source,
 }: {
+  readonly download: VideoDownload;
   readonly name: string;
   onClose: () => void;
   onRetry: () => void;
@@ -411,6 +466,7 @@ function FullscreenVideoPlayer({
       />
       <ContentReviewComposer anchorKind="video" targetId={reviewTargetId} />
       <FullscreenVideoToolbar
+        download={download}
         name={name}
         onClose={onClose}
         onTogglePin={togglePin}
@@ -502,12 +558,14 @@ function VideoPlayerError({
 }
 
 function FullscreenVideoToolbar({
+  download,
   name,
   onClose,
   onTogglePin,
   pinMode,
   top = spacing.xs,
 }: {
+  readonly download: VideoDownload;
   readonly name: string;
   onClose: () => void;
   onTogglePin?: () => void;
@@ -529,24 +587,65 @@ function FullscreenVideoToolbar({
           {name}
         </Text>
       </View>
-      {onTogglePin === undefined ? (
+      {onTogglePin === undefined && download === undefined ? (
         <View style={styles.toolbarSpacer} />
       ) : (
-        <Pressable
-          accessibilityLabel="Pin a comment on video"
-          accessibilityRole="button"
-          accessibilityState={{ selected: pinMode }}
-          onPress={onTogglePin}
-          style={styles.roundButton}
-        >
-          <Ionicons
-            color={pinMode ? "#B794F6" : "#ffffff"}
-            name={pinMode ? "pin" : "pin-outline"}
-            size={iconSize.action}
-          />
-        </Pressable>
+        <View style={styles.topBarActions}>
+          {onTogglePin === undefined ? null : (
+            <VideoPinToggle onToggle={onTogglePin} pinMode={pinMode} />
+          )}
+          {download === undefined ? null : <VideoActionsMenu download={download} />}
+        </View>
       )}
     </View>
+  );
+}
+
+function VideoPinToggle({
+  onToggle,
+  pinMode,
+}: {
+  onToggle: () => void;
+  readonly pinMode: boolean;
+}): React.JSX.Element {
+  return (
+    <Pressable
+      accessibilityLabel="Pin a comment on video"
+      accessibilityRole="button"
+      accessibilityState={{ selected: pinMode }}
+      onPress={onToggle}
+      style={styles.roundButton}
+    >
+      <Ionicons
+        color={pinMode ? "#B794F6" : "#ffffff"}
+        name={pinMode ? "pin" : "pin-outline"}
+        size={iconSize.action}
+      />
+    </Pressable>
+  );
+}
+
+function VideoActionsMenu({ download }: { download: () => Promise<void> }): React.JSX.Element {
+  const dialog = useAppDialog();
+  const selectAction = useEvent((id: string) => {
+    if (id !== "download") {
+      return;
+    }
+    download().catch((error: unknown) => {
+      dialog.alert(
+        "Download failed",
+        error instanceof Error ? error.message : "Could not download video",
+      );
+    });
+  });
+  return (
+    <OverflowMenu
+      accessibilityLabel="Video actions"
+      actions={VIDEO_ACTIONS}
+      onSelect={selectAction}
+      style={styles.menuAnchor}
+      tone="media"
+    />
   );
 }
 
@@ -590,6 +689,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flex: 1,
     justifyContent: "center",
+  },
+  menuAnchor: {
+    height: touchTarget,
+    width: touchTarget,
   },
   messagePlayButton: {
     alignItems: "center",
@@ -717,6 +820,10 @@ const styles = StyleSheet.create({
     left: spacing.sm,
     position: "absolute",
     right: spacing.sm,
+  },
+  topBarActions: {
+    flexDirection: "row",
+    gap: spacing.xs,
   },
   videoFrame: {
     position: "relative",

@@ -21,6 +21,7 @@ type MobileThreadsHeaderProps = Pick<
   | "onFilterChange"
   | "onManageProjects"
   | "onManageTerminals"
+  | "onOpenDownloads"
   | "onModeChange"
   | "onOpenSearch"
   | "onQueryChange"
@@ -44,6 +45,7 @@ export function MobileThreadsHeader({ props }: { props: MobileThreadsHeaderProps
     onManageProjects,
     onManageTerminals,
     onModeChange,
+    onOpenDownloads,
     onOpenSearch,
     onQueryChange,
     onRefreshAccountRateLimits,
@@ -117,6 +119,7 @@ export function MobileThreadsHeader({ props }: { props: MobileThreadsHeaderProps
           archived={mode === "archived"}
           onManageProjects={onManageProjects}
           onManageTerminals={onManageTerminals}
+          onOpenDownloads={onOpenDownloads}
           onSettings={onSettings}
           onToggleArchive={() => {
             onQueryChange("");

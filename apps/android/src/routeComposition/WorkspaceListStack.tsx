@@ -125,6 +125,7 @@ function WorkspaceListHeader(): React.JSX.Element | null {
         onManageProjects: resources.openProjects,
         onManageTerminals: resources.openTerminals,
         onModeChange: selection.onModeChange,
+        onOpenDownloads: resources.openDownloads,
         onOpenSearch: resources.openGlobalSearch,
         onQueryChange: rootState.setMobileThreadQuery,
         onRefreshAccountRateLimits: resources.refreshThreadListAccountRateLimits,

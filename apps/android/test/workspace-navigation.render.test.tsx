@@ -1,3 +1,5 @@
+import { DownloadManagerProvider } from "../src/data/DownloadManagerProvider";
+import { createTestDownloadManager } from "./downloads.fixture";
 import * as summaryView from "../src/data/use-thread-summary-view";
 import { summary } from "./fixtures/thread-summary";
 import { MobileThreads } from "../src/features/threadList/MobileThreads";
@@ -133,6 +135,8 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
+const testDownloads = createTestDownloadManager();
+
 function V1RouteTree({ layout = false }: { readonly layout?: boolean }): React.JSX.Element {
   return (
     <SafeAreaProvider
@@ -141,12 +145,14 @@ function V1RouteTree({ layout = false }: { readonly layout?: boolean }): React.J
         insets: { bottom: 0, left: 0, right: 0, top: 0 },
       }}
     >
-      <AppNoticeContext.Provider value={testNotice}>
-        <AppFullscreenOverlayProvider>
-          {layout ? <MountedV1Workspace /> : <WorkspaceRouteComposition />}
-          <AppFullscreenOverlayHost />
-        </AppFullscreenOverlayProvider>
-      </AppNoticeContext.Provider>
+      <DownloadManagerProvider manager={testDownloads}>
+        <AppNoticeContext.Provider value={testNotice}>
+          <AppFullscreenOverlayProvider>
+            {layout ? <MountedV1Workspace /> : <WorkspaceRouteComposition />}
+            <AppFullscreenOverlayHost />
+          </AppFullscreenOverlayProvider>
+        </AppNoticeContext.Provider>
+      </DownloadManagerProvider>
     </SafeAreaProvider>
   );
 }

@@ -203,6 +203,7 @@ const featurePublicModules = {
     "forkTargetPicker",
     "threadHeaderContract",
   ],
+  downloads: ["DownloadsSheet", "useDownloadsActivity"],
   search: [
     "GlobalSearchScreen",
     "search-conversation-window",

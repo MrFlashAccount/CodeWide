@@ -28,6 +28,7 @@ export function ThreadSidebarHeader({
     onManageProjects,
     onManageTerminals,
     onModeChange,
+    onOpenDownloads,
     onOpenSearch,
     onRefreshAccountRateLimits,
     onSelectServer,
@@ -96,6 +97,7 @@ export function ThreadSidebarHeader({
           archived={mode === "archived"}
           onManageProjects={onManageProjects}
           onManageTerminals={onManageTerminals}
+          onOpenDownloads={onOpenDownloads}
           onSettings={onSettings}
           onToggleArchive={() => {
             setQuery("");

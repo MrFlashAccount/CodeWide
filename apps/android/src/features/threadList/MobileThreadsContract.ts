@@ -22,6 +22,7 @@ export type MobileThreadsProps = {
   onModeChange: (mode: ThreadListMode) => void;
   onNewThread: () => void;
   onOffsetChange: (offset: number) => void;
+  onOpenDownloads: () => void;
   onOpenSearch: () => void;
   onQueryChange: (query: string) => void;
   onRefreshAccountRateLimits?: () => Promise<unknown>;

@@ -94,6 +94,20 @@ describe("document preview", () => {
     expect(resolveRemoteDocumentPath("#section", "/srv/project")).toBeNull();
   });
 
+  it("resolves host file URLs as the absolute paths they name", () => {
+    expect(
+      resolvePreviewableDocumentLink("file:///srv/out/My%20Repro.mp4", "/srv/project"),
+    ).toEqual({ kind: "download", name: "My Repro.mp4", path: "/srv/out/My Repro.mp4" });
+    expect(resolveRemoteDocumentPath("file://localhost/srv/README.md#intro", "/ignored")).toBe(
+      "/srv/README.md",
+    );
+    expect(resolveRemoteDocumentPath("FILE:/srv/src/Screen.tsx:12", "/ignored")).toBe(
+      "/srv/src/Screen.tsx",
+    );
+    expect(resolveRemoteDocumentPath("file://build-host/srv/README.md", "/srv")).toBeNull();
+    expect(resolveRemoteDocumentPath("file:README.md", "/srv")).toBeNull();
+  });
+
   it("classifies previewable links and keeps nested documents relative to their parent", () => {
     expect(resolvePreviewableDocumentLink("../docs/README.md", "/srv/project/apps")).toEqual({
       kind: "markdown",

@@ -1,3 +1,5 @@
+import { DownloadManagerProvider } from "../src/data/DownloadManagerProvider";
+import { createTestDownloadManager } from "./downloads.fixture";
 import { render, waitFor } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -23,21 +25,23 @@ it("keeps file cards at the left while centering the image inside its cover prev
         insets: { bottom: 0, left: 0, right: 0, top: 24 },
       }}
     >
-      <AppNoticeProvider>
-        <AppFullscreenOverlayProvider>
-          <ImagePreviewHost>
-            <DocumentPreviewHost>
-              <UserMessageContent
-                content={[
-                  { type: "image", url: "data:image/png;base64,iVBORw0KGgo=" },
-                  { type: "mention", name: "plan.md", path: "/tmp/plan.md" },
-                  { type: "text", text: "Проверь картинку и план.", text_elements: [] },
-                ]}
-              />
-            </DocumentPreviewHost>
-          </ImagePreviewHost>
-        </AppFullscreenOverlayProvider>
-      </AppNoticeProvider>
+      <DownloadManagerProvider manager={createTestDownloadManager()}>
+        <AppNoticeProvider>
+          <AppFullscreenOverlayProvider>
+            <ImagePreviewHost>
+              <DocumentPreviewHost>
+                <UserMessageContent
+                  content={[
+                    { type: "image", url: "data:image/png;base64,iVBORw0KGgo=" },
+                    { type: "mention", name: "plan.md", path: "/tmp/plan.md" },
+                    { type: "text", text: "Проверь картинку и план.", text_elements: [] },
+                  ]}
+                />
+              </DocumentPreviewHost>
+            </ImagePreviewHost>
+          </AppFullscreenOverlayProvider>
+        </AppNoticeProvider>
+      </DownloadManagerProvider>
     </SafeAreaProvider>,
   );
 
@@ -63,22 +67,24 @@ it("shows an attached SVG in the image gallery", async () => {
         insets: { bottom: 0, left: 0, right: 0, top: 24 },
       }}
     >
-      <AppNoticeProvider>
-        <AppFullscreenOverlayProvider>
-          <ImagePreviewHost>
-            <DocumentPreviewHost>
-              <UserMessageContent
-                content={[{ type: "mention", name: "drawing.svg", path: "/tmp/drawing.svg" }]}
-                getTransferAccess={async () => ({
-                  authorization: "test",
-                  baseUrl: "https://example.test",
-                  transport: urlTransport,
-                })}
-              />
-            </DocumentPreviewHost>
-          </ImagePreviewHost>
-        </AppFullscreenOverlayProvider>
-      </AppNoticeProvider>
+      <DownloadManagerProvider manager={createTestDownloadManager()}>
+        <AppNoticeProvider>
+          <AppFullscreenOverlayProvider>
+            <ImagePreviewHost>
+              <DocumentPreviewHost>
+                <UserMessageContent
+                  content={[{ type: "mention", name: "drawing.svg", path: "/tmp/drawing.svg" }]}
+                  getTransferAccess={async () => ({
+                    authorization: "test",
+                    baseUrl: "https://example.test",
+                    transport: urlTransport,
+                  })}
+                />
+              </DocumentPreviewHost>
+            </ImagePreviewHost>
+          </AppFullscreenOverlayProvider>
+        </AppNoticeProvider>
+      </DownloadManagerProvider>
     </SafeAreaProvider>,
   );
 

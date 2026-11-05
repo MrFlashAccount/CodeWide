@@ -21,6 +21,7 @@ import { PerformanceDiagnostics } from "../diagnostics/PerformanceDiagnostics";
 import { PeleDiagramRendererSettings } from "./PeleDiagramRendererSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { ChatSettings } from "./ChatSettings";
+import { DownloadSettings } from "./DownloadSettings";
 import { SettingsSection, SettingsSheet } from "./SettingsSheet";
 import { SettingsVersion } from "./SettingsVersion";
 import { TimelineRowMeasurementSettings } from "./TimelineRowMeasurementSettings";
@@ -151,6 +152,7 @@ export function ConnectionSettings({
         </>
       }
       chats={<ChatSettings />}
+      downloads={<DownloadSettings />}
       onAddServer={onAddServer}
       onClose={onClose}
       security={Platform.OS === "web" ? null : <SecuritySettings />}

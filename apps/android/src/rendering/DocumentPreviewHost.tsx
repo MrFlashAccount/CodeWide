@@ -29,14 +29,10 @@ import {
   type PrivateAssetSource,
 } from "../data/private-transfer";
 import { documentReadingWidth, type DocumentLayoutMode } from "../data/user-preferences";
-import {
-  openDownloadedFile,
-  pickDownloadDirectory,
-  startDownload,
-  startPreviewDownload,
-  type RunningTransfer,
-  type SelectedDirectory,
-} from "../native/file-transfer";
+import { useDownloadManager } from "../data/downloadManagerContext";
+import type { DownloadSettlement } from "../data/downloadManager";
+import type { DownloadSource } from "../data/downloadRecords";
+import { openDownloadedFile } from "../native/file-transfer";
 import { useEvent } from "../react/useEvent";
 import {
   useAppFullscreenOverlay,
@@ -81,27 +77,18 @@ export type DocumentPreviewRequest = {
   [Kind in DocumentPreviewKind]: DocumentPreviewRequestBase & { readonly kind: Kind };
 }[DocumentPreviewKind];
 
-function startDocumentDownload(
-  request: DocumentPreviewRequest,
-  directory: SelectedDirectory,
-): RunningTransfer {
+/** Only host paths and configured roots have a direct download route. */
+function documentDownloadSource(request: DocumentPreviewRequest): DownloadSource | null {
   const source = request.source ?? { kind: "path" as const, path: request.path };
   if (source.kind === "scoped") {
-    return startDownload(
-      request.getTransferAccess,
-      directory,
-      source.rootId,
-      source.path,
-      () => undefined,
-    );
+    return { kind: "scoped", path: source.path, rootId: source.rootId };
   }
   if (source.kind === "path") {
-    return startPreviewDownload(request.getTransferAccess, directory, source.path, () => undefined);
+    return { kind: "path", path: source.path };
   }
-  throw new Error("This attachment cannot be downloaded directly");
+  return null;
 }
 
-type CompletedTransfer = Awaited<RunningTransfer["promise"]>;
 type DocumentPreviewResult =
   | { phase: "loading" }
   | { phase: "ready"; segments: string[]; source: string; truncated: boolean }
@@ -114,24 +101,6 @@ type DocumentPreviewController = {
 };
 
 const DocumentPreviewContext = createContext<DocumentPreviewController | null>(null);
-
-async function runDocumentDownload(
-  request: DocumentPreviewRequest,
-  onComplete: (request: DocumentPreviewRequest, completed: CompletedTransfer) => void,
-  onFailure: (error: unknown, retry: () => void) => void,
-): Promise<void> {
-  try {
-    const directory = await pickDownloadDirectory();
-    const transfer = startDocumentDownload(request, directory);
-    const completed = await transfer.promise;
-    onComplete(request, completed);
-  } catch (error) {
-    if (isPickerCancellation(error)) {
-      return;
-    }
-    onFailure(error, () => void runDocumentDownload(request, onComplete, onFailure));
-  }
-}
 
 function loadImagePreviewWithRetry(
   request: DocumentPreviewRequest,
@@ -196,40 +165,61 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }): Reac
   const openImagePreview = useImagePreview();
   const previewLoadRef = useRef<AbortController | null>(null);
   const revisionRef = useRef(0);
-  const showDownloadComplete = (request: DocumentPreviewRequest, completed: CompletedTransfer) => {
-    const common = {
-      description: request.name,
+  const downloads = useDownloadManager();
+  const showDownloadComplete = (
+    completed: Extract<DownloadSettlement, { readonly status: "completed" }>,
+  ) => {
+    notice.show({
+      actionLabel: "Open",
+      description: completed.name,
       duration: 6000,
       icon: <Ionicons color={colors.green} name="checkmark-circle" size={iconSize.navigation} />,
       label: "File saved",
-      variant: "success" as const,
-    };
-    if (completed.uri === undefined) {
-      notice.show(common);
-      return;
-    }
-    const uri = completed.uri;
-    notice.show({
-      ...common,
-      actionLabel: "Open",
       onActionPress: () => {
-        void openDownloadedFile(uri, completed.mimeType).catch((error: unknown) => {
-          dialog.alert(
-            "Could not open file",
-            error instanceof Error ? error.message : "No installed app can open this file",
-          );
-        });
+        openDownloadedFile(completed.uri, completed.mimeType ?? undefined).catch(
+          (error: unknown) => {
+            dialog.alert(
+              "Could not open file",
+              error instanceof Error ? error.message : "No installed app can open this file",
+            );
+          },
+        );
       },
+      variant: "success",
     });
   };
-  const downloadFile = useEvent(async (request: DocumentPreviewRequest): Promise<void> =>
-    runDocumentDownload(request, showDownloadComplete, (error, retryDownload) => {
-      dialog.error("Download failed", error, [
-        { style: "cancel", text: "Cancel" },
-        { onPress: retryDownload, text: "Retry" },
-      ]);
-    }),
-  );
+  const showDownloadFailure = (error: unknown): void => {
+    dialog.error("Download failed", error);
+  };
+  const handleDownloadSettlement = (settlement: DownloadSettlement): void => {
+    if (settlement.status === "completed") {
+      showDownloadComplete(settlement);
+      return;
+    }
+    if (settlement.status !== "failed") {
+      return;
+    }
+    const { id } = settlement;
+    dialog.error("Download failed", settlement.error, [
+      { style: "cancel", text: "Cancel" },
+      {
+        onPress: () => {
+          downloads.retry(id).then(handleDownloadSettlement, showDownloadFailure);
+        },
+        text: "Retry",
+      },
+    ]);
+  };
+  const downloadFile = useEvent(async (request: DocumentPreviewRequest): Promise<void> => {
+    const source = documentDownloadSource(request);
+    if (source === null) {
+      dialog.alert("Download failed", "This attachment cannot be downloaded directly");
+      return;
+    }
+    await downloads
+      .start({ getAccess: request.getTransferAccess, name: request.name, source })
+      .then(handleDownloadSettlement, showDownloadFailure);
+  });
   const beginImagePreviewLoad = (
     request: DocumentPreviewRequest,
     revision: number,
@@ -746,7 +736,3 @@ const styles = StyleSheet.create({
     width: "100%",
   },
 });
-
-function isPickerCancellation(error: unknown): boolean {
-  return error instanceof Error && /cancel(?:led|ed)?/iu.test(error.message);
-}
