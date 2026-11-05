@@ -15,6 +15,8 @@ const CHOICE_SIZE = 22;
 const FACET_ICON_SIZE = 34;
 const FACET_ROW_HEIGHT = 58;
 const OPTION_ROW_HEIGHT = 54;
+const TOKEN_HEIGHT = controlSize.compact - spacing.xxs;
+const TOKEN_INPUT_MIN_WIDTH = 120;
 
 export const filterStyles = StyleSheet.create({
   applyButton: {
@@ -131,24 +133,18 @@ export const filterStyles = StyleSheet.create({
     ...typeScale.title,
     color: colors.text,
   },
-  input: {
-    ...typeScale.body,
-    backgroundColor: colors.surfaceContainer,
-    borderColor: colors.border,
-    borderRadius: radii.medium,
-    borderWidth: 1,
-    color: colors.text,
-    minHeight: controlSize.touch,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.inputInset,
-  },
   inputGroup: {
     marginBottom: spacing.md,
     rowGap: spacing.xs,
   },
-  inputLabel: {
+  inputHint: {
     ...typeScale.label,
-    color: colors.textMuted,
+    color: colors.textDim,
+  },
+  inputLabel: {
+    ...typeScale.body,
+    color: colors.text,
+    fontWeight: typeWeight.semibold,
   },
   intro: {
     ...typeScale.body,
@@ -194,6 +190,68 @@ export const filterStyles = StyleSheet.create({
     alignSelf: "center",
     maxWidth: APP_SHEET_MAX_WIDTH,
     width: "100%",
+  },
+  suggestion: {
+    alignItems: "center",
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    borderStyle: "dashed",
+    borderWidth: 1,
+    columnGap: spacing.xxs,
+    flexDirection: "row",
+    maxWidth: "100%",
+    minHeight: TOKEN_HEIGHT,
+    paddingHorizontal: spacing.sm,
+  },
+  suggestions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  suggestionText: {
+    ...typeScale.caption,
+    color: colors.textMuted,
+    flexShrink: 1,
+    fontWeight: typeWeight.semibold,
+  },
+  token: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceContainerHighest,
+    borderRadius: radii.pill,
+    columnGap: spacing.xxs,
+    flexDirection: "row",
+    maxWidth: "100%",
+    minHeight: TOKEN_HEIGHT,
+    paddingLeft: spacing.sm,
+    paddingRight: spacing.compact,
+  },
+  tokenBox: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceContainer,
+    borderColor: colors.border,
+    borderRadius: radii.medium,
+    borderWidth: 1,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    minHeight: controlSize.touch,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  tokenInput: {
+    ...typeScale.body,
+    color: colors.text,
+    flexGrow: 1,
+    minHeight: TOKEN_HEIGHT,
+    minWidth: TOKEN_INPUT_MIN_WIDTH,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 0,
+  },
+  tokenText: {
+    ...typeScale.caption,
+    color: colors.text,
+    flexShrink: 1,
+    fontWeight: typeWeight.semibold,
   },
   triState: {
     alignItems: "center",

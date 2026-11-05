@@ -2,12 +2,14 @@ import { StyleSheet } from "react-native";
 
 import {
   colors,
+  controlSize,
   iconSize,
   layoutSize,
   radii,
   spacing,
   typeScale,
   typeTracking,
+  typeWeight,
 } from "../../../theme";
 import { filterIconButtonDotLayout } from "../../../presentation/input/filterIconButtonLayout";
 import { catalogModeBarContentInset } from "../../../presentation/layouts/catalogModeBarGeometry";
@@ -18,6 +20,7 @@ const ATTENTION_DOT_SIZE = 7;
 const CHECK_BADGE_SIZE = 8;
 const EMPTY_COPY_MAX_WIDTH = 280;
 const EMPTY_MARK_SIZE = 64;
+const CATEGORY_CHIP_HEIGHT = controlSize.compact - spacing.xxs;
 
 /**
  * PR list geometry: account problem rows, label-role section headers, the
@@ -35,6 +38,38 @@ export const listStyles = StyleSheet.create({
     borderRadius: radii.pill,
     height: ATTENTION_DOT_SIZE,
     width: ATTENTION_DOT_SIZE,
+  },
+  // Category chips share the project catalogue's compact pill geometry.
+  categoryChip: {
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    minHeight: CATEGORY_CHIP_HEIGHT,
+    minWidth: controlSize.touch,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.optical,
+  },
+  categoryChipInactive: {
+    backgroundColor: colors.surfaceContainerHighest,
+  },
+  categoryChipLabel: {
+    ...typeScale.caption,
+    color: colors.text,
+    fontWeight: typeWeight.semibold,
+  },
+  categoryChipLabelActive: {
+    color: colors.onPrimary,
+  },
+  categoryChips: {
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  categoryViewport: {
+    flexGrow: 0,
+    flexShrink: 0,
+    height: CATEGORY_CHIP_HEIGHT,
+    marginBottom: spacing.xs,
   },
   checkDot: {
     borderColor: colors.threadListSurface,

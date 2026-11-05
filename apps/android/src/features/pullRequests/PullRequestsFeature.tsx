@@ -4,7 +4,11 @@ import { useDeferredValue, useState, useTransition, type ReactNode } from "react
 import { StyleSheet, View } from "react-native";
 
 import type { AccountState, ForgeProvider } from "../../data/forgeContract";
-import type { PullRequestListPage, PullRequestRow } from "../../data/forgePullRequestContract";
+import type {
+  PullRequestCategory,
+  PullRequestListPage,
+  PullRequestRow,
+} from "../../data/forgePullRequestContract";
 import { forgeQueryRemoteValue, useForgeQuery } from "../../data/forgeQueryResource";
 import { remoteValue, type RemoteValue } from "../../data/forgeRemoteValue";
 import type { ForgeResources } from "../../data/forgeResources";
@@ -25,6 +29,7 @@ import {
   openPullRequestSearch,
   pullRequestListModel,
   pullRequestSearchModel,
+  selectPullRequestCategory,
   selectPullRequestSearchText,
   selectPullRequestSort,
 } from "./pullRequestListModel";
@@ -163,11 +168,17 @@ function ConnectedList({
       selectPullRequestSort(sort);
     });
   });
+  const selectCategory = useEvent((category: PullRequestCategory): void => {
+    startFilterTransition(() => {
+      selectPullRequestCategory(category);
+    });
+  });
   const listProps: Parameters<typeof PullRequestList>[0] = {
     filter,
     iconFor: (pluginId) =>
       providers.find((provider) => provider.pluginId === pluginId)?.icon ?? null,
     nowMs,
+    onCategory: selectCategory,
     onEndReached: loadMore,
     onOpen: onOpenPullRequest,
     onOpenFilters: openPullRequestFilters,

@@ -55,7 +55,9 @@ afterEach(() => {
 it("renders only search, sort and filters above the list", () => {
   const view = render(
     <PullRequestFilterBar
+      categories={[]}
       filter={defaultPullRequestFilter()}
+      onCategory={() => undefined}
       onOpenFilters={() => undefined}
       onOpenSearch={() => undefined}
       onSort={() => undefined}
@@ -380,6 +382,7 @@ it("keeps the published rows visible while a filter refresh is pending", () => {
         filter={defaultPullRequestFilter()}
         iconFor={() => null}
         nowMs={0}
+        onCategory={() => undefined}
         onEndReached={() => undefined}
         onOpenFilters={() => undefined}
         onOpenSearch={() => undefined}

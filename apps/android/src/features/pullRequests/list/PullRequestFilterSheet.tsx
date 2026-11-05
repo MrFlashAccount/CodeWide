@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useSelector } from "@legendapp/state/react";
-import { Pressable, ScrollView, TextInput, useWindowDimensions, View } from "react-native";
+import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -21,8 +21,10 @@ import {
   updatePullRequestFilterDraft,
   type PullRequestFilterFacet,
 } from "../pullRequestListModel";
+import { catalogAccountLogins, isCatalogAccount } from "./catalogAccounts";
 import { filterStyles as styles } from "./filter.styles";
 import { filterTrayViewportGeometry } from "./filterTrayViewport";
+import { PullRequestTermField, type PullRequestTermSuggestion } from "./PullRequestTermField";
 
 const FILTERS_VIEW = "pull-request-filters";
 const FILTER_DETAIL_VIEW = "pull-request-filter-detail";
@@ -34,6 +36,8 @@ const FILTER_TRAY_PALETTE: Partial<ITrayPalette> = {
   surface: colors.surfaceContainer,
   text: colors.text,
 };
+/** Metadata fields have no account-derived values to offer. */
+const NO_SUGGESTIONS: readonly PullRequestTermSuggestion[] = [];
 const REVIEW_OPTIONS = [
   ["none", "No review"],
   ["required", "Review required"],
@@ -256,7 +260,12 @@ function FacetPane({
     return null;
   }
   return (
-    <ScrollView contentContainerStyle={styles.facetContent} style={styles.facetScroll}>
+    <ScrollView
+      contentContainerStyle={styles.facetContent}
+      // Token removal and suggestions take the first tap while a token field is focused.
+      keyboardShouldPersistTaps="handled"
+      style={styles.facetScroll}
+    >
       <FacetContent
         accounts={accounts}
         draft={draft}
@@ -413,7 +422,7 @@ function FacetContent(props: {
     case "sources":
       return <SourcesFacet {...props} />;
     case "people":
-      return <PeopleFacet draft={props.draft} />;
+      return <PeopleFacet accounts={props.accounts} draft={props.draft} />;
     case "review":
       return <ReviewFacet draft={props.draft} />;
     case "state":
@@ -439,10 +448,7 @@ function SourcesFacet({
   readonly repositories: readonly string[];
 }): React.JSX.Element {
   const enabled = providers.filter((provider) => provider.enabled);
-  // An account excluded from the catalog is hidden everywhere in it, including here.
-  const connected = accounts.filter(
-    (account) => account.state === "connected" && account.catalogEnabled !== false,
-  );
+  const connected = accounts.filter(isCatalogAccount);
   const selectedProviders = new Set(draft.providerIds);
   const selectedAccounts = new Set(draft.accounts);
   return (
@@ -510,29 +516,42 @@ function SourcesFacet({
   );
 }
 
-function PeopleFacet({ draft }: { readonly draft: PullRequestSearchFilter }): React.JSX.Element {
+function PeopleFacet({
+  accounts,
+  draft,
+}: {
+  readonly accounts: readonly AccountState[];
+  readonly draft: PullRequestSearchFilter;
+}): React.JSX.Element {
+  const suggestions = catalogAccountLogins(accounts).map((login) => ({
+    label: `${login} (you)`,
+    value: login,
+  }));
   return (
     <View>
-      <FacetIntro text="Comma-separated values within a field are ORed. Different fields are ANDed." />
-      <TermsInput
+      <FacetIntro text="Add logins with Enter or a comma. A pull request matches any login in a field and every field you fill." />
+      <PullRequestTermField
+        field="authors"
+        hint="Opened by any of these people."
         label="Author"
-        onCommit={(values) => {
-          updateTextValues("authors", values);
-        }}
+        placeholder="Add a login"
+        suggestions={suggestions}
         values={draft.query.authors}
       />
-      <TermsInput
+      <PullRequestTermField
+        field="assignees"
+        hint="Assigned to any of these people."
         label="Assignee"
-        onCommit={(values) => {
-          updateTextValues("assignees", values);
-        }}
+        placeholder="Add a login"
+        suggestions={suggestions}
         values={draft.query.assignees}
       />
-      <TermsInput
+      <PullRequestTermField
+        field="reviewers"
+        hint="Reviewed by any of these people."
         label="Reviewed by"
-        onCommit={(values) => {
-          updateTextValues("reviewers", values);
-        }}
+        placeholder="Add a login"
+        suggestions={suggestions}
         values={draft.query.reviewers}
       />
     </View>
@@ -587,26 +606,29 @@ function DeliveryFacet({ draft }: { readonly draft: PullRequestSearchFilter }): 
 function MetadataFacet({ draft }: { readonly draft: PullRequestSearchFilter }): React.JSX.Element {
   return (
     <View>
-      <FacetIntro text="Use comma-separated exact values. Qualifiers remain visible in Advanced query." />
-      <TermsInput
+      <FacetIntro text="Add exact names with Enter or a comma. A pull request matches any value in a field and every field you fill." />
+      <PullRequestTermField
+        field="labels"
+        hint="Carries any of these labels."
         label="Labels"
-        onCommit={(values) => {
-          updateTextValues("labels", values);
-        }}
+        placeholder="Add a label"
+        suggestions={NO_SUGGESTIONS}
         values={draft.query.labels}
       />
-      <TermsInput
-        label="Base branches"
-        onCommit={(values) => {
-          updateTextValues("baseBranches", values);
-        }}
+      <PullRequestTermField
+        field="baseBranches"
+        hint="Merges into any of these branches."
+        label="Base branch"
+        placeholder="Add a branch"
+        suggestions={NO_SUGGESTIONS}
         values={draft.query.baseBranches}
       />
-      <TermsInput
-        label="Head branches"
-        onCommit={(values) => {
-          updateTextValues("headBranches", values);
-        }}
+      <PullRequestTermField
+        field="headBranches"
+        hint="Comes from any of these branches."
+        label="Head branch"
+        placeholder="Add a branch"
+        suggestions={NO_SUGGESTIONS}
         values={draft.query.headBranches}
       />
     </View>
@@ -635,36 +657,6 @@ function EnumFacet<Value extends string>({
           state={valueState(values, value)}
         />
       ))}
-    </View>
-  );
-}
-
-function TermsInput({
-  label,
-  onCommit,
-  values,
-}: {
-  readonly label: string;
-  readonly onCommit: (values: readonly string[]) => void;
-  readonly values: SearchValues<string>;
-}): React.JSX.Element {
-  const commit = useEvent((event: { readonly nativeEvent: { readonly text: string } }) => {
-    onCommit(parseTerms(event.nativeEvent.text));
-  });
-  return (
-    <View style={styles.inputGroup}>
-      <Text style={styles.inputLabel}>{label}</Text>
-      <TextInput
-        accessibilityLabel={label}
-        autoCapitalize="none"
-        autoCorrect={false}
-        defaultValue={values.include.join(", ")}
-        key={values.include.join("\u0000")}
-        onEndEditing={commit}
-        placeholder="Any"
-        placeholderTextColor={colors.textDim}
-        style={styles.input}
-      />
     </View>
   );
 }
@@ -812,27 +804,6 @@ function nextStateValues(
     return { exclude: [], include: [value] };
   }
   return nextValues(values, value, state);
-}
-
-function updateTextValues(
-  field: "assignees" | "authors" | "baseBranches" | "headBranches" | "labels" | "reviewers",
-  include: readonly string[],
-): void {
-  updatePullRequestFilterDraft((current) => ({
-    ...current,
-    query: { ...current.query, [field]: { exclude: current.query[field].exclude, include } },
-  }));
-}
-
-function parseTerms(text: string): readonly string[] {
-  return [
-    ...new Set(
-      text
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
-    ),
-  ];
 }
 
 function valueCount(field: SearchValues<unknown>): number {
