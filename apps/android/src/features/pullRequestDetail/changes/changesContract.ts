@@ -6,6 +6,7 @@ import type { ForgeResources } from "../../../data/forgeResources";
 import type { PullRequestCommentDestinations } from "../../../data/pullRequestCommentDestinations";
 import type { ThreadId } from "../../../data/reviewContract";
 import type { ReviewResources } from "../../../data/reviewResources";
+import type { AppVoiceInputRuntime } from "../../../ui/VoiceInputRuntime";
 import type { ReviewTargetCapabilities } from "../../review/reviewTargetCapabilities";
 import type { PullRequestScreenState } from "../pullRequestScreenModel";
 import type { PullRequestDetailWorkspaceCapabilities } from "../workspaceCapabilities";
@@ -39,4 +40,6 @@ export type PullRequestChangesProps = {
   readonly reviewCapabilities: ReviewTargetCapabilities;
   readonly tablet: boolean;
   readonly verdicts: readonly ActionDescriptor[];
+  /** The app's retained voice input for line comment dictation; `null` hides it. */
+  readonly voiceRuntime: AppVoiceInputRuntime | null;
 };

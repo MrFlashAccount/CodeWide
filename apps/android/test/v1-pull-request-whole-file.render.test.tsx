@@ -229,6 +229,7 @@ function renderChanges(server: ReturnType<typeof companion>) {
           reviewCapabilities={{} as ReviewTargetCapabilities}
           tab="changes"
           tablet={false}
+          voiceRuntime={null}
         />
       </Suspense>
     </SafeAreaProvider>,

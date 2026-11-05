@@ -24,9 +24,10 @@ import { useSubmitReview } from "./useSubmitReview";
 
 /**
  * Changes: one IDE-style toolbar over Files (tree + diff) or Guide, companion
- * drafts with their axes and the comment sheet; Submit lives in the toolbar so
- * the code keeps the screen. Files, drafts and guide are progressive
- * resources; already published data stays visible while they refresh.
+ * drafts with their axes and the one line composer; Submit lives in the
+ * toolbar so the code keeps the screen. Files, drafts and guide are
+ * progressive resources; already published data stays visible while they
+ * refresh, and a new draft shows the moment it is sent.
  */
 export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.Element {
   const { connectionId, model, overview } = props;
@@ -112,6 +113,7 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
         host={props.host}
         ownPullRequest={props.ownPullRequest}
         target={{ connectionId, pullRequest: overview.pullRequest }}
+        voice={props.voiceRuntime}
       />
     </View>
   );
@@ -163,6 +165,8 @@ function ChangesBody({
       {data.view === "files" ? (
         <FilesView
           besideDiff={besideDiff}
+          composerLine={composer.line}
+          draftPuts={data.draftPuts}
           drafts={data.drafts}
           filesOpen={filesOpen}
           headFiles={data.headFiles}
@@ -172,6 +176,8 @@ function ChangesBody({
               dialog.error("Could not delete the draft", error);
             });
           }}
+          onDiscardPut={composer.discard}
+          onEditPut={composer.restore}
           onGuide={() => {
             model.changesView.set("guide");
           }}
@@ -202,8 +208,10 @@ function ChangesBody({
         <PullRequestGuide
           agentThread={props.agentThread}
           capabilities={props.reviewCapabilities}
+          composerLine={composer.line}
           connectionId={connectionId}
           describeThread={props.describeThread}
+          draftPuts={data.draftPuts}
           drafts={data.drafts}
           files={page.files}
           localWorkspace={overview.localCheckout?.workspace ?? null}

@@ -16,7 +16,17 @@ export type ReviewTargetCapabilities = {
     connectionId: string,
     draft: Pick<DraftComment, "id" | "revision" | "version">,
   ) => Promise<void>;
-  /** Durably saves a draft; an exact lost-response replay returns the same acknowledged draft. */
+  /**
+   * Forgets a refused new draft (`data/reviewDraftPuts`) once the user restored
+   * its text into the composer or discarded it.
+   */
+  readonly dismissDraftPut: (operationId: string) => void;
+  /**
+   * Durably saves a draft; an exact lost-response replay returns the same
+   * acknowledged draft. Until the drafts snapshot holds a new draft it is listed
+   * by `data/reviewDraftPuts`, so callers show it at once and need not await
+   * this; the acknowledged draft is patched into the snapshot before the re-read.
+   */
   readonly putDraft: (
     connectionId: string,
     draft: DraftInput,

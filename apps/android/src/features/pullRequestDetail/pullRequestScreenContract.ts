@@ -5,6 +5,7 @@ import type { ThreadUnreadReader } from "../../data/project-unread-model";
 import type { PullRequestCommentDestinations } from "../../data/pullRequestCommentDestinations";
 import type { ThreadId } from "../../data/reviewContract";
 import type { ReviewResources } from "../../data/reviewResources";
+import type { AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
 import type { ReviewTargetCapabilities } from "../review/reviewTargetCapabilities";
 import type { LinkedThreadDescription } from "./linkedThreadDescription";
 import type { PullRequestDetailWorkspaceCapabilities } from "./workspaceCapabilities";
@@ -60,4 +61,6 @@ export type PullRequestScreenProps = {
   readonly reviewCapabilities: ReviewTargetCapabilities;
   readonly tab: PullRequestTab;
   readonly tablet: boolean;
+  /** The app's retained voice input, scoped to this PR; `null` hides dictation. */
+  readonly voiceRuntime: AppVoiceInputRuntime | null;
 };

@@ -6,31 +6,26 @@ import { appLogger } from "../../../observability/logger";
 import { unknownRecord } from "../../../data/unknownRecord";
 import { colors, spacing, typeScale, typeWeight, radii, controlSize } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
-import type {
-  CodeReviewClientEvent,
-  CodeReviewComposerState,
-  CodeReviewDocument,
-  CodeReviewFileItem,
-  CodeReviewHostCommand,
-  CodeReviewViewMode,
-} from "./editorBridge";
+import type { CodeReviewClientEvent, CodeReviewHostCommand } from "./editorBridge";
 import { CODE_REVIEW_BRIDGE_VERSION } from "./editorBridge";
-import type { CodeReviewComment, CodeReviewLineReference } from "../comments/reviewComment";
-import { matchesCodeReviewInput } from "../comments/reviewComment";
+import type { CodeReviewLineReference } from "../comments/reviewComment";
+import type { CodeReviewEditorProps } from "./codeReviewEditorProps";
 
 const EDITOR_URI = "file:///android_asset/code-review-editor.html";
 
 export type { CodeReviewDocument, CodeReviewFileItem, CodeReviewViewMode } from "./editorBridge";
 
-type DraftSelection = { end: number; start: number };
-type VoicePhase = "idle" | "starting" | "recording" | "finishing";
 type WithoutBridgeEnvelope<T> = T extends unknown ? Omit<T, "version" | "sequence"> : never;
 type CodeReviewHostMessage = WithoutBridgeEnvelope<CodeReviewHostCommand>;
 
+/**
+ * The Pierre review editor in its WebView. It displays the document, the file
+ * tree and inline comments, and reports line taps; the selected line is the
+ * native line composer's anchor. It hosts no composer of its own.
+ */
 // WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
 // oxlint-disable-next-line eslint/complexity
 export function CodeReviewEditor({
-  commentDraft,
   comments,
   compact,
   document,
@@ -38,48 +33,15 @@ export function CodeReviewEditor({
   loadError,
   loading,
   mode,
-  onCommentDraftChange,
-  onCommentSelectionChange,
-  onCommentSubmit,
   onFileSelect,
   onLinePress,
-  onVoicePress,
   revealReference,
   selectedPath,
   selectedReference,
   sidebarOpen,
-  voiceError,
-  voicePermissionGranted,
-  voicePhase,
-  voiceRetryAvailable,
   workspaceRevision,
   wrapLines,
-}: {
-  commentDraft: string;
-  comments: readonly CodeReviewComment[];
-  compact: boolean;
-  document: CodeReviewDocument | null;
-  files: readonly CodeReviewFileItem[];
-  loadError: string | null;
-  loading: boolean;
-  mode: CodeReviewViewMode;
-  onCommentDraftChange: (value: string) => void;
-  onCommentSelectionChange: (selection: DraftSelection) => void;
-  onCommentSubmit: (reference: CodeReviewLineReference, draft: string) => void;
-  onFileSelect: (path: string) => void;
-  onLinePress: (reference: CodeReviewLineReference) => void;
-  onVoicePress: (draft: string, selection: DraftSelection) => void;
-  revealReference: CodeReviewLineReference | null;
-  selectedPath: string | null;
-  selectedReference: CodeReviewLineReference | null;
-  sidebarOpen: boolean;
-  voiceError: string | null;
-  voicePermissionGranted: boolean;
-  voicePhase: VoicePhase;
-  voiceRetryAvailable: boolean;
-  workspaceRevision: string;
-  wrapLines: boolean;
-}) {
+}: CodeReviewEditorProps) {
   const webView = useRef<WebView>(null);
   const requestId = useRef(0);
   const sequence = useRef(0);
@@ -135,27 +97,8 @@ export function CodeReviewEditor({
     if (!ready) {
       return;
     }
-    const payload: CodeReviewComposerState | null =
-      selectedReference === null
-        ? null
-        : {
-            draft: commentDraft,
-            reference: selectedReference,
-            voiceError,
-            voicePermissionGranted,
-            voicePhase,
-            voiceRetryAvailable,
-          };
-    send({ command: "composer", payload });
-  }, [
-    ready,
-    selectedReference,
-    commentDraft,
-    voicePhase,
-    voicePermissionGranted,
-    voiceRetryAvailable,
-    voiceError,
-  ]);
+    send({ command: "selection", payload: selectedReference });
+  }, [ready, selectedReference]);
 
   useEffect(() => {
     if (!ready || revealReference === null) {
@@ -170,7 +113,7 @@ export function CodeReviewEditor({
   }, [ready, revealReference]);
 
   // WHY: This dispatcher applies one validated WebView event in protocol order; splitting its
-  // branches would risk accepting stale request ids or targeting the wrong editor state.
+  // branches would risk accepting stale request ids or reordering editor state updates.
   // oxlint-disable-next-line eslint/complexity
   const receive = ({ nativeEvent }: WebViewMessageEvent) => {
     const message = parseClientEvent(nativeEvent.data);
@@ -195,19 +138,6 @@ export function CodeReviewEditor({
       onFileSelect(message.path);
     } else if (message.type === "lineTap") {
       onLinePress(message.reference);
-    } else if (message.type === "draftChanged") {
-      if (!matchesCodeReviewInput(selectedReference, message.reference)) {
-        return;
-      }
-      onCommentDraftChange(message.draft);
-      onCommentSelectionChange({ end: message.selectionEnd, start: message.selectionStart });
-    } else if (message.type === "commentSubmit") {
-      onCommentSubmit(message.reference, message.draft);
-    } else if (message.type === "voiceAction") {
-      if (!matchesCodeReviewInput(selectedReference, message.reference)) {
-        return;
-      }
-      onVoicePress(message.draft, { end: message.selectionEnd, start: message.selectionStart });
     } else if (message.type === "error") {
       setError({ message: message.message, revision: document?.revision ?? null });
     }
@@ -311,49 +241,6 @@ function parseClientEvent(value: string): CodeReviewClientEvent | null {
   const reference = parseLineReference(event.reference);
   if (event.type === "lineTap" && reference !== null) {
     return { reference, requestId, type: "lineTap", version: CODE_REVIEW_BRIDGE_VERSION };
-  }
-  if (
-    event.type === "draftChanged" &&
-    reference !== null &&
-    typeof event.draft === "string" &&
-    typeof event.selectionEnd === "number" &&
-    typeof event.selectionStart === "number"
-  ) {
-    return {
-      draft: event.draft,
-      reference,
-      requestId,
-      selectionEnd: event.selectionEnd,
-      selectionStart: event.selectionStart,
-      type: "draftChanged",
-      version: CODE_REVIEW_BRIDGE_VERSION,
-    };
-  }
-  if (event.type === "commentSubmit" && reference !== null && typeof event.draft === "string") {
-    return {
-      draft: event.draft,
-      reference,
-      requestId,
-      type: "commentSubmit",
-      version: CODE_REVIEW_BRIDGE_VERSION,
-    };
-  }
-  if (
-    event.type === "voiceAction" &&
-    reference !== null &&
-    typeof event.draft === "string" &&
-    typeof event.selectionEnd === "number" &&
-    typeof event.selectionStart === "number"
-  ) {
-    return {
-      draft: event.draft,
-      reference,
-      requestId,
-      selectionEnd: event.selectionEnd,
-      selectionStart: event.selectionStart,
-      type: "voiceAction",
-      version: CODE_REVIEW_BRIDGE_VERSION,
-    };
   }
   if (
     (event.type === "diffUnavailable" || event.type === "error") &&

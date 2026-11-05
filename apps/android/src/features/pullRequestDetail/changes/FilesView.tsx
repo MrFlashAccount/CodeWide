@@ -4,6 +4,8 @@ import { Pressable, StyleSheet, View } from "react-native";
 
 import type { PullRequestFile, PullRequestFilesPage } from "../../../data/forgeMutationContract";
 import type { DraftComment } from "../../../data/reviewDraftContract";
+import type { DraftPut } from "../../../data/reviewDraftPuts";
+import type { CommentSheetTarget } from "../../review/comments/CommentSheet";
 import { useConstant } from "../../../react/useConstant";
 import { colors, controlHitSlop, iconSize, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
@@ -17,12 +19,17 @@ import { useHeadFileContent } from "./useHeadFileContent";
 /** Everything the files view needs. */
 type FilesViewProps = {
   readonly besideDiff: boolean;
+  /** The line whose composer is open, highlighted in the diff. */
+  readonly composerLine: CommentSheetTarget | null;
+  readonly draftPuts: readonly DraftPut[];
   readonly drafts: readonly DraftComment[];
   readonly filesOpen: boolean;
   /** Where the selected file's whole head content is read from. */
   readonly headFiles: HeadFileSource;
   readonly host: string;
   readonly onDeleteDraft: (draft: DraftComment) => void;
+  readonly onDiscardPut: (put: DraftPut) => void;
+  readonly onEditPut: (put: DraftPut) => void;
   readonly onGuide: () => void;
   readonly onLinePress: (reference: CodeReviewLineReference) => void;
   readonly onLoadMore: (() => void) | null;
@@ -50,8 +57,11 @@ export function FilesView(props: FilesViewProps): React.JSX.Element {
           drafts={props.drafts.filter((draft) => draft.anchor.path === selected.path)}
           host={props.host}
           onDelete={props.onDeleteDraft}
+          onDiscardPut={props.onDiscardPut}
+          onEditPut={props.onEditPut}
           onReanchor={props.onReanchor}
           onSendToAgent={props.onSendToAgent}
+          puts={props.draftPuts.filter((put) => put.draft.anchor.path === selected.path)}
         />
       )}
     </View>
@@ -76,7 +86,9 @@ function SelectedFileDiff(
   });
   return (
     <PullRequestDiff
+      composerLine={props.composerLine}
       content={content}
+      draftPuts={props.draftPuts}
       drafts={props.drafts}
       onLinePress={props.onLinePress}
       reveal={null}

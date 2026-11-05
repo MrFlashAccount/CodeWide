@@ -1,6 +1,7 @@
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
 import type { DiffSource, ThreadId } from "../../../data/reviewContract";
 import type { DraftComment } from "../../../data/reviewDraftContract";
+import type { DraftPut } from "../../../data/reviewDraftPuts";
 import type { ReviewResources } from "../../../data/reviewResources";
 import type { CodeReviewLineReference } from "../../review/comments/reviewComment";
 import type { CommentSheetTarget } from "../../review/comments/CommentSheet";
@@ -17,8 +18,10 @@ import { PullRequestDiff } from "./PullRequestDiff";
 export function PullRequestGuide({
   agentThread,
   capabilities,
+  composerLine,
   connectionId,
   describeThread,
+  draftPuts,
   drafts,
   files,
   localWorkspace,
@@ -34,8 +37,10 @@ export function PullRequestGuide({
     readonly title: string;
   } | null;
   readonly capabilities: ReviewTargetCapabilities;
+  readonly composerLine: CommentSheetTarget | null;
   readonly connectionId: string;
   readonly describeThread: (threadId: ThreadId) => string;
+  readonly draftPuts: readonly DraftPut[];
   readonly drafts: readonly DraftComment[];
   readonly files: readonly PullRequestFile[];
   readonly localWorkspace: string | null;
@@ -79,7 +84,9 @@ export function PullRequestGuide({
             : files.find((candidate) => candidate.path === first.path);
         return file === undefined || first === undefined ? null : (
           <PullRequestDiff
+            composerLine={composerLine}
             content={{ state: "patch" }}
+            draftPuts={draftPuts}
             drafts={drafts}
             onLinePress={onLinePress}
             reveal={{ line: first.line, path: first.path, side: "new" }}

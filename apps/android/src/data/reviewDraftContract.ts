@@ -230,3 +230,50 @@ export type DraftInput = {
   | { readonly destination: "pr" }
   | { readonly destination: "both"; readonly targetThreadId: ThreadId }
 );
+
+/** Params of one `companion/review/draft/put`: `expectedVersion` is `null` for a new draft. */
+export type DraftPutParams = {
+  readonly draft: DraftInput;
+  readonly expectedVersion: number | null;
+};
+
+/**
+ * Parses the params of a persisted `companion/review/draft/put` write, which
+ * may have been restored from disk by the mutation persister.
+ */
+export function parseDraftPutParams(value: unknown): DraftPutParams | null {
+  return decodeOrNull(() => {
+    const params = record(value, "params");
+    const draft = record(params.draft, "params.draft");
+    const revision = record(draft.revision, "params.draft.revision");
+    const base = {
+      anchor: anchor(draft.anchor, "params.draft.anchor"),
+      body: text(draft.body, "params.draft.body"),
+      id: draftId(draft.id, "params.draft.id"),
+      revision: {
+        revision: text(revision.revision, "params.draft.revision.revision"),
+        source: diffSource(revision.source, "params.draft.revision.source"),
+      },
+    };
+    const destination = oneOf(
+      draft.destination,
+      ["agent", "pr", "both"],
+      "params.draft.destination",
+    );
+    const input: DraftInput =
+      destination === "pr"
+        ? { ...base, destination }
+        : {
+            ...base,
+            destination,
+            targetThreadId: threadId(draft.targetThreadId, "params.draft.targetThreadId"),
+          };
+    return {
+      draft: input,
+      expectedVersion:
+        params.expectedVersion === null
+          ? null
+          : count(params.expectedVersion, "params.expectedVersion"),
+    };
+  });
+}

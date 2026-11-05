@@ -217,6 +217,7 @@ export function renderScreen({
         initialChangesView="files"
         tab="overview"
         tablet={false}
+        voiceRuntime={null}
       />,
     ),
   );

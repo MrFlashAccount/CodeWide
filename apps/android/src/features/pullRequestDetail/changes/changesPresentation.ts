@@ -6,10 +6,11 @@
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
 import type { Hunk, HunkId } from "../../../data/reviewContract";
 import type { DraftComment } from "../../../data/reviewDraftContract";
-import type { CodeReviewComment } from "../../review/comments/reviewComment";
+import type { DraftPut } from "../../../data/reviewDraftPuts";
 import {
   codeReviewDocumentRevision,
   type CodeReviewDocument,
+  type CodeReviewInlineComment,
   type CodeReviewPatch,
 } from "../../review/editor/editorBridge";
 
@@ -170,22 +171,53 @@ export function hunkLocations(
   return locations;
 }
 
-/** Drafts of one file as inline editor comments. */
+/**
+ * Drafts of one file as inline editor comments: saved drafts, then the new
+ * ones not saved yet (their text shimmers) or refused (with the reason).
+ */
 export function draftEditorComments(
   drafts: readonly DraftComment[],
+  puts: readonly DraftPut[],
   path: string,
-): readonly CodeReviewComment[] {
-  return drafts
-    .filter((draft) => draft.anchor.path === path)
-    .map((draft) => {
-      const createdAt = Date.parse(draft.createdAt);
-      return {
+): readonly CodeReviewInlineComment[] {
+  const comments: CodeReviewInlineComment[] = [];
+  for (const draft of drafts) {
+    if (draft.anchor.path === path) {
+      comments.push({
         body: draft.body,
-        createdAt: Number.isNaN(createdAt) ? 0 : createdAt,
         id: draft.id,
         line: draft.anchor.startLine,
         path: draft.anchor.path,
         side: draft.anchor.side,
-      };
-    });
+        state: "saved",
+      });
+    }
+  }
+  for (const put of puts) {
+    const { anchor, body, id } = put.draft;
+    if (anchor.path !== path) {
+      continue;
+    }
+    comments.push(
+      put.status === "failed"
+        ? {
+            body,
+            error: put.error,
+            id,
+            line: anchor.startLine,
+            path: anchor.path,
+            side: anchor.side,
+            state: "failed",
+          }
+        : {
+            body,
+            id,
+            line: anchor.startLine,
+            path: anchor.path,
+            side: anchor.side,
+            state: "pending",
+          },
+    );
+  }
+  return comments;
 }

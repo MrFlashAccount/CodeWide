@@ -8,6 +8,7 @@ import {
 } from "react-native";
 
 import type { DraftComment } from "../../../data/reviewDraftContract";
+import type { DraftPut } from "../../../data/reviewDraftPuts";
 import { AppButton } from "../../../presentation/controls/AppButton";
 import { colors, radii, spacing, typeScale } from "../../../theme";
 import { ActionMenu } from "../../../ui/ActionMenu";
@@ -85,6 +86,87 @@ function DraftCardBody(
   );
 }
 
+const PUT_DESTINATION_LABELS: Readonly<Record<DraftPut["draft"]["destination"], string>> = {
+  agent: "Agent",
+  both: "PR · Agent",
+  pr: "PR",
+};
+
+/** Props of a draft the companion has not saved yet. */
+export type DraftPutCardProps = {
+  readonly onDiscard: (put: DraftPut) => void;
+  /** Restores the refused text into the line composer. */
+  readonly onEdit: (put: DraftPut) => void;
+  readonly put: DraftPut;
+};
+
+/**
+ * A new draft as soon as it is sent: its text shimmers in place while the
+ * companion saves it. A refused draft stops shimmering, shows the companion's
+ * reason, and offers Edit (the text returns to the composer at its line) and
+ * Discard.
+ */
+export function DraftPutCard({ onDiscard, onEdit, put }: DraftPutCardProps): React.JSX.Element {
+  const body = useRef<NativeText>(null);
+  const { anchor } = put.draft;
+  return (
+    <View style={styles.card} testID={`review-draft-put-${put.draft.id}`}>
+      <View style={styles.header}>
+        <Text numberOfLines={1} style={styles.location}>
+          {`You · line ${String(anchor.startLine)}`}
+        </Text>
+        {put.status === "failed" ? (
+          <CaptionBadge label="Not saved" tone="danger" />
+        ) : (
+          <CaptionBadge label={PUT_DESTINATION_LABELS[put.draft.destination]} tone="neutral" />
+        )}
+      </View>
+      <Text
+        accessibilityState={{ busy: put.status === "saving" }}
+        ref={body}
+        selectable
+        style={styles.body}
+      >
+        {put.draft.body}
+      </Text>
+      <TextShimmer shimmering={put.status === "saving"} target={body} />
+      {put.status === "failed" ? (
+        <Text accessibilityLiveRegion="polite" style={styles.error}>
+          {put.error}
+        </Text>
+      ) : null}
+      {put.status === "failed" ? (
+        <PutFailureActions onDiscard={onDiscard} onEdit={onEdit} put={put} />
+      ) : null}
+    </View>
+  );
+}
+
+function PutFailureActions({ onDiscard, onEdit, put }: DraftPutCardProps): React.JSX.Element {
+  return (
+    <View style={styles.actions}>
+      <AppButton
+        onPress={() => {
+          onDiscard(put);
+        }}
+        size="sm"
+        variant="outline"
+      >
+        Discard
+      </AppButton>
+      <AppButton
+        onPress={() => {
+          onEdit(put);
+        }}
+        size="sm"
+        variant="secondary"
+      >
+        Edit
+      </AppButton>
+    </View>
+  );
+}
+
 function DraftActions({
   draft,
   onReanchor,
@@ -137,6 +219,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: spacing.xs,
     padding: spacing.sm,
+  },
+  error: {
+    ...typeScale.label,
+    color: colors.error,
   },
   header: {
     alignItems: "center",

@@ -1,4 +1,9 @@
-import { MutationObserver, type QueryClient } from "@tanstack/react-query";
+import {
+  MutationObserver,
+  useMutationState,
+  type Mutation,
+  type QueryClient,
+} from "@tanstack/react-query";
 import type { RpcClient } from "@codewide/sync-client";
 
 import { appLogger } from "../observability/logger";
@@ -32,8 +37,18 @@ export type ForgeMutationQueue = {
     request: ForgeMutationRequest,
     decode: (value: unknown) => Result,
   ) => Promise<Result>;
+  /**
+   * Drops the settled write `operationId` from the cache once its owner has
+   * consumed the outcome; a write still queued or in flight is never dropped.
+   */
+  readonly forget: (operationId: string) => void;
   readonly pending: () => readonly ForgeMutationEnvelope[];
 };
+
+/** One write of the persisted pipeline as a screen shows it before the read model has it. */
+export type ForgeMutationView =
+  | { readonly envelope: ForgeMutationEnvelope; readonly status: "pending" | "success" }
+  | { readonly envelope: ForgeMutationEnvelope; readonly error: string; readonly status: "error" };
 
 type MutationAuthority = {
   readonly getSession: (connectionId: string) => RpcClient | undefined;
@@ -58,6 +73,43 @@ function pendingEnvelopes(client: QueryClient): readonly ForgeMutationEnvelope[]
       const envelope = parseForgeMutationEnvelope(mutation.state.variables);
       return envelope === null ? [] : [envelope];
     });
+}
+
+function viewOf(mutation: Mutation): ForgeMutationView | null {
+  const envelope = parseForgeMutationEnvelope(mutation.state.variables);
+  if (envelope === null || mutation.state.status === "idle") {
+    return null;
+  }
+  return mutation.state.status === "error"
+    ? { envelope, error: classifyForgeError(mutation.state.error).message, status: "error" }
+    : { envelope, status: mutation.state.status };
+}
+
+/**
+ * Subscribes to the persisted writes of `method` that `include` keeps, read
+ * from the shared MutationCache during render: a queued or in-flight write, an
+ * acknowledged one its owner has not forgotten yet, and a failed one with the
+ * Companion's reason. TanStack Query owns this state; nothing mirrors it.
+ */
+export function useForgeMutations(
+  client: QueryClient,
+  method: DurableForgeMethod,
+  include: (envelope: ForgeMutationEnvelope) => boolean,
+): readonly ForgeMutationView[] {
+  const views = useMutationState(
+    {
+      filters: {
+        mutationKey: FORGE_MUTATION_KEY,
+        predicate: (mutation) => {
+          const envelope = parseForgeMutationEnvelope(mutation.state.variables);
+          return envelope !== null && envelope.method === method && include(envelope);
+        },
+      },
+      select: viewOf,
+    },
+    client,
+  );
+  return views.filter((view) => view !== null);
 }
 
 function queryBelongsToConnection(queryKey: readonly unknown[], connectionId: string): boolean {
@@ -133,6 +185,17 @@ export function createForgeMutationQueue({
         return decode(await observer.mutate(envelope));
       } finally {
         observer.reset();
+      }
+    },
+    forget(operationId) {
+      const cache = client.getMutationCache();
+      for (const mutation of cache.getAll()) {
+        if (
+          mutation.state.status !== "pending" &&
+          parseForgeMutationEnvelope(mutation.state.variables)?.operationId === operationId
+        ) {
+          cache.remove(mutation);
+        }
       }
     },
     pending: () => pendingEnvelopes(client),

@@ -451,3 +451,72 @@ test("renders suppressed blank context and retains authoritative line references
     await page.close();
   }
 });
+
+test("anchors a tapped line for the native composer and draws pending and refused comments", async () => {
+  const page = await openReview();
+  try {
+    await send(page, "workspace", {
+      files,
+      revision: "comment-states",
+      selectedPath: "file.ts",
+      sidebarOpen: false,
+      compact: true,
+    });
+    await send(page, "settings", { mode: "unified", wrapLines: false });
+    await send(page, "document", {
+      requestId: 3,
+      document: {
+        path: "file.ts",
+        source: "",
+        revision: "comment-states",
+        patches: [patch("before", "after")],
+      },
+    });
+    await expect(page.getByText("after", { exact: true })).toBeVisible();
+    await page.locator('[data-column-number="20"][data-line-type="change-addition"]').click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.reviewEvents.filter((event) => event.type === "lineTap").at(-1)?.reference,
+        ),
+      )
+      .toMatchObject({ path: "file.ts", line: 20, side: "new" });
+    // The native line composer is the only one: the document never grows an inline editor.
+    await expect(page.locator("textarea")).toHaveCount(0);
+
+    await send(page, "comments", [
+      {
+        body: "Saving this",
+        id: "pending",
+        line: 20,
+        path: "file.ts",
+        side: "new",
+        state: "pending",
+      },
+      {
+        body: "Refused text",
+        error: "The line is outside the diff",
+        id: "failed",
+        line: 20,
+        path: "file.ts",
+        side: "new",
+        state: "failed",
+      },
+    ]);
+    const pending = page.locator('.review-comment[data-state="pending"]');
+    await expect(pending).toHaveText("Saving this");
+    await expect(pending).toHaveAttribute("aria-busy", "true");
+    const failed = page.locator('.review-comment[data-state="failed"]');
+    await expect(failed.locator(".review-comment-body")).toHaveText("Refused text");
+    await expect(failed.getByRole("alert")).toHaveText("The line is outside the diff");
+
+    await send(page, "selection", null);
+    await expect(page.locator("textarea")).toHaveCount(0);
+    assert.equal(
+      await page.evaluate(() => window.reviewEvents.some((event) => event.type === "error")),
+      false,
+    );
+  } finally {
+    await page.close();
+  }
+});

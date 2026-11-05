@@ -11,23 +11,20 @@ import {
   controlSize,
   layoutSize,
 } from "../../../theme";
-import { AppText as Text, AppTextInput as TextInput } from "../../../ui/Typography";
-import type { CodeReviewDocument, CodeReviewFileItem, CodeReviewViewMode } from "./editorBridge";
+import { AppText as Text } from "../../../ui/Typography";
+import type { CodeReviewEditorProps } from "./codeReviewEditorProps";
 import {
   codeReviewDocumentEmptyState,
   EMPTY_CHANGES_STATE,
   EMPTY_CHANGES_TREE_STATE,
   type CodeReviewEmptyState,
 } from "./editorEmptyState";
-import type { CodeReviewComment, CodeReviewLineReference } from "../comments/reviewComment";
+import type { CodeReviewLineReference } from "../comments/reviewComment";
 
 export type { CodeReviewDocument, CodeReviewFileItem, CodeReviewViewMode } from "./editorBridge";
 
-type DraftSelection = { end: number; start: number };
-type VoicePhase = "idle" | "starting" | "recording" | "finishing";
-
+/** Web fallback of the review editor: plain source lines, the composer anchor and comments. */
 export function CodeReviewEditor({
-  commentDraft,
   comments,
   compact,
   document,
@@ -35,46 +32,13 @@ export function CodeReviewEditor({
   loadError,
   loading,
   mode,
-  onCommentDraftChange,
-  onCommentSelectionChange,
-  onCommentSubmit,
   onFileSelect,
   onLinePress,
-  onVoicePress,
   selectedPath,
   selectedReference,
   sidebarOpen,
-  voiceError,
-  voicePermissionGranted,
-  voicePhase,
-  voiceRetryAvailable,
   wrapLines,
-}: {
-  commentDraft: string;
-  comments: readonly CodeReviewComment[];
-  compact: boolean;
-  document: CodeReviewDocument | null;
-  files: readonly CodeReviewFileItem[];
-  loadError: string | null;
-  loading: boolean;
-  mode: CodeReviewViewMode;
-  onCommentDraftChange: (value: string) => void;
-  onCommentSelectionChange: (selection: DraftSelection) => void;
-  onCommentSubmit: (reference: CodeReviewLineReference, draft: string) => void;
-  onFileSelect: (path: string) => void;
-  onLinePress: (reference: CodeReviewLineReference) => void;
-  onVoicePress: (draft: string, selection: DraftSelection) => void;
-  revealReference: CodeReviewLineReference | null;
-  selectedPath: string | null;
-  selectedReference: CodeReviewLineReference | null;
-  sidebarOpen: boolean;
-  voiceError: string | null;
-  voicePermissionGranted: boolean;
-  voicePhase: VoicePhase;
-  voiceRetryAvailable: boolean;
-  workspaceRevision: string;
-  wrapLines: boolean;
-}) {
+}: CodeReviewEditorProps) {
   const selectedFile = files.find((file) => file.path === selectedPath) ?? null;
   const documentEmptyState =
     document === null ? null : codeReviewDocumentEmptyState(document, mode);
@@ -156,73 +120,18 @@ export function CodeReviewEditor({
                   const selected =
                     selectedReference !== null && sameReference(reference, selectedReference);
                   return (
-                    <View key={lineReferenceKey(reference)}>
-                      <Pressable
-                        onPress={() => {
-                          onLinePress(reference);
-                        }}
-                        style={[styles.line, selected && styles.lineSelected]}
-                      >
-                        <Text style={styles.lineNumber}>{lineNumber}</Text>
-                        <Text selectable style={[styles.code, wrapLines && styles.codeWrapped]}>
-                          {line === "" ? " " : line}
-                        </Text>
-                      </Pressable>
-                      {selected && (
-                        <View style={styles.composer}>
-                          <TextInput
-                            autoFocus
-                            multiline
-                            onChangeText={onCommentDraftChange}
-                            onSelectionChange={({ nativeEvent }) => {
-                              onCommentSelectionChange(nativeEvent.selection);
-                            }}
-                            placeholder="Comment on this line…"
-                            placeholderTextColor={colors.textMuted}
-                            style={styles.input}
-                            value={commentDraft}
-                            voiceInput={false}
-                          />
-                          <Pressable
-                            onPress={() => {
-                              onVoicePress(commentDraft, {
-                                end: commentDraft.length,
-                                start: commentDraft.length,
-                              });
-                            }}
-                            style={styles.iconButton}
-                          >
-                            <Ionicons
-                              color={
-                                voicePermissionGranted ||
-                                voiceRetryAvailable ||
-                                voicePhase !== "idle"
-                                  ? colors.text
-                                  : colors.textDim
-                              }
-                              name={
-                                voiceRetryAvailable
-                                  ? "refresh"
-                                  : voicePhase === "idle"
-                                    ? "mic-outline"
-                                    : "stop"
-                              }
-                              size={iconSize.action}
-                            />
-                          </Pressable>
-                          <Pressable
-                            disabled={commentDraft.trim() === ""}
-                            onPress={() => {
-                              onCommentSubmit(reference, commentDraft);
-                            }}
-                            style={styles.iconButton}
-                          >
-                            <Ionicons color={colors.text} name="arrow-up" size={iconSize.action} />
-                          </Pressable>
-                          {voiceError !== null && <Text style={styles.error}>{voiceError}</Text>}
-                        </View>
-                      )}
-                    </View>
+                    <Pressable
+                      key={lineReferenceKey(reference)}
+                      onPress={() => {
+                        onLinePress(reference);
+                      }}
+                      style={[styles.line, selected && styles.lineSelected]}
+                    >
+                      <Text style={styles.lineNumber}>{lineNumber}</Text>
+                      <Text selectable style={[styles.code, wrapLines && styles.codeWrapped]}>
+                        {line === "" ? " " : line}
+                      </Text>
+                    </Pressable>
                   );
                 })}
                 {mode !== "source" && document.patches.length > 0 && (
@@ -233,6 +142,7 @@ export function CodeReviewEditor({
                 {comments.map((comment) => (
                   <Text key={comment.id} style={styles.comment}>
                     {comment.path}:{comment.line} · {comment.body}
+                    {comment.state === "failed" ? ` · ${comment.error}` : ""}
                   </Text>
                 ))}
               </View>
@@ -291,13 +201,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.optical,
   },
   compactSidebar: { flexDirection: "column" },
-  composer: {
-    alignItems: "flex-end",
-    backgroundColor: colors.surfaceContainer,
-    flexDirection: "row",
-    gap: spacing.xs,
-    padding: spacing.sm,
-  },
   empty: {
     alignItems: "center",
     flex: 1,
@@ -339,13 +242,6 @@ const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
     textAlign: "center",
   },
-  error: {
-    bottom: -20,
-    color: colors.red,
-    left: spacing.sm,
-    position: "absolute",
-    ...typeScale.label,
-  },
   fileName: {
     color: colors.text,
     flex: 1,
@@ -360,27 +256,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   fileRowSelected: { backgroundColor: colors.surfaceContainerHighest },
-  iconButton: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainerHighest,
-    borderRadius: radii.medium,
-    height: controlSize.regular,
-    justifyContent: "center",
-    width: controlSize.regular,
-  },
   imagePreview: {
     flex: 1,
     margin: spacing.md,
-  },
-  input: {
-    backgroundColor: colors.surfaceContainerHighest,
-    borderRadius: radii.medium,
-    color: colors.text,
-    flex: 1,
-    maxHeight: 120,
-    minHeight: controlSize.touch,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
   },
   line: {
     alignItems: "flex-start",
