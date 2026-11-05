@@ -5,6 +5,7 @@ import { GestureDetector } from "react-native-gesture-handler";
 import type { AccountState } from "../../../data/forgeContract";
 import type { ProviderIcon } from "../../../data/forgeProviderIcon";
 import type {
+  PullRequestCategory,
   PullRequestListPage,
   PullRequestRow as Row,
 } from "../../../data/forgePullRequestContract";
@@ -19,6 +20,7 @@ import type { PullRequestSearchFilter } from "../../../data/forgePullRequestSear
 import { listStyles as styles } from "./list.styles";
 import { ListSkeleton } from "./ListSkeleton";
 import { ListNotice } from "./ListNotice";
+import { pullRequestCategoryOptions } from "./pullRequestCategories";
 import { PullRequestEmptyState } from "./PullRequestEmptyState";
 import { pullRequestListItems } from "./pullRequestListItems";
 import { PullRequestListItemView } from "./PullRequestListItemView";
@@ -26,7 +28,7 @@ import { PullRequestFilterBar, PullRequestSearchHeader } from "./PullRequestFilt
 import { activePullRequestFilterCount, closePullRequestSearch } from "../pullRequestListModel";
 
 /**
- * PR list for one connection: filter chips, account sections and rows. The
+ * PR list for one connection: search controls, category chips, account sections and rows. The
  * last published page stays visible while a refresh runs; when the companion
  * is unreachable the stored snapshot is shown with its age (Q3).
  */
@@ -35,6 +37,8 @@ export function PullRequestList(props: {
   /** Provider mark of an account's plugin, from the accounts snapshot. */
   readonly iconFor: (pluginId: string) => ProviderIcon | null;
   readonly nowMs: number;
+  /** Applies one list category from the row under search. */
+  readonly onCategory: (category: PullRequestCategory) => void;
   readonly onEndReached: () => void;
   readonly onOpen: (row: Row) => void;
   readonly onOpenFilters: () => void;
@@ -75,7 +79,9 @@ function PullRequestCatalogSurface({
   return (
     <View style={styles.fill}>
       <PullRequestFilterBar
+        categories={pullRequestCategoryOptions(page, props.filter.query.category)}
         filter={props.filter}
+        onCategory={props.onCategory}
         onOpenFilters={props.onOpenFilters}
         onOpenSearch={props.onOpenSearch}
         onSort={props.onSort}

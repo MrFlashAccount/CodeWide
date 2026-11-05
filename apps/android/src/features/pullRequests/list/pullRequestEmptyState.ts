@@ -25,9 +25,9 @@ const CATEGORY_COPY: Readonly<Record<PullRequestCategory, PullRequestEmptyStateC
     title: "Nothing assigned",
   },
   authored: {
-    description: "Pull requests you author will appear here.",
+    description: "Pull requests you open will appear here.",
     icon: "git-pull-request-outline",
-    title: "No open pull requests",
+    title: "Nothing of yours is open",
   },
   drafts: {
     description: "Draft pull requests from your connected accounts will appear here.",

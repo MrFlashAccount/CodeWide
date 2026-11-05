@@ -1,6 +1,7 @@
 /** Process-owned interaction model for the PR search header and filter tray. */
 import { observable } from "@legendapp/state";
 
+import type { PullRequestCategory } from "../../data/forgePullRequestContract";
 import {
   emptySearchValues,
   type PullRequestSearchFilter,
@@ -15,6 +16,27 @@ export type PullRequestFilterFacet =
   | "state"
   | "delivery"
   | "metadata";
+
+/** Free-text query fields the tray edits as removable tokens. */
+export type PullRequestTermField =
+  | "assignees"
+  | "authors"
+  | "baseBranches"
+  | "headBranches"
+  | "labels"
+  | "reviewers";
+
+type PullRequestTermDrafts = Readonly<Record<PullRequestTermField, string>>;
+
+const TERM_FIELDS: readonly PullRequestTermField[] = [
+  "assignees",
+  "authors",
+  "baseBranches",
+  "headBranches",
+  "labels",
+  "reviewers",
+];
+const TERM_SEPARATOR = /[,\n]/u;
 
 type FilterSheetState =
   | {
@@ -84,6 +106,19 @@ export const pullRequestFilterSheetModel = {
   },
 };
 
+/**
+ * Text typed into each token field of the open tray but not yet turned into a
+ * token. It belongs to the tray draft: Apply commits it, and opening or
+ * resetting the tray clears it. It is kept apart from the draft so a
+ * keystroke rerenders only the field that shows it.
+ */
+const termDraftModel = observable<PullRequestTermDrafts>(emptyTermDrafts());
+
+/** Pending text of one token field of the open tray; read inside `useSelector`. */
+export function pullRequestTermText(field: PullRequestTermField): string {
+  return termDraftModel[field].get();
+}
+
 /** Whether the Accounts sheet is open; the catalog header and problem rows open it. */
 export const forgeAccountsSheetOpen = observable(false);
 
@@ -121,6 +156,11 @@ export function updatePullRequestSearchDraft(draft: string): void {
   }
 }
 
+/** Applies one list category independently from search, sort and the tray draft. */
+export function selectPullRequestCategory(category: PullRequestCategory): void {
+  publishAppliedQuery((query) => (query.category === category ? query : { ...query, category }));
+}
+
 /** Applies sorting independently from structured filters. */
 export function selectPullRequestSort(sort: PullRequestSearchQuery["sort"]): void {
   publishAppliedQuery((query) =>
@@ -133,6 +173,7 @@ export function selectPullRequestSort(sort: PullRequestSearchQuery["sort"]): voi
 /** Opens a fresh draft copied from the applied filter. */
 export function openPullRequestFilters(): void {
   const previous = storedFilterSheetState.peek();
+  termDraftModel.set(emptyTermDrafts());
   storedFilterSheetState.set({
     draft: copyFilter(pullRequestListModel.peek()),
     facet: null,
@@ -165,23 +206,123 @@ export function updatePullRequestFilterDraft(
   }
 }
 
-/** Publishes the complete draft in one store update. */
+/**
+ * Replaces one token field's pending text. A comma or line break completes
+ * every value before it as a token; the remainder stays editable.
+ */
+export function updatePullRequestTermText(field: PullRequestTermField, text: string): void {
+  const parts = text.split(TERM_SEPARATOR);
+  const pending = parts.pop() ?? "";
+  addPullRequestTerms(field, parts);
+  setTermText(field, pending);
+}
+
+/** Turns one token field's pending text into tokens, as Enter does. */
+export function commitPullRequestTermText(field: PullRequestTermField): void {
+  addPullRequestTerms(field, termDraftModel[field].peek().split(TERM_SEPARATOR));
+  setTermText(field, "");
+}
+
+/** Adds included tokens to the open draft; a value that was excluded becomes included. */
+export function addPullRequestTerms(field: PullRequestTermField, values: readonly string[]): void {
+  const terms = normalizedTerms(values);
+  if (terms.length > 0) {
+    updatePullRequestFilterDraft((draft) => withTerms(draft, field, terms));
+  }
+}
+
+/** Removes one token, whether it includes or excludes the value. */
+export function removePullRequestTerm(field: PullRequestTermField, value: string): void {
+  updatePullRequestFilterDraft((draft) => {
+    const values = draft.query[field];
+    return {
+      ...draft,
+      query: {
+        ...draft.query,
+        [field]: {
+          exclude: values.exclude.filter((candidate) => candidate !== value),
+          include: values.include.filter((candidate) => candidate !== value),
+        },
+      },
+    };
+  });
+}
+
+/** Publishes the complete draft, including pending token text, in one store update. */
 export function applyPullRequestFilters(): void {
   const state = pullRequestFilterSheetModel.peek();
   if (state.status !== "open") {
     return;
   }
-  pullRequestListModel.set(copyFilter(state.draft));
-  // Keep the rendered snapshot until Tray finishes its native-thread exit animation.
-  storedFilterSheetState.set({ ...state, status: "closed" });
+  const pending = termDraftModel.peek();
+  const draft = copyFilter(
+    TERM_FIELDS.reduce(
+      (current, field) =>
+        withTerms(current, field, normalizedTerms(pending[field].split(TERM_SEPARATOR))),
+      state.draft,
+    ),
+  );
+  const applied = pullRequestListModel.peek().query;
+  termDraftModel.set(emptyTermDrafts());
+  // The tray owns structured conditions only; category, search and sort stay as applied.
+  pullRequestListModel.set({
+    ...draft,
+    query: { ...draft.query, category: applied.category, sort: applied.sort, text: applied.text },
+  });
+  // Keep the committed snapshot rendered until Tray finishes its native-thread exit animation.
+  storedFilterSheetState.set({ ...state, draft, status: "closed" });
 }
 
 /** Resets the tray draft, not the visible list, until Apply. */
 export function resetPullRequestFilterDraft(): void {
   const state = pullRequestFilterSheetModel.peek();
   if (state.status === "open") {
+    termDraftModel.set(emptyTermDrafts());
     storedFilterSheetState.set({ ...state, draft: withoutStructuredFilters(state.draft) });
   }
+}
+
+function setTermText(field: PullRequestTermField, text: string): void {
+  const open = pullRequestFilterSheetModel.peek().status === "open";
+  if (open && termDraftModel[field].peek() !== text) {
+    termDraftModel[field].set(text);
+  }
+}
+
+function emptyTermDrafts(): PullRequestTermDrafts {
+  return {
+    assignees: "",
+    authors: "",
+    baseBranches: "",
+    headBranches: "",
+    labels: "",
+    reviewers: "",
+  };
+}
+
+function normalizedTerms(values: readonly string[]): readonly string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function withTerms(
+  draft: PullRequestSearchFilter,
+  field: PullRequestTermField,
+  terms: readonly string[],
+): PullRequestSearchFilter {
+  if (terms.length === 0) {
+    return draft;
+  }
+  const values = draft.query[field];
+  return {
+    ...draft,
+    query: {
+      ...draft.query,
+      [field]: {
+        exclude: values.exclude.filter((value) => !terms.includes(value)),
+        include: [...values.include, ...terms.filter((term) => !values.include.includes(term))],
+      },
+    },
+  };
 }
 
 function projectFilterSheetState(state: StoredFilterSheetState): FilterSheetState {

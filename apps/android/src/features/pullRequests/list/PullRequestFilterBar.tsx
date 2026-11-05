@@ -1,5 +1,6 @@
 import { View } from "react-native";
 
+import type { PullRequestCategory } from "../../../data/forgePullRequestContract";
 import type { PullRequestSearchFilter } from "../../../data/forgePullRequestSearch";
 import { CatalogSearchRow } from "../../../presentation/input/CatalogSearchRow";
 import { SearchOverlayHeader } from "../../../presentation/input/SearchOverlayHeader";
@@ -11,6 +12,8 @@ import {
   updatePullRequestSearchDraft,
 } from "../pullRequestListModel";
 import { listStyles as styles } from "./list.styles";
+import type { PullRequestCategoryOption } from "./pullRequestCategories";
+import { PullRequestCategoryChips } from "./PullRequestCategoryChips";
 
 const SORT_OPTIONS = [
   {
@@ -39,14 +42,19 @@ const SORT_OPTIONS = [
   },
 ] as const;
 
-/** Search, sort and the structured-filter entry. */
+/** Search, sort, the structured-filter entry and the category row below them. */
 export function PullRequestFilterBar({
+  categories,
   filter,
+  onCategory,
   onOpenFilters,
   onOpenSearch,
   onSort,
 }: {
+  /** Selectable categories; an empty list renders no row. */
+  readonly categories: readonly PullRequestCategoryOption[];
   readonly filter: PullRequestSearchFilter;
+  readonly onCategory: (category: PullRequestCategory) => void;
   readonly onOpenFilters: () => void;
   readonly onOpenSearch: () => void;
   readonly onSort: (sort: PullRequestSearchFilter["query"]["sort"]) => void;
@@ -60,6 +68,11 @@ export function PullRequestFilterBar({
         onOpenSearch={onOpenSearch}
         onSort={onSort}
         sort={filter.query.sort}
+      />
+      <PullRequestCategoryChips
+        onSelect={onCategory}
+        options={categories}
+        selected={filter.query.category}
       />
     </View>
   );

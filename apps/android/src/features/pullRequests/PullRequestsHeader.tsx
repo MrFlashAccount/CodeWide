@@ -30,8 +30,8 @@ export function PullRequestsHeader({
       </View>
       {onManageProviders === undefined ? null : (
         <ThreadListHeaderAction
-          accessibilityLabel="Add or manage pull request providers"
-          name="add"
+          accessibilityLabel="Accounts"
+          name="people-circle-outline"
           onPress={onManageProviders}
         />
       )}

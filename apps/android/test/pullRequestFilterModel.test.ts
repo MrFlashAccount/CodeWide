@@ -2,15 +2,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   activePullRequestFilterCount,
   applyPullRequestFilters,
+  commitPullRequestTermText,
   defaultPullRequestFilter,
   dismissPullRequestFilters,
   openPullRequestFilters,
   pullRequestFilterSheetModel,
   pullRequestListModel,
   resetPullRequestFilterDraft,
+  selectPullRequestCategory,
   selectPullRequestSearchText,
   selectPullRequestSort,
   updatePullRequestFilterDraft,
+  updatePullRequestTermText,
 } from "../src/features/pullRequests/pullRequestListModel";
 
 const ACTIVE_FILTER_COUNT = 2;
@@ -80,5 +83,76 @@ describe("pull-request filter draft", () => {
       expect(state.draft.query.text).toBe("is:team");
       expect(state.draft.query.sort).toStrictEqual({ direction: "ascending", field: "created" });
     }
+  });
+});
+
+describe("pull-request category and token fields", () => {
+  it("applies a category at once without counting it as a filter", () => {
+    selectPullRequestCategory("reviewRequested");
+
+    expect(pullRequestListModel.peek().query.category).toBe("reviewRequested");
+    expect(activePullRequestFilterCount(pullRequestListModel.peek())).toBe(0);
+  });
+
+  it("keeps the applied category, search and sort when the tray applies", () => {
+    selectPullRequestCategory("authored");
+    selectPullRequestSearchText("auth");
+    openPullRequestFilters();
+    updatePullRequestTermText("labels", "bug");
+
+    applyPullRequestFilters();
+
+    const query = pullRequestListModel.peek().query;
+    expect(query.category).toBe("authored");
+    expect(query.text).toBe("auth");
+    expect(query.labels.include).toStrictEqual(["bug"]);
+  });
+
+  it("turns separated text into tokens and commits the remainder on Apply", () => {
+    openPullRequestFilters();
+    updatePullRequestTermText("authors", "alice, bob,carol");
+
+    const state = pullRequestFilterSheetModel.peek();
+    expect(state.status === "open" ? state.draft.query.authors.include : null).toStrictEqual([
+      "alice",
+      "bob",
+    ]);
+    expect(activePullRequestFilterCount(pullRequestListModel.peek())).toBe(0);
+
+    applyPullRequestFilters();
+
+    expect(pullRequestListModel.peek().query.authors).toStrictEqual({
+      exclude: [],
+      include: ["alice", "bob", "carol"],
+    });
+  });
+
+  it("preserves excluded values when tokens are added", () => {
+    const initial = defaultPullRequestFilter();
+    pullRequestListModel.set({
+      ...initial,
+      query: { ...initial.query, authors: { exclude: ["dependabot"], include: [] } },
+    });
+    openPullRequestFilters();
+    updatePullRequestTermText("authors", "alice");
+    commitPullRequestTermText("authors");
+
+    applyPullRequestFilters();
+
+    expect(pullRequestListModel.peek().query.authors).toStrictEqual({
+      exclude: ["dependabot"],
+      include: ["alice"],
+    });
+  });
+
+  it("discards pending token text with the dismissed draft", () => {
+    openPullRequestFilters();
+    updatePullRequestTermText("labels", "release");
+    dismissPullRequestFilters();
+    openPullRequestFilters();
+
+    applyPullRequestFilters();
+
+    expect(pullRequestListModel.peek().query.labels).toStrictEqual({ exclude: [], include: [] });
   });
 });

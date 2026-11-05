@@ -171,7 +171,7 @@ it("opens provider management from a connected review inbox", async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 
-  fireEvent.press(view.getByRole("button", { name: "Add or manage pull request providers" }));
+  fireEvent.press(view.getByRole("button", { name: "Accounts" }));
 
   expect(view.getByTestId("forge-accounts-sheet")).toBeOnTheScreen();
   expect(view.getByText("Pull request accounts")).toBeOnTheScreen();
