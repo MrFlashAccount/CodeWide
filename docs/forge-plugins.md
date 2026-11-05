@@ -262,10 +262,33 @@ Validation, applied by the companion before Android sees the catalog:
 - `confirm` other than `none`, `confirm` or `destructive` → the descriptor is dropped;
 - `input` of another type → dropped;
 - `availability: disabled` without a reason → dropped;
-- unknown `placement` → `overflow`; unknown `anchor` kind → no anchor (overflow);
+- unknown `placement` → `overflow`; an `anchor` that is not one of the kinds below (or lacks its
+  id) → no anchor and `overflow` placement, so an action meant for a target the companion or
+  client does not know never lands in the header row;
 - within a `group`, the first `isDefault` in `order` wins; none → the first by `order`.
 
 Dropped descriptors are logged by their opaque `actionId` only.
+
+`anchor` places an action next to what it acts on (`forge_protocol::ActionAnchor`); `null` means
+the header row, by `placement`:
+
+| Anchor | Shown | Without the target |
+|---|---|---|
+| `{ "kind": "header" }` | the header action row | — |
+| `{ "kind": "checks", "checkId" }` | that check's row in the checks sheet | overflow |
+| `{ "kind": "checksSection" }` | the Checks row of the Status section, for whole-PR CI actions such as Start CI; the row is shown for it even when the plugin reports no checks (no `forge.checks@1`, or none ran yet) | overflow (merged or closed PR) |
+| `{ "kind": "conflict" }` | the merge-conflict state | overflow (no conflict) |
+| `{ "kind": "reviewThread", "reviewThreadId" }` | that review thread | overflow |
+| `{ "kind": "file", "path" }` | that file in Changes | overflow |
+
+A companion or client older than an anchor kind treats it as unknown: the action stays runnable
+from the overflow menu. `checksSection` is newer than the other kinds; an older Android shows such
+an action in the overflow menu, and an older companion strips the anchor (the action then follows
+its `placement`).
+
+Destructive whole-PR actions belong in the overflow menu: send `close` (for example labelled
+"Discard" on Arcanum) with `placement: "overflow"`; its kind floor makes it `destructive`. Clients
+list the overflow menu after the page's own Copy link, Share and Open in the forge.
 
 Scenario actions belong to the companion. A plugin descriptor whose `actionId` starts with
 `codewide.scenario.` or whose kind is a scenario kind is dropped, so no plugin can attach an agent
@@ -300,7 +323,17 @@ them:
 | `extension` | plugin level |
 
 Verdicts are a plugin-declared group (for example Approve, Request changes, Comment on GitHub;
-Arcanum's Block is a destructive verdict). The Submit sheet is their confirmation.
+Arcanum's Block is a destructive verdict). The Submit sheet is their confirmation and their only
+trigger. Clients decide how to offer them only by availability:
+
+- the plugin marks the verdict it recommends now `isDefault` (for example Ship or Sticky ship on
+  Arcanum, by the pull request and its settings); a client leads with it while it is enabled;
+- a verdict the viewer cannot give stays in the catalog as `disabled` with the forge's reason (for
+  example on the author's own pull request), so the client can show why;
+- when at least two verdicts are enabled, Android shows a split button on Details whose main
+  segment is the lead verdict and whose menu lists every verdict; any choice opens the Submit
+  sheet with that verdict. With only one enabled verdict (typically Comment) nothing prominent is
+  shown and Submit review stays in the overflow menu.
 
 ## Authentication and credentials
 
@@ -620,7 +653,11 @@ today). The protocol does not change for it.
 - `HeadRevision` is the diff-set id.
 - `forge.fileContent@1` (optional): `forge.pullRequest.fileContent` answers the file's content at
   that diff set's head, by the rules in [Whole-file content](#whole-file-content).
-- Verdicts are a plugin-declared group; Block is marked `destructive`.
+- Verdicts are a plugin-declared group; Block is marked `destructive`. The verdict the pull
+  request calls for (Ship or Sticky ship) is the group's `isDefault`; verdicts the viewer cannot
+  give stay `disabled` with Arcanum's reason.
+- Start CI is anchored `{ "kind": "checksSection" }`; Discard is a `close` action with
+  `placement: "overflow"` and `confirm: "destructive"`.
 - Partial review publication must be reported per comment.
 - `forge.resolve@1`: `forge.repository.resolve` maps the Arc VCS plugin's `arc://arcadia` remote to
   `arcanum.yandex.net` / `arc_vcs` (the repository of Arcanum pull request refs) and answers `-32004`

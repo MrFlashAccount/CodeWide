@@ -33,7 +33,7 @@ Deleting this module removes every PR surface; review targets that do not involv
 - `file_content.rs` — `companion/pullRequest/fileContent/read` (`forge.fileContent@1`): one complete head file for the whole-file diff, re-validated by the protocol's rules (text at most 1 MiB, valid UTF-8 without NUL, else `tooLarge` or `binary`); paths are checked before any plugin call; a provider whose recorded declaration lacks the capability is refused with `-32080` without a spawn. Not cached: content at a revision never changes and the client keys its query by it.
 - `reads.rs` — the legacy cross-account list, provider-aware structured search, the atomic overview, activity pages, file pages with hunk catalogs and viewed marks; one plugin process per provider batch.
 - `pr_catalog.rs` — the pull request implementation of review's `DiffCatalogSource`.
-- `actions.rs` — catalog validation, kind floors, the `forge_action_runs` journal.
+- `actions.rs` — catalog validation (anchors parsed as `forge_protocol::ActionAnchor`; an unknown or incomplete anchor becomes `null` with `overflow` placement), kind floors, the `forge_action_runs` journal.
 - `action_run.rs` — `companion/pullRequest/action/run`: idempotency replay, fresh catalog at the requested head, effective confirmation, journal, then the plugin call.
 - `submit.rs` — Submit review over `review::DraftStore`.
 - `links.rs` — PR–thread links (`branch`, `manual`, `agent`), tombstones, local-checkout resolution.

@@ -19,8 +19,8 @@
 //! holds only that thread's comments, path and lines.
 
 use forge_protocol::{
-    CheckItem, CheckItemState, CheckSummary, MergeState, PullRequestOverview, ReviewThread,
-    ScenarioContext, ScenarioContextParams, ScenarioKind, capability, methods,
+    ActionAnchor, CheckItem, CheckItemState, CheckSummary, MergeState, PullRequestOverview,
+    ReviewThread, ScenarioContext, ScenarioContextParams, ScenarioKind, capability, methods,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -111,23 +111,26 @@ pub fn descriptors(
             json!({"state": "enabled"})
         }
     };
-    let descriptor =
-        |kind: ScenarioKind, action: ActionKind, label: &str, order: i64, anchor: Option<Value>| {
-            ActionDescriptor {
-                action_id: scenario_id(kind),
-                kind: action,
-                group: "agent".into(),
-                label: label.into(),
-                availability: availability(kind),
-                toggle: None,
-                input: None,
-                confirm: Confirmation::None,
-                placement: "secondary".into(),
-                order,
-                is_default: false,
-                anchor,
-            }
-        };
+    let descriptor = |kind: ScenarioKind,
+                      action: ActionKind,
+                      label: &str,
+                      order: i64,
+                      anchor: Option<ActionAnchor>| {
+        ActionDescriptor {
+            action_id: scenario_id(kind),
+            kind: action,
+            group: "agent".into(),
+            label: label.into(),
+            availability: availability(kind),
+            toggle: None,
+            input: None,
+            confirm: Confirmation::None,
+            placement: "secondary".into(),
+            order,
+            is_default: false,
+            anchor,
+        }
+    };
     let mut actions = Vec::new();
     let anchored = fix_ci_targets(check_items);
     for check_id in &anchored {
@@ -136,7 +139,9 @@ pub fn descriptors(
             ActionKind::FixCi,
             "Fix in agent",
             100,
-            Some(json!({"kind": "checks", "checkId": check_id})),
+            Some(ActionAnchor::Checks {
+                check_id: (*check_id).to_owned(),
+            }),
         );
         action.action_id = fix_ci_check_action_id(check_id);
         actions.push(action);
@@ -168,7 +173,7 @@ pub fn descriptors(
             ActionKind::Rebase,
             "Rebase in agent",
             101,
-            Some(json!({"kind": "conflict"})),
+            Some(ActionAnchor::Conflict),
         ));
     }
     actions.push(descriptor(
@@ -183,7 +188,7 @@ pub fn descriptors(
         ActionKind::ReviewPr,
         "Review PR",
         103,
-        Some(json!({"kind": "header"})),
+        Some(ActionAnchor::Header),
     ));
     if let Some(first) = actions.first_mut() {
         first.is_default = true;
@@ -880,13 +885,9 @@ mod tests {
         actions
             .iter()
             .filter(|action| action.kind == ActionKind::FixCi)
-            .map(|action| {
-                action
-                    .anchor
-                    .as_ref()
-                    .and_then(|anchor| anchor.get("checkId"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
+            .map(|action| match &action.anchor {
+                Some(ActionAnchor::Checks { check_id }) => Some(check_id.clone()),
+                _ => None,
             })
             .collect()
     }

@@ -4,7 +4,9 @@
 //! never guessed: an unknown kind becomes `extension`; a descriptor with an
 //! unknown `confirm`, an invalid input type, or `disabled` without a reason
 //! is dropped (logged by its opaque `actionId`); an unknown placement falls
-//! back to `overflow` and an unknown anchor to `null`.
+//! back to `overflow`, and an anchor that is not a valid
+//! [`forge_protocol::ActionAnchor`] becomes `null` with `overflow` placement,
+//! so an action meant for a target no one knows never lands in the header row.
 //!
 //! Kind floors only raise a level and are enforced here as well as on
 //! Android: a run whose `confirmation` is below the effective level is
@@ -17,6 +19,7 @@
 
 use std::sync::Arc;
 
+use forge_protocol::ActionAnchor;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::warn;
@@ -109,7 +112,7 @@ pub struct ActionDescriptor {
     pub placement: String,
     pub order: i64,
     pub is_default: bool,
-    pub anchor: Option<Value>,
+    pub anchor: Option<ActionAnchor>,
 }
 
 impl ActionDescriptor {
@@ -181,8 +184,17 @@ pub fn parse_descriptor(raw: &Value) -> Option<ActionDescriptor> {
         .get("toggle")
         .and_then(|toggle| toggle.get("on")?.as_bool())
         .map(|on| json!({ "on": on }));
+    let (anchor, anchor_known) = match raw.get("anchor") {
+        None | Some(Value::Null) => (None, true),
+        Some(value) => match serde_json::from_value::<ActionAnchor>(value.clone()) {
+            Ok(anchor) => (Some(anchor), true),
+            Err(_) => (None, false),
+        },
+    };
     let placement = match raw.get("placement").and_then(Value::as_str) {
-        Some(placement @ ("primary" | "secondary" | "overflow")) => placement.to_owned(),
+        Some(placement @ ("primary" | "secondary" | "overflow")) if anchor_known => {
+            placement.to_owned()
+        }
         _ => "overflow".to_owned(),
     };
     Some(ActionDescriptor {
@@ -196,7 +208,7 @@ pub fn parse_descriptor(raw: &Value) -> Option<ActionDescriptor> {
         placement,
         order: raw.get("order").and_then(Value::as_i64).unwrap_or(0),
         is_default: raw.get("isDefault").and_then(Value::as_bool) == Some(true),
-        anchor: raw.get("anchor").and_then(parse_anchor),
+        anchor,
         action_id,
     })
 }
@@ -224,20 +236,6 @@ fn parse_input(input: &Value) -> Option<Value> {
             (!options.is_empty())
                 .then(|| json!({"type": "enum", "label": label, "options": options}))
         }
-        _ => None,
-    }
-}
-
-fn parse_anchor(anchor: &Value) -> Option<Value> {
-    let field = |name: &str| anchor.get(name).and_then(Value::as_str);
-    match field("kind")? {
-        "header" => Some(json!({"kind": "header"})),
-        "conflict" => Some(json!({"kind": "conflict"})),
-        "checks" => Some(json!({"kind": "checks", "checkId": field("checkId")?})),
-        "reviewThread" => {
-            Some(json!({"kind": "reviewThread", "reviewThreadId": field("reviewThreadId")?}))
-        }
-        "file" => Some(json!({"kind": "file", "path": field("path")?})),
         _ => None,
     }
 }
@@ -588,6 +586,21 @@ mod tests {
         let odd = parse_descriptor(&odd).expect("kept");
         assert_eq!(odd.placement, "overflow");
         assert_eq!(odd.anchor, None);
+        // An anchor this companion does not know never reaches the header row.
+        let mut unknown_anchor = raw("u", "extension", "none");
+        unknown_anchor["anchor"] = json!({"kind": "sidebar"});
+        let unknown_anchor = parse_descriptor(&unknown_anchor).expect("kept");
+        assert_eq!(unknown_anchor.placement, "overflow");
+        assert_eq!(unknown_anchor.anchor, None);
+        let mut start_ci = raw("startCi", "extension", "none");
+        start_ci["anchor"] = json!({"kind": "checksSection"});
+        let start_ci = parse_descriptor(&start_ci).expect("kept");
+        assert_eq!(start_ci.placement, "primary");
+        assert_eq!(start_ci.anchor, Some(ActionAnchor::ChecksSection));
+        assert_eq!(
+            serde_json::to_value(&start_ci).expect("encodes")["anchor"],
+            json!({"kind": "checksSection"})
+        );
         let mut bad_input = raw("v", "extension", "none");
         bad_input["input"] = json!({"type": "color", "label": "c"});
         assert!(parse_descriptor(&bad_input).is_none());

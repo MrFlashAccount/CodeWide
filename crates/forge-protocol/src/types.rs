@@ -749,9 +749,38 @@ pub struct FilesResult {
     pub next_cursor: Option<String>,
 }
 
+/// Where a client shows an action: next to the problem it addresses.
+///
+/// A client that does not know an anchor kind shows the action in its
+/// overflow menu, so a new kind degrades instead of disappearing. The
+/// companion parses a descriptor's `anchor` with this type; any other value
+/// becomes "no anchor".
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ActionAnchor {
+    /// The header action row of the pull request.
+    Header,
+    /// The merge-conflict state; shown only while the pull request has conflicts.
+    Conflict,
+    /// One check, by the `checkId` of its `CheckItem`.
+    #[serde(rename_all = "camelCase")]
+    Checks { check_id: String },
+    /// The pull request's Checks section as a whole, for example "Start CI".
+    /// A client shows it in the Checks row even when the plugin reports no
+    /// checks (without `forge.checks@1` or before any check ran).
+    ChecksSection,
+    /// One review thread, by its conversation id.
+    #[serde(rename_all = "camelCase")]
+    ReviewThread { review_thread_id: String },
+    /// One changed file, by its head-side path.
+    File { path: String },
+}
+
 /// An action descriptor as a plugin emits it. The companion parses the
 /// catalog leniently from raw JSON (unknown kinds become `extension`,
 /// invalid descriptors are dropped), so this type is for plugin authors.
+/// `anchor` stays raw JSON so a plugin can send a kind newer than this crate;
+/// [`ActionAnchor`] is its typed shape.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionDescriptor {
@@ -1664,6 +1693,47 @@ mod tests {
         }
         assert!(serde_json::from_value::<ConversationEntry>(json!({"kind": "reaction"})).is_err());
         assert!(serde_json::from_value::<ReviewVerdict>(json!("blocked")).is_err());
+    }
+
+    #[test]
+    fn every_action_anchor_round_trips_and_incomplete_ones_are_rejected() {
+        let anchors = [
+            (json!({"kind": "header"}), ActionAnchor::Header),
+            (json!({"kind": "conflict"}), ActionAnchor::Conflict),
+            (
+                json!({"kind": "checks", "checkId": "c-1"}),
+                ActionAnchor::Checks {
+                    check_id: "c-1".into(),
+                },
+            ),
+            (
+                json!({"kind": "checksSection"}),
+                ActionAnchor::ChecksSection,
+            ),
+            (
+                json!({"kind": "reviewThread", "reviewThreadId": "rt-1"}),
+                ActionAnchor::ReviewThread {
+                    review_thread_id: "rt-1".into(),
+                },
+            ),
+            (
+                json!({"kind": "file", "path": "src/a.rs"}),
+                ActionAnchor::File {
+                    path: "src/a.rs".into(),
+                },
+            ),
+        ];
+        for (wire, anchor) in anchors {
+            assert_eq!(round_trips::<ActionAnchor>(&wire), anchor);
+        }
+        for invalid in [
+            json!({"kind": "checks"}),
+            json!({"kind": "reviewThread"}),
+            json!({"kind": "sidebar"}),
+            json!("checksSection"),
+        ] {
+            assert!(serde_json::from_value::<ActionAnchor>(invalid).is_err());
+        }
     }
 
     #[test]
