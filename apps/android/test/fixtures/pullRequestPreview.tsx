@@ -181,6 +181,7 @@ function Screen({ tablet }: { readonly tablet: boolean }): React.JSX.Element | n
         initialChangesView="files"
         tab={tab}
         tablet={tablet}
+        voiceRuntime={null}
       />
     </Suspense>
   );

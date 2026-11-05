@@ -7,49 +7,51 @@ import { ReviewCommentStrip } from "./ReviewCommentStrip";
 
 import { changeScopeDisplay } from "../../../rendering/changeScopeDisplay";
 import { changedFileDisplayPath } from "../../../rendering/changed-file-path";
+import { CommentSheet } from "../comments/CommentSheet";
+import type { CodeReviewComment } from "../comments/reviewComment";
 import { CodeReviewEditor } from "../editor/CodeReviewEditor";
+import type { CodeReviewInlineComment } from "../editor/editorBridge";
 import { colors, iconSize } from "../../../theme";
 import { OverflowMenu } from "../../../ui/OverflowMenu";
 import { AppText as Text } from "../../../ui/Typography";
 
-/** Composes file selection, diff viewing, and review-comment submission. */
+/**
+ * Composes file selection, diff viewing, and review-comment submission. A line
+ * tap opens the one native line composer; adding a comment closes it at once.
+ */
 export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
   const { cwd, scopeLabel } = props;
   const {
-    addComment,
     attach,
     attachDisabled,
     attaching,
     changes,
     changeScope,
     close,
-    commentDraft,
+    closeComposer,
     comments,
+    commitComment,
     compact,
     document,
     documentStatus,
     effectiveMode,
     effectiveSelectedPath,
+    lineDrafts,
     loadError,
     loading,
     menuActions,
-    microphoneAccess,
-    pressVoice,
     revealReference,
     reviewFiles,
     scopeLoading,
     selectedReference,
     selectFile,
-    selectionRef,
     selectLine,
     selectMenuAction,
     setComments,
     setSidebarPreference,
     setWorkspaceWidth,
     sidebarOpen,
-    updateCommentDraft,
     vcs,
-    voiceResource,
     workspaceRevision,
     wrapLines,
   } = useCodeReviewState(props);
@@ -154,19 +156,13 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
       <View style={styles.workspace}>
         <View style={styles.editorPane}>
           <CodeReviewEditor
-            commentDraft={commentDraft}
-            comments={comments}
+            comments={savedInlineComments(comments)}
             compact={compact}
             document={document}
             files={reviewFiles}
             loadError={loadError}
             loading={loading}
             mode={effectiveMode}
-            onCommentDraftChange={updateCommentDraft}
-            onCommentSelectionChange={(selection) => {
-              selectionRef.current = selection;
-            }}
-            onCommentSubmit={addComment}
             onFileSelect={(path) => {
               const change = changes.find((candidate) => candidate.path === path);
               if (change !== undefined) {
@@ -174,15 +170,10 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
               }
             }}
             onLinePress={selectLine}
-            onVoicePress={(draft, selection) => void pressVoice(draft, selection)}
             revealReference={selectedReference === null ? revealReference : null}
             selectedPath={effectiveSelectedPath}
             selectedReference={selectedReference}
             sidebarOpen={sidebarOpen}
-            voiceError={voiceResource?.error ?? null}
-            voicePermissionGranted={microphoneAccess.granted}
-            voicePhase={voiceResource?.phase ?? "idle"}
-            voiceRetryAvailable={voiceResource?.retryAvailable ?? false}
             workspaceRevision={workspaceRevision}
             wrapLines={wrapLines}
           />
@@ -194,6 +185,33 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
           />
         </View>
       </View>
+      {selectedReference === null ? null : (
+        <CommentSheet
+          accessory={null}
+          drafts={lineDrafts}
+          onDismiss={closeComposer}
+          onSubmit={(body) => {
+            commitComment(selectedReference, body);
+          }}
+          submitLabel="Add comment"
+          target={selectedReference}
+          voice={props.voiceRuntime}
+        />
+      )}
     </View>
   );
+}
+
+/** Local session/VCS comments are saved the moment they are added. */
+function savedInlineComments(
+  comments: readonly CodeReviewComment[],
+): readonly CodeReviewInlineComment[] {
+  return comments.map((comment) => ({
+    body: comment.body,
+    id: comment.id,
+    line: comment.line,
+    path: comment.path,
+    side: comment.side,
+    state: "saved" as const,
+  }));
 }

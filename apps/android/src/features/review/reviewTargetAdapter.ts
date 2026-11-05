@@ -49,21 +49,46 @@ export function createReviewTargetAdapter({
         await refreshDrafts(connectionId, draft.revision.source);
       }
     },
+    dismissDraftPut(operationId) {
+      mutations.forget(operationId);
+    },
     async putDraft(connectionId, draft, expectedVersion) {
+      const operationId = randomUUID();
+      const params = { connectionId, source: draft.revision.source };
       try {
-        return requireParsed(
-          await mutations.execute(
+        const answer = await mutations
+          .execute(
             {
               connectionId,
               method: "companion/review/draft/put",
-              operationId: randomUUID(),
+              operationId,
               params: { draft, expectedVersion },
               scope: reviewScope(connectionId, draft.revision.source),
             },
-            parseDraft,
-          ),
-          "draft",
-        );
+            (value) => value,
+          )
+          .catch((error: unknown) => {
+            // A refused new draft stays listed (`data/reviewDraftPuts`) with its reason until the
+            // user restores or discards it; a refused move has nothing to show and is dropped.
+            if (expectedVersion !== null) {
+              mutations.forget(operationId);
+            }
+            throw error;
+          });
+        try {
+          const saved = requireParsed(parseDraft(answer), "draft");
+          // Publish the acknowledged draft before forgetting the write, in the same task, so the
+          // screen never renders a frame with neither.
+          resources.drafts.patch(params, (current) => ({
+            drafts: current.drafts.some((existing) => existing.id === saved.id)
+              ? current.drafts.map((existing) => (existing.id === saved.id ? saved : existing))
+              : [...current.drafts, saved],
+            revision: current.revision,
+          }));
+          return saved;
+        } finally {
+          mutations.forget(operationId);
+        }
       } finally {
         await refreshDrafts(connectionId, draft.revision.source);
       }

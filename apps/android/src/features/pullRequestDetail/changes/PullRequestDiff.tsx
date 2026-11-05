@@ -2,6 +2,8 @@ import { StyleSheet, View } from "react-native";
 
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
 import type { DraftComment } from "../../../data/reviewDraftContract";
+import type { DraftPut } from "../../../data/reviewDraftPuts";
+import type { CommentSheetTarget } from "../../review/comments/CommentSheet";
 import type { CodeReviewLineReference } from "../../review/comments/reviewComment";
 import { CodeReviewEditor } from "../../review/editor/CodeReviewEditor";
 import {
@@ -44,20 +46,26 @@ const TREE_STATUS: Readonly<Record<PullRequestFile["status"], CodeReviewFileItem
  * patch, the diff is that whole file with the changes inline; otherwise it is
  * the recorded patch. `content` is already decided, so the editor receives one
  * document per file; while it is pending the editor shows its own loading
- * state rather than a patch it would later replace. Drafts show inline; a
- * line tap opens the comment sheet instead of an inline composer. Files
- * without a patch say why.
+ * state rather than a patch it would later replace. Drafts show inline, new
+ * ones at once while they are saved; a line tap opens the one native line
+ * composer and the line stays highlighted as its anchor. Files without a
+ * patch say why.
  */
 export function PullRequestDiff({
+  composerLine,
   content,
+  draftPuts,
   drafts,
   onLinePress,
   reveal,
   selected,
   tree,
 }: {
+  /** The line whose composer is open, or `null`. */
+  readonly composerLine: CommentSheetTarget | null;
   /** What the selected file's diff shows. */
   readonly content: DiffContent;
+  readonly draftPuts: readonly DraftPut[];
   readonly drafts: readonly DraftComment[];
   readonly onLinePress: (reference: CodeReviewLineReference) => void;
   readonly reveal: CodeReviewLineReference | null;
@@ -66,32 +74,25 @@ export function PullRequestDiff({
   readonly tree: DiffTree | null;
 }): React.JSX.Element {
   const document = content.state === "pending" ? null : selectedDocument(selected, content);
-  const items = (tree === null ? [selected] : tree.files).map((file) => treeItem(file, drafts));
+  const items = (tree === null ? [selected] : tree.files).map((file) =>
+    treeItem(file, drafts, draftPuts),
+  );
   return (
     <View style={styles.editor} testID="pull-request-diff">
       <CodeReviewEditor
-        commentDraft=""
-        comments={draftEditorComments(drafts, selected.path)}
+        comments={draftEditorComments(drafts, draftPuts, selected.path)}
         compact={tree === null || !tree.besideDiff}
         document={document}
         files={items}
         loadError={null}
         loading={content.state === "pending"}
         mode="unified"
-        onCommentDraftChange={() => undefined}
-        onCommentSelectionChange={() => undefined}
-        onCommentSubmit={() => undefined}
         onFileSelect={tree === null ? () => undefined : tree.onSelect}
         onLinePress={onLinePress}
-        onVoicePress={() => undefined}
         revealReference={reveal}
         selectedPath={selected.path}
-        selectedReference={null}
+        selectedReference={composerLine}
         sidebarOpen={tree !== null && tree.open}
-        voiceError={null}
-        voicePermissionGranted={false}
-        voicePhase="idle"
-        voiceRetryAvailable={false}
         workspaceRevision={codeReviewWorkspaceRevision(items)}
         wrapLines={false}
       />
@@ -113,13 +114,19 @@ function selectedDocument(file: PullRequestFile, content: DiffContent): CodeRevi
   );
 }
 
-function treeItem(file: PullRequestFile, drafts: readonly DraftComment[]): CodeReviewFileItem {
+function treeItem(
+  file: PullRequestFile,
+  drafts: readonly DraftComment[],
+  puts: readonly DraftPut[],
+): CodeReviewFileItem {
   return {
     additions: file.additions,
     deletions: file.deletions,
     path: file.path,
     review: {
-      drafts: drafts.filter((draft) => draft.anchor.path === file.path).length,
+      drafts:
+        drafts.filter((draft) => draft.anchor.path === file.path).length +
+        puts.filter((put) => put.draft.anchor.path === file.path).length,
       viewed: file.viewed.viewed,
     },
     status: TREE_STATUS[file.status],

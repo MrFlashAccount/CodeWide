@@ -72,7 +72,16 @@ jest.mock("../src/data/forgeRuntime", () => ({
   pullRequestCommentDestinations: {},
   reviewResources: {},
 }));
-jest.mock("../src/data/workspace-runtime", () => ({ workspaceRuntime: { native: false } }));
+jest.mock("../src/data/workspace-runtime", () => ({
+  workspaceRuntime: {
+    getSnapshot: () => mockRuntimeSnapshot,
+    native: false,
+    subscribe: () => () => undefined,
+    voiceController: null,
+  },
+}));
+// The runtime before boot: no resources, so the PR pane offers no dictation.
+const mockRuntimeSnapshot = { resources: null };
 jest.mock("../src/features/pullRequestDetail/PullRequestScreen", () =>
   jest.requireActual("./fixtures/PullRequestRouteScreen"),
 );

@@ -10,9 +10,12 @@ import { PullRequestScreen } from "../features/pullRequestDetail/PullRequestScre
 import { PullRequestScreenSkeleton } from "../features/pullRequestDetail/PullRequestScreenSkeleton";
 import type { PullRequestScreenProps } from "../features/pullRequestDetail/pullRequestScreenContract";
 import type { PullRequestTab } from "../features/pullRequestDetail/pullRequestScreenModel";
+import { workspaceRuntime } from "../data/workspace-runtime";
 import { workspaceFeatures } from "../features/workspace/createWorkspaceFeatures";
+import { useWorkspaceRuntime } from "../features/workspace/useWorkspaceRuntime";
 import { useEvent } from "../react/useEvent";
 import { useThreePanels } from "../ui/threePanels";
+import type { AppVoiceInputRuntime } from "../ui/VoiceInputRuntime";
 
 export type PullRequestDetailPaneProps = {
   readonly connectionId: string;
@@ -46,6 +49,24 @@ export function PullRequestDetailPane(props: PullRequestDetailPaneProps): React.
     leaveFullscreen();
     props.navigation.openThread(threadId);
   });
+  const resources = useWorkspaceRuntime().resources;
+  const startRemote = useEvent<NonNullable<AppVoiceInputRuntime["startRemote"]>>(
+    async (listener, options) =>
+      workspaceFeatures.composer.startVoiceTranscription(props.connectionId, "", listener, options),
+  );
+  const controller = workspaceRuntime.voiceController;
+  // Line comment dictation uses the app's one retained voice controller; recordings are scoped to
+  // this PR so another screen's input never receives them.
+  const voiceRuntime: AppVoiceInputRuntime | null =
+    controller === null || resources === null
+      ? null
+      : {
+          controller,
+          resources,
+          scopePrefix: `pull-request\u0000${props.connectionId}\u0000${props.pullRequest}`,
+          thread: null,
+          ...(workspaceRuntime.native ? { startRemote } : {}),
+        };
   return (
     <Suspense fallback={<PullRequestScreenSkeleton />}>
       <PullRequestScreen
@@ -66,6 +87,7 @@ export function PullRequestDetailPane(props: PullRequestDetailPaneProps): React.
         reviewCapabilities={workspaceFeatures.reviewTarget}
         tab={props.tab}
         tablet={props.desktop}
+        voiceRuntime={voiceRuntime}
       />
     </Suspense>
   );

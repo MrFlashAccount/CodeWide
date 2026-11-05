@@ -5,6 +5,7 @@ import type { PullRequestFile, PullRequestFilesPage } from "../../../data/forgeM
 import { useForgeQuery } from "../../../data/forgeQueryResource";
 import { remoteValue } from "../../../data/forgeRemoteValue";
 import type { DraftComment } from "../../../data/reviewDraftContract";
+import { useDraftPuts, type DraftPut } from "../../../data/reviewDraftPuts";
 import { useEvent } from "../../../react/useEvent";
 import { useAppDialog } from "../../../ui/AppDialog";
 import type { PullRequestChangesProps } from "./changesContract";
@@ -14,9 +15,12 @@ import type { HeadFileSource } from "./headFileViews";
 
 /** Plugin capability that serves whole head files. */
 const FILE_CONTENT_CAPABILITY = "forge.fileContent@1";
+const NO_DRAFTS: readonly DraftComment[] = [];
 
 /** Files, drafts, the selected file and the viewed toggle of the Changes tab. */
 export type ChangesData = {
+  /** New drafts sent but not in the drafts snapshot yet: being saved, or refused. */
+  readonly draftPuts: readonly DraftPut[];
   readonly drafts: readonly DraftComment[];
   /** Why the first files page could not be read; `null` while it loads or once shown. */
   readonly filesFailure: FilesFailure | null;
@@ -58,6 +62,8 @@ export function useChangesData(props: PullRequestChangesProps): ChangesData {
   };
   const files = useForgeQuery(forge.files, target);
   const drafts = useForgeQuery(review.drafts, { connectionId, source });
+  const saved = remoteValue(drafts)?.drafts ?? NO_DRAFTS;
+  const draftPuts = useDraftPuts(review.drafts.client, { connectionId, source }, saved);
   const view = useSelector(() => model.changesView.get());
   const selectedPath = useSelector(() => model.selectedPath.get());
   const filesPanelOpen = useSelector(() => model.filesPanelOpen.get());
@@ -79,7 +85,8 @@ export function useChangesData(props: PullRequestChangesProps): ChangesData {
       });
   });
   return {
-    drafts: remoteValue(drafts)?.drafts ?? [],
+    draftPuts,
+    drafts: saved,
     filesFailure: firstPageFailure(files, retryFiles),
     filesPanelOpen,
     headFiles: {

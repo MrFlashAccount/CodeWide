@@ -66,8 +66,16 @@ jest.mock("../src/data/forgeQueryResource", () => ({ useForgeQuery: () => ({}) }
 jest.mock("../src/data/forgeRemoteValue", () => ({ remoteValue: () => null }));
 jest.mock("../src/data/minuteClock", () => ({ useMinuteClock: () => 0 }));
 jest.mock("../src/data/workspace-runtime", () => ({
-  workspaceRuntime: { fileTransferController: null, native: true, voiceController: null },
+  workspaceRuntime: {
+    fileTransferController: null,
+    getSnapshot: () => mockRuntimeSnapshot,
+    native: true,
+    subscribe: () => () => undefined,
+    voiceController: null,
+  },
 }));
+// The runtime before boot: no resources, so the PR pane offers no dictation.
+const mockRuntimeSnapshot = { resources: null };
 jest.mock("../src/features/pullRequestDetail/actions/usePullRequestActions", () => ({
   usePullRequestActions: () => ({
     dismissInput: jest.fn(),

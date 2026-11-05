@@ -146,6 +146,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
             reviewCapabilities={props.reviewCapabilities}
             tablet={props.tablet}
             verdicts={data.slots.verdicts}
+            voiceRuntime={props.voiceRuntime}
           />
         )}
         {actions.pendingInput === null ? null : (

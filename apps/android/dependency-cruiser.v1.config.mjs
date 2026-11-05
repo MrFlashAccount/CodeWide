@@ -53,6 +53,8 @@ const featurePublicModules = {
     "composerTypes",
     "composerWorkspaceCapabilities",
     "input/ComposerMarkdownInput",
+    "ComposerMicrophone",
+    "voice/VoiceCaptureStatus",
     "ComposerPullRequestContextChip",
   ],
   projects: [
@@ -122,7 +124,9 @@ const featurePublicModules = {
     "ReviewFeature",
     "ReviewTargetSheet",
     "comments/CommentSheet",
+    "comments/CommentDestinationPicker",
     "comments/DraftCard",
+    "comments/lineCommentDrafts",
     "comments/destinationPolicy",
     "comments/reviewComment",
     "editor/CodeReviewEditor",
