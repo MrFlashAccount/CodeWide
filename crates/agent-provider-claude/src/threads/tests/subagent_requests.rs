@@ -65,6 +65,7 @@ async fn launch_background_agent(
         .await;
     query.push(frames::text("m2", "Started.")).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     Ok(query)
 }
@@ -121,6 +122,7 @@ async fn agent_reports(query: &FakeQuery) {
     let mut wake_result = frames::result();
     wake_result["origin"] = json!({"kind": "task-notification"});
     query.push(wake_result).await;
+    query.idle().await;
     settle().await;
 }
 

@@ -12,6 +12,7 @@ mod sessions;
 mod subagent_requests;
 mod task_reports;
 mod threads;
+mod turn_boundaries;
 
 use std::{
     path::{Path, PathBuf},
@@ -134,6 +135,13 @@ pub(super) struct FakeQuery {
     /// The session's answers to Claude's control requests, in order.
     pub answers: Mutex<Vec<(String, Result<Value, String>)>>,
     pub closed: AtomicBool,
+    /// Whether the fake Claude works: from the first message it takes
+    /// until the test ends its work ([`Self::idle`]).
+    working: AtomicBool,
+    /// Whether Claude acknowledges each message at once (`queued`).
+    acknowledging: bool,
+    /// The version of a `claude` without session state.
+    unsupported: Option<String>,
     events: mpsc::Sender<ProcessEvent>,
     file: PathBuf,
     session_id: String,
@@ -205,6 +213,18 @@ impl FakeQuery {
     pub fn offer_count(&self) -> usize {
         lock(&self.offers).len()
     }
+
+    /// Claude has answered everything it holds and reports `idle`.
+    pub async fn idle(&self) {
+        self.working.store(false, Ordering::SeqCst);
+        self.push(frames::session_state("idle")).await;
+    }
+
+    /// Claude starts work of its own (a wake) and reports `running`.
+    pub async fn wake(&self) {
+        self.working.store(true, Ordering::SeqCst);
+        self.push(frames::session_state("running")).await;
+    }
 }
 
 impl Query for FakeQuery {
@@ -219,7 +239,31 @@ impl Query for FakeQuery {
             row["origin"] = json!({"kind": "unclassified"});
         }
         self.persist(row);
+        // As Claude does: an idle Claude starts working, and every message
+        // is acknowledged at once. The channel has room for them: the test
+        // drives one offer at a time.
+        if !self.working.swap(true, Ordering::SeqCst) {
+            let _ = self
+                .events
+                .try_send(ProcessEvent::Message(frames::session_state("running")));
+        }
+        if self.acknowledging {
+            let _ = self.events.try_send(ProcessEvent::Message(frames::command(
+                &offer.uuid,
+                "queued",
+            )));
+        }
         lock(&self.offers).push(offer);
+    }
+
+    fn initialized(&self) -> BoxFuture<'static, Result<(), ProcessError>> {
+        let initialized = match &self.unsupported {
+            Some(version) => Err(ProcessError::Unsupported {
+                version: version.clone(),
+            }),
+            None => Ok(()),
+        };
+        Box::pin(std::future::ready(initialized))
     }
 
     fn respond(&self, request_id: String, outcome: Result<Value, String>) {
@@ -255,6 +299,11 @@ impl Query for FakeQuery {
 pub(super) struct FakeRuntime {
     projects: PathBuf,
     queries: Mutex<Vec<Arc<FakeQuery>>>,
+    /// Queries opened from now on leave messages unacknowledged.
+    pub silent: AtomicBool,
+    /// Queries opened from now on run a `claude` of this version without
+    /// session state.
+    pub unsupported: Mutex<Option<String>>,
 }
 
 impl FakeRuntime {
@@ -294,6 +343,9 @@ impl QueryRuntime for FakeRuntime {
             modes: Mutex::new(Vec::new()),
             answers: Mutex::new(Vec::new()),
             closed: AtomicBool::new(false),
+            working: AtomicBool::new(false),
+            acknowledging: !self.silent.load(Ordering::SeqCst),
+            unsupported: lock(&self.unsupported).clone(),
             events,
             file,
             session_id,
@@ -454,6 +506,8 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
     let runtime = Arc::new(FakeRuntime {
         projects: projects.clone(),
         queries: Mutex::new(Vec::new()),
+        silent: AtomicBool::new(false),
+        unsupported: Mutex::new(None),
     });
     let running = Arc::new(FakeRunning::default());
     let clock = Arc::new(AtomicI64::new(1_760_000_000_000));
@@ -621,6 +675,14 @@ pub(super) mod frames {
         json!({"type": "assistant", "message": {"id": message_id, "role": "assistant",
             "content": [{"type": "tool_use", "id": tool_use_id, "name": name, "input": input}]},
             "parent_tool_use_id": null})
+    }
+
+    pub fn command(uuid: &str, state: &str) -> Value {
+        json!({"type": "command_lifecycle", "command_uuid": uuid, "state": state})
+    }
+
+    pub fn session_state(state: &str) -> Value {
+        json!({"type": "system", "subtype": "session_state_changed", "state": state})
     }
 
     pub fn result() -> Value {

@@ -374,6 +374,7 @@ async fn deletes_every_session_of_the_chain() -> TestResult {
     let query = harness.runtime.query(0)?;
     query.push(frames::init()).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     assert!(session_file_exists(&harness, THREAD));
     assert_eq!(update(&harness, THREAD, ThreadChange::Deleted).await?, None);
@@ -392,6 +393,7 @@ async fn keeps_no_conversation_in_its_own_state() -> TestResult {
     query.push(frames::init()).await;
     query.push(frames::text("m1", "a secret answer")).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     let directory = harness.state_directory().join("threads").join(THREAD);
     let files = std::fs::read_dir(&directory)?
@@ -561,6 +563,7 @@ async fn does_not_take_its_own_just_released_query_for_another_process() -> Test
     let query = harness.runtime.query(0)?;
     query.push(frames::init()).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     // The CLI lists the service's own process while its query is open.
     harness.running.add(THREAD);

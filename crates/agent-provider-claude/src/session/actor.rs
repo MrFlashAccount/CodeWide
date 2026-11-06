@@ -26,14 +26,14 @@ use super::{
     client_tools::ClientToolCalls,
     handle::{Command, SessionStatus},
     ports::{SessionDeps, SessionOutput},
-    query::Query,
+    query::{Offer, Query},
     task_reports::{Launch, LiveTaskReports},
     turn::ActiveTurn,
 };
 use crate::{
     cli::{
         command::{QueryOptions, SessionIdentity},
-        process::ProcessEvent,
+        process::{ProcessError, ProcessEvent},
     },
     live::permissions::profile_of,
     state::thread_state::ThreadState,
@@ -70,6 +70,15 @@ pub(super) enum PendingKind {
     UserInput { questions: Vec<UserInputQuestion> },
 }
 
+/// A message written to the open query that Claude has not completed or
+/// cancelled.
+pub(super) struct Unsettled {
+    pub uuid: String,
+    /// Claude queued or started it (`command_lifecycle`): once Claude is
+    /// `idle`, it holds the message no more.
+    pub acknowledged: bool,
+}
+
 /// Background work that reports back to the actor.
 pub(super) enum Internal {
     ToolCallDone {
@@ -87,6 +96,11 @@ pub(super) enum Internal {
         turn_id: TurnId,
         lines: Vec<String>,
     },
+    /// The query's `claude` cannot report its session state.
+    Unsupported {
+        generation: u64,
+        version: String,
+    },
 }
 
 pub(super) struct Session {
@@ -101,6 +115,9 @@ pub(super) struct Session {
     /// earlier query compare against it.
     pub generation: u64,
     pub active: Option<ActiveTurn>,
+    /// The messages written to the open query that Claude has not completed
+    /// or cancelled; the active turn cannot end while one is left.
+    pub unsettled: Vec<Unsettled>,
     pub pending: HashMap<String, PendingRequest>,
     pub background_tasks: usize,
     /// Background tasks of the open query and their reports waiting for a turn.
@@ -140,6 +157,7 @@ impl Session {
             query: None,
             generation: 0,
             active: None,
+            unsettled: Vec::new(),
             pending: HashMap::new(),
             background_tasks: 0,
             task_reports: LiveTaskReports::default(),
@@ -296,6 +314,14 @@ impl Session {
             Internal::HistoryLines { turn_id, lines } => {
                 self.offer_replacement(&turn_id, &lines);
             }
+            Internal::Unsupported {
+                generation,
+                version,
+            } => {
+                if generation == self.generation {
+                    self.on_unsupported(&version).await;
+                }
+            }
         }
     }
 
@@ -436,7 +462,9 @@ impl Session {
                 self.query_tools = tools;
                 self.query_allows_bypass = options.profile.allow_dangerously_skip_permissions;
                 self.query_mode_outdated = false;
+                self.unsettled.clear();
                 self.generation += 1;
+                self.check_protocol(handle.as_ref());
                 let live = self.deps.live_sessions.fetch_add(1, Ordering::Relaxed) + 1;
                 info!(
                     app_thread_id = %self.app_thread_id,
@@ -452,6 +480,49 @@ impl Session {
                 None
             }
         }
+    }
+
+    /// Writes `offer` to the open query; the active turn cannot end before
+    /// Claude completed or cancelled it.
+    pub(super) fn offer(&mut self, query: &dyn Query, offer: Offer) {
+        self.unsettled.push(Unsettled {
+            uuid: offer.uuid.clone(),
+            acknowledged: false,
+        });
+        query.offer(offer);
+    }
+
+    /// Reports a `claude` that cannot say when its turn ends.
+    fn check_protocol(&self, query: &dyn Query) {
+        let initialized = query.initialized();
+        let internal = self.internal.clone();
+        let generation = self.generation;
+        tokio::spawn(async move {
+            if let Err(ProcessError::Unsupported { version }) = initialized.await {
+                let _ = internal.send(Internal::Unsupported {
+                    generation,
+                    version,
+                });
+            }
+        });
+    }
+
+    /// Closes the query of a `claude` without session state and fails the
+    /// turn that opened it.
+    async fn on_unsupported(&mut self, version: &str) {
+        error!(
+            app_thread_id = %self.app_thread_id,
+            claude_code_version = %version,
+            "claude does not report its session state; the session is closed"
+        );
+        self.close_query().await;
+        self.finish_turn(TurnOutcome::Failed(TurnError {
+            kind: TurnErrorKind::Provider,
+            message: format!(
+                "Claude Code {version} cannot report when a turn ends. Update Claude Code (`claude update`) and try again."
+            ),
+        }))
+        .await;
     }
 
     /// Closes the current query and ignores its remaining output.

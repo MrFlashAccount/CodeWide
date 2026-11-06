@@ -537,7 +537,9 @@ impl TurnBuilder {
                 self.on_task_reported(report);
                 Vec::new()
             }
-            ClaudeFrame::Init { .. }
+            ClaudeFrame::SessionState(_)
+            | ClaudeFrame::CommandLifecycle { .. }
+            | ClaudeFrame::Init { .. }
             | ClaudeFrame::BackgroundTasks { .. }
             | ClaudeFrame::RateLimit { .. }
             | ClaudeFrame::Result(_)

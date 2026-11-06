@@ -125,6 +125,7 @@ async fn continues_with_claudes_resume_prompt_as_a_turn_without_a_user_message()
         })
         .await?;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     let continued = match harness
         .service
@@ -149,12 +150,10 @@ async fn continues_with_claudes_resume_prompt_as_a_turn_without_a_user_message()
         offer.content,
         [json!({"type": "text", "text": RESUME_PROMPT})]
     );
-    assert_eq!(offer.uuid.as_deref(), Some(continued.as_str()));
+    assert_eq!(offer.uuid, continued.as_str());
     query.push(frames::text("m2", "the rest")).await;
-    // Claude names the adapter message's origin on the result it answers.
-    let mut own_result = frames::result();
-    own_result["origin"] = json!({"kind": "unclassified"});
-    query.push(own_result).await;
+    query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     let completed = harness.completions();
     let finished = completed.last().ok_or("the resuming turn did not finish")?;
@@ -181,6 +180,7 @@ async fn opens_with_the_session_id_first_and_resumes_afterwards() -> TestResult 
     let query = harness.runtime.query(0)?;
     query.push(frames::init()).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     query.end().await;
     settle().await;

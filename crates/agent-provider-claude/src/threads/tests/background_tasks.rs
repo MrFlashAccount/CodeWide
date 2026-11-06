@@ -54,6 +54,7 @@ async fn launch(
         .await;
     query.push(frames::text("m2", "Started.")).await;
     query.push(frames::result()).await;
+    query.idle().await;
     settle().await;
     Ok(query)
 }
