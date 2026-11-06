@@ -19,6 +19,9 @@ export default {
     "@babel/preset-typescript",
     // Gradle copies the selected grammar files directly from this package into native assets.
     "tm-grammars",
+    // metro.config.js keeps the transform cache beside the worklets output while Knip's Metro
+    // plugin is disabled.
+    "metro-cache",
   ],
   // Reacticx Tray is vendored unchanged; its compound API intentionally exports
   // more primitives than this first consumer uses.

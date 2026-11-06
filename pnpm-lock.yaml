@@ -325,6 +325,9 @@ importers:
       knip:
         specifier: 6.32.2
         version: 6.32.2
+      metro-cache:
+        specifier: 0.84.4
+        version: 0.84.4
       oxfmt:
         specifier: 0.64.0
         version: 0.64.0
