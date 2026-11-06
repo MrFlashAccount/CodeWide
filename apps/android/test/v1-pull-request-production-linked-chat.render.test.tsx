@@ -27,6 +27,7 @@ jest.mock("expo-router", () => {
     Stack: RealStack,
     useIsFocused: useRealIsFocused,
     useLocalSearchParams: hooks.useLocalSearchParams,
+    usePathname: hooks.usePathname,
     useRouter: () => {
       const router = hooks.useRouter();
       return {
