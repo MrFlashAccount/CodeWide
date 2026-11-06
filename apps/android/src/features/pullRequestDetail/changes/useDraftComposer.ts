@@ -2,13 +2,12 @@ import { randomUUID } from "expo-crypto";
 import { useId, useState } from "react";
 
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
-import { newDraftId, type DiffSource, type ThreadId } from "../../../data/reviewContract";
-import type { DraftComment, DraftDestination, DraftInput } from "../../../data/reviewDraftContract";
+import { newDraftId, type DiffSource } from "../../../data/reviewContract";
+import type { DraftComment, DraftInput } from "../../../data/reviewDraftContract";
 import type { DraftPut } from "../../../data/reviewDraftPuts";
 import { useConstant } from "../../../react/useConstant";
 import { useEvent } from "../../../react/useEvent";
-import { useAppDialog } from "../../../ui/AppDialog";
-import type { CommentSheetTarget } from "../../review/comments/CommentSheet";
+import type { LineCommentTarget } from "../../review/comments/LineCommentComposer";
 import {
   createLineCommentDrafts,
   type LineCommentDrafts,
@@ -16,68 +15,50 @@ import {
 import type { ReviewTargetCapabilities } from "../../review/reviewTargetCapabilities";
 import { hunkAt } from "./changesPresentation";
 
-const CLOSED = { kind: "closed" } as const;
-
-/**
- * The open line composer: where it comments and which destination it starts
- * on, either a given one (a guide stop's Agent, a restored draft's own) or the
- * one remembered for this PR.
- */
-type ComposerState =
-  | { readonly kind: "closed" }
-  | {
-      readonly destination: DraftDestination | "remembered";
-      readonly kind: "new";
-      readonly target: CommentSheetTarget;
-    };
-
 /** Draft creation, restoration and re-anchoring intents of the Changes tab. */
 export type DraftComposer = {
-  /** Sends a new draft in the background; it is listed at once by `data/reviewDraftPuts`. */
-  readonly add: (target: CommentSheetTarget, body: string, destination: DraftDestination) => void;
+  /** Sends a new PR draft in the background; it is listed at once by `data/reviewDraftPuts`. */
+  readonly add: (target: LineCommentTarget, body: string) => void;
   readonly close: () => void;
-  readonly composer: ComposerState;
   /** Forgets a refused draft without restoring it. */
   readonly discard: (put: DraftPut) => void;
   /** Unsent text per line, kept while the composer is closed. */
   readonly drafts: LineCommentDrafts;
   /** The line whose composer is open, highlighted in the diff as its anchor. */
-  readonly line: CommentSheetTarget | null;
-  readonly openAt: (target: CommentSheetTarget, preferAgent: boolean) => void;
+  readonly line: LineCommentTarget | null;
+  /** Opens the composer at a line, or re-anchors the open one there with its text. */
+  readonly openAt: (target: LineCommentTarget) => void;
   readonly reanchoring: DraftComment | null;
-  /** Reopens the composer at a refused draft's line with its text and destination. */
+  /** Reopens the composer at a refused draft's line with its text. */
   readonly restore: (put: DraftPut) => void;
   readonly startReanchor: (draft: DraftComment) => void;
-  readonly tapLine: (target: CommentSheetTarget) => void;
+  readonly tapLine: (target: LineCommentTarget) => void;
 };
 
 /**
- * Creates and re-anchors companion drafts on a PR source. A draft's agent half
- * targets the chosen linked thread; without one only PR is offered. Adding a
+ * Creates and re-anchors companion drafts on a PR source. A line comment is a
+ * PR review draft; it reaches the forge only through Submit review. Adding a
  * draft never waits for the companion: the composer closes at once and the
  * draft shows as being saved, or with the companion's reason when refused.
  */
 export function useDraftComposer({
-  agentThreadId,
   capabilities,
   connectionId,
   files,
   headRevision,
   source,
 }: {
-  readonly agentThreadId: ThreadId | null;
   readonly capabilities: ReviewTargetCapabilities;
   readonly connectionId: string;
   readonly files: readonly PullRequestFile[];
   readonly headRevision: string;
   readonly source: DiffSource;
 }): DraftComposer {
-  const dialog = useAppDialog();
   const windowId = useId();
   const drafts = useConstant(() => createLineCommentDrafts(windowId));
-  const [composer, setComposer] = useState<ComposerState>(CLOSED);
+  const [line, setLine] = useState<LineCommentTarget | null>(null);
   const [reanchoring, setReanchoring] = useState<DraftComment | null>(null);
-  const anchorAt = (target: CommentSheetTarget) => {
+  const anchorAt = (target: LineCommentTarget) => {
     const file = files.find((candidate) => candidate.path === target.path);
     const hunk = file === undefined ? null : hunkAt(file, target.line, target.side);
     return {
@@ -88,10 +69,16 @@ export function useDraftComposer({
       startLine: target.line,
     };
   };
-  const tapLine = useEvent((target: CommentSheetTarget): void => {
+  const openAt = useEvent((target: LineCommentTarget): void => {
+    if (line !== null) {
+      drafts.move(line, target);
+    }
+    setLine(target);
+  });
+  const tapLine = useEvent((target: LineCommentTarget): void => {
     const moving = reanchoring;
     if (moving === null) {
-      setComposer({ destination: "remembered", kind: "new", target });
+      openAt(target);
       return;
     }
     setReanchoring(null);
@@ -99,50 +86,36 @@ export function useDraftComposer({
       .putDraft(connectionId, reinput(moving, anchorAt(target), headRevision), moving.version)
       .catch(() => undefined);
   });
-  const add = useEvent(
-    (target: CommentSheetTarget, body: string, destination: DraftDestination): void => {
-      const base = {
-        anchor: anchorAt(target),
-        body,
-        id: newDraftId(randomUUID()),
-        revision: { revision: headRevision, source },
-      };
-      if (destination !== "pr" && agentThreadId === null) {
-        // The destination segments disable Agent and Both without a linked thread.
-        dialog.alert("Could not add the draft", "No linked thread can receive the agent half.");
-        return;
-      }
-      const draft: DraftInput =
-        destination === "pr" || agentThreadId === null
-          ? { ...base, destination: "pr" }
-          : { ...base, destination, targetThreadId: agentThreadId };
-      // A refusal is shown on the draft itself (`data/reviewDraftPuts`) with Edit and Discard.
-      void capabilities.putDraft(connectionId, draft, null).catch(() => undefined);
-    },
-  );
+  const add = useEvent((target: LineCommentTarget, body: string): void => {
+    const draft: DraftInput = {
+      anchor: anchorAt(target),
+      body,
+      destination: "pr",
+      id: newDraftId(randomUUID()),
+      revision: { revision: headRevision, source },
+    };
+    // A refusal is shown on the draft itself (`data/reviewDraftPuts`) with Edit and Discard.
+    void capabilities.putDraft(connectionId, draft, null).catch(() => undefined);
+  });
   const restore = useEvent((put: DraftPut): void => {
     const { anchor } = put.draft;
     const target = { line: anchor.startLine, path: anchor.path, side: anchor.side };
     capabilities.dismissDraftPut(put.operationId);
     drafts.write(target, { markdown: put.draft.body, plainText: put.draft.body });
-    setComposer({ destination: put.draft.destination, kind: "new", target });
+    setLine(target);
   });
   const discard = useEvent((put: DraftPut): void => {
     capabilities.dismissDraftPut(put.operationId);
   });
   const close = useEvent((): void => {
-    setComposer(CLOSED);
-  });
-  const openAt = useEvent((target: CommentSheetTarget, preferAgent: boolean): void => {
-    setComposer({ destination: preferAgent ? "agent" : "remembered", kind: "new", target });
+    setLine(null);
   });
   return {
     add,
     close,
-    composer,
     discard,
     drafts,
-    line: composer.kind === "new" ? composer.target : null,
+    line,
     openAt,
     reanchoring,
     restore,

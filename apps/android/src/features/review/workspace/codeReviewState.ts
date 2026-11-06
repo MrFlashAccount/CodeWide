@@ -12,6 +12,7 @@ import { codeReviewMenuActions } from "./codeReviewMenu";
 import { useCodeReviewResources } from "./codeReviewResources";
 import { useConstant } from "../../../react/useConstant";
 import { createLineCommentDrafts } from "../comments/lineCommentDrafts";
+import type { CodeReviewLineReference } from "../comments/reviewComment";
 import { useReviewComments } from "../comments/reviewComments";
 
 export function useCodeReviewState(props: CodeReviewWorkspaceProps) {
@@ -34,13 +35,20 @@ export function useCodeReviewState(props: CodeReviewWorkspaceProps) {
     comments,
     commitComment,
     selectedReference,
-    selectLine,
+    selectLine: anchorLine,
     setComments,
     setSelectedReference,
   } = useReviewComments();
 
   const resourceOwnerId = useId();
   const lineDrafts = useConstant(() => createLineCommentDrafts(resourceOwnerId));
+  /** Opens the line composer, or re-anchors the open one with its text. */
+  const selectLine = useEvent((reference: CodeReviewLineReference): void => {
+    if (selectedReference !== null) {
+      lineDrafts.move(selectedReference, reference);
+    }
+    anchorLine(reference);
+  });
   const [workspaceWidth, setWorkspaceWidth] = useState(0);
   const [requestedScope, setRequestedScope] = useState(initialChangeScope);
   const [scopeRevision, setScopeRevision] = useState(0);

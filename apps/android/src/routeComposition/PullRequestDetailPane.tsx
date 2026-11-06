@@ -1,11 +1,7 @@
 import { Suspense } from "react";
 
 import type { ThreadId } from "../data/reviewContract";
-import {
-  forgeResources,
-  pullRequestCommentDestinations,
-  reviewResources,
-} from "../data/forgeRuntime";
+import { forgeResources, reviewResources } from "../data/forgeRuntime";
 import { PullRequestScreen } from "../features/pullRequestDetail/PullRequestScreen";
 import { PullRequestScreenSkeleton } from "../features/pullRequestDetail/PullRequestScreenSkeleton";
 import type { PullRequestScreenProps } from "../features/pullRequestDetail/pullRequestScreenContract";
@@ -71,7 +67,6 @@ export function PullRequestDetailPane(props: PullRequestDetailPaneProps): React.
     <Suspense fallback={<PullRequestScreenSkeleton />}>
       <PullRequestScreen
         capabilities={workspaceFeatures.pullRequestDetail}
-        commentDestinations={pullRequestCommentDestinations}
         connectionId={props.connectionId}
         describeThread={props.describeThread}
         forge={forgeResources}

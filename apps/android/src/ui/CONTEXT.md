@@ -1,5 +1,9 @@
 # Shared UI primitives
 
+## Keyboard dock
+
+`ui/KeyboardDock` is a layer over its positioned parent that docks its children at the bottom above the keyboard and passes other touches through to the content beneath. It resizes rather than translates, so a child with `flex: 1` fills the room the keyboard leaves. Outside a fullscreen modal it is Keyboard Controller's `KeyboardAvoidingView` with `automaticOffset` (measured in the window, so a pane that stops above the screen edge avoids only the overlap); inside `AppFullscreenModal` on Android, whose Compose dialog Keyboard Controller does not observe, it reads the dialog's IME insets through Compose. A docked child pads itself with `useKeyboardDockBottomInset()` (`ui/keyboardDockInset.ts`): the navigation bar inset while the keyboard is closed outside a fullscreen modal, otherwise none.
+
 ## Overflow menus
 
 `ui/OverflowMenu.tsx` is the single owner of the `⋮` actions menu: it composes `ActionMenu` with `ui/OverflowMenuButton.tsx`, so a caller passes the label, actions and `onSelect` once. The glyph is always vertical dots (`ui/overflowMenuIcon.ts`: `"ellipsis-vertical"`); there is no horizontal variant.

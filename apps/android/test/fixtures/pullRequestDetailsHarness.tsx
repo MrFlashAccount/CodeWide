@@ -12,7 +12,6 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { parsePullRequestKeyParam } from "../../src/data/forgeContract";
 import { createForgeResources } from "../../src/data/forgeResources";
-import { createPullRequestCommentDestinations } from "../../src/data/pullRequestCommentDestinations";
 import { createReviewResources } from "../../src/data/reviewResources";
 import { threadId } from "../../src/data/reviewContract";
 import { PullRequestScreen } from "../../src/features/pullRequestDetail/PullRequestScreen";
@@ -192,11 +191,6 @@ export function renderScreen({
     wrap(
       <PullRequestScreen
         capabilities={capabilities(capabilityOverrides)}
-        commentDestinations={createPullRequestCommentDestinations({
-          deleteConnection: async () => undefined,
-          read: async () => null,
-          write: async () => undefined,
-        })}
         connectionId="server"
         describeThread={() => null}
         forge={server.forge}

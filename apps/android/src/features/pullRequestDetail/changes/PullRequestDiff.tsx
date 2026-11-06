@@ -3,7 +3,7 @@ import { StyleSheet, View } from "react-native";
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
 import type { DraftComment } from "../../../data/reviewDraftContract";
 import type { DraftPut } from "../../../data/reviewDraftPuts";
-import type { CommentSheetTarget } from "../../review/comments/CommentSheet";
+import type { LineCommentTarget } from "../../review/comments/LineCommentComposer";
 import type { CodeReviewLineReference } from "../../review/comments/reviewComment";
 import { CodeReviewEditor } from "../../review/editor/CodeReviewEditor";
 import {
@@ -62,7 +62,7 @@ export function PullRequestDiff({
   tree,
 }: {
   /** The line whose composer is open, or `null`. */
-  readonly composerLine: CommentSheetTarget | null;
+  readonly composerLine: LineCommentTarget | null;
   /** What the selected file's diff shows. */
   readonly content: DiffContent;
   readonly draftPuts: readonly DraftPut[];

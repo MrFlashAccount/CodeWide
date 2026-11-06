@@ -14,11 +14,9 @@ import { codeReviewVoiceInputScope, type CodeReviewLineReference } from "./revie
 /** Dictation of one line composer over the retained app voice controller. */
 export type LineCommentVoice = {
   readonly controller: AppVoiceInputRuntime["controller"];
-  /** Stops the recording and hands the line's final text to `send` instead of the editor. */
-  readonly finishAndSend: (send: (text: string) => void) => void;
   readonly microphoneAccess: { readonly allowCapture: () => boolean; readonly granted: boolean };
   readonly microphoneButtonRef: React.RefObject<View | null>;
-  /** Ends this composer's claim when its sheet closes; a recording still lands on its line. */
+  /** Ends this composer's claim when it closes; a recording still lands on its line. */
   readonly release: () => void;
   readonly resource: VoiceInputRow | null;
   readonly retry: () => Promise<void>;
@@ -36,7 +34,7 @@ export type LineCommentVoice = {
  * Binds the line composer to the retained VoiceInputController. The recording
  * scope is the review window plus the line, so reopening a line shows its own
  * recording or retry. The binding captures the line, never a latest-value
- * callback: a transcript that arrives after the sheet closed is written to that
+ * callback: a transcript that arrives after the composer closed is written to that
  * line's retained text. No second recording runtime is created and nothing is
  * disposed on unmount.
  */
@@ -117,11 +115,6 @@ export function useLineCommentVoice({
       await controller?.finish(bound, false);
     });
   });
-  const finishAndSend = useEvent((send: (text: string) => void): void => {
-    if (scope !== null && controller !== null) {
-      controller.finish(scope, true, send).catch(report);
-    }
-  });
   const release = useEvent((): void => {
     if (scope === null || controller === null) {
       return;
@@ -146,7 +139,6 @@ export function useLineCommentVoice({
   });
   return {
     controller,
-    finishAndSend,
     microphoneAccess,
     microphoneButtonRef,
     release,

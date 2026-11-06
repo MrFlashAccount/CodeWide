@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 import type { PullRequestFile, PullRequestFilesPage } from "../../../data/forgeMutationContract";
 import type { DraftComment } from "../../../data/reviewDraftContract";
 import type { DraftPut } from "../../../data/reviewDraftPuts";
-import type { CommentSheetTarget } from "../../review/comments/CommentSheet";
+import type { LineCommentTarget } from "../../review/comments/LineCommentComposer";
 import { useConstant } from "../../../react/useConstant";
 import { colors, controlHitSlop, iconSize, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
@@ -20,7 +20,7 @@ import { useHeadFileContent } from "./useHeadFileContent";
 type FilesViewProps = {
   readonly besideDiff: boolean;
   /** The line whose composer is open, highlighted in the diff. */
-  readonly composerLine: CommentSheetTarget | null;
+  readonly composerLine: LineCommentTarget | null;
   readonly draftPuts: readonly DraftPut[];
   readonly drafts: readonly DraftComment[];
   readonly filesOpen: boolean;

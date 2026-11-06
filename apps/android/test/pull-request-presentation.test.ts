@@ -1,14 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { parsePullRequestKeyParam, type PullRequestKey } from "../src/data/forgeContract";
 import { parseFilesPage } from "../src/data/forgeMutationContract";
 import {
   parsePullRequestListPage,
   parsePullRequestOverview,
   type PullRequestOverview,
 } from "../src/data/forgePullRequestContract";
-import type { ForgeSnapshotCache } from "../src/data/forgeSnapshotCache.types";
-import { createPullRequestCommentDestinations } from "../src/data/pullRequestCommentDestinations";
 import { parseDrafts } from "../src/data/reviewDraftContract";
 import { parseGuideState } from "../src/data/reviewGuideContract";
 import { settledChecksLabel } from "../src/features/pullRequestDetail/overview/checkPresentation";
@@ -26,10 +23,6 @@ import {
   publishedTitle,
 } from "../src/features/pullRequestDetail/changes/submitResultCopy";
 import { safeProviderUrl } from "../src/data/forgeProviderUrl";
-import {
-  defaultDestination,
-  destinationExplanation,
-} from "../src/features/review/comments/destinationPolicy";
 import { draftBadges } from "../src/features/review/comments/draftDisplay";
 import { resumeIndex, stopNarration, walkStops } from "../src/features/review/guide/guideWalk";
 import {
@@ -101,59 +94,6 @@ describe("review dock and Submit", () => {
   });
 });
 
-describe("comment destination policy", () => {
-  it("defaults to PR on others' PRs, Agent on one's own and sessions, and prefers the remembered choice", () => {
-    expect(defaultDestination(null, { ownPullRequest: false })).toBe("pr");
-    expect(defaultDestination(null, { ownPullRequest: true })).toBe("agent");
-    expect(defaultDestination("both", { ownPullRequest: false })).toBe("both");
-    expect(defaultDestination(null, null)).toBe("agent");
-  });
-
-  it("persists the choice per PR in the connection store and forgets it with the connection", async () => {
-    const stores = new Map<string, Map<string, unknown>>();
-    const storeOf = (connection: string): Map<string, unknown> => {
-      const existing = stores.get(connection) ?? new Map<string, unknown>();
-      stores.set(connection, existing);
-      return existing;
-    };
-    const store: ForgeSnapshotCache = {
-      deleteConnection: async (connection) => {
-        stores.delete(connection);
-      },
-      read: async (connection, key) => storeOf(connection).get(key) ?? null,
-      write: async (connection, key, value) => {
-        storeOf(connection).set(key, value);
-      },
-    };
-    const pr = requireKey("fpr1.github-91");
-    const other = requireKey("fpr1.github-92");
-    createPullRequestCommentDestinations(store).remember("c", pr, "both");
-    await Promise.resolve();
-
-    const restarted = createPullRequestCommentDestinations(store);
-    restarted.hydrate("c", pr);
-    restarted.hydrate("c", other);
-    await vi.waitFor(() => {
-      expect(restarted.destinations$[restarted.keyOf("c", pr)]?.peek()).toBe("both");
-    });
-    expect(restarted.destinations$[restarted.keyOf("c", other)]?.peek()).toBeUndefined();
-
-    await store.deleteConnection("c");
-    const afterDelete = createPullRequestCommentDestinations(store);
-    afterDelete.hydrate("c", pr);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(afterDelete.destinations$[afterDelete.keyOf("c", pr)]?.peek()).toBeUndefined();
-  });
-
-  it("names where each half lands", () => {
-    const context = { host: "github.com", ownPullRequest: false, threadTitle: "Forge auth state" };
-    expect(destinationExplanation("pr", context)).toContain("only by Submit review");
-    expect(destinationExplanation("both", context)).toContain("Forge auth state");
-    expect(destinationExplanation("agent", context)).toContain("never reaches github.com");
-  });
-});
-
 describe("guide walk", () => {
   it("resumes at the first stop that still needs the reviewer", () => {
     const state = parseGuideState(guideState);
@@ -162,14 +102,6 @@ describe("guide walk", () => {
     expect(state === null ? null : resumeIndex(state, stops)).toBe(1);
   });
 });
-
-function requireKey(value: string): PullRequestKey {
-  const key = parsePullRequestKeyParam(value);
-  if (key === null) {
-    throw new Error(`Invalid PR key ${value}`);
-  }
-  return key;
-}
 
 describe("counters agree with their headers", () => {
   const passed = {

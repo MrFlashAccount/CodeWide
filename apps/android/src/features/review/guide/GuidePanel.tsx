@@ -24,8 +24,8 @@ export type GuidePanelProps = {
   readonly connectionId: string;
   readonly describeThread: (threadId: ThreadId) => string;
   readonly nowMs: number;
-  /** Opens the comment sheet on the stop; `agent` preselects the Agent destination. */
-  readonly onComment: (stop: GuideStop, destination: "agent" | "default") => void;
+  /** Opens the line composer on the stop. */
+  readonly onComment: (stop: GuideStop) => void;
   readonly renderStopDiff: (stop: GuideStop) => ReactNode;
   readonly resources: Pick<ReviewResources, "guide">;
   readonly source: DiffSource;
@@ -33,7 +33,7 @@ export type GuidePanelProps = {
 
 /**
  * Guided walk over any diff source: request a guide from the chosen author,
- * then step through chapters and stops with Comment, Send to agent and Accept.
+ * then step through chapters and stops with Comment and Accept.
  * The same panel serves PR, session and VCS reviews; the caller renders the
  * stop's diff and opens its comment sheet.
  */
@@ -103,10 +103,7 @@ function GuideWalkView({
           walk.accept(current.stop);
         }}
         onComment={() => {
-          props.onComment(current.stop, "default");
-        }}
-        onSendToAgent={() => {
-          props.onComment(current.stop, "agent");
+          props.onComment(current.stop);
         }}
         pending={walk.accepting}
         progress={progress}

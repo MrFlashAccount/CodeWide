@@ -39,21 +39,9 @@ jest.mock("react-native-enriched-markdown", () => {
 
 // The detail pane reads the process-owned resources; here they are the fake companion's.
 let mockServer: ReturnType<typeof companion> | null = null;
-let mockDestinations: unknown = null;
 jest.mock("../src/data/forgeRuntime", () => ({
   get forgeResources() {
     return mockServer?.forge;
-  },
-  get pullRequestCommentDestinations() {
-    const destinations = jest.requireActual<
-      typeof import("../src/data/pullRequestCommentDestinations")
-    >("../src/data/pullRequestCommentDestinations");
-    mockDestinations ??= destinations.createPullRequestCommentDestinations({
-      deleteConnection: async () => undefined,
-      read: async () => null,
-      write: async () => undefined,
-    });
-    return mockDestinations;
   },
   get reviewResources() {
     return mockServer?.review;

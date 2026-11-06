@@ -2,7 +2,6 @@ import type { PullRequestKey } from "../../data/forgeContract";
 import type { ReviewChatWorkspaceCandidate } from "../../data/forgeMutationContract";
 import type { ForgeResources } from "../../data/forgeResources";
 import type { ThreadUnreadReader } from "../../data/project-unread-model";
-import type { PullRequestCommentDestinations } from "../../data/pullRequestCommentDestinations";
 import type { ThreadId } from "../../data/reviewContract";
 import type { ReviewResources } from "../../data/reviewResources";
 import type { AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
@@ -47,7 +46,6 @@ type PullRequestScreenNavigation = {
 /** Stable owners and intents route composition passes to the PR screen. */
 export type PullRequestScreenProps = {
   readonly capabilities: PullRequestDetailWorkspaceCapabilities;
-  readonly commentDestinations: PullRequestCommentDestinations;
   readonly connectionId: string;
   readonly describeThread: (threadId: ThreadId) => LinkedThreadDescription | null;
   readonly forge: ForgeResources;

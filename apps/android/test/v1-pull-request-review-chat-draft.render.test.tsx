@@ -69,7 +69,6 @@ jest.mock("expo-router", () => ({
 }));
 jest.mock("../src/data/forgeRuntime", () => ({
   forgeResources: {},
-  pullRequestCommentDestinations: {},
   reviewResources: {},
 }));
 jest.mock("../src/data/workspace-runtime", () => ({

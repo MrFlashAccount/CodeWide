@@ -9,8 +9,6 @@ import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persi
 import { appLogger } from "../observability/logger";
 import { configureForgeQueryConnectivity } from "./forgeQueryConnectivity";
 import { createForgeResources } from "./forgeResources";
-import { forgeSnapshotCache } from "./forgeSnapshotCache";
-import { createPullRequestCommentDestinations } from "./pullRequestCommentDestinations";
 import { createPullRequestLinkResources } from "./pullRequestLinkResources";
 import { createReviewResources } from "./reviewResources";
 import { rpcAfterAttach, workspaceRuntime } from "./workspace-runtime";
@@ -49,7 +47,3 @@ export const pullRequestLinkResources = createPullRequestLinkResources({
   getSession,
   rpcAfterAttach,
 });
-
-/** Last comment destination per PR on this device. */
-export const pullRequestCommentDestinations =
-  createPullRequestCommentDestinations(forgeSnapshotCache);

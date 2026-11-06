@@ -31,7 +31,6 @@ import { overview91 } from "./forgeWireFixtures";
 import {
   authority,
   forgeResources as forge,
-  pullRequestCommentDestinations,
   previewReady,
   reviewResources as review,
   scenario,
@@ -158,7 +157,6 @@ function Screen({ tablet }: { readonly tablet: boolean }): React.JSX.Element | n
     <Suspense fallback={<View style={{ backgroundColor: colors.conversationSurface, flex: 1 }} />}>
       <PullRequestScreen
         capabilities={detail}
-        commentDestinations={pullRequestCommentDestinations}
         connectionId="server"
         describeThread={(threadId) => threads[threadId] ?? null}
         forge={forge}

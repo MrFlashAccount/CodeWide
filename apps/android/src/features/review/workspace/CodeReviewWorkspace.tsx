@@ -7,7 +7,7 @@ import { ReviewCommentStrip } from "./ReviewCommentStrip";
 
 import { changeScopeDisplay } from "../../../rendering/changeScopeDisplay";
 import { changedFileDisplayPath } from "../../../rendering/changed-file-path";
-import { CommentSheet } from "../comments/CommentSheet";
+import { LineCommentFrame } from "../comments/LineCommentFrame";
 import type { CodeReviewComment } from "../comments/reviewComment";
 import { CodeReviewEditor } from "../editor/CodeReviewEditor";
 import type { CodeReviewInlineComment } from "../editor/editorBridge";
@@ -17,7 +17,8 @@ import { AppText as Text } from "../../../ui/Typography";
 
 /**
  * Composes file selection, diff viewing, and review-comment submission. A line
- * tap opens the one native line composer; adding a comment closes it at once.
+ * tap opens the one line composer docked under the diff; adding a comment
+ * closes it at once.
  */
 export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
   const { cwd, scopeLabel } = props;
@@ -155,49 +156,51 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
 
       <View style={styles.workspace}>
         <View style={styles.editorPane}>
-          <CodeReviewEditor
-            comments={savedInlineComments(comments)}
-            compact={compact}
-            document={document}
-            files={reviewFiles}
-            loadError={loadError}
-            loading={loading}
-            mode={effectiveMode}
-            onFileSelect={(path) => {
-              const change = changes.find((candidate) => candidate.path === path);
-              if (change !== undefined) {
-                selectFile(change);
-              }
-            }}
-            onLinePress={selectLine}
-            revealReference={selectedReference === null ? revealReference : null}
-            selectedPath={effectiveSelectedPath}
-            selectedReference={selectedReference}
-            sidebarOpen={sidebarOpen}
-            workspaceRevision={workspaceRevision}
-            wrapLines={wrapLines}
-          />
-          <ReviewCommentStrip
-            comments={comments}
-            onDelete={(id) => {
-              setComments((current) => current.filter((candidate) => candidate.id !== id));
-            }}
-          />
+          <LineCommentFrame
+            composer={
+              selectedReference === null
+                ? null
+                : {
+                    drafts: lineDrafts,
+                    onClose: closeComposer,
+                    onSubmit: commitComment,
+                    submitLabel: "Add comment",
+                    target: selectedReference,
+                    voice: props.voiceRuntime,
+                  }
+            }
+          >
+            <CodeReviewEditor
+              comments={savedInlineComments(comments)}
+              compact={compact}
+              document={document}
+              files={reviewFiles}
+              loadError={loadError}
+              loading={loading}
+              mode={effectiveMode}
+              onFileSelect={(path) => {
+                const change = changes.find((candidate) => candidate.path === path);
+                if (change !== undefined) {
+                  selectFile(change);
+                }
+              }}
+              onLinePress={selectLine}
+              revealReference={selectedReference === null ? revealReference : null}
+              selectedPath={effectiveSelectedPath}
+              selectedReference={selectedReference}
+              sidebarOpen={sidebarOpen}
+              workspaceRevision={workspaceRevision}
+              wrapLines={wrapLines}
+            />
+            <ReviewCommentStrip
+              comments={comments}
+              onDelete={(id) => {
+                setComments((current) => current.filter((candidate) => candidate.id !== id));
+              }}
+            />
+          </LineCommentFrame>
         </View>
       </View>
-      {selectedReference === null ? null : (
-        <CommentSheet
-          accessory={null}
-          drafts={lineDrafts}
-          onDismiss={closeComposer}
-          onSubmit={(body) => {
-            commitComment(selectedReference, body);
-          }}
-          submitLabel="Add comment"
-          target={selectedReference}
-          voice={props.voiceRuntime}
-        />
-      )}
     </View>
   );
 }

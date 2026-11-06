@@ -7,7 +7,6 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { parsePullRequestKeyParam } from "../src/data/forgeContract";
 import { createForgeResources } from "../src/data/forgeResources";
-import { createPullRequestCommentDestinations } from "../src/data/pullRequestCommentDestinations";
 import { createReviewResources } from "../src/data/reviewResources";
 import { PullRequestScreen } from "../src/features/pullRequestDetail/PullRequestScreen";
 import type { PullRequestDetailWorkspaceCapabilities } from "../src/features/pullRequestDetail/workspaceCapabilities";
@@ -42,24 +41,15 @@ jest.mock("react-native-enriched-markdown", () => {
   };
 });
 
-/**
- * Every `contentProps.enablePanDownToClose` the comment sheet was rendered with. The Material
- * sheet (`ui/AppSheet.android`) shows its drag handle exactly while pan-to-close is enabled.
- */
-const sheetPanStates: boolean[] = [];
-// WHY: the native Material sheet window cannot mount in the Node renderer; its content and the
-// dismissibility that decides its drag handle are the contract here.
+/** How many times any `AppSheet` rendered; the docked line composer must never open one. */
+let sheetRenders = 0;
+// WHY: the native Material sheet window cannot mount in the Node renderer; this records that
+// the line composer is docked in the pane instead of presented in a modal window.
 jest.mock("../src/ui/AppSheet", () => {
   const { View: MockView } = jest.requireActual<typeof import("react-native")>("react-native");
   return {
-    AppSheet: ({
-      children,
-      contentProps,
-    }: {
-      readonly children: ReactNode;
-      readonly contentProps: { readonly enablePanDownToClose?: boolean };
-    }) => {
-      sheetPanStates.push(contentProps.enablePanDownToClose ?? true);
+    AppSheet: ({ children }: { readonly children: ReactNode }) => {
+      sheetRenders += 1;
       return <MockView>{children}</MockView>;
     },
     AppSheetScrollView: ({ children }: { readonly children: ReactNode }) => (
@@ -84,6 +74,7 @@ const PATH = "src/main.rs";
 const PATCH = "@@ -2,4 +2,4 @@ use std::io;\n \n fn main() {\n-    old();\n+    new();\n }";
 const DRAFT_PUT = "companion/review/draft/put";
 const LINE = { coordinate: "file", line: 4, path: PATH, side: "new" } as const;
+const OTHER_LINE = { coordinate: "file", line: 3, path: PATH, side: "new" } as const;
 
 function filesPage() {
   return {
@@ -257,7 +248,7 @@ async function renderChanges(server: ReturnType<typeof companion>) {
     throw new Error("the pull request key fixture must parse");
   }
   webViewPostedMessages.length = 0;
-  sheetPanStates.length = 0;
+  sheetRenders = 0;
   const view = render(
     <SafeAreaProvider
       initialMetrics={{
@@ -268,11 +259,6 @@ async function renderChanges(server: ReturnType<typeof companion>) {
       <Suspense fallback={<Text>Loading pull request</Text>}>
         <PullRequestScreen
           capabilities={capabilities()}
-          commentDestinations={createPullRequestCommentDestinations({
-            deleteConnection: async () => undefined,
-            read: async () => null,
-            write: async () => undefined,
-          })}
           connectionId="server"
           describeThread={() => null}
           forge={server.forge}
@@ -354,12 +340,12 @@ function inlineComments(): readonly CodeReviewInlineComment[] {
   return (last?.payload ?? []) as readonly CodeReviewInlineComment[];
 }
 
-async function tapLine(): Promise<void> {
+async function tapLine(reference: typeof LINE | typeof OTHER_LINE = LINE): Promise<void> {
   await act(async () => {
     latestWebViewProps?.onMessage?.({
       nativeEvent: {
         data: JSON.stringify({
-          reference: LINE,
+          reference,
           requestId: documentRequestId(),
           type: "lineTap",
           version: 1,
@@ -371,34 +357,142 @@ async function tapLine(): Promise<void> {
 }
 
 function typeComment(view: ReturnType<typeof render>, text: string): void {
-  const editor = within(view.getByTestId("review-comment-sheet")).getByTestId("native-editor");
+  const editor = within(view.getByTestId("review-line-composer")).getByTestId("native-editor");
   act(() => {
     editor.props.onChangeText(text);
     editor.props.onChangeMarkdown(text);
   });
 }
 
-it("opens exactly one native composer with dictation on a line tap and anchors the line", async () => {
+/** The anchor line the editor was last asked to highlight. */
+function highlighted(): unknown {
+  return postedCommands()
+    .filter(({ command }) => command === "selection")
+    .at(-1)?.payload;
+}
+
+it("docks one composer under the diff on a line tap, with no modal, picker or title", async () => {
   const server = companion();
   const view = await renderChanges(server);
 
   await tapLine();
 
-  const sheet = view.getByTestId("review-comment-sheet");
-  expect(within(sheet).getByText("Comment on line 4")).toBeOnTheScreen();
-  expect(within(sheet).getByLabelText("Voice input")).toBeOnTheScreen();
-  expect(within(sheet).getByTestId("native-editor")).toBeOnTheScreen();
-  // The WebView only highlights the anchor; it never receives an inline composer.
-  const commands = postedCommands().map(({ command }) => command);
-  expect(commands).not.toContain("composer");
-  expect(
-    postedCommands()
-      .filter(({ command }) => command === "selection")
-      .at(-1)?.payload,
-  ).toMatchObject({ line: 4, path: PATH, side: "new" });
+  const composer = view.getByTestId("review-line-composer");
+  expect(within(composer).getByTestId("review-line-composer-anchor")).toHaveTextContent(
+    "main.rs · line 4",
+  );
+  expect(within(composer).getByLabelText(`Comment on line 4 of ${PATH}`)).toBeOnTheScreen();
+  expect(within(composer).getByTestId("native-editor")).toBeOnTheScreen();
+  expect(within(composer).getByLabelText("Expand")).toBeOnTheScreen();
+  expect(within(composer).getByLabelText("Close")).toBeOnTheScreen();
+  // Nothing to send yet: the one trailing action is the microphone.
+  expect(within(composer).getByLabelText("Voice input")).toBeOnTheScreen();
+  expect(within(composer).queryByTestId("review-comment-send")).toBeNull();
+  for (const removed of ["Send to", "Agent", "Both", "PR", "Add draft"]) {
+    expect(within(composer).queryByText(removed)).toBeNull();
+  }
+  // No sheet or scrim covers the diff; it stays mounted and keeps taking line taps.
+  expect(sheetRenders).toBe(0);
+  expect(view.getByTestId("pull-request-diff")).toBeOnTheScreen();
+  expect(view.getByTestId("review-dock-submit")).toBeOnTheScreen();
+  expect(postedCommands().map(({ command }) => command)).not.toContain("composer");
+  expect(highlighted()).toMatchObject({ line: 4, path: PATH, side: "new" });
 });
 
-it("shows a sent draft at once while it is saved, and keeps the review controls and the sheet handle", async () => {
+it("morphs the microphone into Add to review once there is text", async () => {
+  const server = companion();
+  const view = await renderChanges(server);
+  await tapLine();
+
+  typeComment(view, "Rename this call");
+
+  const composer = view.getByTestId("review-line-composer");
+  expect(within(composer).queryByLabelText("Voice input")).toBeNull();
+  const send = within(composer).getByTestId("review-comment-send");
+  expect(send).toHaveAccessibleName("Add to review");
+  expect(send).toBeEnabled();
+
+  typeComment(view, "  ");
+  expect(within(composer).getByLabelText("Voice input")).toBeOnTheScreen();
+  expect(within(composer).queryByTestId("review-comment-send")).toBeNull();
+});
+
+it("re-anchors the open composer to another tapped line and keeps the typed text", async () => {
+  const server = companion();
+  const view = await renderChanges(server);
+  await tapLine();
+  typeComment(view, "Rename this call");
+  const editor = within(view.getByTestId("review-line-composer")).getByTestId("native-editor");
+
+  await tapLine(OTHER_LINE);
+
+  // The same editor, now anchored to line 3, with the text the user typed.
+  const composer = view.getByTestId("review-line-composer");
+  expect(within(composer).getByTestId("native-editor")).toBe(editor);
+  expect(within(composer).getByTestId("review-line-composer-anchor")).toHaveTextContent(
+    "main.rs · line 3",
+  );
+  expect(editor).toHaveProp("defaultValue", "Rename this call");
+  expect(highlighted()).toMatchObject({ line: 3, path: PATH, side: "new" });
+
+  fireEvent.press(within(composer).getByTestId("review-comment-send"));
+  await waitFor(() => {
+    expect(server.puts).toHaveLength(1);
+  });
+  expect(server.puts[0]?.params.draft).toMatchObject({
+    anchor: { path: PATH, side: "new", startLine: 3 },
+    body: "Rename this call",
+  });
+});
+
+it("expands to fill the pane and collapses with the same editor, text and anchor", async () => {
+  const server = companion();
+  const view = await renderChanges(server);
+  await tapLine();
+  typeComment(view, "A longer review comment");
+  const editor = within(view.getByTestId("review-line-composer")).getByTestId("native-editor");
+
+  fireEvent.press(within(view.getByTestId("review-line-composer")).getByLabelText("Expand"));
+
+  expect(view.getByTestId("review-line-composer")).toHaveStyle({ flex: 1 });
+  expect(
+    within(view.getByTestId("review-line-composer")).getByLabelText("Collapse"),
+  ).toBeOnTheScreen();
+  expect(within(view.getByTestId("review-line-composer")).getByTestId("native-editor")).toBe(
+    editor,
+  );
+  expect(editor).toHaveProp("defaultValue", "A longer review comment");
+  expect(view.getByTestId("pull-request-diff")).toBeOnTheScreen();
+
+  fireEvent.press(within(view.getByTestId("review-line-composer")).getByLabelText("Collapse"));
+
+  const composer = view.getByTestId("review-line-composer");
+  expect(composer).not.toHaveStyle({ flex: 1 });
+  expect(within(composer).getByTestId("review-line-composer-anchor")).toHaveTextContent(
+    "main.rs · line 4",
+  );
+  expect(within(composer).getByTestId("native-editor")).toBe(editor);
+  expect(editor).toHaveProp("defaultValue", "A longer review comment");
+});
+
+it("keeps unsent text on its line after Close", async () => {
+  const server = companion();
+  const view = await renderChanges(server);
+  await tapLine();
+  typeComment(view, "Not yet");
+
+  fireEvent.press(within(view.getByTestId("review-line-composer")).getByLabelText("Close"));
+
+  expect(view.queryByTestId("review-line-composer")).toBeNull();
+  await tapLine();
+  expect(within(view.getByTestId("review-line-composer")).getByTestId("native-editor")).toHaveProp(
+    "defaultValue",
+    "Not yet",
+  );
+  expect(server.puts).toHaveLength(0);
+});
+
+it("closes at once on send and shows the PR draft while it is saved", async () => {
   const server = companion();
   const view = await renderChanges(server);
   await tapLine();
@@ -406,13 +500,16 @@ it("shows a sent draft at once while it is saved, and keeps the review controls 
 
   fireEvent.press(view.getByTestId("review-comment-send"));
 
-  // Closed at once, before the companion answered, and never made undismissible.
-  expect(view.queryByTestId("review-comment-sheet")).toBeNull();
-  expect(sheetPanStates.length).toBeGreaterThan(0);
-  expect(sheetPanStates).not.toContain(false);
+  // Closed at once, before the companion answered.
+  expect(view.queryByTestId("review-line-composer")).toBeNull();
   await waitFor(() => {
     expect(server.puts).toHaveLength(1);
   });
+  expect(server.puts[0]?.params.draft).toMatchObject({
+    body: "Rename this call",
+    destination: "pr",
+  });
+  expect(server.puts[0]?.params.draft).not.toHaveProperty("targetThreadId");
   await waitFor(() => {
     expect(inlineComments()).toEqual([
       expect.objectContaining({ body: "Rename this call", line: 4, state: "pending" }),
@@ -440,7 +537,7 @@ it("shows a sent draft at once while it is saved, and keeps the review controls 
   expect(view.getByTestId("review-dock-submit")).toBeOnTheScreen();
 });
 
-it("shows the companion's reason on a refused draft and restores its text into the composer", async () => {
+it("shows the companion's reason on a refused draft and Edit reopens the docked composer with its text", async () => {
   const server = companion();
   const view = await renderChanges(server);
   await tapLine();
@@ -470,12 +567,18 @@ it("shows the companion's reason on a refused draft and restores its text into t
 
   fireEvent.press(within(card).getByText("Edit"));
 
-  const sheet = view.getByTestId("review-comment-sheet");
-  expect(within(sheet).getByText("Comment on line 4")).toBeOnTheScreen();
-  expect(within(sheet).getByTestId("native-editor")).toHaveProp("defaultValue", "Rename this call");
+  const composer = view.getByTestId("review-line-composer");
+  expect(within(composer).getByTestId("review-line-composer-anchor")).toHaveTextContent(
+    "main.rs · line 4",
+  );
+  expect(within(composer).getByTestId("native-editor")).toHaveProp(
+    "defaultValue",
+    "Rename this call",
+  );
   await waitFor(() => {
     expect(view.queryByTestId(`review-draft-put-${draftId}`)).toBeNull();
   });
   expect(inlineComments()).toEqual([]);
   expect(view.getByTestId("review-comment-send")).toBeEnabled();
+  expect(sheetRenders).toBe(0);
 });

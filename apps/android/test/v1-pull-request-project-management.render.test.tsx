@@ -59,7 +59,6 @@ jest.mock("@expo/ui/jetpack-compose", () => {
 jest.mock("expo-symbols", () => ({}));
 jest.mock("../src/data/forgeRuntime", () => ({
   forgeResources: {},
-  pullRequestCommentDestinations: {},
   reviewResources: {},
 }));
 jest.mock("../src/data/forgeQueryResource", () => ({ useForgeQuery: () => ({}) }));

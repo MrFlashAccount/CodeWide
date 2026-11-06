@@ -18,7 +18,7 @@ Validation: M5 V1 gate passed native/web/compatibility typing and lint, 2286 mod
 
 M7 capability closure: `workspaceCapabilities.ts` exposes only this owner's qualified operations. Private `workspaceAdapter.ts` binds existing lower model/session authority through exact workspace composition; it does not own shared in-flight maps, runtime construction or global cleanup. The broad RemoteWorkspace facade is deleted.
 
-`ComposerMicrophone` and `voice/VoiceCaptureStatus` are public presentational modules with their own narrow props (no `ComposerFeatureProps`): the review line composer (`features/review/comments/CommentSheet`) binds its own line scope on the same retained VoiceInputController and passes its phase and actions. They own no recording state, and the chat composer's use of them is unchanged.
+`ComposerMicrophone`, `ComposerSendButton` and `voice/VoiceCaptureStatus` are public presentational modules with their own narrow props (no `ComposerFeatureProps`): the review line composer (`features/review/comments/LineCommentComposer`) binds its own line scope on the same retained VoiceInputController and passes its phase and actions. `ComposerSendButton` is the chat's round arrow-up send (the `ComposerSubmitAction` styles) without delivery, steer or discard gestures. `composerLayout` is public so that composer reuses the chat input's height, text inset and growth limit. They own no recording state, and the chat composer's use of them is unchanged.
 
 `input/ComposerMarkdownInput` is a public module for `features/messageContent` (PR conversation replies) and the review line composer. That consumer passes no mentions, large-paste handler or voice; the chat composer's use of the input and its behaviour are unchanged.
 

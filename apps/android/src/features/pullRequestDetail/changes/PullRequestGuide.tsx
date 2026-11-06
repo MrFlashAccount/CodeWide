@@ -4,7 +4,7 @@ import type { DraftComment } from "../../../data/reviewDraftContract";
 import type { DraftPut } from "../../../data/reviewDraftPuts";
 import type { ReviewResources } from "../../../data/reviewResources";
 import type { CodeReviewLineReference } from "../../review/comments/reviewComment";
-import type { CommentSheetTarget } from "../../review/comments/CommentSheet";
+import type { LineCommentTarget } from "../../review/comments/LineCommentComposer";
 import { GuidePanel } from "../../review/guide/GuidePanel";
 import type { ReviewTargetCapabilities } from "../../review/reviewTargetCapabilities";
 import { hunkLocations } from "./changesPresentation";
@@ -37,7 +37,7 @@ export function PullRequestGuide({
     readonly title: string;
   } | null;
   readonly capabilities: ReviewTargetCapabilities;
-  readonly composerLine: CommentSheetTarget | null;
+  readonly composerLine: LineCommentTarget | null;
   readonly connectionId: string;
   readonly describeThread: (threadId: ThreadId) => string;
   readonly draftPuts: readonly DraftPut[];
@@ -46,7 +46,7 @@ export function PullRequestGuide({
   readonly localWorkspace: string | null;
   readonly nowMs: number;
   readonly offline: boolean;
-  readonly onComment: (target: CommentSheetTarget, preferAgent: boolean) => void;
+  readonly onComment: (target: LineCommentTarget) => void;
   readonly onLinePress: (reference: CodeReviewLineReference) => void;
   readonly resources: Pick<ReviewResources, "guide">;
   readonly source: DiffSource;
@@ -66,12 +66,12 @@ export function PullRequestGuide({
       connectionId={connectionId}
       describeThread={describeThread}
       nowMs={nowMs}
-      onComment={(stop, destination) => {
+      onComment={(stop) => {
         const first = stop.hunkIds
           .map((id) => locations.get(id))
           .find((location) => location !== undefined);
         if (first !== undefined) {
-          onComment({ line: first.line, path: first.path, side: "new" }, destination === "agent");
+          onComment({ line: first.line, path: first.path, side: "new" });
         }
       }}
       renderStopDiff={(stop) => {

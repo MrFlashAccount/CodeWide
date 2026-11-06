@@ -330,7 +330,7 @@ for (const width of [360, 1024]) {
     }
   });
 
-  test(`the comment sheet explains Agent, PR and Both at ${width}dp`, async () => {
+  test(`the docked line composer at ${width}dp`, async () => {
     const { errors, page } = await open("pr", width);
     try {
       await page.getByTestId("pull-request-tab-changes").click();
@@ -339,11 +339,18 @@ for (const width of [360, 1024]) {
         .getByTestId("review-guide-stop-actions")
         .getByText("Comment", { exact: true })
         .click();
-      await page.getByTestId("review-comment-sheet").waitFor();
+      const composer = page.getByTestId("review-line-composer");
+      await composer.waitFor();
       await settle(page);
-      await capture(page, `comment-sheet-${width}`);
-      await page.getByTestId("review-comment-sheet").getByText("Both", { exact: true }).click();
-      await capture(page, `comment-sheet-both-${width}`);
+      assert.equal(await composer.getByText("Send to", { exact: true }).count(), 0);
+      await capture(page, `line-composer-empty-${width}`);
+      await composer.getByLabel("Comment").first().fill("Rename this call to match the module.");
+      await settle(page);
+      await composer.getByTestId("review-comment-send").waitFor();
+      await capture(page, `line-composer-text-${width}`);
+      await composer.getByLabel("Expand").click();
+      await settle(page);
+      await capture(page, `line-composer-expanded-${width}`);
       assert.deepEqual(errors, []);
       assert.deepEqual(await page.evaluate(() => window.previewWrites), []);
     } finally {

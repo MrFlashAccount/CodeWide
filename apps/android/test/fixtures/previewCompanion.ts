@@ -7,8 +7,6 @@
 import { RpcResponseError, type RpcClient } from "@codewide/sync-client";
 
 import { createForgeResources } from "../../src/data/forgeResources";
-import type { ForgeSnapshotCache } from "../../src/data/forgeSnapshotCache.types";
-import { createPullRequestCommentDestinations } from "../../src/data/pullRequestCommentDestinations";
 import { createPullRequestLinkResources } from "../../src/data/pullRequestLinkResources";
 import { createReviewResources } from "../../src/data/reviewResources";
 import { defaultPullRequestFilter } from "../../src/features/pullRequests/pullRequestListModel";
@@ -291,14 +289,6 @@ async function fakeRpc<T>(_session: RpcClient, method: string, params: unknown):
 const session = { connectionId: undefined, rpc: fakeRpc } as unknown as RpcClient & {
   stop: () => void;
 };
-const memory = new Map<string, unknown>();
-const snapshots: ForgeSnapshotCache = {
-  deleteConnection: async () => undefined,
-  read: async (_connection, key) => memory.get(key) ?? null,
-  write: async (_connection, key, value) => {
-    memory.set(key, value);
-  },
-};
 
 /** Session authority over the fake transport. */
 export const authority = { getSession: () => session, rpcAfterAttach: fakeRpc };
@@ -329,4 +319,3 @@ export const reviewResources = createReviewResources({
   queryClient: forgeResources.queryClient,
 });
 export const pullRequestLinkResources = createPullRequestLinkResources(authority);
-export const pullRequestCommentDestinations = createPullRequestCommentDestinations(snapshots);

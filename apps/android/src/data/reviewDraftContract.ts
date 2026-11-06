@@ -87,9 +87,6 @@ export type DraftComment = DraftBase &
       }
   );
 
-/** Destination a user may pick; `pr` and `both` exist only for pull-request sources. */
-export type DraftDestination = DraftComment["destination"];
-
 function anchor(value: unknown, path: string): DraftAnchor {
   const entry = record(value, path);
   const startLine = count(entry.startLine, `${path}.startLine`);

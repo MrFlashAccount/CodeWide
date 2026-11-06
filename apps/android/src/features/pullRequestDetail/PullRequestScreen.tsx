@@ -154,7 +154,6 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
           <PullRequestChanges
             agentThread={data.agentThread}
             capabilities={props.capabilities}
-            commentDestinations={props.commentDestinations}
             connectionId={props.connectionId}
             describeThread={(threadId) => threadTitle(props.describeThread, threadId)}
             fileActions={data.slots.anchored.files}
@@ -168,7 +167,6 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
             }}
             onStale={staleReview}
             overview={overview}
-            ownPullRequest={overview.author === overview.account.login}
             providerCapabilities={data.providerCapabilities}
             renderAppBar={appBar}
             review={props.review}

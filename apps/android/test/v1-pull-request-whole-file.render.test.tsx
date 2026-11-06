@@ -6,7 +6,6 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { parsePullRequestKeyParam } from "../src/data/forgeContract";
 import { createForgeResources } from "../src/data/forgeResources";
-import { createPullRequestCommentDestinations } from "../src/data/pullRequestCommentDestinations";
 import { createReviewResources } from "../src/data/reviewResources";
 import { PullRequestScreen } from "../src/features/pullRequestDetail/PullRequestScreen";
 import { WHOLE_FILE_WAIT_MS } from "../src/features/pullRequestDetail/changes/headFileViews";
@@ -204,11 +203,6 @@ function renderChanges(server: ReturnType<typeof companion>) {
       <Suspense fallback={<Text>Loading pull request</Text>}>
         <PullRequestScreen
           capabilities={capabilities()}
-          commentDestinations={createPullRequestCommentDestinations({
-            deleteConnection: async () => undefined,
-            read: async () => null,
-            write: async () => undefined,
-          })}
           connectionId="server"
           describeThread={() => null}
           forge={server.forge}

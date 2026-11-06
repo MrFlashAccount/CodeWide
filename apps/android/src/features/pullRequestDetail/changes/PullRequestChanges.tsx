@@ -7,12 +7,12 @@ import { useEvent } from "../../../react/useEvent";
 import { colors, layoutSize, radii, spacing } from "../../../theme";
 import { useAppDialog } from "../../../ui/AppDialog";
 import { AppText as Text } from "../../../ui/Typography";
+import { LineCommentFrame } from "../../review/comments/LineCommentFrame";
 import type { CodeReviewLineReference } from "../../review/comments/reviewComment";
 import { CardNote } from "../overview/CardHeader";
 import { overviewStyles } from "../overview/overview.styles";
 import { ChangesToolbar, type ToolbarFile } from "./ChangesToolbar";
 import { viewedSummary } from "./changesPresentation";
-import { CommentSheetHost } from "./CommentSheetHost";
 import { FilesView } from "./FilesView";
 import { PullRequestGuide } from "./PullRequestGuide";
 import { ReviewOutcome } from "./ReviewOutcome";
@@ -24,8 +24,8 @@ import { useSubmitReview } from "./useSubmitReview";
 
 /**
  * Changes: one IDE-style toolbar over Files (tree + diff) or Guide, companion
- * drafts with their axes and the one line composer; Submit lives in the
- * toolbar so the code keeps the screen. Files, drafts and guide are
+ * drafts with their axes and the one line composer docked under the diff above
+ * the keyboard; Submit lives in the toolbar so the code keeps the screen. Files, drafts and guide are
  * progressive resources; already published data stays visible while they
  * refresh, and a new draft shows the moment it is sent.
  */
@@ -35,7 +35,6 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
   const data = useChangesData(props);
   const agentThread = props.agentThread;
   const composer = useDraftComposer({
-    agentThreadId: agentThread === null ? null : agentThread.threadId,
     capabilities: props.reviewCapabilities,
     connectionId,
     files: data.page === null ? [] : data.page.files,
@@ -97,24 +96,30 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
         view={data.view}
       />
       {result === null ? null : <ReviewOutcome host={props.host} result={result} />}
-      <ChangesBody
-        besideDiff={besideDiff}
-        composer={composer}
-        data={data}
-        filesOpen={filesOpen}
-        onLinePress={composer.tapLine}
-        onSendToAgent={sendToAgent}
-        props={props}
-      />
-      <CommentSheetHost
-        agentThreadTitle={agentTitle}
-        composer={composer}
-        destinations={props.commentDestinations}
-        host={props.host}
-        ownPullRequest={props.ownPullRequest}
-        target={{ connectionId, pullRequest: overview.pullRequest }}
-        voice={props.voiceRuntime}
-      />
+      <LineCommentFrame
+        composer={
+          composer.line === null
+            ? null
+            : {
+                drafts: composer.drafts,
+                onClose: composer.close,
+                onSubmit: composer.add,
+                submitLabel: "Add to review",
+                target: composer.line,
+                voice: props.voiceRuntime,
+              }
+        }
+      >
+        <ChangesBody
+          besideDiff={besideDiff}
+          composer={composer}
+          data={data}
+          filesOpen={filesOpen}
+          onLinePress={composer.tapLine}
+          onSendToAgent={sendToAgent}
+          props={props}
+        />
+      </LineCommentFrame>
     </View>
   );
 }

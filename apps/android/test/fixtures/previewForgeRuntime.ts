@@ -5,7 +5,6 @@
  */
 export {
   forgeResources,
-  pullRequestCommentDestinations,
   pullRequestLinkResources,
   reviewResources,
 } from "./previewCompanion";

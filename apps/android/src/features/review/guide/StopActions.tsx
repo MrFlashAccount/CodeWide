@@ -5,19 +5,17 @@ import { AppButton } from "../../../presentation/controls/AppButton";
 import { spacing } from "../../../theme";
 
 /**
- * Stop actions: Comment, Send to agent, Accept. Accept marks only the guide
+ * Stop actions: Comment and Accept. Accept marks only the guide
  * stop and moves on; it never marks a file viewed and never writes to a forge.
  */
 export function StopActions({
   onAccept,
   onComment,
-  onSendToAgent,
   pending,
   progress,
 }: {
   readonly onAccept: () => void;
   readonly onComment: () => void;
-  readonly onSendToAgent: () => void;
   readonly pending: boolean;
   readonly progress: StopProgressState;
 }): React.JSX.Element {
@@ -25,9 +23,6 @@ export function StopActions({
     <View style={styles.row} testID="review-guide-stop-actions">
       <AppButton onPress={onComment} size="sm" style={styles.compact} variant="outline">
         Comment
-      </AppButton>
-      <AppButton onPress={onSendToAgent} size="sm" style={styles.compact} variant="outline">
-        Send to agent
       </AppButton>
       <AppButton
         accessibilityState={{ busy: pending, checked: progress === "accepted" }}
@@ -48,7 +43,7 @@ const styles = StyleSheet.create({
     marginLeft: "auto",
     paddingHorizontal: spacing.sm,
   },
-  // Compact insets keep the three actions on one row at 360dp.
+  // Compact insets match Accept's.
   compact: {
     paddingHorizontal: spacing.sm,
   },

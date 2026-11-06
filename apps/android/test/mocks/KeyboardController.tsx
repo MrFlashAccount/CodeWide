@@ -77,3 +77,24 @@ export function KeyboardStickyView(props: PropsWithChildren<KeyboardStickyViewPr
   };
   return <View {...renderedProps}>{children}</View>;
 }
+
+interface KeyboardAvoidingViewProps extends ViewProps {
+  automaticOffset?: boolean;
+  behavior?: "height" | "padding" | "position" | "translate-with-padding";
+  enabled?: boolean;
+  keyboardVerticalOffset?: number;
+}
+
+export function KeyboardAvoidingView(props: PropsWithChildren<KeyboardAvoidingViewProps>) {
+  const { automaticOffset, behavior, children, enabled, keyboardVerticalOffset, ...viewProps } =
+    props;
+  const renderedProps = {
+    ...viewProps,
+    automaticOffset,
+    behavior,
+    enabled,
+    keyboardVerticalOffset,
+    testID: viewProps.testID ?? "keyboard-avoiding-view",
+  };
+  return <View {...renderedProps}>{children}</View>;
+}
