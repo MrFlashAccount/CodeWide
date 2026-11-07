@@ -1,0 +1,29 @@
+[package]
+name = "forge-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "A scriptable forge plugin used by companion forge tests and the conformance check"
+publish = false
+
+[[bin]]
+name = "forge-fixture-plugin"
+path = "src/main.rs"
+
+[dependencies]
+forge-protocol = { path = "../forge-protocol" }
+async-trait = "0.1.89"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.143"
+tokio = { version = "1.47.1", features = ["io-std", "io-util", "macros", "rt"] }
+
+[dev-dependencies]
+companion-core = { path = "../companion-core" }
+forge-protocol = { path = "../forge-protocol", features = ["conformance"] }
+tempfile = "3.21.0"
+tokio = { version = "1.47.1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "time", "sync"] }
+url = "2.5.7"
+
+[lints]
+workspace = true

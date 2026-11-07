@@ -5,9 +5,9 @@
 //! same turns).
 
 use agent_core::model::{
-    AgentItem, AgentTurn, AppThreadId, MessagePhase, Provenance, ProviderId, ProviderThreadRef,
-    SubagentStatus, TaskNotificationDelivery, TaskNotificationSource, TaskNotificationStatus,
-    TurnId, TurnOrigin, TurnStatus,
+    AgentItem, AgentTurn, AppThreadId, BackgroundCommandState, MessagePhase, Provenance,
+    ProviderId, ProviderThreadRef, SubagentStatus, TaskNotificationDelivery,
+    TaskNotificationSource, TaskNotificationStatus, TurnId, TurnOrigin, TurnStatus,
 };
 use serde_json::{Value, json};
 
@@ -705,6 +705,106 @@ fn one_notification_naming_several_agents_stops_each_of_them() {
         [
             (TaskNotificationDelivery::Wake, "a0000000000000001"),
             (TaskNotificationDelivery::Wake, "a0000000000000002"),
+        ]
+    );
+}
+
+fn failed_report() -> String {
+    notification_xml(&Notification {
+        task_id: "bfail0001",
+        tool_use_id: None,
+        status: "failed",
+        summary: "Background command \"npm run lint\" failed with exit code 1",
+        note: None,
+        result: None,
+        usage: None,
+    })
+}
+
+/// A launch's stored tool result, with the structured result Claude keeps
+/// beside it (`toolUseResult.backgroundTaskId`).
+fn background_result(store: &mut Store, uuid: &str, tool_use_id: &str, task_id: &str) -> Value {
+    let mut row = store.tool_result(
+        uuid,
+        tool_use_id,
+        &format!("Command running in background with ID: {task_id}."),
+    );
+    row["toolUseResult"] = json!({"stdout": "", "stderr": "", "backgroundTaskId": task_id});
+    row
+}
+
+fn background_states(turns: &[AgentTurn]) -> Vec<(String, BackgroundCommandState)> {
+    turns
+        .iter()
+        .flat_map(|turn| &turn.items)
+        .filter_map(|item| match item {
+            AgentItem::Command {
+                background: Some(background),
+                ..
+            } => Some((background.task_id.clone(), background.state)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// After a restart the history alone says how each background command
+/// ended: at the time its stored report arrived, as completed, failed or
+/// stopped (killed); a launch without a report is unknown, never running.
+#[test]
+fn a_background_command_takes_the_end_its_stored_report_settles() {
+    let mut store = Store { seconds: 0 };
+    let mut messages = vec![store.prompt("u1", "Run the checks in the background.")];
+    for (uuid, tool_use_id, command, task_id) in [
+        ("a1", "toolu_test", "npm test", "btest0001"),
+        ("a2", "toolu_lint", "npm run lint", "bfail0001"),
+        ("a3", "toolu_watch", "npm run watch", "bwatch001"),
+        ("a4", "toolu_dev", "npm run dev", "bdev00001"),
+    ] {
+        messages.push(store.tool(
+            uuid,
+            tool_use_id,
+            "Bash",
+            &json!({"command": command, "run_in_background": true}),
+        ));
+        messages.push(background_result(
+            &mut store,
+            &format!("r{uuid}"),
+            tool_use_id,
+            task_id,
+        ));
+    }
+    messages.push(store.text("a5", "Started."));
+    messages.push(store.wake("n1", &test_report(), "task-notification", false));
+    messages.push(store.wake("n2", &failed_report(), "task-notification", false));
+    messages.push(store.wake("n3", &watch_report(), "task-notification", false));
+    messages.push(store.text("a6", "Checked."));
+    let turns = reconstruct_turns(&messages, &[], &context());
+    // The first report is the 11th stored message: 2026-10-14T10:00:11Z.
+    let wake_at = 1_791_972_011;
+    assert_eq!(
+        background_states(&turns),
+        [
+            (
+                "btest0001".to_owned(),
+                BackgroundCommandState::Completed {
+                    ended_at: wake_at,
+                    exit_code: None
+                }
+            ),
+            (
+                "bfail0001".to_owned(),
+                BackgroundCommandState::Failed {
+                    ended_at: wake_at + 1,
+                    exit_code: None
+                }
+            ),
+            (
+                "bwatch001".to_owned(),
+                BackgroundCommandState::Stopped {
+                    ended_at: wake_at + 2
+                }
+            ),
+            ("bdev00001".to_owned(), BackgroundCommandState::Unknown),
         ]
     );
 }

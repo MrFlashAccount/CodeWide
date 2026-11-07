@@ -1,7 +1,6 @@
 /** V1 AccountPoolFeature owner, extracted without changing interaction or resource lifetime. */
-import { Ionicons } from "@expo/vector-icons";
 import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 import { accountProfileLabel, type AccountPoolSnapshot } from "../../data/account-pool";
 import {
   accountRateLimitResetWindows,
@@ -11,7 +10,8 @@ import {
 import { accountPlanLabel } from "../../data/account-usage-presentation";
 import { useEvent } from "../../react/useEvent";
 import { colors, iconSize } from "../../theme";
-import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
+import type { ActionMenuItem } from "../../ui/ActionMenu";
+import { OverflowMenu } from "../../ui/OverflowMenu";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight, listRowPosition } from "../../ui/AppListRow.types";
 import { styles } from "./AccountPoolFeature.styles";
@@ -187,24 +187,14 @@ export function AccountProfileRow({
           testID: `account-status-${profile.id}`,
         }}
         trailing={
-          <ActionMenu
+          <OverflowMenu
             accessibilityLabel={`Actions for ${label}`}
             actions={actions}
+            disabled={busy}
             onSelect={handleAction}
             style={styles.accountPoolMenuAnchor}
-          >
-            <Pressable
-              accessibilityLabel={`Actions for ${label}`}
-              disabled={busy}
-              style={[styles.connectionMiniButton, busy && styles.disabled]}
-            >
-              <Ionicons
-                color={colors.textMuted}
-                name="ellipsis-horizontal"
-                size={iconSize.action}
-              />
-            </Pressable>
-          </ActionMenu>
+            tone="muted"
+          />
         }
       />
       {expanded && (

@@ -24,6 +24,15 @@ import Foundation
         withReply reply: @escaping @Sendable (String?, NSError?) -> Void
     )
 
+    func httpProxySettings(
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    )
+
+    func setHttpProxySettings(
+        json: String,
+        withReply reply: @escaping @Sendable (String?, NSError?) -> Void
+    )
+
     func discoverAppServers(
         withReply reply: @escaping @Sendable (AppServerListPayload?, NSError?) -> Void
     )

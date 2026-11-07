@@ -4,9 +4,9 @@ import type { RenderBlock } from "@codewide/renderers";
 import { useContext } from "react";
 import { View } from "react-native";
 import type { ContentReviewTarget } from "../../../rendering/content-review";
+import { CompleteMarkdown } from "../../../rendering/CompleteMarkdown";
 import { reasoningActivityTitle } from "../../../rendering/reasoning-title";
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
-import { CompleteAgentMarkdown } from "../content/AgentResponseMarkdown";
 import { LargeContentControls } from "../content/FullContentViewer";
 import { ActiveToolCallContext } from "../turns/turnContexts";
 import { UserMessageContent } from "../turns/UserMessageContent";
@@ -24,6 +24,7 @@ import { ToolCallProtocolBlock } from "./ToolContent";
 import { UnknownProtocolBlock } from "./UnknownProtocolBlock";
 import { WebSearchProtocolBlock } from "./WebSearchProtocolBlock";
 import type { TransferAccess } from "../../../data/private-transfer";
+import { surfaceToneMessageStyle, useSurfaceTone } from "../../../ui/surfaceTone";
 
 export function ProtocolBlock({
   block,
@@ -35,10 +36,11 @@ export function ProtocolBlock({
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
 }) {
   const activeToolCall = useContext(ActiveToolCallContext);
+  const tone = useSurfaceTone();
   if (block.kind === "userMessage") {
     const content = Array.isArray(block.raw.content) ? block.raw.content : [];
     return (
-      <View style={styles.userBubble} testID="user-bubble">
+      <View style={[styles.userBubble, surfaceToneMessageStyle(tone)]} testID="user-bubble">
         <UserMessageContent
           content={content}
           projectedAttachments={block.raw.codewideAttachments}
@@ -60,7 +62,7 @@ export function ProtocolBlock({
     return (
       <View style={styles.agentMessage}>
         <SearchMessage itemId={block.raw.id}>
-          <CompleteAgentMarkdown
+          <CompleteMarkdown
             reviewTarget={reviewTarget}
             source={block.body ?? ""}
             streamKey={block.key}

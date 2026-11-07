@@ -17,7 +17,13 @@ use crate::agent::model::{
 const CAPABILITY_ITEM_NAMESPACE: &str = "codewide.capability";
 /// The `CodeWide` field of a `commandExecution` that started a background
 /// task: the task id `companion/thread/backgroundTask/read` takes.
+/// Kept beside [`BACKGROUND_TASK_FIELD`] for clients that read only the id.
 pub const BACKGROUND_TASK_ID_FIELD: &str = "codewideBackgroundTaskId";
+/// The `CodeWide` field of a `commandExecution` that started a background
+/// task: the neutral `BackgroundCommand` as is (`taskId`, `status`, and
+/// `endedAt` / `exitCode` once it ended). A provider republishes the item
+/// (`item/completed` of the same turn and item id) when the state changes.
+pub const BACKGROUND_TASK_FIELD: &str = "codewideBackgroundTask";
 
 /// Projects one neutral thread. `turns` are already projected wire turns.
 #[must_use]
@@ -288,7 +294,7 @@ pub fn item(item: &AgentItem) -> Value {
             output,
             exit_code,
             duration_ms,
-            background_task_id,
+            background,
             ..
         } => {
             let mut projected = json!({
@@ -308,8 +314,9 @@ pub fn item(item: &AgentItem) -> Value {
             });
             // Omitted for a foreground command, so a command without a
             // background task keeps its earlier bytes.
-            if let Some(task_id) = background_task_id {
-                projected[BACKGROUND_TASK_ID_FIELD] = json!(task_id);
+            if let Some(background) = background {
+                projected[BACKGROUND_TASK_ID_FIELD] = json!(background.task_id);
+                projected[BACKGROUND_TASK_FIELD] = json!(background);
             }
             projected
         }
@@ -739,7 +746,7 @@ mod tests {
 
     #[test]
     fn a_background_command_names_its_task_and_a_foreground_one_keeps_its_bytes() {
-        let command = |background_task_id: Option<&str>| AgentItem::Command {
+        let command = |task_id: Option<&str>| AgentItem::Command {
             item_id: crate::agent::model::ItemId::from_static("toolu_1"),
             provenance: None,
             command: "npm test".into(),
@@ -748,19 +755,57 @@ mod tests {
             output: Some("Command running in background with ID: b1".into()),
             exit_code: Some(0),
             duration_ms: Some(4),
-            background_task_id: background_task_id.map(str::to_owned),
+            background: task_id.map(|task_id| crate::agent::model::BackgroundCommand {
+                task_id: task_id.to_owned(),
+                started_at: 1_760_000_100,
+                description: None,
+                state: crate::agent::model::BackgroundCommandState::Running,
+            }),
         };
         let background = item(&command(Some("bd3cb8oli")));
         assert_eq!(background["type"], "commandExecution");
         assert_eq!(background[BACKGROUND_TASK_ID_FIELD], "bd3cb8oli");
+        assert_eq!(
+            background[BACKGROUND_TASK_FIELD],
+            json!({"taskId": "bd3cb8oli", "startedAt": 1_760_000_100, "description": null, "status": "running"})
+        );
 
         let foreground = item(&command(None));
         assert!(foreground.get(BACKGROUND_TASK_ID_FIELD).is_none());
+        assert!(foreground.get(BACKGROUND_TASK_FIELD).is_none());
         let mut without_field = background;
         if let Some(object) = without_field.as_object_mut() {
             object.remove(BACKGROUND_TASK_ID_FIELD);
+            object.remove(BACKGROUND_TASK_FIELD);
         }
         assert_eq!(foreground, without_field);
+    }
+
+    #[test]
+    fn an_ended_background_command_carries_its_end_and_exit_on_the_wire() {
+        let ended = AgentItem::Command {
+            item_id: crate::agent::model::ItemId::from_static("toolu_1"),
+            provenance: None,
+            command: "npm test".into(),
+            cwd: "/w".into(),
+            status: ExecutionStatus::Completed,
+            output: None,
+            exit_code: Some(0),
+            duration_ms: None,
+            background: Some(crate::agent::model::BackgroundCommand {
+                task_id: "bd3cb8oli".into(),
+                started_at: 1_760_000_100,
+                description: None,
+                state: crate::agent::model::BackgroundCommandState::Failed {
+                    ended_at: 1_760_000_200,
+                    exit_code: Some(2),
+                },
+            }),
+        };
+        assert_eq!(
+            item(&ended)[BACKGROUND_TASK_FIELD],
+            json!({"taskId": "bd3cb8oli", "startedAt": 1_760_000_100, "description": null, "status": "failed", "endedAt": 1_760_000_200, "exitCode": 2})
+        );
     }
 
     #[test]

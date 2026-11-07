@@ -54,6 +54,7 @@ export function createConversationSurfaceAssembly(props: {
     conversationInsets: props.scoped.activation.conversationInsets,
     cwd: props.surfaceInputs.cwd,
     draftConnectionId: props.scoped.activation.draftConnectionId,
+    draftNotice: props.surfaceInputs.draftNotice,
     draftThreadId: props.scoped.activation.draftThreadId,
     historyActivityModel: props.readInputs.historyActivityModel,
     historyActivityResourceId: props.readInputs.historyActivityResourceId,
@@ -145,6 +146,12 @@ export function createConversationSurfaceAssembly(props: {
     conversationPaneGeometryBinding: props.scoped.activation.conversationPaneGeometryBinding,
     draftConnectionId: props.scoped.activation.draftConnectionId,
     draftThreadId: props.scoped.activation.draftThreadId,
+    openTerminals:
+      props.terminalInputs.onListTerminals === undefined
+        ? null
+        : () => {
+            props.composerCommands.composerControlActionsBinding.openControls("runtime");
+          },
     overlayScrollOwnershipBinding: props.scoped.overlayScrollOwnershipBinding,
     surfaceInputs: props.surfaceInputs,
     threadRenameBinding: props.scoped.threadRenameBinding,

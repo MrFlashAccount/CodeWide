@@ -13,11 +13,17 @@ export function PresentationSheetView({
   contentProps,
   onOpenChange,
 }: PresentationSheetViewProps): React.JSX.Element | null {
-  return isOpen ? <View>
-    <Pressable accessibilityRole="button" accessibilityLabel={contentProps?.dismissLabel ?? "Dismiss sheet"}
-      disabled={contentProps?.enablePanDownToClose === false} onPress={() => onOpenChange?.(false)} />
-    {children}
-  </View> : null;
+  return isOpen ? (
+    <View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={contentProps?.dismissLabel ?? "Dismiss sheet"}
+        disabled={contentProps?.enablePanDownToClose === false}
+        onPress={() => onOpenChange?.(false)}
+      />
+      {children}
+    </View>
+  ) : null;
 }
 
 export function PresentationSheetScrollView(props: ScrollViewProps): React.JSX.Element {

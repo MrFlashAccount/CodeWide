@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type { ContentPresentation } from "../../../services/content/contentRouteSession";
 import { formatContentBytes } from "./FullContentViewer";
 import { renderFullContentViewerBody } from "./FullContentViewerBody";
@@ -19,7 +18,6 @@ export function ActivityContentViewer({
   readonly text: string;
   readonly title: string;
 }): React.JSX.Element {
-  const [viewportHeight, setViewportHeight] = useState(0);
   const byteLength = new TextEncoder().encode(text).byteLength;
   return renderFullContentViewerBody({
     formatContentBytes,
@@ -39,9 +37,7 @@ export function ActivityContentViewer({
       reference: { byteLength },
       text,
     },
-    setViewportHeight,
     title,
-    viewportHeight,
   });
 }
 

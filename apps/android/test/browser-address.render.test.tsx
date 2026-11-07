@@ -3,7 +3,9 @@ import { BrowserAddressBar } from "../src/features/browser/BrowserAddressBar";
 
 it("keeps typed text during redirects and resolves it against the latest page on Go", () => {
   const navigate = jest.fn();
-  const view = render(<BrowserAddressBar url="http://127.0.0.1:43210/start" onNavigate={navigate} />);
+  const view = render(
+    <BrowserAddressBar url="http://127.0.0.1:43210/start" onNavigate={navigate} />,
+  );
   fireEvent(view.getByLabelText("Browser address"), "focus");
   fireEvent.changeText(view.getByLabelText("Browser address"), "/settings");
   view.rerender(<BrowserAddressBar url="http://127.0.0.1:43210/redirect" onNavigate={navigate} />);

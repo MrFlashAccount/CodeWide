@@ -12,9 +12,9 @@ import { colors, radii, spacing, layoutSize } from "../theme";
 import type { SheetPerformanceSurface } from "../presentation/diagnostics/sheetPerformanceSurface";
 import { OverlaySurfaceProvider } from "./OverlaySurfaceContext";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
+import { APP_SHEET_MAX_WIDTH } from "./appSheetGeometry";
 
-const SHEET_MAX_WIDTH = 580;
-const SHEET_FRAME_MAX_WIDTH = SHEET_MAX_WIDTH + spacing.md * 2;
+const SHEET_FRAME_MAX_WIDTH = APP_SHEET_MAX_WIDTH + spacing.md * 2;
 
 type AppSheetContentProps = Omit<
   BottomSheetProps,
@@ -169,7 +169,7 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     backgroundColor: colors.surfaceContainerHigh,
     borderRadius: radii.composer,
-    maxWidth: SHEET_MAX_WIDTH,
+    maxWidth: APP_SHEET_MAX_WIDTH,
     minWidth: 0,
     overflow: "hidden",
     paddingBottom: spacing.sm,

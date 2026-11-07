@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,6 +12,36 @@ import {
   resolvePreviewableDocumentLink,
   resolveRemoteDocumentPath,
 } from "../src/rendering/document-preview";
+
+const changes = readFileSync(
+  new URL("../src/features/changes/RouteCodeDocumentReview.tsx", import.meta.url),
+  "utf8",
+);
+const screen = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
+const workspace = readFileSync(
+  new URL("../src/features/review/workspace/CodeReviewWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const nativeEditor = readFileSync(
+  new URL("../src/features/review/editor/CodeReviewEditor.native.tsx", import.meta.url),
+  "utf8",
+);
+const editorRuntime = readFileSync(
+  new URL("../src/features/review/editor/webview/entry.web.ts", import.meta.url),
+  "utf8",
+);
+const migratedDocumentNavigation = readFileSync(
+  new URL("../src/features/attachments/documentNavigation.ts", import.meta.url),
+  "utf8",
+);
+const attachmentRouteActions = readFileSync(
+  new URL("../src/features/attachments/threadAttachmentRouteActions.ts", import.meta.url),
+  "utf8",
+);
+const conversationTools = readFileSync(
+  new URL("../src/features/conversation/ConversationTools.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("document preview", () => {
   it("routes previewable documents, images and downloads by file type", () => {
@@ -62,6 +94,20 @@ describe("document preview", () => {
     expect(resolveRemoteDocumentPath("#section", "/srv/project")).toBeNull();
   });
 
+  it("resolves host file URLs as the absolute paths they name", () => {
+    expect(
+      resolvePreviewableDocumentLink("file:///srv/out/My%20Repro.mp4", "/srv/project"),
+    ).toEqual({ kind: "download", name: "My Repro.mp4", path: "/srv/out/My Repro.mp4" });
+    expect(resolveRemoteDocumentPath("file://localhost/srv/README.md#intro", "/ignored")).toBe(
+      "/srv/README.md",
+    );
+    expect(resolveRemoteDocumentPath("FILE:/srv/src/Screen.tsx:12", "/ignored")).toBe(
+      "/srv/src/Screen.tsx",
+    );
+    expect(resolveRemoteDocumentPath("file://build-host/srv/README.md", "/srv")).toBeNull();
+    expect(resolveRemoteDocumentPath("file:README.md", "/srv")).toBeNull();
+  });
+
   it("classifies previewable links and keeps nested documents relative to their parent", () => {
     expect(resolvePreviewableDocumentLink("../docs/README.md", "/srv/project/apps")).toEqual({
       kind: "markdown",
@@ -107,6 +153,24 @@ describe("document preview", () => {
     expect(remoteDocumentDirectory("/srv/project/docs/README.md")).toBe("/srv/project/docs");
   });
 
+  it("opens source references at a one-shot highlighted line without opening a comment", () => {
+    expect(changes).toContain("initialLine: document.line");
+    expect(changes).toContain("initialColumn: document.column");
+    expect(screen).not.toContain('target.kind === "text" || target.line !== undefined');
+    expect(migratedDocumentNavigation).toContain("openDocument(request);");
+    expect(conversationTools).toContain('if (request.kind === "text") {');
+    expect(conversationTools).toContain("changesFeatureBinding.openCodeDocument(request);");
+    expect(conversationTools).toContain("openTimelineDocument,");
+    expect(attachmentRouteActions).toContain('if (request.kind === "text") {');
+    expect(changes).toContain("<CodeReviewWorkspace");
+    expect(changes).toContain("onClose={onClose}");
+    expect(workspace).toContain(
+      "revealReference={selectedReference === null ? revealReference : null}",
+    );
+    expect(nativeEditor).toContain('send({ command: "reveal", payload: revealReference })');
+    expect(editorRuntime).toContain("revealedReference = parsed.payload");
+    expect(editorRuntime).toContain('scrollIntoView({ block: "center", inline: "nearest" })');
+  });
   it("keeps Markdown source lines in the fullscreen renderer and maps them to a rendered segment", () => {
     const source = "# Intro\n\nFirst\n\n## Details\n\nBody";
     const segments = ["# Intro\n\nFirst\n\n", "## Details\n\nBody"];

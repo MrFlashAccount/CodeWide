@@ -1,4 +1,5 @@
 import { StyleSheet } from "react-native";
+import { catalogModeBarFabBottom } from "../../presentation/layouts/catalogModeBarGeometry";
 import { colors, radii, spacing } from "../../theme";
 
 export const styles = StyleSheet.create({
@@ -6,7 +7,7 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.primary,
     borderRadius: radii.large,
-    bottom: spacing.md,
+    bottom: catalogModeBarFabBottom,
     elevation: 3,
     height: 56,
     justifyContent: "center",

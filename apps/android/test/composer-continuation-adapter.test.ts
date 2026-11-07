@@ -18,7 +18,7 @@ describe("message-free composer continuation", () => {
     await test.continueTurn("server", "thread", "stopped");
     expect(test.rpcAfterAttach.mock.calls.map(([, method, params]) => [method, params])).toEqual([
       ["thread/turns/list", { threadId: "thread", limit: 1, sortDirection: "desc", itemsView: "summary" }],
-      ["turn/start", { threadId: "thread", input: [] }],
+      ["turn/continue", { threadId: "thread" }],
     ]);
   });
 
@@ -43,6 +43,15 @@ describe("message-free composer continuation", () => {
       expect(test.rpcAfterAttach).toHaveBeenCalledTimes(1);
     },
   );
+
+  it.each([
+    new RpcResponseError(-32601, "Method not found"),
+    new RpcResponseError(-32072, "Capability unsupported"),
+  ])("treats a host or provider without turn/continue as a rejection %#", async failure => {
+    const test = binding();
+    test.rpcAfterAttach.mockResolvedValueOnce(page()).mockRejectedValueOnce(failure);
+    await expect(test.continueTurn("server", "thread", "stopped")).rejects.toThrow(failure.message);
+  });
 
   it("allows retry after explicit input rejection", async () => {
     const test = binding();

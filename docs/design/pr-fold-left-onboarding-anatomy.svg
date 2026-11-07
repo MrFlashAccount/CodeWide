@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1664" height="1500" viewBox="0 0 1664 1500">
+  <style>
+    text { font-family: Inter, Roboto, Arial, sans-serif; }
+    .screenTitle { fill:#f2f2f2; font-size:30px; font-weight:600; }
+    .hero { fill:#f2f2f2; font-size:31px; font-weight:600; }
+    .body { fill:#b8b8b8; font-size:18px; font-weight:400; }
+    .label { fill:#b8b8b8; font-size:16px; font-weight:500; }
+    .small { fill:#858585; font-size:14px; font-weight:500; }
+    .mockTitle { fill:#f2f2f2; font-size:24px; font-weight:600; }
+    .mockBody { fill:#b8b8b8; font-size:15px; font-weight:500; }
+  </style>
+  <rect width="1664" height="1500" fill="#0f0f0f"/>
+  <text x="30" y="38" fill="#f2f2f2" font-size="24" font-weight="600">00:32  Fri, Oct 23</text>
+  <text x="1460" y="38" fill="#f2f2f2" font-size="18">4G+  16%</text>
+  <rect y="52" width="1664" height="40" fill="#0b0b0b"/>
+  <circle cx="22" cy="72" r="5" fill="#35c778"/><text x="40" y="78" class="small">76 fps · CPU 25.9% · RSS 491 MB</text>
+
+  <rect x="560" y="92" width="1104" height="1312" rx="26" fill="#181818"/>
+  <line x1="560" y1="92" x2="560" y2="1404" stroke="#242424"/>
+  <text x="28" y="150" class="screenTitle">Pull requests</text>
+
+  <g transform="translate(174 392)">
+    <circle cx="18" cy="18" r="8" fill="none" stroke="#858585" stroke-width="3"/>
+    <circle cx="18" cy="48" r="8" fill="none" stroke="#858585" stroke-width="3"/>
+    <circle cx="18" cy="78" r="8" fill="none" stroke="#858585" stroke-width="3"/>
+    <path d="M29 18h15c20 0 25 30 55 30h21M29 48h91M29 78h15c20 0 25-30 55-30" fill="none" stroke="#858585" stroke-linecap="round" stroke-width="3"/>
+    <rect x="130" y="24" width="54" height="54" rx="11" fill="none" stroke="#f2f2f2" stroke-width="4"/>
+    <path d="M145 50l9 9 17-20" fill="none" stroke="#f2f2f2" stroke-linecap="round" stroke-linejoin="round" stroke-width="4"/>
+  </g>
+  <text x="280" y="535" class="hero" text-anchor="middle">Your review inbox</text>
+  <text x="280" y="579" class="body" text-anchor="middle">Connect a code host to see every</text>
+  <text x="280" y="607" class="body" text-anchor="middle">pull request that needs you.</text>
+  <rect x="76" y="654" width="408" height="70" rx="35" fill="#e6e6e6"/>
+  <text x="280" y="697" text-anchor="middle" fill="#111" font-size="20" font-weight="600">+  Connect a provider</text>
+  <g transform="translate(110 758)">
+    <path d="M14 0l12 5v9c0 10-7 16-12 19C9 30 2 24 2 14V5z" fill="none" stroke="#858585" stroke-width="2"/>
+    <path d="M9 15l4 4 7-8" fill="none" stroke="#858585" stroke-width="2" stroke-linecap="round"/>
+    <text x="40" y="22" class="label">Credentials stay on your Companion.</text>
+  </g>
+
+  <g transform="translate(670 218)">
+    <rect width="884" height="1020" rx="28" fill="#202020" stroke="#2e2e2e" stroke-width="2"/>
+    <rect x="1" y="1" width="882" height="86" rx="27" fill="#242424"/>
+    <circle cx="43" cy="44" r="20" fill="#2b2b2b"/>
+    <path d="M34 44h18M43 35v18" stroke="#b8b8b8" stroke-width="2" stroke-linecap="round"/>
+    <rect x="79" y="32" width="184" height="14" rx="7" fill="#858585" opacity=".52"/>
+    <rect x="79" y="54" width="112" height="10" rx="5" fill="#858585" opacity=".28"/>
+    <rect x="735" y="25" width="112" height="40" rx="20" fill="#272727"/>
+    <circle cx="758" cy="45" r="6" fill="#35c778"/><rect x="775" y="39" width="49" height="11" rx="5" fill="#b8b8b8" opacity=".66"/>
+
+    <rect x="42" y="124" width="70" height="30" rx="15" fill="#173526"/>
+    <text x="77" y="145" text-anchor="middle" fill="#35c778" font-size="13" font-weight="600">OPEN</text>
+    <rect x="42" y="177" width="544" height="24" rx="12" fill="#f2f2f2" opacity=".88"/>
+    <rect x="42" y="215" width="380" height="14" rx="7" fill="#858585" opacity=".38"/>
+    <rect x="42" y="245" width="282" height="12" rx="6" fill="#858585" opacity=".25"/>
+
+    <line x1="42" y1="306" x2="842" y2="306" stroke="#2e2e2e"/>
+    <text x="62" y="348" class="mockBody">Overview</text>
+    <text x="192" y="348" class="mockBody">Files changed</text>
+    <text x="346" y="348" class="mockBody">Checks</text>
+    <rect x="42" y="370" width="102" height="3" rx="2" fill="#e6e6e6"/>
+
+    <rect x="42" y="405" width="800" height="204" rx="18" fill="#272727"/>
+    <text x="70" y="444" class="mockTitle">Ready for review</text>
+    <rect x="70" y="470" width="312" height="12" rx="6" fill="#858585" opacity=".38"/>
+    <rect x="70" y="505" width="744" height="1" fill="#333"/>
+    <circle cx="88" cy="546" r="13" fill="#173526"/><path d="M82 546l4 4 8-9" fill="none" stroke="#35c778" stroke-width="2.5" stroke-linecap="round"/>
+    <rect x="116" y="538" width="244" height="13" rx="6" fill="#b8b8b8" opacity=".62"/>
+    <circle cx="572" cy="546" r="6" fill="#35c778"/><rect x="588" y="539" width="92" height="12" rx="6" fill="#858585" opacity=".42"/>
+    <circle cx="88" cy="581" r="13" fill="#173526"/><path d="M82 581l4 4 8-9" fill="none" stroke="#35c778" stroke-width="2.5" stroke-linecap="round"/>
+    <rect x="116" y="573" width="194" height="13" rx="6" fill="#b8b8b8" opacity=".5"/>
+
+    <rect x="42" y="636" width="800" height="334" rx="18" fill="#181818" stroke="#2e2e2e"/>
+    <rect x="42" y="636" width="800" height="54" rx="18" fill="#242424"/>
+    <rect x="70" y="657" width="174" height="12" rx="6" fill="#b8b8b8" opacity=".6"/>
+    <text x="722" y="671" fill="#35c778" font-size="13" font-weight="600">+18</text>
+    <text x="770" y="671" fill="#f05d65" font-size="13" font-weight="600">−4</text>
+    <g opacity=".72">
+      <rect x="70" y="724" width="154" height="10" rx="5" fill="#858585"/><rect x="245" y="724" width="410" height="10" rx="5" fill="#858585" opacity=".36"/>
+      <rect x="70" y="760" width="154" height="10" rx="5" fill="#35c778" opacity=".7"/><rect x="245" y="760" width="506" height="10" rx="5" fill="#35c778" opacity=".26"/>
+      <rect x="70" y="796" width="154" height="10" rx="5" fill="#35c778" opacity=".7"/><rect x="245" y="796" width="460" height="10" rx="5" fill="#35c778" opacity=".22"/>
+      <rect x="70" y="832" width="154" height="10" rx="5" fill="#858585"/><rect x="245" y="832" width="348" height="10" rx="5" fill="#858585" opacity=".36"/>
+      <rect x="70" y="868" width="154" height="10" rx="5" fill="#f05d65" opacity=".7"/><rect x="245" y="868" width="390" height="10" rx="5" fill="#f05d65" opacity=".22"/>
+      <rect x="70" y="904" width="154" height="10" rx="5" fill="#35c778" opacity=".7"/><rect x="245" y="904" width="438" height="10" rx="5" fill="#35c778" opacity=".23"/>
+    </g>
+  </g>
+
+  <rect x="22" y="1294" width="516" height="90" rx="45" fill="#181818"/>
+  <text x="147" y="1348" text-anchor="middle" class="label">Threads</text>
+  <rect x="282" y="1302" width="248" height="74" rx="37" fill="#e6e6e6"/>
+  <text x="406" y="1348" text-anchor="middle" fill="#111" font-size="17" font-weight="600">Pull requests</text>
+  <rect y="1404" width="1664" height="96" fill="#0b0b0b"/>
+  <circle cx="832" cy="1452" r="10" fill="#f2f2f2"/><rect x="1522" y="1442" width="20" height="20" rx="3" fill="#f2f2f2"/>
+</svg>

@@ -62,6 +62,8 @@ interface AppListRowContentProps {
   readonly onPress?: () => void;
   readonly position?: "only" | "first" | "middle" | "last";
   readonly selected?: boolean;
+  /** Shimmers the unchanged title while an operation on the row awaits confirmation. */
+  readonly shimmering?: boolean;
   readonly testID?: string;
   readonly title: string;
   readonly titleIndicator?: {

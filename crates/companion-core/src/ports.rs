@@ -1257,7 +1257,22 @@ mod tests {
     #[tokio::test]
     async fn forwarding_reaches_a_server_bound_only_to_ipv6_loopback()
     -> Result<(), Box<dyn std::error::Error>> {
-        let listener = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).await?;
+        let mut attempts_remaining = 32;
+        let (listener, _ipv4_guard) = loop {
+            let listener =
+                tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).await?;
+            let port = listener.local_addr()?.port();
+            let ipv4_guard = tokio::net::TcpSocket::new_v4()?;
+            attempts_remaining -= 1;
+            match ipv4_guard.bind((std::net::Ipv4Addr::LOCALHOST, port).into()) {
+                Ok(()) => break (listener, ipv4_guard),
+                // IPv6 ephemeral allocation does not reserve the IPv4 port. Retry only
+                // fixture allocation collisions; forwarding itself must succeed once.
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::AddrInUse && attempts_remaining > 0 => {}
+                Err(error) => return Err(error.into()),
+            }
+        };
         let port = listener.local_addr()?.port();
         let accepted = tokio::spawn(async move { listener.accept().await.map(|_| ()) });
         let stream = connect_loopback(port).await?;

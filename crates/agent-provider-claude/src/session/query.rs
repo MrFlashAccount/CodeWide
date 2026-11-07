@@ -17,7 +17,7 @@ use tracing::warn;
 use crate::cli::{
     command::QueryOptions,
     process::{ClaudeProcess, ProcessError, ProcessEvent},
-    protocol::Priority,
+    protocol::{Author, Priority},
 };
 
 /// A request the session awaits off its loop.
@@ -28,13 +28,21 @@ pub type BoxFuture<'a, Output> = Pin<Box<dyn Future<Output = Output> + Send + 'a
 pub struct Offer {
     /// Messages API content blocks.
     pub content: Vec<Value>,
-    /// The uuid Claude persists the message under.
-    pub uuid: Option<String>,
+    /// The uuid Claude persists the message under and acknowledges it by.
+    pub uuid: String,
     pub priority: Priority,
+    pub author: Author,
 }
 
 /// The query of one session.
 pub trait Query: Send + Sync {
+    /// Resolves once Claude answered `initialize`; fails with
+    /// [`ProcessError::Unsupported`] when that `claude` cannot report its
+    /// session state, or when the process ended first. Default: a query
+    /// without a handshake (a test double).
+    fn initialized(&self) -> BoxFuture<'static, Result<(), ProcessError>> {
+        Box::pin(std::future::ready(Ok(())))
+    }
     /// Queues a user message.
     fn offer(&self, offer: Offer);
     /// Queues the answer to Claude's request `request_id`.
@@ -96,7 +104,7 @@ impl QueryRuntime for CliRuntime {
         let (process, events) = ClaudeProcess::spawn(options, &self.environment)?;
         let process = Arc::new(process);
         let (outbound, queue) = mpsc::unbounded_channel();
-        let (initialized, ready) = watch::channel(false);
+        let (initialized, ready) = watch::channel(Initialization::Pending);
         let servers = options.sdk_mcp_servers();
         self.writers
             .spawn(write_in_order(process.clone(), servers, queue, initialized));
@@ -128,10 +136,21 @@ enum Outbound {
     Close,
 }
 
+/// What the `initialize` answer established.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Initialization {
+    Pending,
+    Ready,
+    /// The answer has no `session_state`; the version Claude reported.
+    Unsupported {
+        version: String,
+    },
+}
+
 struct CliQuery {
     process: Arc<ClaudeProcess>,
     outbound: mpsc::UnboundedSender<Outbound>,
-    ready: watch::Receiver<bool>,
+    ready: watch::Receiver<Initialization>,
 }
 
 impl CliQuery {
@@ -142,19 +161,32 @@ impl CliQuery {
         + Send
         + 'static,
     ) -> BoxFuture<'static, Result<Output, ProcessError>> {
-        let mut ready = self.ready.clone();
+        let ready = self.initialized();
         let process = self.process.clone();
         Box::pin(async move {
-            ready
-                .wait_for(|ready| *ready)
-                .await
-                .map_err(|_| ProcessError::Ended)?;
+            ready.await?;
             request(process).await
         })
     }
 }
 
 impl Query for CliQuery {
+    fn initialized(&self) -> BoxFuture<'static, Result<(), ProcessError>> {
+        let mut ready = self.ready.clone();
+        Box::pin(async move {
+            let initialization = ready
+                .wait_for(|initialization| *initialization != Initialization::Pending)
+                .await
+                .map_err(|_| ProcessError::Ended)?;
+            match &*initialization {
+                Initialization::Unsupported { version } => Err(ProcessError::Unsupported {
+                    version: version.clone(),
+                }),
+                Initialization::Pending | Initialization::Ready => Ok(()),
+            }
+        })
+    }
+
     fn offer(&self, offer: Offer) {
         let _ = self.outbound.send(Outbound::User(offer));
     }
@@ -190,27 +222,47 @@ impl Query for CliQuery {
 
 /// The single writer of one process: `initialize`, then every queued write
 /// in order. A failed `initialize` is logged; the process's exit then ends
-/// the session's query.
+/// the session's query. A `claude` without session state writes nothing
+/// more: the session closes the query once it learned why.
 async fn write_in_order(
     process: Arc<ClaudeProcess>,
     servers: Vec<&'static str>,
     mut queue: mpsc::UnboundedReceiver<Outbound>,
-    initialized: watch::Sender<bool>,
+    initialized: watch::Sender<Initialization>,
 ) {
-    if let Err(err) = process.initialize(&servers).await {
-        warn!(err = %err, "Claude did not accept the session's initialize request");
+    let answer = match process.initialize(&servers).await {
+        Ok(answer) => answer,
+        Err(err) => {
+            warn!(err = %err, "Claude did not accept the session's initialize request");
+            process.close().await;
+            return;
+        }
+    };
+    if answer.get("session_state").is_none() {
+        let version = answer
+            .get("claude_code_version")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned();
+        let _ = initialized.send(Initialization::Unsupported { version });
+        while let Some(outbound) = queue.recv().await {
+            if matches!(outbound, Outbound::Close) {
+                break;
+            }
+        }
         process.close().await;
         return;
     }
-    let _ = initialized.send(true);
+    let _ = initialized.send(Initialization::Ready);
     while let Some(outbound) = queue.recv().await {
         let written = match outbound {
             Outbound::User(offer) => {
                 process
                     .send_user(
                         &Value::Array(offer.content),
-                        offer.uuid.as_deref(),
+                        Some(&offer.uuid),
                         offer.priority,
+                        offer.author,
                     )
                     .await
             }
@@ -261,6 +313,47 @@ echo ended > ended.log
             identity: SessionIdentity::New("s1".into()),
             client_tools: false,
         }
+    }
+
+    /// Answers `initialize` with `answer`, then reads until its input ends.
+    fn answering(answer: &str) -> String {
+        format!(
+            "#!/bin/sh\nread -r init\nprintf '%s\\n' '{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":\"codewide-1\",\"response\":{answer}}}}}'\nwhile read -r line; do :; done\n"
+        )
+    }
+
+    async fn initialized_with(answer: &str) -> Result<(), ProcessError> {
+        let directory = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
+        let mut options = options(directory.path());
+        options.executable = fake_claude(directory.path(), &answering(answer));
+        let runtime = CliRuntime::new(Vec::new());
+        let (query, _events) = runtime
+            .open(&options)
+            .unwrap_or_else(|error| panic!("{error}"));
+        let initialized = tokio::time::timeout(Duration::from_secs(10), query.initialized())
+            .await
+            .unwrap_or_else(|_| panic!("initialize was not answered"));
+        query.close();
+        initialized
+    }
+
+    #[tokio::test]
+    async fn a_claude_reporting_its_session_state_initializes() {
+        let initialized = initialized_with(
+            r#"{"commands":[],"session_state":"idle","claude_code_version":"2.1.310"}"#,
+        )
+        .await;
+        assert!(initialized.is_ok(), "{initialized:?}");
+    }
+
+    #[tokio::test]
+    async fn a_claude_without_session_state_is_unsupported_with_its_version() {
+        let initialized =
+            initialized_with(r#"{"commands":[],"claude_code_version":"2.0.1"}"#).await;
+        assert!(
+            matches!(&initialized, Err(ProcessError::Unsupported { version }) if version == "2.0.1"),
+            "{initialized:?}"
+        );
     }
 
     #[tokio::test]

@@ -12,6 +12,7 @@ import {
   conversationHeaderChromeHeight,
   conversationTopContentInset,
 } from "../../../ui/conversation-chrome-layout";
+import { surfaceToneCanvasStyle, useSurfaceTone } from "../../../ui/surfaceTone";
 import { AppText as Text } from "../../../ui/Typography";
 import { useTimelineGestureBindings } from "./timelineGestureBindings";
 import { TIMELINE_TAIL_MODE_THRESHOLD_RATIO } from "./historyAnchor";
@@ -39,6 +40,7 @@ const MINIMUM_TIMELINE_RENDER_AHEAD_PX = 250;
 
 export function TimelineViewport(props: TimelineViewportProps): ReactElement {
   const rowPremeasurementEnabled = useSelector(timelineRowPremeasurementEnabled$);
+  const canvas = surfaceToneCanvasStyle(useSurfaceTone());
   const {
     awayFromLatestRef,
     completeTimelineJump,
@@ -303,7 +305,7 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
         scrollEventThrottle={16}
         scrollsChildToFocus={false}
         showsVerticalScrollIndicator={false}
-        style={styles.conversationScroll}
+        style={[styles.conversationScroll, canvas]}
         testID="conversation-timeline"
       />
     </RichMarkdownPremeasurementProvider>

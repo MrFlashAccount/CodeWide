@@ -1,10 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LegendList } from "@legendapp/list/react-native";
-import { useState } from "react";
-import { Platform, Pressable, View } from "react-native";
-import { colors, controlSize, iconSize } from "../../theme";
+import { useState, type ReactElement } from "react";
+import { Pressable, View, type ScrollViewProps } from "react-native";
+import { colors, iconSize } from "../../theme";
+import { AppList } from "../../ui/AppList";
 import { AppListRow } from "../../ui/AppListRow";
-import { listRowHeight } from "../../ui/AppListRow.types";
 import { SheetPageTransition, useSheetBackHandler } from "../../ui/sheetNavigation";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
 import { CandidateRow } from "./CandidateRow";
@@ -12,13 +11,14 @@ import { ForwardingRow } from "./ForwardingRow";
 import { ManualPortForm } from "./ManualPortForm";
 import { usePortActions } from "./portActions";
 import { usePortForm } from "./portForm";
-import type { PortForwardingManagerProps, ServiceSegment } from "./portForwardingContract";
+import type {
+  PortForwardingManagerProps,
+  ServiceListRow,
+  ServiceSegment,
+} from "./portForwardingContract";
 import {
   emptySegmentSubtitle,
   emptySegmentTitle,
-  GROUP_HEIGHT,
-  hasProfileError,
-  PROFILE_ERROR_HEIGHT,
   segmentTitle,
   serviceRowKey,
   serviceRowPosition,
@@ -27,7 +27,26 @@ import { styles } from "./PortForwardingManager.styles";
 import { projectPortList } from "./portListProjection";
 import { InfoRow, InlineError, SectionLabel, ServiceIcon } from "./PortPresentation";
 
-export function PortForwardingManager(props: PortForwardingManagerProps) {
+type PortListProjection = ReturnType<typeof projectPortList>;
+
+type PortForwardingManagerViewProps = PortForwardingManagerProps & {
+  readonly scrollComponent?: (props: ScrollViewProps) => ReactElement | null;
+};
+
+type PortForwardingListProps = {
+  readonly counts: PortListProjection["counts"];
+  readonly groups: PortListProjection["groups"];
+  readonly portActions: ReturnType<typeof usePortActions>;
+  readonly portForm: ReturnType<typeof usePortForm>;
+  readonly props: PortForwardingManagerViewProps;
+  readonly query: string;
+  readonly rows: PortListProjection["rows"];
+  readonly segment: ServiceSegment;
+  readonly setQuery: (query: string) => void;
+  readonly setSegment: (segment: ServiceSegment) => void;
+};
+
+export function PortForwardingManager(props: PortForwardingManagerViewProps): React.JSX.Element {
   const portForm = usePortForm(props);
   const portActions = usePortActions(props);
   const [segment, setSegment] = useState<ServiceSegment>("active");
@@ -79,18 +98,7 @@ function PortForwardingList({
   segment,
   setQuery,
   setSegment,
-}: {
-  readonly counts: ReturnType<typeof projectPortList>["counts"];
-  readonly groups: ReturnType<typeof projectPortList>["groups"];
-  readonly portActions: ReturnType<typeof usePortActions>;
-  readonly portForm: ReturnType<typeof usePortForm>;
-  readonly props: PortForwardingManagerProps;
-  readonly query: string;
-  readonly rows: ReturnType<typeof projectPortList>["rows"];
-  readonly segment: ServiceSegment;
-  readonly setQuery: (query: string) => void;
-  readonly setSegment: (segment: ServiceSegment) => void;
-}) {
+}: PortForwardingListProps): React.JSX.Element {
   return (
     <View style={styles.root} testID="port-forwarding-manager">
       <View style={styles.header}>
@@ -143,32 +151,10 @@ function PortForwardingList({
         </View>
       </View>
 
-      <LegendList
+      <AppList
         contentContainerStyle={styles.listContent}
         data={rows}
-        drawDistance={360}
-        getFixedItemSize={(entry) =>
-          entry.type === "group"
-            ? GROUP_HEIGHT
-            : listRowHeight.double +
-              (entry.type === "profile" && hasProfileError(entry.profile)
-                ? PROFILE_ERROR_HEIGHT
-                : 0) +
-              (entry.type === "profile" &&
-              Platform.OS === "web" &&
-              portActions.actionMenuProfileId === entry.profile.id
-                ? controlSize.regular
-                : 0)
-        }
-        keyExtractor={serviceRowKey}
-        nestedScrollEnabled
-        recycleItems
-        showsVerticalScrollIndicator={false}
-        style={styles.list}
-        {...(props.renderScrollComponent === undefined
-          ? {}
-          : { renderScrollComponent: props.renderScrollComponent })}
-        ListFooterComponent={
+        footer={
           segment === "available" && query === "" ? (
             <AppListRow
               description="Enter a localhost port manually"
@@ -178,101 +164,181 @@ function PortForwardingList({
             />
           ) : null
         }
-        ListHeaderComponent={
-          <>
-            {portActions.actionError !== null && <InlineError value={portActions.actionError} />}
-            {props.discoveryStatus === "loading" && props.discoveredPorts.length === 0 && (
-              <InfoRow
-                icon="scan-outline"
-                loading
-                subtitle="Reading localhost listeners"
-                title="Looking for open ports…"
-              />
-            )}
-            {props.discoveryStatus === "error" && (
-              <InfoRow
-                icon="alert-circle-outline"
-                subtitle={props.discoveryError ?? "Waiting for automatic discovery"}
-                title="Could not scan ports"
-              />
-            )}
-            {props.discoveryStatus === "ready" && groups.length === 0 && (
-              <InfoRow
-                icon={segment === "excluded" ? "ban-outline" : "checkmark-circle-outline"}
-                subtitle={
-                  query === ""
-                    ? emptySegmentSubtitle(segment)
-                    : "Try another name, category or port"
-                }
-                title={emptySegmentTitle(segment)}
-              />
-            )}
-          </>
+        header={
+          <PortListNotices
+            actionError={portActions.actionError}
+            groups={groups}
+            props={props}
+            query={query}
+            segment={segment}
+          />
         }
-        renderItem={({ index, item: entry }) =>
-          entry.type === "group" ? (
-            <View style={styles.groupCell}>
-              <SectionLabel value={entry.group} />
-            </View>
-          ) : entry.type === "candidate" ? (
-            <CandidateRow
-              candidate={entry.candidate}
-              key={entry.candidate.forwardingKey}
-              onExclude={() => void portActions.excludePort(entry.candidate)}
-              onPress={() => void portActions.choosePort(entry.candidate)}
-              pending={portActions.pendingPort === entry.candidate.port}
-              position={serviceRowPosition(rows, index)}
-            />
-          ) : (
-            <ForwardingRow
-              key={entry.profile.id}
-              kind={entry.kind}
-              onEdit={() => {
-                portForm.openEdit(entry.profile);
-              }}
-              onInclude={() => {
-                portActions.activateProfileAction(entry.profile.id, async () =>
-                  props.onSetPreference(entry.profile.id, "included"),
-                );
-              }}
-              onOpen={() => {
-                if (entry.profile.previewUrl !== null) {
-                  props.onOpenBrowser(entry.profile.label, entry.profile.previewUrl);
-                }
-              }}
-              onReconnect={() => {
-                portActions.activateProfileAction(entry.profile.id, async () =>
-                  props.onReconnect(entry.profile.id),
-                );
-              }}
-              onRemove={() => {
-                portActions.activateProfileAction(entry.profile.id, async () =>
-                  props.onRemove(entry.profile.id),
-                );
-              }}
-              onStart={() => {
-                portActions.activateProfileAction(entry.profile.id, async () =>
-                  props.onStart(entry.profile.id),
-                );
-              }}
-              onStop={() => {
-                portActions.activateProfileAction(entry.profile.id, async () =>
-                  props.onStop(entry.profile.id),
-                );
-              }}
-              onToggleActions={() => {
-                portActions.setActionMenuProfileId((current) =>
-                  current === entry.profile.id ? null : entry.profile.id,
-                );
-              }}
-              pending={portActions.pendingId === entry.profile.id}
-              position={serviceRowPosition(rows, index)}
-              profile={entry.profile}
-              webActionsVisible={portActions.actionMenuProfileId === entry.profile.id}
-            />
-          )
-        }
+        keyExtractor={serviceRowKey}
+        nestedScrollEnabled
+        renderItem={({ index, item }) => (
+          <PortListRow
+            index={index}
+            item={item}
+            portActions={portActions}
+            portForm={portForm}
+            props={props}
+            rows={rows}
+          />
+        )}
+        {...(props.scrollComponent === undefined ? {} : { scrollComponent: props.scrollComponent })}
+        showsVerticalScrollIndicator={false}
+        style={styles.list}
+        virtualized
       />
     </View>
+  );
+}
+
+function PortListNotices({
+  actionError,
+  groups,
+  props,
+  query,
+  segment,
+}: {
+  readonly actionError: string | null;
+  readonly groups: PortListProjection["groups"];
+  readonly props: PortForwardingManagerProps;
+  readonly query: string;
+  readonly segment: ServiceSegment;
+}): React.JSX.Element {
+  return (
+    <>
+      {actionError !== null && <InlineError value={actionError} />}
+      {loadingNotice(props)}
+      {errorNotice(props)}
+      {emptyNotice({ groupCount: groups.length, props, query, segment })}
+    </>
+  );
+}
+
+function loadingNotice(props: PortForwardingManagerProps): React.JSX.Element | null {
+  return props.discoveryStatus === "loading" && props.discoveredPorts.length === 0 ? (
+    <InfoRow
+      icon="scan-outline"
+      loading
+      subtitle="Reading localhost listeners"
+      title="Looking for open ports…"
+    />
+  ) : null;
+}
+
+function errorNotice(props: PortForwardingManagerProps): React.JSX.Element | null {
+  return props.discoveryStatus === "error" ? (
+    <InfoRow
+      icon="alert-circle-outline"
+      subtitle={props.discoveryError ?? "Waiting for automatic discovery"}
+      title="Could not scan ports"
+    />
+  ) : null;
+}
+
+function emptyNotice({
+  groupCount,
+  props,
+  query,
+  segment,
+}: {
+  readonly groupCount: number;
+  readonly props: PortForwardingManagerProps;
+  readonly query: string;
+  readonly segment: ServiceSegment;
+}): React.JSX.Element | null {
+  if (props.discoveryStatus !== "ready" || groupCount !== 0) {
+    return null;
+  }
+  return (
+    <InfoRow
+      icon={segment === "excluded" ? "ban-outline" : "checkmark-circle-outline"}
+      subtitle={query === "" ? emptySegmentSubtitle(segment) : "Try another name, category or port"}
+      title={emptySegmentTitle(segment)}
+    />
+  );
+}
+
+function PortListRow({
+  index,
+  item,
+  portActions,
+  portForm,
+  props,
+  rows,
+}: {
+  readonly index: number;
+  readonly item: ServiceListRow;
+  readonly portActions: ReturnType<typeof usePortActions>;
+  readonly portForm: ReturnType<typeof usePortForm>;
+  readonly props: PortForwardingManagerProps;
+  readonly rows: readonly ServiceListRow[];
+}): React.JSX.Element {
+  if (item.type === "group") {
+    return (
+      <View style={styles.groupCell}>
+        <SectionLabel value={item.group} />
+      </View>
+    );
+  }
+  if (item.type === "candidate") {
+    return (
+      <CandidateRow
+        candidate={item.candidate}
+        onExclude={() => void portActions.excludePort(item.candidate)}
+        onPress={() => void portActions.choosePort(item.candidate)}
+        pending={portActions.pendingPort === item.candidate.port}
+        position={serviceRowPosition(rows, index)}
+      />
+    );
+  }
+  return (
+    <ForwardingRow
+      kind={item.kind}
+      onEdit={() => {
+        portForm.openEdit(item.profile);
+      }}
+      onInclude={() => {
+        portActions.activateProfileAction(item.profile.id, async () =>
+          props.onSetPreference(item.profile.id, "included"),
+        );
+      }}
+      onOpen={() => {
+        if (item.profile.previewUrl !== null) {
+          props.onOpenBrowser(item.profile.label, item.profile.previewUrl);
+        }
+      }}
+      onReconnect={() => {
+        portActions.activateProfileAction(item.profile.id, async () =>
+          props.onReconnect(item.profile.id),
+        );
+      }}
+      onRemove={() => {
+        portActions.activateProfileAction(item.profile.id, async () =>
+          props.onRemove(item.profile.id),
+        );
+      }}
+      onStart={() => {
+        portActions.activateProfileAction(item.profile.id, async () =>
+          props.onStart(item.profile.id),
+        );
+      }}
+      onStop={() => {
+        portActions.activateProfileAction(item.profile.id, async () =>
+          props.onStop(item.profile.id),
+        );
+      }}
+      onToggleActions={() => {
+        portActions.setActionMenuProfileId((current) =>
+          current === item.profile.id ? null : item.profile.id,
+        );
+      }}
+      pending={portActions.pendingId === item.profile.id}
+      position={serviceRowPosition(rows, index)}
+      profile={item.profile}
+      webActionsVisible={portActions.actionMenuProfileId === item.profile.id}
+    />
   );
 }

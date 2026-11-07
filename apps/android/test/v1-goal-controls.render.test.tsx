@@ -31,6 +31,7 @@ jest.mock("@expo/ui/jetpack-compose", () => {
   return { Host: NativeView, RNHostView: NativeView, DropdownMenu: Menu };
 });
 jest.mock("@expo/ui/jetpack-compose/modifiers", () => ({
+  fillMaxSize: () => ({ fillMaxSize: true }),
   width: (value: number) => ({ width: value }),
 }));
 

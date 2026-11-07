@@ -14,6 +14,7 @@
 //! sent again. Such a change reaches open conversations as a thread
 //! invalidation ([`history_invalidation`]).
 
+use agent_core::model::turns::is_invalid_turns_cursor;
 use serde_json::{Value, json};
 
 use super::{
@@ -24,7 +25,7 @@ use crate::agent::{
     model::{
         AgentTurn, ERROR_INVALID_PARAMS, ItemsView, SortDirection, ThreadTurnsParams, TurnStatus,
     },
-    provider::{HistoryChange, SubagentsChange},
+    provider::{HistoryChange, ProviderError, SubagentsChange},
 };
 
 /// Opaque witness of the provider-owned history source. The provider's
@@ -36,6 +37,7 @@ use crate::agent::{
 /// the summary view and no longer counted as activity.
 pub const SOURCE_WITNESS: &str = "codewide-agent-history-v4";
 const MAX_PAGE_SIZE: u64 = 100;
+const ERROR_STALE_HISTORY: i64 = -32_021;
 
 /// Direction of a semantic page relative to its anchor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,6 +48,17 @@ pub enum Anchor {
 
 fn is_immutable(turn: &AgentTurn) -> bool {
     turn.status != TurnStatus::InProgress
+}
+
+/// A client anchor the provider no longer has is the stale-cursor contract:
+/// the client reloads the tail instead of retrying the same page.
+fn history_failure(error: &ProviderError) -> RpcFailure {
+    match error {
+        ProviderError::Rejected(rejected) if is_invalid_turns_cursor(rejected) => {
+            RpcFailure::new(ERROR_STALE_HISTORY, rejected.message.clone())
+        }
+        _ => RpcFailure::from_provider(error),
+    }
 }
 
 /// Reads one semantic page.
@@ -82,7 +95,7 @@ pub async fn page(target: &Target, params: &Value, anchor: Anchor) -> Result<Val
             items_view: ItemsView::Summary,
         })
         .await
-        .map_err(|error| RpcFailure::from_provider(&error))?;
+        .map_err(|error| history_failure(&error))?;
     let mut turns = result
         .turns
         .into_iter()
@@ -253,7 +266,8 @@ pub fn subagents_invalidation(change: &SubagentsChange) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::model::{AppThreadId, TurnId, TurnOrigin};
+    use crate::agent::model::{AppThreadId, RpcError, TurnId, TurnOrigin};
+    use agent_core::model::turns::page_turns;
 
     fn turn(id: &'static str, completed_at: i64) -> AgentTurn {
         AgentTurn {
@@ -279,6 +293,29 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_lost_anchor_asks_the_client_to_reload_and_other_failures_pass_through() {
+        let lost = page_turns(
+            &[turn("a", 2)],
+            Some("gone"),
+            10,
+            SortDirection::Asc,
+            ItemsView::Summary,
+        )
+        .err()
+        .map(|error| history_failure(&ProviderError::Rejected(error)));
+        assert_eq!(lost.map(|failure| failure.code), Some(ERROR_STALE_HISTORY));
+
+        let other = history_failure(&ProviderError::Protocol("broken".into()));
+        assert_eq!(other.code, -32_020);
+        let invalid = history_failure(&ProviderError::Rejected(RpcError {
+            code: ERROR_INVALID_PARAMS,
+            message: "limit is invalid".into(),
+            data: None,
+        }));
+        assert_eq!(invalid.code, ERROR_INVALID_PARAMS);
     }
 
     #[test]

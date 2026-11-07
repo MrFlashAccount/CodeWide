@@ -7,6 +7,9 @@ import {
 import { BubbleContent } from "../../../rendering/Bubble";
 import { MessageAttachmentCard } from "../../../rendering/MessageAttachmentCard";
 import { MessageAttachmentGrid } from "../../../rendering/MessageAttachmentTile";
+import { MessageVideoGallery } from "../../../rendering/MessageVideoGallery";
+import type { UserMessageAttachment } from "../../../rendering/user-message-attachments";
+import { isAttachmentVideo } from "../../../rendering/videoPreview";
 import { richMarkdownLayout } from "../../../rendering/rich-markdown-layout";
 import { AppText as Text } from "../../../ui/Typography";
 import { AgentResponseMarkdown } from "../content/AgentResponseMarkdown";
@@ -46,6 +49,7 @@ export function renderAgentTurnBody(
     requestPrompt: TurnTimelineItemProps["requestPrompt"];
   },
 ) {
+  const artifactGroups = groupArtifacts(presentation.artifacts);
   return (
     <ArtifactImageReferences.Provider value={artifactImageReferences(presentation.artifacts)}>
       <BubbleContent>
@@ -91,7 +95,6 @@ export function renderAgentTurnBody(
             part.kind === "collapsedActivity" ? (
               <CollapsedTurnActivity
                 compact={compact}
-                forceExpanded={forceExpanded}
                 indexes={part.indexes}
                 item={turn}
                 key={part.key}
@@ -120,7 +123,6 @@ export function renderAgentTurnBody(
               <TurnActivitySegment
                 animateNew={animateLiveUpdates}
                 compact={compact}
-                forceExpanded={forceExpanded}
                 key={part.key}
                 part={part}
                 turnKey={turn.key}
@@ -133,22 +135,29 @@ export function renderAgentTurnBody(
         {presentation.artifacts.length > 0 && (
           <View style={styles.userMessageContent} testID="agent-artifacts">
             <UserImageGallery
-              attachments={presentation.artifacts.filter(
-                (attachment) => attachment.kind === "image",
-              )}
+              attachments={artifactGroups.images}
               {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
             />
-            {presentation.artifacts.some((attachment) => attachment.kind !== "image") && (
+            {artifactGroups.videos.length > 0 && (
+              <MessageVideoGallery style={styles.agentAttachmentGrid}>
+                {artifactGroups.videos.map((attachment) => (
+                  <MessageAttachmentCard
+                    attachment={attachment}
+                    key={userMessageAttachmentReference(attachment)}
+                    {...(getTransferAccess === undefined ? {} : { getAccess: getTransferAccess })}
+                  />
+                ))}
+              </MessageVideoGallery>
+            )}
+            {artifactGroups.files.length > 0 && (
               <MessageAttachmentGrid style={styles.agentAttachmentGrid}>
-                {presentation.artifacts
-                  .filter((attachment) => attachment.kind !== "image")
-                  .map((attachment) => (
-                    <MessageAttachmentCard
-                      attachment={attachment}
-                      key={userMessageAttachmentReference(attachment)}
-                      {...(getTransferAccess === undefined ? {} : { getAccess: getTransferAccess })}
-                    />
-                  ))}
+                {artifactGroups.files.map((attachment) => (
+                  <MessageAttachmentCard
+                    attachment={attachment}
+                    key={userMessageAttachmentReference(attachment)}
+                    {...(getTransferAccess === undefined ? {} : { getAccess: getTransferAccess })}
+                  />
+                ))}
               </MessageAttachmentGrid>
             )}
           </View>
@@ -167,6 +176,26 @@ export function renderAgentTurnBody(
       </BubbleContent>
     </ArtifactImageReferences.Provider>
   );
+}
+
+function groupArtifacts(artifacts: readonly UserMessageAttachment[]): {
+  readonly files: UserMessageAttachment[];
+  readonly images: UserMessageAttachment[];
+  readonly videos: UserMessageAttachment[];
+} {
+  const files: UserMessageAttachment[] = [];
+  const images: UserMessageAttachment[] = [];
+  const videos: UserMessageAttachment[] = [];
+  for (const artifact of artifacts) {
+    if (artifact.kind === "image") {
+      images.push(artifact);
+    } else if (isAttachmentVideo(artifact.name)) {
+      videos.push(artifact);
+    } else {
+      files.push(artifact);
+    }
+  }
+  return { files, images, videos };
 }
 
 function renderBlockBody(block: { body: string | null }): string {

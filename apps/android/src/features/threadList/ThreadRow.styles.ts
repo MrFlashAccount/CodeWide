@@ -1,11 +1,12 @@
 import { StyleSheet } from "react-native";
-import { colors, iconSize, radii, spacing, typeScale } from "../../theme";
+import { colors, iconSize, radii, typeScale } from "../../theme";
 import { threadListLayout } from "../../ui/thread-list-layout";
-import { THREAD_LIST_ROW_CONTENT_HEIGHT, THREAD_LIST_ROW_VERTICAL_MARGIN } from "./threadListModel";
-import { THREAD_ROW_PRESSED_OPACITY } from "./ThreadRowLinkTrigger.types";
+import { THREAD_LIST_ROW_VERTICAL_MARGIN } from "./threadListModel";
+
+/** The failed-state glyph sits in the title line's glyph box. */
+const STATUS_ICON_SLOT = 18;
 
 export const styles = StyleSheet.create({
-  pressed: { opacity: THREAD_ROW_PRESSED_OPACITY },
   selectionBar: { display: "none" },
   sheetTitle: {
     color: colors.text,
@@ -37,102 +38,11 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     width: iconSize.indicator,
   },
-  threadAttentionIcon: {
-    alignItems: "center",
-    flexShrink: 0,
-    height: iconSize.indicator,
-    justifyContent: "center",
-    width: iconSize.indicator,
-  },
-  threadMeta: {
-    alignItems: "center",
-    flexDirection: "row",
-    flexShrink: 0,
-    gap: spacing.xxs,
-  },
-  threadPreview: {
-    color: colors.textMuted,
-    flex: 1,
-    flexShrink: 1,
-    maxWidth: "100%",
-    minWidth: 0,
-    ...typeScale.label,
-  },
-  threadPreviewLine: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.xs,
-    maxWidth: "100%",
-    minWidth: 0,
-    width: "100%",
-  },
-  threadRow: {
-    alignItems: "center",
-    alignSelf: "stretch",
-    borderRadius: radii.selected,
-    flexDirection: "row",
-    gap: spacing.xs,
-    height: THREAD_LIST_ROW_CONTENT_HEIGHT,
-    marginHorizontal: threadListLayout.edgeInset,
-    marginVertical: THREAD_LIST_ROW_VERTICAL_MARGIN,
-    maxWidth: "100%",
-    minWidth: 0,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.compact,
-    position: "relative",
-  },
-  threadRowSelected: { backgroundColor: colors.secondaryContainer },
-  threadRowSwipeChild: {
-    backgroundColor: colors.threadListSurface,
-    borderRadius: radii.selected,
-    marginHorizontal: 0,
-    marginVertical: 0,
-  },
   threadStatusIcon: {
     alignItems: "center",
     flexShrink: 0,
-    height: 18,
+    height: STATUS_ICON_SLOT,
     justifyContent: "center",
-    width: 18,
-  },
-  threadText: {
-    flex: 1,
-    gap: spacing.optical,
-    maxWidth: "100%",
-    minWidth: 0,
-  },
-  threadTime: {
-    color: colors.textMuted,
-    flexShrink: 0,
-    ...typeScale.caption,
-    fontVariant: ["tabular-nums"],
-    textAlign: "right",
-  },
-  threadTitleLine: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: spacing.xs,
-    maxWidth: "100%",
-    minWidth: 0,
-    width: "100%",
-  },
-  threadTitleSlot: {
-    alignItems: "flex-start",
-    flex: 1,
-    minWidth: 0,
-  },
-  unreadDot: {
-    backgroundColor: colors.primary,
-    borderRadius: radii.pill,
-    flexShrink: 0,
-    height: 7,
-    width: 7,
-  },
-  unreadSlot: {
-    alignItems: "center",
-    flexShrink: 0,
-    height: 18,
-    justifyContent: "center",
-    width: 7,
+    width: STATUS_ICON_SLOT,
   },
 });

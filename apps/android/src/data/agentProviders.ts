@@ -40,6 +40,51 @@ export type ProviderLimitWindow = {
   readonly windowDurationMins: number | null;
 };
 
+export type ProviderResetGrant = {
+  readonly clears: readonly string[];
+  readonly expiresAt: number | null;
+  readonly id: string;
+  readonly kind: "full" | "other" | "session" | "weekly";
+  readonly label: string;
+  readonly paused: boolean;
+  readonly resetsLeft: number;
+  readonly resetsTotal: number;
+  readonly startsAt: number | null;
+  readonly unavailableReason: string | null;
+  readonly usableNow: boolean;
+  readonly useRequiresLimit: boolean;
+};
+
+export type ProviderRateLimitResets = {
+  readonly availableCount: number;
+  readonly cooldownUntil: number | null;
+  readonly eligible: boolean;
+  readonly grants: readonly ProviderResetGrant[];
+  readonly ineligibleReason: string | null;
+  readonly nextGrantId: string | null;
+  readonly weeklyResetsAt: number | null;
+};
+
+export const PROVIDER_RATE_LIMIT_RESET_CONSUME_METHOD =
+  "companion/providerRateLimits/reset/consume";
+
+export type ProviderResetConsumption = {
+  readonly cleared: readonly string[];
+  readonly outcome:
+    | "alreadyUsed"
+    | "authError"
+    | "cooldown"
+    | "error"
+    | "ineligible"
+    | "notLimited"
+    | "rateLimited"
+    | "reset"
+    | "unavailable";
+  readonly reason: string | null;
+  readonly resetsLeft: number | null;
+  readonly weeklyResetsAt: string | null;
+};
+
 /**
  * Provider-level subscription limits (not an account pool):
  * - `notReported` — the provider does not report them (the entry has no `rateLimits`);
@@ -51,6 +96,7 @@ export type ProviderLimits =
   | { readonly kind: "pending" }
   | {
       readonly kind: "known";
+      readonly resets: ProviderRateLimitResets | null;
       /** Unix seconds of the provider's latest report. */
       readonly updatedAt: number;
       readonly windows: readonly ProviderLimitWindow[];
@@ -101,9 +147,66 @@ const MAX_ACCOUNT_LABEL_CHARACTERS = 254;
 const MAX_LIMIT_WINDOWS = 16;
 const MAX_WINDOW_ID_CHARACTERS = 64;
 const MAX_WINDOW_LABEL_CHARACTERS = 64;
+const MAX_RESET_GRANTS = 32;
+const MAX_RESET_ID_CHARACTERS = 40;
+const MAX_RESET_LABEL_CHARACTERS = 128;
+const MAX_RESET_REASON_CHARACTERS = 64;
 const PERCENT_MAX = 100;
 const NOT_REPORTED: ProviderLimits = { kind: "notReported" };
 const PENDING: ProviderLimits = { kind: "pending" };
+const RESET_CONSUMPTION_OUTCOMES: ReadonlySet<string> = new Set([
+  "alreadyUsed",
+  "authError",
+  "cooldown",
+  "error",
+  "ineligible",
+  "notLimited",
+  "rateLimited",
+  "reset",
+  "unavailable",
+]);
+
+/** Validates the result of consuming a provider reset grant. */
+export function parseProviderResetConsumption(value: unknown): ProviderResetConsumption | null {
+  const record = unknownRecord(value);
+  if (record === null || !isResetConsumptionOutcome(record.outcome)) {
+    return null;
+  }
+  const fields = parseResetConsumptionFields(record);
+  return fields === null ? null : { ...fields, outcome: record.outcome };
+}
+
+function parseResetConsumptionFields(
+  record: Record<string, unknown>,
+): Omit<ProviderResetConsumption, "outcome"> | null {
+  const cleared = boundedTexts(record.cleared, MAX_LIMIT_WINDOWS, MAX_WINDOW_ID_CHARACTERS);
+  const resetsLeft = nonNegativeIntegerOrNull(record.resetsLeft);
+  if (cleared === null || resetsLeft === undefined) {
+    return null;
+  }
+  const text = parseResetConsumptionTextFields(record);
+  return text === null ? null : { cleared, resetsLeft, ...text };
+}
+
+function parseResetConsumptionTextFields(
+  record: Record<string, unknown>,
+): Pick<ProviderResetConsumption, "reason" | "weeklyResetsAt"> | null {
+  const reason = boundedTextOrNull(record.reason, MAX_RESET_REASON_CHARACTERS);
+  const weeklyResetsAt = boundedTextOrNull(record.weeklyResetsAt, MAX_RESET_LABEL_CHARACTERS);
+  return reason === undefined || weeklyResetsAt === undefined ? null : { reason, weeklyResetsAt };
+}
+
+function isResetConsumptionOutcome(value: unknown): value is ProviderResetConsumption["outcome"] {
+  return typeof value === "string" && RESET_CONSUMPTION_OUTCOMES.has(value);
+}
+
+function nonNegativeIntegerOrNull(value: unknown): number | null | undefined {
+  return value === null ? null : isNonNegativeInteger(value) ? value : undefined;
+}
+
+function boundedTextOrNull(value: unknown, limit: number): string | null | undefined {
+  return value === null ? null : (boundedText(value, limit) ?? undefined);
+}
 
 /** Validates one read result or change notification payload; `null` for any other shape. */
 export function parseAgentProvidersResult(value: unknown): AgentProvidersSnapshot | null {
@@ -230,8 +333,11 @@ function entryLimits(row: Record<string, unknown>): ProviderLimits {
  */
 function parseLimits(value: unknown): ProviderLimits {
   const record = unknownRecord(value);
-  const rows = record === null ? null : boundedWindowRows(record.windows);
-  const updatedAt: unknown = record?.updatedAt;
+  if (record === null) {
+    return PENDING;
+  }
+  const rows = boundedWindowRows(record.windows);
+  const { updatedAt } = record;
   if (rows === null || !isPositiveInteger(updatedAt)) {
     return PENDING;
   }
@@ -242,7 +348,119 @@ function parseLimits(value: unknown): ProviderLimits {
       windows.push(window);
     }
   }
-  return { kind: "known", updatedAt, windows };
+  return { kind: "known", resets: parseResets(record.resets), updatedAt, windows };
+}
+
+/** An absent or malformed additive reset block does not hide valid limit windows. */
+function parseResets(value: unknown): ProviderRateLimitResets | null {
+  const record = unknownRecord(value);
+  const grants = record === null ? null : boundedResetRows(record.grants);
+  if (
+    record === null ||
+    grants === null ||
+    typeof record.eligible !== "boolean" ||
+    !isNonNegativeInteger(record.availableCount)
+  ) {
+    return null;
+  }
+  const parsedGrants: ProviderResetGrant[] = [];
+  for (const grant of grants) {
+    const parsed = parseResetGrant(grant);
+    if (parsed !== null) {
+      parsedGrants.push(parsed);
+    }
+  }
+  return {
+    availableCount: record.availableCount,
+    cooldownUntil: positiveIntegerOrNull(record.cooldownUntil),
+    eligible: record.eligible,
+    grants: parsedGrants,
+    ineligibleReason: optionalBoundedText(record.ineligibleReason, MAX_RESET_REASON_CHARACTERS),
+    nextGrantId: optionalBoundedText(record.nextGrantId, MAX_RESET_ID_CHARACTERS),
+    weeklyResetsAt: positiveIntegerOrNull(record.weeklyResetsAt),
+  };
+}
+
+function boundedResetRows(value: unknown): readonly unknown[] | null {
+  return Array.isArray(value) && value.length <= MAX_RESET_GRANTS ? value : null;
+}
+
+function parseResetGrant(value: unknown): ProviderResetGrant | null {
+  const row = unknownRecord(value);
+  if (row === null) {
+    return null;
+  }
+  const identity = resetGrantIdentity(row);
+  const availability = resetGrantAvailability(row);
+  if (identity === null || availability === null) {
+    return null;
+  }
+  return {
+    clears: identity.clears,
+    expiresAt: positiveIntegerOrNull(row.expiresAt),
+    id: identity.id,
+    kind: identity.kind,
+    label: identity.label,
+    paused: availability.paused,
+    resetsLeft: availability.resetsLeft,
+    resetsTotal: availability.resetsTotal,
+    startsAt: positiveIntegerOrNull(row.startsAt),
+    unavailableReason: optionalBoundedText(row.unavailableReason, MAX_RESET_REASON_CHARACTERS),
+    usableNow: availability.usableNow,
+    useRequiresLimit: availability.useRequiresLimit,
+  };
+}
+
+function resetGrantIdentity(
+  row: Record<string, unknown>,
+): Pick<ProviderResetGrant, "clears" | "id" | "kind" | "label"> | null {
+  const id = boundedText(row.id, MAX_RESET_ID_CHARACTERS);
+  const label = boundedString(row.label, MAX_RESET_LABEL_CHARACTERS);
+  const clears = boundedTexts(row.clears, MAX_LIMIT_WINDOWS, MAX_WINDOW_ID_CHARACTERS);
+  const { kind } = row;
+  if (id === null || label === null || clears === null || !isResetKind(kind)) {
+    return null;
+  }
+  return { clears, id, kind, label };
+}
+
+function resetGrantAvailability(
+  row: Record<string, unknown>,
+): Pick<
+  ProviderResetGrant,
+  "paused" | "resetsLeft" | "resetsTotal" | "usableNow" | "useRequiresLimit"
+> | null {
+  const { paused, resetsLeft, resetsTotal, usableNow, useRequiresLimit } = row;
+  return typeof paused === "boolean" &&
+    isNonNegativeInteger(resetsLeft) &&
+    isNonNegativeInteger(resetsTotal) &&
+    typeof usableNow === "boolean" &&
+    typeof useRequiresLimit === "boolean"
+    ? { paused, resetsLeft, resetsTotal, usableNow, useRequiresLimit }
+    : null;
+}
+
+function boundedTexts(
+  value: unknown,
+  countLimit: number,
+  textLimit: number,
+): readonly string[] | null {
+  if (!Array.isArray(value) || value.length > countLimit) {
+    return null;
+  }
+  const values: string[] = [];
+  for (const item of value) {
+    const text = boundedText(item, textLimit);
+    if (text === null) {
+      return null;
+    }
+    values.push(text);
+  }
+  return values;
+}
+
+function isResetKind(value: unknown): value is ProviderResetGrant["kind"] {
+  return value === "session" || value === "weekly" || value === "full" || value === "other";
 }
 
 function boundedWindowRows(value: unknown): readonly unknown[] | null {
@@ -296,6 +514,10 @@ function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
 function isPercent(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= PERCENT_MAX;
 }
@@ -316,6 +538,14 @@ function boundedText(value: unknown, limit: number): string | null {
   }
   const trimmed = value.trim();
   return trimmed === "" || trimmed.length > limit ? null : trimmed;
+}
+
+function boundedString(value: unknown, limit: number): string | null {
+  return typeof value === "string" && value.length <= limit ? value.trim() : null;
+}
+
+function optionalBoundedText(value: unknown, limit: number): string | null {
+  return value === null ? null : boundedText(value, limit);
 }
 
 /** Names whose value is `true` or a non-empty mode string. */

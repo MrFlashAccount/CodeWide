@@ -166,6 +166,11 @@ impl RowEvent {
         self.kind == EventKind::Excluded
     }
 
+    /// Whether the event starts or ends a turn or changes the thread status.
+    pub(super) fn is_lifecycle(&self) -> bool {
+        matches!(&self.kind, EventKind::Update(update) if update.status.is_some())
+    }
+
     /// Reduces a journaled payload (patch attached) at `cursor`. `streamed`
     /// is the accumulated answer preview observed before projection; `seed`
     /// the decorated row of a `thread/started`. `None` when the payload

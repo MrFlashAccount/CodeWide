@@ -1,6 +1,6 @@
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { ThreadAttachmentResource } from "../../data/thread-resource-types";
-import { isAttachmentVideo } from "../../rendering/AttachmentVideoPreview";
+import { isAttachmentVideo } from "../../rendering/videoPreview";
 import { remoteFileKind, resolveRemoteDocumentLocation } from "../../rendering/document-preview";
 import {
   useDocumentDownload,

@@ -22,6 +22,7 @@ export function WorkspaceThreadList({
   mobileVisibleArchivedThreads,
   mobileVisibleThreads,
   normalizedMobileThreadQuery,
+  openDownloads,
   openGlobalSearch,
   openProjects,
   openSettings,
@@ -66,6 +67,7 @@ export function WorkspaceThreadList({
   mobileVisibleArchivedThreads: ThreadSidebarProps["archivedThreads"];
   mobileVisibleThreads: ThreadSidebarProps["threads"];
   normalizedMobileThreadQuery: string;
+  openDownloads: () => void;
   openGlobalSearch: ThreadSidebarProps["onOpenSearch"];
   openProjects: () => void;
   openSettings: () => void;
@@ -128,6 +130,7 @@ export function WorkspaceThreadList({
                 onOffsetChange: (offset) => {
                   mobileThreadOffset.write(sidebarScopeKey, offset);
                 },
+                onOpenDownloads: openDownloads,
                 onOpenProject: openSidebarProject,
                 onOpenSearch: openGlobalSearch,
                 onRefreshAccountRateLimits: refreshThreadListAccountRateLimits,
@@ -172,6 +175,7 @@ export function WorkspaceThreadList({
                 onOffsetChange: (offset) => {
                   mobileThreadOffset.write(sidebarScopeKey, offset);
                 },
+                onOpenDownloads: openDownloads,
                 onOpenProject: openSidebarProject,
                 onOpenSearch: openGlobalSearch,
                 onQueryChange: setMobileThreadQuery,

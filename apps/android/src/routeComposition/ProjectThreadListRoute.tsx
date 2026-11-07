@@ -57,6 +57,7 @@ export function ProjectThreadListRoute({
           onModeChange: state.setProjectListMode,
           onNewThread: createThread,
           onOffsetChange: changeOffset,
+          onOpenDownloads: resources.openDownloads,
           onOpenProject: resources.openSidebarProject,
           onOpenSearch: resources.openGlobalSearch,
           onQueryChange: changeQuery,

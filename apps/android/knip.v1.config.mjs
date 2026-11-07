@@ -15,13 +15,21 @@ export default {
     "babel-plugin-react-compiler",
     // babel.config.js selects this preset by module name while Knip's Babel plugin is disabled.
     "babel-preset-expo",
+    // Worklets Bundle Mode resolves this preset internally from the app package boundary.
+    "@babel/preset-typescript",
     // Gradle copies the selected grammar files directly from this package into native assets.
     "tm-grammars",
+    // metro.config.js keeps the transform cache beside the worklets output while Knip's Metro
+    // plugin is disabled.
+    "metro-cache",
   ],
+  // Reacticx Tray is vendored unchanged; its compound API intentionally exports
+  // more primitives than this first consumer uses.
+  ignore: ["src/vendor/reacticx/**"],
   // WHY: Metro resolves these exact module names to native, Android, or web files before
   // the unsuffixed fallback. Knip does not model React Native platform resolution.
   ignoreUnresolved: [
-    /^(?:\.\.?\/)+(?:[^/]+\/)*(?:ActionMenu|AppDialogSurface|BrowserDevToolsPane|CodeReviewEditor|CodeWideMenu|ComposerDeliveryMenu|ComposerEditorTrialEntry|ComposerMarkdownInput|Diagram|AppRootProviders|InternalBrowser|MermaidDiagram|MessageActionMenu|ReviewableText|SpeedscopeProfileViewer|TerminalWorkspace|ThinkingLevelSlider|TurnControlMenus|VoiceAura|account-rate-limits-database|connection-profile-database|file-transfer|globalSupervisorBindingDatabase|interactive-terminal-store|local-authentication|native-engine|nativeTerminalInventory|pending-request-database|performance-metrics|questionDraftStorage|quickdraw-image-source|remoteProjectCatalogCache|send-feedback|thread-detail-database|thread-summary-database|thread-ui-state-database|turn-controls-collection|user-preferences-database)$/u,
+    /^(?:\.\.?\/)+(?:[^/]+\/)*(?:ActionMenu|AppDialogSurface|BrowserDevToolsPane|CodeReviewEditor|CodeWideMenu|ComposerDeliveryMenu|ComposerEditorTrialEntry|ComposerMarkdownInput|Diagram|AppRootProviders|InternalBrowser|MermaidDiagram|MessageActionMenu|ReviewableText|SpeedscopeProfileViewer|TerminalWorkspace|ThinkingLevelSlider|TurnControlMenus|VoiceAura|account-rate-limits-database|connection-profile-database|downloadHistoryStorage|file-transfer|globalSupervisorBindingDatabase|interactive-terminal-store|local-authentication|native-engine|nativeTerminalInventory|pending-request-database|performance-metrics|questionDraftStorage|quickdraw-image-source|remoteProjectCatalogCache|send-feedback|thread-detail-database|thread-summary-database|thread-ui-state-database|turn-controls-collection|user-preferences-database)$/u,
   ],
   entry: [
     "app/legacy.tsx",
@@ -33,5 +41,10 @@ export default {
     "src/**/*.android.{ts,tsx}",
     "src/**/*.web.{ts,tsx}",
   ],
-  project: ["app/legacy.tsx", "app/(workspace)/**/*.{ts,tsx}", "src/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"],
+  project: [
+    "app/legacy.tsx",
+    "app/(workspace)/**/*.{ts,tsx}",
+    "src/**/*.{ts,tsx}",
+    "test/**/*.{ts,tsx}",
+  ],
 };

@@ -283,6 +283,12 @@ codesign --force --sign - --identifier "$app_identifier" "$test_app"
 codesign --verify --deep --strict "$test_app"
 baseline_info="$test_app/Contents/Info.plist"
 baseline_version=$(plutil -extract CFBundleShortVersionString raw -o - "$baseline_info")
+forge_helper="$test_app/Contents/Helpers/codewide-forge-github"
+# A baseline from before forge support has no helper.
+baseline_forge_version=absent
+if [ -x "$forge_helper" ]; then
+  baseline_forge_version=$("$forge_helper" --version)
+fi
 cp "$target_dmg" "$feed_dir/"
 
 printf '%s' "$private_key" | "$sparkle_bin/generate_appcast" \
@@ -355,6 +361,18 @@ done
 if [ "$updated" != true ]; then
   echo "Sparkle update did not produce a healthy new runtime." >&2
   dump_diagnostics
+  exit 1
+fi
+# The Sparkle update replaced the signed forge helper: the next plugin spawn
+# runs the new version.
+if [ ! -x "$forge_helper" ] || ! codesign --verify --strict "$forge_helper"; then
+  echo "The updated app has no signed GitHub forge helper." >&2
+  exit 1
+fi
+updated_forge_version=$("$forge_helper" --version)
+if [ "$updated_forge_version" != "codewide-forge-github $target_version" ] || \
+   [ "$updated_forge_version" = "$baseline_forge_version" ]; then
+  echo "Sparkle did not replace the GitHub forge helper: $baseline_forge_version -> $updated_forge_version" >&2
   exit 1
 fi
 

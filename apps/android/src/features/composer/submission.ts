@@ -283,6 +283,7 @@ export function useComposerDeliveryActions({
   queuedComposerEditBusy,
   saveQueuedComposerEdit,
   send,
+  sendAvailable,
   threadLifecycleActive,
   uploadsBlockSend,
   voiceError,
@@ -408,6 +409,7 @@ export function useComposerDeliveryActions({
     (editingQueuedMessage && onEditQueued === undefined) ||
     pastedAttachmentPending ||
     uploadsBlockSend ||
+    (!sendAvailable && !editingQueuedMessage && !stoppingResponse && !resumingResponse) ||
     (voicePhase === "idle" &&
       !stoppingResponse &&
       !resumingResponse &&

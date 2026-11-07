@@ -47,35 +47,37 @@ pub struct IndexTables {
 }
 
 impl IndexTables {
-    const fn files(&self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
+    pub(crate) const fn files(&self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
         TableDefinition::new(self.files)
     }
 
-    const fn records(&self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
+    pub(crate) const fn records(&self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
         TableDefinition::new(self.records)
     }
 
-    const fn turns(&self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
+    pub(crate) const fn turns(&self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
         TableDefinition::new(self.turns)
     }
 
-    const fn turns_by_id(&self) -> TableDefinition<'static, &'static [u8], u64> {
+    pub(crate) const fn turns_by_id(&self) -> TableDefinition<'static, &'static [u8], u64> {
         TableDefinition::new(self.turns_by_id)
     }
 
-    const fn removed_turns(&self) -> TableDefinition<'static, &'static [u8], u8> {
+    pub(crate) const fn removed_turns(&self) -> TableDefinition<'static, &'static [u8], u8> {
         TableDefinition::new(self.removed_turns)
     }
 
-    const fn turn_summaries(&self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
+    pub(crate) const fn turn_summaries(
+        &self,
+    ) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
         TableDefinition::new(self.turn_summaries)
     }
 
-    const fn content(&self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
+    pub(crate) const fn content(&self) -> TableDefinition<'static, &'static [u8], &'static [u8]> {
         TableDefinition::new(self.content)
     }
 
-    const fn content_by_file(&self) -> TableDefinition<'static, &'static [u8], u8> {
+    pub(crate) const fn content_by_file(&self) -> TableDefinition<'static, &'static [u8], u8> {
         TableDefinition::new(self.content_by_file)
     }
 }
@@ -128,9 +130,9 @@ impl DerivedIndexSchema for IndexTables {
 /// One provider's offset index over the shared host index database, and the
 /// companion thread index the scan publishes metadata to.
 pub struct IndexStore {
-    database: Arc<Database>,
+    pub(crate) database: Arc<Database>,
     threads: Arc<dyn HostThreadIndex>,
-    tables: IndexTables,
+    pub(crate) tables: IndexTables,
     index_locks: Mutex<HashMap<[u8; 32], Arc<Mutex<()>>>>,
 }
 
@@ -280,6 +282,20 @@ impl IndexStore {
         file_state: FileState,
     ) -> Result<(), StoreError> {
         let write = self.database.begin_write()?;
+        self.write_index_batch(&write, file_id, batch, file_state)?;
+        write.commit()?;
+        Ok(())
+    }
+
+    /// Writes one batch inside `write`; the caller commits it together with
+    /// any rows of its own.
+    pub(crate) fn write_index_batch(
+        &self,
+        write: &WriteTransaction,
+        file_id: &[u8; 32],
+        batch: IndexBatch<'_>,
+        file_state: FileState,
+    ) -> Result<(), StoreError> {
         {
             let mut table = write.open_table(self.tables.records())?;
             for (key, value) in batch.records {
@@ -306,7 +322,14 @@ impl IndexStore {
                     continue;
                 }
                 let value = turn.encode()?;
-                table.insert(key.as_slice(), value.as_slice())?;
+                if let Some(previous) = table.insert(key.as_slice(), value.as_slice())? {
+                    // A turn whose id changed must not stay reachable under
+                    // its former id.
+                    let previous = TurnRef::decode(previous.value())?;
+                    if previous.id != turn.id {
+                        by_id.remove(turn_id_key(file_id, &previous.id).as_slice())?;
+                    }
+                }
                 let id_key = turn_id_key(file_id, &turn.id);
                 by_id.insert(id_key.as_slice(), turn.start_offset)?;
             }
@@ -336,7 +359,6 @@ impl IndexStore {
             let mut files = write.open_table(self.tables.files())?;
             files.insert(file_id.as_slice(), file_state.encode().as_slice())?;
         }
-        write.commit()?;
         Ok(())
     }
 
@@ -468,6 +490,34 @@ impl IndexStore {
             return Ok(Vec::new());
         }
         let start = offset_key(file_id, after_offset.saturating_add(1));
+        let end = offset_key(file_id, u64::MAX);
+        let read = self.database.begin_read()?;
+        let table = read.open_table(self.tables.turns())?;
+        table
+            .range(start.as_slice()..=end.as_slice())?
+            .take(limit)
+            .map(|entry| {
+                let (_key, value) = entry?;
+                TurnRef::decode(value.value())
+            })
+            .collect()
+    }
+
+    /// Returns the oldest turns starting at or after `from_offset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index cannot be read or holds an invalid turn.
+    pub fn turns_asc_from(
+        &self,
+        file_id: &[u8; 32],
+        from_offset: u64,
+        limit: usize,
+    ) -> Result<Vec<TurnRef>, StoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let start = offset_key(file_id, from_offset);
         let end = offset_key(file_id, u64::MAX);
         let read = self.database.begin_read()?;
         let table = read.open_table(self.tables.turns())?;
@@ -711,7 +761,7 @@ impl FileState {
         self.indexed_from == 0
     }
 
-    fn encode(self) -> Vec<u8> {
+    pub(crate) fn encode(self) -> Vec<u8> {
         if self.is_complete() && self.modified_nanos == 0 {
             // Keep complete checkpoints byte-compatible with the previous
             // companion so a binary rollback can still consume mature indexes.
@@ -749,7 +799,7 @@ impl FileState {
         encoded
     }
 
-    fn decode(encoded: &[u8]) -> Result<Self, StoreError> {
+    pub(crate) fn decode(encoded: &[u8]) -> Result<Self, StoreError> {
         if encoded.len() == FILE_STATE_V1_BYTES && encoded[0] == 1 {
             return Ok(Self {
                 device: read_u64(&encoded[1..9])?,
@@ -824,7 +874,7 @@ fn content_reverse_key(file_id: &[u8; 32], digest: &[u8; 32], offset: u64) -> Ve
     key
 }
 
-fn turn_id_key(file_id: &[u8; 32], turn_id: &str) -> Vec<u8> {
+pub(crate) fn turn_id_key(file_id: &[u8; 32], turn_id: &str) -> Vec<u8> {
     let mut key = Vec::with_capacity(33 + turn_id.len());
     key.extend_from_slice(file_id);
     key.push(0);
@@ -856,7 +906,7 @@ fn decode_record_ref(encoded: &[u8]) -> Result<RecordRef, StoreError> {
     })
 }
 
-fn read_u64(bytes: &[u8]) -> Result<u64, StoreError> {
+pub(crate) fn read_u64(bytes: &[u8]) -> Result<u64, StoreError> {
     let array: [u8; 8] = bytes
         .try_into()
         .map_err(|_| StoreError::CorruptedIndex("invalid integer width".into()))?;

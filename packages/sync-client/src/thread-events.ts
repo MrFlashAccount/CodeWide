@@ -3,9 +3,21 @@ import type { Thread, ThreadItem, Turn, TurnPlanStep } from "@codewide/codex-pro
 
 import { reconcileActiveTurnItems, reconcileTurnItems } from "./thread-items";
 import { appendCommandOutputReference } from "./command-output";
+import {
+  BACKGROUND_COMMAND_FIELD,
+  advanceBackgroundCommand,
+  parseBackgroundCommand,
+  type BackgroundCommandProjection,
+} from "./background-commands";
 
 export type ProjectedTurnMetadata = {
   activityMetrics?: ActivityMetrics;
+  /**
+   * The latest state of each background command of the turn, by item id. A
+   * republished item reaches a turn whose content is already sealed only
+   * through this mutable metadata.
+   */
+  backgroundCommands?: Readonly<Record<string, BackgroundCommandProjection>>;
   questions?: readonly import("./question-history").QuestionHistory[];
   usage?: TurnUsageProjection;
   diff?: string;
@@ -253,6 +265,7 @@ export function applyThreadProjectionPatch(thread: Thread, patch: ThreadProjecti
   else if (params.kind === "modelRerouted") updateReroutedModel(thread, params.turnId, params.toModel, params.toModelLabel);
   else if (params.kind === "itemUpsert") {
     upsertItem(thread, params.turnId, itemWithLifecycleMetadata(thread, params.turnId, params.item, params.itemPhase));
+    recordBackgroundCommand(thread, params.turnId, params.item);
   }
   else if (params.kind === "itemTextDelta" && (params.itemType === "agentMessage" || params.itemType === "plan" || params.itemType === "commandExecution")) {
     const externalOutput = params.itemType === "commandExecution"
@@ -740,6 +753,20 @@ function updateTurnPlan(thread: Thread, turnId: unknown, explanation: unknown, p
   metadataForTurn(thread, turnId).plan = {
     explanation: typeof explanation === "string" ? boundedText(explanation) : null,
     steps: structuredClone(steps.map((step) => ({ ...step, step: boundedText(step.step) }))),
+  };
+}
+
+/** Keeps a background command item's state in its turn's metadata. */
+function recordBackgroundCommand(thread: Thread, rawTurnId: unknown, value: unknown): void {
+  const item = asObject(value);
+  if (item?.type !== "commandExecution" || typeof item.id !== "string") return;
+  const next = parseBackgroundCommand(item[BACKGROUND_COMMAND_FIELD]);
+  if (next === null || typeof rawTurnId !== "string" || turnInThread(thread, rawTurnId) === undefined) return;
+  const metadata = metadataForTurn(thread, rawTurnId);
+  const known = metadata.backgroundCommands ?? {};
+  metadata.backgroundCommands = {
+    ...known,
+    [item.id]: advanceBackgroundCommand(known[item.id] ?? null, next),
   };
 }
 

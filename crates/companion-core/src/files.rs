@@ -22,6 +22,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
 };
 use tokio_util::io::ReaderStream;
+use workspace_io::WorkspaceIo;
 
 use crate::file_revisions::{FileRevisionCache, sha256_file};
 
@@ -296,7 +297,7 @@ impl FileService {
             if !valid_root_id(&id) {
                 return Err(client(StatusCode::BAD_REQUEST, "invalid_root_id"));
             }
-            canonical_roots.insert(id, tokio::fs::canonicalize(root).await?);
+            canonical_roots.insert(id, WorkspaceIo::shared().canonicalize(&root).await?);
         }
         let managed_attachments = managed_attachment_root_id
             .map(|root_id| {
@@ -316,7 +317,7 @@ impl FileService {
             }
             canonical_preview_path_mappings.push(PreviewPathMapping {
                 reported_root: normalize_absolute_path(&reported_root),
-                readable_root: tokio::fs::canonicalize(readable_root).await?,
+                readable_root: WorkspaceIo::shared().canonicalize(&readable_root).await?,
             });
         }
         canonical_preview_path_mappings.sort_by(|left, right| {
@@ -383,11 +384,12 @@ impl FileService {
 
     async fn canonical_preview_path(&self, path: &Path) -> Option<PathBuf> {
         let readable = self.readable_preview_path(path);
-        if let Ok(canonical) = tokio::fs::canonicalize(&readable).await {
+        let io = WorkspaceIo::shared();
+        if let Ok(canonical) = io.canonicalize(&readable).await {
             Some(canonical)
         } else {
             let source = strip_source_location(&readable)?;
-            tokio::fs::canonicalize(source).await.ok()
+            io.canonicalize(&source).await.ok()
         }
     }
 
@@ -528,7 +530,7 @@ impl FileService {
         preview: bool,
     ) -> Result<ImageFileSource, FileError> {
         let path = self.resolve_read_path(query, preview).await?;
-        let metadata = tokio::fs::metadata(&path).await?;
+        let metadata = WorkspaceIo::shared().metadata(&path).await?;
         if !metadata.is_file() {
             return Err(client(StatusCode::BAD_REQUEST, "not_a_regular_file"));
         }
@@ -564,7 +566,7 @@ impl FileService {
                 preview,
             )
             .await?;
-        let metadata = tokio::fs::metadata(&path).await?;
+        let metadata = WorkspaceIo::shared().metadata(&path).await?;
         let total = metadata.len();
         let offset = query.offset.unwrap_or(0);
         let limit = query.limit.unwrap_or(MAX_TEXT_PAGE_BYTES);
@@ -578,11 +580,19 @@ impl FileService {
             .unwrap_or(u64::MAX)
             .saturating_add(4)
             .min(total.saturating_sub(offset));
-        let mut file = File::open(&path).await?;
-        tokio::io::AsyncSeekExt::seek(&mut file, std::io::SeekFrom::Start(offset)).await?;
-        let mut bytes =
-            Vec::with_capacity(usize::try_from(read_limit).unwrap_or(MAX_TEXT_PAGE_BYTES));
-        file.take(read_limit).read_to_end(&mut bytes).await?;
+        let page_path = path.clone();
+        let bytes = WorkspaceIo::shared()
+            .run(&path, move || {
+                use std::io::{Read as _, Seek as _};
+                let mut file = std::fs::File::open(page_path)?;
+                file.seek(std::io::SeekFrom::Start(offset))?;
+                let mut bytes =
+                    Vec::with_capacity(usize::try_from(read_limit).unwrap_or(MAX_TEXT_PAGE_BYTES));
+                file.take(read_limit).read_to_end(&mut bytes)?;
+                Ok(bytes)
+            })
+            .await
+            .map_err(std::io::Error::from)?;
         let (start_delta, end_delta) = utf8_page_bounds(&bytes, offset, limit)?;
         if bytes[start_delta..end_delta].contains(&0) {
             return Err(client(
@@ -793,7 +803,7 @@ impl FileService {
         head_only: bool,
         inline: bool,
     ) -> Result<Response<Body>, FileError> {
-        let metadata = tokio::fs::metadata(path).await?;
+        let metadata = WorkspaceIo::shared().metadata(path).await?;
         if !metadata.is_file() {
             return Err(client(StatusCode::BAD_REQUEST, "not_a_regular_file"));
         }
@@ -1028,10 +1038,12 @@ impl FileService {
         } else {
             root.join(requested)
         };
-        let canonical = tokio::fs::canonicalize(candidate)
+        let io = WorkspaceIo::shared();
+        let canonical = io
+            .canonicalize(&candidate)
             .await
             .map_err(|error| map_not_found(error, "file_not_found"))?;
-        let metadata = tokio::fs::metadata(&canonical).await?;
+        let metadata = io.metadata(&canonical).await?;
         if !metadata.is_file() {
             return Err(client(StatusCode::BAD_REQUEST, "not_a_regular_file"));
         }
@@ -1064,7 +1076,8 @@ impl FileService {
             return Err(client(StatusCode::BAD_REQUEST, "invalid_absolute_path"));
         }
         let reported = normalize_absolute_path(Path::new(path));
-        tokio::fs::canonicalize(self.readable_preview_path(&reported))
+        WorkspaceIo::shared()
+            .canonicalize(&self.readable_preview_path(&reported))
             .await
             .map_err(|error| map_not_found(error, "file_not_found"))
     }
@@ -1095,7 +1108,8 @@ impl FileService {
         let parent = candidate
             .parent()
             .ok_or_else(|| client(StatusCode::BAD_REQUEST, "invalid_path"))?;
-        let canonical_parent = tokio::fs::canonicalize(parent)
+        let canonical_parent = WorkspaceIo::shared()
+            .canonicalize(parent)
             .await
             .map_err(|error| map_not_found(error, "parent_not_found"))?;
         let name = candidate
@@ -1745,7 +1759,7 @@ async fn load_preview_registry(path: Option<&Path>) -> Result<HashSet<PathBuf>, 
         .take(MAX_OBSERVED_PREVIEW_FILES)
     {
         if candidate.is_absolute()
-            && let Ok(canonical) = tokio::fs::canonicalize(candidate).await
+            && let Ok(canonical) = WorkspaceIo::shared().canonicalize(&candidate).await
         {
             observed.insert(canonical);
         }

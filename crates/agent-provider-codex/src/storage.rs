@@ -12,7 +12,7 @@ use std::{
 
 use agent_core::provider::{
     HistoryPageError, HistorySyncRequest, NativeMessageSearch, NativeThreadResources,
-    NativeThreadStore,
+    NativeThreadStore, StoredThreadState, ThreadExecutionAuthority,
 };
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -47,6 +47,16 @@ impl CodexStorage {
     pub fn with_resources(mut self, resources: Arc<ResourceService>) -> Self {
         self.resources = Some(resources);
         self
+    }
+
+    pub(crate) async fn thread_execution_authority(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<ThreadExecutionAuthority>, String> {
+        self.history
+            .thread_execution_authority(thread_id)
+            .await
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -179,6 +189,15 @@ impl NativeThreadStore for CodexStorage {
         .await
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())
+    }
+
+    async fn thread_state(&self, thread_id: &str) -> Result<StoredThreadState, String> {
+        let history = self.history.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::task::spawn_blocking(move || history.thread_state(&thread_id))
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())
     }
 
     fn spawn_change_monitor(&self, events: mpsc::Sender<Value>) {

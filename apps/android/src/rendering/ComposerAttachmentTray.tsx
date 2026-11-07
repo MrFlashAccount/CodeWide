@@ -9,7 +9,8 @@ import type { StoredDraftAttachment } from "../data/thread-ui-state-types";
 import { spacing } from "../theme";
 import { useAppDialog } from "../ui/AppDialog";
 import { AttachmentCard } from "./AttachmentCard";
-import { isAttachmentVideo, useAttachmentVideoPreview } from "./AttachmentVideoPreview";
+import { useAttachmentVideoPreview } from "./AttachmentVideoPreview";
+import { isAttachmentVideo } from "./videoPreview";
 import {
   composerAttachmentPreviewKind,
   composerAttachmentSource,
@@ -125,6 +126,7 @@ function openComposerAttachment(options: ComposerAttachmentOpenOptions): void {
       openVideo({
         getAccess: documentRequest.getTransferAccess,
         name: attachment.name,
+        reference: documentRequest.path,
         source: videoSource,
       });
     }

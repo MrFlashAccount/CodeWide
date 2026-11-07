@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
-    fs::File,
-    io::{BufRead, BufReader, Cursor, Read, Seek},
+    io::{BufRead, Cursor, Seek},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -17,8 +16,11 @@ use resvg::{tiny_skia, usvg};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Semaphore;
+use workspace_io::WorkspaceIo;
 
 const MAX_SOURCE_BYTES: usize = 32 * 1024 * 1024;
+/// How long reading a source image of at most [`MAX_SOURCE_BYTES`] may take.
+const SOURCE_READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 const MAX_SVG_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_DECODE_DIMENSION: u32 = 16_384;
 const MAX_DECODE_ALLOC_BYTES: u64 = 128 * 1024 * 1024;
@@ -58,7 +60,11 @@ struct CachedPreview {
 
 enum PreviewSource {
     Bytes(Bytes),
-    Path(PathBuf),
+    /// A host file read through [`WorkspaceIo`]; `svg` from its extension.
+    File {
+        bytes: Vec<u8>,
+        svg: bool,
+    },
     Shared(Arc<[u8]>),
 }
 
@@ -127,6 +133,19 @@ impl ImagePreviewService {
         if let Some(preview) = self.cached(&key) {
             return preview_response(preview, headers, head_only);
         }
+        // The file is read before an encoder slot is taken: a hung workspace
+        // mount fails this preview by its deadline and never holds a slot
+        // every other preview needs.
+        let io = WorkspaceIo::shared();
+        let metadata = io.metadata(&path).await?;
+        if usize::try_from(metadata.len()).map_or(true, |size| size > MAX_SOURCE_BYTES) {
+            return Err(ImagePreviewError::TooLarge);
+        }
+        let svg = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"));
+        let bytes = io.read_within(&path, SOURCE_READ_DEADLINE).await?;
         let _permit = self
             .encoders
             .clone()
@@ -136,11 +155,7 @@ impl ImagePreviewService {
         if let Some(preview) = self.cached(&key) {
             return preview_response(preview, headers, head_only);
         }
-        let metadata = tokio::fs::metadata(&path).await?;
-        if usize::try_from(metadata.len()).map_or(true, |size| size > MAX_SOURCE_BYTES) {
-            return Err(ImagePreviewError::TooLarge);
-        }
-        self.generate(key, PreviewSource::Path(path), headers, head_only)
+        self.generate(key, PreviewSource::File { bytes, svg }, headers, head_only)
             .await
     }
 
@@ -306,20 +321,11 @@ fn encode_webp(
             }
             encode_webp_reader(ImageReader::new(Cursor::new(bytes)), variant)
         }
-        PreviewSource::Path(path) => {
-            let svg_extension = path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"));
-            let mut reader = BufReader::new(File::open(path)?);
-            if svg_extension || looks_like_svg(reader.fill_buf()?) {
-                let mut bytes = Vec::new();
-                reader
-                    .take((MAX_SVG_SOURCE_BYTES + 1) as u64)
-                    .read_to_end(&mut bytes)?;
+        PreviewSource::File { bytes, svg } => {
+            if svg || looks_like_svg(&bytes) {
                 return encode_svg_webp(&bytes, variant);
             }
-            encode_webp_reader(ImageReader::new(reader), variant)
+            encode_webp_reader(ImageReader::new(Cursor::new(bytes)), variant)
         }
         PreviewSource::Shared(bytes) => {
             if looks_like_svg(&bytes) {

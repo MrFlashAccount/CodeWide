@@ -6,7 +6,8 @@
 //!   a time (`rateLimitType`) with a 0–1 `utilization` fraction, an
 //!   epoch-seconds `resetsAt` and a status;
 //! - the `get_usage` control request (`ClaudeProcess::read_usage`) reports
-//!   several windows at once as 0–100 percentages with RFC 3339 reset times.
+//!   several windows at once as 0–100 percentages with RFC 3339 reset times,
+//!   plus the optional `cedar_ember` banked-reset program.
 //!
 //! `RateLimitBook` owns the merged snapshot; `RateLimitReporter` feeds it,
 //! throttles live usage reads and publishes every change
@@ -17,7 +18,8 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use agent_core::model::{
-    ProviderRateLimitWindow, ProviderRateLimits, RateLimitWindowKind, RateLimitWindowStatus,
+    ProviderRateLimitResetGrant, ProviderRateLimitResets, ProviderRateLimitWindow,
+    ProviderRateLimits, RateLimitResetKind, RateLimitWindowKind, RateLimitWindowStatus,
 };
 use serde_json::{Map, Value};
 use time::OffsetDateTime;
@@ -31,6 +33,10 @@ const WEEK_MINUTES: u32 = 10_080;
 const MAX_PERCENT: u8 = 100;
 const MS_PER_SECOND: i64 = 1000;
 const MAX_WINDOW_ID_LENGTH: usize = 64;
+const MAX_RESET_GRANTS: usize = 32;
+const MAX_RESET_ID_LENGTH: usize = 40;
+const MAX_RESET_LABEL_LENGTH: usize = 128;
+const MAX_RESET_REASON_LENGTH: usize = 64;
 
 /// Reports of one window disagree on its reset by a rounding second (the
 /// usage read's RFC 3339 time keeps fractions the streamed epoch seconds
@@ -215,6 +221,132 @@ pub fn usage_read_windows(response: &Value) -> Vec<ProviderRateLimitWindow> {
         .collect()
 }
 
+/// Whether one usage answer changed the reset program. `Unreported` keeps the
+/// last good value; an explicit `null` clears it after an account/program
+/// change.
+#[derive(Debug)]
+enum ResetReport {
+    Unreported,
+    Reported(Option<ProviderRateLimitResets>),
+}
+
+fn reset_id(value: Option<&Value>) -> Option<&str> {
+    let id = value?.as_str()?;
+    let valid = !id.is_empty()
+        && id.len() <= MAX_RESET_ID_LENGTH
+        && id.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        });
+    valid.then_some(id)
+}
+
+fn bounded_text(value: Option<&Value>, limit: usize) -> Option<&str> {
+    value?.as_str().filter(|text| text.len() <= limit)
+}
+
+fn unsigned(value: Option<&Value>) -> Option<u32> {
+    u32::try_from(value?.as_u64()?).ok()
+}
+
+fn reset_kind(value: Option<&Value>) -> RateLimitResetKind {
+    match value.and_then(Value::as_str) {
+        Some("session") => RateLimitResetKind::Session,
+        Some("weekly") => RateLimitResetKind::Weekly,
+        Some("full") => RateLimitResetKind::Full,
+        _ => RateLimitResetKind::Other,
+    }
+}
+
+fn reset_window_ids(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| window_id(Some(value)).map(str::to_owned))
+        .collect()
+}
+
+fn reset_grant(value: &Value) -> Option<ProviderRateLimitResetGrant> {
+    let grant = value.as_object()?;
+    Some(ProviderRateLimitResetGrant {
+        id: reset_id(grant.get("id"))?.to_owned(),
+        label: bounded_text(grant.get("label"), MAX_RESET_LABEL_LENGTH)
+            .unwrap_or_default()
+            .to_owned(),
+        kind: reset_kind(grant.get("type")),
+        resets_left: unsigned(grant.get("resets_left"))?,
+        resets_total: unsigned(grant.get("resets_total")).unwrap_or_default(),
+        starts_at: rfc3339_seconds(grant.get("starts_at")),
+        expires_at: rfc3339_seconds(grant.get("ends_at")),
+        paused: grant
+            .get("paused")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        usable_now: grant
+            .get("usable_now")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        use_requires_limit: grant
+            .get("use_requires_limit")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        clears: reset_window_ids(grant.get("clears")),
+        unavailable_reason: bounded_text(grant.get("unavailable_reason"), MAX_RESET_REASON_LENGTH)
+            .map(str::to_owned),
+    })
+}
+
+/// The `cedar_ember` block returned inside `get_usage.rate_limits` by Claude
+/// Code. It is not yet declared by the public Agent SDK types, so this adapter
+/// validates the raw additive field and ignores malformed updates.
+fn usage_read_resets(response: &Value) -> ResetReport {
+    let Some(limits) = response
+        .as_object()
+        .filter(|response| response.get("rate_limits_available") == Some(&Value::Bool(true)))
+        .and_then(|response| response.get("rate_limits"))
+        .and_then(Value::as_object)
+    else {
+        return ResetReport::Unreported;
+    };
+    let Some(raw) = limits.get("cedar_ember") else {
+        return ResetReport::Unreported;
+    };
+    if raw.is_null() {
+        return ResetReport::Reported(None);
+    }
+    let Some(program) = raw.as_object() else {
+        return ResetReport::Unreported;
+    };
+    let Some(eligible) = program.get("eligible").and_then(Value::as_bool) else {
+        return ResetReport::Unreported;
+    };
+    let Some(raw_grants) = program
+        .get("grants")
+        .map_or(Some(&[][..]), |value| value.as_array().map(Vec::as_slice))
+        .filter(|grants| grants.len() <= MAX_RESET_GRANTS)
+    else {
+        return ResetReport::Unreported;
+    };
+    let grants: Vec<ProviderRateLimitResetGrant> =
+        raw_grants.iter().filter_map(reset_grant).collect();
+    let available_count = grants.iter().fold(0_u32, |count, grant| {
+        count.saturating_add(grant.resets_left)
+    });
+    let next_grant_id = reset_id(program.get("next_grant_id"))
+        .filter(|next| grants.iter().any(|grant| grant.id == *next))
+        .map(str::to_owned);
+    ResetReport::Reported(Some(ProviderRateLimitResets {
+        eligible,
+        ineligible_reason: bounded_text(program.get("ineligible_reason"), MAX_RESET_REASON_LENGTH)
+            .map(str::to_owned),
+        available_count,
+        grants,
+        next_grant_id,
+        weekly_resets_at: rfc3339_seconds(program.get("weekly_resets_at")),
+        cooldown_until: rfc3339_seconds(program.get("cooldown_until")),
+    }))
+}
+
 /// A later report replaces the figures it carries. A missing percentage keeps
 /// the earlier one unless the window reset in between.
 fn merged(
@@ -272,6 +404,7 @@ fn window_order(left: &ProviderRateLimitWindow, right: &ProviderRateLimitWindow)
 #[derive(Debug, Default)]
 pub struct RateLimitBook {
     windows: BTreeMap<String, ProviderRateLimitWindow>,
+    resets: Option<ProviderRateLimitResets>,
     current: Option<ProviderRateLimits>,
 }
 
@@ -289,6 +422,15 @@ impl RateLimitBook {
         reported: impl IntoIterator<Item = ProviderRateLimitWindow>,
         now_seconds: i64,
     ) -> Option<&ProviderRateLimits> {
+        self.apply_report(reported, ResetReport::Unreported, now_seconds)
+    }
+
+    fn apply_report(
+        &mut self,
+        reported: impl IntoIterator<Item = ProviderRateLimitWindow>,
+        resets: ResetReport,
+        now_seconds: i64,
+    ) -> Option<&ProviderRateLimits> {
         let mut changed = false;
         for next in reported {
             let previous = self.windows.get(&next.id);
@@ -298,6 +440,12 @@ impl RateLimitBook {
                 changed = true;
             }
         }
+        if let ResetReport::Reported(next) = resets
+            && self.resets != next
+        {
+            self.resets = next;
+            changed = true;
+        }
         if !changed {
             return None;
         }
@@ -306,6 +454,7 @@ impl RateLimitBook {
         Some(self.current.insert(ProviderRateLimits {
             updated_at: now_seconds,
             windows,
+            resets: self.resets.clone(),
         }))
     }
 }
@@ -375,7 +524,14 @@ where
     /// Applies one `get_usage` answer (the probe's or a live session's).
     pub fn usage_read(&mut self, response: &Value) {
         self.last_read_at_ms = Some((self.now_ms)());
-        self.apply(usage_read_windows(response));
+        let now_seconds = (self.now_ms)().div_euclid(MS_PER_SECOND);
+        if let Some(next) = self.book.apply_report(
+            usage_read_windows(response),
+            usage_read_resets(response),
+            now_seconds,
+        ) {
+            (self.publish)(next);
+        }
     }
 
     fn apply(&mut self, windows: impl IntoIterator<Item = ProviderRateLimitWindow>) {
@@ -406,6 +562,39 @@ mod tests {
                 "seven_day": { "utilization": 61, "resets_at": null },
                 "seven_day_opus": null,
             },
+        })
+    }
+
+    fn reset_answer() -> Value {
+        json!({
+            "rate_limits_available": true,
+            "rate_limits": {
+                "five_hour": { "utilization": 100, "resets_at": "2025-10-09T12:00:00Z" },
+                "cedar_ember": {
+                    "eligible": true,
+                    "at_limit": true,
+                    "grants": [
+                        {
+                            "id": "grant_one",
+                            "label": "Weekly reset",
+                            "resets_total": 3,
+                            "resets_left": 2,
+                            "starts_at": "2025-10-01T00:00:00Z",
+                            "ends_at": "2025-11-01T00:00:00Z",
+                            "clears": ["five_hour", "seven_day", "Bad id"],
+                            "paused": false,
+                            "usable_now": true,
+                            "use_requires_limit": true,
+                            "type": "weekly",
+                            "unavailable_reason": null
+                        },
+                        { "id": "INVALID", "resets_left": 5 }
+                    ],
+                    "next_grant_id": "grant_one",
+                    "weekly_resets_at": "2025-10-12T00:00:00Z",
+                    "cooldown_until": null
+                }
+            }
         })
     }
 
@@ -546,6 +735,47 @@ mod tests {
                 .is_empty()
         );
         assert!(usage_read_windows(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn maps_the_raw_cedar_ember_reset_inventory() {
+        let ResetReport::Reported(Some(resets)) = usage_read_resets(&reset_answer()) else {
+            panic!("reset inventory expected");
+        };
+        assert!(resets.eligible);
+        assert_eq!(resets.available_count, 2);
+        assert_eq!(resets.next_grant_id.as_deref(), Some("grant_one"));
+        assert_eq!(resets.grants.len(), 1);
+        assert_eq!(resets.grants[0].kind, RateLimitResetKind::Weekly);
+        assert_eq!(resets.grants[0].clears, ["five_hour", "seven_day"]);
+        assert!(resets.grants[0].usable_now);
+        assert!(resets.grants[0].expires_at.is_some());
+    }
+
+    #[test]
+    fn reset_inventory_is_additive_and_malformed_updates_do_not_erase_it() {
+        let mut book = RateLimitBook::default();
+        let windows = usage_read_windows(&reset_answer());
+        let first = book.apply_report(windows, usage_read_resets(&reset_answer()), 1);
+        assert_eq!(
+            first
+                .and_then(|limits| limits.resets.as_ref())
+                .map(|resets| resets.available_count),
+            Some(2)
+        );
+        assert_eq!(
+            book.apply_report([], usage_read_resets(&json!({"rate_limits": "bad"})), 2),
+            None
+        );
+        let cleared = book.apply_report(
+            [],
+            usage_read_resets(&json!({
+                "rate_limits_available": true,
+                "rate_limits": {"cedar_ember": null}
+            })),
+            3,
+        );
+        assert_eq!(cleared.and_then(|limits| limits.resets.as_ref()), None);
     }
 
     #[test]

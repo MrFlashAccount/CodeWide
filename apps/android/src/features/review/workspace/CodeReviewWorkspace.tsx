@@ -1,55 +1,58 @@
 import { Ionicons } from "@expo/vector-icons";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Pressable, View } from "react-native";
 import type { CodeReviewWorkspaceProps } from "./codeReviewContract";
 import { useCodeReviewState } from "./codeReviewState";
 import { styles } from "./CodeReviewWorkspace.styles";
-import { shortPath } from "../resources/reviewLocation";
+import { ReviewCommentStrip } from "./ReviewCommentStrip";
 
 import { changeScopeDisplay } from "../../../rendering/changeScopeDisplay";
 import { changedFileDisplayPath } from "../../../rendering/changed-file-path";
+import { LineCommentFrame } from "../comments/LineCommentFrame";
+import type { CodeReviewComment } from "../comments/reviewComment";
 import { CodeReviewEditor } from "../editor/CodeReviewEditor";
+import type { CodeReviewInlineComment } from "../editor/editorBridge";
 import { colors, iconSize } from "../../../theme";
-import { ActionMenu } from "../../../ui/ActionMenu";
+import { OverflowMenu } from "../../../ui/OverflowMenu";
 import { AppText as Text } from "../../../ui/Typography";
 
-/** Composes file selection, diff viewing, and review-comment submission. */
+/**
+ * Composes file selection, diff viewing, and review-comment submission. A line
+ * tap opens the one line composer docked under the diff; adding a comment
+ * closes it at once.
+ */
 export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
   const { cwd, scopeLabel } = props;
   const {
-    addComment,
     attach,
     attachDisabled,
     attaching,
     changes,
     changeScope,
     close,
-    commentDraft,
+    closeComposer,
     comments,
+    commitComment,
     compact,
     document,
     documentStatus,
     effectiveMode,
     effectiveSelectedPath,
+    lineDrafts,
     loadError,
     loading,
     menuActions,
-    microphoneAccess,
-    pressVoice,
     revealReference,
     reviewFiles,
     scopeLoading,
     selectedReference,
     selectFile,
-    selectionRef,
     selectLine,
     selectMenuAction,
     setComments,
     setSidebarPreference,
     setWorkspaceWidth,
     sidebarOpen,
-    updateCommentDraft,
     vcs,
-    voiceResource,
     workspaceRevision,
     wrapLines,
   } = useCodeReviewState(props);
@@ -113,25 +116,16 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
             </Text>
           )}
         </View>
-        <ActionMenu
+        <OverflowMenu
           accessibilityLabel="Changes options"
           actions={menuActions}
           align="end"
+          busy={scopeLoading}
           onSelect={selectMenuAction}
           placement="bottom"
-        >
-          <Pressable
-            accessibilityLabel="Changes options"
-            disabled={scopeLoading}
-            style={styles.iconButton}
-          >
-            {scopeLoading ? (
-              <ActivityIndicator color={colors.textMuted} size="small" />
-            ) : (
-              <Ionicons color={colors.text} name="ellipsis-vertical" size={iconSize.action} />
-            )}
-          </Pressable>
-        </ActionMenu>
+          size="regular"
+          tone="filled"
+        />
         <Pressable
           accessibilityLabel="Attach review"
           disabled={attachDisabled}
@@ -162,71 +156,65 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
 
       <View style={styles.workspace}>
         <View style={styles.editorPane}>
-          <CodeReviewEditor
-            commentDraft={commentDraft}
-            comments={comments}
-            compact={compact}
-            document={document}
-            files={reviewFiles}
-            loadError={loadError}
-            loading={loading}
-            mode={effectiveMode}
-            onCommentDraftChange={updateCommentDraft}
-            onCommentSelectionChange={(selection) => {
-              selectionRef.current = selection;
-            }}
-            onCommentSubmit={addComment}
-            onFileSelect={(path) => {
-              const change = changes.find((candidate) => candidate.path === path);
-              if (change !== undefined) {
-                selectFile(change);
-              }
-            }}
-            onLinePress={selectLine}
-            onVoicePress={(draft, selection) => void pressVoice(draft, selection)}
-            revealReference={selectedReference === null ? revealReference : null}
-            selectedPath={effectiveSelectedPath}
-            selectedReference={selectedReference}
-            sidebarOpen={sidebarOpen}
-            voiceError={voiceResource?.error ?? null}
-            voicePermissionGranted={microphoneAccess.granted}
-            voicePhase={voiceResource?.phase ?? "idle"}
-            voiceRetryAvailable={voiceResource?.retryAvailable ?? false}
-            workspaceRevision={workspaceRevision}
-            wrapLines={wrapLines}
-          />
-          {comments.length > 0 && (
-            <ScrollView
-              contentContainerStyle={styles.commentStripContent}
-              horizontal
-              keyboardShouldPersistTaps="handled"
-              style={styles.commentStrip}
-            >
-              {comments.map((comment) => (
-                <View key={comment.id} style={styles.commentChip}>
-                  <Text numberOfLines={1} style={styles.commentChipLocation}>
-                    {shortPath(comment.path)}:{comment.line}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.commentChipBody}>
-                    {comment.body}
-                  </Text>
-                  <Pressable
-                    accessibilityLabel="Delete comment"
-                    hitSlop={8}
-                    onPress={() => {
-                      setComments((current) =>
-                        current.filter((candidate) => candidate.id !== comment.id),
-                      );
-                    }}
-                  >
-                    <Ionicons color={colors.textDim} name="close-circle" size={iconSize.inline} />
-                  </Pressable>
-                </View>
-              ))}
-            </ScrollView>
-          )}
+          <LineCommentFrame
+            composer={
+              selectedReference === null
+                ? null
+                : {
+                    drafts: lineDrafts,
+                    onClose: closeComposer,
+                    onSubmit: commitComment,
+                    submitLabel: "Add comment",
+                    target: selectedReference,
+                    voice: props.voiceRuntime,
+                  }
+            }
+          >
+            <CodeReviewEditor
+              comments={savedInlineComments(comments)}
+              compact={compact}
+              document={document}
+              files={reviewFiles}
+              loadError={loadError}
+              loading={loading}
+              mode={effectiveMode}
+              onFileSelect={(path) => {
+                const change = changes.find((candidate) => candidate.path === path);
+                if (change !== undefined) {
+                  selectFile(change);
+                }
+              }}
+              onLinePress={selectLine}
+              revealReference={selectedReference === null ? revealReference : null}
+              selectedPath={effectiveSelectedPath}
+              selectedReference={selectedReference}
+              sidebarOpen={sidebarOpen}
+              workspaceRevision={workspaceRevision}
+              wrapLines={wrapLines}
+            />
+            <ReviewCommentStrip
+              comments={comments}
+              onDelete={(id) => {
+                setComments((current) => current.filter((candidate) => candidate.id !== id));
+              }}
+            />
+          </LineCommentFrame>
         </View>
       </View>
     </View>
   );
+}
+
+/** Local session/VCS comments are saved the moment they are added. */
+function savedInlineComments(
+  comments: readonly CodeReviewComment[],
+): readonly CodeReviewInlineComment[] {
+  return comments.map((comment) => ({
+    body: comment.body,
+    id: comment.id,
+    line: comment.line,
+    path: comment.path,
+    side: comment.side,
+    state: "saved" as const,
+  }));
 }

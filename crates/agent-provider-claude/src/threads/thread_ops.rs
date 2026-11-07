@@ -20,7 +20,7 @@ use tracing::error;
 
 use super::{
     errors::{internal, invalid_params, invalid_request, not_found, session_gone},
-    history::{HistorySource, session_messages, stored_turns},
+    history::caught_up,
     projection::{ThreadView, list_row, project_thread},
     service::{
         CurrentView, FenceReceiver, Listed, Resolved, ServiceInner, ThreadService, cwd_hint,
@@ -29,11 +29,15 @@ use super::{
 };
 use crate::{
     cli::command::PermissionProfile,
+    index::{
+        history::{ActiveTurn, PageRequest},
+        read::ReadError,
+    },
     live::{
         permissions::unsupported_profile_message,
         usage::{NEW_SESSION_BASELINE, ThreadCost, ZERO_USAGE},
     },
-    native::{ChainSession, ForkCut, SessionLocation, files::is_session_id, fork_cut, write},
+    native::{ForkCut, SessionLocation, files::is_session_id, write},
     state::{
         StateVersion,
         thread_state::{SessionChain, ThreadState, ThreadStateOrigin},
@@ -229,6 +233,34 @@ impl ThreadService {
     /// # Errors
     /// `-32602` for an invalid cursor.
     pub async fn list(&self, params: ThreadListParams) -> Result<ThreadListResult, ProviderError> {
+        crate::catalog::list(self.list_rows().await?, &params).map_err(ProviderError::Rejected)
+    }
+
+    /// Every currently listed thread with its authoritative lifecycle status.
+    ///
+    /// This is published once when the provider event stream starts. A client
+    /// can otherwise retain a pre-restart `active` status forever: catalog
+    /// pages intentionally cannot overwrite live lifecycle state, while the
+    /// restarted provider has no transition edge to replay for an already
+    /// stopped process.
+    ///
+    /// # Errors
+    /// When Claude's process registry or session catalog cannot be read.
+    pub async fn status_snapshot(&self) -> Result<Vec<AgentThread>, ProviderError> {
+        if !self.inner.open_elsewhere.refresh_confirmed().await {
+            return Err(ProviderError::Disconnected(
+                "Claude running-session authority is unavailable".into(),
+            ));
+        }
+        Ok(self
+            .list_rows()
+            .await?
+            .into_iter()
+            .map(|row| row.thread)
+            .collect())
+    }
+
+    async fn list_rows(&self) -> Result<Vec<crate::catalog::ListRow>, ProviderError> {
         let inner = &self.inner;
         let snapshot = inner.catalog.snapshot().await?;
         let mut rows = Vec::new();
@@ -273,11 +305,12 @@ impl ThreadService {
                 }));
             }
         }
-        crate::catalog::list(rows, &params).map_err(ProviderError::Rejected)
+        Ok(rows)
     }
 
-    /// `thread.turns`: the stored history with the in-flight turn, paged;
-    /// `fenced` adds the stream position after every event before the read.
+    /// `thread.turns`: the stored history with the in-flight turn and what
+    /// the live session knows of its background commands, paged; `fenced`
+    /// adds the stream position after every event before the read.
     ///
     /// # Errors
     /// `-32600` for an unknown thread, `-32602` for an invalid cursor.
@@ -293,41 +326,79 @@ impl ThreadService {
             .await?
             .listed()
             .ok_or_else(|| not_found(id))?;
-        let (turns, fence) = match listed {
+        let request = PageRequest {
+            cursor: params.cursor.as_deref(),
+            limit: params.limit,
+            direction: params.sort_direction,
+            view: params.items_view,
+        };
+        let (page, fence) = match listed {
             Listed::Entry(handle) => {
                 let (state, active, fence) = handle
                     .read(fenced)
                     .await
                     .map_err(|err| session_gone(&err))?;
-                let source = HistorySource::Thread(Arc::clone(&state));
-                let stored = stored_turns(inner.projects_root.clone(), source).await?;
-                (
-                    crate::native::with_active_turn(stored, active, &state.turns),
-                    fence,
-                )
+                let index = caught_up(&inner.index, state.session_ids.iter()).await?;
+                let thread = params.app_thread_id.clone();
+                let (owned, request) = owned_request(&request);
+                let mut page = tokio::task::spawn_blocking(move || {
+                    let request = request.borrowed(owned.as_deref());
+                    let read = index.history().page_with(
+                        &thread,
+                        &request,
+                        ActiveTurn::Live {
+                            turn: active.clone().map(Box::new),
+                            records: &state.turns,
+                        },
+                    );
+                    match read {
+                        Ok(Some(page)) => Ok(page),
+                        // No session file holds the thread yet: only the
+                        // in-flight turn, if any.
+                        Ok(None) => page_turns(
+                            &crate::native::with_active_turn(Vec::new(), active, &state.turns),
+                            request.cursor,
+                            request.limit,
+                            request.direction,
+                            request.view,
+                        )
+                        .map_err(PageError::Rejected),
+                        Err(err) => Err(PageError::Read(err)),
+                    }
+                })
+                .await
+                .map_err(|err| internal("history read", &err))?
+                .map_err(page_error)?;
+                self.overlay_live_background_commands(&params.app_thread_id, &mut page.turns)
+                    .await?;
+                (page, fence)
             }
             Listed::Discovered(session) => {
-                let source = HistorySource::Session {
-                    app_thread_id: params.app_thread_id.clone(),
-                    cwd: session.cwd.unwrap_or_default(),
-                };
-                let turns = stored_turns(inner.projects_root.clone(), source).await?;
+                let index = caught_up(&inner.index, [session.session_id.as_str()]).await?;
+                let thread = params.app_thread_id.clone();
+                let (owned, request) = owned_request(&request);
+                let page = tokio::task::spawn_blocking(move || {
+                    let request = request.borrowed(owned.as_deref());
+                    match index.history().page(&thread, &request) {
+                        Ok(Some(page)) => Ok(page),
+                        Ok(None) => Ok(ThreadTurnsResult {
+                            turns: Vec::new(),
+                            next_cursor: None,
+                        }),
+                        Err(err) => Err(PageError::Read(err)),
+                    }
+                })
+                .await
+                .map_err(|err| internal("history read", &err))?
+                .map_err(page_error)?;
                 let fence = if fenced {
                     Some(inner.fence().await)
                 } else {
                     None
                 };
-                (turns, fence)
+                (page, fence)
             }
         };
-        let page = page_turns(
-            &turns,
-            params.cursor.as_deref(),
-            params.limit,
-            params.sort_direction,
-            params.items_view,
-        )
-        .map_err(ProviderError::Rejected)?;
         Ok((page, fence))
     }
 
@@ -564,28 +635,19 @@ async fn copy_sessions(
     boundary: ForkBoundary,
 ) -> Result<SessionChain, ProviderError> {
     let root = inner.projects_root.clone();
+    let index = caught_up(&inner.index, state.session_ids.iter()).await?;
     tokio::task::spawn_blocking(move || -> Result<SessionChain, ProviderError> {
-        let session_ids = state.session_ids.iter().collect::<Vec<_>>();
-        let records = &state.turns;
+        let chain = state
+            .session_ids
+            .iter()
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
         let cwd = &state.cwd;
-        let stored = session_ids
-            .iter()
-            .map(|session_id| session_messages(&root, session_id))
-            .collect::<Result<Vec<_>, _>>()
+        let cut = index
+            .history()
+            .fork_cut(&state.app_thread_id, &chain, &boundary)
             .map_err(|err| internal("fork", &err))?;
-        let messages = stored
-            .iter()
-            .map(|rows| rows.iter().collect::<Vec<_>>())
-            .collect::<Vec<_>>();
-        let chain = session_ids
-            .iter()
-            .zip(&messages)
-            .map(|(session_id, messages)| ChainSession {
-                session_id,
-                messages,
-            })
-            .collect::<Vec<_>>();
-        let (whole, last) = match fork_cut(&chain, records, &boundary) {
+        let (whole, last) = match cut {
             ForkCut::Cut { whole, last } => (whole, last),
             ForkCut::UnknownTurn => {
                 return Err(invalid_request(
@@ -654,5 +716,48 @@ async fn remove_sessions(inner: &ServiceInner, state: &ThreadState) {
             }
         }
         inner.catalog.forget(session_id);
+    }
+}
+
+/// A page request the blocking read owns.
+struct OwnedRequest {
+    limit: u32,
+    direction: agent_core::model::SortDirection,
+    view: agent_core::model::ItemsView,
+}
+
+impl OwnedRequest {
+    fn borrowed<'a>(&self, cursor: Option<&'a str>) -> PageRequest<'a> {
+        PageRequest {
+            cursor,
+            limit: self.limit,
+            direction: self.direction,
+            view: self.view,
+        }
+    }
+}
+
+fn owned_request(request: &PageRequest<'_>) -> (Option<String>, OwnedRequest) {
+    (
+        request.cursor.map(ToOwned::to_owned),
+        OwnedRequest {
+            limit: request.limit,
+            direction: request.direction,
+            view: request.view,
+        },
+    )
+}
+
+/// Why a history page could not be answered.
+enum PageError {
+    Rejected(agent_core::model::RpcError),
+    Read(ReadError),
+}
+
+fn page_error(error: PageError) -> ProviderError {
+    match error {
+        PageError::Rejected(rejection) => ProviderError::Rejected(rejection),
+        PageError::Read(ReadError::InvalidParams(message)) => invalid_params(message),
+        PageError::Read(err) => internal("history read", &err),
     }
 }

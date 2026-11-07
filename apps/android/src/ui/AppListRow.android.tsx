@@ -26,6 +26,8 @@ const reactContentProps = [
   "trailingAction",
   "trailingIcon",
   "selected",
+  // The text shimmer decorates a React Native title.
+  "shimmering",
 ] as const;
 
 /** Keep each row in one UI runtime, including independently interactive accessories. */

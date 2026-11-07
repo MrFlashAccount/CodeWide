@@ -12,7 +12,11 @@ type ContinuationRequest = {
   readonly sourceTurnId: string;
 };
 
-/** Starts a new turn from existing history without manufacturing a user message. */
+/**
+ * Asks the thread's provider to continue its interrupted or failed last turn
+ * (`turn/continue`). The provider owns how its agent resumes; the client
+ * manufactures no user message.
+ */
 export function createComposerContinuationAdapter(
   transport: ContinuationTransport,
 ): (connectionId: string, threadId: string, sourceTurnId: string) => Promise<void> {
@@ -65,8 +69,7 @@ async function continueTurn({
   });
   verifySourceTurn(page, sourceTurnId);
   try {
-    const response = await transport.rpcAfterAttach<unknown>(session, "turn/start", {
-      input: [],
+    const response = await transport.rpcAfterAttach<unknown>(session, "turn/continue", {
       threadId,
     });
     verifyStartedTurn(response);

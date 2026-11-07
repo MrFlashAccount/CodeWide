@@ -57,7 +57,7 @@ import type { MarkupImageDimensions } from "./markup-image-dimensions";
 import { useContentReview, useContentReviewHighlights } from "./ContentReviewHost";
 import type { ContentReviewTarget } from "./content-review";
 import { ReviewableText } from "./ReviewableText";
-import { looksLikeAsciiDiagram } from "./ascii-diagram";
+import { isExplicitAsciiDiagram } from "./ascii-diagram";
 import { RichContentWidthProvider, useRichContentWidth } from "./RichContentLayout";
 import { usePrivateImageUri } from "./use-private-image-uri";
 import { NativeMarkup } from "./NativeMarkup";
@@ -592,7 +592,7 @@ function BlockNode({
           </View>
         );
       }
-      if (looksLikeAsciiDiagram(node.value, node.lang)) {
+      if (isExplicitAsciiDiagram(node.lang)) {
         return (
           <View style={styles.wideBlock}>
             <AsciiDiagram source={node.value} />

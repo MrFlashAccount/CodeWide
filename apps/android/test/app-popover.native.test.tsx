@@ -1,6 +1,6 @@
-import { fireEvent, render } from "@testing-library/react-native";
+import { fireEvent, render, within } from "@testing-library/react-native";
 import { useEffect, useState, type ReactNode } from "react";
-import { Pressable, Text } from "react-native";
+import { Pressable, StyleSheet, Text } from "react-native";
 
 import { ContentMenu as AppPopover } from "../src/ui/ContentMenu.android";
 import { useEvent } from "../src/react/useEvent";
@@ -25,6 +25,7 @@ jest.mock("@expo/ui/jetpack-compose", () => {
 
 // WHY: The modifier entrypoint imports native Expo internals unavailable in Jest.
 jest.mock("@expo/ui/jetpack-compose/modifiers", () => ({
+  fillMaxSize: () => ({ fillMaxSize: true }),
   height: (value: number) => ({ height: value }),
   width: (value: number) => ({ width: value }),
 }));
@@ -118,4 +119,40 @@ it("sizes the popup to its laid-out body between its height bounds and opens onc
   expect(view.getByTestId("content-menu")).toHaveStyle({ height: 300 });
   layOutContentMenus(view, 20);
   expect(view.getByTestId("content-menu")).toHaveStyle({ height: 80 });
+});
+
+it("lays out its trigger in React Native beside the native host, which only covers its box", () => {
+  const view = render(
+    <AppPopover
+      open={false}
+      onOpenChange={() => undefined}
+      width={300}
+      anchorStyle={{ maxWidth: "50%" }}
+      trigger={
+        <Pressable accessibilityLabel="Open usage" testID="usage-trigger">
+          <Text>Usage</Text>
+        </Pressable>
+      }
+    >
+      <Text>Body</Text>
+    </AppPopover>,
+  );
+
+  // A trigger hosted inside Compose is sized by a Yoga → Compose → Yoga round
+  // trip and keeps a stale width for frames; here Yoga alone sizes the anchor
+  // around it, and the host follows that box without measuring its content.
+  const anchor = view.getByTestId("content-menu-anchor");
+  expect(anchor).toHaveStyle({ maxWidth: "50%" });
+  const host = view.UNSAFE_getByProps({ colorScheme: "dark" });
+  expect(host.props.matchContents).toBeUndefined();
+  expect(StyleSheet.flatten(host.props.style)).toMatchObject({
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  });
+  expect(within(host).queryByTestId("usage-trigger")).toBeNull();
+  expect(within(anchor).getByTestId("usage-trigger")).toBeOnTheScreen();
+  expect(view.getByTestId("compose-menu").props.modifiers).toEqual([{ fillMaxSize: true }]);
 });

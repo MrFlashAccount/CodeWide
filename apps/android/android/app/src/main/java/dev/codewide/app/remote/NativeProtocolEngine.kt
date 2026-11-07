@@ -791,7 +791,7 @@ internal class NativeProtocolEngine(
       ),
     ))
     if (error != null) {
-      pending.completion(Result.failure(NativeRpcException(error.optInt("code", -32_000), error.optString("message", "RPC failed"))))
+      pending.completion(Result.failure(NativeRpcException(error.optInt("code", -32_000), error.optString("message", "RPC failed"), error.opt("data"))))
     } else {
       pending.completion(Result.success(if (response.has("result")) response.opt("result") else JSONObject.NULL))
     }

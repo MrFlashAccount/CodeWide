@@ -20,6 +20,8 @@ mod catalog_summary;
 mod catalog_visibility;
 mod client_tools;
 mod dispatch;
+mod execution;
+mod execution_authority;
 pub mod history;
 mod history_base;
 mod history_questions;
@@ -36,6 +38,7 @@ pub mod rollout_monitor;
 mod rollout_origin;
 pub mod rollout_store;
 pub mod storage;
+mod subscriptions;
 #[cfg(test)]
 mod test_support;
 pub mod user_text;
@@ -44,19 +47,20 @@ use std::sync::{Arc, RwLock, Weak};
 
 use agent_core::{
     model::{
-        AgentEvent, AgentThread, AppThreadId, Capability, CapabilityInvokeParams, CapabilitySet,
-        ClientMessageId, ModelCatalog, PermissionProfileCatalog, Provenance, ProviderDescriptor,
-        ProviderId, ProviderThreadRef, RequestRespondParams, RpcError, RuntimeResponse,
-        StartWhileActiveMode, ThreadCreateParams, ThreadListParams, ThreadListResult,
-        ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams,
-        ThreadUpdateResult, TurnId, TurnInterruptParams, TurnStartParams, TurnStartResult,
-        TurnSteerParams, TurnSteerResult, thread_not_found_message,
+        AgentEvent, AgentThread, AppThreadId, BackgroundTaskListParams, BackgroundTaskListResult,
+        Capability, CapabilityInvokeParams, CapabilitySet, ClientMessageId, ModelCatalog,
+        PermissionProfileCatalog, Provenance, ProviderDescriptor, ProviderId, ProviderThreadRef,
+        RequestRespondParams, RpcError, RuntimeResponse, StartWhileActiveMode, ThreadCreateParams,
+        ThreadListParams, ThreadListResult, ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult,
+        ThreadUpdateParams, ThreadUpdateResult, TurnContinueParams, TurnId, TurnInterruptParams,
+        TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+        thread_not_found_message,
     },
     naming::{CatalogNames, ModelNaming},
     provider::{
         AdmissionError, AgentProvider, ClientToolHost, DispatchError, NativeMessageSearch,
         NativeSurface, NativeThreadResources, NativeThreadStore, ProviderError, ProviderEvent,
-        ProviderFence, ProviderStatus,
+        ProviderFence, ProviderStatus, ThreadExecutionAuthority,
     },
     request_ids,
     usage::ModelPricing,
@@ -75,6 +79,9 @@ use crate::{
 
 pub const PROVIDER_ID: &str = "codex";
 const EVENT_CHANNEL_CAPACITY: usize = 2_048;
+/// Pages of `thread/backgroundTerminals/list` one running list reads: a
+/// thread keeps few terminals, so the bound only stops a cursor loop.
+const BACKGROUND_TERMINAL_PAGES: usize = 8;
 
 /// The Codex column of the capability table.
 pub const CAPABILITIES: CapabilitySet = CapabilitySet {
@@ -107,6 +114,8 @@ pub const CAPABILITIES: CapabilitySet = CapabilitySet {
     orchestration_tools: true,
     threads_cross_provider_fork: true,
     threads_background_task_output: false,
+    orchestration_external_delivery: false,
+    accounts_rate_limit_resets: false,
     turns_start_while_active: StartWhileActiveMode::NativeJoin,
 };
 
@@ -119,6 +128,8 @@ pub struct CodexProvider {
     compactions: Arc<ActiveCompactions>,
     /// The display names of the last model list read.
     names: Arc<CatalogNames>,
+    /// Threads this App Server connection generation is subscribed to.
+    subscriptions: Arc<subscriptions::ThreadSubscriptions>,
     id: ProviderId,
 }
 
@@ -133,6 +144,7 @@ impl CodexProvider {
             client_tools: Arc::new(CodexClientTools::default()),
             compactions: Arc::new(ActiveCompactions::default()),
             names: Arc::new(CatalogNames::default()),
+            subscriptions: Arc::new(subscriptions::ThreadSubscriptions::default()),
             id: codex_provider_id(),
         }
     }
@@ -167,13 +179,65 @@ impl CodexProvider {
         self.upstream.version()
     }
 
+    async fn create_thread(
+        &self,
+        params: ThreadCreateParams,
+        policy: Option<&agent_core::provider::ExecutionPolicy>,
+    ) -> Result<AgentThread, ProviderError> {
+        let mut request = json!({
+            "cwd": params.cwd,
+            "model": params.settings.model,
+            "permissions": params.settings.permission_profile,
+        });
+        if let Some(policy) = policy {
+            execution::apply(&mut request, policy);
+        }
+        if let Some(tier) = params.settings.service_tier {
+            request["serviceTier"] = json!(tier);
+        }
+        // Codex declares its own tools from the installed host; the neutral
+        // `clientTools` field is the Claude host's channel.
+        self.client_tools.declare_on_params(&mut request);
+        let result = self.rpc("thread/start", request).await?;
+        let thread = result
+            .get("thread")
+            .and_then(|thread| mapping::thread(&self.id, thread, false))
+            .ok_or_else(|| {
+                ProviderError::Protocol("thread/start returned an invalid thread".into())
+            })?;
+        Ok(thread)
+    }
+
     async fn rpc(&self, method: &str, params: Value) -> Result<Value, ProviderError> {
+        let generation = self.upstream.generation();
         let response = self
             .upstream
             .request(json!({"id": format!("codex-adapter:{method}"), "method": method, "params": params}))
             .await
             .map_err(transport_error)?;
+        self.subscriptions
+            .observe_response(generation, method, &response);
         rpc_result(response)
+    }
+
+    /// Subscribes this connection to the thread's events without reading its
+    /// history (see `subscriptions`).
+    async fn subscribe(&self, thread: &AppThreadId) -> Result<(), ProviderError> {
+        let resumed = dispatch::ensure_subscribed(
+            &self.upstream,
+            self.account_pool().as_ref(),
+            &self.subscriptions,
+            thread.as_str(),
+        )
+        .await
+        .map_err(|error| match error {
+            DispatchError::Transport(error) => error,
+            DispatchError::Admission(error) => ProviderError::Protocol(error.to_string()),
+        })?;
+        match resumed {
+            Some(response) => rpc_result(response).map(|_| ()),
+            None => Ok(()),
+        }
     }
 
     async fn rpc_fenced(
@@ -181,11 +245,14 @@ impl CodexProvider {
         method: &str,
         params: Value,
     ) -> Result<(Value, ProviderFence), ProviderError> {
+        let generation = self.upstream.generation();
         let (response, fence) = self
             .upstream
             .request_fenced(json!({"id": format!("codex-adapter:{method}"), "method": method, "params": params}))
             .await
             .map_err(transport_error)?;
+        self.subscriptions
+            .observe_response(generation, method, &response);
         let fence = ProviderFence::new(async move { fence.wait().await.map_err(transport_error) });
         Ok((rpc_result(response)?, fence))
     }
@@ -263,6 +330,15 @@ pub(crate) fn transport_error(error: UpstreamError) -> ProviderError {
 }
 
 /// Splits a JSON-RPC response into its result or a typed rejection.
+/// The JSON-RPC method of a request, empty when it has none.
+fn request_method(request: &Value) -> String {
+    request
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
 pub(crate) fn rpc_result(response: Value) -> Result<Value, ProviderError> {
     let Value::Object(mut response) = response else {
         return Err(ProviderError::Protocol(
@@ -291,6 +367,20 @@ fn admission_error(error: &AccountPoolError) -> AdmissionError {
         error if error.is_retryable() => AdmissionError::Retryable(error.to_string()),
         error => AdmissionError::Fatal(error.to_string()),
     }
+}
+
+/// A client-wire `turn/continue {threadId}` as the App Server's resuming
+/// `turn/start`: the same request id and thread, no input.
+fn continue_as_turn_start(request: &Value) -> Value {
+    let thread_id = request
+        .pointer("/params/threadId")
+        .cloned()
+        .unwrap_or(Value::Null);
+    json!({
+        "id": request.get("id").cloned().unwrap_or(Value::Null),
+        "method": "turn/start",
+        "params": {"threadId": thread_id, "input": []},
+    })
 }
 
 /// Thread id a native notification belongs to, for binding observation.
@@ -451,25 +541,15 @@ impl AgentProvider for CodexProvider {
         &self,
         params: ThreadCreateParams,
     ) -> Result<AgentThread, ProviderError> {
-        let mut request = json!({
-            "cwd": params.cwd,
-            "model": params.settings.model,
-            "permissions": params.settings.permission_profile,
-        });
-        if let Some(tier) = params.settings.service_tier {
-            request["serviceTier"] = json!(tier);
-        }
-        // Codex declares its own tools from the installed host; the neutral
-        // `clientTools` field is the Claude host's channel.
-        self.client_tools.declare_on_params(&mut request);
-        let result = self.rpc("thread/start", request).await?;
-        let thread = result
-            .get("thread")
-            .and_then(|thread| mapping::thread(&self.id, thread, false))
-            .ok_or_else(|| {
-                ProviderError::Protocol("thread/start returned an invalid thread".into())
-            })?;
-        Ok(thread)
+        self.create_thread(params, None).await
+    }
+
+    async fn thread_create_with_policy(
+        &self,
+        params: ThreadCreateParams,
+        policy: &agent_core::provider::ExecutionPolicy,
+    ) -> Result<AgentThread, ProviderError> {
+        self.create_thread(params, Some(policy)).await
     }
 
     async fn thread_read(&self, thread: &AppThreadId) -> Result<ThreadReadResult, ProviderError> {
@@ -480,6 +560,19 @@ impl AgentProvider for CodexProvider {
             )
             .await?;
         self.read_result(&result)
+    }
+
+    async fn thread_execution_authority(
+        &self,
+        thread: &AppThreadId,
+    ) -> Result<Option<ThreadExecutionAuthority>, ProviderError> {
+        let Some(storage) = &self.storage else {
+            return Ok(None);
+        };
+        storage
+            .thread_execution_authority(thread.as_str())
+            .await
+            .map_err(ProviderError::Protocol)
     }
 
     async fn thread_read_fenced(
@@ -582,6 +675,10 @@ impl AgentProvider for CodexProvider {
             .map(|_| ())
     }
 
+    async fn thread_observe(&self, thread: &AppThreadId) -> Result<(), ProviderError> {
+        self.subscribe(thread).await
+    }
+
     async fn turn_start(&self, params: TurnStartParams) -> Result<TurnStartResult, ProviderError> {
         let request = json!({
             "id": "codex-adapter:turn/start",
@@ -610,7 +707,28 @@ impl AgentProvider for CodexProvider {
         Ok(TurnStartResult::Started { turn_id })
     }
 
+    async fn turn_continue(
+        &self,
+        params: TurnContinueParams,
+    ) -> Result<TurnStartResult, ProviderError> {
+        self.turn_start(TurnStartParams {
+            app_thread_id: params.app_thread_id,
+            client_message_id: None,
+            input: Vec::new(),
+            client_tools: None,
+        })
+        .await
+    }
+
     async fn turn_steer(&self, params: TurnSteerParams) -> Result<TurnSteerResult, ProviderError> {
+        // A steer joins a running turn whose events this connection may not
+        // receive yet (a turn that outlived a companion restart). A rejected
+        // subscription leaves the steer itself to report the thread's state;
+        // a transport failure means the steer was never sent.
+        match self.subscribe(&params.app_thread_id).await {
+            Ok(()) | Err(ProviderError::Rejected(_) | ProviderError::Protocol(_)) => {}
+            Err(error) => return Err(error),
+        }
         let result = self
             .rpc(
                 "turn/steer",
@@ -659,6 +777,34 @@ impl AgentProvider for CodexProvider {
         self.respond(response).await
     }
 
+    async fn thread_background_tasks(
+        &self,
+        params: BackgroundTaskListParams,
+    ) -> Result<BackgroundTaskListResult, ProviderError> {
+        let mut tasks = Vec::new();
+        let mut cursor = Value::Null;
+        for _ in 0..BACKGROUND_TERMINAL_PAGES {
+            let page = self
+                .rpc(
+                    "thread/backgroundTerminals/list",
+                    json!({"threadId": params.app_thread_id.as_str(), "cursor": cursor}),
+                )
+                .await?;
+            tasks.extend(
+                page.get("data")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(mapping::background_terminal),
+            );
+            cursor = page.get("nextCursor").cloned().unwrap_or(Value::Null);
+            if !cursor.is_string() {
+                break;
+            }
+        }
+        Ok(BackgroundTaskListResult { tasks })
+    }
+
     async fn capability_invoke(
         &self,
         params: CapabilityInvokeParams,
@@ -702,11 +848,15 @@ impl NativeSurface for CodexProvider {
     async fn request(&self, mut request: Value) -> Result<Value, ProviderError> {
         self.client_tools.declare_on_thread_start(&mut request);
         let page = TurnsPage::of(&request);
+        let method = request_method(&request);
+        let generation = self.upstream.generation();
         let mut response = self
             .upstream
             .request(request)
             .await
             .map_err(transport_error)?;
+        self.subscriptions
+            .observe_response(generation, &method, &response);
         if let Some(page) = &page {
             self.compactions.complete_turns_page(page, &mut response);
         }
@@ -719,11 +869,15 @@ impl NativeSurface for CodexProvider {
     ) -> Result<(Value, ProviderFence), ProviderError> {
         self.client_tools.declare_on_thread_start(&mut request);
         let page = TurnsPage::of(&request);
+        let method = request_method(&request);
+        let generation = self.upstream.generation();
         let (mut response, fence) = self
             .upstream
             .request_fenced(request)
             .await
             .map_err(transport_error)?;
+        self.subscriptions
+            .observe_response(generation, &method, &response);
         if let Some(page) = &page {
             self.compactions.complete_turns_page(page, &mut response);
         }
@@ -741,18 +895,40 @@ impl NativeSurface for CodexProvider {
     }
 
     async fn dispatch_turn_start(&self, request: Value) -> Result<Value, DispatchError> {
-        dispatch::turn_start_with_resume(&self.upstream, self.account_pool().as_ref(), request)
+        dispatch::turn_start_with_resume(
+            &self.upstream,
+            self.account_pool().as_ref(),
+            &self.subscriptions,
+            request,
+        )
+        .await
+    }
+
+    /// The App Server resumes an interrupted turn with a `turn/start` that
+    /// carries no input.
+    async fn dispatch_turn_continue(&self, request: Value) -> Result<Value, DispatchError> {
+        self.dispatch_turn_start(continue_as_turn_start(&request))
             .await
     }
 
     async fn dispatch_settings_update(&self, request: Value) -> Result<Value, DispatchError> {
-        dispatch::settings_update_with_resume(&self.upstream, self.account_pool().as_ref(), request)
-            .await
+        dispatch::settings_update_with_resume(
+            &self.upstream,
+            self.account_pool().as_ref(),
+            &self.subscriptions,
+            request,
+        )
+        .await
     }
 
     async fn dispatch_realtime_start(&self, request: Value) -> Result<Value, DispatchError> {
-        dispatch::realtime_start_with_resume(&self.upstream, self.account_pool().as_ref(), request)
-            .await
+        dispatch::realtime_start_with_resume(
+            &self.upstream,
+            self.account_pool().as_ref(),
+            &self.subscriptions,
+            request,
+        )
+        .await
     }
 
     async fn handle_host_rpc(&self, method: &str, params: &Value) -> Option<Result<Value, String>> {
@@ -786,5 +962,22 @@ impl NativeSurface for CodexProvider {
     fn thread_resources(&self) -> Option<Arc<dyn NativeThreadResources>> {
         let storage: Arc<dyn NativeThreadResources> = self.storage.clone()?;
         Some(storage)
+    }
+}
+
+#[cfg(test)]
+mod continue_tests {
+    use serde_json::json;
+
+    use super::continue_as_turn_start;
+
+    #[test]
+    fn a_continue_is_the_app_servers_turn_start_without_input() {
+        assert_eq!(
+            continue_as_turn_start(
+                &json!({"id": 7, "method": "turn/continue", "params": {"threadId": "t"}})
+            ),
+            json!({"id": 7, "method": "turn/start", "params": {"threadId": "t", "input": []}})
+        );
     }
 }

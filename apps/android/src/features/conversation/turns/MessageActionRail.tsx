@@ -1,12 +1,12 @@
 /** V1 MessageActionRail owner, extracted without changing interaction or resource lifetime. */
-import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useRef } from "react";
 import { Pressable, View } from "react-native";
-import { colors, controlHitSlop, iconSize } from "../../../theme";
+import { colors, controlHitSlop } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { useMessageActionMenu } from "../../../ui/MessageActionMenu";
 import type { MessageActionMenuRequest } from "../../../ui/MessageActionMenu.types";
+import { OverflowMenuButton } from "../../../ui/OverflowMenuButton";
 import { styles } from "./MessageActionRail.styles";
 
 export function CopyButton({
@@ -44,17 +44,14 @@ export function MessageActionRail(props: MessageActionRailProps) {
   };
   return (
     <View style={styles.messageActionRail}>
-      <Pressable
+      <OverflowMenuButton
         accessibilityLabel="Message actions"
-        accessibilityRole="button"
-        collapsable={false}
-        hitSlop={controlHitSlop.compact}
         onPress={openActions}
         ref={actionButtonRef}
-        style={({ pressed }) => [styles.messageActionButton, pressed && styles.pressed]}
-      >
-        <Ionicons color={colors.textDim} name="ellipsis-vertical" size={iconSize.action} />
-      </Pressable>
+        size="compact"
+        style={styles.messageActionButton}
+        tone="dim"
+      />
     </View>
   );
 }

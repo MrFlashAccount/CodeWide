@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import type { Dispatch, SetStateAction } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, View } from "react-native";
 import { stripTerminalControlSequences } from "../../../rendering/native-code-block";
 import { NativeCodeBlock } from "../../../rendering/NativeCodeBlock";
@@ -10,7 +9,7 @@ import { CopyButton } from "../turns/MessageActionRail";
 import { styles } from "./FullContentViewer.styles";
 import type { FullContentViewerProps } from "./FullContentViewer.types";
 
-/** Displays the current bounded output range; the host retains selection and measurement state. */
+/** Displays the current bounded output range; the host retains selection state and layout sizes the viewport. */
 export function renderFullContentViewerBody({
   formatContentBytes,
   hasNext,
@@ -20,17 +19,13 @@ export function renderFullContentViewerBody({
   onPrevious,
   rangeEnd,
   selection,
-  setViewportHeight,
   title,
-  viewportHeight,
 }: FullContentViewerProps & {
   formatContentBytes: (value: number) => string;
   hasNext: boolean;
   hasPrevious: boolean;
   rangeEnd: number;
-  setViewportHeight: Dispatch<SetStateAction<number>>;
   title: string;
-  viewportHeight: number;
 }) {
   return (
     <View style={styles.fullContentViewer} testID="full-content-viewer">
@@ -58,13 +53,7 @@ export function renderFullContentViewerBody({
           <Ionicons color={colors.text} name="close" size={iconSize.navigation} />
         </Pressable>
       </View>
-      <View
-        onLayout={(event) => {
-          const nextHeight = Math.floor(event.nativeEvent.layout.height);
-          setViewportHeight((current) => (current === nextHeight ? current : nextHeight));
-        }}
-        style={styles.fullContentViewport}
-      >
+      <View style={styles.fullContentViewport}>
         {selection.loading ? (
           <View style={styles.fullContentCentered}>
             <ActivityIndicator color={colors.accent} size="small" />
@@ -74,7 +63,7 @@ export function renderFullContentViewerBody({
           <View style={styles.fullContentCentered}>
             <Text style={styles.errorText}>{selection.error}</Text>
           </View>
-        ) : selection.text !== null && viewportHeight > 0 ? (
+        ) : selection.text !== null ? (
           selection.presentation === "markdown" ? (
             <ScrollView
               contentContainerStyle={styles.fullContentMarkdown}
@@ -86,8 +75,8 @@ export function renderFullContentViewerBody({
           ) : Platform.OS === "android" ? (
             <NativeCodeBlock
               embeddedInParentScroll={false}
+              fillParentHeight
               language="text"
-              maxHeight={viewportHeight}
               truncate={false}
               value={selection.text}
               variant={selection.presentation === "terminal" ? "terminal" : "code"}

@@ -699,6 +699,81 @@ fn string_param<'a>(params: &'a Value, name: &'static str) -> Result<&'a str, Di
         .ok_or(DictationError::InvalidParams(name))
 }
 
+fn transcription_client(
+    proxy: &HttpProxyConfig,
+    max_idle_per_host: usize,
+) -> Result<reqwest::Client, DictationError> {
+    proxy
+        .apply(reqwest::Client::builder())
+        .map_err(|_| DictationError::ProxyConfiguration)?
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_mins(15))
+        .pool_idle_timeout(Duration::from_mins(30))
+        .pool_max_idle_per_host(max_idle_per_host)
+        .tcp_keepalive(Duration::from_mins(1))
+        .redirect(reqwest::redirect::Policy::none())
+        .dns_resolver2(MetricsDnsResolver)
+        .connector_layer(MetricsConnectorLayer)
+        .build()
+        .map_err(|_| DictationError::Transport)
+}
+
+fn hedge_delay(audio: Duration) -> Duration {
+    let allowance_ms = HEDGE_DELAY_PER_AUDIO_MINUTE
+        .as_millis()
+        .saturating_mul(audio.as_millis())
+        / 60_000;
+    HEDGE_BASE_DELAY
+        .saturating_add(Duration::from_millis(
+            u64::try_from(allowance_ms).unwrap_or(u64::MAX),
+        ))
+        .min(MAX_HEDGE_DELAY)
+}
+
+/// Races `primary` against one hedge started after `hedge_after`.
+///
+/// The first successful outcome wins and the other request is dropped. A
+/// failure from one side only completes the race once the other side has
+/// also finished, because the surviving request may still answer.
+async fn race_with_hedge<Value, Error, Primary, Hedge, HedgeFuture>(
+    primary: Primary,
+    hedge_after: Duration,
+    hedge: Hedge,
+) -> Result<Value, Error>
+where
+    Primary: Future<Output = Result<Value, Error>>,
+    Hedge: FnOnce() -> HedgeFuture,
+    HedgeFuture: Future<Output = Result<Value, Error>>,
+{
+    tokio::pin!(primary);
+    tokio::select! {
+        result = &mut primary => return result,
+        () = tokio::time::sleep(hedge_after) => {}
+    }
+    info!(
+        status = "dictation-hedge-started",
+        hedge_after_ms = hedge_after.as_millis(),
+    );
+    let hedge = hedge();
+    tokio::pin!(hedge);
+    let (winner, result) = tokio::select! {
+        result = &mut primary => match result {
+            Ok(value) => ("primary", Ok(value)),
+            Err(_) => ("hedge", hedge.await),
+        },
+        result = &mut hedge => match result {
+            Ok(value) => ("hedge", Ok(value)),
+            Err(_) => ("primary", primary.await),
+        },
+    };
+    info!(
+        status = "dictation-hedge-finished",
+        winner,
+        succeeded = result.is_ok(),
+    );
+    result
+}
+
 fn ratio_ppm(value: f64) -> f64 {
     (value.clamp(0.0, 1.0) * 1_000_000.0).round()
 }
@@ -728,8 +803,73 @@ mod tests {
 
     use super::{
         DecodedBatchMetrics, DictationError, DictationUploadMetrics,
-        QualityFrame, cloudflare_retry_delay, decode_opus_chunk, transcription_bounds, wav_header,
+        QualityFrame, cloudflare_retry_delay, decode_opus_chunk, hedge_delay, race_with_hedge,
+        transcription_bounds, wav_header,
     };
+
+    #[test]
+    fn hedge_delay_grows_slowly_with_audio_and_is_capped() {
+        assert_eq!(hedge_delay(Duration::ZERO), Duration::from_secs(6));
+        assert_eq!(hedge_delay(Duration::from_mins(1)), Duration::from_millis(7_500));
+        assert_eq!(hedge_delay(Duration::from_mins(2)), Duration::from_secs(9));
+        assert_eq!(hedge_delay(Duration::from_mins(10)), Duration::from_secs(20));
+        assert_eq!(hedge_delay(Duration::from_hours(1)), Duration::from_secs(20));
+    }
+
+    #[tokio::test]
+    async fn fast_primary_never_starts_a_hedge() {
+        let mut hedge_started = false;
+        let result: Result<&str, ()> = race_with_hedge(
+            async { Ok("primary") },
+            Duration::from_millis(50),
+            || {
+                hedge_started = true;
+                async { Ok("hedge") }
+            },
+        )
+        .await;
+        assert_eq!(result, Ok("primary"));
+        assert!(!hedge_started);
+    }
+
+    #[tokio::test]
+    async fn stalled_primary_is_answered_by_the_hedge() {
+        let result: Result<&str, ()> = race_with_hedge(
+            std::future::pending(),
+            Duration::from_millis(10),
+            || async { Ok("hedge") },
+        )
+        .await;
+        assert_eq!(result, Ok("hedge"));
+    }
+
+    #[tokio::test]
+    async fn failed_hedge_waits_for_the_surviving_primary() {
+        let result: Result<&str, &str> = race_with_hedge(
+            async {
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                Ok("primary")
+            },
+            Duration::from_millis(10),
+            || async { Err("hedge failed") },
+        )
+        .await;
+        assert_eq!(result, Ok("primary"));
+    }
+
+    #[tokio::test]
+    async fn both_failures_report_the_last_error() {
+        let result: Result<&str, &str> = race_with_hedge(
+            async {
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                Err("primary failed")
+            },
+            Duration::from_millis(10),
+            || async { Err("hedge failed") },
+        )
+        .await;
+        assert_eq!(result, Err("primary failed"));
+    }
 
     #[test]
     fn dictation_upload_metrics_preserve_first_arrival_and_accumulate_batches() {

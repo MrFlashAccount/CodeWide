@@ -1,4 +1,5 @@
 import { ConversationEmptyState } from "./ConversationEmptyState";
+import { RunningBackgroundTasksPanel } from "./turns/RunningBackgroundTasksPanel";
 import { ConversationQueueFooter } from "./ConversationQueueFooter";
 import type { CreateConversationTimelineContentProps } from "./ConversationTimelineContent.types";
 import { ConversationTimelineSurface } from "./timeline/ConversationTimelineSurface";
@@ -32,8 +33,10 @@ export function createConversationTimelineContent(props: CreateConversationTimel
           historyActivityModel={props.historyActivityModel}
           historyActivityResourceId={props.historyActivityResourceId}
           newChat={props.timelineRead.newChat}
+          notice={props.draftNotice}
           onChangeWorkspaceMode={props.projectsInputs.onChangeWorkspaceMode}
           openProjectPicker={props.composerProjectSelectionBinding.openProjectPicker}
+          projectRequirement={props.projectsInputs.projectRequirement}
           server={draftServer}
           threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
           workspaceMode={props.workspaceMode}
@@ -44,27 +47,32 @@ export function createConversationTimelineContent(props: CreateConversationTimel
         props.timelineState.historyAnchorStateBinding.firstVisibleHistoryAnchorRef
       }
       footerContent={
-        <ConversationQueueFooter
-          beginQueuedComposerEdit={props.queueEditActionsBinding.beginQueuedComposerEdit}
-          closeInlineQueueOverlay={props.queueVisibilityBinding.closeInlineQueueOverlay}
-          currentTurnId={props.timelineRead.conversationPresentationBinding.currentTurnId}
-          inlineQueueExpanded={props.queueVisibilityBinding.inlineQueueExpanded}
-          inlineQueueMaxHeight={props.inlineQueueMaxHeight}
-          inlineQueueOverlayItems={props.inlineQueueBinding.inlineQueueOverlayItems}
-          onCancelQueued={props.queueInputs.onCancelQueued}
-          onEditQueued={props.queueInputs.onEditQueued}
-          onListQueue={props.queueInputs.onListQueue}
-          onMoveQueued={props.queueInputs.onMoveQueued}
-          onRetryFailedMessage={props.composerInputs.onRetryFailedMessage}
-          onSteerQueued={props.queueInputs.onSteerQueued}
-          queuedPromptEditing={
-            props.composerStateBinding.queueEditStateBinding.queuedComposerEdit !== null
-          }
-          threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
-          toggleInlineQueueOverlay={props.queueVisibilityBinding.toggleInlineQueueOverlay}
-          visibleQueuedPrompts={props.visibleQueuedPrompts}
-          voicePhase={props.composerStateBinding.composerVoiceStateBinding.voicePhase}
-        />
+        <>
+          <RunningBackgroundTasksPanel />
+          <ConversationQueueFooter
+            beginQueuedComposerEdit={props.queueEditActionsBinding.beginQueuedComposerEdit}
+            closeInlineQueueOverlay={props.queueVisibilityBinding.closeInlineQueueOverlay}
+            currentTurnId={props.timelineRead.conversationPresentationBinding.currentTurnId}
+            inlineQueueExpanded={props.queueVisibilityBinding.inlineQueueExpanded}
+            inlineQueueMaxHeight={props.inlineQueueMaxHeight}
+            inlineQueueOverlayItems={props.inlineQueueBinding.inlineQueueOverlayItems}
+            onCancelQueued={props.queueInputs.onCancelQueued}
+            onEditQueued={props.queueInputs.onEditQueued}
+            onListQueue={props.queueInputs.onListQueue}
+            onMoveQueued={props.queueInputs.onMoveQueued}
+            onRetryFailedMessage={props.composerInputs.onRetryFailedMessage}
+            onSteerQueued={props.queueInputs.onSteerQueued}
+            queuedPromptEditing={
+              props.composerStateBinding.queueEditStateBinding.queuedComposerEdit !== null
+            }
+            threadSearchActive={
+              props.timelineRead.timelineSearchProjectionBinding.threadSearchActive
+            }
+            toggleInlineQueueOverlay={props.queueVisibilityBinding.toggleInlineQueueOverlay}
+            visibleQueuedPrompts={props.visibleQueuedPrompts}
+            voicePhase={props.composerStateBinding.composerVoiceStateBinding.voicePhase}
+          />
+        </>
       }
       fullscreenCovered={props.overlayScrollStateBinding.fullscreenCovered}
       fullscreenScrollOwnership={props.overlayScrollStateBinding.fullscreenScrollOwnership}

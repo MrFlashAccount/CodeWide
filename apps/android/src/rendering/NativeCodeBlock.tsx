@@ -1,4 +1,4 @@
-import { ScrollView, StyleSheet, View } from "react-native";
+import { ScrollView, StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 import { useContext, type ReactElement } from "react";
 import { HighlightSearchText, SearchHighlightQuery } from "./SearchMessageFocus";
 
@@ -16,9 +16,28 @@ import {
 } from "./native-code-block";
 import { useRichContentWidth } from "./RichContentLayout";
 
+/**
+ * Vertical sizing of a code viewport. Content sizing estimates the rendered
+ * rows and caps them; parent fill lets layout give the viewport its parent's
+ * whole height, so a fullscreen surface never depends on that estimate.
+ */
+type NativeCodeBlockSizing =
+  | {
+      /** Fills the parent's height and scrolls the rest inside the native viewport. */
+      readonly fillParentHeight: true;
+      readonly maxHeight?: never;
+      readonly maxVisibleLines?: never;
+    }
+  | {
+      readonly fillParentHeight?: false;
+      readonly maxHeight?: number;
+      readonly maxVisibleLines?: number;
+    };
+
 export function NativeCodeBlock({
   embeddedInParentScroll = true,
   fillAvailableWidth = false,
+  fillParentHeight = false,
   language,
   maxHeight,
   maxVisibleLines,
@@ -26,17 +45,15 @@ export function NativeCodeBlock({
   value,
   variant = "code",
   wrapLines = false,
-}: {
-  embeddedInParentScroll?: boolean;
-  fillAvailableWidth?: boolean;
-  language: string;
-  maxHeight?: number;
-  maxVisibleLines?: number;
-  truncate?: boolean;
-  value: string;
-  variant?: NativeCodeVariant;
+}: NativeCodeBlockSizing & {
+  readonly embeddedInParentScroll?: boolean;
+  readonly fillAvailableWidth?: boolean;
+  readonly language: string;
+  readonly truncate?: boolean;
+  readonly value: string;
+  readonly variant?: NativeCodeVariant;
   /** Wraps long lines instead of scrolling them sideways; wrapped rows fill `maxHeight`. */
-  wrapLines?: boolean;
+  readonly wrapLines?: boolean;
 }) {
   const availableWidth = useRichContentWidth();
   const searchQuery = useContext(SearchHighlightQuery);
@@ -46,19 +63,30 @@ export function NativeCodeBlock({
   const normalizedLanguage = normalizeNativeCodeLanguage(language, variant);
   // Wrapped rows outnumber the source's lines, so a wrapping block takes the
   // whole height it is given and scrolls inside it.
-  const height =
-    wrapLines && maxHeight !== undefined
-      ? maxHeight
-      : nativeCodeHeight(preview.value, maxHeight, maxVisibleLines);
+  const heightStyle = fillParentHeight
+    ? styles.fillParentHeight
+    : {
+        height:
+          wrapLines && maxHeight !== undefined
+            ? maxHeight
+            : nativeCodeHeight(preview.value, maxHeight, maxVisibleLines),
+      };
   if (NativeCodeBlockHost === null) {
     const fallbackValue =
       variant === "terminal" ? stripTerminalControlSequences(preview.value) : preview.value;
-    return <NativeCodeBlockFallback height={height} value={fallbackValue} wrapLines={wrapLines} />;
+    return (
+      <NativeCodeBlockFallback
+        heightStyle={heightStyle}
+        value={fallbackValue}
+        wrapLines={wrapLines}
+      />
+    );
   }
   return (
     <View
       style={[
         styles.container,
+        fillParentHeight ? styles.fillParentHeight : null,
         fillAvailableWidth && availableWidth !== null && availableWidth > 0
           ? { width: availableWidth }
           : null,
@@ -70,7 +98,7 @@ export function NativeCodeBlock({
         language={normalizedLanguage}
         maxLines={maxVisibleLines ?? 0}
         searchQuery={searchQuery}
-        style={[styles.nativeView, { height }]}
+        style={[styles.nativeView, heightStyle]}
         variant={variant}
         wrapLines={wrapLines}
       />
@@ -85,11 +113,11 @@ export function NativeCodeBlock({
 }
 
 function NativeCodeBlockFallback({
-  height,
+  heightStyle,
   value,
   wrapLines,
 }: {
-  readonly height: number;
+  readonly heightStyle: StyleProp<ViewStyle>;
   readonly value: string;
   readonly wrapLines: boolean;
 }): ReactElement {
@@ -97,7 +125,7 @@ function NativeCodeBlockFallback({
     <ScrollView
       nestedScrollEnabled
       showsVerticalScrollIndicator
-      style={[styles.fallbackViewport, { height }]}
+      style={[styles.fallbackViewport, heightStyle]}
     >
       {wrapLines ? (
         <Text selectable style={[styles.fallbackText, styles.fallbackContent]}>
@@ -148,6 +176,13 @@ const styles = StyleSheet.create({
     maxWidth: "100%",
     minWidth: 0,
     width: "100%",
+  },
+  // Explicit longhands: the fallback viewport's `flexGrow: 0` would win over `flex`.
+  fillParentHeight: {
+    flexBasis: 0,
+    flexGrow: 1,
+    flexShrink: 1,
+    minHeight: 0,
   },
   nativeView: {
     maxWidth: "100%",

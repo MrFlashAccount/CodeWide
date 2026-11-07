@@ -217,6 +217,33 @@ impl ClientWireGateway {
             .map(|provider| (provider.clone(), self.wire(provider)))
     }
 
+    /// The owner of a provider-qualified host call. Unlike singleton host
+    /// capabilities, reset inventories can be declared by several providers.
+    ///
+    /// # Errors
+    /// Returns invalid params, disabled provider, or unsupported capability.
+    pub fn provider_owner(
+        &self,
+        capability: Capability,
+        params: &Value,
+    ) -> Result<(Arc<dyn AgentProvider>, WireProvider), RpcFailure> {
+        let id = params
+            .get("providerId")
+            .and_then(Value::as_str)
+            .and_then(ProviderId::parse)
+            .ok_or_else(|| RpcFailure::new(ERROR_INVALID_PARAMS, "providerId is invalid"))?;
+        let provider = self
+            .registry
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| RpcFailure::provider_disabled(&id))?;
+        if !provider.capabilities().supports(capability) {
+            return Err(RpcFailure::capability_unsupported(capability, &id));
+        }
+        let wire = self.wire(&provider);
+        Ok((provider, wire))
+    }
+
     /// Resolves a thread-scoped call and checks `requires`.
     ///
     /// # Errors
@@ -460,18 +487,40 @@ impl ClientWireGateway {
             .capabilities()
             .supports(Capability::ThreadsHostMintedIds)
             .then(mint_app_thread_id);
+        self.create_thread_with_id(provider, wire, app_thread_id, cwd, settings, None)
+            .await
+    }
+
+    /// Creates a thread with a previously journaled host id, or lets the
+    /// provider mint one when `app_thread_id` is absent. Reusing a host id is
+    /// the restart-safe orchestration path for providers that declare
+    /// `threads.hostMintedIds`.
+    ///
+    /// # Errors
+    /// Returns the provider or binding failure.
+    pub async fn create_thread_with_id(
+        &self,
+        provider: &Arc<dyn AgentProvider>,
+        wire: &WireProvider,
+        app_thread_id: Option<AppThreadId>,
+        cwd: String,
+        settings: ThreadSettings,
+        execution_policy: Option<&crate::agent::provider::ExecutionPolicy>,
+    ) -> Result<crate::agent::model::AgentThread, RpcFailure> {
         if let Some(id) = &app_thread_id {
             self.bind_created(&wire.descriptor.id, id.as_str()).await?;
         }
-        let thread = provider
-            .thread_create(ThreadCreateParams {
-                app_thread_id,
-                cwd,
-                settings,
-                client_tools: None,
-            })
-            .await
-            .map_err(|error| RpcFailure::from_provider(&error))?;
+        let params = ThreadCreateParams {
+            app_thread_id,
+            cwd,
+            settings,
+            client_tools: None,
+        };
+        let created = match execution_policy {
+            Some(policy) => provider.thread_create_with_policy(params, policy).await,
+            None => provider.thread_create(params).await,
+        };
+        let thread = created.map_err(|error| RpcFailure::from_provider(&error))?;
         self.bind_created(&wire.descriptor.id, thread.app_thread_id.as_str())
             .await?;
         Ok(thread)

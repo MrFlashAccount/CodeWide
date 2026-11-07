@@ -224,7 +224,7 @@ pub(super) async fn forward_rpc_response(
     }
     if let (Some(orchestration), Some(result)) = (&observers.orchestration, response.get("result"))
     {
-        orchestration.observe_rpc_result(method, result);
+        orchestration.observe_rpc_result(&observers.wire.descriptor.id, method, result);
     }
     if let (Some(projects), Some(result)) = (observers.projects, response.get("result")) {
         projects.observe_rpc_result(method, result).await;
@@ -462,7 +462,8 @@ pub(super) async fn handle_neutral_fork(
     .await
 }
 
-/// A host-level call owned by the first provider declaring `owner`.
+/// A host-level call. Provider reset consumption is qualified by `providerId`;
+/// singleton host capabilities use their first declaring provider.
 pub(super) async fn handle_host(
     hub: &SyncHub,
     socket: &SessionSocket,
@@ -471,7 +472,16 @@ pub(super) async fn handle_host(
     method: &str,
     owner: Capability,
 ) -> Result<(), ()> {
-    let Some((provider, wire)) = hub.gateway.owner(owner) else {
+    let params = request.get("params").cloned().unwrap_or(Value::Null);
+    let selected = if owner == Capability::AccountsRateLimitResets {
+        match hub.gateway.provider_owner(owner, &params) {
+            Ok(selected) => Some(selected),
+            Err(failure) => return send_rpc_failure(socket, id, &failure).await,
+        }
+    } else {
+        hub.gateway.owner(owner)
+    };
+    let Some((provider, wire)) = selected else {
         return send_rpc_error(socket, id, -32_601, "Method is not supported on this host").await;
     };
     if let Some(native) = provider.native_surface() {
@@ -479,7 +489,6 @@ pub(super) async fn handle_host(
             .await
             .map(|_| ());
     }
-    let params = request.get("params").cloned().unwrap_or(Value::Null);
     match provider
         .capability_invoke(CapabilityInvokeParams {
             capability: owner.name().to_owned(),
@@ -544,7 +553,7 @@ pub(super) async fn handle_native_thread_rpc(
     };
     if !matches!(
         method,
-        "turn/start" | "thread/settings/update" | "thread/realtime/start"
+        "turn/start" | "turn/continue" | "thread/settings/update" | "thread/realtime/start"
     ) {
         let accepted = forward_rpc(hub, native, socket, request, id, method, &target.wire).await?;
         hub.gateway.confirm(target, accepted == Some(true)).await;
@@ -552,6 +561,7 @@ pub(super) async fn handle_native_thread_rpc(
     }
     let dispatched = match method {
         "turn/start" => native.dispatch_turn_start(request).await,
+        "turn/continue" => native.dispatch_turn_continue(request).await,
         "thread/settings/update" => native.dispatch_settings_update(request).await,
         _ => {
             let started_at = std::time::Instant::now();
@@ -590,7 +600,7 @@ pub(super) async fn handle_native_thread_rpc(
         Err(error) => {
             let code = match (&error, method) {
                 (_, "thread/realtime/start") => -32_020,
-                (_, "turn/start") | (DispatchError::Admission(_), _) => -32_040,
+                (_, "turn/start" | "turn/continue") | (DispatchError::Admission(_), _) => -32_040,
                 (DispatchError::Transport(error), _) => transport_code(error),
             };
             send_rpc_error(socket, id, code, &error.to_string()).await

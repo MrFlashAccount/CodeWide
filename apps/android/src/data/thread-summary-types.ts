@@ -54,6 +54,11 @@ export type StoredThreadSummary = {
   /** Locally skipped question identities in one turn; contains no answer text. */
   skippedQuestions?: QuestionOpportunity | null;
   status: Thread["status"];
+  /**
+   * Last root whose authoritative subagent index contained this row. This is fallback membership
+   * for incomplete ancestry only; a proven parent chain can place the row under multiple roots.
+   */
+  subagentRootThreadId?: string | null;
   /** Questions with a natively admitted answer; failures restore attention. */
   submittedQuestions?: QuestionOpportunity | null;
   unread: number;
@@ -77,7 +82,13 @@ export function normalizeStoredThreadSummary(row: StoredThreadSummary): StoredTh
     projectionCursor: threadSummaryProjectionCursor(row),
     recencyAt: row.recencyAt ?? null,
     status: normalizeThreadStatus(row.status),
+    subagentRootThreadId: nonEmptyString(row.subagentRootThreadId),
   };
+}
+
+function nonEmptyString(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed === "" ? null : trimmed;
 }
 
 /** Reads the material-event version, including persisted summaries from before this field existed. */

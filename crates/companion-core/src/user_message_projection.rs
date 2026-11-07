@@ -18,6 +18,8 @@ use agent_core::user_text::{
 };
 use serde_json::{Map, Value, json};
 
+use crate::delegated_task_completion::{self, ProjectedReport};
+
 /// The enabled providers' user text cleaners; a thread of an unknown provider
 /// is cleaned by the primary provider's, as its wire always was.
 #[derive(Clone)]
@@ -159,6 +161,10 @@ fn project_turn(turn: &mut Value, cleaner: &dyn UserTextCleaner) {
 /// Projects one item; `false` when it is a user message with nothing the user
 /// wrote. Other items are unchanged.
 fn project_item(item: &mut Value, cleaner: &dyn UserTextCleaner) -> bool {
+    if let Some(report) = delegated_task_report(item) {
+        *item = report;
+        return true;
+    }
     let Some(object) = item.as_object_mut() else {
         return true;
     };
@@ -166,6 +172,102 @@ fn project_item(item: &mut Value, cleaner: &dyn UserTextCleaner) -> bool {
         return true;
     }
     project_user_message(object, cleaner)
+}
+
+fn delegated_task_report(item: &Value) -> Option<Value> {
+    let object = item.as_object()?;
+    if object.get("type").and_then(Value::as_str) != Some("userMessage") {
+        return None;
+    }
+    let item_id = object.get("id")?.as_str()?.trim();
+    if item_id.is_empty() {
+        return None;
+    }
+    let content = object.get("content")?.as_array()?;
+    let reports = content
+        .iter()
+        .filter_map(text_of)
+        .find_map(delegated_task_completion::parse)?;
+    match reports.as_slice() {
+        [] => None,
+        [report] => {
+            let mut projected = report_fields(report);
+            projected.insert("id".into(), json!(item_id));
+            projected.insert("type".into(), json!("codewideTaskNotification"));
+            Some(Value::Object(projected))
+        }
+        [first, ..] => {
+            let entries = reports
+                .iter()
+                .enumerate()
+                .map(|(index, report)| {
+                    json!({
+                        "id": format!("{item_id}:{index}"),
+                        "requestId": report.request_id,
+                        "taskId": report.task_id,
+                        "agentThreadId": report.agent_thread_id,
+                        "name": report_name(report),
+                        "status": report.status,
+                        "turnId": report.turn_id,
+                    })
+                })
+                .collect::<Vec<_>>();
+            // The top level is a summary that older clients render alone.
+            Some(json!({
+                "id": item_id,
+                "type": "codewideTaskNotification",
+                "delivery": "wake",
+                "kind": "agent",
+                "taskId": first.task_id,
+                "agentThreadId": null,
+                "name": format!("{} agent results", reports.len()),
+                "status": batch_status(&reports),
+                "durationMs": null,
+                "toolUses": null,
+                "result": null,
+                "requestId": null,
+                "turnId": null,
+                "reports": entries,
+            }))
+        }
+    }
+}
+
+fn report_name(report: &ProjectedReport) -> &str {
+    report
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Delegated task")
+}
+
+/// One report as a task notification, without its item identity.
+fn report_fields(report: &ProjectedReport) -> Map<String, Value> {
+    let Value::Object(fields) = json!({
+        "delivery": "wake",
+        "kind": "agent",
+        "taskId": report.task_id,
+        "agentThreadId": report.agent_thread_id,
+        "name": report_name(report),
+        "status": report.status,
+        "durationMs": null,
+        "toolUses": null,
+        "result": null,
+        "requestId": report.request_id,
+        "turnId": report.turn_id,
+    }) else {
+        return Map::new();
+    };
+    fields
+}
+
+/// The status a batch summary shows: the most severe of its reports.
+fn batch_status(reports: &[ProjectedReport]) -> &'static str {
+    ["failed", "interrupted", "stopped"]
+        .into_iter()
+        .find(|status| reports.iter().any(|report| report.status == *status))
+        .unwrap_or("completed")
 }
 
 /// Projects one `userMessage`'s content; `false` when no part is left.
@@ -278,7 +380,12 @@ fn mentioned_attachment_kind(name: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use agent_core::user_text::{CleanedText, NoUserTextFormats, UserTextCleaner};
-    use serde_json::json;
+    use serde_json::{Value, json};
+
+    use crate::delegated_task_completion::{
+        ChildResultNotice, ChildResultReport, DelegatedTaskCompletion, DelegatedTaskStatus,
+        serialize, serialize_v1,
+    };
 
     use super::{project_desktop_content, project_notification, project_rpc_result};
 
@@ -370,5 +477,119 @@ mod tests {
             projected.map(|payload| payload["params"]["item"]["content"].clone()),
             Some(json!([{"type": "text", "text": "Continue please"}]))
         );
+    }
+
+    #[test]
+    fn projects_a_delegated_completion_as_a_task_report_not_a_user_message()
+    -> Result<(), serde_json::Error> {
+        // A version 1 notice persisted in a transcript before batching.
+        let text = serialize_v1(DelegatedTaskCompletion {
+            task_id: "task-1".into(),
+            attempt_id: "attempt-1".into(),
+            agent_thread_id: Some("child-1".into()),
+            name: Some("Review".into()),
+            status: DelegatedTaskStatus::Succeeded,
+            final_message: Some("The full private result for the parent model".into()),
+            result_truncated: false,
+            cost: None,
+        })?;
+        let projected = project_notification(
+            json!({"method": "item/completed", "params": {"item": {
+                "id": "message-1", "type": "userMessage", "content": [
+                    {"type": "text", "text": text}
+                ]
+            }}}),
+            &NoUserTextFormats,
+        );
+        assert_eq!(
+            projected.as_ref().map(|payload| &payload["params"]["item"]),
+            Some(&json!({
+                "id": "message-1",
+                "type": "codewideTaskNotification",
+                "delivery": "wake",
+                "kind": "agent",
+                "taskId": "task-1",
+                "agentThreadId": "child-1",
+                "name": "Review",
+                "status": "completed",
+                "durationMs": null,
+                "toolUses": null,
+                "result": null,
+                "requestId": null,
+                "turnId": null,
+            }))
+        );
+        assert!(
+            !projected
+                .as_ref()
+                .is_some_and(|payload| payload.to_string().contains("full private result"))
+        );
+        Ok(())
+    }
+
+    fn child_report(request: &str, status: DelegatedTaskStatus) -> ChildResultReport {
+        ChildResultReport {
+            request_id: request.into(),
+            task_id: None,
+            agent_thread_id: Some(format!("child-{request}")),
+            turn_id: Some(format!("turn-{request}")),
+            name: Some(format!("Agent {request}")),
+            status,
+            final_message: Some("The full private result for the parent model".into()),
+            result_truncated: false,
+            note: None,
+            cost: None,
+        }
+    }
+
+    fn projected_item(text: &str) -> Option<Value> {
+        project_notification(
+            json!({"method": "item/completed", "params": {"item": {
+                "id": "message-2", "type": "userMessage", "content": [
+                    {"type": "text", "text": text}
+                ]
+            }}}),
+            &NoUserTextFormats,
+        )
+        .map(|payload| payload["params"]["item"].clone())
+    }
+
+    #[test]
+    fn an_interrupted_child_result_projects_its_request_and_turn() -> Result<(), serde_json::Error>
+    {
+        let text = serialize(ChildResultNotice::new(vec![child_report(
+            "r1",
+            DelegatedTaskStatus::Interrupted,
+        )]))?;
+        let item = projected_item(&text).unwrap_or_default();
+        assert_eq!(item["type"], "codewideTaskNotification");
+        assert_eq!(item["status"], "interrupted");
+        assert_eq!(item["requestId"], "r1");
+        assert_eq!(item["taskId"], "r1");
+        assert_eq!(item["turnId"], "turn-r1");
+        assert_eq!(item["agentThreadId"], "child-r1");
+        assert!(item.get("reports").is_none());
+        assert!(!item.to_string().contains("full private result"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_batched_notice_projects_one_summary_row_with_every_report() -> Result<(), serde_json::Error>
+    {
+        let text = serialize(ChildResultNotice::new(vec![
+            child_report("r1", DelegatedTaskStatus::Succeeded),
+            child_report("r2", DelegatedTaskStatus::Failed),
+        ]))?;
+        let item = projected_item(&text).unwrap_or_default();
+        assert_eq!(item["type"], "codewideTaskNotification");
+        assert_eq!(item["id"], "message-2");
+        assert_eq!(item["name"], "2 agent results");
+        assert_eq!(item["status"], "failed");
+        assert_eq!(item["reports"][0]["id"], "message-2:0");
+        assert_eq!(item["reports"][1]["requestId"], "r2");
+        assert_eq!(item["reports"][1]["status"], "failed");
+        assert_eq!(item["reports"].as_array().map(Vec::len), Some(2));
+        assert!(!item.to_string().contains("full private result"));
+        Ok(())
     }
 }

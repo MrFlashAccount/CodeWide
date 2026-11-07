@@ -1,8 +1,7 @@
-import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, waitFor, within } from "@testing-library/react-native";
 import { useState, type ReactNode } from "react";
 import { Image, Pressable, Text } from "react-native";
-import { State } from "react-native-gesture-handler";
-import { fireGestureHandler, getByGestureTestId } from "react-native-gesture-handler/jest-utils";
+import { setZoomChildSize, tapZoomChild } from "./mocks/ZoomToolkit";
 import { ContentReviewHost, useContentReviewRuntime } from "../src/rendering/ContentReviewHost";
 import {
   ImagePreviewHost,
@@ -36,7 +35,11 @@ const image = {
   draft: { scope: "thread", attachmentId: "photo" },
 };
 
-function Preview() {
+function Preview({
+  item = image,
+}: {
+  readonly item?: typeof image & { download?: () => Promise<void> };
+}) {
   const [overlay, setOverlay] = useState<ReactNode>(null);
   const open = useImagePreview();
   useImagePreviewAnnotationHandler(annotate);
@@ -59,7 +62,7 @@ function Preview() {
   };
   return (
     <>
-      <Pressable onPress={() => open(image, fullscreen)}>
+      <Pressable onPress={() => open(item, fullscreen)}>
         <Text>Open photo</Text>
       </Pressable>
       {overlay}
@@ -159,12 +162,11 @@ it("offers both drawing and pins, saves the image comment and restores its point
     nativeEvent: { source: { width: 200, height: 100 } },
   });
   fireEvent.press(view.getByLabelText("Pin a comment on image"));
-  await waitFor(() => expect(getByGestureTestId("image-review-pin-tap").config.enabled).toBe(true));
-  act(() =>
-    fireGestureHandler(getByGestureTestId("image-review-pin-tap"), [
-      { state: State.END, x: 150, y: 150 },
-    ]),
-  );
+  // The 200x100 photo fits the 300x300 viewport as 300x150; a tap at its centre pins 50%/50%.
+  setZoomChildSize({ height: 150, width: 300 });
+  act(() => {
+    tapZoomChild(150, 75);
+  });
   fireEvent.changeText(view.getByPlaceholderText("What should change here?"), "Change the center");
   fireEvent.press(view.getByLabelText("Save review comment"));
   await waitFor(() =>
@@ -173,6 +175,31 @@ it("offers both drawing and pins, saves the image comment and restores its point
   expect(attach).toHaveBeenCalledWith(expect.stringContaining("(50.0%, 50.0%)"));
   fireEvent.press(view.getByLabelText("Close image"));
   fireEvent.press(view.getByText("Open photo"));
+  fireEvent(view.getByTestId("image-preview-viewport"), "layout", {
+    nativeEvent: { layout: { width: 300, height: 300 } },
+  });
   expect(view.getByText("1")).toBeTruthy();
   expect(view.queryByPlaceholderText("What should change here?")).toBeNull();
+});
+
+it("keeps the actions menu at the trailing edge of the top bar", () => {
+  const view = render(
+    <AppDialogProvider>
+      <AppFullscreenOverlayProvider>
+        <ContentReviewHost>
+          <ImagePreviewHost>
+            <Preview item={{ ...image, download: async () => undefined }} />
+          </ImagePreviewHost>
+        </ContentReviewHost>
+      </AppFullscreenOverlayProvider>
+    </AppDialogProvider>,
+  );
+  fireEvent.press(view.getByText("Open photo"));
+  const labels = within(view.getByTestId("image-preview-controls"))
+    .getAllByRole("button")
+    .map((button) => String(button.props.accessibilityLabel));
+  expect(labels.at(-1)).toBe("Image actions");
+  expect(labels.indexOf("Annotate image in QuickDraw")).toBeLessThan(
+    labels.indexOf("Image actions"),
+  );
 });

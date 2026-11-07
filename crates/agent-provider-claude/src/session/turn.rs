@@ -2,16 +2,28 @@
 //! a lost session's replacement, usage and the end of a turn.
 //!
 //! Rules owned here:
+//! - Claude owns the turn's boundaries; nothing is inferred from a result's
+//!   origin. A turn ends once Claude settled (`command_lifecycle`
+//!   `completed` or `cancelled`) every message the companion wrote to it and
+//!   answered with a result since it started the latest of them, whichever
+//!   of the two Claude reports last; or once Claude reports `idle`, holding
+//!   nothing. A result before that only updates the outcome, so a steer's
+//!   `aborted_*` result and a wake Claude answered before a queued user
+//!   message stay in the user's turn, and a user message Claude merged into
+//!   a wake ends the turn with that wake's result. A background agent keeps
+//!   Claude `running` between its turns; it does not keep a turn open.
 //! - `turn.start` on an active thread answers `busy`; it never steers.
 //! - A user turn's id is the uuid of its first prompt offer, which Claude
 //!   persists, so the turn keeps its id when history is read back.
-//! - Steer is explicit and offered with priority `now`; the `aborted_*`
-//!   result a steer causes does not end the turn.
-//! - Interrupt answers at once; without an `aborted_*` result within the
-//!   timeout the query is closed and the turn finalized as interrupted.
+//! - Steer is explicit and offered with priority `now`.
+//! - Interrupt answers at once; without the turn's end within the timeout
+//!   the query is closed and the turn finalized as interrupted.
 //!   Open requests are resolved before `turn.completed`.
-//! - A provider-started turn (background task wake) is a separate turn with
-//!   origin `provider` and no user message.
+//! - Claude's `running` while no turn runs (a background task wake) starts a
+//!   separate turn with origin `provider` and no user message.
+//! - `turn.continue` resumes the interrupted or failed last turn as Claude
+//!   resumes one itself: a user turn without a user message, whose first
+//!   offer is Claude's resume prompt as an adapter (meta) message.
 //! - A background task report delivered to this conversation
 //!   (`task_reports.rs`) becomes a `taskNotification` item: while a turn
 //!   runs, a `midTurn` item at once (a `wake` item while a provider turn has
@@ -37,7 +49,7 @@ use super::{
     query::Offer,
 };
 use crate::{
-    cli::protocol::Priority,
+    cli::protocol::{Author, Priority},
     live::{
         prompt::{history_prefix, prompt_content},
         usage::{
@@ -49,11 +61,24 @@ use crate::{
     state::thread_state::{PromptRecord, PromptRole, TurnOutcomeRecord, TurnRecord},
     transcript::{
         builder::{LiveUsage, TurnBuilder, TurnBuilderContext, UserMessage},
-        frames::{ClaudeFrame, ResultFrame, StreamEvent, classify_frame},
+        entries::RESUME_PROMPT,
+        frames::{
+            ClaudeFrame, CommandState, ResultFrame, SessionState, StreamEvent, classify_frame,
+        },
         result::{TurnOutcome, is_interruption, is_lost_session, turn_outcome},
         task_reports::TaskReport,
     },
 };
+
+/// What Claude answered in the turn so far; the turn ends with the outcome
+/// of its latest result.
+pub(super) enum Answer {
+    /// No result since Claude started the turn's latest message: the outcome
+    /// of an earlier result, if any.
+    Pending(Option<TurnOutcome>),
+    /// A result since then, with its outcome.
+    Given(TurnOutcome),
+}
 
 /// The turn that runs.
 pub(super) struct ActiveTurn {
@@ -61,17 +86,16 @@ pub(super) struct ActiveTurn {
     pub anchors: Vec<String>,
     pub builder: TurnBuilder,
     /// The first offer, kept to resend after a lost session.
-    pub first_offer: Option<Vec<Value>>,
+    pub first_offer: Option<FirstOffer>,
     /// Whether the first persisted frame's uuid is among the anchors.
     pub frame_anchored: bool,
     pub interrupt_requested: bool,
     pub interrupt_deadline: Option<Instant>,
+    pub answer: Answer,
     /// The context size of the turn's latest top-level model request.
     pub last_request: Option<TokenUsage>,
     /// Requests reported live since the turn's last result.
     pub live_usage: LiveUsageMeter,
-    /// Steers whose `aborted_*` restart result must not end the turn.
-    pub pending_steer_aborts: usize,
     pub prompts: Vec<PromptRecord>,
     /// Release the process after this turn (an interrupt during a command).
     pub release_after: bool,
@@ -80,13 +104,22 @@ pub(super) struct ActiveTurn {
     pub usage: Option<UsageDelta>,
 }
 
-/// A user turn or the `/compact` turn.
+/// A user turn, the turn resuming the last one, or the `/compact` turn.
 pub enum TurnRequest {
     User {
         client_message_id: Option<ClientMessageId>,
         input: Vec<UserContent>,
     },
+    Continue,
     Compact,
+}
+
+/// The message that starts a turn, as offered to Claude.
+#[derive(Clone)]
+pub(super) struct FirstOffer {
+    /// Messages API content blocks.
+    content: Vec<Value>,
+    author: Author,
 }
 
 /// A steer's message.
@@ -100,7 +133,7 @@ pub const EXPECTED_TURN_NOT_ACTIVE: &str = "expected turn is not active";
 const INVALID_UUID: &str = "the session's uuid generator produced an invalid id";
 
 struct TurnStart {
-    first_offer: Option<Vec<Value>>,
+    first_offer: Option<FirstOffer>,
     origin: TurnOrigin,
     /// How the turn delivers the task reports that arrived while idle when
     /// it begins; `None`: they keep waiting (`/compact` delivers them after
@@ -150,7 +183,8 @@ fn outcome_record(outcome: &TurnOutcome) -> TurnOutcomeRecord {
 }
 
 impl Session {
-    /// Starts a user turn (or the `/compact` turn). Never steers.
+    /// Starts a user turn (the resuming turn, or the `/compact` turn). Never
+    /// steers.
     pub(super) async fn start_turn(
         &mut self,
         request: TurnRequest,
@@ -169,8 +203,20 @@ impl Session {
         };
         let (first_offer, origin, client_message_id, user_message) = match request {
             TurnRequest::Compact => (
-                vec![json!({"type": "text", "text": "/compact"})],
+                FirstOffer {
+                    content: vec![json!({"type": "text", "text": "/compact"})],
+                    author: Author::Person,
+                },
                 TurnOrigin::Provider,
+                None,
+                None,
+            ),
+            TurnRequest::Continue => (
+                FirstOffer {
+                    content: vec![json!({"type": "text", "text": RESUME_PROMPT})],
+                    author: Author::Adapter,
+                },
+                TurnOrigin::User,
                 None,
                 None,
             ),
@@ -178,17 +224,20 @@ impl Session {
                 client_message_id,
                 input,
             } => (
-                prompt_content(&input),
+                FirstOffer {
+                    content: prompt_content(&input),
+                    author: Author::Person,
+                },
                 TurnOrigin::User,
                 client_message_id.clone(),
                 Some((client_message_id, input)),
             ),
         };
+        let resumes = first_offer.author == Author::Adapter;
         self.begin_turn(TurnStart {
             first_offer: Some(first_offer.clone()),
             origin,
-            waiting_reports: user_message
-                .is_some()
+            waiting_reports: (user_message.is_some() || resumes)
                 .then_some(TaskNotificationDelivery::MidTurn),
             prompts: vec![PromptRecord {
                 client_message_id: client_message_id.map(ClientMessageId::into_string),
@@ -200,11 +249,15 @@ impl Session {
         })
         .await;
         match self.ensure_query() {
-            Some(query) => query.offer(Offer {
-                content: first_offer,
-                uuid: Some(offer_uuid),
-                priority: Priority::Queued,
-            }),
+            Some(query) => self.offer(
+                query.as_ref(),
+                Offer {
+                    content: first_offer.content,
+                    uuid: offer_uuid,
+                    priority: Priority::Queued,
+                    author: first_offer.author,
+                },
+            ),
             None => {
                 self.finish_turn(TurnOutcome::Failed(TurnError {
                     kind: TurnErrorKind::ProcessExited,
@@ -237,9 +290,9 @@ impl Session {
             frame_anchored: false,
             interrupt_requested: false,
             interrupt_deadline: None,
+            answer: Answer::Pending(None),
             last_request: None,
             live_usage: LiveUsageMeter::new(),
-            pending_steer_aborts: 0,
             prompts: start.prompts,
             release_after: false,
             session_replacements: 0,
@@ -331,7 +384,6 @@ impl Session {
             uuid: Some(uuid.clone()),
         });
         active.anchors.push(uuid.clone());
-        active.pending_steer_aborts += 1;
         let turn_id = active.builder.turn_id().clone();
         self.record_active_turn(TurnOutcomeRecord::InProgress, None);
         let now = self.now_ms();
@@ -343,11 +395,15 @@ impl Session {
             .builder
             .add_user_message(message.client_message_id, &message.input);
         self.emit_all(events).await;
-        query.offer(Offer {
-            content: prompt_content(&message.input),
-            uuid: Some(uuid),
-            priority: Priority::Now,
-        });
+        self.offer(
+            query.as_ref(),
+            Offer {
+                content: prompt_content(&message.input),
+                uuid,
+                priority: Priority::Now,
+                author: Author::Person,
+            },
+        );
         Ok(turn_id)
     }
 
@@ -412,6 +468,11 @@ impl Session {
     pub(super) async fn on_message(&mut self, raw: &Value) {
         let frame = classify_frame(raw);
         match &frame {
+            ClaudeFrame::SessionState(state) => self.on_session_state(*state).await,
+            ClaudeFrame::CommandLifecycle {
+                command_uuid,
+                state,
+            } => self.on_command_state(command_uuid, *state).await,
             ClaudeFrame::Init { mcp_servers, .. } => self.on_init(mcp_servers.clone()).await,
             ClaudeFrame::BackgroundTasks { count } => {
                 self.background_tasks = *count;
@@ -454,6 +515,11 @@ impl Session {
     /// Claude's own output for the wake does.
     async fn on_task_report(&mut self, frame: &ClaudeFrame, report: &TaskReport) {
         self.task_reports.received(report);
+        // The launching item shows the end at once, delivered or waiting.
+        let now = self.now_ms();
+        if let Some(launch) = self.task_reports.settle(report, now) {
+            self.republish_launches(vec![launch]).await;
+        }
         let delivered = self.task_reports.delivered(report, |tool_use_id| {
             self.active
                 .as_ref()
@@ -622,22 +688,9 @@ impl Session {
         self.persist();
     }
 
-    /// A result that does not end the active turn: the `aborted_*` restart a
-    /// steer causes, or a provider-initiated result inside a user turn.
-    fn is_intermediate_result(&mut self, frame: &ResultFrame) -> bool {
-        let Some(active) = &mut self.active else {
-            return false;
-        };
-        if active.interrupt_requested {
-            return false;
-        }
-        if is_interruption(frame) && active.pending_steer_aborts > 0 {
-            active.pending_steer_aborts -= 1;
-            return true;
-        }
-        active.builder.origin() == TurnOrigin::User && frame.origin.is_some()
-    }
-
+    /// A result of the active turn: measured, and its outcome becomes the
+    /// turn's. It ends the turn only once Claude settled every message the
+    /// companion wrote to it.
     async fn on_result(&mut self, frame: &ResultFrame) {
         if self.active.is_none() {
             // Not measured: the baseline stays, so the next turn's first result counts it.
@@ -648,16 +701,79 @@ impl Session {
             self.replace_lost_session().await;
             return;
         }
-        if self.is_intermediate_result(frame) {
-            return;
-        }
-        let Some(active) = &self.active else {
+        let Some(active) = &mut self.active else {
             return;
         };
-        let outcome = if active.interrupt_requested && is_interruption(frame) {
+        active.answer = Answer::Given(if active.interrupt_requested && is_interruption(frame) {
             TurnOutcome::Interrupted
         } else {
             turn_outcome(frame, active.builder.assistant_error())
+        });
+        self.end_if_settled().await;
+    }
+
+    /// One of the companion's messages moved on in Claude's queue.
+    async fn on_command_state(&mut self, command_uuid: &str, state: CommandState) {
+        match state {
+            CommandState::Queued | CommandState::Started => {
+                for unsettled in &mut self.unsettled {
+                    if unsettled.uuid == command_uuid {
+                        unsettled.acknowledged = true;
+                    }
+                }
+                if state == CommandState::Started
+                    && let Some(active) = &mut self.active
+                    && let Answer::Given(outcome) = &active.answer
+                {
+                    active.answer = Answer::Pending(Some(outcome.clone()));
+                }
+            }
+            CommandState::Completed | CommandState::Cancelled => {
+                self.unsettled
+                    .retain(|unsettled| unsettled.uuid != command_uuid);
+                self.end_if_settled().await;
+            }
+        }
+    }
+
+    /// Claude's session state: `running` without a turn is Claude's own work
+    /// (a wake); `idle` means Claude holds nothing, so every message it
+    /// acknowledged is settled and the turn ends unless one is on its way.
+    async fn on_session_state(&mut self, state: SessionState) {
+        match state {
+            SessionState::Running | SessionState::RequiresAction => self.active_or_wake().await,
+            SessionState::Idle => {
+                // A message Claude has not acknowledged yet is still on its way.
+                self.unsettled.retain(|unsettled| !unsettled.acknowledged);
+                if self.unsettled.is_empty() {
+                    self.end_turn().await;
+                }
+            }
+        }
+    }
+
+    /// Ends the active turn once Claude settled the companion's messages and
+    /// answered since it started the latest.
+    async fn end_if_settled(&mut self) {
+        if self.unsettled.is_empty()
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|active| matches!(active.answer, Answer::Given(_)))
+        {
+            self.end_turn().await;
+        }
+    }
+
+    /// Ends the active turn with its latest result's outcome.
+    async fn end_turn(&mut self) {
+        let Some(active) = &mut self.active else {
+            return;
+        };
+        let outcome = match std::mem::replace(&mut active.answer, Answer::Pending(None)) {
+            Answer::Given(outcome) | Answer::Pending(Some(outcome)) => outcome,
+            Answer::Pending(None) if active.interrupt_requested => TurnOutcome::Interrupted,
+            Answer::Pending(None) => TurnOutcome::Completed,
         };
         self.finish_turn(outcome).await;
     }
@@ -709,9 +825,9 @@ impl Session {
         };
         let content = match history_prefix(lines) {
             Some(prefix) => std::iter::once(json!({"type": "text", "text": prefix}))
-                .chain(first_offer)
+                .chain(first_offer.content)
                 .collect(),
-            None => first_offer,
+            None => first_offer.content,
         };
         active.prompts.push(PromptRecord {
             client_message_id: None,
@@ -721,11 +837,15 @@ impl Session {
         active.anchors.push(uuid.clone());
         self.record_active_turn(TurnOutcomeRecord::InProgress, None);
         if let Some(query) = self.ensure_query() {
-            query.offer(Offer {
-                content,
-                uuid: Some(uuid),
-                priority: Priority::Queued,
-            });
+            self.offer(
+                query.as_ref(),
+                Offer {
+                    content,
+                    uuid,
+                    priority: Priority::Queued,
+                    author: first_offer.author,
+                },
+            );
         }
     }
 

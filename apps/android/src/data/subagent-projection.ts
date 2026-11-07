@@ -17,6 +17,7 @@ export class SubagentListProjection {
           thread.connectionId,
           thread.remoteThreadId,
           thread.parentThreadId,
+          thread.subagentRootThreadId,
           thread.updatedAt,
           thread.recencyAt,
           thread.status.type,
@@ -40,7 +41,14 @@ export function subagentsForThread(
   summaries: readonly StoredThreadSummary[],
   rootThreadId: string,
 ): StoredThreadSummary[] {
-  const result = threadSummaryDescendants(summaries, rootThreadId);
+  const provenDescendantIds = new Set(
+    threadSummaryDescendants(summaries, rootThreadId).map((row) => row.remoteThreadId),
+  );
+  const result = summaries.filter(
+    (summary) =>
+      provenDescendantIds.has(summary.remoteThreadId) ||
+      summary.subagentRootThreadId === rootThreadId,
+  );
   return result.sort(compareSubagentRecency);
 }
 

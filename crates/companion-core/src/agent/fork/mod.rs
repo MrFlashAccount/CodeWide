@@ -155,7 +155,10 @@ impl ForkService {
             .thread;
         let source_profile = Some(source_thread.settings.permission_profile.clone())
             .filter(|profile| !profile.is_empty())
-            .or_else(|| self.profiles.get(source.thread_id.as_str()));
+            .or_else(|| {
+                self.profiles
+                    .get(&source.wire.descriptor.id, source.thread_id.as_str())
+            });
         let turns = source_turns(&source.provider, source, params).await?;
         let preamble = handoff::handoff_preamble(
             source.thread_id.as_str(),
@@ -533,7 +536,14 @@ mod tests {
     }
 
     async fn harness(target_forks: bool) -> Result<Harness, Box<dyn std::error::Error>> {
-        harness_for("codex", ":workspace", "claude", &[], target_forks).await
+        harness_for(
+            "codex",
+            ":workspace",
+            "claude",
+            &[":read-only", ":workspace", ":full-access"],
+            target_forks,
+        )
+        .await
     }
 
     async fn harness_for(
@@ -843,6 +853,7 @@ mod tests {
         )
         .await?;
         harness.profiles.observe_rpc_result(
+            &ProviderId::from_static("codex"),
             "thread/resume",
             &json!({"thread": {"id": SOURCE}, "activePermissionProfile": null,
                 "sandbox": {"type": "dangerFullAccess"}}),

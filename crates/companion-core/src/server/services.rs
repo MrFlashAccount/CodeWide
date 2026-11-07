@@ -434,12 +434,19 @@ async fn terminal_upgrade(
         }
         _ => None,
     };
+    // Spawning enters the working directory synchronously; its mount is asked
+    // first, off the runtime, so a hung mount refuses only this terminal.
+    let workspace = match resolve_terminal_spawn_query(&state, &query) {
+        Ok(spawn_query) => terminal::check_workspace(spawn_query.cwd.as_deref()).await,
+        Err(_) => Ok(()),
+    };
     if query.session_id.is_some() {
         let offset = query.offset.unwrap_or(0);
         let session =
             match state
                 .terminals
                 .attach_or_create(&owner, &query, authorization_changes, || {
+                    workspace?;
                     let spawn_query = resolve_terminal_spawn_query(&state, &query)?;
                     terminal::TerminalSession::spawn(&spawn_query)
                 }) {
@@ -458,7 +465,8 @@ async fn terminal_upgrade(
         Ok(permit) => permit,
         Err(error) => return json_error(error.status(), error.code()),
     };
-    let session = match resolve_terminal_spawn_query(&state, &query)
+    let session = match workspace
+        .and_then(|()| resolve_terminal_spawn_query(&state, &query))
         .and_then(|spawn_query| terminal::TerminalSession::spawn(&spawn_query))
     {
         Ok(session) => session,

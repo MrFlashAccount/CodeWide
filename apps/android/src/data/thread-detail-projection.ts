@@ -1,8 +1,13 @@
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import { isTaskNotificationItem } from "../rendering/taskNotifications";
 import {
+  BACKGROUND_COMMAND_FIELD,
+  advanceBackgroundCommand,
+  parseBackgroundCommand,
   projectedTurnMetadata,
+  reconcileBackgroundCommand,
   reconcileTurnItems,
+  type BackgroundCommandProjection,
   type ProjectedTurnMetadata,
   type RemoteFileAttachment,
 } from "@codewide/sync-client";
@@ -677,14 +682,15 @@ export function compactCompletedTurnForStorage(turn: Turn): Turn {
   // is lifecycle evidence, not the chat boundary: compacting around it would
   // discard the visible answer and produce "Completed without final response".
   const finalAgentIndex = explicitFinalAgentIndex >= 0 ? explicitFinalAgentIndex : latestAgentIndex;
-  // Background task reports and context compactions are small and drawn
-  // outside the collapsed history (reason lines, lifecycle lines), so they
-  // stay resident.
+  // Background task reports, background commands and context compactions
+  // are drawn outside the collapsed history (reason lines, background
+  // command chips, lifecycle lines), so they stay resident.
   const retains = (item: Turn["items"][number], index: number): boolean =>
     item.type === "userMessage" ||
     item.type === "contextCompaction" ||
     index === finalAgentIndex ||
-    isTaskNotificationItem(item);
+    isTaskNotificationItem(item) ||
+    isBackgroundCommandItem(item);
   const retained = turn.items.filter(retains);
   const kinds = turn.items.flatMap((item, index) => (retains(item, index) ? [] : [item.type]));
   if (kinds.length === 0) {
@@ -702,6 +708,83 @@ export function compactCompletedTurnForStorage(turn: Turn): Turn {
     itemsView: "summary",
   };
   return compacted;
+}
+
+/**
+ * The metadata a turn write leaves, with each background command's latest
+ * state (`codewide.backgroundCommands`) merged in. `metadata` is what the
+ * write carries (`null` when it keeps the stored row's), `stored` the stored
+ * row's. The background commands of `turn` meet the known states by the
+ * rule of the write: an authoritative read reconciles (its end wins, its
+ * running or unknown never replaces an end), a live event advances (an end
+ * is final). Sealed content never changes; this mutable metadata does, so a
+ * read repairs a chip whose live event was lost. `null` when nothing is to
+ * be written.
+ */
+export function mergeBackgroundCommandStates(write: {
+  readonly authority: "live" | "authoritative";
+  readonly metadata: ProjectedTurnMetadata | null;
+  readonly stored: ProjectedTurnMetadata | null;
+  readonly turn: Turn;
+}): ProjectedTurnMetadata | null {
+  const { metadata, stored } = write;
+  const known = knownBackgroundCommands([stored, metadata]);
+  reconcileWrittenBackgroundCommands(known, write.turn, write.authority);
+  if (Object.keys(known).length === 0) {
+    return metadata;
+  }
+  const merged: ProjectedTurnMetadata = {
+    ...(metadata ?? stored ?? {}),
+    backgroundCommands: known,
+  };
+  return metadata === null && JSON.stringify(merged) === JSON.stringify(stored ?? {})
+    ? null
+    : merged;
+}
+
+/** The background command states the metadata already holds, each advanced in order. */
+function knownBackgroundCommands(
+  sources: readonly (ProjectedTurnMetadata | null)[],
+): Record<string, BackgroundCommandProjection> {
+  const known: Record<string, BackgroundCommandProjection> = {};
+  for (const source of sources) {
+    for (const [itemId, value] of Object.entries(source?.backgroundCommands ?? {})) {
+      const state = parseBackgroundCommand(value);
+      if (state !== null) {
+        known[itemId] = advanceBackgroundCommand(known[itemId] ?? null, state);
+      }
+    }
+  }
+  return known;
+}
+
+/** Meets the known states with the background commands a written turn carries. */
+function reconcileWrittenBackgroundCommands(
+  known: Record<string, BackgroundCommandProjection>,
+  turn: Turn,
+  authority: "live" | "authoritative",
+): void {
+  for (const item of turn.items) {
+    const read =
+      item.type === "commandExecution"
+        ? parseBackgroundCommand(unknownRecord(item)?.[BACKGROUND_COMMAND_FIELD])
+        : null;
+    if (read !== null) {
+      const local = known[item.id] ?? null;
+      known[item.id] =
+        authority === "authoritative"
+          ? reconcileBackgroundCommand(local, read)
+          : advanceBackgroundCommand(local, read);
+    }
+  }
+}
+
+/** A command that started a background task: its chip draws outside the collapsed history. */
+function isBackgroundCommandItem(item: Turn["items"][number]): boolean {
+  return (
+    item.type === "commandExecution" &&
+    ("codewideBackgroundTask" in item || "codewideBackgroundTaskId" in item)
+  );
 }
 
 // WHY: This V1 projection keeps one existing ordered decision tree; extracting branches would risk changing merge precedence during behavior-preserving cleanup.

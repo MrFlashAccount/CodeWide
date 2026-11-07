@@ -117,7 +117,9 @@ pub struct QueryOptions {
     pub client_tools: bool,
 }
 
-const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+/// The reasoning efforts Claude Code accepts (`--effort`) and records on its
+/// answers (`runtime/recorded_model.rs`).
+pub(crate) const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// The probe runs with Claude's default permission mode, no settings files
 /// and only the MCP servers on its command line (none), as the Agent SDK
@@ -172,6 +174,8 @@ impl QueryOptions {
         if session {
             push(&mut args, "--model", &self.model);
             args.push("--permission-prompt-tool=stdio".into());
+            // Claude acknowledges each message it takes (`command_lifecycle`).
+            args.push("--replay-user-messages".into());
         }
         match &self.identity {
             SessionIdentity::New(id) => push(&mut args, "--session-id", id),
@@ -274,6 +278,7 @@ mod tests {
         assert_eq!(after(&args, "--session-id"), Some("s"));
         assert_eq!(after(&args, "--effort"), Some("high"));
         assert!(args.contains(&"--permission-prompt-tool=stdio".to_owned()));
+        assert!(args.contains(&"--replay-user-messages".to_owned()));
         assert!(args.contains(&"--tools=default".to_owned()));
         assert!(!args.contains(&"--allow-dangerously-skip-permissions".to_owned()));
         assert!(

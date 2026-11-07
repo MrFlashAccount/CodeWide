@@ -34,6 +34,7 @@ use crate::{
     rollout_origin::OwnTurns,
     rollout_store::{RolloutStore, TurnRef},
 };
+use agent_core::provider::{StoredThreadState, ThreadExecutionAuthority};
 
 const CURSOR_PREFIX: &str = "codewide-history-v1:";
 const SOURCE_WITNESS_PREFIX: &str = "codewide-history-source-v1:";
@@ -228,6 +229,29 @@ impl HistoryService {
         }
     }
 
+    /// Reads the provider-owned settings that governed the newest canonical
+    /// rollout. This is separate from history projection: orchestration needs
+    /// an authority even when App Server `thread/read` omits its profile.
+    pub(crate) async fn thread_execution_authority(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<ThreadExecutionAuthority>, HistoryServiceError> {
+        let catalog = self.catalog.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let path = match catalog.resolve(&thread_id) {
+                Ok(path) => path,
+                Err(CatalogError::NotFound(_)) => return Ok(None),
+                Err(error) => return Err(HistoryServiceError::Catalog(error)),
+            };
+            crate::execution_authority::read(&path)
+                .map_err(IndexError::Io)
+                .map_err(HistoryServiceError::Rollout)
+        })
+        .await
+        .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
+    }
+
     pub(crate) fn catalog_event(&self, payload: Value) -> Result<Value, rusqlite::Error> {
         self.catalog.visibility.event(payload)
     }
@@ -243,15 +267,34 @@ impl HistoryService {
         let snapshot = self.store.threads().thread_pin_snapshot()?;
         let mut archived_thread_ids = Vec::new();
         for id in snapshot.thread_ids.iter().filter(|id| has_rollout(id)) {
-            match self.catalog.thread_archived(id) {
-                Ok(true) => archived_thread_ids.push(id),
-                Ok(false) | Err(CatalogError::NotFound(_)) => {}
-                Err(error) => return Err(error.into()),
+            if self.thread_archived(id)? {
+                archived_thread_ids.push(id);
             }
         }
         Ok(
             json!({"cursor": snapshot.cursor, "threadIds": snapshot.thread_ids, "archivedThreadIds": archived_thread_ids}),
         )
+    }
+
+    /// Archive membership of one thread from the canonical rollout roots; a
+    /// thread without a rollout yet is not archived.
+    pub(crate) fn thread_archived(&self, thread_id: &str) -> Result<bool, HistoryServiceError> {
+        Ok(self.thread_state(thread_id)? == StoredThreadState::Archived)
+    }
+
+    /// The canonical rollout state of one thread. Codex writes a rollout
+    /// only with the first user message, so a started thread without one is
+    /// `Unrecorded`, not archived.
+    pub(crate) fn thread_state(
+        &self,
+        thread_id: &str,
+    ) -> Result<StoredThreadState, HistoryServiceError> {
+        match self.catalog.thread_archived(thread_id) {
+            Ok(true) => Ok(StoredThreadState::Archived),
+            Ok(false) => Ok(StoredThreadState::Active),
+            Err(CatalogError::NotFound(_)) => Ok(StoredThreadState::Unrecorded),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub(crate) async fn filter_catalog_page(

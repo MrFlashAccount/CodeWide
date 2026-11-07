@@ -1,6 +1,7 @@
 import { performanceExperimentEnabled } from "../../../data/performance-experiments";
 import type { TimelineFixedSizeFallbackReason } from "../../../data/timelineScrollDiagnosticContract";
 import { artifactImageReferences } from "../../../rendering/ArtifactImageReferences";
+import { isAttachmentVideo, MESSAGE_VIDEO_PREVIEW_HEIGHT } from "../../../rendering/videoPreview";
 import {
   estimateDynamicRichMarkdownBlock,
   measureRichMarkdownBlock,
@@ -334,7 +335,14 @@ function estimatedTurnSliceSize(options: {
       collapsedCompletedHistoryHeight(row, presentation, fontScale);
   }
   if (isTrailingPlacement(row.placement)) {
-    bodyHeight += presentation.artifacts.length * controlSize.regular;
+    const hasVideoPreview = presentation.artifacts.some((artifact) =>
+      isAttachmentVideo(artifact.name),
+    );
+    const compactArtifacts = presentation.artifacts.filter(
+      (artifact) => !isAttachmentVideo(artifact.name),
+    );
+    bodyHeight += compactArtifacts.length * controlSize.regular;
+    bodyHeight += hasVideoPreview ? MESSAGE_VIDEO_PREVIEW_HEIGHT + spacing.compact : 0;
     bodyHeight += presentation.showEmptyResponsePlaceholder
       ? typeScale.label.lineHeight * fontScale
       : 0;

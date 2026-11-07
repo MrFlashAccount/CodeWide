@@ -10,7 +10,11 @@
 //! the device re-reads its pages.
 //!
 //! A payload for a thread without a row waits while the row is read once
-//! through [`materialize::RowReader`] (implemented by the sync layer).
+//! through [`materialize::RowReader`] (implemented by the sync layer). A
+//! failed read never parks the thread: it is retried with bounded backoff and
+//! on the thread's next update. Only a confirmed hidden, missing or not-owned
+//! thread is ignored, and even then its next lifecycle event (a turn start or
+//! end, a status change) reads it again.
 //!
 //! The module owns no provider, thread view or interest code: interest
 //! membership is passed in by the session at each flush. Wire names and
@@ -71,6 +75,19 @@ pub const LIST_STREAM_CLOSE_CODE: u16 = 1008;
 const MAX_MATERIALIZING: usize = 64;
 /// Most events buffered for one thread waiting for its first row.
 const MAX_BUFFERED_EVENTS: usize = 64;
+/// Timed retries of a failed first-row read; afterwards only the thread's
+/// next update reads it again.
+const MAX_READ_RETRIES: u32 = 5;
+/// Delay before the first timed retry; it doubles up to [`MAX_RETRY_DELAY`].
+#[cfg(not(test))]
+const FIRST_RETRY_DELAY: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const FIRST_RETRY_DELAY: Duration = Duration::from_millis(10);
+/// Longest delay between timed retries.
+#[cfg(not(test))]
+const MAX_RETRY_DELAY: Duration = Duration::from_mins(1);
+#[cfg(test)]
+const MAX_RETRY_DELAY: Duration = Duration::from_millis(80);
 
 /// Why a hello or `listStream` frame closes the socket.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -141,9 +158,12 @@ struct Hub {
     next_subscriber: u64,
     /// Threads whose first row is being read, with the events since.
     materializing: HashMap<String, Materializing>,
-    /// Threads not to read again until a page or `thread/started` names them:
-    /// hidden by the catalog, missing, or a failed read.
+    /// Threads confirmed hidden, missing or not owned by any provider: read
+    /// again only for a lifecycle event, a page or `thread/started`.
     ignored: HashSet<String>,
+    /// Threads whose last first-row read failed, with the failed attempts.
+    /// They stay readable on every update; a timed retry also reads them.
+    retrying: HashMap<String, u32>,
 }
 
 #[derive(Default)]
@@ -151,6 +171,54 @@ struct Materializing {
     events: Vec<RowEvent>,
     /// The buffer overflowed: the row is read once more afterwards.
     overflowed: bool,
+}
+
+/// The outcome of a first-row read, as the row port reports it.
+#[derive(Debug)]
+pub enum RowRead {
+    /// The decorated row.
+    Row(Value),
+    /// The thread has no list row, for a confirmed reason.
+    Absent(AbsentReason),
+}
+
+/// Why a thread has no list row. Each reason is conclusive: the thread is
+/// ignored until its next lifecycle event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AbsentReason {
+    /// No enabled provider owns the thread.
+    NotOwned,
+    /// Its provider does not know the thread.
+    Missing,
+    /// The catalog filter hides the thread.
+    CatalogHidden,
+    /// The thread continues another app thread.
+    Continuation,
+}
+
+impl AbsentReason {
+    /// The log value of the reason.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotOwned => "not_owned",
+            Self::Missing => "missing",
+            Self::CatalogHidden => "catalog_hidden",
+            Self::Continuation => "continuation",
+        }
+    }
+}
+
+/// What the reader does after a first-row read completed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AfterRead {
+    /// Nothing more to read now.
+    Done,
+    /// Read the row once more now (its event buffer overflowed).
+    ReadAgain,
+    /// The read failed: retry attempt `attempt` after `delay`, unless the
+    /// thread's next update reads it first.
+    RetryAfter { attempt: u32, delay: Duration },
 }
 
 /// The shared row hub. Cloning shares the same rows.
@@ -210,28 +278,31 @@ impl ThreadListRows {
         for row in rows.iter() {
             if let Some(thread_id) = row.get("id").and_then(Value::as_str) {
                 hub.ignored.remove(thread_id);
+                hub.retrying.remove(thread_id);
             }
         }
         hub.store.observe_page(rows, head, archived);
     }
 
     /// Completes the read of a thread's first row taken after journal head
-    /// `head`: `Ok(None)` when the thread is hidden or gone. Returns whether
-    /// the row must be read once more (its buffer overflowed).
+    /// `head` and says what the reader does next. A confirmed absence ignores
+    /// the thread until its next lifecycle event; a failure keeps it readable
+    /// and asks for a timed retry with bounded backoff.
     #[must_use]
     pub fn complete_materialization(
         &self,
         thread_id: &str,
         head: u64,
-        read: Result<Option<Value>, String>,
+        read: Result<RowRead, String>,
         now_secs: i64,
-    ) -> bool {
+    ) -> AfterRead {
         let mut hub = self.lock();
         let Some(pending) = hub.materializing.remove(thread_id) else {
-            return false;
+            return AfterRead::Done;
         };
         match read {
-            Ok(Some(row)) => {
+            Ok(RowRead::Row(row)) => {
+                hub.retrying.remove(thread_id);
                 let class = hub
                     .store
                     .seed(thread_id, row, head, &pending.events, now_secs);
@@ -241,20 +312,54 @@ impl ThreadListRows {
                 if pending.overflowed {
                     hub.materializing
                         .insert(thread_id.to_owned(), Materializing::default());
+                    AfterRead::ReadAgain
+                } else {
+                    AfterRead::Done
                 }
-                pending.overflowed
             }
-            Ok(None) => {
+            Ok(RowRead::Absent(_)) => {
+                hub.retrying.remove(thread_id);
                 hub.ignore(thread_id);
-                false
+                AfterRead::Done
             }
             Err(_) => {
-                hub.ignore(thread_id);
                 self.materialization_failures
                     .fetch_add(1, Ordering::Relaxed);
-                false
+                let attempt = hub.record_failure(thread_id);
+                if attempt > MAX_READ_RETRIES {
+                    AfterRead::Done
+                } else {
+                    AfterRead::RetryAfter {
+                        attempt,
+                        delay: retry_delay(attempt),
+                    }
+                }
             }
         }
+    }
+
+    /// Starts timed retry `attempt` of a failed first-row read. `false` when
+    /// it is no longer due: the row appeared, a read is in flight, or a newer
+    /// failure scheduled its own retry.
+    #[must_use]
+    pub fn retry_materialization(&self, thread_id: &str, attempt: u32) -> bool {
+        let mut hub = self.lock();
+        if hub.retrying.get(thread_id) != Some(&attempt)
+            || hub.store.contains(thread_id)
+            || hub.materializing.contains_key(thread_id)
+            || hub.materializing.len() >= MAX_MATERIALIZING
+        {
+            return false;
+        }
+        hub.materializing
+            .insert(thread_id.to_owned(), Materializing::default());
+        true
+    }
+
+    /// Threads currently ignored as hidden, missing or not owned.
+    #[must_use]
+    pub fn ignored_count(&self) -> usize {
+        self.lock().ignored.len()
     }
 
     /// Reads of unknown threads' rows that failed since start.
@@ -335,10 +440,17 @@ impl Hub {
                 }
             }
             Applied::Unknown => {
-                if self.ignored.contains(&event.thread_id)
-                    || self.materializing.len() >= MAX_MATERIALIZING
-                {
+                if self.materializing.len() >= MAX_MATERIALIZING {
                     return;
+                }
+                // An ignored thread is read again when it starts or ends a
+                // turn or changes status: an ignored but active thread must
+                // not stay frozen.
+                if self.ignored.contains(&event.thread_id) {
+                    if !event.is_lifecycle() {
+                        return;
+                    }
+                    self.ignored.remove(&event.thread_id);
                 }
                 let thread_id = event.thread_id.clone();
                 self.materializing.insert(
@@ -358,6 +470,17 @@ impl Hub {
             self.ignored.clear();
         }
         self.ignored.insert(thread_id.to_owned());
+        tracing::debug!(ignored = self.ignored.len(), "thread list ignored threads");
+    }
+
+    /// Counts one more failed read of a thread; returns its attempt number.
+    fn record_failure(&mut self, thread_id: &str) -> u32 {
+        if !self.retrying.contains_key(thread_id) && self.retrying.len() >= MAX_TRACKED_ROWS {
+            self.retrying.clear();
+        }
+        let attempts = self.retrying.entry(thread_id.to_owned()).or_insert(0);
+        *attempts = attempts.saturating_add(1);
+        *attempts
     }
 
     fn mark_dirty(&mut self, dirty: &[(String, FlushClass)]) {
@@ -402,6 +525,14 @@ impl Hub {
         }
         frames
     }
+}
+
+/// The delay before timed retry `attempt` (1-based): doubling from
+/// [`FIRST_RETRY_DELAY`] up to [`MAX_RETRY_DELAY`].
+fn retry_delay(attempt: u32) -> Duration {
+    FIRST_RETRY_DELAY
+        .saturating_mul(1_u32 << attempt.saturating_sub(1).min(16))
+        .min(MAX_RETRY_DELAY)
 }
 
 fn frame(rows: Vec<Value>, removed: Vec<Value>) -> Value {

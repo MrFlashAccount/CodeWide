@@ -2,7 +2,8 @@ import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { MobileThreadsHeader } from "./MobileThreadsHeader";
 import { useThreadListViewportPaging } from "./threadListViewportPaging";
 import { LegendList } from "@legendapp/list/react-native";
-import { Animated, View } from "react-native";
+import { Animated, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { useEvent } from "../../react/useEvent";
 import { GestureDetector } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
 import { usePerformanceExperiment } from "../../data/performance-experiments";
@@ -10,7 +11,7 @@ import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import { NewThreadFloatingButton } from "../projects/NewThreadFloatingButton";
 import { SidebarProjectRow } from "../projects/SidebarProjectViews";
 import { styles } from "./MobileThreads.styles";
-import { SidebarListFeedback } from "./SidebarListFeedback";
+import { SidebarListFeedback, ThreadListPageError } from "./SidebarListFeedback";
 import { sidebarRows } from "./sidebarRows";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { ThreadListExperimentSuspended } from "./ThreadListBoundary";
@@ -94,6 +95,10 @@ export function MobileThreads(props: MobileThreadsProps) {
     project === null ? onLoadMore : projectSource.loadMore,
   );
   const pullSearch = useThreadListPullGesture(props.onOpenSearch, initialOffset, listKey);
+  const handleListScroll = useEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    pullSearch.onScroll(event);
+    scroll.onScroll();
+  });
 
   return (
     <View style={[styles.mobileList, searchContent !== null && styles.searchOverlayList]}>
@@ -108,6 +113,7 @@ export function MobileThreads(props: MobileThreadsProps) {
             ) : (
               <Reanimated.View style={styles.threadListSuspended}>
                 <LegendList
+                  contentContainerStyle={styles.floatingBarContent}
                   data={scroll.rows}
                   dataKey={`mobile-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
                   drawDistance={320}
@@ -126,9 +132,11 @@ export function MobileThreads(props: MobileThreadsProps) {
                     />
                   }
                   ListFooterComponent={
-                    scroll.rows.length > 0 &&
-                    mode === "active" &&
-                    !scroll.rows.some((row) => row.kind === "thread") ? (
+                    paging.failure !== null ? (
+                      <ThreadListPageError message={paging.failure} onRetry={paging.retry} />
+                    ) : scroll.rows.length > 0 &&
+                      mode === "active" &&
+                      !scroll.rows.some((row) => row.kind === "thread") ? (
                       <SidebarListFeedback
                         archived={false}
                         key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
@@ -143,7 +151,7 @@ export function MobileThreads(props: MobileThreadsProps) {
                   onLayout={paging.onLayout}
                   onMomentumScrollBegin={scroll.onMomentumScrollBegin}
                   onMomentumScrollEnd={scroll.onMomentumScrollEnd}
-                  onScroll={pullSearch.onScroll}
+                  onScroll={handleListScroll}
                   onScrollBeginDrag={scroll.onScrollBeginDrag}
                   onScrollEndDrag={scroll.onScrollEndDrag}
                   recycleItems

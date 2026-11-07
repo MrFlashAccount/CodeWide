@@ -23,5 +23,7 @@ export type ThreadHeaderProps = {
    */
   openElsewhere?: boolean;
   pinned: boolean;
+  /** The thread refuses changes (a sub-agent): mutating actions show disabled with the reason. */
+  readOnly?: boolean;
   threadId: string;
 };

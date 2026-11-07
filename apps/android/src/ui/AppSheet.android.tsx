@@ -21,13 +21,12 @@ import { spacing } from "../theme";
 import type { SheetPerformanceSurface } from "../presentation/diagnostics/sheetPerformanceSurface";
 import { OverlaySurfaceProvider } from "./OverlaySurfaceContext";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
+import { APP_SHEET_MAX_WIDTH } from "./appSheetGeometry";
 import { SheetBackProvider, useSheetDismissController } from "./sheetNavigation";
 
 // Material's standard sheet width. Both layout trees must receive the same
 // constraint: RNHostView(matchContents) otherwise forces window-wide Yoga
 // content into the narrower Material surface on tablets and unfolded devices.
-const SHEET_MAX_WIDTH = 640;
-
 type AppSheetContentProps = Omit<
   BottomSheetProps,
   "children" | "index" | "onChange" | "onClose" | "onDismiss" | "ref"
@@ -62,7 +61,7 @@ export function AppSheet({
   onOpenChange,
 }: AppSheetProps) {
   const { width: windowWidth } = useWindowDimensions();
-  const width = Math.min(windowWidth, SHEET_MAX_WIDTH);
+  const width = Math.min(windowWidth, APP_SHEET_MAX_WIDTH);
   const sheetRef = useRef<ModalBottomSheetRef>(null);
   const [nativeSheetReady, setNativeSheetReady] = useState(false);
   const closeSheet = useEvent(() => {

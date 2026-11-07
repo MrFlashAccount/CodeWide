@@ -44,28 +44,13 @@ export function ProjectPickerSurface(props: ScopedProjectPickerProps): React.JSX
 
 function ProjectPickerSessionSheet(props: ScopedProjectPickerProps) {
   const state = useProjectPickerSession(props);
-  const { browseOnly = false, onClose, visible } = props;
-  const { mode, navigate, parentPath, showProjects, showServers } = state;
+  const { onClose, visible } = props;
   const changeOpen = useEvent((open: boolean) => {
     if (!open && visible && state.isCurrent()) {
       onClose();
     }
   });
-  const backFromDirectory = useEvent(() => {
-    if (mode === "directory") {
-      if (parentPath !== null) {
-        navigate(parentPath);
-      } else {
-        showServers();
-      }
-      return;
-    }
-    if (browseOnly) {
-      onClose();
-    } else {
-      showProjects();
-    }
-  });
+  const backFromDirectory = useProjectPickerBack(props, state);
 
   return (
     <AppSheet
@@ -76,14 +61,36 @@ function ProjectPickerSessionSheet(props: ScopedProjectPickerProps) {
         enableOverDrag: false,
         enablePanDownToClose: !props.busy && !state.adding,
         index: 0,
-        performanceSurface: mode === "projects" ? "projects" : "folders",
+        performanceSurface: state.mode === "projects" ? "projects" : "folders",
         snapPoints: ["62%", "92%"],
       }}
       isOpen={visible}
-      {...(mode !== "projects" ? { onDismissRequest: backFromDirectory } : {})}
+      {...(state.mode !== "projects" ? { onDismissRequest: backFromDirectory } : {})}
       onOpenChange={changeOpen}
     >
       <ProjectPickerPage onBack={backFromDirectory} props={props} state={state} />
     </AppSheet>
   );
+}
+
+function useProjectPickerBack(
+  props: ScopedProjectPickerProps,
+  state: ProjectPickerSession,
+): () => void {
+  return useEvent(() => {
+    const { mode, navigate, parentPath, showProjects, showServers } = state;
+    if (mode === "directory") {
+      if (parentPath !== null) {
+        navigate(parentPath);
+      } else {
+        showServers();
+      }
+      return;
+    }
+    if (props.browseOnly === true) {
+      props.onClose();
+    } else {
+      showProjects();
+    }
+  });
 }

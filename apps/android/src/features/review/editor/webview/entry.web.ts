@@ -22,10 +22,10 @@ import { materializeBeforeSource as reconstructBeforeSource } from "./materializ
 import {
   CODE_REVIEW_BRIDGE_VERSION,
   type CodeReviewClientEvent,
-  type CodeReviewComposerState,
   type CodeReviewDocument,
   type CodeReviewFileItem,
   type CodeReviewHostCommand,
+  type CodeReviewInlineComment,
   type CodeReviewViewMode,
   type CodeReviewWorkspaceState,
 } from "../editorBridge";
@@ -36,31 +36,23 @@ import {
   LOADING_CHANGE_STATE,
   type CodeReviewEmptyState,
 } from "../editorEmptyState";
-import type { CodeReviewComment, CodeReviewLineReference } from "../../comments/reviewComment";
+import type { CodeReviewLineReference } from "../../comments/reviewComment";
 
-type AnnotationMetadata =
-  | { body: string; id: string; kind: "comment" }
-  | ({ kind: "composer" } & CodeReviewComposerState);
+/** Every annotation is a comment: the line composer is native, never part of the document. */
+type AnnotationMetadata = { readonly comment: CodeReviewInlineComment };
 type CodeReviewClientPayload = CodeReviewClientEvent extends infer Event
   ? Event extends CodeReviewClientEvent
     ? Omit<Event, "version">
     : never
   : never;
-type ComposerEventTargets = {
-  input: HTMLTextAreaElement;
-  reference: CodeReviewLineReference;
-  submit: HTMLButtonElement;
-  voice: HTMLButtonElement;
-};
 
 const FILE_TREE_OVERSCAN = 4;
 const MATERIALIZED_SOURCE_CACHE_LIMIT = 24;
-const MAX_COMPOSER_HEIGHT_PX = 120;
 
 let latestRequestId = 0;
 let latestHostSequence = 0;
 let currentDocument: CodeReviewDocument | null = null;
-let currentComments: readonly CodeReviewComment[] = [];
+let currentComments: readonly CodeReviewInlineComment[] = [];
 let currentWorkspace: CodeReviewWorkspaceState = {
   compact: false,
   files: [],
@@ -68,12 +60,14 @@ let currentWorkspace: CodeReviewWorkspaceState = {
   selectedPath: null,
   sidebarOpen: false,
 };
-let currentComposer: CodeReviewComposerState | null = null;
+/** The line the native composer is open on; highlighted as its anchor. */
+let currentSelection: CodeReviewLineReference | null = null;
 let currentMode: CodeReviewViewMode = "source";
 let wrapLines = false;
 let tree: FileTree | null = null;
 let treePathToFile = new Map<string, CodeReviewFileItem>();
 let selectedTreePath: string | null = null;
+let currentReviewSignature = "";
 let fileRenderer: PierreFile<AnnotationMetadata> | null = null;
 let diffRenderer: FileDiff<AnnotationMetadata> | null = null;
 let activeFileRenderer: PierreFile<AnnotationMetadata> | null = null;
@@ -81,7 +75,6 @@ let activeDiffRenderer: FileDiff<AnnotationMetadata> | null = null;
 let pendingRender: { requestId: number; startedAt: number } | null = null;
 let pendingReveal: CodeReviewLineReference | null = null;
 let revealedReference: CodeReviewLineReference | null = null;
-let composerInput: HTMLTextAreaElement | null = null;
 const materializedBefore = new Map<string, string | null>();
 
 const treeTheme = {
@@ -106,6 +99,28 @@ const treeTheme = {
   type: "dark",
 } satisfies TreeThemeInput;
 const treeThemeStyles = themeToTreeStyles(treeTheme);
+/** Status glyphs drawn as boxed icons (plus, dot, minus, arrow) instead of Pierre's letters. */
+const STATUS_ICON_PATHS: Readonly<Record<"added" | "deleted" | "modified" | "renamed", string>> = {
+  added:
+    "<path d='M8 4.75v6.5M4.75 8h6.5' stroke='black' stroke-width='1.5' stroke-linecap='round'/>",
+  deleted: "<path d='M4.75 8h6.5' stroke='black' stroke-width='1.5' stroke-linecap='round'/>",
+  modified: "<circle cx='8' cy='8' r='2.25' fill='black'/>",
+  renamed:
+    "<path d='M4.5 8h6.25M8.5 5.5 11 8l-2.5 2.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/>",
+};
+
+function statusIconMask(inner: string): string {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='1.75' y='1.75' width='12.5' height='12.5' rx='3' fill='none' stroke='black' stroke-width='1.5'/>${inner}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+}
+
+const STATUS_ICON_CSS = Object.entries(STATUS_ICON_PATHS)
+  .map(
+    ([status, inner]) =>
+      `[data-item-git-status="${status}"] [data-item-section="git"] { --review-status-icon: ${statusIconMask(inner)}; }`,
+  )
+  .join("\n");
+
 const TOUCH_FILE_TREE_CSS = `
 @media (hover: none), (pointer: coarse) {
   [data-type="item"]:hover:not([data-item-selected="true"]) {
@@ -126,6 +141,25 @@ const TOUCH_FILE_TREE_CSS = `
     opacity: 0;
   }
 }
+
+[data-item-git-status] [data-item-section="git"] {
+  font-size: 0;
+  min-width: 16px;
+  overflow: visible;
+}
+
+[data-item-git-status] [data-item-section="git"]::before {
+  content: "";
+  display: inline-block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  background-color: currentColor;
+  -webkit-mask: var(--review-status-icon) center / contain no-repeat;
+  mask: var(--review-status-icon) center / contain no-repeat;
+}
+
+${STATUS_ICON_CSS}
 `;
 
 const treeHost = requiredElement("tree");
@@ -205,7 +239,6 @@ function receiveHostMessage(data: string): void {
     case "document":
       latestRequestId = parsed.payload.requestId;
       currentDocument = parsed.payload.document;
-      currentComposer = null;
       renderCurrentDocument();
       break;
     case "settings":
@@ -223,8 +256,9 @@ function receiveHostMessage(data: string): void {
     case "workspace":
       updateWorkspace(parsed.payload);
       break;
-    case "composer":
-      updateComposer(parsed.payload);
+    case "selection":
+      currentSelection = parsed.payload;
+      highlightSelection();
       break;
     case "reveal":
       pendingReveal = parsed.payload;
@@ -260,7 +294,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isHostCommandName(value: string): boolean {
-  return ["document", "settings", "comments", "workspace", "composer", "reveal"].includes(value);
+  return ["document", "settings", "comments", "workspace", "selection", "reveal"].includes(value);
 }
 
 function updateWorkspace(payload: CodeReviewWorkspaceState): void {
@@ -278,6 +312,7 @@ function updateWorkspace(payload: CodeReviewWorkspaceState): void {
   } else {
     instance.setGitStatus(gitStatus(payload.files));
   }
+  refreshReviewDecorations(instance, payload.files);
   selectTreeFile(payload.selectedPath, pathsChanged);
   if (currentDocument === null) {
     renderCurrentDocument();
@@ -321,16 +356,18 @@ function ensureTree(payload: CodeReviewWorkspaceState): FileTree {
       if (file.sourceOnly === true) {
         return { parts: [{ color: "#8b949e", text: "Attachment" }], text: "Attachment" };
       }
+      if (file.review !== undefined) {
+        // PR rows keep the lane for review state; counts live in the file toolbar.
+        const review = reviewDecoration(file.review);
+        return review.length === 0 ? null : decorationText(review);
+      }
       if (file.countsAreNet === false) {
         return null;
       }
-      return {
-        parts: [
-          { color: "#3fb950", text: `+${String(file.additions)}` },
-          { color: "#f85149", text: ` −${String(file.deletions)}` },
-        ],
-        text: `+${String(file.additions)} −${String(file.deletions)}`,
-      };
+      return decorationText([
+        { color: "#3fb950", text: `+${String(file.additions)}` },
+        { color: "#f85149", text: ` −${String(file.deletions)}` },
+      ]);
     },
     search: true,
     stickyFolders: false,
@@ -344,6 +381,49 @@ function ensureTree(payload: CodeReviewWorkspaceState): FileTree {
     }
   }
   return tree;
+}
+
+type DecorationPart = { readonly color: string; readonly text: string };
+
+/** `✎2 ✓`: pending drafts and the viewed mark of a PR file. */
+function reviewDecoration(review: NonNullable<CodeReviewFileItem["review"]>): DecorationPart[] {
+  const parts: DecorationPart[] = [];
+  if (review.drafts > 0) {
+    parts.push({ color: "#78a9ff", text: `✎${String(review.drafts)}` });
+  }
+  if (review.viewed) {
+    parts.push({ color: "#3fb950", text: parts.length === 0 ? "✓" : " ✓" });
+  }
+  return parts;
+}
+
+/** Redraws row decorations when a viewed mark or draft count changed. */
+function refreshReviewDecorations(instance: FileTree, files: readonly CodeReviewFileItem[]): void {
+  const nextReviewSignature = reviewSignature(files);
+  if (nextReviewSignature === currentReviewSignature) {
+    return;
+  }
+  currentReviewSignature = nextReviewSignature;
+  // Row decorations read the file map lazily; re-rendering the root redraws them
+  // without resetting paths, expansion or scroll.
+  instance.setComposition(instance.getComposition());
+}
+
+function reviewSignature(files: readonly CodeReviewFileItem[]): string {
+  return files
+    .map((file) =>
+      file.review === undefined
+        ? ""
+        : `${file.treePath}:${String(file.review.drafts)}:${file.review.viewed ? "1" : "0"}`,
+    )
+    .join("|");
+}
+
+function decorationText(parts: readonly DecorationPart[]): {
+  parts: readonly DecorationPart[];
+  text: string;
+} {
+  return { parts, text: parts.map((part) => part.text).join("") };
 }
 
 function gitStatus(files: readonly CodeReviewFileItem[]): GitStatusEntry[] {
@@ -577,7 +657,7 @@ function renderRecordedPatches(
       onLineNumberClick: (event) => {
         activeFileRenderer = null;
         activeDiffRenderer = instance;
-        openComposer(referenceForDiffLine(payload.path, event));
+        selectLine(referenceForDiffLine(payload.path, event));
       },
     });
     activeFileRenderer = null;
@@ -618,7 +698,7 @@ function fileOptions(): FileOptions<AnnotationMetadata> {
     lineHoverHighlight: "number",
     onLineNumberClick: (event: OnLineClickProps) => {
       if (currentDocument !== null) {
-        openComposer(referenceForFileLine(currentDocument.path, event.lineNumber));
+        selectLine(referenceForFileLine(currentDocument.path, event.lineNumber));
       }
     },
     onPostRender: () => {
@@ -645,7 +725,7 @@ function diffOptions(
     lineHoverHighlight: "number",
     onLineNumberClick: (event: OnDiffLineClickProps) => {
       if (currentDocument !== null) {
-        openComposer(referenceForDiffLine(currentDocument.path, event));
+        selectLine(referenceForDiffLine(currentDocument.path, event));
       }
     },
     onPostRender: () => {
@@ -708,56 +788,18 @@ function referenceForDiffLine(path: string, event: OnDiffLineClickProps): CodeRe
   };
 }
 
-function openComposer(reference: CodeReviewLineReference): void {
-  const same = currentComposer !== null && sameReference(currentComposer.reference, reference);
-  currentComposer = {
-    draft: same ? (currentComposer?.draft ?? "") : "",
-    reference,
-    voiceError: null,
-    voicePermissionGranted: false,
-    voicePhase: "idle",
-    voiceRetryAvailable: false,
-  };
+/** A tapped line becomes the composer's anchor at once; the native host then opens its composer. */
+function selectLine(reference: CodeReviewLineReference): void {
+  currentSelection = reference;
   post({ reference, requestId: latestRequestId, type: "lineTap" });
-  refreshAnnotations();
+  highlightSelection();
 }
 
-function updateComposer(payload: CodeReviewComposerState | null): void {
-  const previous = currentComposer;
-  currentComposer = payload;
-  const input = composerInput;
-  if (
-    payload !== null &&
-    previous !== null &&
-    input !== null &&
-    sameReference(payload.reference, previous.reference)
-  ) {
-    updateComposerDraft(input, payload.draft);
-    if (sameComposerPresentation(payload, previous)) {
-      return;
-    }
+function highlightSelection(): void {
+  const active = activeFileRenderer ?? activeDiffRenderer;
+  if (active !== null) {
+    selectPreviewLine(active);
   }
-  refreshAnnotations();
-}
-
-function updateComposerDraft(input: HTMLTextAreaElement, draft: string): void {
-  if (input.value === draft) {
-    return;
-  }
-  input.value = draft;
-  resizeComposerInput(input);
-}
-
-function sameComposerPresentation(
-  left: CodeReviewComposerState,
-  right: CodeReviewComposerState,
-): boolean {
-  return (
-    left.voicePhase === right.voicePhase &&
-    left.voicePermissionGranted === right.voicePermissionGranted &&
-    left.voiceRetryAvailable === right.voiceRetryAvailable &&
-    left.voiceError === right.voiceError
-  );
 }
 
 function refreshAnnotations(): void {
@@ -776,29 +818,25 @@ function refreshAnnotations(): void {
   selectPreviewLine(active);
 }
 
+/** Highlights the composer's line, else the last revealed line of this document. */
 function selectPreviewLine(
   instance: PierreFile<AnnotationMetadata> | FileDiff<AnnotationMetadata>,
 ): void {
-  if (currentComposer === null) {
-    const reveal = revealedReference?.path === currentDocument?.path ? revealedReference : null;
-    instance.setSelectedLines(
-      reveal === null
-        ? null
-        : {
-            end: reveal.line,
-            side: reveal.side === "old" ? "deletions" : "additions",
-            start: reveal.line,
-          },
-      { notify: false },
-    );
-    return;
-  }
+  const path = currentDocument?.path;
+  const selected =
+    currentSelection?.path === path
+      ? currentSelection
+      : revealedReference?.path === path
+        ? revealedReference
+        : null;
   instance.setSelectedLines(
-    {
-      end: currentComposer.reference.line,
-      side: currentComposer.reference.side === "old" ? "deletions" : "additions",
-      start: currentComposer.reference.line,
-    },
+    selected === null
+      ? null
+      : {
+          end: selected.line,
+          side: selected.side === "old" ? "deletions" : "additions",
+          start: selected.line,
+        },
     { notify: false },
   );
 }
@@ -837,21 +875,8 @@ function fileAnnotations(payload: CodeReviewDocument): LineAnnotation<Annotation
   const annotations: LineAnnotation<AnnotationMetadata>[] = [];
   for (const comment of currentComments) {
     if (comment.path === payload.path && comment.side === "new") {
-      annotations.push({
-        lineNumber: comment.line,
-        metadata: { body: comment.body, id: comment.id, kind: "comment" },
-      });
+      annotations.push({ lineNumber: comment.line, metadata: { comment } });
     }
-  }
-  if (
-    currentComposer !== null &&
-    currentComposer.reference.path === payload.path &&
-    currentComposer.reference.side === "new"
-  ) {
-    annotations.push({
-      lineNumber: currentComposer.reference.line,
-      metadata: { kind: "composer", ...currentComposer },
-    });
   }
   return annotations;
 }
@@ -862,202 +887,40 @@ function diffAnnotations(payload: CodeReviewDocument): DiffLineAnnotation<Annota
     if (comment.path === payload.path) {
       annotations.push({
         lineNumber: comment.line,
-        metadata: { body: comment.body, id: comment.id, kind: "comment" },
+        metadata: { comment },
         side: comment.side === "old" ? "deletions" : "additions",
       });
     }
   }
-  if (currentComposer !== null && currentComposer.reference.path === payload.path) {
-    annotations.push({
-      lineNumber: currentComposer.reference.line,
-      metadata: { kind: "composer", ...currentComposer },
-      side: currentComposer.reference.side === "old" ? "deletions" : "additions",
-    });
-  }
   return annotations;
 }
 
+/**
+ * A comment under its line. A pending one keeps its text in place with the
+ * shimmer; a failed one stops shimmering and shows the owner's reason below.
+ */
 function renderAnnotation(
   annotation: LineAnnotation<AnnotationMetadata> | DiffLineAnnotation<AnnotationMetadata>,
-): HTMLElement | undefined {
-  const metadata = annotation.metadata;
-  if (metadata.kind === "comment") {
-    const comment = document.createElement("div");
-    comment.className = "review-comment";
-    comment.textContent = metadata.body;
-    return comment;
-  }
-  return createComposer(metadata);
-}
-
-function createComposer(spec: CodeReviewComposerState): HTMLElement {
+): HTMLElement {
+  const { comment } = annotation.metadata;
   const root = document.createElement("div");
-  root.className = "review-composer";
-  const row = document.createElement("div");
-  row.className = "review-composer-row";
-  const input = createComposerInput(spec.draft);
-  const voice = createVoiceButton(spec);
-  const submit = composerButton("send", "Add line comment");
-  submit.classList.add("is-submit");
-  bindComposerEvents({ input, reference: spec.reference, submit, voice });
-  row.append(input, voice, submit);
-  root.append(row);
-  appendVoiceError(root, spec.voiceError);
-  requestAnimationFrame(() => {
-    resizeComposerInput(input);
-    input.focus({ preventScroll: true });
-    input.setSelectionRange(input.value.length, input.value.length);
-    root.scrollIntoView({ block: "nearest", inline: "nearest" });
-  });
+  root.className = "review-comment";
+  root.dataset.state = comment.state;
+  const body = document.createElement("div");
+  body.className = "review-comment-body";
+  body.textContent = comment.body;
+  root.append(body);
+  if (comment.state === "pending") {
+    root.setAttribute("aria-busy", "true");
+  }
+  if (comment.state === "failed") {
+    const error = document.createElement("div");
+    error.className = "review-comment-error";
+    error.setAttribute("role", "alert");
+    error.textContent = comment.error;
+    root.append(error);
+  }
   return root;
-}
-
-function createComposerInput(draft: string): HTMLTextAreaElement {
-  const input = document.createElement("textarea");
-  composerInput = input;
-  input.className = "review-composer-input";
-  input.placeholder = "Comment on this line…";
-  input.rows = 1;
-  input.value = draft;
-  input.setAttribute("aria-label", "Comment on this line");
-  return input;
-}
-
-function createVoiceButton(spec: CodeReviewComposerState): HTMLButtonElement {
-  const button = composerButton(voiceButtonIcon(spec), voiceButtonLabel(spec));
-  applyVoiceButtonState(button, spec);
-  return button;
-}
-
-function voiceButtonIcon(
-  spec: CodeReviewComposerState,
-): "loading" | "microphone" | "retry" | "stop" {
-  if (spec.voiceRetryAvailable) {
-    return "retry";
-  }
-  if (spec.voicePhase === "starting" || spec.voicePhase === "finishing") {
-    return "loading";
-  }
-  return spec.voicePhase === "idle" ? "microphone" : "stop";
-}
-
-function voiceButtonLabel(spec: CodeReviewComposerState): string {
-  if (spec.voiceRetryAvailable) {
-    return "Retry voice comment";
-  }
-  return spec.voicePhase === "idle" ? "Record voice comment" : "Stop voice comment";
-}
-
-function applyVoiceButtonState(button: HTMLButtonElement, spec: CodeReviewComposerState): void {
-  if (spec.voicePhase !== "idle") {
-    button.classList.add("is-recording");
-  }
-  if (spec.voicePhase === "idle" && !spec.voiceRetryAvailable && !spec.voicePermissionGranted) {
-    button.classList.add("needs-permission");
-    button.setAttribute("aria-label", "Allow microphone access");
-  }
-  if (spec.voicePhase === "starting" || spec.voicePhase === "finishing") {
-    button.classList.add("is-pending");
-  }
-}
-
-function bindComposerEvents({ input, reference, submit, voice }: ComposerEventTargets): void {
-  const syncDraft = () => {
-    if (currentComposer !== null && sameReference(currentComposer.reference, reference)) {
-      currentComposer = { ...currentComposer, draft: input.value };
-    }
-    submit.disabled = input.value.trim() === "";
-    resizeComposerInput(input);
-    post({
-      draft: input.value,
-      reference,
-      requestId: latestRequestId,
-      selectionEnd: input.selectionEnd,
-      selectionStart: input.selectionStart,
-      type: "draftChanged",
-    });
-  };
-  input.addEventListener("input", syncDraft);
-  input.addEventListener("select", syncDraft);
-  input.addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      submit.click();
-    }
-  });
-  voice.addEventListener("click", () => {
-    syncDraft();
-    post({
-      draft: input.value,
-      reference,
-      requestId: latestRequestId,
-      selectionEnd: input.selectionEnd,
-      selectionStart: input.selectionStart,
-      type: "voiceAction",
-    });
-  });
-  submit.addEventListener("click", () => {
-    const draft = input.value.trim();
-    if (draft === "") {
-      return;
-    }
-    post({ draft, reference, requestId: latestRequestId, type: "commentSubmit" });
-    currentComposer = null;
-    composerInput = null;
-    refreshAnnotations();
-  });
-}
-
-function appendVoiceError(root: HTMLElement, message: string | null): void {
-  if (message === null) {
-    return;
-  }
-  const error = document.createElement("div");
-  error.className = "review-composer-error";
-  error.textContent = message;
-  root.append(error);
-}
-
-function resizeComposerInput(input: HTMLTextAreaElement): void {
-  input.style.height = "0";
-  input.style.height = `${String(Math.min(input.scrollHeight, MAX_COMPOSER_HEIGHT_PX))}px`;
-}
-
-function composerButton(
-  icon: "microphone" | "retry" | "send" | "stop" | "loading",
-  label: string,
-): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "review-composer-button";
-  button.setAttribute("aria-label", label);
-  button.innerHTML = composerIcon(icon);
-  return button;
-}
-
-function composerIcon(icon: "microphone" | "retry" | "send" | "stop" | "loading"): string {
-  if (icon === "loading") {
-    return '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-8-8"/></svg>';
-  }
-  if (icon === "send") {
-    return '<svg viewBox="0 0 24 24"><path d="M5 12l7-7 7 7M12 5v14"/></svg>';
-  }
-  if (icon === "retry") {
-    return '<svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0111.8-2.2L20 11M4 13l2.1 4.2A7 7 0 0017.9 15"/></svg>';
-  }
-  if (icon === "stop") {
-    return '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>';
-  }
-  return '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0012 0M12 17v4M9 21h6"/></svg>';
-}
-
-function sameReference(left: CodeReviewLineReference, right: CodeReviewLineReference): boolean {
-  return (
-    left.path === right.path &&
-    left.line === right.line &&
-    left.side === right.side &&
-    (left.coordinate ?? "file") === (right.coordinate ?? "file")
-  );
 }
 
 declare global {

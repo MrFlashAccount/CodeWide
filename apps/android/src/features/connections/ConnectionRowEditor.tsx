@@ -7,9 +7,10 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import Constants from "expo-constants";
 import { createElement, useState } from "react";
-import { Platform, Pressable, Switch, View } from "react-native";
+import { Platform, Switch, View } from "react-native";
 import { colors, iconSize } from "../../theme";
-import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
+import type { ActionMenuItem } from "../../ui/ActionMenu";
+import { OverflowMenu } from "../../ui/OverflowMenu";
 import { useAppDialog } from "../../ui/AppDialog";
 import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight } from "../../ui/AppListRow.types";
@@ -31,6 +32,7 @@ export function ConnectionRowEditor({
   onActivateAccountProfile,
   onCancelAccountLogin,
   onConsumeAccountResetCredit,
+  onConsumeProviderRateLimitReset,
   onDelete,
   onReconnect,
   onRefreshAccountPool,
@@ -198,23 +200,13 @@ export function ConnectionRowEditor({
                   onValueChange={(enabled) => void onToggle(connection.id, enabled)}
                   value={connection.enabled}
                 />
-                <ActionMenu
+                <OverflowMenu
                   accessibilityLabel={`Actions for ${connection.displayName}`}
                   actions={connectionActions}
                   onSelect={handleConnectionAction}
                   style={styles.connectionActionMenuAnchor}
-                >
-                  <Pressable
-                    accessibilityLabel={`Actions for ${connection.displayName}`}
-                    style={styles.connectionMiniButton}
-                  >
-                    <Ionicons
-                      color={colors.textMuted}
-                      name="ellipsis-horizontal"
-                      size={iconSize.action}
-                    />
-                  </Pressable>
-                </ActionMenu>
+                  tone="muted"
+                />
               </>
             }
           />
@@ -249,6 +241,7 @@ export function ConnectionRowEditor({
             <ProviderAccounts
               agentProviders={agentProviders}
               connectionId={connection.id}
+              onConsumeReset={onConsumeProviderRateLimitReset}
               serverName={connection.displayName}
             />
           )}

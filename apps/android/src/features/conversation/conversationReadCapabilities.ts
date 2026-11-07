@@ -20,6 +20,7 @@ export type ConversationReadSurfaceProps = {
   footerContent: ReactElement;
   getStableTransferAccess: GetTransferAccess;
   getTransferAccess: GetTransferAccess | undefined;
+  headerSubtitle: string | null;
   onBack: (() => void) | undefined;
   onFixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
   onOpenSubagentThread: (threadId: string) => void;

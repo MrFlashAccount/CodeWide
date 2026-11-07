@@ -3,6 +3,7 @@ import { parseRichMarkdown } from "@codewide/rendering-core";
 import type { Nodes } from "mdast";
 import { compactTurnArtifactReferences } from "../data/turn-artifacts";
 
+import { hostFileUrlPath } from "./document-preview";
 import { privateImageAssetProjection, safeImageUri } from "./image-source";
 import { attachmentSourceKey, type UserMessageAttachment } from "./user-message-attachments";
 
@@ -125,7 +126,8 @@ function generatedImage(value: unknown): UserMessageAttachment | null {
 }
 
 function linkArtifact(url: string, image: boolean): UserMessageAttachment | null {
-  const path = url.startsWith("sandbox:/") ? url.slice("sandbox:".length) : url;
+  const path =
+    hostFileUrlPath(url) ?? (url.startsWith("sandbox:/") ? url.slice("sandbox:".length) : url);
   if (
     path.startsWith("/") &&
     path.length <= 4096 &&

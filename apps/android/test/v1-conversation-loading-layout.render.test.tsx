@@ -230,6 +230,13 @@ it("keeps draft, loading existing, and confirmed empty thread states distinct", 
   // The draft's server is shown next to its project, as a thread row shows it.
   expect(draftView.getByTestId("new-chat-project-server")).toBeTruthy();
   expect(draftView.getByLabelText("Change project, currently workspace on Buddy")).toBeTruthy();
+  // A hosted draft without a server default asks for the project that sending requires.
+  draftView.rerender(<ConversationEmptyState {...props} newChat projectRequirement="required" />);
+  expect(draftView.getByText("Choose a project to start")).toBeTruthy();
+  expect(
+    draftView.getByLabelText("Choose a project. Sending starts after you choose one"),
+  ).toBeTruthy();
+  expect(draftView.queryByText("in workspace")).toBeNull();
   draftView.unmount();
 
   const loadingView = render(

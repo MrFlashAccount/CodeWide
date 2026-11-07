@@ -274,12 +274,30 @@ function poolEditor(capabilities: readonly string[]) {
   const value = parseAgentProvidersResult({
     hostCapabilities: {},
     providers: [
-      { auth: "unknown", capabilities: Object.fromEntries(capabilities.map((name) => [name, true])), id: "codex", name: "Codex", planLabel: null, primary: true, status: "live" },
-      { auth: "authenticated", capabilities: {}, id: "claude", name: "Claude", planLabel: null, primary: false, status: "live" },
+      {
+        auth: "unknown",
+        capabilities: Object.fromEntries(capabilities.map((name) => [name, true])),
+        id: "codex",
+        name: "Codex",
+        planLabel: null,
+        primary: true,
+        status: "live",
+      },
+      {
+        auth: "authenticated",
+        capabilities: {},
+        id: "claude",
+        name: "Claude",
+        planLabel: null,
+        primary: false,
+        status: "live",
+      },
     ],
   });
   if (value === null) throw new Error("fixture must parse");
-  const state$ = observable<Record<string, AgentProvidersState>>({ server: { status: "ready", value } });
+  const state$ = observable<Record<string, AgentProvidersState>>({
+    server: { status: "ready", value },
+  });
   return render(
     <AccountPoolEditor
       accountPool={accountPool}
@@ -287,9 +305,17 @@ function poolEditor(capabilities: readonly string[]) {
       connectionId="server"
       onActivate={jest.fn(() => Promise.resolve(accountPool))}
       onCancelLogin={jest.fn(() => Promise.resolve())}
-      onConsumeResetCredit={jest.fn(() => Promise.resolve({ accountPool, outcome: "reset" as const }))}
+      onConsumeResetCredit={jest.fn(() =>
+        Promise.resolve({ accountPool, outcome: "reset" as const }),
+      )}
       onRemove={jest.fn(() => Promise.resolve(accountPool))}
-      onStartLogin={jest.fn(() => Promise.resolve({ loginId: "login", userCode: "CODE", verificationUrl: "https://example.com" }))}
+      onStartLogin={jest.fn(() =>
+        Promise.resolve({
+          loginId: "login",
+          userCode: "CODE",
+          verificationUrl: "https://example.com",
+        }),
+      )}
       onUpdate={jest.fn(() => Promise.resolve(accountPool))}
     />,
   );

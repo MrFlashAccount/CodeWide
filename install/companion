@@ -256,6 +256,7 @@ tar -xzf "$archive" -C "$temporary_root"
 payload="$temporary_root/$bundle_name"
 test -x "$payload/bin/codewide-companion"
 test -x "$payload/libexec/codewide-vcs-git"
+test -x "$payload/libexec/codewide-forge-github"
 test -x "$payload/libexec/codewide-companion-update-guardian"
 test -x "$payload/libexec/codewide-companion-memory-watch"
 test -x "$payload/install.sh"
@@ -307,6 +308,7 @@ backup_current_link
 deployment_started=1
 CODEWIDE_COMPANION_BINARY="$payload/bin/codewide-companion" \
 CODEWIDE_COMPANION_GIT_PLUGIN_BINARY="$payload/libexec/codewide-vcs-git" \
+CODEWIDE_COMPANION_FORGE_GITHUB_PLUGIN_BINARY="$payload/libexec/codewide-forge-github" \
 CODEWIDE_COMPANION_UPDATE_GUARDIAN_BINARY="$payload/libexec/codewide-companion-update-guardian" \
 CODEWIDE_COMPANION_MEMORY_WATCH_SOURCE="$payload/libexec/codewide-companion-memory-watch" \
 CODEWIDE_COMPANION_UNIT_SOURCE="$payload/systemd/user/codewide-companion.service" \

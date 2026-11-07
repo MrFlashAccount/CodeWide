@@ -10,9 +10,10 @@ use serde_json::{Map, Value, json};
 use agent_core::model::{
     AgentItem, AgentThread, AgentTurn, AppThreadId, CallStatus, ClientMessageId, ExecutionStatus,
     FileChange, FileChangeKind, InputModality, ItemId, ItemsView, McpToolResult, MessagePhase,
-    ModelEffort, ModelEntry, PermissionProfileEntry, ProviderId, SortDirection, ThreadChange,
-    ThreadListParams, ThreadOrigin, ThreadSettings, ThreadSortKey, ThreadStatus, TurnError,
-    TurnErrorKind, TurnId, TurnOrigin, TurnStatus, UserContent, WebSearchAction,
+    ModelEffort, ModelEntry, PermissionProfileEntry, ProviderId, RunningBackgroundTask,
+    SortDirection, ThreadChange, ThreadListParams, ThreadOrigin, ThreadSettings, ThreadSortKey,
+    ThreadStatus, TurnError, TurnErrorKind, TurnId, TurnOrigin, TurnStatus, UserContent,
+    WebSearchAction,
 };
 
 /// Every Codex source kind: the neutral list covers all origins.
@@ -198,7 +199,9 @@ pub fn item(item: &Value) -> Option<AgentItem> {
             output: opt_string(item, "aggregatedOutput"),
             exit_code: int_field(item, "exitCode"),
             duration_ms: int_field(item, "durationMs"),
-            background_task_id: None,
+            // TODO(background-commands): Codex items carry no background
+            // marker; see "Background commands" in this crate's CONTEXT.md.
+            background: None,
         },
         "fileChange" => AgentItem::FileChange {
             provenance: None,
@@ -383,6 +386,16 @@ pub fn permission_profile(row: &Value) -> Option<PermissionProfileEntry> {
     })
 }
 
+/// Maps a Codex `ThreadBackgroundTerminal` row to a running terminal.
+#[must_use]
+pub fn background_terminal(row: &Value) -> Option<RunningBackgroundTask> {
+    Some(RunningBackgroundTask::Terminal {
+        item_id: ItemId::parse(str_field(row, "itemId")?)?,
+        process_id: opt_string(row, "processId")?,
+        command: opt_string(row, "command").unwrap_or_default(),
+    })
+}
+
 /// Neutral list params → Codex `thread/list` params: every origin, every
 /// model provider, state DB only.
 #[must_use]
@@ -478,6 +491,22 @@ pub fn thread_change(thread_id: &AppThreadId, change: &ThreadChange) -> (&'stati
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_a_background_terminal_and_skips_a_row_without_its_process() {
+        assert_eq!(
+            background_terminal(&json!({
+                "itemId": "call_1", "processId": "1042", "command": "pnpm dev",
+                "cwd": "/w", "osPid": 4242, "cpuPercent": 1.5, "rssKb": 2048
+            })),
+            ItemId::parse("call_1").map(|item_id| RunningBackgroundTask::Terminal {
+                item_id,
+                process_id: "1042".into(),
+                command: "pnpm dev".into(),
+            })
+        );
+        assert_eq!(background_terminal(&json!({"itemId": "call_1"})), None);
+    }
 
     #[test]
     fn maps_codex_threads_turns_and_unknown_items() -> Result<(), &'static str> {

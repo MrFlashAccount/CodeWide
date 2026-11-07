@@ -13,6 +13,7 @@ type WorkspaceRouteThreadListProps = {
   readonly globalVoice: GlobalVoiceControl;
   readonly list: ReturnType<typeof useWorkspaceListBindings>;
   readonly listActions: ReturnType<typeof useThreadListActions>;
+  readonly openDownloads: () => void;
   readonly openGlobalSearch: () => void;
   readonly openProjects: () => void;
   readonly openSettings: () => void;
@@ -46,6 +47,7 @@ export function WorkspaceRouteThreadList(props: WorkspaceRouteThreadListProps): 
       mobileVisibleArchivedThreads={project.threadSearch.mobileVisibleArchivedThreads}
       mobileVisibleThreads={project.threadSearch.mobileVisibleThreads}
       normalizedMobileThreadQuery={project.threadSearch.normalizedMobileThreadQuery}
+      openDownloads={props.openDownloads}
       openGlobalSearch={props.openGlobalSearch}
       openProjects={props.openProjects}
       openSettings={props.openSettings}

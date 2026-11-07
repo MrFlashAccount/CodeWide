@@ -46,6 +46,14 @@ const BASE_RETRY_DELAY: Duration = Duration::from_secs(1);
 // Keep a tiny bounded delay so a transient edge decision can clear without
 // turning every challenged recording into a multi-second pause.
 const CLOUDFLARE_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
+// The transcription route occasionally accepts a request and never answers it,
+// while an identical request sent next to it completes in about a second.
+// Observed healthy latency barely depends on duration (p95 under 4.2 s up to a
+// minute of audio, under 8 s for several minutes), so the hedge waits a fixed
+// base plus a small per-minute allowance before racing one fresh request.
+const HEDGE_BASE_DELAY: Duration = Duration::from_secs(6);
+const HEDGE_DELAY_PER_AUDIO_MINUTE: Duration = Duration::from_millis(1_500);
+const MAX_HEDGE_DELAY: Duration = Duration::from_secs(20);
 const QUIET_RMS_PPM: f64 = 5_000.0;
 const EDGE_PADDING_MS: f64 = 300.0;
 const IDLE_SESSION_TTL: Duration = Duration::from_hours(2);
@@ -59,6 +67,9 @@ pub struct DictationService {
     auth_file: PathBuf,
     endpoint: Arc<str>,
     client: reqwest::Client,
+    // Keeps no idle connections, so every hedge opens a new connection instead
+    // of sharing whatever pooled connection the stalled request may be on.
+    hedge_client: reqwest::Client,
     temp_root: PathBuf,
     options: DictationLimits,
 }
@@ -240,7 +251,7 @@ pub enum DictationError {
     Timeout,
     #[error("ChatGPT transcription transport failed")]
     Transport,
-    #[error("Codex proxy configuration is invalid")]
+    #[error("Companion HTTP proxy settings are invalid")]
     ProxyConfiguration,
     #[error("ChatGPT transcription returned an invalid response")]
     InvalidResponse,
@@ -274,6 +285,25 @@ struct StoredTokens {
     account_id: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+struct RequestAttempt<'auth> {
+    auth: &'auth OAuth,
+    attempt: usize,
+    reason: &'static str,
+    auth_read_ms: u64,
+}
+
+impl<'auth> RequestAttempt<'auth> {
+    fn new(auth: &'auth OAuth, attempt: usize, reason: &'static str, auth_read_ms: u64) -> Self {
+        Self {
+            auth,
+            attempt,
+            reason,
+            auth_read_ms,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct OAuth {
     access_token: String,
@@ -294,9 +324,10 @@ impl DictationService {
     ) -> Result<Self, DictationError> {
         info!(
             status = "dictation-proxy-configured",
-            http_proxy = proxy.http_is_configured(),
-            https_proxy = proxy.https_is_configured(),
-            no_proxy = proxy.no_proxy_is_configured(),
+            explicit_http_proxy = proxy.http_is_configured(),
+            explicit_https_proxy = proxy.https_is_configured(),
+            explicit_no_proxy = proxy.no_proxy_is_configured(),
+            system_proxy_fallback = !proxy.http_is_configured() && !proxy.https_is_configured(),
         );
         Self::open_with_options(
             auth_file,
@@ -355,19 +386,8 @@ impl DictationService {
         fs::set_permissions(&temp_root, std::fs::Permissions::from_mode(0o700))
             .await
             .map_err(|_| DictationError::Storage)?;
-        let client = proxy
-            .apply(reqwest::Client::builder())
-            .map_err(|_| DictationError::ProxyConfiguration)?
-            .connect_timeout(Duration::from_secs(15))
-            .timeout(Duration::from_mins(15))
-            .pool_idle_timeout(Duration::from_mins(30))
-            .pool_max_idle_per_host(2)
-            .tcp_keepalive(Duration::from_mins(1))
-            .redirect(reqwest::redirect::Policy::none())
-            .dns_resolver2(MetricsDnsResolver)
-            .connector_layer(MetricsConnectorLayer)
-            .build()
-            .map_err(|_| DictationError::Transport)?;
+        let client = transcription_client(&proxy, 2)?;
+        let hedge_client = transcription_client(&proxy, 0)?;
         let sessions = Arc::new(Mutex::new(
             recover_sessions(&temp_root, options.max_audio_bytes).await,
         ));
@@ -381,6 +401,7 @@ impl DictationService {
             auth_file,
             endpoint: Arc::from(endpoint),
             client,
+            hedge_client,
             temp_root,
             options,
         })
@@ -803,9 +824,15 @@ impl DictationService {
                 pcm_bytes = bytes,
                 segment_offset = session.next_offset,
             );
+            let audio = Duration::from_millis(
+                bytes.saturating_mul(1_000)
+                    / u64::from(session.sample_rate)
+                        .saturating_mul(bytes_per_frame)
+                        .max(1),
+            );
             let request_started = std::time::Instant::now();
             match self
-                .transcribe_segment(&wav, session.language.as_deref())
+                .transcribe_segment(&wav, session.language.as_deref(), hedge_delay(audio))
                 .await?
             {
                 TranscriptionOutcome::Text(text) => {
@@ -852,6 +879,7 @@ impl DictationService {
         &self,
         wav: &Bytes,
         language: Option<&str>,
+        hedge_after: Duration,
     ) -> Result<TranscriptionOutcome, DictationError> {
         let mut reason = "initial";
         for attempt in 0..=self.options.automatic_retries {
@@ -859,7 +887,12 @@ impl DictationService {
             let auth = read_oauth(self.auth_file.clone()).await?;
             let auth_read_ms = elapsed_millis(auth_started.elapsed());
             let mut response = self
-                .request_transcription(wav, language, &auth, attempt, reason, auth_read_ms)
+                .request_hedged(
+                    wav,
+                    language,
+                    RequestAttempt::new(&auth, attempt, reason, auth_read_ms),
+                    hedge_after,
+                )
                 .await;
             if let Ok(candidate) = &response
                 && candidate.response.status() == reqwest::StatusCode::UNAUTHORIZED
@@ -870,13 +903,11 @@ impl DictationService {
                 if refreshed.access_token != auth.access_token {
                     reason = "oauth-refresh";
                     response = self
-                        .request_transcription(
+                        .request_hedged(
                             wav,
                             language,
-                            &refreshed,
-                            attempt,
-                            reason,
-                            refresh_auth_read_ms,
+                            RequestAttempt::new(&refreshed, attempt, reason, refresh_auth_read_ms),
+                            hedge_after,
                         )
                         .await;
                 }
@@ -945,15 +976,46 @@ impl DictationService {
         Err(DictationError::Transport)
     }
 
-    async fn request_transcription(
+    async fn request_hedged(
         &self,
         wav: &Bytes,
         language: Option<&str>,
-        auth: &OAuth,
-        attempt: usize,
-        reason: &'static str,
-        auth_read_ms: u64,
+        request: RequestAttempt<'_>,
+        hedge_after: Duration,
     ) -> Result<MeasuredResponse, reqwest::Error> {
+        race_with_hedge(
+            self.request_transcription(&self.client, wav, language, request),
+            hedge_after,
+            || {
+                self.request_transcription(
+                    &self.hedge_client,
+                    wav,
+                    language,
+                    RequestAttempt {
+                        auth: request.auth,
+                        attempt: request.attempt,
+                        reason: "hedge",
+                        auth_read_ms: 0,
+                    },
+                )
+            },
+        )
+        .await
+    }
+
+    async fn request_transcription(
+        &self,
+        client: &reqwest::Client,
+        wav: &Bytes,
+        language: Option<&str>,
+        request: RequestAttempt<'_>,
+    ) -> Result<MeasuredResponse, reqwest::Error> {
+        let RequestAttempt {
+            auth,
+            attempt,
+            reason,
+            auth_read_ms,
+        } = request;
         let request_id = next_request_id();
         let total_started = std::time::Instant::now();
         // `Bytes::clone` is reference-counted. Retries reuse the same immutable
@@ -971,8 +1033,7 @@ impl DictationService {
         if let Some(language) = language {
             form = form.text("language", language.to_owned());
         }
-        let request = self
-            .client
+        let request = client
             .post(self.endpoint.as_ref())
             .header("authorization", format!("Bearer {}", auth.access_token))
             .header("chatgpt-account-id", &auth.account_id)
@@ -1000,8 +1061,16 @@ impl DictationService {
             .build()?;
         let request_build_ms = elapsed_millis(request_build_started.elapsed());
         let network_probe = RequestNetworkProbe::new(request_id);
-        let response =
-            request_metrics(Arc::clone(&network_probe), self.client.execute(request)).await;
+        let pending = metrics::PendingRequest::new(
+            request_id,
+            total_started,
+            upload_probe.clone(),
+            Arc::clone(&network_probe),
+            attempt,
+            reason,
+        );
+        let response = request_metrics(Arc::clone(&network_probe), client.execute(request)).await;
+        pending.answered();
         let request_to_headers_ms = elapsed_millis(total_started.elapsed());
         let observation = metrics::ResponseHeaderObservation {
             request_id,

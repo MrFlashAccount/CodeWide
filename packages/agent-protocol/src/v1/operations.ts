@@ -16,6 +16,7 @@ import type {
   JsonValue,
   NativeSession,
   NativeSubagent,
+  RunningBackgroundTask,
   RuntimeResponse,
   ThreadSettings,
   UserContent,
@@ -289,6 +290,17 @@ export interface OperationMap {
       readonly text: string;
     };
   };
+  /**
+   * The background commands of the thread that still run, as the provider's
+   * live session knows them, each with the turn and item that launched it.
+   * Empty when no session of the thread runs. Optional, gated by
+   * `threads.backgroundTaskOutput` like `thread.backgroundTask.read`; added
+   * within v1.
+   */
+  readonly "thread.backgroundTasks.list": {
+    readonly params: { readonly appThreadId: AppThreadId };
+    readonly result: { readonly tasks: readonly RunningBackgroundTask[] };
+  };
   readonly "thread.compact": {
     readonly params: { readonly appThreadId: AppThreadId };
     readonly result: Record<string, never>;
@@ -358,6 +370,16 @@ export interface OperationMap {
     readonly result: { readonly thread: AgentThread | null };
   };
   /**
+   * Starts a turn that resumes the thread's interrupted or failed last turn
+   * without a user message. The provider decides how its harness resumes;
+   * like `turn.start`, an active thread answers `busy`. Added within v1: a
+   * provider without it answers `-32601`.
+   */
+  readonly "turn.continue": {
+    readonly params: { readonly appThreadId: AppThreadId };
+    readonly result: TurnStartResult;
+  };
+  /**
    * Answers `{}` at once when the turn is active, already interrupted,
    * completed, or the thread is idle. Errors only for a foreign `turnId`
    * during an active turn or an unknown thread.
@@ -408,7 +430,9 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   "thread.owns",
   "thread.compact",
   "thread.backgroundTask.read",
+  "thread.backgroundTasks.list",
   "turn.start",
+  "turn.continue",
   "turn.steer",
   "turn.interrupt",
   "request.respond",

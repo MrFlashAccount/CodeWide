@@ -1,4 +1,4 @@
-import type { CodeReviewComment, CodeReviewLineReference } from "../comments/reviewComment";
+import type { CodeReviewLineReference } from "../comments/reviewComment";
 
 export const CODE_REVIEW_BRIDGE_VERSION = 1 as const;
 
@@ -33,6 +33,8 @@ export type CodeReviewDocument =
       source: "";
     }
   | {
+      /** Why the file has no preview, when the source knows (too large, binary). */
+      detail?: string;
       displayState: "unsupported";
       fullFileDiff?: never;
       patches: readonly [];
@@ -47,8 +49,10 @@ export type CodeReviewFileItem = {
   countsAreNet?: boolean;
   deletions: number;
   path: string;
+  /** Pull request review state shown on the tree row: viewed mark and pending drafts. */
+  review?: { readonly drafts: number; readonly viewed: boolean };
   sourceOnly?: boolean;
-  status: "added" | "deleted" | "modified";
+  status: "added" | "deleted" | "modified" | "renamed";
   treePath: string;
 };
 
@@ -60,20 +64,28 @@ export type CodeReviewWorkspaceState = {
   sidebarOpen: boolean;
 };
 
-export type CodeReviewComposerState = {
-  draft: string;
-  reference: CodeReviewLineReference;
-  voiceError: string | null;
-  voicePermissionGranted: boolean;
-  voicePhase: "idle" | "starting" | "recording" | "finishing";
-  voiceRetryAvailable: boolean;
-};
+/**
+ * A comment the editor draws under its line. `pending` text shimmers while the
+ * owner saves it; `failed` shows the owner's reason below the text. The
+ * editor only displays comments: composing happens in the native line composer.
+ */
+export type CodeReviewInlineComment = {
+  readonly body: string;
+  readonly id: string;
+  readonly line: number;
+  readonly path: string;
+  readonly side: "new" | "old";
+} & (
+  | { readonly state: "pending" | "saved" }
+  | { readonly error: string; readonly state: "failed" }
+);
 
 export type CodeReviewHostCommand =
   | BridgeCommand<"document", { document: CodeReviewDocument | null; requestId: number }>
   | BridgeCommand<"workspace", CodeReviewWorkspaceState>
-  | BridgeCommand<"comments", readonly CodeReviewComment[]>
-  | BridgeCommand<"composer", CodeReviewComposerState | null>
+  | BridgeCommand<"comments", readonly CodeReviewInlineComment[]>
+  /** The line the native composer is open on, highlighted as its anchor; `null` clears it. */
+  | BridgeCommand<"selection", CodeReviewLineReference | null>
   | BridgeCommand<"settings", { mode: CodeReviewViewMode; wrapLines: boolean }>
   | BridgeCommand<"reveal", CodeReviewLineReference>;
 
@@ -82,30 +94,6 @@ export type CodeReviewClientEvent =
   | BridgeEvent<"rendered", { renderMs: number; requestId: number }>
   | BridgeEvent<"fileSelect", { path: string; requestId: number }>
   | BridgeEvent<"lineTap", { reference: CodeReviewLineReference; requestId: number }>
-  | BridgeEvent<
-      "draftChanged",
-      {
-        draft: string;
-        reference: CodeReviewLineReference;
-        requestId: number;
-        selectionEnd: number;
-        selectionStart: number;
-      }
-    >
-  | BridgeEvent<
-      "commentSubmit",
-      { draft: string; reference: CodeReviewLineReference; requestId: number }
-    >
-  | BridgeEvent<
-      "voiceAction",
-      {
-        draft: string;
-        reference: CodeReviewLineReference;
-        requestId: number;
-        selectionEnd: number;
-        selectionStart: number;
-      }
-    >
   | BridgeEvent<"diffUnavailable", { message: string; requestId: number }>
   | BridgeEvent<"error", { message: string; requestId: number }>;
 

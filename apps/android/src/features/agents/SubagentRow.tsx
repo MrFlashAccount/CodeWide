@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import type { Ref } from "react";
 import { Pressable, View } from "react-native";
 import { formatDeviceTime } from "../../data/device-time";
 import { subagentDisplayName, subagentIsActive } from "../../data/subagent-projection";
@@ -7,25 +8,32 @@ import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { colors, iconSize } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 import { WaveText } from "../../ui/WaveText";
+import { subagentLineageAccessibility, type SubagentLineage } from "./lineageProjection";
 import { styles } from "./SubagentWorkspace.styles";
 
 export function SubagentRow({
+  focusRef,
+  lineage,
   onPress,
   selected,
   summary,
 }: {
+  focusRef?: Ref<View>;
+  lineage: SubagentLineage;
   onPress: () => void;
   selected: boolean;
   summary: StoredThreadSummary;
 }) {
   const active = subagentIsActive(summary);
   const title = subagentDisplayName(summary);
+  const accessibilityLabel = subagentRowAccessibilityLabel(title, summary, lineage);
   return (
     <Pressable
-      accessibilityLabel={`Open subagent ${title}`}
+      accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
       accessibilityState={{ selected }}
       onPress={onPress}
+      ref={focusRef}
       style={({ pressed }) => [
         styles.row,
         selected && styles.rowSelected,
@@ -71,6 +79,26 @@ export function SubagentRow({
       </View>
     </Pressable>
   );
+}
+
+function subagentRowAccessibilityLabel(
+  title: string,
+  summary: StoredThreadSummary,
+  lineage: SubagentLineage,
+): string {
+  const parts = [
+    `Open subagent ${title}`,
+    lineage.status === "known" ? subagentLineageAccessibility(lineage) : "lineage unavailable",
+  ];
+  if (subagentIsActive(summary)) {
+    parts.push("active");
+  } else if (summary.status.type === "systemError") {
+    parts.push("failed");
+  }
+  if (summary.unread > 0) {
+    parts.push(`${String(summary.unread)} unread ${summary.unread === 1 ? "message" : "messages"}`);
+  }
+  return parts.join(", ");
 }
 
 // WHY: This presenter owns the user-visible fallback order between role and lifecycle state;

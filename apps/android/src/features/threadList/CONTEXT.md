@@ -24,6 +24,8 @@ The root list scope remains unchanged when a project opens. The workspace-owned 
 survive child routes; the shared offset memory restores each list scope. The Router-owned catalog
 stack remains mounted in one pane, full width on compact layouts and left of the conversation
 on wide layouts. One shared header stays above Expo Stack; root/project content scenes contain no header.
+The top-level `/pulls` peer hides this entire pane while focused; Pull requests never inherit the
+Threads header, pull-search surface, rows or New message action.
 Expo Stack owns content placement and transition timing, while Orb and Search retain their native instances.
 
 The header orb reserves a fixed hit-target slot while its floating counterpart is active.
@@ -44,6 +46,6 @@ While a row is running, its preview line shows the Companion-published live acti
 
 The unread slot prioritizes a raised-hand icon for current pending requests, waiting flags and observed async questions. Opening a thread does not resolve that attention. The unread state is retained and reappears after attention clears. This owner consumes summary metadata without loading chat history for each row.
 
-Session rows and pinned project shortcuts share the UI-owned RowActionMenu and RowActionTrigger native primitives. These primitives own only transient popup anchoring, dismissal, haptics, accessibility activation and scroll-safe tap/long-press recognition. Feature-specific commands, errors, layout, selection and swipe policy stay in their respective owners. Both retain the 350 ms hold and 8 dp cancellation threshold, with no Compose host in idle rows.
+Session rows render their content through the shared `ui/CatalogRow` parts and their trigger frame through `catalogRowFrameStyles`; the Pull requests catalog uses the same owner, so row size, typography and trailing meta never diverge between catalogs. Session rows and pinned project shortcuts share the UI-owned RowActionMenu and RowActionTrigger native primitives. These primitives own only transient popup anchoring, dismissal, haptics, accessibility activation and scroll-safe tap/long-press recognition. Feature-specific commands, errors, layout, selection and swipe policy stay in their respective owners. Both retain the 350 ms hold and 8 dp cancellation threshold, with no Compose host in idle rows.
 
 A root whose own turn ended shows as running while its sub-agents run (`StoredThreadSummary.activeSubagents`, derived in `data/threadSummarySubagentActivity.ts` from the loaded child rows). A child's status comes from its own live events (primary provider), its index row's `running`, or, for a non-primary provider, the `agentsStates` of its parent's `collabAgentToolCall`; a sub-agent refresh never replaces a live `active` with an unknown status. Index rows arrive with every `companion/thread/sync` answer (its `subagents`, authoritative for the thread's descendants; `null` from an older Companion or an unreadable index keeps the cached rows and falls back to `companion/threadSubagents/read`) and through a forced `companion/threadSubagents/read` of the root whenever the Companion journals `companion/thread/subagents/invalidated` for it, whether or not that thread is open; a completed spawning call also reads once. There is no freshness throttle or retry timer.

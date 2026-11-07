@@ -10,8 +10,10 @@ import { useAppDialog } from "../../../ui/AppDialog";
 import type { CodeReviewWorkspaceProps } from "./codeReviewContract";
 import { codeReviewMenuActions } from "./codeReviewMenu";
 import { useCodeReviewResources } from "./codeReviewResources";
+import { useConstant } from "../../../react/useConstant";
+import { createLineCommentDrafts } from "../comments/lineCommentDrafts";
+import type { CodeReviewLineReference } from "../comments/reviewComment";
 import { useReviewComments } from "../comments/reviewComments";
-import { useReviewVoice } from "../comments/reviewVoice";
 
 export function useCodeReviewState(props: CodeReviewWorkspaceProps) {
   const {
@@ -30,19 +32,23 @@ export function useCodeReviewState(props: CodeReviewWorkspaceProps) {
   const dialog = useAppDialog();
   const window = useWindowDimensions();
   const {
-    commentDraft,
     comments,
     commitComment,
     selectedReference,
-    selectionRef,
-    selectLine,
+    selectLine: anchorLine,
     setComments,
     setSelectedReference,
-    updateCommentDraft,
-    updateReferenceDraft,
   } = useReviewComments();
 
   const resourceOwnerId = useId();
+  const lineDrafts = useConstant(() => createLineCommentDrafts(resourceOwnerId));
+  /** Opens the line composer, or re-anchors the open one with its text. */
+  const selectLine = useEvent((reference: CodeReviewLineReference): void => {
+    if (selectedReference !== null) {
+      lineDrafts.move(selectedReference, reference);
+    }
+    anchorLine(reference);
+  });
   const [workspaceWidth, setWorkspaceWidth] = useState(0);
   const [requestedScope, setRequestedScope] = useState(initialChangeScope);
   const [scopeRevision, setScopeRevision] = useState(0);
@@ -86,15 +92,12 @@ export function useCodeReviewState(props: CodeReviewWorkspaceProps) {
       setSidebarPreference(false);
     }
   });
-  const { addComment, close, microphoneAccess, pressVoice, voiceResource } = useReviewVoice(
-    props,
-    resourceOwnerId,
-    selectedReference,
-    selectionRef,
-    updateCommentDraft,
-    updateReferenceDraft,
-    commitComment,
-  );
+  const close = useEvent(() => {
+    props.onClose();
+  });
+  const closeComposer = useEvent(() => {
+    setSelectedReference(null);
+  });
 
   const attach = useEvent(async () => {
     if (comments.length === 0 || attaching) {
@@ -172,40 +175,36 @@ export function useCodeReviewState(props: CodeReviewWorkspaceProps) {
         ]),
   ];
   return {
-    addComment,
     attach,
     attachDisabled,
     attaching,
     changes,
     changeScope,
     close,
-    commentDraft,
+    closeComposer,
     comments,
+    commitComment,
     compact,
     document,
     documentStatus,
     effectiveMode,
     effectiveSelectedPath,
+    lineDrafts,
     loadError,
     loading,
     menuActions,
-    microphoneAccess,
-    pressVoice,
     revealReference,
     reviewFiles,
     scopeLoading,
     selectedReference,
     selectFile,
-    selectionRef,
     selectLine,
     selectMenuAction,
     setComments,
     setSidebarPreference,
     setWorkspaceWidth,
     sidebarOpen,
-    updateCommentDraft,
     vcs,
-    voiceResource,
     workspaceRevision,
     wrapLines,
   };

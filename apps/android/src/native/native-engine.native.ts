@@ -78,7 +78,7 @@ function safeIntegerOrZero(value: unknown): number {
 
 type NativeEngineResult<T> =
   | { ok: true; result: T }
-  | { code?: number; message: string; ok: false };
+  | { code?: number; data?: unknown; message: string; ok: false };
 
 type NativeBridge = {
   acknowledgeProjection: (connectionId: string, projectionCursor: number) => void;
@@ -757,7 +757,7 @@ export class NativeEngineSession implements RpcClient {
       return envelope.result;
     }
     if (typeof envelope.code === "number") {
-      throw new RpcResponseError(envelope.code, envelope.message);
+      throw new RpcResponseError(envelope.code, envelope.message, envelope.data);
     }
     throw new Error(envelope.message);
   }

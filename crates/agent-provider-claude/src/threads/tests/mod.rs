@@ -12,9 +12,9 @@ mod sessions;
 mod subagent_requests;
 mod task_reports;
 mod threads;
+mod turn_boundaries;
 
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, PoisonError,
@@ -37,10 +37,12 @@ use crate::{
     cli::{
         command::{QueryOptions, SessionIdentity},
         process::{ProcessError, ProcessEvent},
-        protocol::ControlRequest,
+        protocol::{Author, ControlRequest},
     },
     native::{files, write::project_dir_name},
-    runtime::running_sessions::{RunningSessions, RunningSessionsError},
+    runtime::running_sessions::{
+        RunningProcess, RunningSessionMap, RunningSessions, RunningSessionsError,
+    },
     session::{
         ports::{ClientTools, RateLimitSink, SessionConfig},
         query::{BoxFuture, Offer, Query, QueryRuntime},
@@ -133,6 +135,13 @@ pub(super) struct FakeQuery {
     /// The session's answers to Claude's control requests, in order.
     pub answers: Mutex<Vec<(String, Result<Value, String>)>>,
     pub closed: AtomicBool,
+    /// Whether the fake Claude works: from the first message it takes
+    /// until the test ends its work ([`Self::idle`]).
+    working: AtomicBool,
+    /// Whether Claude acknowledges each message at once (`queued`).
+    acknowledging: bool,
+    /// The version of a `claude` without session state.
+    unsupported: Option<String>,
     events: mpsc::Sender<ProcessEvent>,
     file: PathBuf,
     session_id: String,
@@ -204,16 +213,57 @@ impl FakeQuery {
     pub fn offer_count(&self) -> usize {
         lock(&self.offers).len()
     }
+
+    /// Claude has answered everything it holds and reports `idle`.
+    pub async fn idle(&self) {
+        self.working.store(false, Ordering::SeqCst);
+        self.push(frames::session_state("idle")).await;
+    }
+
+    /// Claude starts work of its own (a wake) and reports `running`.
+    pub async fn wake(&self) {
+        self.working.store(true, Ordering::SeqCst);
+        self.push(frames::session_state("running")).await;
+    }
 }
 
 impl Query for FakeQuery {
     fn offer(&self, offer: Offer) {
-        self.persist(
-            json!({"type": "user", "uuid": offer.uuid, "sessionId": self.session_id,
+        let mut row = json!({"type": "user", "uuid": offer.uuid, "sessionId": self.session_id,
             "cwd": self.options.cwd.to_string_lossy(), "timestamp": "2026-10-01T10:00:00.000Z",
-            "entrypoint": "cli", "message": {"role": "user", "content": offer.content}}),
-        );
+            "entrypoint": "cli", "message": {"role": "user", "content": offer.content}});
+        // Claude stores an adapter message as a meta message with a
+        // non-person origin.
+        if offer.author == Author::Adapter {
+            row["isMeta"] = json!(true);
+            row["origin"] = json!({"kind": "unclassified"});
+        }
+        self.persist(row);
+        // As Claude does: an idle Claude starts working, and every message
+        // is acknowledged at once. The channel has room for them: the test
+        // drives one offer at a time.
+        if !self.working.swap(true, Ordering::SeqCst) {
+            let _ = self
+                .events
+                .try_send(ProcessEvent::Message(frames::session_state("running")));
+        }
+        if self.acknowledging {
+            let _ = self.events.try_send(ProcessEvent::Message(frames::command(
+                &offer.uuid,
+                "queued",
+            )));
+        }
         lock(&self.offers).push(offer);
+    }
+
+    fn initialized(&self) -> BoxFuture<'static, Result<(), ProcessError>> {
+        let initialized = match &self.unsupported {
+            Some(version) => Err(ProcessError::Unsupported {
+                version: version.clone(),
+            }),
+            None => Ok(()),
+        };
+        Box::pin(std::future::ready(initialized))
     }
 
     fn respond(&self, request_id: String, outcome: Result<Value, String>) {
@@ -249,6 +299,11 @@ impl Query for FakeQuery {
 pub(super) struct FakeRuntime {
     projects: PathBuf,
     queries: Mutex<Vec<Arc<FakeQuery>>>,
+    /// Queries opened from now on leave messages unacknowledged.
+    pub silent: AtomicBool,
+    /// Queries opened from now on run a `claude` of this version without
+    /// session state.
+    pub unsupported: Mutex<Option<String>>,
 }
 
 impl FakeRuntime {
@@ -288,6 +343,9 @@ impl QueryRuntime for FakeRuntime {
             modes: Mutex::new(Vec::new()),
             answers: Mutex::new(Vec::new()),
             closed: AtomicBool::new(false),
+            working: AtomicBool::new(false),
+            acknowledging: !self.silent.load(Ordering::SeqCst),
+            unsupported: lock(&self.unsupported).clone(),
             events,
             file,
             session_id,
@@ -300,21 +358,37 @@ impl QueryRuntime for FakeRuntime {
 
 /// What `claude agents --json` lists, set by the test.
 #[derive(Default)]
-pub(super) struct FakeRunning(Mutex<HashSet<String>>);
+pub(super) struct FakeRunning(Mutex<RunningSessionMap>, AtomicBool);
 
 impl FakeRunning {
     pub fn add(&self, session_id: &str) {
-        lock(&self.0).insert(session_id.to_owned());
+        lock(&self.0).insert(session_id.to_owned(), RunningProcess::StartUnknown);
     }
 
     pub fn remove(&self, session_id: &str) {
         lock(&self.0).remove(session_id);
     }
+
+    /// Makes every read fail (`true`) or succeed again.
+    pub fn fail(&self, failing: bool) {
+        self.1.store(failing, Ordering::SeqCst);
+    }
+
+    /// Lists `session_id` as held by a process that started at `started_at_ms`.
+    pub fn add_started(&self, session_id: &str, started_at_ms: i64) {
+        lock(&self.0).insert(
+            session_id.to_owned(),
+            RunningProcess::StartedAt(started_at_ms),
+        );
+    }
 }
 
 #[async_trait]
 impl RunningSessions for FakeRunning {
-    async fn list(&self) -> Result<HashSet<String>, RunningSessionsError> {
+    async fn list(&self) -> Result<RunningSessionMap, RunningSessionsError> {
+        if self.1.load(Ordering::SeqCst) {
+            return Err(RunningSessionsError::NotAnArray);
+        }
         Ok(lock(&self.0).clone())
     }
 }
@@ -371,6 +445,8 @@ pub(super) struct Harness {
     pub events: Arc<Mutex<Vec<AgentEvent>>>,
     pub root: Arc<tempfile::TempDir>,
     collector: tokio::task::JoinHandle<()>,
+    /// The index the service reads history from (it holds it weakly).
+    _history_index: Arc<crate::index::sessions::SessionIndex>,
 }
 
 impl Harness {
@@ -430,11 +506,14 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
     let runtime = Arc::new(FakeRuntime {
         projects: projects.clone(),
         queries: Mutex::new(Vec::new()),
+        silent: AtomicBool::new(false),
+        unsupported: Mutex::new(None),
     });
     let running = Arc::new(FakeRunning::default());
     let clock = Arc::new(AtomicI64::new(1_760_000_000_000));
     let ticking = options.ticking_clock;
     let ids = AtomicU64::new(0);
+    let index_projects = projects.clone();
     let (service, mut outputs) = ThreadService::new(ServiceDeps {
         projects_root: projects,
         state_directory: root.path().join("journal"),
@@ -464,6 +543,14 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
         open_elsewhere_poll: options.poll,
         model_id_for: options.model_id_for,
     })?;
+    let history_index = Arc::new(crate::index::sessions::SessionIndex::in_memory(
+        crate::native::LocalSessions::new(
+            index_projects,
+            root.path().join("journal"),
+            service.session_activity(),
+        ),
+    )?);
+    service.attach_index(&history_index);
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
     let collector = tokio::spawn(async move {
@@ -477,6 +564,7 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
                 ServiceOutput::Fence(fence) => {
                     let _ = fence.send(Ok(position));
                 }
+                ServiceOutput::SessionActivityChanged(_) => {}
             }
         }
     });
@@ -487,6 +575,7 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
         events,
         root,
         collector,
+        _history_index: history_index,
     })
 }
 
@@ -586,6 +675,14 @@ pub(super) mod frames {
         json!({"type": "assistant", "message": {"id": message_id, "role": "assistant",
             "content": [{"type": "tool_use", "id": tool_use_id, "name": name, "input": input}]},
             "parent_tool_use_id": null})
+    }
+
+    pub fn command(uuid: &str, state: &str) -> Value {
+        json!({"type": "command_lifecycle", "command_uuid": uuid, "state": state})
+    }
+
+    pub fn session_state(state: &str) -> Value {
+        json!({"type": "system", "subtype": "session_state_changed", "state": state})
     }
 
     pub fn result() -> Value {

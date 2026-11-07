@@ -1,3 +1,4 @@
+import { appLogger } from "../../observability/logger";
 import { useEvent } from "../../react/useEvent";
 /** V1 turnActions owner, extracted without changing interaction or resource lifetime. */
 import * as Clipboard from "expo-clipboard";
@@ -33,7 +34,13 @@ export function useActiveThreadActions(
     if (!remote.native || activeConnectionId === "" || activeRemoteThreadId === null) {
       return;
     }
-    void remote.markThreadRead(activeConnectionId, activeRemoteThreadId).catch(() => undefined);
+    void remote.markThreadRead(activeConnectionId, activeRemoteThreadId).catch((error: unknown) => {
+      appLogger.errorCaught({
+        error,
+        event: "thread.mark_read.failed",
+        fields: { connectionId: activeConnectionId, threadId: activeRemoteThreadId },
+      });
+    });
   });
   return { forkCurrentThread, markActiveThreadRead };
 }

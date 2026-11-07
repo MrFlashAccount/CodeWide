@@ -11,12 +11,17 @@ describe("OrderedProjectionGate", () => {
 
     gate.enqueue({
       recovery: false,
-      apply: async () => { applied.push(10); throw new Error("disk full"); },
+      apply: async () => {
+        applied.push(10);
+        throw new Error("disk full");
+      },
       acknowledge: () => acknowledged.push(10),
     });
     gate.enqueue({
       recovery: false,
-      apply: async () => { applied.push(11); },
+      apply: async () => {
+        applied.push(11);
+      },
       acknowledge: () => acknowledged.push(11),
     });
     await gate.settled();
@@ -28,16 +33,33 @@ describe("OrderedProjectionGate", () => {
   });
 
   it("reopens only after a successful checkpoint replay", async () => {
-    const apply = vi.fn<(cursor: number) => Promise<void>>()
+    const apply = vi
+      .fn<(cursor: number) => Promise<void>>()
       .mockRejectedValueOnce(new Error("write failed"))
       .mockResolvedValue(undefined);
     const acknowledged: number[] = [];
     const gate = new OrderedProjectionGate(() => undefined);
 
-    gate.enqueue({ recovery: false, apply: () => apply(20), acknowledge: () => acknowledged.push(20) });
-    gate.enqueue({ recovery: false, apply: () => apply(21), acknowledge: () => acknowledged.push(21) });
-    gate.enqueue({ recovery: true, apply: () => apply(21), acknowledge: () => acknowledged.push(21) });
-    gate.enqueue({ recovery: false, apply: () => apply(22), acknowledge: () => acknowledged.push(22) });
+    gate.enqueue({
+      recovery: false,
+      apply: () => apply(20),
+      acknowledge: () => acknowledged.push(20),
+    });
+    gate.enqueue({
+      recovery: false,
+      apply: () => apply(21),
+      acknowledge: () => acknowledged.push(21),
+    });
+    gate.enqueue({
+      recovery: true,
+      apply: () => apply(21),
+      acknowledge: () => acknowledged.push(21),
+    });
+    gate.enqueue({
+      recovery: false,
+      apply: () => apply(22),
+      acknowledge: () => acknowledged.push(22),
+    });
     await gate.settled();
 
     expect(apply.mock.calls.map(([cursor]) => cursor)).toEqual([20, 21, 22]);
@@ -49,9 +71,28 @@ describe("OrderedProjectionGate", () => {
     const applied: string[] = [];
     const gate = new OrderedProjectionGate(() => undefined);
 
-    gate.enqueue({ recovery: false, apply: async () => { throw new Error("live"); }, acknowledge: () => undefined });
-    gate.enqueue({ recovery: true, apply: async () => { applied.push("checkpoint"); throw new Error("checkpoint"); }, acknowledge: () => undefined });
-    gate.enqueue({ recovery: false, apply: async () => { applied.push("later"); }, acknowledge: () => undefined });
+    gate.enqueue({
+      recovery: false,
+      apply: async () => {
+        throw new Error("live");
+      },
+      acknowledge: () => undefined,
+    });
+    gate.enqueue({
+      recovery: true,
+      apply: async () => {
+        applied.push("checkpoint");
+        throw new Error("checkpoint");
+      },
+      acknowledge: () => undefined,
+    });
+    gate.enqueue({
+      recovery: false,
+      apply: async () => {
+        applied.push("later");
+      },
+      acknowledge: () => undefined,
+    });
     await gate.settled();
 
     expect(applied).toEqual(["checkpoint"]);
@@ -59,22 +100,33 @@ describe("OrderedProjectionGate", () => {
 
   it("coalesces queued live batches while the current durable projection is busy", async () => {
     let release!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const applied: number[][] = [];
     const acknowledged: number[] = [];
     const gate = new OrderedProjectionGate(() => undefined);
-    const batch = (values: number[]): ProjectionWork => ({
-      recovery: false,
-      apply: async () => { applied.push(values); },
-      acknowledge: () => acknowledged.push(values.at(-1)!),
-      mergeWith: (newer) => {
-        const tagged = newer as ProjectionWork & { values?: number[] };
-        return tagged.values === undefined ? null : batch([...values, ...tagged.values]);
-      },
-      values,
-    } as ProjectionWork & { values: number[] });
+    const batch = (values: number[]): ProjectionWork =>
+      ({
+        recovery: false,
+        apply: async () => {
+          applied.push(values);
+        },
+        acknowledge: () => acknowledged.push(values.at(-1)!),
+        mergeWith: (newer) => {
+          const tagged = newer as ProjectionWork & { values?: number[] };
+          return tagged.values === undefined ? null : batch([...values, ...tagged.values]);
+        },
+        values,
+      }) as ProjectionWork & { values: number[] };
 
-    gate.enqueue({ recovery: false, apply: async () => { await blocked; }, acknowledge: () => acknowledged.push(1) });
+    gate.enqueue({
+      recovery: false,
+      apply: async () => {
+        await blocked;
+      },
+      acknowledge: () => acknowledged.push(1),
+    });
     gate.enqueue(batch([2]));
     gate.enqueue(batch([3, 4]));
     release();

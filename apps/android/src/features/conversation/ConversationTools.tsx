@@ -7,6 +7,7 @@ import { useAttachmentVisibility } from "../attachments/attachmentVisibility";
 import { useDocumentNavigation } from "../attachments/documentNavigation";
 import { useChangesFeature } from "../changes/ChangesFeature";
 import { ThreadResourceContextChips } from "../changes/ThreadResourceContextChips";
+import { ComposerPullRequestContextChip } from "../composer/ComposerPullRequestContextChip";
 import { useDrawingFeature } from "../drawing/DrawingFeature";
 import { ComposerPortContextChip } from "../ports/ComposerPortContextChip";
 import { useReviewFeature } from "../review/ReviewFeature";
@@ -34,6 +35,7 @@ export function useConversationTools(props: UseConversationToolsProps) {
       void props.agentsInputs.onRefreshSubagents?.(props.draftThreadId).catch(() => undefined);
       routeNavigation.openAgents({
         initialThreadId,
+        parentLabel: props.surfaceInputs.thread?.title ?? null,
         parentThreadId: props.draftThreadId,
         summaries,
       });
@@ -82,15 +84,18 @@ export function useConversationTools(props: UseConversationToolsProps) {
       props.composerCommands.composerAttachmentsBinding.readDrawingAttachments,
   });
   useImagePreviewAnnotationHandler(drawingFeatureBinding.annotateImage);
-  useReviewFeature(
-    props.composerScope,
-    props.composerStateBinding.reviewAttachmentIdsBinding.contentReviewAttachmentId,
-    props.readInputs.remoteThread,
-    props.appVoiceInputRuntime,
-    props.voiceController,
-    props.composerInputs.onStartVoiceTranscription,
-    reviewSubmissionBinding.attachContentReview,
-  );
+  useReviewFeature({
+    appVoiceInputRuntime: props.appVoiceInputRuntime,
+    attachContentReview: reviewSubmissionBinding.attachContentReview,
+    composerScope: props.composerScope,
+    contentReviewAttachmentId:
+      props.composerStateBinding.reviewAttachmentIdsBinding.contentReviewAttachmentId,
+    onStartVoiceTranscription: props.composerInputs.onStartVoiceTranscription,
+    remoteThread: props.readInputs.remoteThread,
+    removeContentReviewAttachment:
+      props.composerCommands.composerAttachmentsBinding.removeComposerAttachment,
+    voiceController: props.voiceController,
+  });
   const changesFeatureBinding = useChangesFeature({
     appVoiceInputRuntime: props.appVoiceInputRuntime,
     attachCodeReview: reviewSubmissionBinding.attachCodeReview,
@@ -137,8 +142,11 @@ export function useConversationTools(props: UseConversationToolsProps) {
   );
   const toolContextChips = (
     <>
-      {props.changesInputs.onLoadThreadResources !== undefined && (
+      {props.changesInputs.onLoadThreadResources === undefined ? (
+        <ComposerPullRequestContextChip />
+      ) : (
         <ThreadResourceContextChips
+          afterChanges={<ComposerPullRequestContextChip />}
           load={props.changesInputs.onLoadThreadResources}
           model={props.threadResourcesModel}
           onOpen={attachmentVisibilityBinding.openThreadResources}

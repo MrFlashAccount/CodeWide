@@ -9,10 +9,10 @@ use super::{
     items, settings,
 };
 use crate::agent::model::{
-    AgentTurn, BackgroundTaskReadParams, BackgroundTaskReadResult, BackgroundTaskStatus,
-    ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ItemsView, SortDirection, ThreadChange,
-    ThreadTurnsParams, ThreadUpdateParams, TurnInterruptParams, TurnStartParams, TurnStartResult,
-    TurnSteerParams,
+    AgentTurn, BackgroundTaskListParams, BackgroundTaskReadParams, BackgroundTaskReadResult,
+    BackgroundTaskStatus, ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ItemsView, SortDirection,
+    ThreadChange, ThreadTurnsParams, ThreadUpdateParams, TurnContinueParams, TurnInterruptParams,
+    TurnStartParams, TurnStartResult, TurnSteerParams,
 };
 
 /// Turns read when a call asks for a thread's whole history.
@@ -219,6 +219,15 @@ pub async fn execute(target: &Target, method: &str, params: &Value) -> Result<Va
             update(target, decode::settings_change(params)).await?;
             Ok(json!({}))
         }
+        decode::BACKGROUND_TASKS_LIST_METHOD => {
+            let listed = provider
+                .thread_background_tasks(BackgroundTaskListParams {
+                    app_thread_id: thread_id,
+                })
+                .await
+                .map_err(|error| failure(&error))?;
+            Ok(json!({"tasks": listed.tasks}))
+        }
         decode::BACKGROUND_TASK_READ_METHOD => {
             let page = decode::background_task_page(params)
                 .map_err(|message| RpcFailure::new(ERROR_INVALID_PARAMS, message))?;
@@ -254,6 +263,21 @@ pub async fn execute(target: &Target, method: &str, params: &Value) -> Result<Va
                     client_message_id: decode::client_message_id(params),
                     input,
                     client_tools: None,
+                })
+                .await
+                .map_err(|error| failure(&error))?;
+            match started {
+                TurnStartResult::Started { turn_id } => Ok(turn_started(turn_id.as_str())),
+                TurnStartResult::Busy { active_turn_id } => Err(RpcFailure::new(
+                    ERROR_INVALID_REQUEST,
+                    format!("thread has an active turn: {active_turn_id}"),
+                )),
+            }
+        }
+        "turn/continue" => {
+            let started = provider
+                .turn_continue(TurnContinueParams {
+                    app_thread_id: thread_id,
                 })
                 .await
                 .map_err(|error| failure(&error))?;

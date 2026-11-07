@@ -1,15 +1,12 @@
 //! Claude's sessions read by the companion itself: the native index's
-//! source, in place of the Claude host's `nativeSession.list` and
-//! `nativeSession.read`.
+//! source, in place of the Claude host's `nativeSession.list`.
 //!
 //! A listing reads only the head and tail of each session file
-//! (`meta.rs`); a read parses one file, keeps its active branch
-//! (`transcript::chain`) and rebuilds its turns and its sub-agents' turns
-//! with the same reconstruction live turns use. What Claude's files cannot
-//! tell (which `CodeWide` thread a session belongs to, its list metadata,
-//! its turn index and a running turn's snapshot) comes from the host's own
-//! files (`host_state.rs`). Ids depend only on that input, so reading
-//! unchanged input twice yields equal results.
+//! (`meta.rs`); the turns of a session are indexed from its files' appended
+//! tails by `crate::index`. What Claude's files cannot tell (which
+//! `CodeWide` thread a session belongs to, its list metadata, its turn index
+//! and a running turn's snapshot) comes from the host's own files
+//! (`host_state.rs`).
 //!
 //! Writes to Claude's store (`write.rs`: rename, removal, fork) follow the
 //! Agent SDK's session mutations on local files; `fork_cut.rs` decides which
@@ -27,32 +24,23 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use agent_core::{
     model::{
-        AgentTurn, AppThreadId, ERROR_INVALID_REQUEST, NativeSession, NativeSessionListParams,
-        NativeSessionListResult, NativeSessionReadResult, NativeSubagent, RpcError,
-        native_session_not_found_message,
+        AgentTurn, AppThreadId, NativeSession, NativeSessionListParams, NativeSessionListResult,
+        RpcError,
     },
     provider::ProviderError,
 };
+#[cfg(test)]
 use async_trait::async_trait;
-use serde_json::Value;
 
+#[cfg(test)]
+use crate::runtime::running_sessions::RunningProcess;
 use crate::{
-    indexer::NativeSessions,
-    runtime::recorded_model::last_recorded_model,
-    transcript::{
-        agents::SubagentRuns,
-        chain::active_branch,
-        json::{JsonRecord, str_of},
-        reconstruct::{
-            HistoryContext, reconstruct_subagent_turns, reconstruct_turns, record_transcript_runs,
-            running_agents, settle_subagent_items,
-        },
-        turn_index::TurnRecord,
-    },
+    runtime::open_elsewhere::{OpenElsewhere, SessionActivity},
+    transcript::turn_index::TurnRecord,
 };
 
 pub use self::{
-    fork_cut::{ChainSession, ForkCut, SessionCut, fork_cut},
+    fork_cut::{ForkCut, SessionCut},
     write::{ForkError, Removal, RenameError, SessionLocation},
 };
 
@@ -74,17 +62,73 @@ pub struct LocalSessions {
 struct Paths {
     projects_root: PathBuf,
     journal_directory: PathBuf,
+    activity: Arc<OpenElsewhere>,
 }
 
 impl LocalSessions {
     #[must_use]
-    pub fn new(projects_root: PathBuf, journal_directory: PathBuf) -> Self {
+    pub fn new(
+        projects_root: PathBuf,
+        journal_directory: PathBuf,
+        activity: Arc<OpenElsewhere>,
+    ) -> Self {
         Self {
             inner: Arc::new(Paths {
                 projects_root,
                 journal_directory,
+                activity,
             }),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        projects_root: PathBuf,
+        journal_directory: PathBuf,
+        running_sessions: HashSet<String>,
+    ) -> Self {
+        let running_sessions = running_sessions
+            .into_iter()
+            .map(|session_id| (session_id, RunningProcess::StartUnknown))
+            .collect();
+        Self::for_test_processes(projects_root, journal_directory, running_sessions)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_processes(
+        projects_root: PathBuf,
+        journal_directory: PathBuf,
+        running_sessions: crate::runtime::running_sessions::RunningSessionMap,
+    ) -> Self {
+        use crate::runtime::open_elsewhere::OpenElsewhereDeps;
+
+        let sessions = Arc::new(TestRunningSessions { running_sessions });
+        let activity = Arc::new(OpenElsewhere::new(OpenElsewhereDeps {
+            running: sessions,
+            owns_live: Arc::new(|_| false),
+            changed: Arc::new(|_| {}),
+            activity_changed: Arc::new(|_| {}),
+            poll: std::time::Duration::from_mins(1),
+        }));
+        Self::new(projects_root, journal_directory, activity)
+    }
+}
+
+#[cfg(test)]
+struct TestRunningSessions {
+    running_sessions: crate::runtime::running_sessions::RunningSessionMap,
+}
+
+#[cfg(test)]
+#[async_trait]
+impl crate::runtime::running_sessions::RunningSessions for TestRunningSessions {
+    async fn list(
+        &self,
+    ) -> Result<
+        crate::runtime::running_sessions::RunningSessionMap,
+        crate::runtime::running_sessions::RunningSessionsError,
+    > {
+        Ok(self.running_sessions.clone())
     }
 }
 
@@ -92,20 +136,13 @@ fn worker_error(error: &tokio::task::JoinError) -> ProviderError {
     ProviderError::Protocol(format!("Claude session read failed: {error}"))
 }
 
-fn not_found(session_id: &str) -> ProviderError {
-    ProviderError::Rejected(RpcError::new(
-        ERROR_INVALID_REQUEST,
-        native_session_not_found_message(session_id),
-    ))
-}
-
-fn io_error(error: &std::io::Error) -> ProviderError {
-    ProviderError::Protocol(format!("Claude session file cannot be read: {error}"))
-}
-
-#[async_trait]
-impl NativeSessions for LocalSessions {
-    async fn list(
+impl LocalSessions {
+    /// Every session of the store, a listing page at a time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid cursor or a failed blocking read.
+    pub async fn list(
         &self,
         params: NativeSessionListParams,
     ) -> Result<NativeSessionListResult, ProviderError> {
@@ -115,12 +152,37 @@ impl NativeSessions for LocalSessions {
             .map_err(|error| worker_error(&error))?
     }
 
-    async fn read(&self, session_id: &str) -> Result<NativeSessionReadResult, ProviderError> {
-        let paths = self.inner.clone();
-        let session_id = session_id.to_owned();
-        tokio::task::spawn_blocking(move || read(&paths, &session_id))
-            .await
-            .map_err(|error| worker_error(&error))?
+    /// Whether a Claude process holds the session now; `None` while the
+    /// running-session authority cannot be read.
+    pub async fn activity(&self, session_id: &str) -> Option<SessionActivity> {
+        self.inner.activity.activity(session_id).await
+    }
+
+    /// Claude's projects root.
+    #[must_use]
+    pub fn projects_root(&self) -> &std::path::Path {
+        &self.inner.projects_root
+    }
+
+    /// The thread state directory of `CodeWide`'s threads.
+    #[must_use]
+    pub fn journal_directory(&self) -> &std::path::Path {
+        &self.inner.journal_directory
+    }
+
+    /// The session file of `session_id` and its listing row; `None` when
+    /// the store has no such session.
+    #[must_use]
+    pub fn listed_session(
+        &self,
+        session_id: &str,
+        threads: &HostThreads,
+    ) -> Option<(SessionFile, NativeSession)> {
+        let file = files::find_session(&self.inner.projects_root, session_id)?;
+        let (head, tail) = files::head_and_tail(&file.path).ok()?;
+        let meta = meta::session_meta(&head, &tail)?;
+        let session = native_session(&file, meta, threads.owner_of(session_id))?;
+        Some((file, session))
     }
 }
 
@@ -199,7 +261,7 @@ fn list(
     })
 }
 
-fn native_session(
+pub(crate) fn native_session(
     file: &SessionFile,
     meta: SessionMeta,
     owner: Option<&HostThread>,
@@ -220,47 +282,6 @@ fn native_session(
         session_id: file.session_id.clone(),
         summary: meta.summary,
         title: meta.title,
-    })
-}
-
-fn read(paths: &Paths, session_id: &str) -> Result<NativeSessionReadResult, ProviderError> {
-    let file = files::find_session(&paths.projects_root, session_id)
-        .ok_or_else(|| not_found(session_id))?;
-    let (head, tail) = files::head_and_tail(&file.path).map_err(|error| io_error(&error))?;
-    let meta = meta::session_meta(&head, &tail).ok_or_else(|| not_found(session_id))?;
-    let rows = files::rows(&file.path).map_err(|error| io_error(&error))?;
-    let threads = HostThreads::read(&paths.journal_directory);
-    let owner = threads.owner_of(session_id);
-    let context = HistoryContext {
-        app_thread_id: match owner {
-            Some(owner) => owner.app_thread_id.clone(),
-            None => AppThreadId::parse(session_id).ok_or_else(|| not_found(session_id))?,
-        },
-        cwd: owner.map_or_else(
-            || meta.cwd.clone().unwrap_or_default(),
-            |owner| owner.cwd.clone(),
-        ),
-    };
-    let records = owner.map_or(&[][..], |owner| owner.turns.as_slice());
-    let branch = active_branch(&rows);
-    let messages = branch.iter().map(AsRef::as_ref).collect::<Vec<_>>();
-    let active = owner
-        .filter(|owner| owner.is_current(session_id))
-        .and_then(HostThread::active_turn);
-    let turns = with_active_turn(
-        reconstruct_turns(&messages, records, &context),
-        active,
-        records,
-    );
-    let transcripts = subagent_transcripts(&file);
-    let runs = session_runs(&messages, &transcripts);
-    let turns = settle_subagent_items(turns, &runs);
-    let subagents = native_subagents(&transcripts, &turns, &context, &runs);
-    let session = native_session(&file, meta, owner).ok_or_else(|| not_found(session_id))?;
-    Ok(NativeSessionReadResult {
-        session,
-        subagents,
-        turns,
     })
 }
 
@@ -293,106 +314,14 @@ pub(crate) fn with_active_turn(
     turns
 }
 
-/// The rows of a sub-agent transcript in file order: every row of its own
-/// conversation level is a side-chain row.
-fn transcript_rows(rows: &[Value]) -> Vec<&JsonRecord> {
-    rows.iter()
-        .filter_map(Value::as_object)
-        .filter(|row| matches!(str_of(row, "type"), Some("user" | "assistant" | "system")))
-        .filter(|row| str_of(row, "uuid").is_some())
-        .collect()
-}
-
-/// One stored sub-agent transcript of a session.
-struct SubagentTranscript {
-    agent_id: String,
-    rows: Vec<Value>,
-    sidecar: files::SubagentSidecar,
-}
-
-fn subagent_transcripts(session: &SessionFile) -> Vec<SubagentTranscript> {
-    files::subagents(session)
-        .into_iter()
-        .filter_map(|subagent| {
-            let rows = files::rows(&subagent.path).ok()?;
-            let sidecar = files::subagent_sidecar(&subagent);
-            Some(SubagentTranscript {
-                agent_id: subagent.agent_id,
-                rows,
-                sidecar,
-            })
-        })
-        .collect()
-}
-
-/// The sub-agent runs recorded anywhere in the session: a report reaches
-/// whichever conversation was there to take it, not always the one that
-/// spawned its agent, and any conversation may resume an agent.
-fn session_runs(messages: &[&JsonRecord], transcripts: &[SubagentTranscript]) -> SubagentRuns {
-    let mut runs = SubagentRuns::default();
-    record_transcript_runs(&mut runs, messages);
-    for transcript in transcripts {
-        let rows = transcript
-            .rows
-            .iter()
-            .filter_map(Value::as_object)
-            .collect::<Vec<_>>();
-        record_transcript_runs(&mut runs, &rows);
-    }
-    runs
-}
-
-/// Each sub-agent transcript as neutral turns with the model it last answered
-/// with; a sub-agent its spawning item
-/// (in the main conversation or another sub-agent) reports `running` keeps
-/// its last turn in progress. A spawning item is running until a report
-/// anywhere in the session settles it, and again while a resume of its agent
-/// is unreported.
-fn native_subagents(
-    transcripts: &[SubagentTranscript],
-    turns: &[AgentTurn],
-    context: &HistoryContext,
-    runs: &SubagentRuns,
-) -> Vec<NativeSubagent> {
-    let subagent_turns = |transcript: &SubagentTranscript, running: bool| {
-        settle_subagent_items(
-            reconstruct_subagent_turns(&transcript_rows(&transcript.rows), context, running),
-            runs,
-        )
-    };
-    let settled = transcripts
-        .iter()
-        .map(|transcript| subagent_turns(transcript, false))
-        .collect::<Vec<_>>();
-    let mut running = running_agents(turns).into_iter().collect::<HashSet<_>>();
-    for turns in &settled {
-        running.extend(running_agents(turns));
-    }
-    transcripts
-        .iter()
-        .zip(settled)
-        .map(|(transcript, settled)| NativeSubagent {
-            agent_id: transcript.agent_id.clone(),
-            // Stored sidecar rows name no `parent_tool_use_id`, so every
-            // assistant row of the transcript is the sub-agent's own answer.
-            model: last_recorded_model(&transcript.rows).map(ToOwned::to_owned),
-            parent_agent_id: transcript.sidecar.parent_agent_id.clone(),
-            parent_tool_use_id: transcript.sidecar.tool_use_id.clone(),
-            turns: if running.contains(&transcript.agent_id) {
-                subagent_turns(transcript, true)
-            } else {
-                settled
-            },
-        })
-        .collect()
-}
-
 /// The projects root and journal of a test: one session and its sidecars.
 #[cfg(test)]
 pub(crate) fn fixture_paths(root: &std::path::Path) -> (PathBuf, PathBuf) {
     (root.join("projects"), root.join("journal"))
 }
 
+#[cfg(test)]
+mod parity_tests;
 #[cfg(test)]
 mod subagent_model_tests;
 #[cfg(test)]

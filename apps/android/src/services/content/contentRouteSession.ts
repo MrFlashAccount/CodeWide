@@ -24,6 +24,13 @@ type InlineContentRouteRequest = {
 };
 
 export type CommandContentRouteRequest = {
+  /**
+   * The command as launched, shown when its thread holds the item no longer;
+   * a preview when the Companion externalized the command.
+   */
+  readonly command: string;
+  /** The opened item's externalized command, read when its thread holds the item no longer. */
+  readonly commandReference: CommandOutputReference | null;
   readonly fallbackOutput: string;
   /** Reads output the Companion externalized as private content; null without a connection. */
   readonly getTransferAccess: GetTransferAccess | null;
@@ -36,7 +43,6 @@ export type CommandContentRouteRequest = {
    * conversation, not the thread whose route presents the viewer.
    */
   readonly threadId: string;
-  readonly title: string;
   readonly turnId: string;
 };
 

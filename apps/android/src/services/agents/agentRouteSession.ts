@@ -7,6 +7,7 @@ const MAX_AGENT_SESSIONS = 4;
 /** Captured V1 subagent workspace input retained outside serializable route parameters. */
 export type AgentRouteRequest = {
   readonly initialThreadId: string | null;
+  readonly parentLabel: string | null;
   readonly parentThreadId: string;
   readonly summaries: readonly StoredThreadSummary[];
 };

@@ -1,8 +1,26 @@
 /** V1 turnContexts owner, extracted without changing interaction or resource lifetime. */
 import type { ActivityMetrics, TurnUsageProjection } from "@codewide/sync-client";
 import { createContext } from "react";
+import type { RunningBackgroundTasksQuery } from "../../../data/runningBackgroundTaskResource";
 
-export const ForceExpandCardsContext = createContext(false);
+/**
+ * Where a tool card draws. In a bubble it is the one-line row of the step, never
+ * its body: a tool's output belongs to the activity sheet or its semantic
+ * viewer, so the row opens one of them. Activity rows never disclose inline;
+ * a row without a semantic destination stays informational.
+ */
+export type ToolCardPlacement =
+  | { readonly kind: "bubble"; readonly openActivity: (() => void) | null }
+  | {
+      readonly description: string;
+      readonly kind: "sheet";
+      readonly openDetail: () => void;
+    }
+  | { readonly kind: "sheetDetail" };
+
+const BUBBLE_ROW: ToolCardPlacement = { kind: "bubble", openActivity: null };
+
+export const ToolCardPlacementContext = createContext<ToolCardPlacement>(BUBBLE_ROW);
 
 export const ActiveToolCallContext = createContext(false);
 
@@ -37,3 +55,18 @@ export type OpenableBackgroundTask = { readonly name: string; readonly taskId: s
 export const BackgroundTaskContext = createContext<
   ((task: OpenableBackgroundTask) => Promise<void>) | null
 >(null);
+
+/**
+ * The query of the shown thread's running background commands, for the
+ * quick-access panel at the bottom of the conversation; `null` when the
+ * thread cannot list them.
+ */
+export const RunningBackgroundTasksContext = createContext<RunningBackgroundTasksQuery | null>(
+  null,
+);
+
+/**
+ * Opens the thread's background terminals (list and stop); `null` where the
+ * thread has none to open.
+ */
+export const BackgroundTerminalsContext = createContext<(() => void) | null>(null);

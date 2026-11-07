@@ -1,8 +1,9 @@
 /**
  * Accounts of providers without an account pool (Claude), next to the pool
- * editor. Each provider gets a section with one read-only account row: the
- * server's sign-in and the subscription limits the provider reports. There are
- * no account actions; signing in happens in the provider's CLI on the server.
+ * editor. Each provider gets a section with one account row: the server's
+ * sign-in and the subscription limits the provider reports. A declared reset
+ * capability makes reported grants actionable; signing in and account
+ * management remain in the provider's CLI on the server.
  */
 import { useSelector } from "@legendapp/state/react";
 import { useState } from "react";
@@ -27,15 +28,22 @@ import {
   providerLimitsSummary,
 } from "./providerAccountPresentation";
 import { ProviderLimitWindows } from "./ProviderLimitWindows";
+import { ProviderResetDetails } from "./ProviderResetDetails";
 
 /** One section per enabled provider whose sign-in is not an account pool. */
 export function ProviderAccounts({
   agentProviders,
   connectionId,
+  onConsumeReset,
   serverName,
 }: {
   readonly agentProviders: Pick<AgentProvidersResource, "state$">;
   readonly connectionId: string;
+  readonly onConsumeReset: (
+    connectionId: string,
+    providerId: string,
+    grantId: string,
+  ) => Promise<void>;
   readonly serverName: string;
 }): React.JSX.Element | null {
   const state = useSelector(() => agentProviders.state$[connectionId]?.get());
@@ -46,17 +54,31 @@ export function ProviderAccounts({
   return (
     <>
       {entries.map((entry) => (
-        <ProviderAccountSection entry={entry} key={entry.id} serverName={serverName} />
+        <ProviderAccountSection
+          connectionId={connectionId}
+          entry={entry}
+          key={entry.id}
+          onConsumeReset={onConsumeReset}
+          serverName={serverName}
+        />
       ))}
     </>
   );
 }
 
 function ProviderAccountSection({
+  connectionId,
   entry,
+  onConsumeReset,
   serverName,
 }: {
+  readonly connectionId: string;
   readonly entry: AgentProviderStatusEntry;
+  readonly onConsumeReset: (
+    connectionId: string,
+    providerId: string,
+    grantId: string,
+  ) => Promise<void>;
   readonly serverName: string;
 }): React.JSX.Element {
   return (
@@ -68,7 +90,12 @@ function ProviderAccountSection({
         title={entry.name}
       />
       {providerAccountShowsLimits(entry) ? (
-        <ProviderAccountLimitsRow entry={entry} serverName={serverName} />
+        <ProviderAccountLimitsRow
+          connectionId={connectionId}
+          entry={entry}
+          onConsumeReset={onConsumeReset}
+          serverName={serverName}
+        />
       ) : (
         <ProviderAccountRow entry={entry} serverName={serverName} />
       )}
@@ -103,10 +130,18 @@ function ProviderAccountRow({
 
 /** A signed-in provider account with its limit rings; expands to every limit window. */
 function ProviderAccountLimitsRow({
+  connectionId,
   entry,
+  onConsumeReset,
   serverName,
 }: {
+  readonly connectionId: string;
   readonly entry: AgentProviderStatusEntry;
+  readonly onConsumeReset: (
+    connectionId: string,
+    providerId: string,
+    grantId: string,
+  ) => Promise<void>;
   readonly serverName: string;
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false);
@@ -136,24 +171,56 @@ function ProviderAccountLimitsRow({
           testID: `provider-account-status-${entry.id}`,
         }}
       />
-      {expanded && <ProviderLimitDetails entry={entry} now={now} />}
+      {expanded && (
+        <ProviderLimitDetails
+          connectionId={connectionId}
+          entry={entry}
+          now={now}
+          onConsumeReset={onConsumeReset}
+          serverName={serverName}
+        />
+      )}
     </View>
   );
 }
 
 function ProviderLimitDetails({
+  connectionId,
   entry,
   now,
+  onConsumeReset,
+  serverName,
 }: {
+  readonly connectionId: string;
   readonly entry: AgentProviderStatusEntry;
   readonly now: number;
+  readonly onConsumeReset: (
+    connectionId: string,
+    providerId: string,
+    grantId: string,
+  ) => Promise<void>;
+  readonly serverName: string;
 }): React.JSX.Element {
+  const resets = entry.limits.kind === "known" ? entry.limits.resets : null;
+  const showsResets = entry.capabilities?.includes("accounts.rateLimitResets") === true;
+  const useReset = useEvent(async (grantId: string): Promise<void> => {
+    await onConsumeReset(connectionId, entry.id, grantId);
+  });
   return (
     <View
       style={[styles.accountResetDetailsSurface, styles.accountResetDetailsSurfaceLast]}
       testID={`provider-account-details-${entry.id}`}
     >
       <ProviderLimitWindows limits={entry.limits} now={now} providerName={entry.name} />
+      {showsResets && resets !== null && (
+        <ProviderResetDetails
+          now={now}
+          onUseReset={useReset}
+          providerName={entry.name}
+          resets={resets}
+          serverName={serverName}
+        />
+      )}
     </View>
   );
 }

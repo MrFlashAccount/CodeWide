@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import { LegendList } from "@legendapp/list/react-native";
 import { ActivityIndicator, View } from "react-native";
 import type { ThreadResourcesModel } from "../../data/thread-resources-model";
 import type { ThreadResourcesValue } from "../../data/workspace-resource-database";
@@ -8,8 +7,9 @@ import { useThreadResources } from "../../data/use-thread-resources";
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
 import { colors, iconSize } from "../../theme";
+import { AppList } from "../../ui/AppList";
+import { useAppListItemState } from "../../ui/appListItemContext";
 import { AppSheet, AppSheetScrollView } from "../../ui/AppSheet";
-import { listRowHeight, listRowPosition } from "../../ui/AppListRow.types";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./AttachmentsFeature.styles";
 import { ThreadAttachmentResourceRow } from "./ThreadAttachmentResourceRow";
@@ -119,22 +119,17 @@ function AttachmentRouteList({
   return (
     <>
       {error === null ? null : <Text style={styles.errorText}>{error}</Text>}
-      <LegendList
+      <AppList
         contentContainerStyle={styles.threadResourcesContent}
         data={attachments}
-        getFixedItemSize={() => listRowHeight.double}
         keyboardShouldPersistTaps="handled"
         keyExtractor={(attachment) => attachment.key}
-        renderItem={({ index, item }) => (
-          <AttachmentRouteRow
-            attachment={item}
-            count={attachments.length}
-            index={index}
-            onOpenAttachment={onOpenAttachment}
-          />
+        renderItem={({ item }) => (
+          <AttachmentRouteRow attachment={item} onOpenAttachment={onOpenAttachment} />
         )}
-        renderScrollComponent={AppSheetScrollView}
+        scrollComponent={AppSheetScrollView}
         style={styles.menuScroll}
+        virtualized
       />
     </>
   );
@@ -142,15 +137,12 @@ function AttachmentRouteList({
 
 function AttachmentRouteRow({
   attachment,
-  count,
-  index,
   onOpenAttachment,
 }: {
   readonly attachment: ThreadAttachmentResource;
-  readonly count: number;
-  readonly index: number;
   readonly onOpenAttachment: (attachment: ThreadAttachmentResource) => void;
 }): React.JSX.Element {
+  const { position } = useAppListItemState();
   return (
     <View style={styles.threadAttachmentCell}>
       <ThreadAttachmentResourceRow
@@ -158,7 +150,7 @@ function AttachmentRouteRow({
         onPress={() => {
           onOpenAttachment(attachment);
         }}
-        position={listRowPosition(index, count)}
+        position={position}
       />
     </View>
   );

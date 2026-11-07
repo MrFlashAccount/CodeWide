@@ -173,7 +173,7 @@ describe("chronological turn sequence", () => {
       commentary,
       block("tool-2", "mcpToolCall"),
       final,
-      block("metadata", "turnDiff"),
+      block("metadata", "turnPlan"),
     ]);
 
     expect(content.finalAnswer?.key).toBe("final");

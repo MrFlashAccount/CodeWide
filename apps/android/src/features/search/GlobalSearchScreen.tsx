@@ -9,8 +9,8 @@ import {
 import type { SearchScreenProps } from "./globalSearchContract";
 import { renderGlobalSearchView } from "./GlobalSearchView";
 import type { SearchResultTarget, ServerSearchResult } from "./searchResultTypes";
-import { SearchOverlayMotion } from "./SearchOverlayMotionView";
-import { useSearchOverlayMotion } from "./searchOverlayMotion";
+import { SearchOverlayMotion } from "../../presentation/input/SearchOverlayMotionView";
+import { useSearchOverlayMotion } from "../../presentation/input/searchOverlayMotion";
 
 import { searchDateBoundary } from "../../data/message-search";
 import { useConstant } from "../../react/useConstant";

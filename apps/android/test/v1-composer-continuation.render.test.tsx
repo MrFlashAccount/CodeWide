@@ -28,7 +28,7 @@ function delivery(overrides: Partial<ComposerDeliveryCapabilities> = {}): Compos
     discardVoice: jest.fn(async () => undefined), draft: "", finishVoice: jest.fn(async () => undefined),
     goalSubmissionActive: false, onEditQueued: undefined, onInterrupt: jest.fn(async () => undefined),
     pastedAttachmentPending: false, pauseGoalBeforeInterrupt: undefined, queuedComposerEdit: null,
-    queuedComposerEditBusy: false, saveQueuedComposerEdit: jest.fn(), send: jest.fn(async () => undefined),
+    queuedComposerEditBusy: false, saveQueuedComposerEdit: jest.fn(), send: jest.fn(async () => undefined), sendAvailable: true,
     threadLifecycleActive: false, uploadsBlockSend: false, voiceError: null, voicePhase: "idle",
     voiceRetryAvailable: false, ...overrides,
   };

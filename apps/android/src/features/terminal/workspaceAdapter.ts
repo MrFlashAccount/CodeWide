@@ -2,6 +2,7 @@ import type {
   ThreadBackgroundTerminalsListResponse,
   ThreadBackgroundTerminalsTerminateResponse,
 } from "@codewide/codex-protocol/v0.155.1/v2";
+import { backgroundTaskInvalidationBus } from "../../data/backgroundTaskInvalidationBus";
 import type {
   BackgroundTerminalValue,
   WorkspaceResourceDatabase,
@@ -85,6 +86,7 @@ export function createTerminalWorkspaceAdapter({
       { processId, threadId },
     );
     if (response.terminated) {
+      backgroundTaskInvalidationBus.changed(connectionId, threadId);
       const key = threadResourceKey(connectionId, threadId);
       const current = getResources().backgroundTerminals.get(key);
       if (current !== undefined) {

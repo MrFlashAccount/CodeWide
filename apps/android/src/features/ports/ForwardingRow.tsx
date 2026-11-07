@@ -1,10 +1,11 @@
 import { ActivityIndicator, Platform, View } from "react-native";
 import { useEvent } from "../../react/useEvent";
 import { colors } from "../../theme";
-import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
+import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { AppListRow } from "../../ui/AppListRow";
-import { AppListRowMenuTrigger } from "../../ui/AppListRowMenuTrigger";
 import { listRowHeight, type AppListRowProps } from "../../ui/AppListRow.types";
+import { OverflowMenu } from "../../ui/OverflowMenu";
+import { OverflowMenuButton } from "../../ui/OverflowMenuButton";
 import { AppText as Text } from "../../ui/Typography";
 import type { PortForwardingCandidate, PortForwardingProfile } from "./portForwardingContract";
 import { hasProfileError } from "./portForwardingList";
@@ -106,18 +107,18 @@ export function ForwardingRow(props: {
           <>
             {(connecting || props.pending) && <ActivityIndicator color={color} size="small" />}
             {Platform.OS === "web" ? (
-              <AppListRowMenuTrigger
+              <OverflowMenuButton
                 accessibilityLabel={`Forwarding actions ${profile.label}`}
                 onPress={props.onToggleActions}
+                tone="dim"
               />
             ) : (
-              <ActionMenu
+              <OverflowMenu
                 accessibilityLabel={`Forwarding actions ${profile.label}`}
                 actions={actions}
                 onSelect={selectAction}
-              >
-                <AppListRowMenuTrigger accessibilityLabel={`Forwarding actions ${profile.label}`} />
-              </ActionMenu>
+                tone="dim"
+              />
             )}
           </>
         }

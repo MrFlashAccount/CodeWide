@@ -18,6 +18,8 @@ use crate::agent::model::{
 /// Reads one page of a background task's output
 /// (`threads.backgroundTaskOutput`).
 pub const BACKGROUND_TASK_READ_METHOD: &str = "companion/thread/backgroundTask/read";
+/// The thread's background commands that still run (`thread.backgroundTasks.list`).
+pub const BACKGROUND_TASKS_LIST_METHOD: &str = "companion/thread/backgroundTasks/list";
 
 /// Methods answered from every enabled provider.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,7 +47,7 @@ pub enum MethodRoute {
 }
 
 /// Thread-scoped methods every provider supports through neutral operations.
-const CORE_THREAD_METHODS: [&str; 11] = [
+const CORE_THREAD_METHODS: [&str; 13] = [
     "thread/read",
     "thread/resume",
     "thread/turns/list",
@@ -56,7 +58,9 @@ const CORE_THREAD_METHODS: [&str; 11] = [
     "thread/delete",
     "thread/settings/update",
     "turn/start",
+    "turn/continue",
     "turn/interrupt",
+    BACKGROUND_TASKS_LIST_METHOD,
 ];
 
 /// The capability a thread-scoped method needs beyond the core operations.
@@ -106,6 +110,7 @@ pub fn host_capability(method: &str) -> Capability {
         }
         "account/rateLimits/read" => Capability::AccountsRateLimits,
         method if method.starts_with("companion/accountPool/") => Capability::AccountsPool,
+        "companion/providerRateLimits/reset/consume" => Capability::AccountsRateLimitResets,
         method if method.starts_with("companion/search") => Capability::HistoryMessageSearch,
         _ => Capability::CodexNative,
     }
@@ -405,6 +410,13 @@ mod tests {
             }
         );
         assert_eq!(
+            route("turn/continue", &json!({"threadId": "t"})),
+            MethodRoute::Thread {
+                thread_id: "t".into(),
+                requires: None
+            }
+        );
+        assert_eq!(
             route("thread/goal/get", &json!({"threadId": "t"})),
             MethodRoute::Thread {
                 thread_id: "t".into(),
@@ -415,6 +427,15 @@ mod tests {
             route("fs/readDirectory", &json!({})),
             MethodRoute::Host {
                 owner: Capability::HostFs
+            }
+        );
+        assert_eq!(
+            route(
+                "companion/providerRateLimits/reset/consume",
+                &json!({"providerId": "claude", "grantId": "weekly"})
+            ),
+            MethodRoute::Host {
+                owner: Capability::AccountsRateLimitResets
             }
         );
         assert_eq!(
@@ -431,6 +452,13 @@ mod tests {
 
     #[test]
     fn a_background_task_read_needs_its_capability_and_a_bounded_page() {
+        assert_eq!(
+            route(BACKGROUND_TASKS_LIST_METHOD, &json!({"threadId": "t"})),
+            MethodRoute::Thread {
+                thread_id: "t".into(),
+                requires: None
+            }
+        );
         assert_eq!(
             route(
                 BACKGROUND_TASK_READ_METHOD,

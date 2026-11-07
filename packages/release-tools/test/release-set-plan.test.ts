@@ -137,7 +137,11 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-describe("release-set planner", () => {
+// WHY: every case runs the real planner in a child process over the whole repository
+// (8 s alone); under the full parallel suite that exceeds the 15 s default.
+const PLANNER_PROCESS_TIMEOUT_MS = 60_000;
+
+describe("release-set planner", { timeout: PLANNER_PROCESS_TIMEOUT_MS }, () => {
   it("bumps a product's semantic version", () => {
     expect(bumpVersion("1.2.3", "patch")).toBe("1.2.4");
     expect(bumpVersion("1.2.3", "minor")).toBe("1.3.0");

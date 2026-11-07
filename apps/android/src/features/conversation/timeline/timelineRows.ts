@@ -1,6 +1,12 @@
 import { projectCompleteMarkdown } from "@codewide/rendering-core";
 import { markdownDocumentBlocks } from "../../../rendering/markdown-document-blocks";
 import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
+import {
+  launchedTaskIds,
+  turnBackgroundLaunches,
+  withoutLaunchedReports,
+  type TaskLineEntry,
+} from "../turns/backgroundLaunches";
 import { projectTurnPresentation } from "../turns/turnProjection";
 import type { VirtualizedTurnPart, VirtualizedTurnPlacement } from "../turns/virtualizedTurnTypes";
 import { timelineItemKey } from "./timelineProjection";
@@ -32,6 +38,12 @@ export type TimelineRow =
       /** The slice's place within its turn's bubble. */
       placement: VirtualizedTurnPlacement;
       timelineIndex: number;
+      /**
+       * The task line after the turn's last slice: the reports a person's
+       * turn received while it answered and the commands the turn started in
+       * the background; empty for other slices.
+       */
+      trailingTasks: readonly TaskLineEntry[];
     };
 
 type TimelineRowsCacheEntry = {
@@ -69,12 +81,46 @@ export function projectTimelineRows(
       rows.push(...projectTimelineItemRows(item, timelineIndex, options));
     }
   }
-  const merged = mergeEmptyWakeLeads(rows);
+  const merged = mergeEmptyWakeLeads(withoutDuplicateTasks(rows, items));
   timelineRowsCache.set(items, { key: cacheKey, rows: merged });
   return merged;
 }
 
 type TimelineLeadRow = Extract<TimelineRow, { kind: "turnLead" }>;
+
+/**
+ * One element per background task: a command the shown history started is
+ * drawn by its launch pill, whose state follows it to its end, so the
+ * report of that command (in a later wake or a later answer) is not drawn
+ * again. A wake whose only line was such a report draws nothing. Agent and
+ * other reports, and reports of commands launched outside the shown range,
+ * keep their own line.
+ */
+function withoutDuplicateTasks(
+  rows: readonly TimelineRow[],
+  items: readonly TimelineItem[],
+): TimelineRow[] {
+  const launched = launchedTaskIds(
+    items.flatMap((item) => (item.kind === "turn" ? [item.turn] : [])),
+  );
+  if (launched.size === 0) {
+    return [...rows];
+  }
+  return rows.flatMap((row): TimelineRow[] => {
+    if (row.kind === "turnLead") {
+      const notifications = withoutLaunchedReports(row.notifications, launched);
+      if (notifications === row.notifications) {
+        return [row];
+      }
+      return notifications.length === 0 && isReportLead(row) ? [] : [{ ...row, notifications }];
+    }
+    if (row.kind === "turnSlice") {
+      const trailingTasks = withoutLaunchedReports(row.trailingTasks, launched);
+      return [trailingTasks === row.trailingTasks ? row : { ...row, trailingTasks }];
+    }
+    return [row];
+  });
+}
 type TimelineTurnItem = Extract<TimelineItem, { kind: "turn" }>;
 
 /**
@@ -201,6 +247,7 @@ function turnSlices({
   const split = shouldSplitTurn({ options, parts, presentation });
   const slices = split ? parts.map((part) => [part]) : [parts];
   const baseKey = timelineItemKey(item);
+  const trailing = trailingTasks(presentation);
   return slices.map((slice, index) => ({
     followsLead,
     item,
@@ -209,7 +256,27 @@ function turnSlices({
     parts: slice,
     placement: slicePlacement(index, slices.length),
     timelineIndex,
+    trailingTasks: index === slices.length - 1 ? trailing : NO_TASKS,
   }));
+}
+
+const NO_TASKS: readonly TaskLineEntry[] = [];
+
+/**
+ * The line after a turn's bubble: a person's turn's mid-turn reports (a
+ * wake turn lists them on its reason line instead), then the commands the
+ * turn started in the background.
+ */
+function trailingTasks(
+  presentation: ReturnType<typeof projectTurnPresentation>,
+): readonly TaskLineEntry[] {
+  const midTurn =
+    presentation.userBlocks.length > 0 ? presentation.taskNotifications.midTurn : NO_TASKS;
+  const launches = turnBackgroundLaunches(presentation.rawTurn);
+  if (launches.length === 0) {
+    return midTurn;
+  }
+  return midTurn.length === 0 ? launches : [...midTurn, ...launches];
 }
 
 function timelineRowsOptionsKey(options: TimelineRowsOptions): string {

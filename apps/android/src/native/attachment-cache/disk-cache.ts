@@ -130,6 +130,50 @@ export class AttachmentDiskCache {
     };
   }
 
+  /**
+   * A reader lease on a completed entry whose size the caller does not know yet, or `null`
+   * when there is none. Content-addressed callers use it before any network request.
+   */
+  async acquireExisting(key: string): Promise<AttachmentLease | null> {
+    await this.ready();
+    const found = await this.exclusive(async () => {
+      const entry = this.entries.get(key);
+      if (entry === undefined) {
+        return null;
+      }
+      const valid = await this.validExistingEntry(key, entry.value.bytes);
+      if (valid === undefined) {
+        return null;
+      }
+      valid.value.touchedAt = this.now();
+      if (!this.pending.has(key)) {
+        await this.storage.touch(valid.value);
+      }
+      valid.readers += 1;
+      return { entry: valid, ready: this.pending.get(key) ?? Promise.resolve() };
+    });
+    if (found === null) {
+      return null;
+    }
+    try {
+      await found.ready;
+    } catch {
+      found.entry.readers -= 1;
+      return null;
+    }
+    let released = false;
+    return {
+      release: () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        found.entry.readers -= 1;
+      },
+      uri: this.storage.uri(key),
+    };
+  }
+
   /** Restores the cache before a caller creates temporary files in its directory. */
   async ready(): Promise<void> {
     if (this.initialized === null) {

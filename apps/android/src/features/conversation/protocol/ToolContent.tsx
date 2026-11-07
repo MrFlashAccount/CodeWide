@@ -48,9 +48,7 @@ export function ToolCallProtocolBlock({ block, getTransferAccess }: ToolCallProt
       icon="extension-puzzle-outline"
       title={block.title}
       {...(block.status === null ? {} : { status: block.status })}
-      collapsible
       copyText={() => protocolCopyText(block)}
-      initiallyExpanded={false}
       {...(openContent !== null && content !== ""
         ? { onOpen: openResult, openLabel: `Open ${block.title} output` }
         : {})}
