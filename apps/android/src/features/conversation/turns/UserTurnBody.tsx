@@ -5,7 +5,8 @@ import { ImagePreviewGroup } from "../../../rendering/ImagePreviewHost";
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
 import { RecoverableRenderBoundary } from "../../../ui/RecoverableRenderBoundary";
 import { AppText as Text } from "../../../ui/Typography";
-import { LargeContentControls } from "../content/FullContentViewer";
+import { userMessageDocument } from "../content/blockContentDocument";
+import { ContentDocumentPress } from "../content/ContentDocumentPress";
 import type { projectTurnPresentation } from "./turnProjection";
 import { styles } from "./TurnTimelineItem.styles";
 import type { TurnTimelineItemProps } from "./TurnTimelineItem.types";
@@ -38,15 +39,16 @@ export function renderUserTurnBody(
                   {userBlocks.map((block) => (
                     <SearchMessage itemId={block.raw.id} key={block.key}>
                       <View style={styles.userMessageBlock}>
-                        <UserMessageContent
-                          content={Array.isArray(block.raw.content) ? block.raw.content : []}
-                          projectedAttachments={block.raw.codewideAttachments}
-                          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-                        />
-                        <LargeContentControls
-                          block={block}
-                          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-                        />
+                        <ContentDocumentPress
+                          accessibilityLabel="Open full message"
+                          document={userMessageDocument(block, getTransferAccess ?? null)}
+                        >
+                          <UserMessageContent
+                            content={Array.isArray(block.raw.content) ? block.raw.content : []}
+                            projectedAttachments={block.raw.codewideAttachments}
+                            {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+                          />
+                        </ContentDocumentPress>
                       </View>
                     </SearchMessage>
                   ))}

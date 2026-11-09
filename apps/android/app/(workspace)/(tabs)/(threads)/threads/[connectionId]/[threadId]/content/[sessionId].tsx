@@ -3,8 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { RouteUnavailable } from "../../../../../../../../src/components/navigation/RouteUnavailable";
 import { recoverUnavailableRoute } from "../../../../../../../../src/components/navigation/routeRecovery";
 import { ConversationRouteFullscreenOverlay } from "../../../../../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
-import { LargeContentViewerSession } from "../../../../../../../../src/features/conversation/content/FullContentViewer";
-import { ActivityContentViewer } from "../../../../../../../../src/features/conversation/content/ActivityContentViewer";
+import { ContentDocumentViewer } from "../../../../../../../../src/features/conversation/content/ContentDocumentViewer";
 import { CommandContentViewer } from "../../../../../../../../src/features/conversation/content/CommandContentViewer";
 import { contentRouteSessions } from "../../../../../../../../src/services/content/contentRouteSession";
 import { useWorkspaceRouteResources } from "../../../../../../../../src/services/workspace/workspaceRouteResources";
@@ -63,28 +62,16 @@ export default function V1ContentRoute(): React.JSX.Element {
     <ConversationRouteFullscreenOverlay
       onDismiss={close}
       render={(closeOverlay) => {
-        if (session.request.kind === "reference") {
-          return (
-            <LargeContentViewerSession initialRequest={session.request} onClose={closeOverlay} />
-          );
-        }
-        if (session.request.kind === "command") {
-          return (
-            <CommandContentViewer
-              connectionId={thread.value.connectionId.value}
-              database={resources.runtime.threadDetails}
-              onClose={closeOverlay}
-              request={session.request}
-              threadId={session.request.threadId}
-            />
-          );
+        if (session.request.kind === "document") {
+          return <ContentDocumentViewer onClose={closeOverlay} request={session.request} />;
         }
         return (
-          <ActivityContentViewer
+          <CommandContentViewer
+            connectionId={thread.value.connectionId.value}
+            database={resources.runtime.threadDetails}
             onClose={closeOverlay}
-            presentation={session.request.presentation}
-            text={session.request.text}
-            title={session.request.title}
+            request={session.request}
+            threadId={session.request.threadId}
           />
         );
       }}

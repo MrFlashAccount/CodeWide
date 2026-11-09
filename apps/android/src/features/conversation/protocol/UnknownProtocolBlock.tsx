@@ -9,15 +9,19 @@ import { colors, iconSize } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { AppText as Text } from "../../../ui/Typography";
 import { CopyButton } from "../turns/MessageActionRail";
+import type { GetTransferAccess } from "../../../data/private-transfer";
+import { blockContentDocument } from "../content/blockContentDocument";
 import { LargeContentViewerContext } from "../content/contentViewerContext";
 import { protocolCopyText } from "./protocolCopyText";
 import { styles } from "./UnknownProtocolBlock.styles";
 
 export function UnknownProtocolBlock({
   block,
+  getTransferAccess,
   onFixUnsupportedBlock,
 }: {
   block: RenderBlock;
+  getTransferAccess?: GetTransferAccess;
   onFixUnsupportedBlock?: (block: RenderBlock) => Promise<void>;
 }) {
   const insideBubbleSurface = useInsideBubbleSurface();
@@ -25,15 +29,15 @@ export function UnknownProtocolBlock({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const rawType = typeof block.raw.type === "string" ? block.raw.type : block.kind;
-  const content = protocolCopyText(block);
+  const document = blockContentDocument({
+    block,
+    getTransferAccess: getTransferAccess ?? null,
+    inline: { presentation: "text", text: protocolCopyText(block) },
+    title: `Unsupported · ${rawType}`,
+  });
   const openRawContent = useEvent(() => {
-    if (openContent !== null && content !== "") {
-      openContent({
-        kind: "inline",
-        presentation: "text",
-        text: content,
-        title: `Unsupported · ${rawType}`,
-      });
+    if (openContent !== null && document !== null) {
+      openContent(document);
     }
   });
   const fix = async () => {
@@ -55,7 +59,7 @@ export function UnknownProtocolBlock({
       <Pressable
         accessibilityLabel={`Open unsupported block ${rawType}`}
         accessibilityRole="button"
-        disabled={openContent === null || content === ""}
+        disabled={openContent === null || document === null}
         onPress={openRawContent}
         style={styles.flex}
       >
