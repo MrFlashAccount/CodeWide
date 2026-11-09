@@ -210,7 +210,10 @@ function ActivityDetailContent({
       {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
     />
   ) : (
-    <ActivityProtocolListRow block={block} />
+    <ActivityProtocolListRow
+      block={block}
+      {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+    />
   );
   return (
     <View style={styles.row}>

@@ -1,7 +1,6 @@
 import { render } from "@testing-library/react-native";
 import { StyleSheet } from "react-native";
 
-import { ActivityContentViewer } from "../src/features/conversation/content/ActivityContentViewer";
 import { NativeCodeBlockHost } from "../src/presentation/nativeCodeBlockHost";
 import { FullscreenCodeBlock } from "../src/rendering/FullscreenCodeBlock";
 
@@ -27,19 +26,4 @@ it("fills the fullscreen body with the complete code before any layout pass", ()
   expect(viewport.style.height).toBeUndefined();
   expect(viewport.style.flexGrow).toBe(1);
   expect(viewport.style.minHeight).toBe(0);
-});
-
-it("fills the full output body with wrapped terminal text before any layout pass", () => {
-  const view = render(
-    <ActivityContentViewer
-      onClose={() => {}}
-      presentation="terminal"
-      text={LONG_CODE}
-      title="Command output"
-    />,
-  );
-  const viewport = nativeCodeViewportStyle(view);
-  expect(viewport.code).toBe(LONG_CODE);
-  expect(viewport.style.height).toBeUndefined();
-  expect(viewport.style.flexGrow).toBe(1);
 });

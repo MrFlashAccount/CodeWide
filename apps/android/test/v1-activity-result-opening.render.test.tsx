@@ -149,9 +149,16 @@ it("opens unknown protocol output directly in the full-screen content viewer", (
   fireEvent.press(view.getByRole("button", { name: "Open Provider extension output" }));
   expect(opened).toEqual([
     {
-      kind: "inline",
-      presentation: "text",
-      text: expect.stringContaining("raw output"),
+      getTransferAccess: null,
+      kind: "document",
+      parts: [
+        {
+          kind: "inline",
+          label: "Item",
+          presentation: "text",
+          text: expect.stringContaining("raw output"),
+        },
+      ],
       title: "Unsupported · providerExtension",
     },
   ]);
@@ -630,8 +637,16 @@ it("opens an unclassified tool result in the generic content viewer", () => {
 
   fireEvent.press(view.getByLabelText("Open Custom tool output"));
   expect(opened).toHaveLength(1);
-  expect(opened[0]).toMatchObject({ kind: "inline", presentation: "text", title: "Custom tool" });
-  expect(opened[0]?.kind === "inline" ? opened[0].text : "").toContain('"contentItems"');
+  expect(opened[0]).toMatchObject({ kind: "document", title: "Custom tool" });
+  const parts = opened[0]?.kind === "document" ? opened[0].parts : [];
+  expect(parts).toEqual([
+    {
+      kind: "inline",
+      label: "Item",
+      presentation: "text",
+      text: expect.stringContaining('"contentItems"'),
+    },
+  ]);
 });
 
 it("reads a command the Companion moved into private content in place of its preview", async () => {

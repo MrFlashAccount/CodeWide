@@ -28,7 +28,6 @@ import { compactNumber, formatDuration } from "../../../ui/number-format";
 import { TOKEN_SYMBOL } from "../../../ui/token-display";
 import { AppText as Text } from "../../../ui/Typography";
 import { WaveText } from "../../../ui/WaveText";
-import { LargeContentControls } from "../content/FullContentViewer";
 import { LargeContentViewerContext } from "../content/contentViewerContext";
 import { Card } from "../turns/Card";
 import { CopyButton } from "../turns/MessageActionRail";
@@ -87,11 +86,6 @@ export function CommandExecutionProtocolBlock({
       {block.durationMs !== null && (
         <Text style={styles.turnMetaText}>{formatDuration(block.durationMs)}</Text>
       )}
-      <LargeContentControls
-        block={block}
-        omitCommandFields
-        {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-      />
     </Card>
   );
 }

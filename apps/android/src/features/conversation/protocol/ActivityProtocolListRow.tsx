@@ -5,6 +5,9 @@ import { useEvent } from "../../../react/useEvent";
 import { colors } from "../../../theme";
 import { AppListItem } from "../../../ui/AppListItem";
 import { listRowHeight } from "../../../ui/AppListRow.types";
+import type { GetTransferAccess } from "../../../data/private-transfer";
+import type { DocumentContentRouteRequest } from "../../../services/content/contentRouteSession";
+import { blockContentDocument } from "../content/blockContentDocument";
 import { LargeContentViewerContext } from "../content/contentViewerContext";
 import { SubagentNavigationContext, TurnActivityMetricsContext } from "../turns/turnContexts";
 import { protocolActivityRow } from "./protocolActivityRow";
@@ -21,25 +24,21 @@ type ActivityRowAction =
 /** A non-card Activity row either owns a semantic destination or remains informational. */
 export function ActivityProtocolListRow({
   block,
+  getTransferAccess,
 }: {
   readonly block: RenderBlock;
+  readonly getTransferAccess?: GetTransferAccess;
 }): React.JSX.Element {
   const metrics = useContext(TurnActivityMetricsContext);
   const openContent = useContext(LargeContentViewerContext);
   const openSubagent = useContext(SubagentNavigationContext);
   const row = protocolActivityRow(block, metrics);
   const title = activityRowTitle(block);
-  const content = unknownOutput(block);
+  const document = unknownDocument(block, getTransferAccess ?? null);
   const targetThreadId = subagentTargetThreadId(block);
   const openUnknown = useEvent(() => {
-    if (openContent !== null && content !== "") {
-      const rawType = typeof block.raw.type === "string" ? block.raw.type : block.kind;
-      openContent({
-        kind: "inline",
-        presentation: "text",
-        text: content,
-        title: `Unsupported · ${rawType}`,
-      });
+    if (openContent !== null && document !== null) {
+      openContent(document);
     }
   });
   const openAgent = useEvent(() => {
@@ -49,7 +48,7 @@ export function ActivityProtocolListRow({
   });
   const action = activityRowAction({
     block,
-    canOpenContent: openContent !== null && content !== "",
+    canOpenContent: openContent !== null && document !== null,
     canOpenSubagent: openSubagent !== null && targetThreadId !== null,
     openAgent,
     openUnknown,
@@ -112,8 +111,21 @@ function activityRowTitle(block: RenderBlock): string {
   return block.title === "" ? "Activity step" : block.title;
 }
 
-function unknownOutput(block: RenderBlock): string {
-  return block.kind === "unknown" ? protocolCopyText(block) : "";
+/** An unsupported block opens its raw item and out-of-line fields; others open no document. */
+function unknownDocument(
+  block: RenderBlock,
+  getTransferAccess: GetTransferAccess | null,
+): DocumentContentRouteRequest | null {
+  if (block.kind !== "unknown") {
+    return null;
+  }
+  const rawType = typeof block.raw.type === "string" ? block.raw.type : block.kind;
+  return blockContentDocument({
+    block,
+    getTransferAccess,
+    inline: { presentation: "text", text: protocolCopyText(block) },
+    title: `Unsupported · ${rawType}`,
+  });
 }
 
 function subagentTargetThreadId(block: RenderBlock): string | null {

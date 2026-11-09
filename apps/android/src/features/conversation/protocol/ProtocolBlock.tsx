@@ -7,17 +7,21 @@ import type { ContentReviewTarget } from "../../../rendering/content-review";
 import { CompleteMarkdown } from "../../../rendering/CompleteMarkdown";
 import { reasoningActivityTitle } from "../../../rendering/reasoning-title";
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
-import { LargeContentControls } from "../content/FullContentViewer";
+import { AgentResponseMarkdown } from "../content/AgentResponseMarkdown";
+import { hasContentReferences, userMessageDocument } from "../content/blockContentDocument";
+import { ContentDocumentPress } from "../content/ContentDocumentPress";
 import { ActiveToolCallContext } from "../turns/turnContexts";
 import { UserMessageContent } from "../turns/UserMessageContent";
 import { AgentActivityProtocolBlock } from "./AgentActivityProtocolBlock";
 import { CommandExecutionProtocolBlock } from "./CommandOutput";
+import { ContentDocumentCard } from "./ContentDocumentCard";
 import { FileChangeProtocolBlock } from "./FileChangeProtocolBlock";
 import { ImageProtocolBlock } from "./ImageProtocolBlock";
 import { MemoryCitationList } from "./MemoryCitationList";
 import { orchestrationToolCall } from "./orchestrationToolCall";
 import { OrchestrationProtocolBlock } from "./OrchestrationProtocolBlock";
 import { styles } from "./ProtocolBlock.styles";
+import { protocolCopyText } from "./protocolCopyText";
 import { ThinkingStatus } from "./ThinkingStatus";
 import { TokenUsageProtocolBlock } from "./TokenUsageProtocolBlock";
 import { ToolCallProtocolBlock } from "./ToolContent";
@@ -41,15 +45,16 @@ export function ProtocolBlock({
     const content = Array.isArray(block.raw.content) ? block.raw.content : [];
     return (
       <View style={[styles.userBubble, surfaceToneMessageStyle(tone)]} testID="user-bubble">
-        <UserMessageContent
-          content={content}
-          projectedAttachments={block.raw.codewideAttachments}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        />
-        <LargeContentControls
-          block={block}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        />
+        <ContentDocumentPress
+          accessibilityLabel="Open full message"
+          document={userMessageDocument(block, getTransferAccess ?? null)}
+        >
+          <UserMessageContent
+            content={content}
+            projectedAttachments={block.raw.codewideAttachments}
+            {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+          />
+        </ContentDocumentPress>
       </View>
     );
   }
@@ -61,18 +66,22 @@ export function ProtocolBlock({
     };
     return (
       <View style={styles.agentMessage}>
-        <SearchMessage itemId={block.raw.id}>
-          <CompleteMarkdown
-            reviewTarget={reviewTarget}
-            source={block.body ?? ""}
-            streamKey={block.key}
+        {block.content?.fields["/text"] === undefined ? (
+          <SearchMessage itemId={block.raw.id}>
+            <CompleteMarkdown
+              reviewTarget={reviewTarget}
+              source={block.body ?? ""}
+              streamKey={block.key}
+            />
+          </SearchMessage>
+        ) : (
+          // The Companion keeps a long response out of line; this reads all of it in place.
+          <AgentResponseMarkdown
+            block={block}
+            {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
           />
-        </SearchMessage>
+        )}
         <MemoryCitationList value={block.raw.memoryCitation} />
-        <LargeContentControls
-          block={block}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        />
       </View>
     );
   }
@@ -87,16 +96,26 @@ export function ProtocolBlock({
       />
     );
   }
-  if (block.kind === "fileChange") {
+  if (
+    hasContentReferences(block) &&
+    (block.kind === "fileChange" ||
+      block.kind === "webSearch" ||
+      block.kind === "imageView" ||
+      block.kind === "imageGeneration")
+  ) {
+    // These viewers read only what the item holds inline; its out-of-line
+    // fields would be unreachable there, so the whole item opens instead.
     return (
-      <>
-        <FileChangeProtocolBlock block={block} />
-        <LargeContentControls
-          block={block}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        />
-      </>
+      <ContentDocumentCard
+        block={block}
+        getTransferAccess={getTransferAccess ?? null}
+        inline={{ presentation: "text", text: protocolCopyText(block) }}
+        title={block.title}
+      />
     );
+  }
+  if (block.kind === "fileChange") {
+    return <FileChangeProtocolBlock block={block} />;
   }
   const orchestration =
     block.kind === "dynamicToolCall" ? orchestrationToolCall(block.raw, block.status) : null;
@@ -105,66 +124,34 @@ export function ProtocolBlock({
   }
   if (block.kind === "mcpToolCall" || block.kind === "dynamicToolCall") {
     return (
-      <>
-        <ToolCallProtocolBlock
-          block={block}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        />
-        <LargeContentControls
-          block={block}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        />
-      </>
+      <ToolCallProtocolBlock
+        block={block}
+        {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+      />
     );
   }
   if (block.kind === "webSearch") {
-    return (
-      <>
-        <WebSearchProtocolBlock block={block} />
-        <LargeContentControls
-          block={block}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        />
-      </>
-    );
+    return <WebSearchProtocolBlock block={block} />;
   }
   if (block.kind === "collabAgentToolCall" || block.kind === "subAgentActivity") {
-    return (
-      <>
-        <AgentActivityProtocolBlock block={block} />
-        <LargeContentControls
-          block={block}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        />
-      </>
-    );
+    // The subagent's own thread holds its prompt and result in full.
+    return <AgentActivityProtocolBlock block={block} />;
   }
   if (block.kind === "imageView" || block.kind === "imageGeneration") {
     return (
-      <>
-        <ImageProtocolBlock
-          block={block}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        />
-        <LargeContentControls
-          block={block}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        />
-      </>
+      <ImageProtocolBlock
+        block={block}
+        {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+      />
     );
   }
   if (block.kind === "unknown") {
     return (
-      <>
-        <UnknownProtocolBlock
-          block={block}
-          {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
-        />
-        <LargeContentControls
-          block={block}
-          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-        />
-      </>
+      <UnknownProtocolBlock
+        block={block}
+        {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+        {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
+      />
     );
   }
   const displayTitle =
