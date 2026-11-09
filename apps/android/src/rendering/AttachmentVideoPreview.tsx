@@ -43,6 +43,13 @@ import {
   type ContentReviewPoint,
 } from "./ContentReviewHost";
 import { useDocumentDownload, type DocumentPreviewRequest } from "./DocumentPreviewHost";
+import { MediaPreviewTopBar } from "./MediaPreviewChrome";
+import {
+  mediaPreviewButtonStyle,
+  useMediaChrome,
+  useObservedTap,
+  type MediaChrome,
+} from "./mediaPreviewChromeState";
 import { materializePrivateAsset } from "./private-asset";
 import { usePrivateFileAccessScope } from "./use-private-image-uri";
 import { MESSAGE_VIDEO_PREVIEW_HEIGHT, MESSAGE_VIDEO_PREVIEW_WIDTH } from "./videoPreview";
@@ -309,9 +316,17 @@ function FullscreenVideoPending({
   onClose: () => void;
   onRetry: () => void;
 }): React.JSX.Element {
+  // Nothing plays yet, so the chrome stays shown; it is the only way out.
+  const chrome = useMediaChrome();
   return (
     <>
-      <FullscreenVideoToolbar download={download} name={name} onClose={onClose} pinMode={false} />
+      <FullscreenVideoToolbar
+        chrome={chrome}
+        download={download}
+        name={name}
+        onClose={onClose}
+        pinMode={false}
+      />
       <View style={styles.fullscreenStatus}>
         <FullscreenVideoPendingState error={error} onRetry={onRetry} />
       </View>
@@ -403,6 +418,13 @@ function FullscreenVideoPlayer({
   const topInset = surface === "fullscreen-modal" ? 0 : insets.top;
   const bottomInset = surface === "fullscreen-modal" ? 0 : insets.bottom;
   const [pinMode, setPinMode] = useState(false);
+  const chrome = useMediaChrome();
+  const toggleChrome = useEvent((): void => {
+    if (!pinMode) {
+      chrome.toggle();
+    }
+  });
+  const observedTap = useObservedTap(toggleChrome);
   const [viewport, setViewport] = useState<VideoSize>({ height: 0, width: 0 });
   const intrinsic = track.videoTrack?.size ?? { height: 0, width: 0 };
   const frame = containSize(intrinsic, viewport);
@@ -437,6 +459,8 @@ function FullscreenVideoPlayer({
             width: Math.max(0, nativeEvent.layout.width),
           });
         }}
+        onTouchEnd={observedTap.onTouchEnd}
+        onTouchStart={observedTap.onTouchStart}
         style={styles.fullscreenViewport}
         testID="video-preview-viewport"
       >
@@ -466,6 +490,7 @@ function FullscreenVideoPlayer({
       />
       <ContentReviewComposer anchorKind="video" targetId={reviewTargetId} />
       <FullscreenVideoToolbar
+        chrome={chrome}
         download={download}
         name={name}
         onClose={onClose}
@@ -558,6 +583,7 @@ function VideoPlayerError({
 }
 
 function FullscreenVideoToolbar({
+  chrome,
   download,
   name,
   onClose,
@@ -565,6 +591,7 @@ function FullscreenVideoToolbar({
   pinMode,
   top = spacing.xs,
 }: {
+  readonly chrome: MediaChrome;
   readonly download: VideoDownload;
   readonly name: string;
   onClose: () => void;
@@ -573,23 +600,15 @@ function FullscreenVideoToolbar({
   readonly top?: number;
 }): React.JSX.Element {
   return (
-    <View pointerEvents="box-none" style={[styles.topBar, { top }]} testID="video-preview-controls">
-      <Pressable
-        accessibilityLabel="Close video"
-        accessibilityRole="button"
-        onPress={onClose}
-        style={styles.roundButton}
-      >
-        <Ionicons color="#ffffff" name="close" size={iconSize.navigation} />
-      </Pressable>
-      <View style={styles.titlePill}>
-        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.titleText}>
-          {name}
-        </Text>
-      </View>
-      {onTogglePin === undefined && download === undefined ? (
-        <View style={styles.toolbarSpacer} />
-      ) : (
+    <MediaPreviewTopBar
+      chrome={chrome}
+      closeLabel="Close video"
+      onClose={onClose}
+      testID="video-preview-controls"
+      title={name}
+      top={top}
+    >
+      {onTogglePin === undefined && download === undefined ? undefined : (
         <View style={styles.topBarActions}>
           {onTogglePin === undefined ? null : (
             <VideoPinToggle onToggle={onTogglePin} pinMode={pinMode} />
@@ -597,7 +616,7 @@ function FullscreenVideoToolbar({
           {download === undefined ? null : <VideoActionsMenu download={download} />}
         </View>
       )}
-    </View>
+    </MediaPreviewTopBar>
   );
 }
 
@@ -614,7 +633,7 @@ function VideoPinToggle({
       accessibilityRole="button"
       accessibilityState={{ selected: pinMode }}
       onPress={onToggle}
-      style={styles.roundButton}
+      style={mediaPreviewButtonStyle}
     >
       <Ionicons
         color={pinMode ? "#B794F6" : "#ffffff"}
@@ -786,40 +805,6 @@ const styles = StyleSheet.create({
   },
   retryButton: {
     padding: spacing.lg,
-  },
-  roundButton: {
-    alignItems: "center",
-    backgroundColor: "rgba(36,36,36,0.9)",
-    borderRadius: radii.pill,
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
-  titlePill: {
-    alignItems: "center",
-    backgroundColor: "rgba(36,36,36,0.82)",
-    borderRadius: radii.medium,
-    flex: 1,
-    justifyContent: "center",
-    marginHorizontal: spacing.sm,
-    minHeight: controlSize.compact,
-    paddingHorizontal: spacing.sm,
-  },
-  titleText: {
-    color: "#ffffff",
-    ...typeScale.label,
-    fontWeight: typeWeight.semibold,
-  },
-  toolbarSpacer: {
-    height: touchTarget,
-    width: touchTarget,
-  },
-  topBar: {
-    alignItems: "center",
-    flexDirection: "row",
-    left: spacing.sm,
-    position: "absolute",
-    right: spacing.sm,
   },
   topBarActions: {
     flexDirection: "row",

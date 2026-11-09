@@ -1,4 +1,4 @@
-import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, render, waitFor, within } from "@testing-library/react-native";
 import { useState } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -13,7 +13,7 @@ import { ThreadCodeDocumentContext } from "../src/rendering/ThreadCodeDocumentCo
 import { DownloadManagerProvider } from "../src/data/DownloadManagerProvider";
 import type { DownloadManager } from "../src/data/downloadManager";
 import { createTestDownloadManager } from "./downloads.fixture";
-import { touchTarget } from "../src/theme";
+import { spacing, touchTarget } from "../src/theme";
 import { ActionMenu } from "../src/ui/ActionMenu";
 import { AppDialogProvider } from "../src/ui/AppDialog.tsx";
 import { AppFullscreenOverlayProvider } from "../src/ui/AppFullscreenOverlay";
@@ -203,6 +203,45 @@ it("uses image-style fullscreen controls and starts a timestamped point review",
 
   expect(view.getByPlaceholderText("What should change here?")).toBeTruthy();
   expect(view.getByText("Video · 25.0%, 50.0%")).toBeTruthy();
+});
+
+it("hides the video chrome on a tap without taking the touch from the player", async () => {
+  const view = render(
+    <FullscreenProviders>
+      <RouteAttachmentVideoPreview
+        getAccess={access}
+        name="comparison.mp4"
+        onClose={() => undefined}
+        path="/tmp/comparison.mp4"
+      />
+    </FullscreenProviders>,
+  );
+  await waitFor(() => {
+    expect(view.getByLabelText("Close video")).toBeTruthy();
+  });
+  const controls = () => view.getByTestId("video-preview-controls");
+  expect(within(controls()).getByText("comparison.mp4")).toBeTruthy();
+  // The title is as tall as the round buttons beside it.
+  expect(view.getByTestId("media-preview-title")).toHaveStyle({
+    borderRadius: radii.pill,
+    height: touchTarget,
+  });
+  expect(controls()).toHaveStyle({ top: 24 + spacing.xs });
+  const viewport = view.getByTestId("video-preview-viewport");
+  const touch = (timestamp: number, pageX: number) => ({
+    nativeEvent: { pageX, pageY: 100, timestamp, touches: [] },
+  });
+
+  fireEvent(viewport, "touchStart", touch(0, 100));
+  fireEvent(viewport, "touchEnd", touch(120, 102));
+  expect(controls().props.pointerEvents).toBe("none");
+  // A drag (scrubbing the native seek bar) is not a tap.
+  fireEvent(viewport, "touchStart", touch(200, 100));
+  fireEvent(viewport, "touchEnd", touch(320, 220));
+  expect(controls().props.pointerEvents).toBe("none");
+  fireEvent(viewport, "touchStart", touch(400, 100));
+  fireEvent(viewport, "touchEnd", touch(450, 100));
+  expect(controls().props.pointerEvents).toBe("box-none");
 });
 
 it("downloads a host video from its actions menu", async () => {

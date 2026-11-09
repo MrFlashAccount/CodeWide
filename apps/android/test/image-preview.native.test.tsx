@@ -8,6 +8,8 @@ import {
   useImagePreview,
   useImagePreviewAnnotationHandler,
 } from "../src/rendering/ImagePreviewHost";
+import { MediaPreviewPosition } from "../src/rendering/MediaPreviewChrome";
+import { useMediaChrome } from "../src/rendering/mediaPreviewChromeState";
 import { OpenableImage } from "../src/features/conversation/protocol/ImageProtocolBlock";
 import { styles as userMessageStyles } from "../src/features/conversation/turns/UserMessageContent.styles";
 import { ProgressiveImageFrames } from "../src/rendering/ProgressiveImageLayer";
@@ -202,4 +204,47 @@ it("keeps the actions menu at the trailing edge of the top bar", () => {
   expect(labels.indexOf("Annotate image in QuickDraw")).toBeLessThan(
     labels.indexOf("Image actions"),
   );
+});
+
+it("titles the viewer with the image name and hides its chrome on a tap", () => {
+  const view = render(
+    <AppDialogProvider>
+      <AppFullscreenOverlayProvider>
+        <ContentReviewHost>
+          <ImagePreviewHost>
+            <Preview />
+          </ImagePreviewHost>
+        </ContentReviewHost>
+      </AppFullscreenOverlayProvider>
+    </AppDialogProvider>,
+  );
+  fireEvent.press(view.getByText("Open photo"));
+  fireEvent(view.getByTestId("image-preview-viewport"), "layout", {
+    nativeEvent: { layout: { width: 300, height: 300 } },
+  });
+  const controls = () => view.getByTestId("image-preview-controls");
+  expect(within(controls()).getByText("Photo")).toBeTruthy();
+  // A single image has no position to show.
+  expect(view.queryByTestId("media-preview-position")).toBeNull();
+  expect(controls().props.pointerEvents).toBe("box-none");
+
+  act(() => {
+    tapZoomChild(10, 10);
+  });
+  expect(controls().props.pointerEvents).toBe("none");
+  act(() => {
+    tapZoomChild(10, 10);
+  });
+  expect(controls().props.pointerEvents).toBe("box-none");
+});
+
+it("shows a gallery position only for more than one item", () => {
+  function Position({ count }: { readonly count: number }) {
+    const chrome = useMediaChrome();
+    return <MediaPreviewPosition bottom={0} chrome={chrome} count={count} index={1} />;
+  }
+  const view = render(<Position count={1} />);
+  expect(view.queryByTestId("media-preview-position")).toBeNull();
+  view.rerender(<Position count={3} />);
+  expect(within(view.getByTestId("media-preview-position")).getByText("2 / 3")).toBeTruthy();
 });

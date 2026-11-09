@@ -41,6 +41,8 @@ import {
   type AppFullscreenOverlayController,
 } from "../ui/AppFullscreenOverlay";
 import { AppText as Text } from "../ui/Typography";
+import { MediaPreviewPosition, MediaPreviewTopBar } from "./MediaPreviewChrome";
+import { mediaPreviewButtonStyle, useMediaChrome } from "./mediaPreviewChromeState";
 import { useOverlaySurface } from "../ui/OverlaySurfaceContext";
 import { percentageDimension } from "../ui/percentageDimension";
 import {
@@ -291,6 +293,7 @@ function ImageViewer({
   const topInset = surface === "fullscreen-modal" ? 0 : insets.top;
   const bottomInset = surface === "fullscreen-modal" ? 0 : insets.bottom;
   const [pinMode, setPinMode] = useState(false);
+  const chrome = useMediaChrome();
   const item = session.items[session.index];
   if (item === undefined) return null;
   const imageActions: ActionMenuItem[] = [
@@ -312,26 +315,17 @@ function ImageViewer({
         items={session.items}
         onChangeIndex={onChangeIndex}
         onClose={onClose}
+        onToggleChrome={chrome.toggle}
         pinMode={pinMode}
       />
-      <View
-        pointerEvents="box-none"
-        style={[styles.topBar, { top: topInset + spacing.xs }]}
+      <MediaPreviewTopBar
+        chrome={chrome}
+        closeLabel="Close image"
+        onClose={onClose}
         testID="image-preview-controls"
+        title={item.label}
+        top={topInset + spacing.xs}
       >
-        <Pressable
-          accessibilityLabel="Close image"
-          accessibilityRole="button"
-          onPress={onClose}
-          style={styles.roundButton}
-        >
-          <Ionicons color="#ffffff" name="close" size={iconSize.navigation} />
-        </Pressable>
-        <View style={styles.counterPill}>
-          <Text style={styles.counterText}>
-            {session.index + 1} / {session.items.length}
-          </Text>
-        </View>
         <View style={styles.topBarActions}>
           <Pressable
             accessibilityLabel="Pin a comment on image"
@@ -340,7 +334,7 @@ function ImageViewer({
             onPress={() => {
               setPinMode(!pinMode);
             }}
-            style={styles.roundButton}
+            style={mediaPreviewButtonStyle}
           >
             <Ionicons
               color={pinMode ? "#B794F6" : "#ffffff"}
@@ -354,7 +348,7 @@ function ImageViewer({
               accessibilityRole="button"
               disabled={annotationPreparing}
               onPress={onAnnotate}
-              style={[styles.roundButton, annotationPreparing && styles.disabled]}
+              style={[mediaPreviewButtonStyle, annotationPreparing && styles.disabled]}
             >
               {annotationPreparing ? (
                 <ActivityIndicator color="#ffffff" size="small" />
@@ -389,7 +383,13 @@ function ImageViewer({
             />
           )}
         </View>
-      </View>
+      </MediaPreviewTopBar>
+      <MediaPreviewPosition
+        bottom={bottomInset + spacing.lg}
+        chrome={chrome}
+        count={session.items.length}
+        index={session.index}
+      />
     </View>
   );
 }
@@ -414,6 +414,7 @@ function ImageGallery({
   items,
   onChangeIndex,
   onClose,
+  onToggleChrome,
   pinMode,
 }: {
   activeItem: ImagePreviewItem;
@@ -421,6 +422,7 @@ function ImageGallery({
   items: ImagePreviewItem[];
   onChangeIndex: (index: number) => void;
   onClose: () => void;
+  onToggleChrome: () => void;
   pinMode: boolean;
 }) {
   const review = useContentReview();
@@ -428,10 +430,15 @@ function ImageGallery({
   const [viewport, setViewport] = useState({ height: 0, width: 0 });
   const dismissOpacity = useSharedValue(1);
   const dismissing = useSharedValue(false);
-  const placePin = useEvent((event: TapGestureEvent, itemIndex: number) => {
+  /** In pin mode a tap pins a review comment; otherwise it shows or hides the chrome. */
+  const tap = useEvent((event: TapGestureEvent, itemIndex: number) => {
+    if (!pinMode) {
+      onToggleChrome();
+      return;
+    }
     const item = items[itemIndex];
     const state = gallery.current?.getState();
-    if (!pinMode || item === undefined || state === undefined) {
+    if (item === undefined || state === undefined) {
       return;
     }
     // The tap lands on the active image itself, in its own unscaled frame.
@@ -472,7 +479,7 @@ function ImageGallery({
           keyExtractor={(item) => item.id}
           maxScale={MAX_IMAGE_ZOOM}
           onIndexChange={onChangeIndex}
-          onTap={placePin}
+          onTap={tap}
           onVerticalPull={({ released, translateY, velocityY }) => {
             "worklet";
             if (!released) {
@@ -595,19 +602,6 @@ function containSize(
 }
 
 const styles = StyleSheet.create({
-  counterPill: {
-    alignItems: "center",
-    backgroundColor: "rgba(36,36,36,0.82)",
-    borderRadius: radii.medium,
-    justifyContent: "center",
-    minHeight: controlSize.compact,
-    paddingHorizontal: spacing.sm,
-  },
-  counterText: {
-    color: "#ffffff",
-    ...typeScale.label,
-    fontWeight: typeWeight.semibold,
-  },
   disabled: { opacity: 0.4 },
   fill: { flex: 1 },
   gestureSurface: {
@@ -665,22 +659,6 @@ const styles = StyleSheet.create({
   root: {
     backgroundColor: "#000000",
     flex: 1,
-  },
-  roundButton: {
-    alignItems: "center",
-    backgroundColor: "rgba(36,36,36,0.9)",
-    borderRadius: radii.pill,
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
-  topBar: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    left: spacing.sm,
-    position: "absolute",
-    right: spacing.sm,
   },
   topBarActions: {
     flexDirection: "row",
