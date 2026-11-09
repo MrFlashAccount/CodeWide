@@ -25,7 +25,7 @@ export const styles = StyleSheet.create({
     alignSelf: "stretch",
     backgroundColor: "transparent",
     borderRadius: radii.selected,
-    marginHorizontal: threadListLayout.edgeInset,
+    marginHorizontal: threadListLayout.cardEdgeInset,
     marginVertical: THREAD_LIST_ROW_VERTICAL_MARGIN,
     maxWidth: "100%",
     minWidth: 0,

@@ -101,7 +101,9 @@ it("uses a single compact project row without a path or navigation chevron", () 
   expect(view.getByLabelText("Open project Repo, unread chats")).toHaveStyle({
     height: 48,
     minHeight: 48,
-    marginHorizontal: 8,
+    // The card edge plus its content inset keep the label on the list's 16 dp text column.
+    marginHorizontal: 4,
+    paddingHorizontal: 12,
   });
   fireEvent.press(view.getByLabelText("Open project Repo, unread chats"));
   expect(open).toHaveBeenCalledTimes(1);

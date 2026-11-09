@@ -131,8 +131,8 @@ export const styles = StyleSheet.create({
   shortcut: {
     gap: spacing.xs,
     height: threadListLayout.projectRowHeight,
-    marginHorizontal: threadListLayout.edgeInset,
-    paddingHorizontal: spacing.xs,
+    marginHorizontal: threadListLayout.cardEdgeInset,
+    paddingHorizontal: threadListLayout.cardContentInset,
   },
   shortcutIdentity: {
     alignItems: "baseline",
