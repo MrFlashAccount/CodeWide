@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { parseHistoryTurns } from "../src/data/thread-cursor-sync";
 import { parseThreadTurnsAfterPage } from "../src/data/thread-turns-after-page";
 
 const completed = {
@@ -36,6 +37,19 @@ describe("thread turns after page", () => {
       .toEqual([turn]);
   });
 
+  it("reads turns as the thread snapshot does, so a later page never refuses what it shows", () => {
+    const turns = [
+      {
+        ...completed,
+        id: "commands",
+        items: [{ type: "commandExecution", id: "ls", command: "ls", status: "completed" }],
+      },
+      { ...completed, id: "failed", status: "failed", error: { message: "boom" }, items: [] },
+    ];
+    expect(parseThreadTurnsAfterPage({ data: turns, hasMore: false, sourceWitness: "source" }, "anchor", 5).turns)
+      .toEqual(parseHistoryTurns(turns));
+  });
+
   it.each([
     null,
     {},
@@ -46,15 +60,7 @@ describe("thread turns after page", () => {
     { data: [{ ...completed, status: "unknown" }], hasMore: false },
     { data: [{ ...completed, id: "" }], hasMore: false },
     { data: [completed, completed], hasMore: false },
-    { data: [{ ...completed, items: [null] }], hasMore: false },
-    { data: [{ ...completed, items: [{ type: "agentMessage", id: "item", text: 10 }] }], hasMore: false },
-    { data: [{ ...completed, items: [{ type: "userMessage", id: "item", content: [null] }] }], hasMore: false },
-    { data: [{ ...completed, items: [{ type: "collabAgentToolCall", id: "item", tool: "spawnAgent", receiverThreadIds: [""] }] }], hasMore: false },
-    { data: [{ ...completed, items: [{ type: "codewideTaskNotification", id: "item" }] }], hasMore: false },
-    { data: [{ ...completed, items: [{ type: "commandExecution", id: "item" }] }], hasMore: false },
-    { data: [{ ...completed, items: [{ type: "commandExecution", id: "item", command: "ls" }] }], hasMore: false },
-    { data: [{ ...completed, error: { message: 12 } }], hasMore: false },
-    { data: [{ ...completed, durationMs: Infinity }], hasMore: false },
+    { data: [{ ...completed, items: "none" }], hasMore: false },
   ])("rejects a malformed or non-advancing page %#", (value) => {
     const response = value === null ? value : { sourceWitness: "source", ...value };
     expect(() => parseThreadTurnsAfterPage(response, "anchor", 5))
