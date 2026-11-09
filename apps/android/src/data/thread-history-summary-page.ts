@@ -83,6 +83,13 @@ function isSummaryItem(value: unknown): boolean {
       );
     case "codewideTaskNotification":
       return isId(value.taskId);
+    // Only a command that started a background task is in the summary
+    // view: its pill shows the task's state after the turn.
+    case "commandExecution":
+      return (
+        typeof value.command === "string" &&
+        (isRecord(value.codewideBackgroundTask) || isId(value.codewideBackgroundTaskId))
+      );
     case "contextCompaction":
       return true;
     default:

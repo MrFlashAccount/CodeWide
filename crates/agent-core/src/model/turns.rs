@@ -74,7 +74,10 @@ pub fn page_turns(
 /// each task the turn started), the background task reports and the context
 /// compactions (all shown outside the turn's collapsed body). No other
 /// activity item. The one summary rule:
-/// `thread.turns` pages and the wire projector both apply it.
+/// `thread.turns` pages and the wire projector both apply it. The Android
+/// history page validator (`apps/android/src/data/thread-history-summary-page.ts`,
+/// `isSummaryItem`) rejects a whole page with any other wire item type, so a
+/// kind added here must be accepted there in the same change.
 #[must_use]
 pub const fn in_summary_view(item: &AgentItem) -> bool {
     matches!(

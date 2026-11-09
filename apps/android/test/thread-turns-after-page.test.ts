@@ -21,6 +21,13 @@ describe("thread turns after page", () => {
         { type: "userMessage", id: "prompt", content: [] },
         { type: "collabAgentToolCall", id: "spawn", tool: "spawnAgent", receiverThreadIds: ["parent:agent:a1"] },
         { type: "codewideTaskNotification", id: "report", taskId: "a1" },
+        {
+          type: "commandExecution",
+          id: "launch",
+          command: "sleep 6",
+          codewideBackgroundTaskId: "b1",
+          codewideBackgroundTask: { taskId: "b1", state: "running" },
+        },
         { type: "contextCompaction", id: "compaction" },
         { type: "agentMessage", id: "answer", text: "Done", phase: "final_answer" },
       ],
@@ -45,6 +52,7 @@ describe("thread turns after page", () => {
     { data: [{ ...completed, items: [{ type: "collabAgentToolCall", id: "item", tool: "spawnAgent", receiverThreadIds: [""] }] }], hasMore: false },
     { data: [{ ...completed, items: [{ type: "codewideTaskNotification", id: "item" }] }], hasMore: false },
     { data: [{ ...completed, items: [{ type: "commandExecution", id: "item" }] }], hasMore: false },
+    { data: [{ ...completed, items: [{ type: "commandExecution", id: "item", command: "ls" }] }], hasMore: false },
     { data: [{ ...completed, error: { message: 12 } }], hasMore: false },
     { data: [{ ...completed, durationMs: Infinity }], hasMore: false },
   ])("rejects a malformed or non-advancing page %#", (value) => {
