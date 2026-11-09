@@ -196,9 +196,10 @@ function ZoomablePeleDiagram({
     if (fit.width <= 0 || fit.height <= 0) {
       return;
     }
-    // The tap lands on the zoomed child itself, in its own unscaled frame.
-    const x = event.x / fit.width;
-    const y = event.y / fit.height;
+    // The tap lands on the gesture area in its unscaled frame: the whole
+    // viewport (`extendGestures`), with the fitted diagram centred in it.
+    const x = (event.x - (viewport.width - fit.width) * HALF) / fit.width;
+    const y = (event.y - (viewport.height - fit.height) * HALF) / fit.height;
     if (x >= 0 && x <= 1 && y >= 0 && y <= 1) {
       onReviewPoint?.(x, y);
     }
@@ -219,6 +220,8 @@ function ZoomablePeleDiagram({
 
   const zoomed = (
     <ResumableZoom
+      // Pinch and drag anywhere in the viewport, not only over the fitted diagram.
+      extendGestures
       maxScale={MAX_ZOOM}
       onUpdate={(state) => {
         "worklet";

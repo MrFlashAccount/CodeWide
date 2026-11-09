@@ -22,6 +22,8 @@ import type {
 type Size = { width: number; height: number };
 
 const state = {
+  /** Whether the mounted `ResumableZoom` takes gestures over its whole root (`extendGestures`). */
+  areaExtended: false,
   childSize: { height: 0, width: 0 } as Size,
   index: 0,
   onTap: undefined as ((event: TapGestureEvent, index: number) => void) | undefined,
@@ -48,6 +50,17 @@ export function tapZoomChild(x: number, y: number): void {
   // WHY: the handler reads only the tap position; a full gesture event exists only natively.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   state.onTap?.({ x, y } as TapGestureEvent, state.index);
+}
+
+/**
+ * A single tap at a point of the viewport the mounted `ResumableZoom` fills. Only an
+ * `extendGestures` zoom takes it there; without it the gesture area is the child alone.
+ */
+export function tapZoomViewport(x: number, y: number): void {
+  if (!state.areaExtended) {
+    throw new Error("ResumableZoom takes gestures over its child only");
+  }
+  tapZoomChild(x, y);
 }
 
 function GalleryInner<T>(
@@ -81,7 +94,9 @@ export const ResumableZoom = forwardRef(function ResumableZoom(
   ref: ForwardedRef<ResumableZoomRefType>,
 ): ReactElement {
   const onTap = props.onTap;
+  const extended = props.extendGestures === true;
   useLayoutEffect(() => {
+    state.areaExtended = extended;
     state.onTap = onTap === undefined ? undefined : (event) => onTap(event);
   });
   useImperativeHandle(ref, () => ({

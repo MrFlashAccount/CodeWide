@@ -803,9 +803,9 @@ const styles = StyleSheet.create({
   fullscreenSurface: { flex: 1 },
   fullscreenTitle: {
     backgroundColor: "rgba(35, 39, 44, .88)",
-    borderRadius: radii.medium,
+    // A capsule, like the round buttons beside it.
+    borderRadius: radii.pill,
     flex: 1,
-    // The title bubble matches the round buttons beside it.
     height: touchTarget,
     justifyContent: "center",
     minWidth: 0,
