@@ -9,13 +9,11 @@ import { CatalogTitle } from "../../ui/CatalogTitle";
 import { styles } from "./MobileThreads.styles";
 import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
-import { GlobalVoiceEntryAction } from "./GlobalVoiceEntryAction";
 import { ThreadListSearchRow } from "./ThreadListSearchRow";
 
 type MobileThreadsHeaderProps = Pick<
   MobileThreadsProps,
   | "filter"
-  | "globalVoice"
   | "mode"
   | "onBackToProjects"
   | "onFilterChange"
@@ -38,7 +36,6 @@ type MobileThreadsHeaderProps = Pick<
 export function MobileThreadsHeader({ props }: { props: MobileThreadsHeaderProps }) {
   const {
     filter,
-    globalVoice,
     mode,
     onBackToProjects,
     onFilterChange,
@@ -102,7 +99,6 @@ export function MobileThreadsHeader({ props }: { props: MobileThreadsHeaderProps
         ) : (
           <CatalogTitle layout={[styles.mobileTitle, styles.mobileTitleGrow]}>Threads</CatalogTitle>
         )}
-        <GlobalVoiceEntryAction {...globalVoice} />
         <ThreadFilterMenu
           mode={mode}
           onSelect={onFilterChange}

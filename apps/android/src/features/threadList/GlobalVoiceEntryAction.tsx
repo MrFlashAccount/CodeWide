@@ -11,11 +11,14 @@ import {
 import { supportsGlobalVoiceFloatingOverlay } from "../../native/globalVoiceOverlayPresentation";
 import type { GlobalVoiceOrbState } from "../../native/globalVoiceOverlayActions";
 import { useEvent } from "../../react/useEvent";
-import { radii, touchTarget } from "../../theme";
+import { colors, controlHitSlop, iconSize } from "../../theme";
 import { VoiceAssistantOrb } from "../../ui/VoiceAssistantOrb";
+import { SECONDARY_FAB_SIZE } from "./threadListFabGeometry";
 
 const PRESSED_OPACITY = 0.68;
-const HEADER_ORB_SIZE = 34;
+const MINI_FAB_ORB_SIZE = iconSize.navigation;
+/** Secondary floating actions sit one step below the primary New thread elevation. */
+const MINI_FAB_ELEVATION = 2;
 const CENTER_DIVISOR = 2;
 const ERROR_INDICATOR_DURATION_MS = 3000;
 
@@ -25,7 +28,7 @@ export type GlobalVoiceControl = {
   readonly state: "idle" | "starting" | "active" | "reconnecting" | "stopping";
 };
 
-function HeaderActionSurface({
+function MiniActionSurface({
   children,
   hidden,
   measureOrigin,
@@ -48,9 +51,14 @@ function HeaderActionSurface({
       accessibilityState={{ selected: state === "active" }}
       accessible={!hidden}
       disabled={hidden}
+      hitSlop={controlHitSlop.compact}
       importantForAccessibility={hidden ? "no-hide-descendants" : "auto"}
       onPress={onPress}
-      style={({ pressed }) => [styles.action, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.action,
+        hidden && styles.handedOff,
+        pressed && styles.pressed,
+      ]}
     >
       <View
         collapsable={false}
@@ -66,7 +74,10 @@ function HeaderActionSurface({
   );
 }
 
-/** Stable header anchor; only the native activation handoff owns spatial orb animation. */
+/**
+ * Round mini action whose orb is the measured anchor of the Android overlay
+ * flights. Its surface clears while the floating overlay owns the orb.
+ */
 export function GlobalVoiceEntryAction(props: GlobalVoiceControl): React.JSX.Element | null {
   const orbOriginRef = useRef<View>(null);
   const [errorDismissed, setErrorDismissed] = useState(false);
@@ -132,7 +143,7 @@ export function GlobalVoiceEntryAction(props: GlobalVoiceControl): React.JSX.Ele
     orbOrigin.measureInWindow(startFromMeasuredOrigin);
   });
 
-  const hideHeaderOrb = supportsGlobalVoiceFloatingOverlay() && props.state !== "idle";
+  const orbHandedOff = supportsGlobalVoiceFloatingOverlay() && props.state !== "idle";
   const visibleOrbState =
     props.orbState === "error" && !errorDismissed
       ? "error"
@@ -141,14 +152,14 @@ export function GlobalVoiceEntryAction(props: GlobalVoiceControl): React.JSX.Ele
         : props.orbState;
   return (
     <View onLayout={measureOrigin} style={styles.slot} testID="global-voice-slot">
-      <HeaderActionSurface
-        hidden={hideHeaderOrb}
+      <MiniActionSurface
+        hidden={orbHandedOff}
         measureOrigin={measureOrigin}
         onPress={toggle}
         registerOrigin={registerOrigin}
         state={props.state}
       >
-        {hideHeaderOrb ? null : (
+        {orbHandedOff ? null : (
           <VoiceAssistantOrb
             accessibilityElementsHidden
             orbState={visibleOrbState}
@@ -158,7 +169,7 @@ export function GlobalVoiceEntryAction(props: GlobalVoiceControl): React.JSX.Ele
             testID="global-voice-orb"
           />
         )}
-      </HeaderActionSurface>
+      </MiniActionSurface>
     </View>
   );
 }
@@ -174,17 +185,21 @@ const labels = {
 const styles = StyleSheet.create({
   action: {
     alignItems: "center",
-    borderRadius: radii.large,
-    height: touchTarget,
+    backgroundColor: colors.surfaceContainerHigh,
+    borderRadius: SECONDARY_FAB_SIZE / CENTER_DIVISOR,
+    elevation: MINI_FAB_ELEVATION,
+    height: SECONDARY_FAB_SIZE,
     justifyContent: "center",
     overflow: "hidden",
-    position: "absolute",
-    right: 0,
-    width: touchTarget,
+    width: SECONDARY_FAB_SIZE,
+  },
+  handedOff: {
+    backgroundColor: "transparent",
+    elevation: 0,
   },
   orb: {
-    height: HEADER_ORB_SIZE,
-    width: HEADER_ORB_SIZE,
+    height: MINI_FAB_ORB_SIZE,
+    width: MINI_FAB_ORB_SIZE,
   },
   orbFill: {
     height: "100%",
@@ -194,8 +209,7 @@ const styles = StyleSheet.create({
     opacity: PRESSED_OPACITY,
   },
   slot: {
-    height: touchTarget,
-    overflow: "hidden",
-    width: touchTarget,
+    height: SECONDARY_FAB_SIZE,
+    width: SECONDARY_FAB_SIZE,
   },
 });

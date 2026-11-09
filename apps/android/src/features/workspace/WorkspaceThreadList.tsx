@@ -13,7 +13,6 @@ export function WorkspaceThreadList({
   closeSidebarProject,
   createSidebarThread,
   desktop,
-  globalVoice,
   loadMoreProjectThreads,
   loadMoreThreads,
   mobileRemoteSearchResource,
@@ -58,7 +57,6 @@ export function WorkspaceThreadList({
   closeSidebarProject: ThreadSidebarProps["onBackToProjects"];
   createSidebarThread: ThreadSidebarProps["onNewThread"];
   desktop: boolean;
-  globalVoice: ThreadSidebarProps["globalVoice"];
   loadMoreProjectThreads: ThreadSidebarProps["onLoadMoreProject"];
   loadMoreThreads: ThreadSidebarProps["onLoadMore"];
   mobileRemoteSearchResource: ReturnType<typeof useThreadSearch>["mobileRemoteSearchResource"];
@@ -114,7 +112,6 @@ export function WorkspaceThreadList({
                         mobileRemoteSearchResource.error,
                       ),
                 filter: sidebarFilter,
-                globalVoice,
                 headerVisible: false,
                 initialOffset: mobileThreadOffset.read(sidebarScopeKey),
                 mode: sidebarMode,
@@ -159,7 +156,6 @@ export function WorkspaceThreadList({
                 archivedThreads: mobileVisibleArchivedThreads,
                 catalogState: sidebarCatalogState,
                 filter: sidebarFilter,
-                globalVoice,
                 headerVisible: false,
                 initialOffset: mobileThreadOffset.read(sidebarScopeKey),
                 mode: sidebarMode,

@@ -4,8 +4,10 @@ import { View, type LayoutChangeEvent } from "react-native";
 
 import { workspaceCatalogDiagnostics } from "../data/workspaceCatalogDiagnostics";
 import {
+  ThreadListFabProvider,
   ThreadListHeader,
   ThreadListSearchPullProvider,
+  ThreadListVoiceFab,
 } from "../features/threadList/ThreadListFeature";
 import { effectiveThreadListFilter } from "../features/threadList/threadListFilters";
 import { NoServerWelcome } from "../features/threadList/NoServerWelcome";
@@ -63,11 +65,23 @@ function CatalogContent(): React.JSX.Element {
   }
   return (
     <ThreadListSearchPullProvider>
+      <ThreadListFabProvider>
+        <CatalogBody />
+      </ThreadListFabProvider>
+    </ThreadListSearchPullProvider>
+  );
+}
+
+/** Fixed header, the native list scenes and the catalog's single voice action. */
+function CatalogBody(): React.JSX.Element {
+  return (
+    <>
       <CatalogHeader />
       <View style={styles.listScenes} testID="workspace-list-scenes">
         <ListContentNavigator />
       </View>
-    </ThreadListSearchPullProvider>
+      <CatalogVoiceAction />
+    </>
   );
 }
 
@@ -86,9 +100,9 @@ function ListContentNavigator(): React.JSX.Element {
   );
 }
 
-function WorkspaceListHeader(): React.JSX.Element | null {
-  const resources = useWorkspaceListRouteResources();
-  const { list } = resources;
+/** The focused list scope (All or one project) with its mode and filter selection. */
+function useFocusedCatalogScope() {
+  const { list } = useWorkspaceListRouteResources();
   const route = useWorkspaceRouteModel();
   const session =
     route.projectListSessionId === null
@@ -111,6 +125,23 @@ function WorkspaceListHeader(): React.JSX.Element | null {
           onFilterChange: projectState.setProjectListFilter,
           onModeChange: projectState.setProjectListMode,
         };
+  return { project, selection };
+}
+
+/** One Global Voice action above the focused scope's New thread action. */
+function CatalogVoiceAction(): React.JSX.Element | null {
+  const { globalVoice } = useWorkspaceListRouteResources();
+  const { selection } = useFocusedCatalogScope();
+  return (
+    <ThreadListVoiceFab globalVoice={globalVoice} primaryVisible={selection.mode === "active"} />
+  );
+}
+
+function WorkspaceListHeader(): React.JSX.Element | null {
+  const resources = useWorkspaceListRouteResources();
+  const { list } = resources;
+  const rootState = list.listState;
+  const { project, selection } = useFocusedCatalogScope();
   const closeProject = useEvent((): void => {
     list.projectSelection.closeSidebarProject();
   });
@@ -118,7 +149,6 @@ function WorkspaceListHeader(): React.JSX.Element | null {
     <ThreadListHeader
       props={{
         filter: effectiveThreadListFilter(selection.mode, selection.filter),
-        globalVoice: resources.globalVoice,
         mode: selection.mode,
         onBackToProjects: closeProject,
         onFilterChange: selection.onFilterChange,

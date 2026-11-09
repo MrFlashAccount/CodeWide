@@ -38,7 +38,6 @@ export function WorkspaceRouteThreadList(props: WorkspaceRouteThreadListProps): 
       closeSidebarProject={list.projectSelection.closeSidebarProject}
       createSidebarThread={props.createSidebarThread}
       desktop={props.desktop}
-      globalVoice={props.globalVoice}
       loadMoreProjectThreads={project.loadMoreProjectThreads}
       loadMoreThreads={list.loadMoreThreads}
       mobileRemoteSearchResource={project.threadSearch.mobileRemoteSearchResource}

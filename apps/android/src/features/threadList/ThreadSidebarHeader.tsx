@@ -9,7 +9,6 @@ import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
 import { CatalogTitle } from "../../ui/CatalogTitle";
 import { styles } from "./ThreadSidebar.styles";
 import type { ThreadSidebarProps } from "./ThreadSidebarContract";
-import { GlobalVoiceEntryAction } from "./GlobalVoiceEntryAction";
 import { ThreadListSearchRow } from "./ThreadListSearchRow";
 
 export function ThreadSidebarHeader({
@@ -21,7 +20,6 @@ export function ThreadSidebarHeader({
 }) {
   const {
     filter,
-    globalVoice,
     mode,
     onBackToProjects,
     onFilterChange,
@@ -80,7 +78,6 @@ export function ThreadSidebarHeader({
             Threads
           </CatalogTitle>
         )}
-        <GlobalVoiceEntryAction {...globalVoice} />
         <ThreadFilterMenu
           mode={mode}
           onSelect={onFilterChange}

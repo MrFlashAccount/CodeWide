@@ -43,7 +43,6 @@ export function ProjectThreadListRoute({
           archivedThreads: [],
           catalogState: { status: "loading" },
           filter: effectiveThreadListFilter(mode, state.projectListFilter),
-          globalVoice: resources.globalVoice,
           headerVisible: false,
           initialOffset: offset.read(scopeKey),
           mode,

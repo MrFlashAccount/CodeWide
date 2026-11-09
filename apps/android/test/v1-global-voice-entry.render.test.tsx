@@ -4,7 +4,7 @@ import { StyleSheet, View } from "react-native";
 import { GlobalVoiceEntryAction } from "../src/features/threadList/GlobalVoiceEntryAction";
 import { writeGlobalVoiceOrbStylePreference } from "../src/data/globalVoiceOrbStylePreference";
 
-it("hands the idle header orb off and removes the duplicate while the session is active", () => {
+it("hands the idle mini action orb off and removes the duplicate while the session is active", () => {
   const onToggle = jest.fn();
   const view = render(<GlobalVoiceEntryAction state="idle" orbState="idle" onToggle={onToggle} />);
   const visibleSlotWidth = StyleSheet.flatten(
@@ -19,7 +19,9 @@ it("hands the idle header orb off and removes the duplicate while the session is
   view.rerender(
     <GlobalVoiceEntryAction state="starting" orbState="connecting" onToggle={onToggle} />,
   );
-  expect(StyleSheet.flatten(view.getByTestId("global-voice-slot").props.style).width).toBe(visibleSlotWidth);
+  expect(StyleSheet.flatten(view.getByTestId("global-voice-slot").props.style).width).toBe(
+    visibleSlotWidth,
+  );
   expect(view.queryByTestId("global-voice-orb", { includeHiddenElements: true })).toBeNull();
   expect(view.getByTestId("global-voice-orb-anchor", { includeHiddenElements: true })).toBeTruthy();
   expect(view.queryByRole("button")).toBeNull();
@@ -30,7 +32,7 @@ it("hands the idle header orb off and removes the duplicate while the session is
 });
 
 it.each(["starting", "active", "reconnecting", "stopping"] as const)(
-  "keeps the header empty during %s so only the floating orb is visible",
+  "keeps the mini action empty during %s so only the floating orb is visible",
   (state) => {
     const view = render(
       <GlobalVoiceEntryAction state={state} orbState="disabled" onToggle={jest.fn()} />,

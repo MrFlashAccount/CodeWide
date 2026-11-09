@@ -147,6 +147,11 @@ export function withTiming<Value>(
   return value;
 }
 
+// Node renders settled frames, so a delayed animation settles like its inner one.
+export function withDelay<Value>(_delayMs: number, animation: Value): Value {
+  return animation;
+}
+
 // Native animation timing is unavailable in Node; settle at the requested value.
 export function withSpring<Value>(
   value: Value,

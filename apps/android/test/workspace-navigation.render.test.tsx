@@ -664,6 +664,13 @@ it.each([
   const threadsHeaderStyle = StyleSheet.flatten(threadsHeader.props.style);
   const orbSlot = view.getByTestId("global-voice-slot");
 
+  // The voice orb is the floating mini action above New thread, never a header control.
+  expect(
+    within(threadsHeader).queryByTestId("global-voice-slot", { includeHiddenElements: true }),
+  ).toBeNull();
+  expect(within(view.getByTestId("global-voice-fab-slot")).getByTestId("global-voice-slot")).toBe(
+    orbSlot,
+  );
   expect(within(threadsHeader).getByText("Threads")).toBeTruthy();
   expect(within(threadsHeader).queryByLabelText("Search threads and messages")).toBeNull();
   expect(within(threadsHeader).getByLabelText(/Thread filters/u)).toBeTruthy();

@@ -8,15 +8,17 @@ import { GestureDetector } from "react-native-gesture-handler";
 import Reanimated from "react-native-reanimated";
 import { usePerformanceExperiment } from "../../data/performance-experiments";
 import { threadSelectionKey } from "../../services/threads/threadRouteParams";
-import { NewThreadFloatingButton } from "../projects/NewThreadFloatingButton";
 import { SidebarProjectRow } from "../projects/SidebarProjectViews";
 import { styles } from "./MobileThreads.styles";
 import { SidebarListFeedback, ThreadListPageError } from "./SidebarListFeedback";
 import { sidebarRows } from "./sidebarRows";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { ThreadListExperimentSuspended } from "./ThreadListBoundary";
+import { ThreadListNewThreadFab } from "./ThreadListFabs";
+import { useThreadListFabModel } from "./threadListFabModel";
 import { ThreadListRouteTransition } from "./ThreadListRouteTransition";
 import { ThreadListPullBackdrop } from "./ThreadListPullBackdrop";
+import { useThreadListFabScroll } from "./useThreadListFabScroll";
 import { threadMatchesFilter } from "./threadListFilters";
 import { useThreadListPullGesture } from "./threadListSearchPull";
 import {
@@ -95,6 +97,8 @@ export function MobileThreads(props: MobileThreadsProps) {
     project === null ? onLoadMore : projectSource.loadMore,
   );
   const pullSearch = useThreadListPullGesture(props.onOpenSearch, initialOffset, listKey);
+  const fabModel = useThreadListFabModel();
+  const attachFabScroll = useThreadListFabScroll(fabModel);
   const handleListScroll = useEvent((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     pullSearch.onScroll(event);
     scroll.onScroll();
@@ -155,6 +159,7 @@ export function MobileThreads(props: MobileThreadsProps) {
                   onScrollBeginDrag={scroll.onScrollBeginDrag}
                   onScrollEndDrag={scroll.onScrollEndDrag}
                   recycleItems
+                  ref={attachFabScroll}
                   renderItem={({ item }) =>
                     item.kind === "header" ? (
                       <SidebarSectionHeader title={item.title} />
@@ -204,7 +209,11 @@ export function MobileThreads(props: MobileThreadsProps) {
         {searchContent === null && <ThreadListPullBackdrop />}
       </View>
       {searchContent === null && mode === "active" && (
-        <NewThreadFloatingButton onPress={onNewThread} projectName={project?.name ?? null} />
+        <ThreadListNewThreadFab
+          model={fabModel}
+          onNewThread={onNewThread}
+          projectName={project?.name ?? null}
+        />
       )}
     </View>
   );
