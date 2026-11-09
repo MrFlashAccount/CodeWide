@@ -9,7 +9,7 @@ import type { MobileThreadsProps } from "./MobileThreadsContract";
 
 export { ThreadListSearchPullProvider } from "./ThreadListSearchPullProvider";
 export { ThreadListFabProvider } from "./ThreadListFabProvider";
-export { ThreadListVoiceFab } from "./ThreadListFabs";
+export { ThreadListFabStack } from "./ThreadListFabs";
 
 type ThreadListView =
   | { mode: "desktop"; props: ThreadSidebarProps }

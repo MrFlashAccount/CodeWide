@@ -11,7 +11,6 @@ export function WorkspaceThreadList({
   changeSidebarFilter,
   changeSidebarMode,
   closeSidebarProject,
-  createSidebarThread,
   desktop,
   loadMoreProjectThreads,
   loadMoreThreads,
@@ -55,7 +54,6 @@ export function WorkspaceThreadList({
   changeSidebarFilter: ThreadSidebarProps["onFilterChange"];
   changeSidebarMode: ThreadSidebarProps["onModeChange"];
   closeSidebarProject: ThreadSidebarProps["onBackToProjects"];
-  createSidebarThread: ThreadSidebarProps["onNewThread"];
   desktop: boolean;
   loadMoreProjectThreads: ThreadSidebarProps["onLoadMoreProject"];
   loadMoreThreads: ThreadSidebarProps["onLoadMore"];
@@ -123,7 +121,6 @@ export function WorkspaceThreadList({
                 onManageProjects: openProjects,
                 onManageTerminals: openTerminals,
                 onModeChange: changeSidebarMode,
-                onNewThread: createSidebarThread,
                 onOffsetChange: (offset) => {
                   mobileThreadOffset.write(sidebarScopeKey, offset);
                 },
@@ -167,7 +164,6 @@ export function WorkspaceThreadList({
                 onManageProjects: openProjects,
                 onManageTerminals: openTerminals,
                 onModeChange: changeSidebarMode,
-                onNewThread: createSidebarThread,
                 onOffsetChange: (offset) => {
                   mobileThreadOffset.write(sidebarScopeKey, offset);
                 },

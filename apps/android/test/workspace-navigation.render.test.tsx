@@ -4,6 +4,7 @@ import * as summaryView from "../src/data/use-thread-summary-view";
 import { summary } from "./fixtures/thread-summary";
 import { MobileThreads } from "../src/features/threadList/MobileThreads";
 import { ThreadSidebar } from "../src/features/threadList/ThreadSidebar";
+import { NewThreadFloatingButton } from "../src/features/projects/NewThreadFloatingButton";
 import { useSelector } from "@legendapp/state/react";
 import { useIsFocused } from "expo-router";
 import {
@@ -2069,6 +2070,61 @@ it.each([400, 1400])(
   },
 );
 
+it.each([400, 1400])(
+  "keeps one catalog New thread action through project and archived navigation at width %s",
+  (width) => {
+    holdInitialDeepLink();
+    setWindowSize(width, 800);
+    resetMockRouter("/");
+    registerMockRoute("/", ProjectLaunchRoot);
+    const view = render(<V1RouteTree />);
+    const fab = view.getByTestId("new-thread-fab-slot");
+    const orb = view.getByTestId("global-voice-slot");
+    expect(view.getAllByTestId("new-thread-fab-slot")).toHaveLength(1);
+    expect(within(fab).getByLabelText("New thread")).toBeTruthy();
+    expect(
+      within(view.getByTestId("workspace-list-scenes")).queryByTestId("new-thread-fab-slot", {
+        includeHiddenElements: true,
+      }),
+    ).toBeNull();
+
+    fireEvent.press(view.getByText("Open example project"));
+    expect(view.getByLabelText("Project Example project")).toBeVisible();
+    expect(view.getAllByTestId("new-thread-fab-slot")).toHaveLength(1);
+    expect(view.getByTestId("new-thread-fab-slot")).toBe(fab);
+    expect(within(fab).getByLabelText("New thread in Example project")).toBeTruthy();
+
+    fireEvent.press(within(fab).getByLabelText("New thread in Example project"));
+    expect(newThreadService.current()?.cwd).toBe(projectListFixture.path);
+    expect(newThreadService.current()?.connectionId).toBe(projectListFixture.connectionId);
+    expect(mockRouterHistory().map((entry) => entry.pathname)).toEqual([
+      "/",
+      "/project/[sessionId]",
+      "/new",
+    ]);
+    act(() => router.back());
+    expect(view.getByTestId("new-thread-fab-slot")).toBe(fab);
+
+    fireEvent.press(view.getByLabelText("Back to projects"));
+    expect(catalogTitle(view)).toBeVisible();
+    expect(view.getByTestId("new-thread-fab-slot")).toBe(fab);
+    expect(within(fab).getByLabelText("New thread")).toBeTruthy();
+    expect(view.getByTestId("global-voice-slot")).toBe(orb);
+    setWindowSize(width === 400 ? 1400 : 400, 800);
+    expect(view.getByTestId("new-thread-fab-slot")).toBe(fab);
+
+    // The archived view has no New thread; the voice action takes its slot.
+    fireEvent.press(view.getByText("Open example project"));
+    act(() => view.UNSAFE_getByType(MobileThreads).props.onModeChange("archived"));
+    expect(view.queryByTestId("new-thread-fab-slot", { includeHiddenElements: true })).toBeNull();
+    expect(view.getAllByTestId("global-voice-slot")).toHaveLength(1);
+    act(() => view.UNSAFE_getByType(MobileThreads).props.onModeChange("active"));
+    expect(view.getAllByLabelText("New thread in Example project")).toHaveLength(1);
+    setWindowSize(400, 800);
+    view.unmount();
+  },
+);
+
 it("returns to the project browsed beside a retained chat after folding", () => {
   holdInitialDeepLink();
   setWindowSize(400, 800);
@@ -2139,7 +2195,7 @@ it("opens a project draft above the selected catalog while a wide conversation i
       threadSelectionKey({ serverId: "server", id: "selected" }),
     ),
   );
-  act(() => view.UNSAFE_getByType(MobileThreads).props.onNewThread());
+  act(() => view.UNSAFE_getByType(NewThreadFloatingButton).props.onPress());
   const draft = newThreadService.current();
   expect(draft?.cwd).toBe(projectListFixture.path);
   expect(draft?.connectionId).toBe(projectListFixture.connectionId);
@@ -2155,7 +2211,7 @@ it("opens a project draft above the selected catalog while a wide conversation i
       threadSelectionKey({ serverId: "server", id: "selected" }),
     ),
   );
-  act(() => view.UNSAFE_getByType(MobileThreads).props.onNewThread());
+  act(() => view.UNSAFE_getByType(NewThreadFloatingButton).props.onPress());
   expect(newThreadService.current()).toBe(draft);
   expect(mockRouterHistory().at(-1)?.pathname).toBe("/new");
   view.unmount();
