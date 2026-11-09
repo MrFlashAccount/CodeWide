@@ -259,6 +259,11 @@ pub trait AgentProvider: Send + Sync {
     /// Installs the single lossless ordered event stream. Called once.
     fn take_events(&self) -> mpsc::Receiver<ProviderEvent>;
 
+    /// The provider's current model list: a model the provider adds or drops
+    /// reaches a later read without a companion restart. A provider whose
+    /// list is costly to read may answer a cached list, refreshing it on its
+    /// own within a bounded age, but must not make a read wait for that
+    /// refresh once a list is known.
     async fn catalog_models(&self) -> Result<ModelCatalog, ProviderError>;
 
     async fn catalog_permission_profiles(&self) -> Result<PermissionProfileCatalog, ProviderError>;
