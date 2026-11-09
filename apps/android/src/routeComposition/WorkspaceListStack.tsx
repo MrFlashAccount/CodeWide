@@ -5,9 +5,9 @@ import { View, type LayoutChangeEvent } from "react-native";
 import { workspaceCatalogDiagnostics } from "../data/workspaceCatalogDiagnostics";
 import {
   ThreadListFabProvider,
+  ThreadListFabStack,
   ThreadListHeader,
   ThreadListSearchPullProvider,
-  ThreadListVoiceFab,
 } from "../features/threadList/ThreadListFeature";
 import { effectiveThreadListFilter } from "../features/threadList/threadListFilters";
 import { NoServerWelcome } from "../features/threadList/NoServerWelcome";
@@ -72,7 +72,7 @@ function CatalogContent(): React.JSX.Element {
   );
 }
 
-/** Fixed header, the native list scenes and the catalog's single voice action. */
+/** Fixed header, the native list scenes and the catalog's single floating action stack. */
 function CatalogBody(): React.JSX.Element {
   return (
     <>
@@ -80,7 +80,7 @@ function CatalogBody(): React.JSX.Element {
       <View style={styles.listScenes} testID="workspace-list-scenes">
         <ListContentNavigator />
       </View>
-      <CatalogVoiceAction />
+      <CatalogFabStack />
     </>
   );
 }
@@ -128,12 +128,31 @@ function useFocusedCatalogScope() {
   return { project, selection };
 }
 
-/** One Global Voice action above the focused scope's New thread action. */
-function CatalogVoiceAction(): React.JSX.Element | null {
-  const { globalVoice } = useWorkspaceListRouteResources();
-  const { selection } = useFocusedCatalogScope();
+/**
+ * The catalog's one Global Voice + New thread stack, outside the native list
+ * scenes so root, project and archived navigation never remount it. New thread
+ * acts on the focused scope and is absent in the archived view.
+ */
+function CatalogFabStack(): React.JSX.Element {
+  const { createSidebarThread, globalVoice } = useWorkspaceListRouteResources();
+  const { openNewThread } = useWorkspaceRouteResources();
+  const { project, selection } = useFocusedCatalogScope();
+  const createThread = useEvent((): void => {
+    if (project === null) {
+      createSidebarThread();
+      return;
+    }
+    openNewThread(project.connectionId, project.path);
+  });
   return (
-    <ThreadListVoiceFab globalVoice={globalVoice} primaryVisible={selection.mode === "active"} />
+    <ThreadListFabStack
+      globalVoice={globalVoice}
+      newThread={
+        selection.mode === "active"
+          ? { onPress: createThread, projectName: project?.name ?? null }
+          : null
+      }
+    />
   );
 }
 

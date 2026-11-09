@@ -67,7 +67,6 @@ function ThreadList({
       onManageTerminals={noop}
       onToggleRead={done}
       onModeChange={noop}
-      onNewThread={noop}
       onOffsetChange={noop}
       onOpenProject={noop}
       onOpenSearch={noop}

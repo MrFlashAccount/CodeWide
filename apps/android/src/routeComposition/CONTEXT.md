@@ -22,6 +22,11 @@ route keys and nested state while inactive.
 - `CatalogSearchOverlayHost` is the shared presentation boundary that retains and hides a complete
   catalog while Search covers those same bounds. Threads and Pull requests supply their own search
   state and result surfaces; neither may mount Search below its fixed catalog header.
+- `WorkspaceListStack` owns the Threads catalog chrome outside the `(lists)` Stack scenes: the fixed
+  header and the single floating action stack (Global Voice above New thread). Both read the
+  focused list scope from the route model's project-list session, so New thread acts on and is
+  labelled for the open root or project scope and is absent in the archived view. List scenes only
+  register their scroll with the shared `ThreadListFabProvider` model; they never render a FAB.
 - `workspaceThreadsRouteState` is the only topology adapter for
   `(workspace) -> (tabs) -> (threads)`. It returns an `unavailable | ready` result that references
   the existing Threads navigation state; it is not a cache or copied navigation model.

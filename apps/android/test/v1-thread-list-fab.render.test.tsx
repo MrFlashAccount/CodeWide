@@ -7,10 +7,7 @@ import { makeMutable } from "react-native-reanimated";
 
 import { NewThreadFloatingButton } from "../src/features/projects/NewThreadFloatingButton";
 import type { GlobalVoiceControl } from "../src/features/threadList/GlobalVoiceEntryAction";
-import {
-  ThreadListNewThreadFab,
-  ThreadListVoiceFab,
-} from "../src/features/threadList/ThreadListFabs";
+import { ThreadListFabStack } from "../src/features/threadList/ThreadListFabs";
 import {
   ThreadListFabContext,
   type ThreadListFabModel,
@@ -39,8 +36,10 @@ function FabStack({
 }): ReactNode {
   return (
     <ThreadListFabContext.Provider value={model}>
-      <ThreadListVoiceFab globalVoice={globalVoice} primaryVisible />
-      <ThreadListNewThreadFab model={model} onNewThread={onNewThread} projectName={null} />
+      <ThreadListFabStack
+        globalVoice={globalVoice}
+        newThread={{ onPress: onNewThread, projectName: null }}
+      />
     </ThreadListFabContext.Provider>
   );
 }
@@ -94,6 +93,24 @@ it("shows only New thread when the voice control is unavailable", () => {
   expect(view.getByLabelText("New thread")).toBeTruthy();
   expect(view.queryByTestId("global-voice-fab-slot", { includeHiddenElements: true })).toBeNull();
   expect(view.queryByTestId("global-voice-slot", { includeHiddenElements: true })).toBeNull();
+});
+
+it("moves the voice action into the New thread slot when the scope has no New thread", () => {
+  const model = fabModel(true);
+  const view = render(
+    <ThreadListFabContext.Provider value={model}>
+      <ThreadListFabStack globalVoice={voice("idle")} newThread={null} />
+    </ThreadListFabContext.Provider>,
+  );
+  expect(view.queryByTestId("new-thread-fab-slot", { includeHiddenElements: true })).toBeNull();
+  const alone = flatStyle(view.getByTestId("global-voice-fab-slot"));
+  const above = flatStyle(
+    render(<FabStack globalVoice={voice("idle")} model={model} />).getByTestId(
+      "global-voice-fab-slot",
+    ),
+  );
+  expect(Number(alone.bottom)).toBeLessThan(Number(above.bottom));
+  expect(alone.right).toBe(above.right);
 });
 
 it("removes scroll-hidden actions from touch and accessibility until they show again", () => {

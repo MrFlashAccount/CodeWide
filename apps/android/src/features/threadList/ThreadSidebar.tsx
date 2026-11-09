@@ -15,7 +15,6 @@ import { SidebarListFeedback, ThreadListPageError } from "./SidebarListFeedback"
 import { sidebarRows } from "./sidebarRows";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { ThreadListExperimentSuspended } from "./ThreadListBoundary";
-import { ThreadListNewThreadFab } from "./ThreadListFabs";
 import { useThreadListFabModel } from "./threadListFabModel";
 import { ThreadListRouteTransition } from "./ThreadListRouteTransition";
 import { ThreadListPullBackdrop } from "./ThreadListPullBackdrop";
@@ -46,7 +45,6 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     onArchive,
     onLoadMore,
     onLoadMoreProject,
-    onNewThread,
     onOffsetChange,
     onOpenProject,
     onTogglePin,
@@ -214,13 +212,6 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
         </ThreadListRouteTransition>
         {searchContent === null && <ThreadListPullBackdrop />}
       </View>
-      {searchContent === null && mode === "active" && (
-        <ThreadListNewThreadFab
-          model={fabModel}
-          onNewThread={onNewThread}
-          projectName={project?.name ?? null}
-        />
-      )}
     </View>
   );
 }

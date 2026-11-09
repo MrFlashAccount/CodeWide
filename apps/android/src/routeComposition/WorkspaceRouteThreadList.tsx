@@ -36,7 +36,6 @@ export function WorkspaceRouteThreadList(props: WorkspaceRouteThreadListProps): 
       changeSidebarFilter={list.listState.setThreadListFilter}
       changeSidebarMode={list.listState.setThreadListMode}
       closeSidebarProject={list.projectSelection.closeSidebarProject}
-      createSidebarThread={props.createSidebarThread}
       desktop={props.desktop}
       loadMoreProjectThreads={project.loadMoreProjectThreads}
       loadMoreThreads={list.loadMoreThreads}

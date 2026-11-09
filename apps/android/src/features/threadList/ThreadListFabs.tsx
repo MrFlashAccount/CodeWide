@@ -3,8 +3,14 @@ import Reanimated from "react-native-reanimated";
 import { NewThreadFloatingButton } from "../projects/NewThreadFloatingButton";
 import { styles } from "./ThreadListFab.styles";
 import { GlobalVoiceEntryAction, type GlobalVoiceControl } from "./GlobalVoiceEntryAction";
-import { useThreadListFabModel, type ThreadListFabModel } from "./threadListFabModel";
+import { useThreadListFabModel } from "./threadListFabModel";
 import { useThreadListFabMotion } from "./threadListFabMotion";
+
+/** The open catalog scope's New thread action; `projectName` is `null` in the root scope. */
+type ThreadListNewThreadAction = {
+  readonly onPress: () => void;
+  readonly projectName: string | null;
+};
 
 /** Scroll-hidden actions take no touches and leave the accessibility tree. */
 function hiddenProps(hidden: boolean) {
@@ -15,35 +21,52 @@ function hiddenProps(hidden: boolean) {
   };
 }
 
-/** The list-scoped New thread action; it hides with the list's scroll direction. */
-export function ThreadListNewThreadFab({
-  model,
-  onNewThread,
-  projectName,
+/**
+ * The catalog's single floating stack: Global Voice above New thread. One
+ * instance serves every list scope, so navigating between the root, a project
+ * and the archived view never remounts it; the open scope only changes its
+ * `newThread` action. `null` (archived scope) removes New thread and the voice
+ * action takes its slot on the same axis.
+ */
+export function ThreadListFabStack({
+  globalVoice,
+  newThread,
 }: {
-  readonly model: ThreadListFabModel;
-  readonly onNewThread: () => void;
-  readonly projectName: string | null;
+  readonly globalVoice: GlobalVoiceControl | null;
+  readonly newThread: ThreadListNewThreadAction | null;
 }): React.JSX.Element {
-  const motion = useThreadListFabMotion(model, "primary", false);
+  return (
+    <>
+      <ThreadListVoiceFab globalVoice={globalVoice} primaryVisible={newThread !== null} />
+      {newThread === null ? null : <ThreadListNewThreadFab action={newThread} />}
+    </>
+  );
+}
+
+/** New thread for the open scope; it hides with the focused list's scroll direction. */
+function ThreadListNewThreadFab({
+  action,
+}: {
+  readonly action: ThreadListNewThreadAction;
+}): React.JSX.Element {
+  const motion = useThreadListFabMotion(useThreadListFabModel(), "primary", false);
   return (
     <Reanimated.View
       {...hiddenProps(motion.hidden)}
       style={[styles.primary, motion.style]}
       testID="new-thread-fab-slot"
     >
-      <NewThreadFloatingButton onPress={onNewThread} projectName={projectName} />
+      <NewThreadFloatingButton onPress={action.onPress} projectName={action.projectName} />
     </Reanimated.View>
   );
 }
 
 /**
- * The catalog's single Global Voice mini action above New thread. One
- * instance serves every list scope so the orb keeps its native view and the
- * overlay flights keep one measured anchor. It stays shown while a session
- * is active so the return flight lands on a visible anchor.
+ * The Global Voice mini action. It keeps one native orb view and one measured
+ * anchor for the overlay flights, and stays shown while a session is active so
+ * the return flight lands on a visible anchor.
  */
-export function ThreadListVoiceFab({
+function ThreadListVoiceFab({
   globalVoice,
   primaryVisible,
 }: {
