@@ -11,12 +11,13 @@ import {
 import { supportsGlobalVoiceFloatingOverlay } from "../../native/globalVoiceOverlayPresentation";
 import type { GlobalVoiceOrbState } from "../../native/globalVoiceOverlayActions";
 import { useEvent } from "../../react/useEvent";
-import { colors, controlHitSlop, iconSize } from "../../theme";
+import { colors, controlHitSlop } from "../../theme";
 import { VoiceAssistantOrb } from "../../ui/VoiceAssistantOrb";
 import { SECONDARY_FAB_SIZE } from "./threadListFabGeometry";
 
 const PRESSED_OPACITY = 0.68;
-const MINI_FAB_ORB_SIZE = iconSize.navigation;
+/** The orb fills its mini action: the orb itself is the button's face. */
+const MINI_FAB_ORB_SIZE = SECONDARY_FAB_SIZE;
 /** Secondary floating actions sit one step below the primary New thread elevation. */
 const MINI_FAB_ELEVATION = 2;
 const CENTER_DIVISOR = 2;
