@@ -47,15 +47,17 @@ function GoalControls({
   readonly onEdit?: () => void;
 }): React.JSX.Element {
   const resource = useThreadGoalRow(request.resources, request.goalResourceId);
-  const actions = useComposerFeatureActions(
-    async () => undefined,
-    () => undefined,
-    () => undefined,
-    () => undefined,
-    onCreate,
-    () => undefined,
-    onEdit,
-  );
+  const actions = useComposerFeatureActions({
+    createAndOpenTerminal: () => undefined,
+    editGoalInComposer: onEdit,
+    focusComposer: () => undefined,
+    openControls: () => undefined,
+    openDrawing: () => undefined,
+    openGoalAttachment: onCreate,
+    pickComposerAttachment: async () => undefined,
+    pickComposerPhotos: async () => undefined,
+    takeComposerPhoto: async () => undefined,
+  });
   return (
     <>
       <Pressable

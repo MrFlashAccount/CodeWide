@@ -38,6 +38,7 @@ module.exports = {
     "^expo-clipboard$": "<rootDir>/test/mocks/ExpoClipboard.ts",
     "^expo-crypto$": "<rootDir>/test/mocks/ExpoCrypto.ts",
     "^expo-haptics$": "<rootDir>/test/mocks/ExpoHaptics.ts",
+    "^expo-image-picker$": "<rootDir>/test/mocks/ExpoImagePicker.ts",
     "^expo-router$": "<rootDir>/test/mocks/ExpoRouter.ts",
     "^@legendapp/list/react-native$": "<rootDir>/test/mocks/LegendNativeList.tsx",
     "^@legendapp/list/keyboard$": "<rootDir>/test/mocks/LegendKeyboardList.tsx",
