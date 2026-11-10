@@ -3,6 +3,7 @@ import { useEvent } from "../../../react/useEvent";
 import { useAttachmentAdmission, useDrawingAttachmentRead } from "./attachmentAdmission";
 import { useAttachmentRemoval } from "./attachmentRemoval";
 import { useLargePasteActions } from "./largePaste";
+import { usePhotoAdmission } from "./photoAdmission";
 import { useReviewAdmission } from "./reviewAdmission";
 /** Composes the existing ComposerAttachments owners without adding state or lifecycle policy. */
 export function useComposerAttachments({
@@ -83,6 +84,14 @@ export function useComposerAttachments({
     setComposerTrayVisible,
     upsertDraftAttachment,
   });
+  const { pickComposerPhotos, takeComposerPhoto } = usePhotoAdmission({
+    captureStageAttachment,
+    composerSession,
+    composerUploadScope,
+    dismissComposerKeyboardForOverlay,
+    fileAttachmentEnabled,
+    setComposerTrayVisible,
+  });
   const reviewAdmission = useReviewAdmission(
     composerScope,
     contentReviewAttachmentId,
@@ -124,8 +133,10 @@ export function useComposerAttachments({
     fileAttachmentEnabled,
     handleComposerLargePaste,
     pickComposerAttachment,
+    pickComposerPhotos,
     readDrawingAttachments,
     removeComposerAttachment,
     reviewAdmission,
+    takeComposerPhoto,
   };
 }

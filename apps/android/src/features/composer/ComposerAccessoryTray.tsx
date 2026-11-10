@@ -11,6 +11,8 @@ const COMPOSER_ACCESSORY_ACTIONS: ReadonlyArray<{
   id: ComposerAccessoryAction;
   label: string;
 }> = [
+  { icon: "camera-outline", id: "camera", label: "Camera" },
+  { icon: "images-outline", id: "photos", label: "Photo" },
   { icon: "attach-outline", id: "files", label: "File" },
   { icon: "brush-outline", id: "drawing", label: "Drawing" },
   { icon: "terminal-outline", id: "terminal", label: "Terminal" },
@@ -32,13 +34,15 @@ export function ComposerAccessoryTray({
   terminalEnabled: boolean;
 }) {
   const enabled = (action: ComposerAccessoryAction) =>
-    action === "files" || action === "drawing"
-      ? fileEnabled
-      : action === "terminal"
-        ? terminalEnabled
-        : action === "skills"
-          ? skillsEnabled
-          : goalEnabled;
+    action === "camera" || action === "photos"
+      ? fileEnabled && Platform.OS === "android"
+      : action === "files" || action === "drawing"
+        ? fileEnabled
+        : action === "terminal"
+          ? terminalEnabled
+          : action === "skills"
+            ? skillsEnabled
+            : goalEnabled;
   return (
     <View
       accessibilityLabel="Composer actions"
@@ -101,8 +105,22 @@ export function useComposerAccessoryActions({
   });
 
   const useAnchoredComposerMenu = Platform.OS === "android";
+  // System Photo Picker and camera capture exist only in the Android attachment transport.
+  const photoAttachmentEnabled = fileAttachmentEnabled && Platform.OS === "android";
 
   const anchoredComposerActions: ActionMenuItem[] = [
+    {
+      disabled: !photoAttachmentEnabled,
+      icon: "camera-outline",
+      id: "camera",
+      label: "Camera",
+    },
+    {
+      disabled: !photoAttachmentEnabled,
+      icon: "images-outline",
+      id: "photos",
+      label: "Add photo",
+    },
     { disabled: !fileAttachmentEnabled, icon: "attach-outline", id: "files", label: "Attach file" },
     { disabled: !fileAttachmentEnabled, icon: "brush-outline", id: "drawing", label: "Drawing" },
     {
@@ -117,6 +135,8 @@ export function useComposerAccessoryActions({
 
   const handleAnchoredComposerAction = useEvent((id: string) => {
     if (
+      id === "camera" ||
+      id === "photos" ||
       id === "files" ||
       id === "drawing" ||
       id === "terminal" ||
