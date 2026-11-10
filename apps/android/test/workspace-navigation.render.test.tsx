@@ -1807,6 +1807,38 @@ it("carries the owning thread into the root drawing modal", () => {
   });
 });
 
+it.each([
+  ["openAttachments", { openCodeDocument: () => undefined }, "attachments"],
+  ["openChanges", { kind: "current" }, "changes"],
+  ["openCodeDocument", { kind: "codeDocument" }, "documents/[sessionId]"],
+  ["openContent", { kind: "command", threadId: "root" }, "content/[sessionId]"],
+  ["openDocument", { kind: "text", name: "notes.md", path: "/notes.md" }, "documents/[sessionId]"],
+  ["openTaskOutput", { taskId: "task" }, "task-output/[sessionId]"],
+  ["openTerminal", { connectionId: "server", cwd: null, threadId: "root" }, "terminal"],
+  ["openTool", { kind: "queue" }, "queue"],
+  ["openTurnChanges", { kind: "turn", target: { turnId: "turn" } }, "changes/turns/[turnId]"],
+] as const)("keeps the Threads chat's %s as a thread child route", (intent, request, child) => {
+  const parsed = v1ThreadRouteParams({ connectionId: "server", threadId: "root" });
+  if (parsed.status === "invalid") {
+    throw new Error("Expected valid route parameters");
+  }
+  resetMockRouter({
+    params: { connectionId: "server", threadId: "root" },
+    pathname: "/threads/[connectionId]/[threadId]",
+  });
+  const view = renderHook(() => useThreadRouteNavigation(router, parsed.value));
+
+  act(() => {
+    const open = view.result.current[intent] as (value: unknown) => void;
+    open(request);
+  });
+
+  expect(mockRouterHistory().at(-1)).toMatchObject({
+    params: { connectionId: "server", threadId: "root" },
+    pathname: `/threads/[connectionId]/[threadId]/${child}`,
+  });
+});
+
 const projectListFixture = {
   connectionId: "project-server",
   key: "project-key",

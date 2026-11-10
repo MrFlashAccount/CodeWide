@@ -3,8 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { RouteUnavailable } from "../../../../../../../../src/components/navigation/RouteUnavailable";
 import { recoverUnavailableRoute } from "../../../../../../../../src/components/navigation/routeRecovery";
 import { ConversationRouteFullscreenOverlay } from "../../../../../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
-import { ContentDocumentViewer } from "../../../../../../../../src/features/conversation/content/ContentDocumentViewer";
-import { CommandContentViewer } from "../../../../../../../../src/features/conversation/content/CommandContentViewer";
+import { ContentDestination } from "../../../../../../../../src/routeComposition/ConversationDestinations";
 import { contentRouteSessions } from "../../../../../../../../src/services/content/contentRouteSession";
 import { useWorkspaceRouteResources } from "../../../../../../../../src/services/workspace/workspaceRouteResources";
 import {
@@ -61,20 +60,14 @@ export default function V1ContentRoute(): React.JSX.Element {
   return (
     <ConversationRouteFullscreenOverlay
       onDismiss={close}
-      render={(closeOverlay) => {
-        if (session.request.kind === "document") {
-          return <ContentDocumentViewer onClose={closeOverlay} request={session.request} />;
-        }
-        return (
-          <CommandContentViewer
-            connectionId={thread.value.connectionId.value}
-            database={resources.runtime.threadDetails}
-            onClose={closeOverlay}
-            request={session.request}
-            threadId={session.request.threadId}
-          />
-        );
-      }}
+      render={(closeOverlay) => (
+        <ContentDestination
+          connectionId={thread.value.connectionId.value}
+          database={resources.runtime.threadDetails}
+          onClose={closeOverlay}
+          request={session.request}
+        />
+      )}
       scope={`content:${session.id}`}
     />
   );

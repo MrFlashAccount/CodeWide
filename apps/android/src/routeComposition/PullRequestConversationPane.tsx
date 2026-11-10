@@ -1,10 +1,7 @@
-import { useRouter } from "expo-router";
-
 import type { PullRequestKey } from "../data/forgeContract";
 import { workspaceRuntime } from "../data/workspace-runtime";
 import type { ThreadId } from "../data/reviewContract";
 import { ActiveWorkspaceConversation } from "../features/conversation/ConversationWorkspace";
-import { ConversationRouteNavigationContext } from "../features/conversation/conversationRouteNavigation";
 import { workspaceFeatures as features } from "../features/workspace/createWorkspaceFeatures";
 import { WorkspaceConversationProviders } from "../features/workspace/WorkspaceConversationProviders";
 import { newThreadService } from "../services/threads/newThreadService";
@@ -16,15 +13,17 @@ import { useWorkspaceRouteResources } from "../services/workspace/workspaceRoute
 import { useEvent } from "../react/useEvent";
 import { useThreePanels } from "../ui/threePanels";
 import { LinkedPullRequestChipProvider } from "./LinkedPullRequestChipProvider";
+import { PaneConversationNavigationProvider } from "./PaneConversationNavigation";
 import { usePullRequestNavigation } from "./pullRequestNavigation";
-import { useThreadRouteNavigation } from "./threadRouteNavigation";
 
 /** The review chat is always declared closable; outside a pane nothing can close it. */
 function ignoreClose(): void {}
 
 /**
  * Mounts the canonical conversation surface for the PR-linked thread in the right pane: its header
- * (`ThreePanelsHeader`) shows the pane's close and fullscreen. The route's own pull request is the
+ * (`ThreePanelsHeader`) shows the pane's close and fullscreen. Everything the conversation opens
+ * (content, changes, documents, subagents, task output, tool sheets) opens over the mounted PR
+ * route through `PaneConversationNavigationProvider`, never through the Threads child routes. The route's own pull request is the
  * neighbouring pane in every arrangement of this route (split, PR fullscreen, chat fullscreen), so
  * the composer's linked-PR chip excludes it.
  */
@@ -62,16 +61,14 @@ function ValidPullRequestConversation({
   readonly thread: V1ThreadRouteParams;
 }): React.JSX.Element {
   const onClose = useThreePanels().chrome.close ?? ignoreClose;
-  const router = useRouter();
   const resources = useWorkspaceRouteResources();
-  const navigation = useThreadRouteNavigation(router, thread);
   const connectionId = thread.connectionId.value;
   const threadId = thread.threadId.value;
   const closeDraft = useEvent((draftId: string): void => {
     newThreadService.close(draftId);
   });
   return (
-    <ConversationRouteNavigationContext.Provider value={navigation}>
+    <PaneConversationNavigationProvider thread={thread}>
       <WorkspaceConversationProviders
         activeConnectionId={connectionId}
         composerThreadId={threadId}
@@ -112,6 +109,6 @@ function ValidPullRequestConversation({
           voiceController={workspaceRuntime.voiceController}
         />
       </WorkspaceConversationProviders>
-    </ConversationRouteNavigationContext.Provider>
+    </PaneConversationNavigationProvider>
   );
 }

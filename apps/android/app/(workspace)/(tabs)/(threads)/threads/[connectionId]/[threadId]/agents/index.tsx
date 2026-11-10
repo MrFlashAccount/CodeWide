@@ -2,9 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../../../../../../src/components/navigation/RouteUnavailable";
 import { recoverUnavailableRoute } from "../../../../../../../../src/components/navigation/routeRecovery";
-import { SubagentSheet } from "../../../../../../../../src/features/agents/SubagentSheet";
 import { ConversationRouteFullscreenOverlay } from "../../../../../../../../src/features/conversation/ConversationRouteFullscreenOverlay";
-import { SubagentConversation } from "../../../../../../../../src/features/conversation/SubagentConversation";
 import { useTurnChangesLoader } from "../../../../../../../../src/features/changes/turnChanges";
 import { workspaceFeatures as features } from "../../../../../../../../src/features/workspace/createWorkspaceFeatures";
 import { agentRouteSessions } from "../../../../../../../../src/services/agents/agentRouteSession";
@@ -15,6 +13,7 @@ import {
   v1ThreadRouteParams,
   type V1ThreadRouteParams,
 } from "../../../../../../../../src/services/threads/threadRouteParams";
+import { SubagentsDestination } from "../../../../../../../../src/routeComposition/ConversationDestinations";
 import { useRouteSessionLifetime } from "../../../../../../../../src/services/useRouteSessionLifetime";
 import { useWorkspaceRouteResources } from "../../../../../../../../src/services/workspace/workspaceRouteResources";
 
@@ -116,33 +115,13 @@ function ValidAgentsRoute({
     <ConversationRouteFullscreenOverlay
       onDismiss={back}
       render={(closeOverlay) => (
-        <SubagentSheet
+        <SubagentsDestination
           connectionId={connectionId}
-          initialThreadId={initialThreadId ?? request.initialThreadId}
+          initialThreadId={initialThreadId}
+          loadTurnChanges={loadTurnChanges}
           onClose={closeOverlay}
-          parentLabel={request.parentLabel}
-          parentThreadId={request.parentThreadId}
-          renderThread={(view) => (
-            <SubagentConversation
-              details={threadDetails}
-              fixUnsupportedBlock={resources.recovery.createUnsupportedFixThread}
-              getTransferAccess={async (forceRefresh) =>
-                features.attachments.transferAccess(connectionId, forceRefresh)
-              }
-              loadControls={async (cwd, options) =>
-                features.composer.loadTurnControls(connectionId, cwd, options)
-              }
-              loadTurnChanges={loadTurnChanges}
-              refresh={async (rootThreadId) =>
-                features.agents.refreshSubagents(connectionId, rootThreadId)
-              }
-              server={resources.list.servers.find((server) => server.id === connectionId)}
-              summaries={resources.runtime.threadSummaries}
-              view={view}
-              workspaceResources={resources.runtime.resources}
-            />
-          )}
-          summaries={request.summaries}
+          request={request}
+          resources={resources}
           threadDetails={threadDetails}
         />
       )}

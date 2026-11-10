@@ -1,9 +1,7 @@
 import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../../../../../../src/components/navigation/RouteUnavailable";
-import { threadResourceKey } from "../../../../../../../../src/data/workspace-resource-keys";
-import { ThreadAttachmentsRoute } from "../../../../../../../../src/features/attachments/ThreadAttachmentsRoute";
-import { workspaceFeatures as features } from "../../../../../../../../src/features/workspace/createWorkspaceFeatures";
+import { AttachmentsDestination } from "../../../../../../../../src/routeComposition/ConversationDestinations";
 import { attachmentRouteSessions } from "../../../../../../../../src/services/attachments/attachmentRouteSession";
 import { documentRouteService } from "../../../../../../../../src/services/documents/documentRouteService";
 import {
@@ -48,8 +46,8 @@ function closeAttachmentsRoute(
 
 function codeDocumentOpener(
   session: ReturnType<typeof attachmentRouteSessions.get>,
-  fallback: Parameters<typeof ThreadAttachmentsRoute>[0]["onOpenDocument"],
-): Parameters<typeof ThreadAttachmentsRoute>[0]["onOpenCodeDocument"] {
+  fallback: Parameters<typeof AttachmentsDestination>[0]["onOpenDocument"],
+): Parameters<typeof AttachmentsDestination>[0]["onOpenCodeDocument"] {
   return session === null ? fallback : session.request.openCodeDocument;
 }
 
@@ -76,13 +74,6 @@ export default function V1AttachmentsRoute(): React.JSX.Element {
   }
   const connectionId = params.value.connectionId.value;
   const threadId = params.value.threadId.value;
-  const resourceId = threadResourceKey(connectionId, threadId);
-  const cwd =
-    resources.list.loadedThreadSummaries.find(
-      (thread) => thread.connectionId === connectionId && thread.remoteThreadId === threadId,
-    )?.cwd ?? "/workspace";
-  const getTransferAccess = async (forceRefresh = false) =>
-    features.attachments.transferAccess(connectionId, forceRefresh);
   const openDocument = (request: Parameters<typeof documentRouteService.open>[1]): void => {
     const session = documentRouteService.open(threadRouteSessionOwner(params.value), request);
     router.push({
@@ -91,24 +82,15 @@ export default function V1AttachmentsRoute(): React.JSX.Element {
     });
   };
   return (
-    <ThreadAttachmentsRoute
-      cwd={cwd}
-      getTransferAccess={getTransferAccess}
-      model={resources.runtime.resources?.threadResources ?? null}
+    <AttachmentsDestination
+      connectionId={connectionId}
       onClose={() => {
         closeAttachmentsRoute(routeSession, router.back);
       }}
-      onOpenBrowser={resources.openBrowser}
       onOpenCodeDocument={codeDocumentOpener(routeSession, openDocument)}
       onOpenDocument={openDocument}
-      onReload={async () =>
-        features.changes.loadThreadResources(connectionId, threadId, undefined, "attachments")
-      }
-      resourceId={resourceId}
-      revision={
-        resources.connections.find((connection) => connection.id === connectionId)?.state ??
-        "offline"
-      }
+      resources={resources}
+      threadId={threadId}
       visible={visible}
     />
   );

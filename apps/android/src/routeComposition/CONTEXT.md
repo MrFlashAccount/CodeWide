@@ -171,6 +171,17 @@ beside a PR, or the linked pull request beside a thread). One frame owns one mod
   `ProjectManagementSheet` / `AddProjectSheet` bindings the `/projects` routes render
   (`ProjectManagementSheets.tsx`). No navigation happens, so the PR route stays focused and
   mounted, its right pane keeps its presence, and closing returns to it.
+- Conversation destinations are tab-scoped the same way: the thread child routes (content,
+  changes, documents, subagents, task output, terminal, attachments, composer tool sheets) live
+  under `/threads/...`, so a conversation that a Pull requests pane hosts must never reach them.
+  `PullRequestConversationPane` supplies its conversation's `ConversationRouteNavigation` through
+  `PaneConversationNavigationProvider`, which opens every destination over the mounted PR route:
+  fullscreen destinations as their own `AppFullscreenOverlayHost` entry, sheets as their native
+  sheet window (shown only while they are the top entry of a focused route). Entries stack in
+  opening order and closing one closes the entries above it. A drawing keeps the workspace-root
+  `/drawing` modal, which covers both tabs without switching them. Both presenters render the same
+  content through `ConversationDestinations.tsx`; the Threads chat keeps its routes
+  (`useThreadRouteNavigation`).
 - Rounding has one rule, `centerCornerRadii(visibility)`: the center rounds its left corners in a
   `left+center` split and its right corners in a `center+right` split, with `radii.composer`;
   it never rounds both sides. Fullscreen and phone layouts have no neighbours and no rounding. Both
