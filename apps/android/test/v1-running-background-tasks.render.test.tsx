@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider, queryOptions } from "@tanstack/react-query";
-import { fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 
 import type { RunningBackgroundTask } from "../src/data/runningBackgroundTasks";
 import { RunningBackgroundTasksPanel } from "../src/features/conversation/turns/RunningBackgroundTasksPanel";
 import {
+  BackgroundTaskContext,
   BackgroundTerminalsContext,
   RunningBackgroundTasksContext,
 } from "../src/features/conversation/turns/turnContexts";
@@ -48,6 +49,23 @@ function withTasks(
 it("shows each running background command as its pill below the conversation", async () => {
   const view = render(withTasks([running], <RunningBackgroundTasksPanel />));
   expect(await view.findByText("Run the tests")).toBeOnTheScreen();
+});
+
+it("opens a running command's output from its pill", async () => {
+  const openTask = jest.fn(async () => undefined);
+  const view = render(
+    withTasks(
+      [running],
+      <BackgroundTaskContext.Provider value={openTask}>
+        <RunningBackgroundTasksPanel />
+      </BackgroundTaskContext.Provider>,
+    ),
+  );
+  const pill = await view.findByTestId("task-notification-line");
+  await act(async () => {
+    fireEvent.press(pill);
+  });
+  expect(openTask).toHaveBeenCalledWith({ name: "Run the tests", taskId: "b1" });
 });
 
 it("shows the provider's open terminals as one pill that opens the terminals sheet", async () => {

@@ -113,6 +113,7 @@ function ValidV1ThreadLayout({
         <Stack.Screen name="queue" options={v1SheetScreenOptions} />
         <Stack.Screen name="review" options={v1SheetScreenOptions} />
         <Stack.Screen name="runtime" options={v1SheetScreenOptions} />
+        <Stack.Screen name="task-output/[sessionId]" options={v1FullscreenScreenOptions} />
         <Stack.Screen name="terminal" options={v1FullscreenScreenOptions} />
       </Stack>
     </ConversationRouteNavigationContext.Provider>
