@@ -6,6 +6,7 @@ import {
 } from "@codewide/sync-client";
 import { act, fireEvent, render, type RenderResult } from "@testing-library/react-native";
 import { View } from "react-native";
+import { AppText } from "../src/ui/Typography";
 import type { BackgroundTaskOutputPage } from "../src/data/backgroundTaskOutput";
 import {
   compactCompletedTurnForStorage,
@@ -228,7 +229,7 @@ afterEach(() => {
 
 it("draws a background command as one pill after its bubble: title, state and time", () => {
   for (const [background, label] of [
-    [{ status: "running" }, `${TITLE} running · 3m`],
+    [{ status: "running" }, `${TITLE} 3m`],
     [{ endedAt: LAUNCHED_AT + 120, exitCode: 0, status: "completed" }, `${TITLE} 2m`],
     [{ endedAt: LAUNCHED_AT + 30, exitCode: 2, status: "failed" }, `${TITLE} failed · 30.0 s`],
     [{ endedAt: LAUNCHED_AT + 60, status: "stopped" }, `${TITLE} stopped · 1m`],
@@ -260,7 +261,7 @@ it("names a command without a description by its shortened first line", () => {
     ]),
   );
 
-  expect(pillLabels(view)).toEqual(["./scripts/release --with-a-long-argument running · 3m"]);
+  expect(pillLabels(view)).toEqual(["./scripts/release --with-a-long-argument 3m"]);
 });
 
 it("draws an older Companion's id-only marker as an ended task, never as unknown", () => {
@@ -314,7 +315,7 @@ it("updates a sealed turn's pill live when the Companion republishes its command
   expect(stored.items.map((item) => item.id)).toEqual(["prompt", "release", "answer"]);
   const content = detailRow({ turn: stored });
   const view = render(timelineSurface([materializeThreadTurns([content])[0] ?? stored]));
-  expect(pillLabels(view)).toEqual([`${TITLE} running · 3m`]);
+  expect(pillLabels(view)).toEqual([`${TITLE} 3m`]);
 
   // The task ended after its turn: the same item of the same turn again.
   const ended = command("release", {
@@ -377,4 +378,32 @@ it("opens the task's output when its pill is pressed, and offers nothing without
   expect(unreadable.getByTestId("task-notification-line").props.accessibilityState).toMatchObject({
     disabled: true,
   });
+});
+
+it("advances a running command's time every second and shimmers its title instead of a running word", () => {
+  // Fake timers own the wall clock here: three minutes after the launch, as in beforeEach.
+  jest.useFakeTimers({ now: (LAUNCHED_AT + 180) * 1000 });
+  try {
+    const view = render(
+      timelineSurface([
+        completedTurn("turn", [
+          prompt,
+          command("release", { description: TITLE, status: "running", taskId: "brelease1" }),
+          answer("answer"),
+        ]),
+      ]),
+    );
+    expect(pillLabels(view)).toEqual([`${TITLE} 3m`]);
+    const title = view
+      .UNSAFE_getAllByType(AppText)
+      .find((node) => node.props.children === TITLE);
+    expect(title?.props.shimmering).toBe(true);
+
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
+    expect(pillLabels(view)).toEqual([`${TITLE} 3m 5s`]);
+  } finally {
+    jest.useRealTimers();
+  }
 });

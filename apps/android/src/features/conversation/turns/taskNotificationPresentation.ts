@@ -88,9 +88,9 @@ export function reportDetails(report: TaskLineEntry, nowMs: number): string {
 }
 
 /**
- * A background command's state and time on its pill: "running · 3m" while it
- * runs (from its start), its total run once it ended, "ended" when the
- * Companion could not tell how it ended.
+ * A background command's time on its pill: its elapsed time while it runs
+ * (from its start; the shimmering title says it is running), its total run
+ * once it ended, "ended" when the Companion could not tell how it ended.
  */
 export function launchDetail(report: TaskLineEntry, nowMs: number): string | null {
   if (!isBackgroundLaunch(report)) {
@@ -107,11 +107,9 @@ export function launchDetail(report: TaskLineEntry, nowMs: number): string | nul
 
 const MS_PER_SECOND = 1000;
 
-/** A running command's time since its start, when known. */
-function runningDetail(startedAt: number | null, nowMs: number): string {
-  return startedAt === null
-    ? "running"
-    : `running · ${formatDuration(Math.max(0, nowMs - startedAt * MS_PER_SECOND))}`;
+/** A running command's time since its start, when known; its title shimmers instead of a word. */
+function runningDetail(startedAt: number | null, nowMs: number): string | null {
+  return startedAt === null ? null : formatDuration(Math.max(0, nowMs - startedAt * MS_PER_SECOND));
 }
 
 /** An ended command's run: the time alone once completed, else its end and time. */

@@ -21,7 +21,7 @@ import {
 import { BackgroundTaskContext, SubagentNavigationContext } from "./turnContexts";
 
 /** How often a running background command's elapsed time advances. */
-const ELAPSED_TICK_MS = 15_000;
+const ELAPSED_TICK_MS = 1000;
 
 /**
  * Background tasks drawn outside a bubble as one short pill: the reports that
@@ -135,7 +135,8 @@ function TaskNotificationPill({
 }): React.JSX.Element {
   const summary = reportLineSummary(reports);
   const [only] = reports;
-  const now = useNow(reports.some((report) => report.status === "running"));
+  const running = reports.some((report) => report.status === "running");
+  const now = useNow(running);
   // A single background command shows its own state and time on the pill.
   const detail = reports.length === 1 && only !== undefined ? launchDetail(only, now) : null;
   return (
@@ -158,7 +159,12 @@ function TaskNotificationPill({
         subjects={reports}
         surface={colors.surfaceRaised}
       />
-      <Text ellipsizeMode="tail" numberOfLines={1} shimmering={loading} style={styles.label}>
+      <Text
+        ellipsizeMode="tail"
+        numberOfLines={1}
+        shimmering={loading || running}
+        style={styles.label}
+      >
         {summary.label}
       </Text>
       {detail === null ? null : (
@@ -180,7 +186,8 @@ function ReportRow({
   // The list renders in the anchored popover, outside any recycled list cell.
   const [opening, setOpening] = useState<OpeningState>(NOT_OPENING);
   const target = useReportTarget(report, [opening, setOpening], onNavigate);
-  const now = useNow(isBackgroundLaunch(report) && report.status === "running");
+  const running = isBackgroundLaunch(report) && report.status === "running";
+  const now = useNow(running);
   const details = reportDetails(report, now);
   return (
     <AnchoredMenuRow
@@ -196,7 +203,7 @@ function ReportRow({
       />
       <ReportRowText
         details={target.error ?? details}
-        loading={target.loading}
+        loading={target.loading || running}
         name={reportName(report)}
       />
       {target.kind === "none" ? null : (
