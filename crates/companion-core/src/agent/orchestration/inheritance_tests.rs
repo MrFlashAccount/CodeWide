@@ -362,3 +362,72 @@ fn main() -> std::io::Result<()> {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn spawn_and_delegate_run_the_child_at_the_requested_effort() -> TestResult {
+    for (tool, arguments) in [
+        (
+            "codewide_spawn_agent",
+            json!({"prompt": "build", "provider": "claude", "model": "claude-default", "effort": "low"}),
+        ),
+        (
+            "codewide_delegate_task",
+            json!({"prompt": "build", "waitMode": "deferred", "provider": "claude", "model": "claude-default", "effort": "low"}),
+        ),
+    ] {
+        let harness = harness(":workspace").await?;
+        let (success, result) = call(&harness.service, "codex", PARENT, tool, arguments).await;
+        assert!(success, "{tool}: {result}");
+        let created = harness.claude.created();
+        assert_eq!(created.len(), 1, "{tool}");
+        assert_eq!(created[0].settings.effort.as_deref(), Some("low"), "{tool}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_child_on_the_parents_model_inherits_its_effort_and_another_model_keeps_its_default()
+-> TestResult {
+    for (arguments, expected) in [
+        (json!({"prompt": "build"}), Some("xhigh")),
+        (json!({"prompt": "build", "model": "codex-default"}), None),
+    ] {
+        let harness = harness(":workspace").await?;
+        harness.codex.update_settings(PARENT, |settings| {
+            settings.effort = Some("xhigh".into());
+        });
+        let (success, result) = call(
+            &harness.service,
+            "codex",
+            PARENT,
+            "codewide_spawn_agent",
+            arguments,
+        )
+        .await;
+        assert!(success, "{result}");
+        let created = harness.codex.created();
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].settings.effort.as_deref(), expected);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_effort_the_target_model_does_not_list_is_refused_before_admission() -> TestResult {
+    let harness = harness(":workspace").await?;
+    let (success, result) = call(
+        &harness.service,
+        "codex",
+        PARENT,
+        "codewide_spawn_agent",
+        json!({"prompt": "build", "provider": "claude", "model": "claude-default", "effort": "max"}),
+    )
+    .await;
+    assert!(!success, "{result}");
+    assert!(
+        result.to_string().contains("supported: low, high"),
+        "{result}"
+    );
+    assert!(harness.claude.created().is_empty());
+    Ok(())
+}

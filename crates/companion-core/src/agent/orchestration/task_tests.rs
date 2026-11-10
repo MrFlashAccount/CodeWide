@@ -554,6 +554,7 @@ async fn claimed_turn_waiting_for_late_receipt(
                 delivery_id,
                 provider: ProviderId::from_static("claude"),
                 model: "claude-default".into(),
+                effort: None,
                 name: None,
                 permission: PermissionEnvelope {
                     execution_policy: None,
@@ -674,6 +675,7 @@ async fn provider_minted_create_crash_recovers_as_start_uncertain_without_retry(
         delivery_id,
         provider: ProviderId::from_static("codex"),
         model: "gpt-parent".into(),
+        effort: None,
         name: None,
         permission: PermissionEnvelope {
             execution_policy: None,

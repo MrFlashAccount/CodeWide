@@ -47,6 +47,7 @@ fn task_specs() -> Vec<ClientToolSpec> {
                     "waitMode": {"type": "string", "enum": ["blocking", "deferred"]},
                     "provider": {"type": "string", "description": "Target provider. Default: this thread's provider."},
                     "model": {"type": "string", "description": "Target model. Default: this thread's model on the same provider, else the target provider default."},
+                    "effort": {"type": "string", "description": "Reasoning effort of the target model (for example low, medium, high, xhigh or max; the model's catalog lists what it supports). Default: this thread's effort when the child runs this thread's model on the same provider, else the model's default."},
                     "name": {"type": "string", "description": "Short child display name."},
                     "permissionProfile": {"type": "string", "description": "Default: inherit the parent's profile exactly, translated to the target provider. An explicit profile may narrow access."},
                     "workspace": {
@@ -127,6 +128,7 @@ fn agent_specs() -> Vec<ClientToolSpec> {
                     "prompt": {"type": "string", "description": "The complete task for the new agent."},
                     "provider": {"type": "string", "description": "Agent provider id (for example \"codex\" or \"claude\"). Default: this thread's provider."},
                     "model": {"type": "string", "description": "Model id. Default: this thread's model on the same provider, else the provider's default model."},
+                    "effort": {"type": "string", "description": "Reasoning effort of the model (for example low, medium, high, xhigh or max; the model's catalog lists what it supports). Default: this thread's effort when the agent runs this thread's model on the same provider, else the model's default."},
                     "name": {"type": "string", "description": "Short display name of the agent."},
                     "cwd": {"type": "string", "description": "Absolute working directory; default is the parent's cwd. Used directly with inherited permissions; no VCS or isolation required."},
                     "permissionProfile": {"type": "string", "description": "Default: inherit the parent's permissions exactly. An explicit profile may narrow access; full-access aliases have the same ceiling."}
@@ -210,6 +212,9 @@ pub struct DelegateRequest {
     pub wait_mode: WaitMode,
     pub provider: Option<ProviderId>,
     pub model: Option<String>,
+    /// Omitted when absent, so a request without it keeps its earlier hash.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub name: Option<String>,
     pub permission_profile: Option<String>,
     pub workspace: WorkspaceRequest,
@@ -229,6 +234,7 @@ pub struct SpawnRequest {
     pub prompt: String,
     pub provider: Option<ProviderId>,
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub name: Option<String>,
     pub cwd: Option<String>,
     pub permission_profile: Option<String>,
@@ -273,6 +279,7 @@ struct DelegateArguments {
     wait_mode: WaitMode,
     provider: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
     name: Option<String>,
     permission_profile: Option<String>,
     workspace: Option<WorkspaceArguments>,
@@ -310,6 +317,7 @@ struct SpawnArguments {
     prompt: String,
     provider: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
     name: Option<String>,
     cwd: Option<String>,
     permission_profile: Option<String>,
@@ -380,6 +388,24 @@ fn present(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
 }
 
+/// The workspace of a `codewide_delegate_task` call; inherit when omitted.
+fn delegate_workspace(workspace: Option<WorkspaceArguments>) -> Result<WorkspaceRequest, String> {
+    Ok(match workspace {
+        None => WorkspaceRequest::Inherit { cwd: None },
+        Some(WorkspaceArguments::Inherit { cwd }) => WorkspaceRequest::Inherit {
+            cwd: absolute_optional(cwd, "workspace.cwd")?,
+        },
+        Some(WorkspaceArguments::SharedReadOnly { cwd }) => WorkspaceRequest::SharedReadOnly {
+            cwd: absolute_optional(cwd, "workspace.cwd")?,
+        },
+        Some(WorkspaceArguments::IsolatedWrite { source_workspace }) => {
+            WorkspaceRequest::IsolatedWrite {
+                source_workspace: absolute_optional(source_workspace, "workspace.sourceWorkspace")?,
+            }
+        }
+    })
+}
+
 /// Decodes and validates one call's arguments.
 ///
 /// # Errors
@@ -398,30 +424,13 @@ pub fn parse(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
                 ),
                 None => None,
             };
-            let workspace = match arguments.workspace {
-                None => WorkspaceRequest::Inherit { cwd: None },
-                Some(WorkspaceArguments::Inherit { cwd }) => WorkspaceRequest::Inherit {
-                    cwd: absolute_optional(cwd, "workspace.cwd")?,
-                },
-                Some(WorkspaceArguments::SharedReadOnly { cwd }) => {
-                    WorkspaceRequest::SharedReadOnly {
-                        cwd: absolute_optional(cwd, "workspace.cwd")?,
-                    }
-                }
-                Some(WorkspaceArguments::IsolatedWrite { source_workspace }) => {
-                    WorkspaceRequest::IsolatedWrite {
-                        source_workspace: absolute_optional(
-                            source_workspace,
-                            "workspace.sourceWorkspace",
-                        )?,
-                    }
-                }
-            };
+            let workspace = delegate_workspace(arguments.workspace)?;
             Ok(ToolRequest::Delegate(DelegateRequest {
                 prompt: arguments.prompt,
                 wait_mode: arguments.wait_mode,
                 provider,
                 model: present(arguments.model),
+                effort: present(arguments.effort),
                 name: present(arguments.name),
                 permission_profile: present(arguments.permission_profile),
                 workspace,
@@ -455,6 +464,7 @@ pub fn parse(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
                 prompt: arguments.prompt,
                 provider,
                 model: present(arguments.model),
+                effort: present(arguments.effort),
                 name: present(arguments.name),
                 cwd,
                 permission_profile: present(arguments.permission_profile),

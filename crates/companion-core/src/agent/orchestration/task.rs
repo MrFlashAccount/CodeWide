@@ -250,6 +250,10 @@ pub struct OrchestrationTask {
     pub delivery_id: DeliveryId,
     pub provider: ProviderId,
     pub model: String,
+    /// The reasoning effort the child runs with; absent in tasks admitted
+    /// before it was recorded, which keep their model's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub name: Option<String>,
     pub permission: PermissionEnvelope,
     pub workspace_claim_id: WorkspaceClaimId,

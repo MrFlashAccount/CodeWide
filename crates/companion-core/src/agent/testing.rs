@@ -458,6 +458,16 @@ impl ScriptedProvider {
             .cloned()
     }
 
+    /// Changes the settings of an existing thread.
+    pub(crate) fn update_settings(&self, id: &str, change: impl FnOnce(&mut ThreadSettings)) {
+        if let Some(thread) = locked(&self.threads)
+            .iter_mut()
+            .find(|thread| thread.app_thread_id.as_str() == id)
+        {
+            change(&mut thread.settings);
+        }
+    }
+
     pub(crate) fn set_turns(&self, thread: &str, turns: Vec<crate::agent::model::AgentTurn>) {
         locked(&self.turns).insert(thread.to_owned(), turns);
     }
@@ -563,8 +573,14 @@ impl AgentProvider for ScriptedProvider {
                 description: String::new(),
                 is_default: true,
                 hidden: false,
-                efforts: Vec::new(),
-                default_effort: None,
+                efforts: ["low", "high"]
+                    .into_iter()
+                    .map(|effort| crate::agent::model::ModelEffort {
+                        effort: effort.into(),
+                        description: String::new(),
+                    })
+                    .collect(),
+                default_effort: Some("high".into()),
                 input_modalities: Vec::new(),
             }],
             prices: std::collections::BTreeMap::new(),

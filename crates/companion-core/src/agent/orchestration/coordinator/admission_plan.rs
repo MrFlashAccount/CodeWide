@@ -64,18 +64,8 @@ impl OrchestrationService {
         }
         let wire = self.gateway.wire(&target);
         let same_provider = wire.descriptor.id == caller.provider.descriptor().id;
-        let model = match &request.model {
-            Some(model) => model.clone(),
-            None if same_provider && !parent.settings.model.is_empty() => {
-                parent.settings.model.clone()
-            }
-            None => default_model(&target).await.map_err(|failure| {
-                ToolError::admission(AdmissionRejection::new(
-                    RejectionCode::ProviderUnavailable,
-                    format!("no default model: {}", failure.message),
-                ))
-            })?,
-        };
+        let parent_settings = same_provider.then_some(&parent.settings);
+        let (model, effort) = child_model_and_effort(&target, parent_settings, request).await?;
         let inherited = self
             .inherited_permissions(caller, &parent.settings.permission_profile, request)
             .await?;
@@ -116,7 +106,7 @@ impl OrchestrationService {
             wire,
             settings: ThreadSettings {
                 model,
-                effort: None,
+                effort,
                 permission_profile: translated_profile,
                 service_tier: None,
             },
@@ -205,6 +195,68 @@ pub(super) fn call_key(identity: &CallIdentity) -> String {
         hasher.update(&[0]);
     }
     hasher.finalize().to_hex().to_string()
+}
+
+/// The child's model and effort: the requested ones, else the parent's on
+/// the same provider (`parent`), else the target's default model at its
+/// default effort. The parent's effort follows only its own model.
+async fn child_model_and_effort(
+    target: &std::sync::Arc<dyn crate::agent::provider::AgentProvider>,
+    parent: Option<&ThreadSettings>,
+    request: &DelegateRequest,
+) -> Result<(String, Option<String>), ToolError> {
+    let parent = parent.filter(|settings| !settings.model.is_empty());
+    let model = match (&request.model, parent) {
+        (Some(model), _) => model.clone(),
+        (None, Some(settings)) => settings.model.clone(),
+        (None, None) => default_model(target).await.map_err(|failure| {
+            ToolError::admission(AdmissionRejection::new(
+                RejectionCode::ProviderUnavailable,
+                format!("no default model: {}", failure.message),
+            ))
+        })?,
+    };
+    let effort = match (&request.effort, parent) {
+        (Some(effort), _) => {
+            supported_effort(target, &model, effort).await?;
+            Some(effort.clone())
+        }
+        (None, Some(settings)) if settings.model == model => settings.effort.clone(),
+        (None, _) => None,
+    };
+    Ok((model, effort))
+}
+
+/// Rejects an effort the target model's catalog row does not list. A model
+/// the catalog does not name, or one without effort levels, is left to the
+/// provider.
+async fn supported_effort(
+    target: &std::sync::Arc<dyn crate::agent::provider::AgentProvider>,
+    model: &str,
+    effort: &str,
+) -> Result<(), ToolError> {
+    let Ok(catalog) = target.catalog_models().await else {
+        return Ok(());
+    };
+    let Some(row) = catalog
+        .models
+        .iter()
+        .find(|row| row.id == model || row.model == model)
+    else {
+        return Ok(());
+    };
+    if row.efforts.is_empty() || row.efforts.iter().any(|level| level.effort == effort) {
+        return Ok(());
+    }
+    let supported: Vec<&str> = row
+        .efforts
+        .iter()
+        .map(|level| level.effort.as_str())
+        .collect();
+    Err(ToolError::message(format!(
+        "effort {effort} is not supported by model {model}; supported: {}",
+        supported.join(", ")
+    )))
 }
 
 pub(super) fn request_hash(request: &DelegateRequest) -> Result<String, ToolError> {

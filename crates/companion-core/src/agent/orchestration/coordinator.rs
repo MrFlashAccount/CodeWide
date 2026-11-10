@@ -62,11 +62,14 @@ impl OrchestrationService {
         let call_key = call_key(&identity);
         let command_id = format!("task-turn-{call_key}");
         let request_hash = request_hash(&request)?;
-        let turn_params = json!({
+        let mut turn_params = json!({
             "input": [{"type": "text", "text": request.prompt.clone(), "text_elements": []}],
             "model": plan.settings.model,
             "permissions": plan.settings.permission_profile,
         });
+        if let Some(effort) = &plan.settings.effort {
+            turn_params["effort"] = json!(effort);
+        }
         let task = OrchestrationTask {
             task_id: task_id.clone(),
             parent_thread_id: caller.thread.clone(),
@@ -80,6 +83,7 @@ impl OrchestrationService {
             delivery_id,
             provider: plan.wire.descriptor.id.clone(),
             model: plan.settings.model.clone(),
+            effort: plan.settings.effort.clone(),
             name: request.name,
             permission: plan.permission,
             workspace_claim_id: workspace_claim_id.clone(),
@@ -155,6 +159,7 @@ impl OrchestrationService {
             wait_mode: WaitMode::Deferred,
             provider: request.provider,
             model: request.model,
+            effort: request.effort,
             name: request.name,
             permission_profile: request.permission_profile,
             workspace: WorkspaceRequest::AgentSpawn { cwd: request.cwd },
@@ -456,7 +461,7 @@ impl OrchestrationService {
         let wire = self.gateway.wire(&target);
         let settings = ThreadSettings {
             model: bundle.task.model.clone(),
-            effort: None,
+            effort: bundle.task.effort.clone(),
             permission_profile: bundle.task.permission.translated_profile.clone(),
             service_tier: None,
         };

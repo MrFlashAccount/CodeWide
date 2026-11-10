@@ -53,6 +53,7 @@ pub(super) fn admission(
             delivery_id,
             provider: ProviderId::from_static("claude"),
             model: "claude-default".into(),
+            effort: None,
             name: None,
             permission: PermissionEnvelope {
                 execution_policy: None,
