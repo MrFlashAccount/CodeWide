@@ -51,11 +51,7 @@ export function ThreadsWorkspacePaneLayout(props: PaneLayoutProps): React.JSX.El
   const focusedRouteName = props.state.routes[props.state.index]?.name ?? null;
   const catalogFocused = focusedRouteName === "(lists)";
   const welcomeVisible = catalogFocused && isNoServerWorkspace(runtime);
-  const presentation = threadsPresentation({
-    desktop,
-    viewportWidth,
-    welcomeVisible,
-  });
+  const presentation = threadsPresentation({ desktop, welcomeVisible });
   const catalog = threadsCatalogPresentation(props);
   return (
     <WorkspacePaneFrame
@@ -113,17 +109,15 @@ function threadsCatalogPresentation(props: PaneLayoutProps) {
 
 function threadsPresentation({
   desktop,
-  viewportWidth,
   welcomeVisible,
 }: {
   readonly desktop: boolean;
-  readonly viewportWidth: number;
   readonly welcomeVisible: boolean;
 }): WorkspaceFramePresentation {
   if (welcomeVisible) {
     return { kind: "catalogOnly" };
   }
-  return desktop ? { kind: "wide", viewportWidth } : { kind: "stacked" };
+  return desktop ? { kind: "wide" } : { kind: "stacked" };
 }
 
 function renderThreadsPaneLayout(props: PaneLayoutProps): React.JSX.Element {

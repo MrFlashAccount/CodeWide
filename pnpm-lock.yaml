@@ -349,6 +349,9 @@ importers:
       tm-grammars:
         specifier: 1.32.5
         version: 1.32.5
+      yoga-layout:
+        specifier: 3.2.1
+        version: 3.2.1
 
   packages/agent-protocol:
     devDependencies:
@@ -8321,6 +8324,9 @@ packages:
   yocto-queue@0.1.0:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
+
+  yoga-layout@3.2.1:
+    resolution: {integrity: sha512-0LPOt3AxKqMdFBZA3HBAt/t/8vIKq7VaQYbuA8WxCgung+p9TVyKRYdpvCb80HcdTN2NkbIKbhNwKUfm3tQywQ==}
 
   zod-validation-error@4.0.2:
     resolution: {integrity: sha512-Q6/nZLe6jxuU80qb/4uJ4t5v2VEZ44lzQjPDhYJNztRQ4wyWc6VF3D3Kb/fAuPetZQnhS3hnajCf9CsWesghLQ==}
@@ -17665,6 +17671,8 @@ snapshots:
   ylru@1.4.0: {}
 
   yocto-queue@0.1.0: {}
+
+  yoga-layout@3.2.1: {}
 
   zod-validation-error@4.0.2(zod@4.4.3):
     dependencies:

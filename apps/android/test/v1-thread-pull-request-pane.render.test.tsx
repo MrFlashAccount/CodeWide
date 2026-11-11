@@ -158,7 +158,7 @@ function Workspace(): React.JSX.Element {
       catalogStatus="present"
       desktop={desktop}
       detail={<V1ThreadLayout />}
-      presentation={desktop ? { kind: "wide", viewportWidth: 1600 } : { kind: "stacked" }}
+      presentation={desktop ? { kind: "wide" } : { kind: "stacked" }}
       viewportWidth={1600}
     />
   );

@@ -6,7 +6,8 @@ import { useConstant } from "../react/useConstant";
 import { colors } from "../theme";
 import type { ThreePanelsContent } from "../ui/threePanels";
 import { threadListLayout } from "../ui/thread-list-layout";
-import { currentPaneGeometry, usePaneMotionArmed, type PaneMotionState } from "./paneMotion";
+import { centerClipFrame, centerContentFrame, rightFrame } from "./paneFrames";
+import { usePaneMotionArmed, type PaneMotionState } from "./paneMotion";
 import {
   createRightPaneKey,
   rightPanePlacement,
@@ -40,7 +41,8 @@ type CenterLayoutProps = {
 /**
  * The center destination and its optional right pane, placed inside the center destination so
  * route-owned content stays in its route tree. It feeds the right pane's presence into the frame's
- * three-pane owner and places both panes from the frame's one pane motion: beside, the center and
+ * three-pane owner and places both panes from the frame's one pane motion (relative to the
+ * destination at rest, explicit only while panes move): beside, the center and
  * right panes split the width equally and the center rounds its right corners; a fullscreen right
  * pane covers the retained center; a fullscreen center keeps the right pane mounted past the
  * trailing edge; the phone layout covers the center. The right pane sits on the frame's surface,
@@ -127,7 +129,10 @@ function FramedCenterLayout({
   );
 }
 
-/** The center surface clips its content while the frame's pane geometry moves its edge. */
+/**
+ * The center surface clips its content while the frame's pane motion moves its edge; at rest both
+ * take the destination's relative share.
+ */
 function FramedCenterPane({
   covered,
   declaration,
@@ -139,17 +144,8 @@ function FramedCenterPane({
   readonly geometry: PaneMotionState;
   readonly neighbour: ThreePanelsContent | null;
 }): React.JSX.Element {
-  const clip = useAnimatedStyle(() => {
-    const pane = currentPaneGeometry(geometry);
-    return {
-      borderBottomRightRadius: pane.centerRightRadius,
-      borderTopRightRadius: pane.centerRightRadius,
-      width: pane.centerClipWidth,
-    };
-  });
-  const content = useAnimatedStyle(() => ({
-    width: currentPaneGeometry(geometry).centerWidth,
-  }));
+  const clip = useAnimatedStyle(() => centerClipFrame(geometry));
+  const content = useAnimatedStyle(() => centerContentFrame(geometry));
   return (
     <Reanimated.View
       accessibilityElementsHidden={covered}
@@ -217,11 +213,8 @@ function FramedRightPane({
   readonly neighbour: ThreePanelsContent | null;
   readonly placement: RightPanePlacement;
 }): React.JSX.Element {
-  const frame = useAnimatedStyle(() => {
-    const pane = currentPaneGeometry(geometry);
-    // The right pane lives inside the destination, so its frame position is destination-relative.
-    return { transform: [{ translateX: pane.rightX - pane.detailX }], width: pane.rightWidth };
-  });
+  // The right pane lives inside the destination, so its frame is destination-relative.
+  const frame = useAnimatedStyle(() => rightFrame(geometry));
   const hidden = placement === "stashed";
   return (
     <Reanimated.View

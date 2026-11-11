@@ -21,12 +21,10 @@ export const styles = StyleSheet.create({
     zIndex: 1,
   },
   threadListSuspended: { flex: 1 },
+  // Fills the catalog pane, whose box the pane frame sizes.
   threadSidebar: {
     backgroundColor: colors.threadListSurface,
     flex: 1,
-    flexShrink: 0,
-    maxWidth: 480,
-    minWidth: 280,
     overflow: "hidden",
   },
 });

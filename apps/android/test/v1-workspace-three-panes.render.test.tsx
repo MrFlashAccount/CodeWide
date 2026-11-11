@@ -1,7 +1,6 @@
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { BackHandler, Text, View } from "react-native";
 
-import { desktopThreadSidebarWidth } from "../src/presentation/layouts/windowLayout";
 import { WorkspaceCenterLayout } from "../src/routeComposition/WorkspaceCenterLayout";
 import { WorkspacePaneFrame } from "../src/routeComposition/WorkspacePaneFrame";
 import {
@@ -13,6 +12,7 @@ import {
 } from "../src/routeComposition/workspacePanes";
 import { colors, radii } from "../src/theme";
 import { PaneChromeControls } from "./fixtures/PaneChromeControls";
+import { RESTING_SIDEBAR } from "./fixtures/paneRestLayout";
 
 const VIEWPORT = 1600;
 const NONE: WorkspacePaneCapabilities = {};
@@ -55,7 +55,7 @@ function Workspace({
   center = NONE,
   desktop = true,
   left = NONE,
-  presentation = { kind: "wide", viewportWidth: VIEWPORT },
+  presentation = { kind: "wide" },
   right = null,
 }: {
   readonly center?: WorkspacePaneCapabilities;
@@ -116,7 +116,7 @@ function expectCenterRadii(
 
 describe("the left and right panes are never visible together", () => {
   const frames: readonly (readonly [boolean, WorkspaceFramePresentation])[] = [
-    [true, { kind: "wide", viewportWidth: VIEWPORT }],
+    [true, { kind: "wide" }],
     [true, { kind: "catalogOnly" }],
     [false, { kind: "catalogOnly" }],
     [false, { kind: "detailOnly" }],
@@ -191,34 +191,35 @@ it("paints the right pane like the left pane, with no border against the center"
   expect(view.getByTestId("center")).toHaveStyle({ backgroundColor: colors.conversationSurface });
 });
 
-describe("pane widths", () => {
-  const sidebar = desktopThreadSidebarWidth(VIEWPORT);
+// At rest every pane box is relative to the frame or its destination, so Yoga sizes the panes from
+// the frame it actually lays out; `pane-rest-layout-yoga.test.ts` proves what these resolve to.
+const BESIDE_CATALOG = { flexGrow: 1, position: "relative", width: "auto" } as const;
+const OVER_FRAME = { left: 0, position: "absolute", width: "100%" } as const;
 
+describe("pane widths", () => {
   it("keeps the sidebar width for the left pane beside the center", () => {
     const view = render(<Workspace />);
-    expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle({ opacity: 1, width: sidebar });
-    expect(view.getByTestId("v1-workspace-destination")).toHaveStyle({
-      transform: [{ translateX: sidebar }],
-      width: VIEWPORT - sidebar,
+    expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle({
+      opacity: 1,
+      ...RESTING_SIDEBAR,
     });
-    expect(view.getByTestId("center")).toHaveStyle({ width: VIEWPORT - sidebar });
+    expect(view.getByTestId("v1-workspace-destination")).toHaveStyle(BESIDE_CATALOG);
+    expect(view.getByTestId("center")).toHaveStyle({ width: "100%" });
   });
 
   it("covers the left pane and splits the whole width equally beside the right pane", () => {
     const view = render(<Workspace right={NONE} />);
     // The covered catalog keeps its width and dims under the destination.
     const catalog = view.getByTestId("workspace-catalog-pane", { includeHiddenElements: true });
-    expect(catalog).toHaveStyle({ opacity: 0, width: sidebar });
+    expect(catalog).toHaveStyle({ opacity: 0, ...RESTING_SIDEBAR });
     expect(catalog).toHaveProp("pointerEvents", "none");
     expect(view.getByTestId("left-content", { includeHiddenElements: true })).not.toBeVisible();
-    expect(view.getByTestId("v1-workspace-destination")).toHaveStyle({
-      transform: [{ translateX: 0 }],
-      width: VIEWPORT,
-    });
-    expect(view.getByTestId("center")).toHaveStyle({ width: VIEWPORT / 2 });
+    expect(view.getByTestId("v1-workspace-destination")).toHaveStyle(OVER_FRAME);
+    expect(view.getByTestId("center")).toHaveStyle({ width: "50%" });
     expect(view.getByTestId("right")).toHaveStyle({
-      transform: [{ translateX: VIEWPORT / 2 }],
-      width: VIEWPORT / 2,
+      left: "50%",
+      transform: [{ translateX: 0 }],
+      width: "50%",
     });
   });
 
@@ -232,11 +233,11 @@ describe("pane widths", () => {
       expect(view.getByTestId("left-content")).toBeVisible();
     });
     expect(view.getByTestId("left-content")).toBe(left);
-    expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle({ opacity: 1, width: sidebar });
-    expect(view.getByTestId("v1-workspace-destination")).toHaveStyle({
-      transform: [{ translateX: sidebar }],
-      width: VIEWPORT - sidebar,
+    expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle({
+      opacity: 1,
+      ...RESTING_SIDEBAR,
     });
+    expect(view.getByTestId("v1-workspace-destination")).toHaveStyle(BESIDE_CATALOG);
     expectCenterRadii(view, { left: radii.composer, right: 0 });
   });
 
@@ -244,11 +245,9 @@ describe("pane widths", () => {
     const view = render(<Workspace right={FULLSCREEN} />);
     fireEvent.press(view.getByLabelText("Open right fullscreen"));
     await waitFor(() => {
-      expect(view.getByTestId("right")).toHaveStyle({
-        transform: [{ translateX: 0 }],
-        width: VIEWPORT,
-      });
+      expect(view.getByTestId("right")).toHaveStyle({ left: 0, width: "100%" });
     });
+    expect(view.getByTestId("v1-workspace-destination")).toHaveStyle(OVER_FRAME);
     expect(view.getByTestId("workspace-catalog-pane", { includeHiddenElements: true })).toHaveStyle(
       { opacity: 0 },
     );

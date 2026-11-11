@@ -75,12 +75,14 @@ describe("Android-transformed pane geometry", () => {
           centerRightRadius: 12,
           left,
           right,
-          sidebarWidth: 300,
+          sidebar: true,
         };
-        const detailX = left === "alone" ? 1200 : left === "beside" ? 300 : 0;
-        const detailWidth = left === "alone" || left === "beside" ? 900 : 1200;
+        // A 1200 wide frame gives the sidebar its plain 34 % share.
+        const sidebar = 408;
+        const detailX = left === "alone" ? 1200 : left === "beside" ? sidebar : 0;
+        const detailWidth = left === "beside" ? 1200 - sidebar : 1200;
         const centerWidth = right === "beside" ? detailWidth / 2 : detailWidth;
-        const catalogWidth = left === "beside" || left === "covered" ? 300 : 1200;
+        const catalogWidth = left === "beside" || left === "covered" ? sidebar : 1200;
         const rightWidth = right === "cover" ? detailWidth : detailWidth / 2;
         // Settled, every pane shows its whole content box.
         expect(invoke(resolve, [arrangement, 1200])).toEqual({

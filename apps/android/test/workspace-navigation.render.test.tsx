@@ -572,9 +572,9 @@ it("stretches the single-column workspace across compact phone landscape", () =>
   const list = view.getByTestId("v1-workspace-destination");
   const listStyle = StyleSheet.flatten(list.props.style);
 
-  // The single column spans the whole compact landscape window.
+  // The single column spans the whole compact landscape frame, whatever width Yoga gives it.
   expect(listStyle).toEqual(
-    expect.objectContaining({ transform: [{ translateX: 0 }], width: 700 }),
+    expect.objectContaining({ left: 0, transform: [{ translateX: 0 }], width: "100%" }),
   );
   expect(listStyle).not.toHaveProperty("maxWidth");
   expect(catalogTitle(view)).toBeVisible();
@@ -590,7 +590,7 @@ it("stretches the single-column workspace across compact phone landscape", () =>
   );
 
   expect(destinationStyle).toEqual(
-    expect.objectContaining({ transform: [{ translateX: 0 }], width: 700 }),
+    expect.objectContaining({ left: 0, transform: [{ translateX: 0 }], width: "100%" }),
   );
   expect(destinationStyle).not.toHaveProperty("maxWidth");
   expect(view.getByText("Server unavailable")).toBeVisible();

@@ -1,7 +1,14 @@
 import { observable, type Observable } from "@legendapp/state";
 import { useSelector } from "@legendapp/state/react";
 import { createContext, useContext, useLayoutEffect } from "react";
-import { cancelAnimation, useSharedValue, type SharedValue } from "react-native-reanimated";
+import type { View } from "react-native";
+import {
+  cancelAnimation,
+  measure,
+  useSharedValue,
+  type AnimatedRef,
+  type SharedValue,
+} from "react-native-reanimated";
 import { scheduleOnRN, scheduleOnUI } from "react-native-worklets";
 
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
@@ -86,24 +93,47 @@ const UNARMED: PaneMotion = {
 export const PaneMotionContext = createContext<PaneMotion>(UNARMED);
 
 /**
- * The UI-thread state of one frame's pane geometry. `arrangement` is the settled target; while
- * `moving`, every pane derives its frame from `from`, the target and the one `progress`.
+ * The UI-thread state of one frame's pane geometry. `arrangement` is the settled target, which
+ * Yoga lays out at rest. Only while `moving` do the panes take explicit pixels, derived from
+ * `from`, the target in a frame `frameWidth` wide and the one `progress`; `frameWidth` is the
+ * frame measured on the UI thread when the motion started and feeds nothing else.
  */
 export type PaneMotionState = {
   readonly arrangement: SharedValue<PaneArrangement>;
+  /** The pane frame view, measured when a rearrangement starts. */
+  readonly frameRef: AnimatedRef<View>;
   readonly frameWidth: SharedValue<number>;
   readonly from: SharedValue<PaneGeometry>;
   readonly moving: SharedValue<boolean>;
   readonly progress: SharedValue<number>;
 };
 
-/** The frame's pane geometry now; every pane's animated style reads it. */
-export function currentPaneGeometry(state: PaneMotionState): PaneGeometry {
+/** The geometry the moving panes stand at now; meaningful only while `moving`. */
+export function movingPaneGeometry(state: PaneMotionState): PaneGeometry {
   "worklet";
   const to = paneGeometry(state.arrangement.get(), state.frameWidth.get());
+  return interpolatePaneGeometry(state.from.get(), to, state.progress.get());
+}
+
+/**
+ * Where the panes stand when a rearrangement starts: an interrupted motion continues from its
+ * current frame; panes at rest stand where Yoga laid them out, which is the settled geometry in
+ * the frame as measured now.
+ */
+function standingPaneGeometry(state: PaneMotionState, frameWidth: number): PaneGeometry {
+  "worklet";
   return state.moving.get()
-    ? interpolatePaneGeometry(state.from.get(), to, state.progress.get())
-    : to;
+    ? movingPaneGeometry(state)
+    : paneGeometry(state.arrangement.get(), frameWidth);
+}
+
+/** Puts the panes at rest in `next`: Yoga lays them out from the relative pane styles. */
+function settlePanes(state: PaneMotionState, next: PaneArrangement): void {
+  "worklet";
+  cancelAnimation(state.progress);
+  state.arrangement.set(next);
+  state.moving.set(false);
+  state.progress.set(1);
 }
 
 /** One arrangement change handed to the UI thread. */
@@ -117,22 +147,27 @@ export type PaneMotionRequest = {
 };
 
 /**
- * Starts one rearrangement on the UI thread: it springs from wherever the panes are now, so an
- * interrupted motion continues without a jump. Without `animate` the panes take `next` at once.
+ * Starts one rearrangement on the UI thread. It measures the frame now, so the motion's ends come
+ * from the actual layout rather than an earlier JavaScript measurement, and springs from wherever
+ * the panes are, so an interrupted motion continues without a jump. When the spring settles the
+ * panes return to Yoga, whose layout equals the motion's explicit end. Without `animate`, or
+ * without a measurable frame, the panes settle into `next` at once.
  */
 export function startPaneMotion(
   state: PaneMotionState,
   { animate, generation, next, onSettled }: PaneMotionRequest,
 ): void {
   "worklet";
-  if (!animate) {
-    cancelAnimation(state.progress);
-    state.arrangement.set(next);
-    state.moving.set(false);
-    state.progress.set(1);
+  const frameWidth = animate ? (measure(state.frameRef)?.width ?? 0) : 0;
+  if (frameWidth <= 0) {
+    settlePanes(state, next);
+    if (animate) {
+      scheduleOnRN(onSettled, generation);
+    }
     return;
   }
-  state.from.set(currentPaneGeometry(state));
+  state.from.set(standingPaneGeometry(state, frameWidth));
+  state.frameWidth.set(frameWidth);
   state.arrangement.set(next);
   state.moving.set(true);
   state.progress.set(0);
@@ -147,22 +182,24 @@ export function startPaneMotion(
 }
 
 /**
- * Owns one frame's pane geometry. React resolves the settled `arrangement`; one layout effect
+ * Owns one frame's pane geometry; `frameRef` is the pane frame view it measures when a motion
+ * starts. React resolves the settled `arrangement`; one layout effect
  * per changed arrangement hands it to the UI thread, which springs a single progress that every
  * pane property derives from. No pane starts its own animation.
  */
 export function usePaneMotionState(
   arrangement: PaneArrangement,
-  initialFrameWidth: number,
+  frameRef: AnimatedRef<View>,
 ): PaneMotionState {
   const motion = useContext(PaneMotionContext);
   const reducedMotion = useReducedMotionPreference();
   const arrangementValue = useSharedValue(arrangement);
-  const frameWidth = useSharedValue(initialFrameWidth);
-  const from = useSharedValue(paneGeometry(arrangement, initialFrameWidth));
+  // Both are written when a motion starts; at rest no pane reads them.
+  const frameWidth = useSharedValue(0);
+  const from = useSharedValue(paneGeometry(arrangement, 0));
   const moving = useSharedValue(false);
   const progress = useSharedValue(1);
-  const { centerLeftRadius, centerRightRadius, left, right, sidebarWidth } = arrangement;
+  const { centerLeftRadius, centerRightRadius, left, right, sidebar } = arrangement;
   // WHY: the shared values are Reanimated's UI-thread store; the effect publishes the committed
   // arrangement to it exactly once per change, after the commit that mounted any arriving pane.
   useLayoutEffect(() => {
@@ -173,11 +210,11 @@ export function usePaneMotionState(
     }
     scheduleOnUI(
       startPaneMotion,
-      { arrangement: arrangementValue, frameWidth, from, moving, progress },
+      { arrangement: arrangementValue, frameRef, frameWidth, from, moving, progress },
       {
         animate,
         generation: generation ?? -1,
-        next: { centerLeftRadius, centerRightRadius, left, right, sidebarWidth },
+        next: { centerLeftRadius, centerRightRadius, left, right, sidebar },
         onSettled: motion.settle,
       },
     );
@@ -185,6 +222,7 @@ export function usePaneMotionState(
     arrangementValue,
     centerLeftRadius,
     centerRightRadius,
+    frameRef,
     frameWidth,
     from,
     left,
@@ -193,9 +231,9 @@ export function usePaneMotionState(
     progress,
     reducedMotion,
     right,
-    sidebarWidth,
+    sidebar,
   ]);
-  return { arrangement: arrangementValue, frameWidth, from, moving, progress };
+  return { arrangement: arrangementValue, frameRef, frameWidth, from, moving, progress };
 }
 
 /** Whether this frame's rearrangement is armed or still moving. */

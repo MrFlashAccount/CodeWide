@@ -1,11 +1,11 @@
 import { render, within } from "@testing-library/react-native";
 import { StyleSheet, Text } from "react-native";
 
-import { desktopThreadSidebarWidth } from "../src/presentation/layouts/windowLayout";
 import { WorkspaceCatalogMaster } from "../src/routeComposition/WorkspaceCatalogMaster";
 import { WorkspacePaneFrame } from "../src/routeComposition/WorkspacePaneFrame";
 import type { WorkspaceTwoPanePresentation } from "../src/routeComposition/WorkspaceTwoPaneLayout";
 import { colors } from "../src/theme";
+import { RESTING_SIDEBAR } from "./fixtures/paneRestLayout";
 
 jest.mock("react-native-reanimated/mock", () => {
   const mock = jest.requireActual("./mocks/Reanimated");
@@ -34,7 +34,7 @@ function frame(
       desktop={desktop}
       detail={<Text testID="master-detail">Detail</Text>}
       presentation={presentation}
-      viewportWidth={"viewportWidth" in presentation ? presentation.viewportWidth : 400}
+      viewportWidth={presentation.kind.startsWith("wide") ? 1200 : 400}
     />
   );
 }
@@ -64,27 +64,19 @@ it("retains the whole compact master beneath an inaccessible detail", () => {
 });
 
 it("bounds the bar to the wide master and restores that master after expansion", () => {
-  const width = 1200;
-  const wide = { kind: "wide", viewportWidth: width } as const;
+  const wide = { kind: "wide" } as const;
   const view = render(frame(wide, { catalogFocused: false, desktop: true }));
   const master = view.getByTestId("workspace-catalog-master-pullRequests");
   const detail = view.getByTestId("master-detail");
   expect(within(master).getByTestId("master-catalog-mode-bar")).toBeVisible();
-  expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle({
-    width: desktopThreadSidebarWidth(width),
-  });
+  expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle(RESTING_SIDEBAR);
 
-  view.rerender(
-    frame(
-      { kind: "wideDetailExpanded", viewportWidth: width },
-      { catalogFocused: false, desktop: true },
-    ),
-  );
+  view.rerender(frame({ kind: "wideDetailExpanded" }, { catalogFocused: false, desktop: true }));
   expect(view.queryByTestId("master-catalog-mode-bar")).toBeNull();
   // The detail slides over the catalog, which keeps its width and dims beneath it.
   expect(view.getByTestId("workspace-catalog-pane", { includeHiddenElements: true })).toHaveStyle({
     opacity: 0,
-    width: desktopThreadSidebarWidth(width),
+    ...RESTING_SIDEBAR,
   });
 
   view.rerender(frame(wide, { catalogFocused: false, desktop: true }));
@@ -93,9 +85,7 @@ it("bounds the bar to the wide master and restores that master after expansion",
 });
 
 it("paints the shared catalog surface beneath the rounded detail boundary", () => {
-  const view = render(
-    frame({ kind: "wide", viewportWidth: 1200 }, { catalogFocused: false, desktop: true }),
-  );
+  const view = render(frame({ kind: "wide" }, { catalogFocused: false, desktop: true }));
 
   expect(StyleSheet.flatten(view.getByTestId("v1-workspace-pane-frame").props.style)).toEqual(
     expect.objectContaining({ backgroundColor: colors.threadListSurface }),

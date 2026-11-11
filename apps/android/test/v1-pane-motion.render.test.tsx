@@ -3,16 +3,26 @@ import { StyleSheet, Text, View } from "react-native";
 import * as Reanimated from "react-native-reanimated";
 
 import { ConversationEmptyState } from "../src/features/conversation/ConversationEmptyState";
-import { desktopThreadSidebarWidth } from "../src/presentation/layouts/windowLayout";
 import { ThreadListHeaderRow } from "../src/presentation/navigation/ThreadListHeader";
+import {
+  catalogFrame,
+  centerClipFrame,
+  centerContentFrame,
+  currentChromeInset,
+  destinationFrame,
+  rightFrame,
+} from "../src/routeComposition/paneFrames";
 import {
   interpolatePaneGeometry,
   paneGeometry,
+  sidebarWidth,
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
   type PaneArrangement,
   type PaneGeometry,
 } from "../src/routeComposition/paneGeometry";
 import {
-  currentPaneGeometry,
+  movingPaneGeometry,
   startPaneMotion,
   type PaneMotionState,
 } from "../src/routeComposition/paneMotion";
@@ -36,7 +46,7 @@ afterEach(() => {
 });
 
 const FRAME = 1600;
-const SIDEBAR = desktopThreadSidebarWidth(FRAME);
+const SIDEBAR = sidebarWidth(FRAME);
 const LEFTS: readonly PaneArrangement["left"][] = ["alone", "beside", "covered", "under"];
 const RIGHTS: readonly PaneArrangement["right"][] = ["beside", "cover", "offscreen"];
 
@@ -49,7 +59,7 @@ function arrangement(
     centerRightRadius: right === "beside" ? radii.composer : 0,
     left,
     right,
-    sidebarWidth: left === "under" ? 0 : SIDEBAR,
+    sidebar: left !== "under",
   };
 }
 
@@ -59,11 +69,13 @@ const COMBINATIONS = LEFTS.flatMap((left) =>
 
 /** Plain stand-ins for shared values: the derivation reads and writes only through get/set. */
 function motionState({
+  frameWidth = FRAME,
   from,
   moving,
   progress,
   to,
 }: {
+  readonly frameWidth?: number;
   readonly from: PaneGeometry;
   readonly moving: boolean;
   readonly progress: number;
@@ -84,14 +96,48 @@ function motionState({
       },
     };
   };
-  // WHY: the worklets only call `get`/`set`; a full Reanimated SharedValue needs the native runtime.
+  // WHY: the worklets only call `get`/`set` and hand the frame ref to `measure`, which the tests
+  // stub; a full Reanimated SharedValue and AnimatedRef need the native runtime.
   return {
     arrangement: box(to),
-    frameWidth: box(FRAME),
+    frameRef: { current: null },
+    frameWidth: box(frameWidth),
     from: box(from),
     moving: box(moving),
     progress: box(progress),
   } as unknown as PaneMotionState;
+}
+
+/** The frame the UI thread measures when a motion starts. */
+function measureFrame(width: number | null): jest.SpyInstance {
+  return jest
+    .spyOn(Reanimated, "measure")
+    .mockReturnValue(
+      width === null ? null : { height: 800, pageX: 0, pageY: 0, width, x: 0, y: 0 },
+    );
+}
+
+/** Every pane box's style for the state, as the animated styles read it. */
+function frames(state: PaneMotionState) {
+  return {
+    catalog: catalogFrame(state),
+    centerClip: centerClipFrame(state),
+    centerContent: centerContentFrame(state),
+    destination: destinationFrame(state),
+    right: rightFrame(state),
+  };
+}
+
+/** Holds the spring where it starts and returns the callback that settles it. */
+function holdSpring(): () => void {
+  let settle: ((finished?: boolean) => void) | undefined;
+  jest.spyOn(Reanimated, "withSpring").mockImplementation((_to, _config, callback) => {
+    settle = callback;
+    return 0;
+  });
+  return () => {
+    settle?.(true);
+  };
 }
 
 describe("settled geometry of every pane combination", () => {
@@ -118,8 +164,68 @@ describe("settled geometry of every pane combination", () => {
     expect(pane.centerRightRadius).toBe(target.centerRightRadius);
   });
 
-  it("keeps a destination moved past the trailing edge at its width beside the catalog", () => {
-    expect(paneGeometry(arrangement("alone", "beside"), FRAME).detailWidth).toBe(FRAME - SIDEBAR);
+  it("bounds the sidebar to a share of the frame", () => {
+    expect(sidebarWidth(840)).toBe(SIDEBAR_MIN_WIDTH);
+    expect(sidebarWidth(1200)).toBeCloseTo(408);
+    expect(sidebarWidth(1600)).toBe(SIDEBAR_MAX_WIDTH);
+  });
+});
+
+describe("settled panes belong to Yoga", () => {
+  /** A style value Yoga resolves against the frame, or a constant that no measurement feeds. */
+  const isRelative = (value: unknown): boolean =>
+    value === 0 ||
+    value === "auto" ||
+    (typeof value === "string" && /^\d+%$/u.test(value)) ||
+    value === SIDEBAR_MIN_WIDTH ||
+    value === SIDEBAR_MAX_WIDTH;
+
+  it.each(COMBINATIONS)(
+    "lays out left %s with right %s without pixels from a measurement",
+    (_left, _right, target) => {
+      const settled = frames(
+        motionState({
+          frameWidth: FRAME,
+          from: paneGeometry(target, FRAME),
+          moving: false,
+          progress: 1,
+          to: target,
+        }),
+      );
+      // A stale frame width or start geometry changes nothing once the panes rest.
+      const stale = frames(
+        motionState({
+          frameWidth: 700,
+          from: paneGeometry(arrangement("covered", "cover"), 2400),
+          moving: false,
+          progress: 0.3,
+          to: target,
+        }),
+      );
+      expect(stale).toEqual(settled);
+      for (const style of Object.values(settled)) {
+        for (const key of ["left", "maxWidth", "minWidth", "width"] as const) {
+          if (key in style) {
+            expect(isRelative(Reflect.get(style, key))).toBe(true);
+          }
+        }
+      }
+      expect(settled.destination.transform).toEqual([{ translateX: 0 }]);
+      expect(settled.right.transform).toEqual([{ translateX: 0 }]);
+    },
+  );
+
+  it("gives up no chrome width at rest", () => {
+    const state = motionState({
+      frameWidth: 700,
+      from: paneGeometry(arrangement("beside", "offscreen"), 2400),
+      moving: false,
+      progress: 0.3,
+      to: arrangement("covered", "beside"),
+    });
+    for (const box of ["catalog", "center", "destination", "right"] as const) {
+      expect(currentChromeInset(state, box)).toBe(0);
+    }
   });
 });
 
@@ -178,29 +284,45 @@ describe("one progress derives every pane property", () => {
     }
   });
 
-  it("reads the settled arrangement directly while nothing moves", () => {
-    const to = arrangement("beside", "beside");
-    const state = motionState({
-      from: paneGeometry(arrangement("covered", "cover"), FRAME),
-      moving: false,
-      progress: 0.3,
-      to,
-    });
-    expect(currentPaneGeometry(state)).toEqual(paneGeometry(to, FRAME));
-  });
-
-  it("derives a moving frame from the one progress", () => {
+  it("frames every moving pane box in explicit pixels from the one progress", () => {
     const from = paneGeometry(arrangement("beside", "offscreen"), FRAME);
-    const to = arrangement("beside", "beside");
+    const to = arrangement("covered", "beside");
     const state = motionState({ from, moving: true, progress: 0.3, to });
-    expect(currentPaneGeometry(state)).toEqual(
-      interpolatePaneGeometry(from, paneGeometry(to, FRAME), 0.3),
-    );
+    const pane = interpolatePaneGeometry(from, paneGeometry(to, FRAME), 0.3);
+    expect(movingPaneGeometry(state)).toEqual(pane);
+    expect(frames(state)).toEqual({
+      catalog: {
+        maxWidth: pane.catalogWidth,
+        minWidth: pane.catalogWidth,
+        opacity: pane.catalogOpacity,
+        width: pane.catalogWidth,
+      },
+      centerClip: {
+        borderBottomRightRadius: pane.centerRightRadius,
+        borderTopRightRadius: pane.centerRightRadius,
+        width: pane.centerClipWidth,
+      },
+      centerContent: { width: pane.centerWidth },
+      destination: {
+        borderBottomLeftRadius: pane.centerLeftRadius,
+        borderTopLeftRadius: pane.centerLeftRadius,
+        flexGrow: 0,
+        left: 0,
+        position: "absolute",
+        transform: [{ translateX: pane.detailX }],
+        width: pane.detailWidth,
+      },
+      right: {
+        left: 0,
+        transform: [{ translateX: pane.rightX - pane.detailX }],
+        width: pane.rightWidth,
+      },
+    });
   });
 });
 
 describe("starting a rearrangement on the UI thread", () => {
-  it("snaps without a spring when motion is not animated", () => {
+  it("settles into Yoga without a spring when motion is not animated", () => {
     const spring = jest.spyOn(Reanimated, "withSpring");
     const settled = jest.fn();
     const next = arrangement("beside", "beside");
@@ -215,13 +337,90 @@ describe("starting a rearrangement on the UI thread", () => {
 
     expect(spring).not.toHaveBeenCalled();
     expect(state.moving.get()).toBe(false);
-    expect(state.progress.get()).toBe(1);
-    expect(currentPaneGeometry(state)).toEqual(paneGeometry(next, FRAME));
+    expect(frames(state)).toEqual(
+      frames(
+        motionState({ from: paneGeometry(next, FRAME), moving: false, progress: 1, to: next }),
+      ),
+    );
     expect(settled).not.toHaveBeenCalled();
+  });
+
+  it("takes the motion's ends from the frame measured now, not an earlier width", () => {
+    const settle = holdSpring();
+    measureFrame(1200);
+    const previous = arrangement("beside", "offscreen");
+    const next = arrangement("covered", "beside");
+    // The panes rest; the last motion ran in a frame that has since changed size.
+    const state = motionState({
+      frameWidth: FRAME,
+      from: paneGeometry(arrangement("covered", "cover"), FRAME),
+      moving: false,
+      progress: 1,
+      to: previous,
+    });
+
+    startPaneMotion(state, { animate: true, generation: 3, next, onSettled: jest.fn() });
+
+    expect(state.moving.get()).toBe(true);
+    expect(state.from.get()).toEqual(paneGeometry(previous, 1200));
+    // At the start every box stands exactly where Yoga had laid it out in the measured frame.
+    expect(movingPaneGeometry(state)).toEqual(
+      interpolatePaneGeometry(paneGeometry(previous, 1200), paneGeometry(next, 1200), 0),
+    );
+    settle();
+  });
+
+  it("uses explicit pixels only while moving and releases them to Yoga when it settles", () => {
+    const settle = holdSpring();
+    measureFrame(1200);
+    const settled = jest.fn();
+    const next = arrangement("covered", "beside");
+    const state = motionState({
+      from: paneGeometry(arrangement("beside", "offscreen"), FRAME),
+      moving: false,
+      progress: 1,
+      to: arrangement("beside", "offscreen"),
+    });
+
+    startPaneMotion(state, { animate: true, generation: 7, next, onSettled: settled });
+    state.progress.set(0.5);
+    const moving = frames(state);
+    expect(typeof moving.catalog.width).toBe("number");
+    expect(moving.destination.position).toBe("absolute");
+    expect(typeof moving.right.width).toBe("number");
+    expect(settled).not.toHaveBeenCalled();
+
+    state.progress.set(1);
+    // The explicit end shows every pane where Yoga lays it out from the rest frames; only the
+    // content layout widths, which held the larger end, change as the boxes return to Yoga.
+    const end = movingPaneGeometry(state);
+    const target = paneGeometry(next, 1200);
+    for (const key of [
+      "catalogOpacity",
+      "catalogVisibleWidth",
+      "centerClipWidth",
+      "detailVisibleWidth",
+      "detailX",
+      "rightVisibleWidth",
+      "rightX",
+    ] as const) {
+      expect(end[key]).toBeCloseTo(target[key]);
+    }
+    settle();
+
+    expect(state.moving.get()).toBe(false);
+    expect(frames(state)).toEqual(
+      frames(
+        motionState({ from: paneGeometry(next, FRAME), moving: false, progress: 1, to: next }),
+      ),
+    );
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(settled).toHaveBeenCalledWith(7);
   });
 
   it("springs one progress from where an interrupted motion stands and settles once", () => {
     const spring = jest.spyOn(Reanimated, "withSpring");
+    measureFrame(FRAME);
     const settled = jest.fn();
     const from = paneGeometry(arrangement("beside", "offscreen"), FRAME);
     const previous = arrangement("beside", "beside");
@@ -241,6 +440,26 @@ describe("starting a rearrangement on the UI thread", () => {
     expect(state.arrangement.get()).toEqual(arrangement("covered", "beside"));
     expect(settled).toHaveBeenCalledTimes(1);
     expect(settled).toHaveBeenCalledWith(7);
+  });
+
+  it("settles at once into Yoga when the frame has no layout to measure", () => {
+    const spring = jest.spyOn(Reanimated, "withSpring");
+    measureFrame(null);
+    const settled = jest.fn();
+    const next = arrangement("covered", "beside");
+    const state = motionState({
+      from: paneGeometry(arrangement("beside", "offscreen"), FRAME),
+      moving: false,
+      progress: 1,
+      to: arrangement("beside", "offscreen"),
+    });
+
+    startPaneMotion(state, { animate: true, generation: 4, next, onSettled: settled });
+
+    expect(spring).not.toHaveBeenCalled();
+    expect(state.moving.get()).toBe(false);
+    expect(state.arrangement.get()).toEqual(next);
+    expect(settled).toHaveBeenCalledWith(4);
   });
 });
 
@@ -282,7 +501,7 @@ function Workspace({
           testID="center-layout"
         />
       }
-      presentation={desktop ? { kind: "wide", viewportWidth: FRAME } : { kind: "detailOnly" }}
+      presentation={desktop ? { kind: "wide" } : { kind: "detailOnly" }}
       viewportWidth={FRAME}
     />
   );
@@ -292,6 +511,7 @@ describe("pane motion in the frame", () => {
   it("springs an intentional rearrangement once and snaps it under reduced motion", () => {
     for (const reduced of [false, true]) {
       mockReducedMotion = reduced;
+      measureFrame(FRAME);
       const spring = jest.spyOn(Reanimated, "withSpring");
       const view = render(<Workspace />);
       spring.mockClear();

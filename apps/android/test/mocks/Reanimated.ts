@@ -104,6 +104,11 @@ export function useFrameCallback(
   return { setActive: () => undefined };
 }
 
+/** Node lays nothing out, so a view has no measurable frame unless a test supplies one. */
+export function measure(_ref: RefObject<unknown>): null {
+  return null;
+}
+
 export function scrollTo(
   _ref: RefObject<unknown>,
   _x: number,

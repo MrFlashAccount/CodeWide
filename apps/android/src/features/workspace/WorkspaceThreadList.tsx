@@ -3,7 +3,6 @@ import type { ThreadSidebarProps } from "../threadList/ThreadSidebarContract";
 import type { useThreadListState } from "../threadList/threadListState";
 import type { useThreadSearch } from "../search/threadSearch";
 import { sidebarListState } from "../threadList/SidebarListFeedback";
-import { desktopThreadSidebarWidth } from "../../presentation/layouts/windowLayout";
 /** Binds the shared list capabilities to their desktop or mobile presentation. */
 export function WorkspaceThreadList({
   archivedThreads,
@@ -47,7 +46,6 @@ export function WorkspaceThreadList({
   toggleListThreadPin,
   toggleListThreadRead,
   unarchiveListThread,
-  viewportWidth,
 }: {
   archivedThreads: ThreadSidebarProps["archivedThreads"];
   archiveListThread: ThreadSidebarProps["onArchive"];
@@ -90,7 +88,6 @@ export function WorkspaceThreadList({
   toggleListThreadPin: ThreadSidebarProps["onTogglePin"];
   toggleListThreadRead: ThreadSidebarProps["onToggleRead"];
   unarchiveListThread: ThreadSidebarProps["onUnarchive"];
-  viewportWidth: number;
 }): React.JSX.Element {
   return (
     <ThreadListFeature
@@ -144,7 +141,6 @@ export function WorkspaceThreadList({
                 serverScope,
                 threadNavigation,
                 threads: serverThreads,
-                width: desktopThreadSidebarWidth(viewportWidth),
               },
             }
           : {

@@ -23,7 +23,6 @@ type WorkspaceRouteThreadListProps = {
   readonly refreshThreadListAccountRateLimits: () => Promise<void>;
   readonly sidebarSearch: React.JSX.Element | null;
   readonly threadListSources: ThreadListSources;
-  readonly viewportWidth: number;
 };
 
 /** Adapts mounted route resources to the shared V1 thread-list presentation. */
@@ -75,7 +74,6 @@ export function WorkspaceRouteThreadList(props: WorkspaceRouteThreadListProps): 
       toggleListThreadPin={listActions.toggleListThreadPin}
       toggleListThreadRead={listActions.toggleListThreadRead}
       unarchiveListThread={listActions.unarchiveListThread}
-      viewportWidth={props.viewportWidth}
     />
   );
 }

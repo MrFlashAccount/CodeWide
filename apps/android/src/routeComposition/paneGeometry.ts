@@ -1,8 +1,29 @@
 import { COVERED_CATALOG_OPACITY } from "./paneMotionSpec";
 
+/** The catalog sidebar takes this share of the frame width, within the bounds below. */
+export const SIDEBAR_FRAME_PERCENT = 34;
+/** The same share as a Yoga percentage; the type keeps both spellings equal. */
+export const SIDEBAR_FRAME_SHARE = "34%" satisfies `${typeof SIDEBAR_FRAME_PERCENT}%`;
+export const SIDEBAR_MIN_WIDTH = 320;
+export const SIDEBAR_MAX_WIDTH = 480;
+const PERCENT = 100;
+
+/**
+ * The catalog sidebar width in a frame `frameWidth` wide: the formula Yoga applies at rest to
+ * `width: "34%"` with `minWidth`/`maxWidth`, so a motion's explicit end equals the settled layout.
+ */
+export function sidebarWidth(frameWidth: number): number {
+  "worklet";
+  return Math.max(
+    SIDEBAR_MIN_WIDTH,
+    Math.min(SIDEBAR_MAX_WIDTH, (frameWidth * SIDEBAR_FRAME_PERCENT) / PERCENT),
+  );
+}
+
 /**
  * One frame's settled pane arrangement, the target of a pane rearrangement. React resolves it
- * from the pane visibility; the UI thread turns it into pixels with the measured frame width.
+ * from the pane visibility. At rest Yoga lays it out (`paneFrames.ts`); while panes move the UI
+ * thread turns it into pixels with the frame width measured when the motion starts.
  *
  * - `left`: `beside` keeps the catalog at its sidebar width; `covered` slides the destination
  *   over it and dims it; `alone` shows the catalog over the whole frame and moves the destination
@@ -19,8 +40,8 @@ export type PaneArrangement = {
   readonly centerRightRadius: number;
   readonly left: "alone" | "beside" | "covered" | "under";
   readonly right: "beside" | "cover" | "offscreen";
-  /** The catalog's sidebar width; `0` where no sidebar exists and the catalog spans the frame. */
-  readonly sidebarWidth: number;
+  /** Whether the catalog keeps the sidebar width; without one it spans the frame. */
+  readonly sidebar: boolean;
 };
 
 /**
@@ -94,11 +115,11 @@ function leftPaneGeometry(
         detailX: 0,
       };
     case "alone":
-      // A destination past the trailing edge keeps the width it has beside the catalog.
+      // Past the trailing edge the destination spans the frame, as Yoga can lay it out at rest.
       return {
         catalogOpacity: 1,
         catalogWidth: frameWidth,
-        detailWidth: frameWidth - sidebar,
+        detailWidth: frameWidth,
         detailX: frameWidth,
       };
     case "under":
@@ -135,10 +156,13 @@ function rightPaneGeometry(
 }
 
 // Worklets capture helper values during module initialization, so dependencies must come first.
-/** The settled geometry of `arrangement` in a frame `frameWidth` wide. */
+/**
+ * The settled geometry of `arrangement` in a frame `frameWidth` wide: exactly what Yoga lays out
+ * at rest from the frame's relative pane styles, in pixels for a motion's ends.
+ */
 export function paneGeometry(arrangement: PaneArrangement, frameWidth: number): PaneGeometry {
   "worklet";
-  const sidebar = Math.min(Math.max(arrangement.sidebarWidth, 0), frameWidth);
+  const sidebar = arrangement.sidebar ? sidebarWidth(frameWidth) : 0;
   const left = leftPaneGeometry(arrangement.left, sidebar, frameWidth);
   const right = rightPaneGeometry(arrangement.right, left.detailX, left.detailWidth);
   // Settled, every pane shows its whole content box.

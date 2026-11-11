@@ -199,7 +199,7 @@ function renderInWideFrame() {
       catalogStatus="present"
       desktop
       detail={<PullRequestRoute tab="overview" />}
-      presentation={{ kind: "wide", viewportWidth: 1600 }}
+      presentation={{ kind: "wide" }}
       viewportWidth={1600}
     />,
   );

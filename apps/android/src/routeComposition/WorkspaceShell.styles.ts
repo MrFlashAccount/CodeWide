@@ -1,16 +1,12 @@
 import { StyleSheet } from "react-native";
 
-import { colors, radii } from "../theme";
+import { colors } from "../theme";
 import { v1MobileRouteMotion } from "../ui/v1MobileRouteMotion";
 
 export const v1WorkspaceShellStyles = StyleSheet.create({
+  // The pane frame owns the destination's box, position and leading radius.
   destination: {
-    borderBottomLeftRadius: radii.composer,
-    borderTopLeftRadius: radii.composer,
-    flex: 1,
-    minWidth: 0,
     overflow: "hidden",
-    position: "relative",
   },
   flex: {
     flex: 1,

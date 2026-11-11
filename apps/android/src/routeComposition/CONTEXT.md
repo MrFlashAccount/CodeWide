@@ -107,15 +107,27 @@ but it does not own transport, persistence, protocol reduction or application da
   placement, tab reveal, data arrival and viewport changes move panes without animation.
 - One owner drives all pane geometry. The frame resolves one settled `PaneArrangement`
   (`resolvePaneArrangement`) and `usePaneMotionState` publishes it to the UI thread once per
-  change; there `startPaneMotion` springs a single progress (`paneMotionSpec`, one spring) from
-  wherever the panes stand. Every pane frame (catalog width and opacity, destination translation
-  and leading radius, center clip and right radius, right pane translation and width) is derived in
-  worklets from that one progress by `currentPaneGeometry` (`paneGeometry.ts`, pure functions).
-  Panes are absolutely positioned and move by translation and clipping: content layout widths
+  change. At rest Yoga owns pane layout: every pane box takes the relative frame of the settled
+  arrangement (`paneRestFrames.ts`: the frame is a row; the catalog is `34%` of it within
+  320–480 or the whole frame; the destination flows beside it or lies over the frame; center and
+  right split the destination in halves or the right pane covers it), so no measured pixel width
+  or position reaches a settled style and a resized, folded, rotated or inset frame relayouts
+  without any JavaScript event. Only a rearrangement uses explicit pixels: `startPaneMotion`
+  measures the frame on the UI thread (`measure` on the frame's animated ref) when it starts,
+  takes the start from where the panes stand (the settled geometry in that measured frame, or the
+  current frame of an interrupted motion), and springs a single progress (`paneMotionSpec`, one
+  spring). While it moves, every pane frame (catalog width and opacity, destination translation
+  and leading radius, center clip and right radius, right pane translation and width) is derived
+  in worklets from that one progress (`paneFrames.ts`, `paneGeometry.ts`, pure functions); when it
+  settles the boxes return to their relative frames, which Yoga lays out to exactly the motion's
+  explicit end (`sidebarWidth` and the halves use the same formulas; `pane-rest-layout-yoga.test.ts`
+  checks it with Yoga). A stale measurement can therefore affect at most one motion, never the
+  settled layout. A frame that cannot be measured settles at once. While panes move they lie
+  absolutely and move by translation and clipping: content layout widths
   hold the larger end of a motion and change at most at its start and settle, never per frame. No
   pane uses layout transitions, entering/exiting animations or its own spring. A closed right pane
   stays mounted, hidden, while it slides out, until the motion settles. Reduced motion (system or
-  app preference) snaps.
+  app preference) and changes that are not rearrangements settle into the Yoga layout at once.
 - Pane chrome is the one exception to fixed content widths. Each pane box also has a visible
   width that moves with the same progress; `ThreePanelsPane` derives, on the UI thread, how far
   its box's content extends past that visible edge (`paneChromeInset`) and publishes it as
@@ -192,11 +204,12 @@ beside a PR, or the linked pull request beside a thread). One frame owns one mod
   it never rounds both sides. Fullscreen and phone layouts have no neighbours and no rounding. Both
   radii are part of the frame's arrangement: the destination's leading edge and the center's
   trailing edge move with the same progress.
-- Sizing: beside the center the left pane keeps `desktopThreadSidebarWidth` and the center takes
+- Sizing: beside the center the left pane keeps the sidebar width (`sidebarWidth`: 34 % of the
+  frame within 320–480, which the catalog content fills) and the center takes
   the rest; when the right pane is beside the center they split the whole frame width equally
   over the covered catalog. A fullscreen right pane covers the retained
   center; a fullscreen center keeps the right pane mounted past the trailing edge; a fullscreen
-  left pane moves the destination past the trailing edge at its split width; a covered catalog
+  left pane moves the destination past the trailing edge at the frame width; a covered catalog
   keeps its width and dims. Every hidden pane stays mounted. Beside other panes the right pane
   keeps the left pane's edge inset (`threadListLayout.edgeInset`) on both sides.
 - Surfaces: the left and right panes sit on the frame color (`threadListSurface`) with no border

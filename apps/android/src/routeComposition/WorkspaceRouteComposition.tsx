@@ -459,7 +459,6 @@ export function WorkspaceRouteComposition(): React.JSX.Element {
     refreshThreadListAccountRateLimits,
     sidebarSearch,
     threadListSources,
-    viewportWidth: windowLayout.width,
   };
   return (
     <>

@@ -1,5 +1,6 @@
 import { useEffect, type ReactElement } from "react";
-import type { LayoutChangeEvent } from "react-native";
+import type { LayoutChangeEvent, View } from "react-native";
+import { useAnimatedRef } from "react-native-reanimated";
 
 import { workspaceCatalogDiagnostics } from "../data/workspaceCatalogDiagnostics";
 import { useConstant } from "../react/useConstant";
@@ -36,6 +37,7 @@ type WorkspacePaneFrameProps = {
   /** Actions the left (catalog) pane supports; none by default. */
   readonly leftCapabilities?: WorkspacePaneCapabilities;
   readonly presentation: WorkspaceFramePresentation;
+  /** For diagnostics only; Yoga sizes the panes from the frame itself. */
   readonly viewportWidth: number;
 };
 
@@ -81,9 +83,10 @@ function WorkspacePaneFrameContent({
     });
   }, [catalogFocused, catalogStatus, desktop, viewportWidth]);
   const placed = placeFramePresentation(presentation, visibility);
+  const frameRef = useAnimatedRef<View>();
   const geometry = usePaneMotionState(
     resolvePaneArrangement({ presentation: placed, rightPresent, visibility }),
-    viewportWidth,
+    frameRef,
   );
   usePaneMotionFrameProbe(geometry.moving);
   const catalogAccessible = isCatalogAccessible(placed, desktop, catalogFocused);
@@ -124,6 +127,7 @@ function WorkspacePaneFrameContent({
         }
         detailStyle={desktop ? v1WorkspaceShellStyles.destination : undefined}
         detailViewProps={destinationViewProps(desktop, catalogFocused, centerHidden)}
+        frameRef={frameRef}
         frameStyle={v1WorkspaceShellStyles.paneFrame}
         geometry={geometry}
         presentation={placed}

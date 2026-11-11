@@ -3,8 +3,8 @@ import { useDerivedValue } from "react-native-reanimated";
 
 import { SurfaceToneProvider } from "../ui/surfaceTone";
 import { ThreePanelsContext, type ThreePanelsContent } from "../ui/threePanels";
-import { paneChromeInset, type PaneBox } from "./paneGeometry";
-import { currentPaneGeometry } from "./paneMotion";
+import { currentChromeInset } from "./paneFrames";
+import type { PaneBox } from "./paneGeometry";
 import {
   useWorkspacePaneChrome,
   WorkspacePanesContext,
@@ -44,7 +44,7 @@ export function ThreePanelsPane({
   const chrome = useWorkspacePaneChrome({ capabilities, label, pane });
   // One UI-thread derivation per pane; it recomputes only while the frame's progress moves.
   const chromeInset = useDerivedValue(() =>
-    geometry === null ? 0 : paneChromeInset(currentPaneGeometry(geometry), box),
+    geometry === null ? 0 : currentChromeInset(geometry, box),
   );
   const tone = PANE_TONE[pane];
   return (

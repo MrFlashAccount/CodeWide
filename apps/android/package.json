@@ -139,7 +139,8 @@
     "oxlint-tsgolint": "7.0.2001",
     "react-test-renderer": "19.2.3",
     "speedscope": "1.25.0",
-    "tm-grammars": "1.32.5"
+    "tm-grammars": "1.32.5",
+    "yoga-layout": "3.2.1"
   },
   "enriched-markdown": {
     "enableCodeHighlight": false,

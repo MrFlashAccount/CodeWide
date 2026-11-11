@@ -87,7 +87,7 @@ function Workspace(): React.JSX.Element {
           testID="center-layout"
         />
       }
-      presentation={{ kind: "wide", viewportWidth: FRAME }}
+      presentation={{ kind: "wide" }}
       viewportWidth={FRAME}
     />
   );
@@ -102,8 +102,14 @@ function chromeInsets(view: ReturnType<typeof render>, pane: "center" | "right")
   ];
 }
 
-/** Holds the spring halfway: the rearrangement has started and has not settled. */
+/**
+ * Holds the spring halfway in a frame the UI thread measures `FRAME` wide: the rearrangement has
+ * started and has not settled.
+ */
 function stallSpringHalfway(): jest.SpyInstance {
+  jest
+    .spyOn(Reanimated, "measure")
+    .mockReturnValue({ height: 800, pageX: 0, pageY: 0, width: FRAME, x: 0, y: 0 });
   return jest.spyOn(Reanimated, "withSpring").mockImplementation(() => 0.5);
 }
 

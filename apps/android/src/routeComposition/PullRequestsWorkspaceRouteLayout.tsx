@@ -63,7 +63,7 @@ export function PullRequestsWorkspacePaneLayout(props: PaneLayoutProps): React.J
           {props.children}
         </PullRequestsDestinationPlacement.Provider>
       }
-      presentation={pullRequestsPresentation({ catalogFocused, desktop, viewportWidth })}
+      presentation={pullRequestsPresentation({ catalogFocused, desktop })}
       viewportWidth={viewportWidth}
     />
   );
@@ -108,16 +108,14 @@ function pullRequestsCatalogPresentation(props: PaneLayoutProps) {
 function pullRequestsPresentation({
   catalogFocused,
   desktop,
-  viewportWidth,
 }: {
   readonly catalogFocused: boolean;
   readonly desktop: boolean;
-  readonly viewportWidth: number;
 }): WorkspaceFramePresentation {
   if (catalogFocused) {
-    return desktop ? { kind: "wide", viewportWidth } : { kind: "catalogOnly" };
+    return desktop ? { kind: "wide" } : { kind: "catalogOnly" };
   }
-  return desktop ? { kind: "wide", viewportWidth } : { kind: "detailOnly" };
+  return desktop ? { kind: "wide" } : { kind: "detailOnly" };
 }
 
 function renderPullRequestsPaneLayout(props: PaneLayoutProps): React.JSX.Element {

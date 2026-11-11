@@ -33,5 +33,4 @@ export type ThreadSidebarProps = {
   serverScope: ServerScope;
   threadNavigation: ThreadListNavigation;
   threads: ThreadListItem[];
-  width: number;
 } & SidebarProjectsNavigation;

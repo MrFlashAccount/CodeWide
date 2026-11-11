@@ -2,7 +2,6 @@ import { observable, type Observable } from "@legendapp/state";
 import { useSelector } from "@legendapp/state/react";
 import { createContext, useContext } from "react";
 
-import { desktopThreadSidebarWidth } from "../presentation/layouts/windowLayout";
 import { useEvent } from "../react/useEvent";
 import { radii } from "../theme";
 import type { ThreePanelsChrome, ThreePanelsPane, ThreePanelsVariant } from "../ui/threePanels";
@@ -107,12 +106,10 @@ export function placeFramePresentation(
   }
   if (visibility.kind === "fullscreen") {
     return visibility.pane === "left"
-      ? { kind: "wideCatalogExpanded", viewportWidth: presentation.viewportWidth }
-      : { kind: "wideDetailExpanded", viewportWidth: presentation.viewportWidth };
+      ? { kind: "wideCatalogExpanded" }
+      : { kind: "wideDetailExpanded" };
   }
-  return visibility.panes === "center+right"
-    ? { kind: "wideDetailExpanded", viewportWidth: presentation.viewportWidth }
-    : presentation;
+  return visibility.panes === "center+right" ? { kind: "wideDetailExpanded" } : presentation;
 }
 
 /**
@@ -149,6 +146,16 @@ export function rightPanePlacement(visibility: WorkspacePaneVisibility): RightPa
   return visibility.panes === "center+right" ? "beside" : "stashed";
 }
 
+/** The wide presentations keep the catalog at its sidebar width wherever it is shown. */
+const SIDEBAR: Readonly<Record<WorkspaceTwoPanePresentation["kind"], boolean>> = {
+  catalogOnly: false,
+  detailOnly: false,
+  stacked: false,
+  wide: true,
+  wideCatalogExpanded: true,
+  wideDetailExpanded: true,
+};
+
 const LEFT_PLACEMENT: Readonly<
   Record<WorkspaceTwoPanePresentation["kind"], PaneArrangement["left"]>
 > = {
@@ -181,8 +188,7 @@ export function resolvePaneArrangement({
     centerRightRadius: corners.right,
     left: LEFT_PLACEMENT[presentation.kind],
     right: !rightPresent || placement === "stashed" ? "offscreen" : placement,
-    sidebarWidth:
-      "viewportWidth" in presentation ? desktopThreadSidebarWidth(presentation.viewportWidth) : 0,
+    sidebar: SIDEBAR[presentation.kind],
   };
 }
 

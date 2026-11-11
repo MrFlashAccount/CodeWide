@@ -1,11 +1,11 @@
 import { act, fireEvent, testRouter, waitFor, within } from "expo-router/testing-library";
 import { router } from "expo-router/build/imperative-api";
 
-import { desktopThreadSidebarWidth } from "../src/presentation/layouts/windowLayout";
 import { linkedThreadSelectionKey } from "../src/routeComposition/pullRequestNavigation";
 import { renderProductionPullRequestRouter } from "./fixtures/PullRequestProductionRouter";
 import { productionReviewThread } from "./fixtures/PullRequestProductionScreens";
 import { getAppDialogRequest, resetAppDialog } from "./mocks/AppDialog";
+import { RESTING_SIDEBAR } from "./fixtures/paneRestLayout";
 
 const mockEnsureReviewChat = jest.fn();
 const mockPrepareThreadLink = jest.fn();
@@ -369,9 +369,7 @@ it("keys compact claims to the active route across resize, Back, close and resto
 
   act(() => router.push("/pulls/server/fpr1.github-92"));
   expect(view.getByTestId("floating-catalog-mode-bar")).toBeVisible();
-  expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle({
-    width: desktopThreadSidebarWidth(1000),
-  });
+  expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle(RESTING_SIDEBAR);
 
   resizeWorkspace(true, 1200);
   fireEvent.press(view.getByTestId("pull-request-linked-chat"));
@@ -395,7 +393,5 @@ it("keys compact claims to the active route across resize, Back, close and resto
     "Start linked review chat",
     "Threads",
   ]);
-  expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle({
-    width: desktopThreadSidebarWidth(1000),
-  });
+  expect(view.getByTestId("workspace-catalog-pane")).toHaveStyle(RESTING_SIDEBAR);
 });

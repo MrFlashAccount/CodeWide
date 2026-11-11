@@ -61,7 +61,6 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     serverScope,
     threadNavigation,
     threads,
-    width,
   } = props;
 
   const projectSource = useProjectSidebarThreads(
@@ -104,7 +103,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
   });
 
   return (
-    <View style={[styles.threadSidebar, { width }]} testID="thread-list-pane">
+    <View style={styles.threadSidebar} testID="thread-list-pane">
       {props.headerVisible === false ? null : (
         <ThreadSidebarHeader props={props} setQuery={setQuery} />
       )}
