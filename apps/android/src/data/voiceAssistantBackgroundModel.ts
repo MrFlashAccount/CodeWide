@@ -1,5 +1,5 @@
 import type { TurnControlsValue } from "./turn-controls-types";
-import { primaryProviderModels } from "./turnControlsAgentProviders";
+import { defaultProviderModels } from "./turnControlsAgentProviders";
 import { unknownRecord } from "./unknownRecord";
 
 export const VOICE_ASSISTANT_BACKGROUND_MODEL_PREFERENCE_ID = "voice-assistant-background-model";
@@ -187,7 +187,7 @@ export function resolveVoiceAssistantBackgroundModel(
   if (preference.status === "serverDefault") {
     return { status: "serverDefault" };
   }
-  const supervisorModels = primaryProviderModels(models);
+  const supervisorModels = defaultProviderModels(models);
   const selected = selectedAvailableModel(preference, supervisorModels);
   if (selected !== null) {
     return selected;

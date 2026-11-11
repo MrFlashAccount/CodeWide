@@ -215,7 +215,7 @@ enum Command {
     Vcs(VcsOptions),
     /// Forge providers and external forge plugins.
     Forge(forge_cli::ForgeOptions),
-    /// Agent provider configuration (`agent-providers.json`).
+    /// Agent providers this machine offers.
     Providers(ProvidersOptions),
     /// Companion-owned HTTP proxy settings for dictation requests.
     Proxy(ProxyOptions),
@@ -229,9 +229,10 @@ struct ProvidersOptions {
 
 #[derive(Debug, Subcommand)]
 enum ProvidersCommand {
-    /// Prints the configured providers and whether each could start, as JSON.
-    /// Offline: reads the configuration and file metadata only. Exits with an
-    /// error when the configuration is invalid or a provider is not ready.
+    /// Prints the providers the companion would enable on this machine and
+    /// whether each could start, as JSON. Offline: reads file metadata and
+    /// the login shell's `PATH` only. Exits with an error when a found
+    /// provider is not ready.
     Status {
         /// Companion state directory (default: the user service's).
         #[arg(long)]
@@ -799,7 +800,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let report = provider_status::report(&state_dir, std::env::var_os("PATH").as_ref());
                 println!("{}", serde_json::to_string_pretty(&report)?);
                 if !report.ready() {
-                    return Err("agent provider configuration is not ready".into());
+                    return Err("an agent provider is not ready".into());
                 }
             }
         },
@@ -1475,7 +1476,6 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let codex = CodexProvider::new(upstream.clone())
         .with_storage(CodexStorage::new(history).with_resources(resources.clone()));
     let registry = codewide_companion::agent::providers::load_registry(
-        &state_directory,
         Arc::new(codex),
         Some(&codewide_companion::agent::providers::ProviderHost {
             index: store.clone(),

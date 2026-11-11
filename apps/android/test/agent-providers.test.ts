@@ -89,9 +89,14 @@ describe("agent provider list", () => {
       limits: { kind: "notReported" },
       name: "Claude",
       planLabel: "max",
-      primary: false,
       status: "live",
     });
+    // The deprecated `primary` flag is neither required nor read.
+    const { primary: _deprecated, ...withoutPrimary } = providers.providers[1];
+    expect(
+      parseAgentProvidersResult({ ...providers, providers: [providers.providers[0], withoutPrimary] })
+        ?.providers[1]?.id,
+    ).toBe("claude");
     expect(parseAgentProvidersResult(withClaude({ status: "sleeping" }))).toBeNull();
     expect(
       parseAgentProvidersResult(withClaude({ capabilities: null, status: "disabled" }))

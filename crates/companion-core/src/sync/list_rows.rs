@@ -206,7 +206,7 @@ pub(super) fn test_feed(store: &Arc<IndexStore>) -> RowFeed {
     )
     .into_arc();
     let gateway = Arc::new(ClientWireGateway::new(
-        Arc::new(ProviderRegistry::single(provider, Vec::new())),
+        Arc::new(ProviderRegistry::single(provider)),
         Arc::new(BindingStore::new(store.clone())),
     ));
     RowFeed::new(gateway, store.clone())

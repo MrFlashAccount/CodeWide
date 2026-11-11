@@ -94,7 +94,7 @@ impl ReplayProjector {
             Some(id) => registry.get(id),
             // A legacy journal may predate bindings. A single-provider host
             // still supplies unambiguous provider context without model lookup.
-            None if !registry.is_multi_provider() => Some(registry.primary()),
+            None if !registry.is_multi_provider() => Some(registry.lead()),
             None => None,
         };
         let pricing = provider.and_then(|provider| provider.usage_pricing());
@@ -181,13 +181,12 @@ mod tests {
     ) -> Result<Arc<ClientWireGateway>, RegistryError> {
         let primary = provider("primary", Some(table(1.0)));
         let registry = if multi {
-            ProviderRegistry::new(
-                vec![primary, provider("secondary", priced.then(|| table(7.0)))],
-                &ProviderId::from_static("primary"),
-                Vec::new(),
-            )?
+            ProviderRegistry::new(vec![
+                primary,
+                provider("secondary", priced.then(|| table(7.0))),
+            ])?
         } else {
-            ProviderRegistry::single(primary, Vec::new())
+            ProviderRegistry::single(primary)
         };
         Ok(Arc::new(ClientWireGateway::new(
             Arc::new(registry),
@@ -229,11 +228,10 @@ mod tests {
         let directory = tempfile::tempdir()?;
         let store = Arc::new(IndexStore::open(directory.path().join("replay.redb"))?);
         let context = Arc::new(ClientWireGateway::new(
-            Arc::new(ProviderRegistry::new(
-                vec![named_provider("primary"), named_provider("secondary")],
-                &ProviderId::from_static("primary"),
-                Vec::new(),
-            )?),
+            Arc::new(ProviderRegistry::new(vec![
+                named_provider("primary"),
+                named_provider("secondary"),
+            ])?),
             Arc::new(BindingStore::new(store.clone())),
         ));
         context

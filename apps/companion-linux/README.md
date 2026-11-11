@@ -45,13 +45,12 @@ user unit sets no `RUST_LOG`; read the records with
 ## Agent providers
 
 `codewide-companion providers status [--state-dir <dir>]` prints the
-configured providers from `agent-providers.json` as JSON and exits non-zero
-unless every configured provider could start. It is offline (configuration
-and file metadata only). Codex is always enabled; a host without Codex is not
-supported. Claude needs no setup and ships nothing: the companion drives the
-user's own `claude` CLI directly and runs Claude when a signed-in `claude` is
-found;
-`"claude": false` in `agent-providers.json` turns it off. See
+providers the companion would enable on this machine as JSON and exits
+non-zero when a found provider could not start. It is offline (file metadata
+and the login shell's `PATH` only). Codex is always enabled; a host without
+Codex is not supported. Claude needs no setup and ships nothing: the companion
+drives the user's own `claude` CLI directly and runs Claude when `claude` is
+found. There is no provider configuration file. See
 [docs/agent-providers.md](../../docs/agent-providers.md#install-and-configuration).
 
 ## Running locally

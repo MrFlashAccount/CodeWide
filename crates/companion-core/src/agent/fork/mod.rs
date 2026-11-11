@@ -577,11 +577,7 @@ mod tests {
         let target_dyn: Arc<dyn AgentProvider> = target.clone();
         let source_provider = ProviderId::from_static(source_provider);
         let target_provider = ProviderId::from_static(target_provider);
-        let registry = Arc::new(ProviderRegistry::new(
-            vec![source_dyn, target_dyn],
-            &source_provider,
-            Vec::new(),
-        )?);
+        let registry = Arc::new(ProviderRegistry::new(vec![source_dyn, target_dyn])?);
         let bindings = Arc::new(BindingStore::new(store.clone()));
         bindings
             .bind(

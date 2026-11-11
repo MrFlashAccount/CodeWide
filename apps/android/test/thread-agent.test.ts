@@ -14,7 +14,7 @@ import {
 import type { TurnControlsValue } from "../src/data/turn-controls-types";
 import {
   permissionRowWithProviders,
-  primaryProviderModels,
+  defaultProviderModels,
 } from "../src/data/turnControlsAgentProviders";
 import {
   decodeVoiceAssistantBackgroundModelPreference,
@@ -55,7 +55,6 @@ describe("thread agent descriptor", () => {
   it("reads declared capabilities from either wire form and treats a missing descriptor as legacy Codex", () => {
     expect(readThreadAgent(claudeThread)).toEqual({
       capabilities: ["threads.compact", "turns.startWhileActive", "turns.steer"],
-      primary: false,
       provider: "claude",
       providerName: "Claude",
     });
@@ -63,12 +62,12 @@ describe("thread agent descriptor", () => {
       readThreadAgent({
         codewideAgent: { capabilities: ["goals", "review", 3], provider: "codex" },
       }),
-    ).toEqual({ capabilities: ["goals", "review"], primary: true, provider: "codex", providerName: "codex" });
+    ).toEqual({ capabilities: ["goals", "review"], provider: "codex", providerName: "codex" });
     expect(
       readThreadAgent({
         codewideAgent: { capabilities: { review: false, fork: null }, provider: "x", providerName: " " },
       }),
-    ).toEqual({ capabilities: [], primary: true, provider: "x", providerName: "x" });
+    ).toEqual({ capabilities: [], provider: "x", providerName: "x" });
     expect(readThreadAgent({})).toBeNull();
     expect(readThreadAgent({ codewideAgent: null })).toBeNull();
     expect(threadAgentSupports(null, "review")).toBe(true);
@@ -79,7 +78,6 @@ describe("thread agent descriptor", () => {
   it("reads a malformed descriptor as an agent without capabilities, not as legacy Codex", () => {
     expect(readThreadAgent({ codewideAgent: { capabilities: [], provider: "" } })).toEqual({
       capabilities: [],
-      primary: true,
       provider: null,
       providerName: "Agent",
     });
@@ -88,7 +86,6 @@ describe("thread agent descriptor", () => {
     });
     expect(missingCapabilities).toEqual({
       capabilities: [],
-      primary: false,
       provider: "claude",
       providerName: "Claude",
     });
@@ -169,8 +166,8 @@ describe("provider-scoped catalogs", () => {
     );
   });
 
-  it("restricts the hidden supervisor thread to the primary provider's models", () => {
-    expect(primaryProviderModels(mixedControls.models).map((row) => row.id)).toEqual([
+  it("restricts the hidden supervisor thread to the default provider's models", () => {
+    expect(defaultProviderModels(mixedControls.models).map((row) => row.id)).toEqual([
       "gpt",
       "unannotated",
     ]);
@@ -233,10 +230,10 @@ describe("capability-gated thread actions", () => {
 describe("thread list provider badge", () => {
   it("labels every thread with a declared provider and leaves legacy identity unknown", () => {
     const claude = summary("claude-thread", {
-      codewideAgent: { capabilities: [], primary: false, provider: provider("claude"), providerName: "Claude" },
+      codewideAgent: { capabilities: [], provider: provider("claude"), providerName: "Claude" },
     });
     const codex = summary("codex-thread", {
-      codewideAgent: { capabilities: ["review"], primary: true, provider: provider("codex"), providerName: "Codex" },
+      codewideAgent: { capabilities: ["codex.native", "review"], provider: provider("codex"), providerName: "Codex" },
     });
     expect(storedThreadToListItem(claude).agentBadge).toBe("Claude");
     expect(storedThreadToListItem(codex).agentBadge).toBe("Codex");

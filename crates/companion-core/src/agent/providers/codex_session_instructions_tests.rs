@@ -16,9 +16,8 @@ use super::{build_registry, codex::CodexProvider};
 use crate::{
     agent::{
         client_conventions::CLIENT_CONVENTIONS,
-        model::{AppThreadId, ProviderId, ThreadCreateParams, ThreadSettings},
+        model::{AppThreadId, ThreadCreateParams, ThreadSettings},
         provider::{AgentProvider, NativeSurface, ProviderStatus},
-        registry::AgentProvidersConfig,
     },
     upstream::UpstreamHandle,
 };
@@ -85,15 +84,8 @@ async fn connect(configured: Value) -> Result<Connected, Box<dyn std::error::Err
     let (received_tx, received) = mpsc::unbounded_channel();
     tokio::spawn(fake_app_server(listener, configured, received_tx));
     let codex = Arc::new(CodexProvider::new(UpstreamHandle::spawn(socket_path)));
-    // Claude off, so the test never runs the machine's `claude`.
-    let config = AgentProvidersConfig {
-        primary: ProviderId::from_static(super::codex::PROVIDER_ID),
-        entries: vec![(
-            ProviderId::from_static(super::claude::PROVIDER_ID),
-            Value::Bool(false),
-        )],
-    };
-    let _registry = build_registry(Some(config), codex.clone(), None);
+    // Codex only, so the test never runs the machine's `claude`.
+    let _registry = build_registry(codex.clone(), Vec::new());
     let mut status = codex.subscribe_status();
     tokio::time::timeout(Duration::from_secs(5), async {
         while *status.borrow() != ProviderStatus::Live {

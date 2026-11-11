@@ -57,23 +57,25 @@ pub const APPROVAL_TITLE_FIELD: &str = "codewideApprovalTitle";
 pub struct WireProvider {
     pub descriptor: ProviderDescriptor,
     pub capabilities: CapabilitySet,
-    pub primary_id: ProviderId,
+    pub lead_id: ProviderId,
     pub multi_provider: bool,
 }
 
 impl WireProvider {
     #[must_use]
-    pub fn is_primary(&self) -> bool {
-        self.descriptor.id == self.primary_id
+    pub fn is_lead(&self) -> bool {
+        self.descriptor.id == self.lead_id
     }
 
-    /// The `Thread.codewideAgent` value.
+    /// The `Thread.codewideAgent` value. `primary` is a deprecated
+    /// compatibility field (`true` for the lead) kept for published clients
+    /// that still require it; current clients do not read it.
     #[must_use]
     pub fn extension(&self) -> Value {
         json!({
             "provider": self.descriptor.id.as_str(),
             "providerName": self.descriptor.display_name,
-            "primary": self.is_primary(),
+            "primary": self.is_lead(),
             "capabilities": self.capabilities,
         })
     }

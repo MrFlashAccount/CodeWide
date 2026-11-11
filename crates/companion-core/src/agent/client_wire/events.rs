@@ -277,7 +277,7 @@ impl EventProjector {
                 provider: self.provider.descriptor.id.clone(),
                 native_id,
             },
-            &self.provider.primary_id,
+            &self.provider.lead_id,
         )
     }
 
@@ -513,7 +513,7 @@ mod tests {
                 version: "1".into(),
             },
             capabilities: CapabilitySet::none(StartWhileActiveMode::Busy),
-            primary_id: ProviderId::from_static("codex"),
+            lead_id: ProviderId::from_static("codex"),
             multi_provider: true,
         })
     }

@@ -122,16 +122,12 @@ fn proxy_value<'value>(
 }
 
 fn reset_client(
-    config: &ClaudeConfig,
     config_directory: &Path,
     home: Option<&Path>,
     proxy: &ProxyEnvironment,
 ) -> Result<RateLimitResetClient, String> {
-    let state_root = config
-        .environment
-        .claude_config_dir
-        .clone()
-        .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from))
+    let state_root = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
         .or_else(|| home.map(Path::to_path_buf))
         .ok_or("Claude's state directory is unknown (no HOME)")?;
     RateLimitResetClient::new(
@@ -339,15 +335,12 @@ impl ClaudeProvider {
             .ok_or("Claude's configuration directory is unknown (no HOME)")?;
         let mut environment = config.child_environment(std::env::var_os("PATH").as_deref());
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-        let settings = user_settings_path(
-            config.environment.claude_config_dir.as_deref(),
-            home.as_deref().unwrap_or(&config_directory),
-        );
+        let settings = user_settings_path(home.as_deref().unwrap_or(&config_directory));
         // Continuing without the user's proxy could bypass a network
         // configuration they require.
         let proxy = read_user_proxy_environment(&settings)
             .map_err(|err| format!("the Claude proxy environment cannot be read: {err}"))?;
-        let reset_client = reset_client(config, &config_directory, home.as_deref(), &proxy)?;
+        let reset_client = reset_client(&config_directory, home.as_deref(), &proxy)?;
         environment.extend(proxy.environment());
         let limits = Arc::new(PublishedLimits::new(self.rate_limits.clone()));
         let account = Arc::new(Account::new(

@@ -6,7 +6,7 @@
 //! pass the row hub (`codewideList`, journal head read before the page). Providers without
 //! the native surface are answered from neutral operations projected by
 //! `agent::client_wire`. Merged calls (`thread/list`, `model/list`,
-//! `permissionProfile/list`) take the primary provider's page and add the
+//! `permissionProfile/list`) take the lead provider's page and add the
 //! other providers' rows only in multi-provider mode.
 
 use std::sync::Arc;
@@ -618,8 +618,8 @@ pub(super) async fn handle_merged(
     method: &str,
     merged: MergedMethod,
 ) -> Result<(), ()> {
-    let (primary, wire) = hub.gateway.primary();
-    let Some(native) = primary.native_surface() else {
+    let (lead, wire) = hub.gateway.lead();
+    let Some(native) = lead.native_surface() else {
         return send_rpc_error(socket, id, -32_601, "Method is not supported on this host").await;
     };
     match merged {
@@ -653,10 +653,10 @@ async fn merge_catalog(
     hub: &SyncHub,
     mut response: Value,
     merged: MergedMethod,
-    primary: &WireProvider,
+    lead: &WireProvider,
     first_page: bool,
 ) -> Value {
-    if !primary.multi_provider {
+    if !lead.multi_provider {
         return response;
     }
     let Some(result) = response.get_mut("result") else {
@@ -667,7 +667,7 @@ async fn merge_catalog(
     let mut unavailable = Vec::new();
     let mut others = Vec::new();
     if asks_others {
-        for (provider, wire) in hub.gateway.non_primary() {
+        for (provider, wire) in hub.gateway.others() {
             if provider.status() == ProviderStatus::Live {
                 others.push((provider, wire));
             } else {
@@ -686,7 +686,7 @@ async fn merge_catalog(
                 }
             }
         }
-        catalog::merge_models(result.take(), primary, &catalogs, first_page)
+        catalog::merge_models(result.take(), lead, &catalogs, first_page)
     } else {
         let mut catalogs = Vec::new();
         for (provider, wire) in &others {
@@ -698,7 +698,7 @@ async fn merge_catalog(
                 }
             }
         }
-        catalog::merge_permission_profiles(result.take(), primary, &catalogs)
+        catalog::merge_permission_profiles(result.take(), lead, &catalogs)
     };
     catalog::attach_unavailable(&mut merged_result, &unavailable);
     *result = merged_result;
@@ -707,7 +707,7 @@ async fn merge_catalog(
 
 fn live_others(gateway: &ClientWireGateway) -> Vec<(Arc<dyn AgentProvider>, WireProvider)> {
     gateway
-        .non_primary()
+        .others()
         .into_iter()
         .filter(|(provider, _)| provider.status() == ProviderStatus::Live)
         .collect()
@@ -762,7 +762,7 @@ async fn handle_thread_list(
         None
     };
     // Only `thread/list` merges; the supervisor list is owned by the
-    // providers declaring `globalSupervisor`, which the primary leads.
+    // providers declaring `globalSupervisor`, which the lead provider leads.
     let plan = list::prepare(
         &params,
         wire.multi_provider && merged == MergedMethod::ThreadList,

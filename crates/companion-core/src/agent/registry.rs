@@ -1,97 +1,79 @@
 //! The set of enabled providers, the capability index and host-capability
 //! owners.
 //!
-//! Providers are kept in configured order; the first entry is the primary
-//! provider, which leads `thread/list` pagination, owns the default model and
-//! suppresses the provider badge. The configuration loader at the bottom only
-//! parses `agent-providers.json`; mapping its provider ids to adapters is
-//! `build_registry` in `agent/providers/mod.rs`, the only code outside
-//! the adapter crates that branches on a provider id. Everywhere else
+//! Providers are kept in provider-id order. No provider is configured as
+//! preferred: the lead is the provider that declares `codex.native`, the
+//! Codex App Server surface the client wire speaks. The lead's raw surface
+//! answers the merged `thread/list`, `model/list` and
+//! `permissionProfile/list`, its runtime request ids pass through unprefixed,
+//! and it is the default provider of a new thread. Mapping provider ids to
+//! adapters is `build_registry` in `agent/providers/mod.rs`, the only code
+//! outside the adapter crates that branches on a provider id. Everywhere else
 //! providers are selected by binding or by capability.
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use agent_core::usage::UsagePricing;
-use serde::Deserialize;
-use serde_json::{Map, Value};
 
 use super::{
     model::{Capability, ProviderId},
     provider::AgentProvider,
 };
 
-/// Name of the provider configuration file inside the companion state directory.
-pub const CONFIG_FILE_NAME: &str = "agent-providers.json";
-
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
-    #[error("the primary provider {0} is not enabled")]
-    PrimaryMissing(String),
+    #[error("no provider is enabled")]
+    Empty,
     #[error("provider {0} is registered twice")]
     Duplicate(String),
 }
 
-/// Enabled providers in configured order, plus known-but-disabled ids.
+/// Enabled providers in provider-id order.
 pub struct ProviderRegistry {
     providers: Vec<Arc<dyn AgentProvider>>,
     ids: Vec<ProviderId>,
-    disabled: Vec<ProviderId>,
+    /// Index of the lead provider in `providers`.
+    lead: usize,
 }
 
 impl ProviderRegistry {
-    /// Builds a registry whose first provider is `primary`.
+    /// Builds a registry of `providers` in provider-id order.
     ///
     /// # Errors
-    /// Returns an error when `primary` is not among `providers` or an id repeats.
-    pub fn new(
-        providers: Vec<Arc<dyn AgentProvider>>,
-        primary: &ProviderId,
-        disabled: Vec<ProviderId>,
-    ) -> Result<Self, RegistryError> {
-        let mut ordered = Vec::with_capacity(providers.len());
-        let mut rest = Vec::with_capacity(providers.len());
-        for provider in providers {
-            if &provider.descriptor().id == primary {
-                ordered.push(provider);
-            } else {
-                rest.push(provider);
-            }
-        }
-        if ordered.len() != 1 {
-            return Err(RegistryError::PrimaryMissing(primary.to_string()));
-        }
-        ordered.extend(rest);
-        let ids = ordered
+    /// Returns an error when `providers` is empty or an id repeats.
+    pub fn new(mut providers: Vec<Arc<dyn AgentProvider>>) -> Result<Self, RegistryError> {
+        providers.sort_by_key(|provider| provider.descriptor().id);
+        let ids = providers
             .iter()
             .map(|provider| provider.descriptor().id)
             .collect::<Vec<_>>();
-        for (index, id) in ids.iter().enumerate() {
-            if ids[..index].contains(id) {
-                return Err(RegistryError::Duplicate(id.to_string()));
-            }
+        if providers.is_empty() {
+            return Err(RegistryError::Empty);
         }
-        let disabled = disabled
-            .into_iter()
-            .filter(|id| !ids.contains(id))
-            .collect();
+        if let Some(pair) = ids.windows(2).find(|pair| pair[0] == pair[1]) {
+            return Err(RegistryError::Duplicate(pair[0].to_string()));
+        }
+        // The provider speaking the client's native wire leads; a host
+        // without one (test hosts) is led by the first id.
+        let lead = providers
+            .iter()
+            .position(|provider| provider.capabilities().supports(Capability::CodexNative))
+            .unwrap_or(0);
         Ok(Self {
-            providers: ordered,
+            providers,
             ids,
-            disabled,
+            lead,
         })
     }
 
-    /// A registry with one provider, which is its primary.
+    /// A registry with one provider, which leads.
     #[must_use]
-    pub fn single(provider: Arc<dyn AgentProvider>, disabled: Vec<ProviderId>) -> Self {
+    pub fn single(provider: Arc<dyn AgentProvider>) -> Self {
         let id = provider.descriptor().id;
         Self {
             providers: vec![provider],
-            disabled: disabled
-                .into_iter()
-                .filter(|candidate| candidate != &id)
-                .collect(),
             ids: vec![id],
+            lead: 0,
         }
     }
 
@@ -102,20 +84,23 @@ impl ProviderRegistry {
             .await;
     }
 
-    /// The primary provider (first in order).
+    /// The lead provider: the one declaring `codex.native` (Codex). Its raw
+    /// surface answers the merged list methods, its request ids are
+    /// unprefixed, and it is the default provider of `thread/start` without
+    /// `codewideAgentProvider` and of companion-created threads.
     #[must_use]
-    pub fn primary(&self) -> &Arc<dyn AgentProvider> {
-        &self.providers[0]
+    pub fn lead(&self) -> &Arc<dyn AgentProvider> {
+        &self.providers[self.lead]
     }
 
     #[must_use]
-    pub fn primary_id(&self) -> &ProviderId {
-        &self.ids[0]
+    pub fn lead_id(&self) -> &ProviderId {
+        &self.ids[self.lead]
     }
 
     #[must_use]
-    pub fn is_primary(&self, id: &ProviderId) -> bool {
-        &self.ids[0] == id
+    pub fn is_lead(&self, id: &ProviderId) -> bool {
+        self.lead_id() == id
     }
 
     /// Whether more than one provider is enabled. Client-wire extensions
@@ -142,7 +127,8 @@ impl ProviderRegistry {
     }
 
     /// The enabled providers' cleaners of their own formats in user text;
-    /// a thread of an unknown provider uses the primary's.
+    /// a thread of an unknown provider is native-wire text, cleaned by the
+    /// lead's.
     #[must_use]
     pub(crate) fn user_text_cleaners(&self) -> crate::user_message_projection::UserTextCleaners {
         crate::user_message_projection::UserTextCleaners::new(
@@ -155,7 +141,7 @@ impl ProviderRegistry {
                         .map(|cleaner| (id.clone(), cleaner))
                 })
                 .collect(),
-            self.primary_id().clone(),
+            self.lead_id().clone(),
         )
     }
 
@@ -167,38 +153,41 @@ impl ProviderRegistry {
             .map(|index| &self.providers[index])
     }
 
-    /// Enabled providers in configured order.
+    /// Enabled providers in provider-id order.
     pub fn enabled(&self) -> impl Iterator<Item = &Arc<dyn AgentProvider>> {
         self.providers.iter()
     }
 
-    /// Configured or previously bound providers that are not enabled now.
-    pub fn disabled(&self) -> impl Iterator<Item = &ProviderId> {
-        self.disabled.iter()
-    }
-
-    /// Whether `id` was configured or bound before but is not enabled now.
-    #[must_use]
-    pub fn is_known_disabled(&self, id: &ProviderId) -> bool {
-        self.disabled.contains(id)
-    }
-
-    /// The first provider in order that declares `capability`; host-level
-    /// capabilities (`host.fs`, `host.config`, account methods) route here.
-    #[must_use]
-    pub fn owner(&self, capability: Capability) -> Option<&Arc<dyn AgentProvider>> {
+    /// Enabled providers other than the lead, in provider-id order.
+    pub fn others(&self) -> impl Iterator<Item = &Arc<dyn AgentProvider>> {
+        let lead = self.lead;
         self.providers
             .iter()
+            .enumerate()
+            .filter(move |(index, _)| *index != lead)
+            .map(|(_, provider)| provider)
+    }
+
+    /// The owner of a host-level capability (`host.fs`, `host.config`,
+    /// account methods, stored history): the lead when it declares
+    /// `capability`, else the first declaring provider in id order.
+    #[must_use]
+    pub fn owner(&self, capability: Capability) -> Option<&Arc<dyn AgentProvider>> {
+        std::iter::once(self.lead())
+            .chain(self.others())
             .find(|provider| provider.capabilities().supports(capability))
     }
 
-    /// Providers that can recognize thread ids created outside `CodeWide`.
+    /// Providers that can recognize thread ids created outside `CodeWide`:
+    /// the lead first, then the others in id order.
     pub fn discovery_providers(&self) -> impl Iterator<Item = &Arc<dyn AgentProvider>> {
-        self.providers.iter().filter(|provider| {
-            provider
-                .capabilities()
-                .supports(Capability::ThreadsExternalDiscovery)
-        })
+        std::iter::once(self.lead())
+            .chain(self.others())
+            .filter(|provider| {
+                provider
+                    .capabilities()
+                    .supports(Capability::ThreadsExternalDiscovery)
+            })
     }
 }
 
@@ -211,147 +200,9 @@ pub fn disabled_provider_name(id: &ProviderId) -> String {
     })
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
-    #[error("cannot read {path}: {source}")]
-    Read {
-        path: String,
-        source: std::io::Error,
-    },
-    #[error("invalid provider configuration: {0}")]
-    Invalid(String),
-}
-
-/// Parsed `agent-providers.json`: the primary id and one opaque entry per
-/// configured provider, validated by that provider's own adapter.
-#[derive(Clone, Debug, PartialEq)]
-pub struct AgentProvidersConfig {
-    pub primary: ProviderId,
-    pub entries: Vec<(ProviderId, Value)>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawConfig {
-    version: u32,
-    primary: String,
-    #[serde(default)]
-    providers: Map<String, Value>,
-}
-
-impl AgentProvidersConfig {
-    /// The configuration used when the file is absent: the primary provider
-    /// only, built from the existing host flags.
-    #[must_use]
-    pub fn primary_only(primary: ProviderId) -> Self {
-        Self {
-            primary,
-            entries: Vec::new(),
-        }
-    }
-
-    /// Reads the configuration file. A missing file is `Ok(None)`.
-    ///
-    /// # Errors
-    /// Returns an error when the file exists but cannot be read or parsed.
-    pub fn load(path: &Path) -> Result<Option<Self>, ConfigError> {
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => {
-                return Err(ConfigError::Read {
-                    path: path.display().to_string(),
-                    source,
-                });
-            }
-        };
-        Self::parse(&bytes).map(Some)
-    }
-
-    /// Parses the configuration document.
-    ///
-    /// # Errors
-    /// Returns an error for an unsupported version, an invalid id or a
-    /// non-object provider entry.
-    pub fn parse(bytes: &[u8]) -> Result<Self, ConfigError> {
-        let raw: RawConfig = serde_json::from_slice(bytes)
-            .map_err(|error| ConfigError::Invalid(error.to_string()))?;
-        if raw.version != 1 {
-            return Err(ConfigError::Invalid(format!(
-                "unsupported version {}",
-                raw.version
-            )));
-        }
-        let primary = ProviderId::parse(&raw.primary)
-            .ok_or_else(|| ConfigError::Invalid("primary must be a provider id".into()))?;
-        let mut entries = Vec::with_capacity(raw.providers.len());
-        for (id, entry) in raw.providers {
-            let id = ProviderId::parse(&id)
-                .ok_or_else(|| ConfigError::Invalid("provider ids must be non-empty".into()))?;
-            if !entry.is_object() {
-                return Err(ConfigError::Invalid(format!(
-                    "providers.{id} must be an object"
-                )));
-            }
-            entries.push((id, entry));
-        }
-        Ok(Self { primary, entries })
-    }
-
-    /// The configuration entry of one provider, if present.
-    #[must_use]
-    pub fn entry(&self, id: &ProviderId) -> Option<&Value> {
-        self.entries
-            .iter()
-            .find(|(candidate, _)| candidate == id)
-            .map(|(_, entry)| entry)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_primary_and_opaque_entries() -> Result<(), ConfigError> {
-        let config = AgentProvidersConfig::parse(
-            br#"{"version":1,"primary":"codex","providers":{"claude":{"idleReleaseMinutes":30}}}"#,
-        )?;
-        assert_eq!(config.primary.as_str(), "codex");
-        assert_eq!(config.entries.len(), 1);
-        let claude =
-            ProviderId::parse("claude").ok_or_else(|| ConfigError::Invalid("id".into()))?;
-        assert_eq!(
-            config.entry(&claude),
-            Some(&serde_json::json!({"idleReleaseMinutes": 30}))
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_unknown_versions_fields_and_non_object_entries() {
-        for document in [
-            br#"{"version":2,"primary":"codex"}"#.as_slice(),
-            br#"{"version":1,"primary":""}"#,
-            br#"{"version":1,"primary":"codex","extra":1}"#,
-            br#"{"version":1,"primary":"codex","providers":{"claude":true}}"#,
-        ] {
-            assert!(AgentProvidersConfig::parse(document).is_err());
-        }
-    }
-
-    #[test]
-    fn missing_file_is_not_an_error() -> Result<(), ConfigError> {
-        let directory = tempfile::tempdir().map_err(|source| ConfigError::Read {
-            path: "tempdir".into(),
-            source,
-        })?;
-        assert_eq!(
-            AgentProvidersConfig::load(&directory.path().join(CONFIG_FILE_NAME))?,
-            None
-        );
-        Ok(())
-    }
 
     #[test]
     fn disabled_provider_names_are_capitalized_ids() {

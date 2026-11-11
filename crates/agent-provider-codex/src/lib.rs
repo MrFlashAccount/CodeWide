@@ -433,7 +433,7 @@ async fn forward_native_events(
                 if payload.get("method").is_some()
                     && payload
                         .get("id")
-                        .is_some_and(request_ids::is_ambiguous_primary_id)
+                        .is_some_and(request_ids::is_ambiguous_lead_id)
                 {
                     let method = payload
                         .get("method")

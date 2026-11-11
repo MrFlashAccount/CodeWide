@@ -1,4 +1,4 @@
-//! What this machine offers Claude before `providers.claude` is read: the
+//! What this machine offers Claude: the
 //! user's `claude` and the user's login-shell `PATH`. A service manager
 //! starts the companion with a minimal `PATH`, so both are looked up the way
 //! the user's own terminal sees them.
@@ -11,7 +11,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde_json::Value;
 use tracing::warn;
 
 use crate::config::ClaudeDefaults;
@@ -85,38 +84,27 @@ pub fn login_shell_path(shell: &Path) -> Option<Vec<PathBuf>> {
 }
 
 impl ClaudeDefaults {
-    /// Looks up what `entry` (a `providers.claude` object, `{}` when absent)
-    /// leaves to the machine, from the companion's environment (`SHELL`,
-    /// `HOME`, `PATH`): the login-shell `PATH` unless the entry configures
-    /// `environment.PATH`, and `claude` (on that `PATH`, on the companion's
-    /// own, or in the installers' locations) unless it configures
-    /// `claudeExecutable`.
+    /// Looks up what the machine offers Claude, from the companion's
+    /// environment (`SHELL`, `HOME`, `PATH`): the login-shell `PATH`, and
+    /// `claude` (on that `PATH`, on the companion's own, or in the
+    /// installers' locations).
     #[must_use]
-    pub fn discover(entry: &Value, journal_directory: PathBuf) -> Self {
-        let configures = |pointer: &str| entry.pointer(pointer).is_some();
-        let login_path = if configures("/environment/PATH") {
-            None
-        } else {
-            std::env::var_os("SHELL")
-                .map(PathBuf::from)
-                .filter(|shell| shell.is_absolute())
-                .and_then(|shell| login_shell_path(&shell))
-        };
-        let claude_executable = if configures("/claudeExecutable") {
-            None
-        } else {
-            let inherited = std::env::var_os("PATH")
-                .map(|value| absolute_directories(&value))
-                .unwrap_or_default();
-            let search_path = login_path
-                .iter()
-                .flatten()
-                .chain(&inherited)
-                .cloned()
-                .collect::<Vec<_>>();
-            let home = std::env::var_os("HOME").map(PathBuf::from);
-            find_claude(&search_path, home.as_deref())
-        };
+    pub fn discover(journal_directory: PathBuf) -> Self {
+        let login_path = std::env::var_os("SHELL")
+            .map(PathBuf::from)
+            .filter(|shell| shell.is_absolute())
+            .and_then(|shell| login_shell_path(&shell));
+        let inherited = std::env::var_os("PATH")
+            .map(|value| absolute_directories(&value))
+            .unwrap_or_default();
+        let search_path = login_path
+            .iter()
+            .flatten()
+            .chain(&inherited)
+            .cloned()
+            .collect::<Vec<_>>();
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let claude_executable = find_claude(&search_path, home.as_deref());
         Self {
             claude_executable,
             journal_directory,

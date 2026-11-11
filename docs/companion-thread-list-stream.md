@@ -93,9 +93,10 @@ Pages: `thread/list` parameters are unchanged. Every response row carries
 
 The stream carries rows whose `source` is in `rowSourceKinds` (`cli`,
 `vscode`), child rows with a non-null `parentThreadId`, and every row of a
-non-primary provider (`codewideAgent.primary == false`, whose `source` is
+provider without the native Codex surface
+(`codewideAgent.capabilities["codex.native"] == false`, whose `source` is
 `appServer`), matching the merged `thread/list` membership. The
-`rowSourceKinds` literal stays `["cli", "vscode"]`; the non-primary rule is not
+`rowSourceKinds` literal stays `["cli", "vscode"]`; the provider rule is not
 a source kind. A row hidden by the catalog filter (`codewideCatalogExcluded`,
 the supervisor source) is sent as a tombstone.
 
@@ -350,7 +351,7 @@ Rollback triggers after release:
   of its deltas produce at most 41 frames while a status change goes out at once;
   `visible:false` produces no frames until `visible:true`; a hub update at
   `H+3` during a page read yields the hub's fields with cursor `H+3`; a
-  non-primary provider row is pushed live;
+  neutral provider row is pushed live;
   `hello` without `listStream` closes with `list_stream_required`.
   Gates: `pnpm test:companion`,
   `cargo clippy --workspace --all-targets -- -D warnings`,

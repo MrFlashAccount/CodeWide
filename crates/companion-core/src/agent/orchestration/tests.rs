@@ -119,11 +119,7 @@ async fn harness_at(
     );
     let codex_dyn: Arc<dyn AgentProvider> = codex.clone();
     let claude_dyn: Arc<dyn AgentProvider> = claude.clone();
-    let registry = Arc::new(ProviderRegistry::new(
-        vec![codex_dyn, claude_dyn],
-        &ProviderId::from_static("codex"),
-        Vec::new(),
-    )?);
+    let registry = Arc::new(ProviderRegistry::new(vec![codex_dyn, claude_dyn])?);
     let bindings = Arc::new(BindingStore::new(store.clone()));
     bindings
         .bind(

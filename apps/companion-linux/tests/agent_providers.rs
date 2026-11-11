@@ -629,15 +629,11 @@ impl Harness {
         if let Some(stored) = stored {
             let _ = fake.stored.set(stored);
         }
-        let registry = ProviderRegistry::new(
-            vec![
-                Arc::new(CodexProvider::new(upstream).with_storage(CodexStorage::new(history)))
-                    as Arc<dyn AgentProvider>,
-                fake.clone() as Arc<dyn AgentProvider>,
-            ],
-            &ProviderId::from_static("codex"),
-            Vec::new(),
-        )?;
+        let registry = ProviderRegistry::new(vec![
+            Arc::new(CodexProvider::new(upstream).with_storage(CodexStorage::new(history)))
+                as Arc<dyn AgentProvider>,
+            fake.clone() as Arc<dyn AgentProvider>,
+        ])?;
         let sync = SyncHub::with_registry(Arc::new(registry), store.clone(), true);
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;

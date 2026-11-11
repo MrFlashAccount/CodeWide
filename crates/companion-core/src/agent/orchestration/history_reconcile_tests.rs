@@ -235,11 +235,7 @@ async fn a_turn_that_ended_during_a_restart_is_idle_after_startup() -> TestResul
     codex.set_status(child.as_str(), ThreadStatus::Idle);
     let codex_dyn: Arc<dyn AgentProvider> = codex.clone();
     let claude_dyn: Arc<dyn AgentProvider> = harness.claude.clone();
-    let registry = Arc::new(ProviderRegistry::new(
-        vec![codex_dyn, claude_dyn],
-        &ProviderId::from_static(CODEX),
-        Vec::new(),
-    )?);
+    let registry = Arc::new(ProviderRegistry::new(vec![codex_dyn, claude_dyn])?);
     let gateway = Arc::new(ClientWireGateway::new(
         registry,
         Arc::new(BindingStore::new(harness.store.clone())),

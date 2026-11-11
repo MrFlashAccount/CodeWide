@@ -187,24 +187,24 @@ impl ClientWireGateway {
         WireProvider {
             descriptor: provider.descriptor(),
             capabilities: provider.capabilities(),
-            primary_id: self.registry.primary_id().clone(),
+            lead_id: self.registry.lead_id().clone(),
             multi_provider: self.registry.is_multi_provider(),
         }
     }
 
+    /// The lead provider (`ProviderRegistry::lead`) with its projection context.
     #[must_use]
-    pub fn primary(&self) -> (Arc<dyn AgentProvider>, WireProvider) {
-        let provider = self.registry.primary().clone();
+    pub fn lead(&self) -> (Arc<dyn AgentProvider>, WireProvider) {
+        let provider = self.registry.lead().clone();
         let wire = self.wire(&provider);
         (provider, wire)
     }
 
-    /// Every enabled provider except the primary, with its projection context.
+    /// Every enabled provider except the lead, with its projection context.
     #[must_use]
-    pub fn non_primary(&self) -> Vec<(Arc<dyn AgentProvider>, WireProvider)> {
+    pub fn others(&self) -> Vec<(Arc<dyn AgentProvider>, WireProvider)> {
         self.registry
-            .enabled()
-            .skip(1)
+            .others()
             .map(|provider| (provider.clone(), self.wire(provider)))
             .collect()
     }
@@ -349,18 +349,19 @@ impl ClientWireGateway {
     /// Decodes a client-wire runtime request id.
     #[must_use]
     pub fn decode_request_id(&self, id: &Value) -> Option<RuntimeRequestId> {
-        request_ids::decode(id, self.registry.primary_id())
+        request_ids::decode(id, self.registry.lead_id())
     }
 
     /// Chooses the provider of `thread/start`: the requested
-    /// `codewideAgentProvider`, else the primary provider (older clients).
+    /// `codewideAgentProvider`, else the lead provider: the native-wire
+    /// default of a request that names no provider (older clients).
     ///
     /// # Errors
     /// Returns `-32070` for a disabled provider and `-32602` for an invalid one.
     pub fn thread_start_route(&self, params: &Value) -> Result<ThreadStartRoute, RpcFailure> {
         let requested = params.get(PROVIDER_FIELD);
         let provider = match requested {
-            None | Some(Value::Null) => self.registry.primary().clone(),
+            None | Some(Value::Null) => self.registry.lead().clone(),
             Some(Value::String(id)) => {
                 let id = ProviderId::parse(id).ok_or_else(|| {
                     RpcFailure::new(ERROR_INVALID_PARAMS, "codewideAgentProvider is invalid")
@@ -688,7 +689,6 @@ mod tests {
                 CapabilitySet::none(StartWhileActiveMode::NativeJoin),
             )
             .into_arc(),
-            Vec::new(),
         ));
         let gateway = ClientWireGateway::new(registry, bindings.clone());
         let mut page = json!({"data": [{"id": "app"}, {"id": "native-b"}, {"id": "other"}]});

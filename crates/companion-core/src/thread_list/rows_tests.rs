@@ -336,10 +336,11 @@ fn children_and_cli_or_vscode_rows_stream() {
     }
     let mut claude = thread("claude", "idle");
     claude["source"] = json!("appServer");
-    claude["codewideAgent"] = json!({"provider": "claude", "primary": false});
+    claude["codewideAgent"] =
+        json!({"provider": "claude", "capabilities": {"codex.native": false}});
     let mut native_app_server = claude.clone();
     native_app_server["id"] = json!("native");
-    native_app_server["codewideAgent"]["primary"] = json!(true);
+    native_app_server["codewideAgent"]["capabilities"]["codex.native"] = json!(true);
     for (id, value) in [("claude", claude), ("native", native_app_server)] {
         store.insert(
             id,
@@ -353,11 +354,11 @@ fn children_and_cli_or_vscode_rows_stream() {
     }
     assert!(
         store.streamable("claude"),
-        "a non-primary provider's row streams"
+        "a neutral provider's row streams"
     );
     assert!(
         !store.streamable("native"),
-        "a primary appServer row does not"
+        "a native appServer row does not"
     );
     assert!(store.streamable("cli"));
     assert!(store.streamable("child"));

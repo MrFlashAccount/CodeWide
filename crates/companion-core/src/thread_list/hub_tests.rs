@@ -402,11 +402,12 @@ fn a_dropped_subscription_unregisters() {
 }
 
 #[tokio::test]
-async fn a_non_primary_provider_row_is_pushed_live() {
+async fn a_neutral_provider_row_is_pushed_live() {
     let rows = ThreadListRows::default();
     let mut claude = row("claude");
     claude["source"] = json!("appServer");
-    claude["codewideAgent"] = json!({"provider": "claude", "primary": false});
+    claude["codewideAgent"] =
+        json!({"provider": "claude", "capabilities": {"codex.native": false}});
     rows.observe_page(&mut [claude], 1, false);
     let subscription = rows.subscribe(true);
     apply(

@@ -526,7 +526,7 @@ mod tests {
             capabilities: crate::agent::model::CapabilitySet::none(
                 crate::agent::model::StartWhileActiveMode::Busy,
             ),
-            primary_id: crate::agent::model::ProviderId::from_static("codex"),
+            lead_id: crate::agent::model::ProviderId::from_static("codex"),
             multi_provider: true,
         }
     }

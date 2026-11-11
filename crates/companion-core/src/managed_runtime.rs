@@ -291,7 +291,6 @@ impl ManagedRuntime {
         let codex = CodexProvider::new(upstream.clone())
             .with_storage(CodexStorage::new(history).with_resources(resources.clone()));
         let agent_registry = crate::agent::providers::load_registry(
-            &config.state_directory,
             Arc::new(codex),
             Some(&crate::agent::providers::ProviderHost {
                 index: store.clone(),

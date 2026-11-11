@@ -57,7 +57,7 @@ async fn harness() -> Result<Harness, Box<dyn std::error::Error>> {
     let claude = Arc::new(ScriptedProvider::new("claude", capabilities).with_thread(source));
     claude.set_turns("source", vec![turn("t1"), turn("t2"), turn("t3")]);
     let provider: Arc<dyn AgentProvider> = claude.clone();
-    let registry = Arc::new(ProviderRegistry::single(provider, Vec::new()));
+    let registry = Arc::new(ProviderRegistry::single(provider));
     let bindings = Arc::new(BindingStore::new(store));
     bindings
         .bind(

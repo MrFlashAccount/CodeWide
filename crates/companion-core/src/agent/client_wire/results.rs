@@ -355,7 +355,7 @@ mod tests {
             wire: WireProvider {
                 descriptor: dynamic.descriptor(),
                 capabilities: dynamic.capabilities(),
-                primary_id: crate::agent::model::ProviderId::from_static("codex"),
+                lead_id: crate::agent::model::ProviderId::from_static("codex"),
                 multi_provider: true,
             },
             provider: dynamic,

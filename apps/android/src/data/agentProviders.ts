@@ -114,7 +114,6 @@ export type AgentProviderStatusEntry = {
   readonly name: string;
   /** Opaque plan label such as `max`; `null` when unknown or signed out. */
   readonly planLabel: string | null;
-  readonly primary: boolean;
   readonly status: AgentProviderRuntimeStatus;
 };
 
@@ -294,7 +293,6 @@ function parseEntry(value: unknown): AgentProviderStatusEntry | null {
     limits: entryLimits(row),
     name: boundedText(row.name, MAX_NAME_CHARACTERS) ?? id,
     planLabel: boundedText(row.planLabel, MAX_PLAN_LABEL_CHARACTERS),
-    primary: state.primary,
     status: state.status,
   };
 }
@@ -302,18 +300,13 @@ function parseEntry(value: unknown): AgentProviderStatusEntry | null {
 /** The closed-vocabulary fields of one entry; `null` when any is invalid. */
 function entryState(
   row: Record<string, unknown>,
-): Pick<AgentProviderStatusEntry, "auth" | "capabilities" | "primary" | "status"> | null {
-  const { auth, primary, status } = row;
+): Pick<AgentProviderStatusEntry, "auth" | "capabilities" | "status"> | null {
+  const { auth, status } = row;
   const capabilities = entryCapabilities(row.capabilities);
-  if (
-    !isRuntimeStatus(status) ||
-    !isAuth(auth) ||
-    typeof primary !== "boolean" ||
-    capabilities === undefined
-  ) {
+  if (!isRuntimeStatus(status) || !isAuth(auth) || capabilities === undefined) {
     return null;
   }
-  return { auth, capabilities, primary, status };
+  return { auth, capabilities, status };
 }
 
 /** `null` for a disabled provider, `undefined` for an invalid shape. */

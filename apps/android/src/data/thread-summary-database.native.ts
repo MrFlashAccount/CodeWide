@@ -453,7 +453,7 @@ export function createThreadSummaryDatabase(
   };
 
   /**
-   * Sets the status of a non-primary provider's sub-agents from their
+   * Sets the status of a neutral (non-`codex.native`) provider's sub-agents from their
    * parent's `collabAgentToolCall` (see `reportedSubagentStates`); their child
    * rows have no live events of their own.
    */

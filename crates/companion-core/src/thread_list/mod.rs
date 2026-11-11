@@ -65,7 +65,8 @@ pub const MAX_PREVIEW_CHARS: usize = 2_000;
 /// Most rows the Companion keeps.
 pub const MAX_TRACKED_ROWS: usize = 4_096;
 /// `Thread.source` values whose rows are streamed. Children and every row of
-/// a non-primary provider (`codewideAgent.primary == false`) stream too,
+/// a provider without the native surface
+/// (`codewideAgent.capabilities["codex.native"] == false`) stream too,
 /// mirroring the merged `thread/list` membership.
 pub const ROW_SOURCE_KINDS: [&str; 2] = ["cli", "vscode"];
 /// WebSocket close code of every list-stream rejection.

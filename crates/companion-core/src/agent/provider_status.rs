@@ -2,9 +2,11 @@
 //! durable change notification `companion/agentProviders/changed`
 //! (`AgentProvidersReadResult` in `packages/agent-protocol`).
 //!
-//! Every configured provider is listed with its status (transport lifecycle
-//! plus the provider's own health), its sign-in state and its declared
-//! capabilities; disabled providers follow the enabled ones. The host-level
+//! Every enabled provider is listed in provider-id order with its status
+//! (transport lifecycle plus the provider's own health), its sign-in state
+//! and its declared capabilities. `primary` is a deprecated compatibility
+//! field (`true` for the lead provider) kept only for published clients that
+//! still require it; current clients do not read it. The host-level
 //! capabilities say which connection-scoped features some enabled provider
 //! serves. Credentials never pass through here: the sign-in state is a flag,
 //! an opaque plan label and, when the provider reports it, the signed-in
@@ -24,7 +26,7 @@ use tracing::warn;
 use super::{
     model::ProviderRateLimits,
     provider::{AgentProvider, ProviderAuth, ProviderHealth, ProviderStatus},
-    registry::{ProviderRegistry, disabled_provider_name},
+    registry::ProviderRegistry,
 };
 
 /// Client-wire read of the provider list; answered in every mode.
@@ -35,21 +37,10 @@ pub const CHANGED_METHOD: &str = "companion/agentProviders/changed";
 /// The current `AgentProvidersReadResult`.
 #[must_use]
 pub fn snapshot(registry: &ProviderRegistry) -> Value {
-    let mut providers = registry
+    let providers = registry
         .enabled()
         .map(|provider| enabled_entry(registry, provider.as_ref()))
         .collect::<Vec<_>>();
-    providers.extend(registry.disabled().map(|id| {
-        json!({
-            "id": id.as_str(),
-            "name": disabled_provider_name(id),
-            "primary": false,
-            "status": "disabled",
-            "auth": "unknown",
-            "planLabel": null,
-            "capabilities": null,
-        })
-    }));
     json!({
         "providers": providers,
         "hostCapabilities": host_capabilities(registry),
@@ -61,19 +52,10 @@ pub fn snapshot(registry: &ProviderRegistry) -> Value {
 /// stay inside their existing client-wire owner.
 #[must_use]
 pub fn connection_snapshot(registry: &ProviderRegistry) -> Value {
-    let mut providers = registry
+    let providers = registry
         .enabled()
         .map(|provider| connection_entry(registry, provider.as_ref()))
         .collect::<Vec<_>>();
-    providers.extend(registry.disabled().map(|id| {
-        json!({
-            "id": id.as_str(),
-            "name": disabled_provider_name(id),
-            "primary": false,
-            "status": "disabled",
-            "version": null,
-        })
-    }));
     json!({"providers": providers})
 }
 
@@ -87,7 +69,7 @@ fn connection_entry(registry: &ProviderRegistry, provider: &dyn AgentProvider) -
     json!({
         "id": descriptor.id.as_str(),
         "name": descriptor.display_name,
-        "primary": registry.is_primary(&descriptor.id),
+        "primary": registry.is_lead(&descriptor.id),
         "status": runtime_status(&health, provider.status()),
         "version": version,
     })
@@ -110,7 +92,7 @@ fn enabled_entry(registry: &ProviderRegistry, provider: &dyn AgentProvider) -> V
     let mut entry = json!({
         "id": descriptor.id.as_str(),
         "name": descriptor.display_name,
-        "primary": registry.is_primary(&descriptor.id),
+        "primary": registry.is_lead(&descriptor.id),
         "status": status,
         "auth": auth,
         "planLabel": plan_label,
@@ -242,7 +224,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::agent::{model::ProviderId, testing::FakeProvider};
+    use crate::agent::testing::FakeProvider;
 
     fn codex() -> Arc<FakeProvider> {
         FakeProvider::new("codex", agent_provider_codex::CAPABILITIES).into_arc()
@@ -254,28 +236,20 @@ mod tests {
 
     fn registry(
         providers: Vec<Arc<dyn AgentProvider>>,
-        disabled: Vec<ProviderId>,
     ) -> Result<Arc<ProviderRegistry>, Box<dyn std::error::Error>> {
-        Ok(Arc::new(ProviderRegistry::new(
-            providers,
-            &ProviderId::from_static("codex"),
-            disabled,
-        )?))
+        Ok(Arc::new(ProviderRegistry::new(providers)?))
     }
 
     #[test]
-    fn lists_enabled_then_disabled_providers_with_host_capabilities()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn lists_providers_in_id_order_with_host_capabilities() -> Result<(), Box<dyn std::error::Error>>
+    {
         let codex = codex();
         let claude = claude();
         claude.set_health(ProviderHealth::Available(ProviderAuth::Authenticated {
             plan_label: Some("max".into()),
             account_label: Some("user@example.com".into()),
         }));
-        let registry = registry(
-            vec![codex, claude.clone()],
-            vec![ProviderId::from_static("gemini")],
-        )?;
+        let registry = registry(vec![codex, claude.clone()])?;
         let snapshot = snapshot(&registry);
         let providers = snapshot["providers"]
             .as_array()
@@ -295,13 +269,7 @@ mod tests {
         assert_eq!(
             rows,
             vec![
-                (
-                    json!("codex"),
-                    json!(true),
-                    json!("live"),
-                    json!("unknown"),
-                    Value::Null
-                ),
+                // `primary` stays on the wire as the deprecated lead flag.
                 (
                     json!("claude"),
                     json!(false),
@@ -310,18 +278,17 @@ mod tests {
                     json!("max")
                 ),
                 (
-                    json!("gemini"),
-                    json!(false),
-                    json!("disabled"),
+                    json!("codex"),
+                    json!(true),
+                    json!("live"),
                     json!("unknown"),
                     Value::Null
                 ),
             ]
         );
-        assert_eq!(providers[1]["accountLabel"], "user@example.com");
-        assert!(providers[0].get("accountLabel").is_none());
-        assert_eq!(providers[1]["capabilities"]["realtimeVoice"], false);
-        assert_eq!(providers[2]["capabilities"], Value::Null);
+        assert_eq!(providers[0]["accountLabel"], "user@example.com");
+        assert!(providers[1].get("accountLabel").is_none());
+        assert_eq!(providers[0]["capabilities"]["realtimeVoice"], false);
         assert_eq!(snapshot["hostCapabilities"]["realtimeVoice"], true);
         assert_eq!(snapshot["hostCapabilities"]["accounts.pool"], true);
         assert!(
@@ -350,7 +317,7 @@ mod tests {
 
     #[test]
     fn a_codex_only_entry_keeps_its_fields() -> Result<(), Box<dyn std::error::Error>> {
-        let registry = registry(vec![codex()], Vec::new())?;
+        let registry = registry(vec![codex()])?;
         let snapshot = snapshot(&registry);
         let entry = snapshot["providers"][0]
             .as_object()
@@ -384,19 +351,15 @@ mod tests {
             account_label: Some("user@example.com".into()),
         }));
         claude.set_rate_limits(limits(42));
-        let registry = registry(
-            vec![codex(), claude],
-            vec![ProviderId::from_static("gemini")],
-        )?;
+        let registry = registry(vec![codex(), claude])?;
 
         let snapshot = connection_snapshot(&registry);
         assert_eq!(
             snapshot,
             json!({
                 "providers": [
-                    {"id": "codex", "name": "CODEX", "primary": true, "status": "live", "version": "1"},
                     {"id": "claude", "name": "CLAUDE", "primary": false, "status": "live", "version": "1"},
-                    {"id": "gemini", "name": "Gemini", "primary": false, "status": "disabled", "version": null},
+                    {"id": "codex", "name": "CODEX", "primary": true, "status": "live", "version": "1"},
                 ]
             })
         );
@@ -410,11 +373,11 @@ mod tests {
             FakeProvider::new("claude", agent_provider_claude::CAPABILITIES)
                 .reporting_rate_limits(),
         );
-        let registry = registry(vec![codex(), claude.clone()], Vec::new())?;
+        let registry = registry(vec![codex(), claude.clone()])?;
         let before = snapshot(&registry);
-        assert!(before["providers"][0].get("rateLimits").is_none());
-        assert_eq!(before["providers"][1]["rateLimits"], Value::Null);
-        assert!(before["providers"][1].get("rateLimits").is_some());
+        assert!(before["providers"][1].get("rateLimits").is_none());
+        assert_eq!(before["providers"][0]["rateLimits"], Value::Null);
+        assert!(before["providers"][0].get("rateLimits").is_some());
 
         let (sink, mut journal) = mpsc::channel(8);
         spawn_change_notifier(registry, sink);
@@ -424,7 +387,7 @@ mod tests {
             .ok_or("journal closed")?;
         assert_eq!(event["method"], CHANGED_METHOD);
         assert_eq!(
-            event["params"]["providers"][1]["rateLimits"],
+            event["params"]["providers"][0]["rateLimits"],
             json!({
                 "updatedAt": 1_760_000_000,
                 "windows": [{
@@ -445,10 +408,10 @@ mod tests {
     fn an_unavailable_provider_reports_no_sign_in() -> Result<(), Box<dyn std::error::Error>> {
         let claude = claude();
         claude.set_health(ProviderHealth::Unavailable);
-        let registry = registry(vec![codex(), claude], Vec::new())?;
+        let registry = registry(vec![codex(), claude])?;
         let snapshot = snapshot(&registry);
-        assert_eq!(snapshot["providers"][1]["status"], "unavailable");
-        assert_eq!(snapshot["providers"][1]["auth"], "unknown");
+        assert_eq!(snapshot["providers"][0]["status"], "unavailable");
+        assert_eq!(snapshot["providers"][0]["auth"], "unknown");
         Ok(())
     }
 
@@ -457,22 +420,22 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let claude = claude();
         let (sink, mut journal) = mpsc::channel(8);
-        spawn_change_notifier(registry(vec![codex(), claude.clone()], Vec::new())?, sink);
+        spawn_change_notifier(registry(vec![codex(), claude.clone()])?, sink);
         claude.set_health(ProviderHealth::Available(ProviderAuth::Unauthenticated));
         let event = tokio::time::timeout(Duration::from_secs(5), journal.recv())
             .await?
             .ok_or("journal closed")?;
         assert_eq!(event["method"], CHANGED_METHOD);
-        assert_eq!(event["params"]["providers"][1]["auth"], "unauthenticated");
+        assert_eq!(event["params"]["providers"][0]["auth"], "unauthenticated");
         claude.set_transport_status(ProviderStatus::Reconnecting);
         let event = tokio::time::timeout(Duration::from_secs(5), journal.recv())
             .await?
             .ok_or("journal closed")?;
-        assert_eq!(event["params"]["providers"][1]["status"], "reconnecting");
+        assert_eq!(event["params"]["providers"][0]["status"], "reconnecting");
 
         let codex = codex();
         let (sink, mut journal) = mpsc::channel(8);
-        spawn_change_notifier(registry(vec![codex.clone()], Vec::new())?, sink);
+        spawn_change_notifier(registry(vec![codex.clone()])?, sink);
         codex.set_transport_status(ProviderStatus::Reconnecting);
         // A Codex-only host keeps no notifier: the sink is dropped at once.
         assert!(journal.recv().await.is_none());

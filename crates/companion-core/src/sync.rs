@@ -657,11 +657,11 @@ impl SyncHub {
         self.gateway.registry()
     }
 
-    /// Transport state of the primary provider, which the client sees as
+    /// Transport state of the lead provider, which the client sees as
     /// the companion status.
     #[must_use]
     pub fn upstream_status(&self) -> ProviderStatus {
-        self.gateway.registry().primary().status()
+        self.gateway.registry().lead().status()
     }
 
     /// Journals a provider-owned local event stream (for example account-pool
@@ -1031,7 +1031,7 @@ impl SyncHub {
             None
         };
         let mut snapshot_started_at = session.snapshot_started_at;
-        let mut upstream_status = self.gateway.registry().primary().subscribe_status();
+        let mut upstream_status = self.gateway.registry().lead().subscribe_status();
         let rpc_permits = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_SESSION_RPCS));
         let thread_mutation_lanes = ThreadMutationLanes::default();
         let (task_failed_tx, mut task_failed_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1596,7 +1596,7 @@ impl SyncHub {
         }
     }
 
-    /// A provider's cleaner of its own formats in user text; the primary's
+    /// A provider's cleaner of its own formats in user text; the lead's
     /// for a thread of no known provider.
     fn user_text_cleaner(
         &self,
@@ -1605,7 +1605,7 @@ impl SyncHub {
         let registry = self.gateway.registry();
         provider
             .and_then(|id| registry.get(id))
-            .unwrap_or_else(|| registry.primary())
+            .unwrap_or_else(|| registry.lead())
             .user_text_cleaner()
             .unwrap_or_else(|| Arc::new(agent_core::user_text::NoUserTextFormats))
     }
@@ -1646,7 +1646,7 @@ impl SyncHub {
             Ok(Some(provider)) => self.gateway.registry().get(&provider),
             // A host with one provider needs no binding to know the thread's.
             _ if !self.gateway.registry().is_multi_provider() => {
-                Some(self.gateway.registry().primary())
+                Some(self.gateway.registry().lead())
             }
             _ => None,
         }?;
@@ -2799,7 +2799,7 @@ type OwnResources = HashMap<String, Arc<dyn NativeThreadResources>>;
 
 /// Projects a payload before the journal: a spawned agent's `thread/started`
 /// gets its caller as parent, and user messages are cleaned with the
-/// provider's cleaner (the primary's for the owner stream); `None` when it
+/// provider's cleaner (the lead's for the owner stream); `None` when it
 /// carries nothing the user wrote and is not delivered.
 fn project_ingest_payload(
     context: &IngestContext,

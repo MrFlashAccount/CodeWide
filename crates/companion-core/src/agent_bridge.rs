@@ -4,7 +4,7 @@
 //! - a turn goes through the existing durable queue owner (the outbox): one
 //!   `turn/start` command per call, idempotent by its command id, delivered
 //!   by the outbox pump when the thread is free;
-//! - a new thread is created on the primary provider with its default model
+//! - a new thread is created on the lead provider (Codex, the default provider) with its default model
 //!   and an explicit permission profile, and announced on the journal;
 //! - the result of a turn is read back by its client message id, as the
 //!   orchestration tools do (the final agent message of that turn).
@@ -192,14 +192,14 @@ impl AgentBridge {
         })
     }
 
-    /// Creates a thread on the primary provider in `cwd` with `profile`
+    /// Creates a thread on the lead (default) provider in `cwd` with `profile`
     /// (`:read-only` or `:workspace`), announced like any new thread.
     ///
     /// # Errors
     ///
     /// Returns a short reason when the provider refuses.
     pub async fn create_thread(&self, cwd: String, profile: &str) -> Result<AppThreadId, String> {
-        let (provider, wire) = self.gateway.primary();
+        let (provider, wire) = self.gateway.lead();
         let model = default_model(&provider)
             .await
             .map_err(|failure| format!("no default model: {}", failure.message))?;

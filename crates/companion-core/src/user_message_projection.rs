@@ -21,29 +21,26 @@ use serde_json::{Map, Value, json};
 use crate::delegated_task_completion::{self, ProjectedReport};
 
 /// The enabled providers' user text cleaners; a thread of an unknown provider
-/// is cleaned by the primary provider's, as its wire always was.
+/// is native-wire text, cleaned by the lead provider's, as its wire always was.
 #[derive(Clone)]
 pub(crate) struct UserTextCleaners {
     by_provider: HashMap<ProviderId, Arc<dyn UserTextCleaner>>,
-    primary: ProviderId,
+    lead: ProviderId,
 }
 
 impl UserTextCleaners {
     pub(crate) fn new(
         by_provider: HashMap<ProviderId, Arc<dyn UserTextCleaner>>,
-        primary: ProviderId,
+        lead: ProviderId,
     ) -> Self {
-        Self {
-            by_provider,
-            primary,
-        }
+        Self { by_provider, lead }
     }
 
-    /// The cleaner of `provider`, else the primary provider's.
+    /// The cleaner of `provider`, else the lead provider's.
     pub(crate) fn for_provider(&self, provider: Option<&ProviderId>) -> &dyn UserTextCleaner {
         provider
             .and_then(|provider| self.by_provider.get(provider))
-            .or_else(|| self.by_provider.get(&self.primary))
+            .or_else(|| self.by_provider.get(&self.lead))
             .map_or(&NoUserTextFormats as &dyn UserTextCleaner, |cleaner| {
                 cleaner.as_ref()
             })

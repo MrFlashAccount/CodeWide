@@ -133,12 +133,12 @@ async fn real_claude_serves_threads_catalogs_and_degradation_without_a_turn() ->
     });
     let upstream = UpstreamHandle::spawn(upstream_path);
     wait_for_live(&upstream).await?;
-    let claude = ClaudeProvider::spawn(&ClaudeConfig::parse(
-        &json!({
-            "claudeExecutable": variable("CODEWIDE_SMOKE_CLAUDE")?,
-            "journalDirectory": directory.path().join("journal"),
-        }),
-        &ClaudeDefaults::default(),
+    let claude = ClaudeProvider::spawn(&ClaudeConfig::with_executable(
+        std::path::PathBuf::from(variable("CODEWIDE_SMOKE_CLAUDE")?),
+        &ClaudeDefaults {
+            journal_directory: directory.path().join("journal"),
+            ..ClaudeDefaults::default()
+        },
     )?);
     let mut status = claude.subscribe_status();
     timeout(Duration::from_secs(30), async {
@@ -153,15 +153,11 @@ async fn real_claude_serves_threads_catalogs_and_degradation_without_a_turn() ->
         Arc::new(SessionCatalog::scan(directory.path())),
         Arc::new(RolloutStore::attach(store.database(), store.clone())?),
     );
-    let registry = ProviderRegistry::new(
-        vec![
-            Arc::new(CodexProvider::new(upstream).with_storage(CodexStorage::new(history)))
-                as Arc<dyn AgentProvider>,
-            claude.clone() as Arc<dyn AgentProvider>,
-        ],
-        &ProviderId::from_static("codex"),
-        Vec::new(),
-    )?;
+    let registry = ProviderRegistry::new(vec![
+        Arc::new(CodexProvider::new(upstream).with_storage(CodexStorage::new(history)))
+            as Arc<dyn AgentProvider>,
+        claude.clone() as Arc<dyn AgentProvider>,
+    ])?;
     let sync = SyncHub::with_registry(Arc::new(registry), store.clone(), true);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;

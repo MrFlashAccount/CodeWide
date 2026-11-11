@@ -98,8 +98,12 @@ export type CapabilitySet = Readonly<Record<BooleanCapability, boolean>> &
 export interface CodewideAgentThreadExtension {
   /** The provider's declared capability set. */
   readonly capabilities: CapabilitySet;
-  /** Whether the provider is the host's primary provider (no badge). */
-  readonly primary: boolean;
+  /**
+   * @deprecated Compatibility flag for published clients: `true` for the
+   * provider serving the native Codex surface. Current clients must not read
+   * it; the companion stops sending it once those builds are retired.
+   */
+  readonly primary?: boolean;
   /** Provider bound to the thread for its whole life. */
   readonly provider: string;
   /** Human-readable provider name, used only as badge text. */

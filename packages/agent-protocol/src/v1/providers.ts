@@ -174,7 +174,9 @@ export const PROVIDERS_UNAVAILABLE_FIELD = "codewideAgentProvidersUnavailable" a
  * - `reconnecting` — enabled, its runtime is (re)starting;
  * - `unavailable` — enabled but unusable on this host (for example a
  *   protocol version mismatch with its runtime);
- * - `disabled` — configured (or bound by earlier threads) but not enabled.
+ * - `disabled` — reported by older companions for a provider turned off in
+ *   their former configuration file; the current companion lists only
+ *   enabled providers.
  */
 export type AgentProviderStatus = "disabled" | "live" | "reconnecting" | "unavailable";
 
@@ -196,7 +198,12 @@ export interface AgentProviderEntry {
   readonly name: string;
   /** Opaque plan label reported by the provider (for example `max`); `null` when unknown. */
   readonly planLabel: string | null;
-  readonly primary: boolean;
+  /**
+   * @deprecated Compatibility flag for published clients: `true` for the
+   * provider serving the native Codex surface. Current clients must not read
+   * it; the companion stops sending it once those builds are retired.
+   */
+  readonly primary?: boolean;
   /**
    * Provider-level subscription limits. Present only for a provider that
    * reports them (absent: it reports none, for example Codex, whose limits
@@ -217,6 +224,6 @@ export type HostCapabilities = Readonly<
 
 export interface AgentProvidersReadResult {
   readonly hostCapabilities: HostCapabilities;
-  /** Enabled providers in registry order (primary first), then disabled ones. */
+  /** Enabled providers in provider-id order. */
   readonly providers: readonly AgentProviderEntry[];
 }

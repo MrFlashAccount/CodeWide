@@ -40,7 +40,7 @@ fn claude_wire() -> WireProvider {
             version: "0.1.0".into(),
         },
         capabilities,
-        primary_id: ProviderId::from_static("codex"),
+        lead_id: ProviderId::from_static("codex"),
         multi_provider: true,
     }
 }
