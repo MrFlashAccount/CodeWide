@@ -5,10 +5,10 @@
 //! background commands the live session launched, which a history read adds
 //! (`transcript::background_commands`).
 
-use std::{collections::HashMap, sync::PoisonError, time::Duration};
+use std::{sync::PoisonError, time::Duration};
 
 use agent_core::{
-    model::{AgentTurn, AppThreadId, BackgroundCommandState, RunningBackgroundTask},
+    model::{AgentTurn, AppThreadId, RunningBackgroundTask},
     provider::ProviderError,
 };
 
@@ -20,6 +20,7 @@ use crate::{
     background_tasks::{BackgroundTaskId, LiveTaskState},
     native::files::{self, SessionFile},
     runtime::{open_elsewhere::SessionActivity, running_sessions::RunningProcess},
+    session::handle::LiveLaunches,
     transcript::background_commands::{
         HoldingProcess, has_unended_background_command, overlay_holding_process,
         overlay_live_background_commands,
@@ -90,7 +91,7 @@ impl ThreadService {
     pub async fn live_session_knowledge(
         &self,
         app_thread_id: &AppThreadId,
-    ) -> Result<(Option<HashMap<String, BackgroundCommandState>>, String), ProviderError> {
+    ) -> Result<(Option<LiveLaunches>, String), ProviderError> {
         let id = app_thread_id.as_str();
         match self.inner.resolve(id).await?.listed() {
             Some(Listed::Entry(handle)) => {
@@ -146,7 +147,19 @@ impl ThreadService {
         }
         let (live, session_id) = self.live_session_knowledge(app_thread_id).await?;
         if let Some(live) = live {
-            overlay_live_background_commands(turns, &live);
+            overlay_live_background_commands(turns, &live.states);
+            // A launch the open query does not know belongs to an earlier
+            // process generation: that process is gone (a new query opens
+            // only when no process holds the session), and with it the task,
+            // by this query's start at the latest — as Claude itself reports
+            // such tasks on resume.
+            overlay_holding_process(
+                turns,
+                HoldingProcess::Running {
+                    started_at_ms: Some(live.process_started_at_ms),
+                },
+                &mut |_| live.process_started_at_ms.div_euclid(MS_PER_SECOND),
+            );
             return Ok(());
         }
         let process = self.holding_process(&session_id).await;

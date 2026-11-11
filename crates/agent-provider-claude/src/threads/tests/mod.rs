@@ -424,6 +424,11 @@ pub(super) struct Options {
     pub model_id_for: Arc<dyn Fn(&str) -> String + Send + Sync>,
     /// Advance the clock one second per read (the golden replays).
     pub ticking_clock: bool,
+    /// The clock's reading (Unix ms).
+    pub clock_ms: i64,
+    /// Ids minted before the first one this service mints (a restarted
+    /// companion never mints an id again).
+    pub minted_ids: u64,
 }
 
 impl Default for Options {
@@ -433,6 +438,8 @@ impl Default for Options {
             poll: Duration::from_mins(1),
             model_id_for: Arc::new(ToOwned::to_owned),
             ticking_clock: false,
+            clock_ms: 1_760_000_000_000,
+            minted_ids: 0,
         }
     }
 }
@@ -510,9 +517,9 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
         unsupported: Mutex::new(None),
     });
     let running = Arc::new(FakeRunning::default());
-    let clock = Arc::new(AtomicI64::new(1_760_000_000_000));
+    let clock = Arc::new(AtomicI64::new(options.clock_ms));
     let ticking = options.ticking_clock;
-    let ids = AtomicU64::new(0);
+    let ids = AtomicU64::new(options.minted_ids);
     let index_projects = projects.clone();
     let (service, mut outputs) = ThreadService::new(ServiceDeps {
         projects_root: projects,

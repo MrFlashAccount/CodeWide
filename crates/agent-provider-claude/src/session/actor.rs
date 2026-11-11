@@ -24,7 +24,7 @@ use tracing::{error, info, warn};
 
 use super::{
     client_tools::ClientToolCalls,
-    handle::{Command, SessionStatus},
+    handle::{Command, LiveLaunches, SessionStatus},
     ports::{SessionDeps, SessionOutput},
     query::{Offer, Query},
     task_reports::{Launch, LiveTaskReports},
@@ -54,6 +54,8 @@ pub(super) const fn seconds(ms: i64) -> i64 {
 pub(super) struct LiveQuery {
     pub handle: Arc<dyn Query>,
     pub events: mpsc::Receiver<ProcessEvent>,
+    /// When its process started (the companion's clock).
+    pub started_at_ms: i64,
 }
 
 /// A runtime request waiting for the user's answer.
@@ -261,11 +263,10 @@ impl Session {
                 });
             }
             Command::BackgroundCommands { reply } => {
-                let _ = reply.send(
-                    self.query
-                        .is_some()
-                        .then(|| self.task_reports.launch_states()),
-                );
+                let _ = reply.send(self.query.as_ref().map(|query| LiveLaunches {
+                    process_started_at_ms: query.started_at_ms,
+                    states: self.task_reports.launch_states(),
+                }));
             }
             Command::Dispose { reply } => {
                 self.dispose().await;
@@ -458,6 +459,7 @@ impl Session {
                 self.query = Some(LiveQuery {
                     handle: handle.clone(),
                     events,
+                    started_at_ms: self.now_ms(),
                 });
                 self.query_tools = tools;
                 self.query_allows_bypass = options.profile.allow_dangerously_skip_permissions;

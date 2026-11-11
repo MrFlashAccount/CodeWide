@@ -804,3 +804,67 @@ async fn a_session_that_joins_its_chain_before_earlier_indexed_ones_keeps_search
     );
     Ok(())
 }
+
+/// Two background commands a companion restart killed with their `claude`
+/// process (the shape of a real session, reduced): the kill records Claude
+/// queued but never delivered, then, at the next message, Claude's one
+/// aggregate report of both with its summary pseudo id.
+#[tokio::test]
+async fn background_commands_a_restart_killed_read_stopped_and_report_only_real_tasks()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = StoreFixture::new()?;
+    let session = "11111111-1111-4111-8111-222222222222";
+    let rows = include_str!("../../fixtures/raw/orphaned-background-commands.jsonl")
+        .lines()
+        .map(serde_json::from_str::<Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+    fixture.append(session, CWD, &rows)?;
+    fixture.index(session)?;
+    let page = fixture
+        .history
+        .page(
+            &AppThreadId::parse(session).ok_or("thread id")?,
+            &request(None, 10, SortDirection::Asc),
+        )?
+        .ok_or("indexed")?;
+    let items = page
+        .turns
+        .iter()
+        .flat_map(|turn| &turn.items)
+        .collect::<Vec<_>>();
+    let launches = items
+        .iter()
+        .filter_map(|item| match item {
+            AgentItem::Command {
+                background: Some(background),
+                ..
+            } => Some((background.task_id.as_str(), background.state)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        launches.len() == 2
+            && launches.iter().all(|(_, state)| matches!(
+                state,
+                agent_core::model::BackgroundCommandState::Stopped { .. }
+            )),
+        "{launches:?}"
+    );
+    let reports = items
+        .iter()
+        .filter_map(|item| match item {
+            AgentItem::TaskNotification {
+                task_id, status, ..
+            } => Some((task_id.as_str(), *status)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reports,
+        [
+            ("bkweufyo6", agent_core::model::TaskNotificationStatus::Lost),
+            ("b0a7y9mpq", agent_core::model::TaskNotificationStatus::Lost),
+        ]
+    );
+    Ok(())
+}

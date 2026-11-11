@@ -234,7 +234,8 @@ async fn a_launch_runs_and_its_report_republishes_the_end_live() -> TestResult {
                 .service
                 .live_session_knowledge(&id(THREAD)?)
                 .await?
-                .0,
+                .0
+                .map(|live| live.states),
             Some(HashMap::from([(
                 TASK.to_owned(),
                 BackgroundCommandState::Running
@@ -295,7 +296,7 @@ async fn a_launch_runs_and_its_report_republishes_the_end_live() -> TestResult {
                 .live_session_knowledge(&id(THREAD)?)
                 .await?
                 .0
-                .and_then(|live| live.get(TASK).copied()),
+                .and_then(|live| live.states.get(TASK).copied()),
             state
         );
 
@@ -633,5 +634,94 @@ async fn the_running_list_holds_a_launch_until_its_report_ends_it() -> TestResul
             .is_empty()
     );
     harness.close().await;
+    Ok(())
+}
+
+/// What `claude` 2.1.319 sends live when it resumes a session whose previous
+/// process died with a background command running: one report per
+/// orphaned task (its launch's tool call, `stopped`) and never one for the
+/// summary Claude stores beside them.
+fn orphan_report(task_id: &str) -> serde_json::Value {
+    json!({"type": "system", "subtype": "task_notification", "task_id": task_id,
+        "tool_use_id": "toolu_bg", "status": "stopped", "output_file": "",
+        "summary": "Orphaned by a previous Claude Code process exit and reported in an aggregate summary."})
+}
+
+#[tokio::test]
+async fn after_a_restart_a_resumed_session_ends_the_earlier_process_launches() -> TestResult {
+    let first = harness(Options::default())?;
+    launch(&first).await?;
+    let root = Arc::clone(&first.root);
+    first.close().await;
+
+    // The companion restarted (its `claude` died with the task) an hour
+    // after the launch; the person writes again and the session resumes.
+    let resumed_at_ms = LAUNCHED_AT_MS + 3_600_000;
+    let restarted = harness(Options {
+        root: Some(root),
+        clock_ms: resumed_at_ms,
+        minted_ids: 1_000,
+        ..Options::default()
+    })?;
+    restarted.service.load().await?;
+    start(&restarted.service, THREAD, "Why did it stop?").await?;
+    let query = restarted.runtime.query(0)?;
+    query.push(frames::init()).await;
+    settle().await;
+
+    // Before Claude reports it: the open query is a later process
+    // generation, so the earlier launch is no longer running anywhere.
+    let ended = BackgroundCommandState::Stopped {
+        ended_at: resumed_at_ms / 1000,
+    };
+    assert_eq!(read_state(&restarted).await?, ended);
+    assert!(
+        restarted
+            .service
+            .running_background_tasks(&id(THREAD)?)
+            .await?
+            .is_empty()
+    );
+
+    // Claude's live reports: the launching item, in its own older turn,
+    // is republished with the end; the summary pseudo id reports nothing.
+    query.push(orphan_report(TASK)).await;
+    query.push(orphan_report("__orphan_summary__:shell")).await;
+    settle().await;
+    let republished = restarted
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            AgentEvent::ItemCompleted { item, .. } => match item {
+                AgentItem::Command {
+                    background: Some(background),
+                    ..
+                } => Some((background.task_id, background.state)),
+                AgentItem::TaskNotification { task_id, .. } => Some((task_id, ended)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        republished
+            .iter()
+            .any(|(task_id, state)| task_id == TASK && state.has_ended()),
+        "{republished:?}"
+    );
+    assert!(
+        republished
+            .iter()
+            .all(|(task_id, _)| !task_id.starts_with("__orphan_summary__")),
+        "{republished:?}"
+    );
+    assert!(
+        restarted
+            .service
+            .running_background_tasks(&id(THREAD)?)
+            .await?
+            .is_empty()
+    );
+    restarted.close().await;
     Ok(())
 }

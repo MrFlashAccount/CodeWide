@@ -10,7 +10,7 @@
 use std::sync::{Arc, OnceLock, Weak};
 
 use agent_core::{
-    model::{AgentItem, AgentTurn, AppThreadId, MessagePhase, UserContent},
+    model::{AgentItem, AgentTurn, AppThreadId, MessagePhase, TurnId, UserContent},
     provider::ProviderError,
 };
 use tracing::warn;
@@ -107,7 +107,40 @@ async fn recent_lines(
     .map_err(|err| internal("history read", &err))
 }
 
+async fn stored_launch(
+    slot: &IndexSlot,
+    app_thread_id: AppThreadId,
+    session_ids: Vec<String>,
+    task_id: String,
+) -> Result<Option<(TurnId, AgentItem)>, ProviderError> {
+    let index = caught_up(slot, session_ids.iter().map(String::as_str)).await?;
+    tokio::task::spawn_blocking(move || index.history().find_launch(&app_thread_id, &task_id))
+        .await
+        .map_err(|err| internal("history read", &err))?
+        .map_err(|err| internal("history read", &err))
+}
+
 impl HistoryLines for StoredHistoryLines {
+    fn launch(
+        &self,
+        state: &ThreadState,
+        task_id: &str,
+    ) -> BoxFuture<'static, Option<(TurnId, AgentItem)>> {
+        let slot = self.index.clone();
+        let app_thread_id = state.app_thread_id.clone();
+        let session_ids = state.session_ids.iter().map(ToOwned::to_owned).collect();
+        let task_id = task_id.to_owned();
+        Box::pin(async move {
+            match stored_launch(&slot, app_thread_id.clone(), session_ids, task_id).await {
+                Ok(launch) => launch,
+                Err(err) => {
+                    warn!(app_thread_id = %app_thread_id, err = %err, "the stored launch of a reported background task is unavailable");
+                    None
+                }
+            }
+        })
+    }
+
     fn lines(&self, state: &ThreadState) -> BoxFuture<'static, Vec<String>> {
         let slot = self.index.clone();
         let app_thread_id = state.app_thread_id.clone();

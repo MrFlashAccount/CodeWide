@@ -259,6 +259,57 @@ impl IndexedHistory {
         Ok(lines)
     }
 
+    /// The `command` item that launched background task `task_id`, with its
+    /// turn: the thread's turns newest first until it is found, at most
+    /// [`LAUNCH_SEARCH_TURNS`] of them (a task is reported to the session
+    /// that launched it, soon after a recent turn).
+    ///
+    /// # Errors
+    ///
+    /// Read failures.
+    pub fn find_launch(
+        &self,
+        thread: &AppThreadId,
+        task_id: &str,
+    ) -> Result<Option<(agent_core::model::TurnId, agent_core::model::AgentItem)>, ReadError> {
+        let mut cursor = None::<String>;
+        let mut searched = 0_usize;
+        while searched < LAUNCH_SEARCH_TURNS {
+            let Some(page) = self.page(
+                thread,
+                &PageRequest {
+                    cursor: cursor.as_deref(),
+                    limit: RECENT_PAGE,
+                    direction: SortDirection::Desc,
+                    view: ItemsView::Full,
+                },
+            )?
+            else {
+                return Ok(None);
+            };
+            searched += page.turns.len();
+            for turn in page.turns {
+                let launch = turn.items.into_iter().find(|item| {
+                    matches!(
+                        item,
+                        agent_core::model::AgentItem::Command {
+                            background: Some(background),
+                            ..
+                        } if background.task_id == task_id
+                    )
+                });
+                if let Some(item) = launch {
+                    return Ok(Some((turn.turn_id, item)));
+                }
+            }
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => return Ok(None),
+            }
+        }
+        Ok(None)
+    }
+
     /// The model the session's newest main-loop answer recorded, from the
     /// index's state at the session file's checkpoint.
     ///
@@ -544,6 +595,8 @@ impl IndexedHistory {
 
 /// Turns per page while the newest transcript lines are gathered.
 const RECENT_PAGE: u32 = 20;
+/// The newest turns searched for the launch of a reported task.
+const LAUNCH_SEARCH_TURNS: usize = 400;
 
 static SIDECAR_HINTS: std::sync::LazyLock<SegmentHints> =
     std::sync::LazyLock::new(SegmentHints::default);

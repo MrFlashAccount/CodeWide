@@ -38,6 +38,9 @@ const FALLBACK_NAME: &str = "Background task";
 const AGENT_PREFIX: &str = "Agent \"";
 const COMMAND_PREFIX: &str = "Background command \"";
 const LOST_SUMMARY: &str = "didn't finish before the previous session ended";
+/// The summary of each live report of a task a previous process left
+/// unfinished (stored as one aggregate report with [`LOST_SUMMARY`]).
+const LIVE_LOST_SUMMARY: &str = "Orphaned by a previous Claude Code process exit";
 const INTERIM_NOTE: &str = "may be interim";
 /// The `task_started` task type of a sub-agent.
 const AGENT_TASK_TYPE: &str = "local_agent";
@@ -149,11 +152,9 @@ pub fn started_task_identity(
 /// The status a report states (see the module docs).
 #[must_use]
 pub fn reported_status(report: &TaskReport) -> TaskNotificationStatus {
-    if report
-        .summary
-        .as_deref()
-        .is_some_and(|summary| summary.contains(LOST_SUMMARY))
-    {
+    if report.summary.as_deref().is_some_and(|summary| {
+        summary.contains(LOST_SUMMARY) || summary.contains(LIVE_LOST_SUMMARY)
+    }) {
         return TaskNotificationStatus::Lost;
     }
     if report

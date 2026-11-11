@@ -60,6 +60,16 @@ pub(super) struct Launch {
 }
 
 impl Launch {
+    /// A stored launch (`item` of turn `turn_id`) once its task ended as
+    /// `end`; `None` when it already shows that end.
+    pub(super) fn ended(
+        turn_id: TurnId,
+        item: AgentItem,
+        end: BackgroundCommandState,
+    ) -> Option<Self> {
+        Self { turn_id, item }.advanced(end)
+    }
+
     fn state(&self) -> Option<BackgroundCommandState> {
         match &self.item {
             AgentItem::Command {
@@ -170,7 +180,21 @@ impl LiveTaskReports {
         Some(settled)
     }
 
-    /// The state of every background command the open query launched, by task id.
+    /// The end a final report proves of a task the open query neither
+    /// launched nor started (an earlier query's launch, such as one Claude
+    /// reports orphaned when it resumes the session); `None` otherwise.
+    pub(super) fn earlier_launch_end(
+        &self,
+        report: &TaskReport,
+        now_ms: i64,
+    ) -> Option<BackgroundCommandState> {
+        if self.launches.contains_key(&report.task_id) || self.started.contains_key(&report.task_id)
+        {
+            return None;
+        }
+        reported_state(report, now_ms)
+    }
+
     /// The launches whose command still runs, oldest first.
     pub(super) fn running_launches(&self) -> Vec<RunningBackgroundTask> {
         let mut running = self

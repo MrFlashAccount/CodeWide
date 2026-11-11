@@ -47,6 +47,7 @@ use tracing::{info, warn};
 use super::{
     actor::{Internal, Session, seconds},
     query::Offer,
+    task_reports::Launch,
 };
 use crate::{
     cli::protocol::{Author, Priority},
@@ -518,6 +519,14 @@ impl Session {
         // The launching item shows the end at once, delivered or waiting.
         let now = self.now_ms();
         if let Some(launch) = self.task_reports.settle(report, now) {
+            self.republish_launches(vec![launch]).await;
+        } else if let Some(end) = self.task_reports.earlier_launch_end(report, now)
+            && let Some((turn_id, item)) =
+                self.deps.history.launch(&self.state, &report.task_id).await
+            && let Some(launch) = Launch::ended(turn_id, item, end)
+        {
+            // An earlier query's launch: its item lives in an older turn
+            // clients already hold, so it is republished with the end.
             self.republish_launches(vec![launch]).await;
         }
         let delivered = self.task_reports.delivered(report, |tool_use_id| {

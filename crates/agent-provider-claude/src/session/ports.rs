@@ -11,8 +11,8 @@ use std::{
 
 use agent_core::{
     model::{
-        AgentEvent, AgentTurn, AppThreadId, ClientToolSpec, ProviderRateLimitWindow,
-        ToolCallParams, ToolCallResult,
+        AgentEvent, AgentItem, AgentTurn, AppThreadId, ClientToolSpec, ProviderRateLimitWindow,
+        ToolCallParams, ToolCallResult, TurnId,
     },
     provider::ProviderError,
 };
@@ -78,11 +78,23 @@ pub trait ClientTools: Send + Sync {
     fn call(&self, params: ToolCallParams) -> BoxFuture<'static, ToolCallResult>;
 }
 
-/// The thread's stored history, for a replacement session's prefix.
+/// The thread's stored history, for what the live session cannot know.
 pub trait HistoryLines: Send + Sync {
     /// User messages and final answers of the thread's history, oldest
     /// first, as `User: …` / `Claude: …` lines.
     fn lines(&self, state: &ThreadState) -> BoxFuture<'static, Vec<String>>;
+
+    /// The stored `command` item that launched background task `task_id`
+    /// (an earlier query's launch), with its turn; `None` when the history
+    /// holds none.
+    fn launch(
+        &self,
+        state: &ThreadState,
+        task_id: &str,
+    ) -> BoxFuture<'static, Option<(TurnId, AgentItem)>> {
+        let _ = (state, task_id);
+        Box::pin(async { None })
+    }
 }
 
 /// The owner of the subscription limits sessions observe.
