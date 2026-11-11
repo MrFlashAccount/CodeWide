@@ -452,6 +452,7 @@ impl Session {
                 SessionIdentity::New(session_id)
             },
             client_tools: !tools.is_empty(),
+            session_instructions: self.deps.session_instructions.get().copied(),
             profile,
         };
         match self.deps.runtime.open(&options) {

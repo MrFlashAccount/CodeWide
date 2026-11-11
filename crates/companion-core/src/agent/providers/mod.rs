@@ -9,6 +9,8 @@ pub use agent_provider_codex as codex;
 mod codex_golden_tests;
 pub mod codex_hub;
 #[cfg(test)]
+mod codex_session_instructions_tests;
+#[cfg(test)]
 mod codex_subscription_tests;
 #[cfg(test)]
 mod codex_tools_tests;
@@ -25,6 +27,7 @@ use tracing::{error, info};
 use crate::store::IndexStore;
 
 use super::{
+    client_conventions::CLIENT_CONVENTIONS,
     model::ProviderId,
     provider::AgentProvider,
     registry::{AgentProvidersConfig, CONFIG_FILE_NAME, ProviderRegistry},
@@ -140,7 +143,9 @@ fn automatic_claude(host: Option<&ProviderHost>) -> Option<Arc<dyn AgentProvider
 }
 
 /// Builds the registry: the Codex adapter (from the existing host flags) is
-/// always enabled; other providers come from `agent-providers.json`. An
+/// always enabled; other providers come from `agent-providers.json`. Every
+/// enabled provider gets the `CodeWide` client conventions
+/// (`client_conventions`) for its sessions. An
 /// invalid or unknown entry disables only that provider, with one `error`
 /// log carrying the full error. A missing file means Codex only.
 #[must_use]
@@ -182,6 +187,10 @@ pub fn build_registry(
                 disabled.push(id.clone());
             }
         }
+    }
+    // Every enabled provider hands the product conventions to its sessions.
+    for provider in &providers {
+        provider.install_session_instructions(CLIENT_CONVENTIONS);
     }
     let primary = match providers
         .iter()

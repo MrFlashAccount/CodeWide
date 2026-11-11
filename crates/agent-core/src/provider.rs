@@ -13,6 +13,7 @@
 
 mod execution;
 mod native_storage;
+mod session_instructions;
 mod stored_search;
 
 use std::{
@@ -41,6 +42,7 @@ pub use native_storage::{
     HistoryPageError, HistorySyncRequest, NativeMessageSearch, NativeThreadResources,
     NativeThreadStore, StoredThreadState,
 };
+pub use session_instructions::SessionInstructions;
 pub use stored_search::{SearchWindow, StoredMessageSearch};
 
 use crate::usage::ModelPricing;
@@ -446,6 +448,16 @@ pub trait AgentProvider: Send + Sync {
     /// providers and every store they hold alive after the companion stops.
     fn install_client_tools(&self, host: Weak<dyn ClientToolHost>) {
         let _ = host;
+    }
+
+    /// Installs the host's instructions for every agent session. A provider
+    /// with a native instruction channel hands them to every session it
+    /// starts, resumes or forks afterwards, alongside the instructions the
+    /// session already has and without repeating them; a provider without
+    /// such a channel ignores them. Called at most once, before any thread
+    /// is started.
+    fn install_session_instructions(&self, instructions: SessionInstructions) {
+        let _ = instructions;
     }
 
     /// The provider's cleaner of its own envelopes and model-only context in

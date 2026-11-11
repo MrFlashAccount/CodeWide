@@ -63,7 +63,8 @@ use agent_core::{
     naming::{CatalogNames, ModelNaming},
     provider::{
         AgentProvider, ClientToolHost, NativeThreadResources, ProviderAuth, ProviderError,
-        ProviderEvent, ProviderFence, ProviderHealth, ProviderStatus, StoredMessageSearch,
+        ProviderEvent, ProviderFence, ProviderHealth, ProviderStatus, SessionInstructions,
+        StoredMessageSearch,
     },
     usage::{CatalogPricing, ModelPricing},
 };
@@ -214,6 +215,9 @@ pub struct ClaudeProvider {
     running: Option<Running>,
     storage: Option<Arc<ClaudeStorage>>,
     tools: Arc<CompanionTools>,
+    /// The host's session instructions, installed once; every `claude`
+    /// process of a session appends them to Claude's system prompt.
+    session_instructions: Arc<std::sync::OnceLock<SessionInstructions>>,
     status: watch::Sender<ProviderStatus>,
     health: Arc<watch::Sender<ProviderHealth>>,
     rate_limits: Arc<watch::Sender<Option<ProviderRateLimits>>>,
@@ -264,6 +268,7 @@ impl ClaudeProvider {
             running: None,
             storage,
             tools,
+            session_instructions: Arc::default(),
             status,
             health,
             rate_limits,
@@ -365,6 +370,7 @@ impl ClaudeProvider {
             clock: Arc::new(now_ms),
             new_uuid: Arc::new(uuid::random_uuid),
             client_tools: self.tools.clone(),
+            session_instructions: self.session_instructions.clone(),
             rate_limits: limits,
             session_config: SessionConfig {
                 idle_release: Duration::from_mins(u64::from(config.idle_release_minutes)),
@@ -1010,6 +1016,12 @@ impl AgentProvider for ClaudeProvider {
     fn install_client_tools(&self, host: Weak<dyn ClientToolHost>) {
         if !self.tools.install(host) {
             warn!("client tools are already installed on the Claude adapter");
+        }
+    }
+
+    fn install_session_instructions(&self, instructions: SessionInstructions) {
+        if self.session_instructions.set(instructions).is_err() {
+            warn!("session instructions are already installed on the Claude adapter");
         }
     }
 

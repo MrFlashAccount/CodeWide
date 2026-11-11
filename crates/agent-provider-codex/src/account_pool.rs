@@ -312,14 +312,12 @@ impl AccountPoolService {
     /// # Errors
     ///
     /// Returns an upstream error when the active App Server cannot be reached.
-    pub async fn resume_thread_runtime(&self, thread_id: &str) -> Result<Value, AccountPoolError> {
+    /// `params` are the dispatcher's `thread/resume` params.
+    pub async fn resume_thread_runtime(&self, params: Value) -> Result<Value, AccountPoolError> {
         self.request(json!({
             "id": "thread-mutation-resume",
             "method": "thread/resume",
-            "params": {
-                "threadId": thread_id,
-                "excludeTurns": true
-            }
+            "params": params
         }))
         .await
     }

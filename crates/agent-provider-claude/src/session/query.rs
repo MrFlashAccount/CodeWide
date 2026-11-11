@@ -312,6 +312,7 @@ echo ended > ended.log
             profile: profile_options(":workspace").unwrap_or_else(|| unreachable!()),
             identity: SessionIdentity::New("s1".into()),
             client_tools: false,
+            session_instructions: None,
         }
     }
 

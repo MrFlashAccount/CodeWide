@@ -429,6 +429,8 @@ pub(super) struct Options {
     /// Ids minted before the first one this service mints (a restarted
     /// companion never mints an id again).
     pub minted_ids: u64,
+    /// The host's session instructions, installed before the first thread.
+    pub session_instructions: Option<agent_core::provider::SessionInstructions>,
 }
 
 impl Default for Options {
@@ -440,6 +442,7 @@ impl Default for Options {
             ticking_clock: false,
             clock_ms: 1_760_000_000_000,
             minted_ids: 0,
+            session_instructions: None,
         }
     }
 }
@@ -540,6 +543,12 @@ pub(super) fn harness(options: Options) -> Result<Harness, Box<dyn std::error::E
             )
         }),
         client_tools: Arc::new(NoClientTools),
+        session_instructions: Arc::new(
+            options
+                .session_instructions
+                .map(std::sync::OnceLock::from)
+                .unwrap_or_default(),
+        ),
         rate_limits: Arc::new(NoRateLimits),
         session_config: SessionConfig {
             idle_release: Duration::from_mins(30),

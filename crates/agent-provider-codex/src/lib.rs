@@ -37,6 +37,7 @@ pub mod rollout_content;
 pub mod rollout_monitor;
 mod rollout_origin;
 pub mod rollout_store;
+mod session_instructions;
 pub mod storage;
 mod subscriptions;
 #[cfg(test)]
@@ -60,7 +61,7 @@ use agent_core::{
     provider::{
         AdmissionError, AgentProvider, ClientToolHost, DispatchError, NativeMessageSearch,
         NativeSurface, NativeThreadResources, NativeThreadStore, ProviderError, ProviderEvent,
-        ProviderFence, ProviderStatus, ThreadExecutionAuthority,
+        ProviderFence, ProviderStatus, SessionInstructions, ThreadExecutionAuthority,
     },
     request_ids,
     usage::ModelPricing,
@@ -69,7 +70,7 @@ use agent_transport::{OrderedUpstreamEvent, UpstreamError, UpstreamHandle};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::{
     account_pool::{AccountPoolError, AccountPoolService},
@@ -125,6 +126,9 @@ pub struct CodexProvider {
     account_pool: RwLock<Option<Arc<AccountPoolService>>>,
     storage: Option<Arc<storage::CodexStorage>>,
     client_tools: Arc<CodexClientTools>,
+    /// The host's instructions, added to every session start (`thread/start`,
+    /// `thread/resume`, `thread/fork`) sent upstream.
+    session_instructions: session_instructions::CodexSessionInstructions,
     compactions: Arc<ActiveCompactions>,
     /// The display names of the last model list read.
     names: Arc<CatalogNames>,
@@ -142,6 +146,7 @@ impl CodexProvider {
             account_pool: RwLock::new(None),
             storage: None,
             client_tools: Arc::new(CodexClientTools::default()),
+            session_instructions: session_instructions::CodexSessionInstructions::default(),
             compactions: Arc::new(ActiveCompactions::default()),
             names: Arc::new(CatalogNames::default()),
             subscriptions: Arc::new(subscriptions::ThreadSubscriptions::default()),
@@ -208,7 +213,10 @@ impl CodexProvider {
         Ok(thread)
     }
 
-    async fn rpc(&self, method: &str, params: Value) -> Result<Value, ProviderError> {
+    async fn rpc(&self, method: &str, mut params: Value) -> Result<Value, ProviderError> {
+        self.session_instructions
+            .apply(&self.upstream, method, &mut params)
+            .await;
         let generation = self.upstream.generation();
         let response = self
             .upstream
@@ -226,6 +234,7 @@ impl CodexProvider {
         let resumed = dispatch::ensure_subscribed(
             &self.upstream,
             self.account_pool().as_ref(),
+            &self.session_instructions,
             &self.subscriptions,
             thread.as_str(),
         )
@@ -243,8 +252,11 @@ impl CodexProvider {
     async fn rpc_fenced(
         &self,
         method: &str,
-        params: Value,
+        mut params: Value,
     ) -> Result<(Value, ProviderFence), ProviderError> {
+        self.session_instructions
+            .apply(&self.upstream, method, &mut params)
+            .await;
         let generation = self.upstream.generation();
         let (response, fence) = self
             .upstream
@@ -826,6 +838,12 @@ impl AgentProvider for CodexProvider {
         self.client_tools.install(host);
     }
 
+    fn install_session_instructions(&self, instructions: SessionInstructions) {
+        if !self.session_instructions.install(instructions) {
+            warn!("session instructions are already installed on the Codex adapter");
+        }
+    }
+
     fn native_surface(&self) -> Option<&dyn NativeSurface> {
         Some(self)
     }
@@ -847,6 +865,9 @@ impl AgentProvider for CodexProvider {
 impl NativeSurface for CodexProvider {
     async fn request(&self, mut request: Value) -> Result<Value, ProviderError> {
         self.client_tools.declare_on_thread_start(&mut request);
+        self.session_instructions
+            .apply_to_request(&self.upstream, &mut request)
+            .await;
         let page = TurnsPage::of(&request);
         let method = request_method(&request);
         let generation = self.upstream.generation();
@@ -868,6 +889,9 @@ impl NativeSurface for CodexProvider {
         mut request: Value,
     ) -> Result<(Value, ProviderFence), ProviderError> {
         self.client_tools.declare_on_thread_start(&mut request);
+        self.session_instructions
+            .apply_to_request(&self.upstream, &mut request)
+            .await;
         let page = TurnsPage::of(&request);
         let method = request_method(&request);
         let generation = self.upstream.generation();
@@ -898,6 +922,7 @@ impl NativeSurface for CodexProvider {
         dispatch::turn_start_with_resume(
             &self.upstream,
             self.account_pool().as_ref(),
+            &self.session_instructions,
             &self.subscriptions,
             request,
         )
@@ -915,6 +940,7 @@ impl NativeSurface for CodexProvider {
         dispatch::settings_update_with_resume(
             &self.upstream,
             self.account_pool().as_ref(),
+            &self.session_instructions,
             &self.subscriptions,
             request,
         )
@@ -925,6 +951,7 @@ impl NativeSurface for CodexProvider {
         dispatch::realtime_start_with_resume(
             &self.upstream,
             self.account_pool().as_ref(),
+            &self.session_instructions,
             &self.subscriptions,
             request,
         )

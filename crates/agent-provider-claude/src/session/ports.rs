@@ -5,7 +5,7 @@
 
 use std::{
     path::PathBuf,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{Arc, OnceLock, atomic::AtomicUsize},
     time::Duration,
 };
 
@@ -14,7 +14,7 @@ use agent_core::{
         AgentEvent, AgentItem, AgentTurn, AppThreadId, ClientToolSpec, ProviderRateLimitWindow,
         ToolCallParams, ToolCallResult, TurnId,
     },
-    provider::ProviderError,
+    provider::{ProviderError, SessionInstructions},
 };
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
@@ -116,6 +116,9 @@ pub struct SessionDeps {
     pub persistence: Arc<dyn StatePersistence>,
     pub outputs: mpsc::Sender<SessionOutput>,
     pub client_tools: Arc<dyn ClientTools>,
+    /// The host's session instructions, once installed; every process a
+    /// session opens passes them.
+    pub session_instructions: Arc<OnceLock<SessionInstructions>>,
     pub history: Arc<dyn HistoryLines>,
     pub rate_limits: Arc<dyn RateLimitSink>,
     pub config: SessionConfig,

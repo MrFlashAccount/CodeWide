@@ -7,10 +7,11 @@ use agent_core::model::{
 };
 
 use super::{
-    Harness, Options, TERMINAL, TestResult, harness, id, stored_answer, stored_prompt,
+    Harness, Options, TERMINAL, TestResult, harness, id, start, stored_answer, stored_prompt,
     threads::{rejected_code, session_file_exists, turns_params, update},
     write_session,
 };
+use crate::cli::command::SessionIdentity;
 
 const FORK: &str = "6b8f0c2a-1d3e-4f5a-8b9c-0d1e2f3a4b5c";
 
@@ -98,6 +99,27 @@ async fn copies_the_history_through_a_turn_into_a_thread_with_its_own_session() 
         ["Fix the flaky test", "Now add a regression test"]
     );
     assert_eq!(forked_sessions(&harness), 1);
+    harness.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_fork_resumes_its_own_session_with_the_session_instructions() -> TestResult {
+    let instructions = agent_core::provider::SessionInstructions::new("Link every file.");
+    let harness = harness(Options {
+        session_instructions: Some(instructions),
+        ..Options::default()
+    })?;
+    store_with_two_turns(&harness)?;
+    harness
+        .service
+        .fork(fork_params(Some(FORK), ForkBoundary::All)?)
+        .await?;
+    start(&harness.service, FORK, "continue").await?;
+    let query = harness.runtime.query(0)?;
+    let options = &query.options;
+    assert!(matches!(&options.identity, SessionIdentity::Resume(session) if session != TERMINAL));
+    assert_eq!(options.session_instructions, Some(instructions));
     harness.close().await;
     Ok(())
 }

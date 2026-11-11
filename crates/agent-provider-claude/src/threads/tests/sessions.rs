@@ -203,6 +203,45 @@ async fn opens_with_the_session_id_first_and_resumes_afterwards() -> TestResult 
 }
 
 #[tokio::test]
+async fn every_process_of_a_session_carries_the_session_instructions() -> TestResult {
+    let instructions = agent_core::provider::SessionInstructions::new("Link every file.");
+    let harness = harness(Options {
+        session_instructions: Some(instructions),
+        ..Options::default()
+    })?;
+    create_thread(&harness.service, THREAD).await?;
+    start(&harness.service, THREAD, "first").await?;
+    let query = harness.runtime.query(0)?;
+    query.push(frames::init()).await;
+    query.push(frames::result()).await;
+    query.idle().await;
+    settle().await;
+    query.end().await;
+    settle().await;
+    start(&harness.service, THREAD, "second").await?;
+    let opened = harness
+        .runtime
+        .queries()
+        .iter()
+        .map(|query| {
+            (
+                query.options.identity.clone(),
+                query.options.session_instructions,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        opened,
+        [
+            (SessionIdentity::New(THREAD.into()), Some(instructions)),
+            (SessionIdentity::Resume(THREAD.into()), Some(instructions))
+        ]
+    );
+    harness.close().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn fails_only_the_turn_of_the_thread_whose_process_died() -> TestResult {
     let harness = harness(Options::default())?;
     create_thread(&harness.service, THREAD).await?;

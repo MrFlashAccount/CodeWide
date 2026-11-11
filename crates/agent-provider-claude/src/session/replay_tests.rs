@@ -556,6 +556,7 @@ fn session_deps(
         persistence: Arc::new(MemoryPersistence),
         outputs,
         client_tools: Arc::new(NoClientTools),
+        session_instructions: Arc::default(),
         history: Arc::new(CompletedHistory(completed)),
         rate_limits: Arc::new(NoRateLimits),
         config: SessionConfig {

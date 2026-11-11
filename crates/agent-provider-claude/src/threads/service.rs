@@ -8,7 +8,7 @@
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{Arc, OnceLock, atomic::AtomicUsize},
     time::Duration,
 };
 
@@ -16,7 +16,7 @@ use agent_core::{
     model::{
         AgentEvent, AgentThread, AgentTurn, NativeThreadPresence, NativeTitleOverride, ThreadStatus,
     },
-    provider::ProviderError,
+    provider::{ProviderError, SessionInstructions},
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
@@ -72,6 +72,8 @@ pub struct ServiceDeps {
     /// Ids Claude persists ([`crate::uuid::random_uuid`] outside tests).
     pub new_uuid: Arc<dyn Fn() -> String + Send + Sync>,
     pub client_tools: Arc<dyn ClientTools>,
+    /// The host's session instructions, once installed.
+    pub session_instructions: Arc<OnceLock<SessionInstructions>>,
     pub rate_limits: Arc<dyn RateLimitSink>,
     pub session_config: SessionConfig,
     /// The sessions other `claude` processes run.
@@ -183,6 +185,7 @@ impl ThreadService {
             persistence,
             outputs: outputs.clone(),
             client_tools: deps.client_tools,
+            session_instructions: deps.session_instructions,
             history: Arc::new(StoredHistoryLines {
                 index: history_index.clone(),
             }),

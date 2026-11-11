@@ -38,6 +38,7 @@ fn fake(directory: &Path, script: &str) -> QueryOptions {
         profile: profile_options(":workspace").unwrap_or_else(|| unreachable!()),
         identity: SessionIdentity::New("s1".into()),
         client_tools: true,
+        session_instructions: None,
     }
 }
 
