@@ -1054,6 +1054,7 @@ impl OrchestrationService {
             result_truncated: false,
             note: None,
             cost: None,
+            pending_input: None,
         })
     }
 
@@ -1111,6 +1112,7 @@ impl OrchestrationService {
             result_truncated: false,
             note: None,
             cost: None,
+            pending_input: None,
         });
         report.note = Some(UNREADABLE_NOTE.to_owned());
         report

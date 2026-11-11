@@ -721,5 +721,6 @@ pub(super) fn addressable_uncertain_snapshot(bundle: &TaskBundle) -> TaskSnapsho
         recovery: Some(RecoveryAction::WaitTask),
         final_message: None,
         cost: None,
+        pending_input: Vec::new(),
     }
 }

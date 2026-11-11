@@ -1,6 +1,7 @@
 //! Cross-provider subagents driven by the model through native client-side
 //! tools (`codewide_spawn_agent`, `codewide_wait_agent`,
-//! `codewide_send_agent`, `codewide_cancel_agent`, `codewide_list_agents`).
+//! `codewide_send_agent`, `codewide_cancel_agent`, `codewide_list_agents`,
+//! `codewide_answer_agent`).
 //!
 //! The service is the single owner of the tool semantics for every
 //! provider: it is installed into each provider as its `ClientToolHost`,
@@ -12,14 +13,19 @@
 //! and its permission profile never exceeds the caller's (`profiles`). Every
 //! spawn, delegated task and queued follow-up is one child work request
 //! (`work_requests`) whose settled result is pushed to the parent as a
-//! hidden notice (`notifications`) unless a wait or cancel took it. See
+//! hidden notice (`notifications`) unless a wait or cancel took it. A
+//! child's pending request to a person (approval, user input) is reported
+//! as `awaitingInput`, announced once and answerable by the parent
+//! (`awaiting`, over the `input_requests` owner contract). See
 //! `docs/agent-providers.md#agent-delegation-tools`.
 
 pub mod admission;
 mod agent_controls;
+mod awaiting;
 pub mod children;
 mod coordinator;
 mod delivery;
+pub mod input_requests;
 pub mod journal;
 pub mod lineage;
 mod notifications;
@@ -146,6 +152,7 @@ pub struct OrchestrationService {
     delegate_task_enabled: std::sync::atomic::AtomicBool,
     max_agent_depth: std::sync::atomic::AtomicUsize,
     delivery: Arc<notifications::DeliveryLoop>,
+    inputs: awaiting::InputWatch,
 }
 
 impl OrchestrationService {
@@ -221,6 +228,7 @@ impl OrchestrationService {
             delegate_task_enabled: std::sync::atomic::AtomicBool::new(true),
             max_agent_depth: std::sync::atomic::AtomicUsize::new(DEFAULT_MAX_AGENT_DEPTH),
             delivery,
+            inputs: awaiting::InputWatch::default(),
         });
         service.start_recovery();
         service.start_delivery_loop();
@@ -364,6 +372,7 @@ impl OrchestrationService {
             ToolRequest::Send(request) => to_json(&self.send(&caller, request, &identity).await?),
             ToolRequest::Cancel(child) => to_json(&self.cancel(&caller, &child).await?),
             ToolRequest::List => to_json(&self.list(&caller).await?),
+            ToolRequest::Answer(request) => to_json(&self.answer(&caller, request).await?),
         }
     }
 

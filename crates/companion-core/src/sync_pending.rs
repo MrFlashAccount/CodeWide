@@ -39,6 +39,46 @@ pub(crate) struct PendingServerRequests {
     dynamic_tool_rejections: HashMap<String, PendingDynamicToolRejection>,
     dynamic_tool_rejection_bytes: usize,
     dynamic_tool_rejection_wakeup: Arc<tokio::sync::Notify>,
+    user_request_changes: UserRequestChanges,
+}
+
+/// Capacity of the user-request change signal. A lagging subscriber rescans
+/// the threads it follows.
+const USER_REQUEST_CHANGES_CAPACITY: usize = 256;
+
+/// Thread ids whose pending user-interaction requests opened or closed. It is
+/// only a wake-up edge: subscribers read the pending set itself.
+struct UserRequestChanges(tokio::sync::broadcast::Sender<String>);
+
+impl Default for UserRequestChanges {
+    fn default() -> Self {
+        Self(tokio::sync::broadcast::channel(USER_REQUEST_CHANGES_CAPACITY).0)
+    }
+}
+
+impl UserRequestChanges {
+    fn publish(&self, request: &Value) {
+        let user_interaction = request
+            .get("method")
+            .and_then(Value::as_str)
+            .and_then(classify_pending_request_method)
+            == Some(PendingRequestClass::UserInteraction);
+        if !user_interaction || self.0.receiver_count() == 0 {
+            return;
+        }
+        if let Some(thread_id) = request.pointer("/params/threadId").and_then(Value::as_str) {
+            let _ = self.0.send(thread_id.to_owned());
+        }
+    }
+}
+
+impl PendingServerRequests {
+    /// The signal of threads whose pending user-interaction requests change
+    /// (a request opens, is resolved or is dropped), so a reader can
+    /// subscribe without taking the pending-state lock.
+    pub(crate) fn user_request_changes(&self) -> tokio::sync::broadcast::Sender<String> {
+        self.user_request_changes.0.clone()
+    }
 }
 
 pub(crate) async fn reject_oversized_dynamic_tool_requests(
@@ -284,6 +324,7 @@ pub(crate) async fn observe_server_requests(
         }
         pending.requests.insert(key, payload.clone());
         pending.bytes = next_request_bytes;
+        pending.user_request_changes.publish(payload);
     }
     Ok(())
 }
@@ -373,6 +414,7 @@ fn remove_server_request_locked(state: &mut PendingServerRequests, key: &str) {
         state.bytes = state
             .bytes
             .saturating_sub(serde_json::to_vec(&request).map_or(0, |serialized| serialized.len()));
+        state.user_request_changes.publish(&request);
     }
     if let Some(rejection) = state.dynamic_tool_rejections.remove(key) {
         state.dynamic_tool_rejection_bytes = state

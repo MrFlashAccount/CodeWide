@@ -12,7 +12,7 @@ use crate::agent::orchestration::{
 const CODEX: &str = "codex";
 const CLAUDE: &str = "claude";
 
-async fn eventually<T>(
+pub(super) async fn eventually<T>(
     what: &str,
     mut check: impl AsyncFnMut() -> Result<Option<T>, Box<dyn std::error::Error>>,
 ) -> Result<T, Box<dyn std::error::Error>> {
@@ -28,7 +28,7 @@ async fn eventually<T>(
     .map_err(|_| format!("timed out waiting for {what}"))?
 }
 
-async fn spawn_from_claude(
+pub(super) async fn spawn_from_claude(
     harness: &Harness,
     prompt: &str,
 ) -> Result<AppThreadId, Box<dyn std::error::Error>> {
@@ -44,7 +44,9 @@ async fn spawn_from_claude(
     AppThreadId::parse(&agent_id(&spawned)?).ok_or_else(|| "invalid child".into())
 }
 
-async fn delegate_from_claude(harness: &Harness) -> Result<Value, Box<dyn std::error::Error>> {
+pub(super) async fn delegate_from_claude(
+    harness: &Harness,
+) -> Result<Value, Box<dyn std::error::Error>> {
     let (success, delegated) = call(
         &harness.service,
         CLAUDE,
@@ -78,7 +80,7 @@ fn child_requests(
 }
 
 /// A running request's turn bound by its receipt, other than `known`.
-async fn running_turn(
+pub(super) async fn running_turn(
     harness: &Harness,
     child: &AppThreadId,
     known: &[TurnId],
@@ -126,7 +128,7 @@ fn end(harness: &Harness, child: &AppThreadId, turn: &TurnId, status: &str) {
 }
 
 /// The model-facing notices the Claude parent received, decoded.
-fn notices(harness: &Harness) -> Vec<Value> {
+pub(super) fn notices(harness: &Harness) -> Vec<Value> {
     harness
         .claude
         .started()
@@ -147,7 +149,7 @@ fn notices(harness: &Harness) -> Vec<Value> {
         .collect()
 }
 
-async fn notice_count(
+pub(super) async fn notice_count(
     harness: &Harness,
     count: usize,
 ) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
@@ -159,7 +161,7 @@ async fn notice_count(
 }
 
 /// No further notice arrives during a settle window.
-async fn settle_window() {
+pub(super) async fn settle_window() {
     tokio::time::sleep(Duration::from_millis(250)).await;
 }
 

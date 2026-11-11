@@ -9,6 +9,8 @@
 use agent_core::{model::ProviderCost, user_text::DELEGATED_TASK_CONTEXT_PREFIX};
 use serde::{Deserialize, Serialize};
 
+use crate::agent::orchestration::input_requests::PendingInput;
+
 const VERSION_1: u8 = 1;
 const VERSION: u8 = 2;
 
@@ -22,6 +24,9 @@ pub(crate) enum DelegatedTaskStatus {
     /// A user or system interrupt (not a parent cancel).
     Interrupted,
     Cancelled,
+    /// Not terminal: the child's turn waits for an answer to a runtime
+    /// request (`pendingInput`).
+    AwaitingInput,
 }
 
 impl DelegatedTaskStatus {
@@ -32,6 +37,7 @@ impl DelegatedTaskStatus {
             Self::Failed => "failed",
             Self::Interrupted => "interrupted",
             Self::Cancelled => "stopped",
+            Self::AwaitingInput => "interim",
         }
     }
 }
@@ -69,6 +75,9 @@ pub(crate) struct ChildResultReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) note: Option<String>,
     pub(crate) cost: Option<ProviderCost>,
+    /// The request an `awaitingInput` report waits on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) pending_input: Option<PendingInput>,
 }
 
 /// A batch of reports delivered as one parent notice.
@@ -88,6 +97,15 @@ impl ChildResultNotice {
             count => format!("{count} agent results"),
         };
         Self { summary, reports }
+    }
+
+    /// One child's request waiting for an answer.
+    #[must_use]
+    pub(crate) fn awaiting_input(report: ChildResultReport) -> Self {
+        Self {
+            summary: "1 agent awaits an answer".to_owned(),
+            reports: vec![report],
+        }
     }
 }
 
@@ -231,6 +249,7 @@ mod tests {
             result_truncated: false,
             note: None,
             cost: None,
+            pending_input: None,
         }
     }
 

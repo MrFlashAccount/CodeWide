@@ -32,6 +32,8 @@ mod compatibility_tests;
 mod history_reconcile_tests;
 #[path = "inheritance_tests.rs"]
 mod inheritance_tests;
+#[path = "input_request_tests.rs"]
+mod input_request_tests;
 #[path = "notification_journal_tests.rs"]
 mod notification_journal_tests;
 #[path = "notification_tests.rs"]

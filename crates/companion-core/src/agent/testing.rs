@@ -362,6 +362,8 @@ pub(crate) struct ScriptedProvider {
     pub(crate) interrupt_hangs: std::sync::atomic::AtomicBool,
     pub(crate) updated: Mutex<Vec<ThreadUpdateParams>>,
     pub(crate) forked: Mutex<Vec<ThreadForkParams>>,
+    /// Answers to runtime requests, in call order.
+    pub(crate) responded: Mutex<Vec<RequestRespondParams>>,
     /// Ids of `catalog.permissionProfiles`; empty lists none.
     profiles: Vec<&'static str>,
     /// Threads whose history reads fail transiently.
@@ -401,6 +403,7 @@ impl ScriptedProvider {
             interrupt_hangs: std::sync::atomic::AtomicBool::new(false),
             updated: Mutex::new(Vec::new()),
             forked: Mutex::new(Vec::new()),
+            responded: Mutex::new(Vec::new()),
             profiles: Vec::new(),
             unreadable: Mutex::new(std::collections::HashSet::new()),
             observed: Mutex::new(Vec::new()),
@@ -789,8 +792,9 @@ impl AgentProvider for ScriptedProvider {
         Ok(())
     }
 
-    async fn request_respond(&self, _: RequestRespondParams) -> Result<(), ProviderError> {
-        Err(unsupported())
+    async fn request_respond(&self, params: RequestRespondParams) -> Result<(), ProviderError> {
+        locked(&self.responded).push(params);
+        Ok(())
     }
 
     async fn capability_invoke(&self, _: CapabilityInvokeParams) -> Result<Value, ProviderError> {

@@ -7,8 +7,13 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::task::{TaskId, WaitMode};
-use crate::agent::model::{AppThreadId, ClientToolSpec, ProviderId};
+use std::collections::BTreeMap;
+
+use super::{
+    input_requests::PendingInput,
+    task::{TaskId, WaitMode},
+};
+use crate::agent::model::{AppThreadId, ApprovalDecision, ClientToolSpec, ProviderId};
 
 pub const DELEGATE_TASK: &str = "codewide_delegate_task";
 pub const WAIT_TASK: &str = "codewide_wait_task";
@@ -18,6 +23,7 @@ pub const WAIT_AGENT: &str = "codewide_wait_agent";
 pub const SEND_AGENT: &str = "codewide_send_agent";
 pub const CANCEL_AGENT: &str = "codewide_cancel_agent";
 pub const LIST_AGENTS: &str = "codewide_list_agents";
+pub const ANSWER_AGENT: &str = "codewide_answer_agent";
 
 /// Default and maximum wait of `codewide_wait_agent`.
 pub const DEFAULT_WAIT: Duration = Duration::from_mins(1);
@@ -39,7 +45,7 @@ fn task_specs() -> Vec<ClientToolSpec> {
     vec![
         ClientToolSpec {
             name: DELEGATE_TASK.into(),
-            description: "Delegate a task to a dedicated child thread. The host preserves the task across reconnects and restarts. Use deferred to continue immediately: the result arrives automatically as a CodeWide notice that starts this thread's next turn once it is idle (never inside a running turn). Use blocking to wait while this turn remains alive; a result returned to you here is not delivered again.".into(),
+            description: "Delegate a task to a dedicated child thread. The host preserves the task across reconnects and restarts. Use deferred to continue immediately: the result arrives automatically as a CodeWide notice that starts this thread's next turn once it is idle (never inside a running turn). Use blocking to wait while this turn remains alive; a result returned to you here is not delivered again. A blocking call also returns early with status awaitingInput when the child asks a question or needs an approval (see codewide_wait_task).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -89,7 +95,7 @@ fn task_specs() -> Vec<ClientToolSpec> {
         },
         ClientToolSpec {
             name: WAIT_TASK.into(),
-            description: "Wait for one durable delegated task. Returns only that task's initial turn result. A terminal result returned here is acknowledged: its automatic notice is not delivered (or is withdrawn while still queued).".into(),
+            description: "Wait for one durable delegated task. Returns only that task's initial turn result. A terminal result returned here is acknowledged: its automatic notice is not delivered (or is withdrawn while still queued). Returns early with status awaitingInput when the child's turn is blocked on a question to the user or an approval: pendingInput lists each request (requestId, kind userInput with its questions and options, or kind approval with the command and reason). Answer it with codewide_answer_agent using the snapshot's agentThreadId, or leave it to the user.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -121,7 +127,7 @@ fn agent_specs() -> Vec<ClientToolSpec> {
     vec![
         ClientToolSpec {
             name: SPAWN_AGENT.into(),
-            description: "Start another agent in a new CodeWide thread, linked to this thread as a subagent, and give it a task. The new agent sees only `prompt` (not this conversation). Returns immediately. Its result arrives automatically as a CodeWide notice that starts this thread's next turn once it is idle, so you do not need to poll; call codewide_wait_agent only when you must block on the answer now.".into(),
+            description: "Start another agent in a new CodeWide thread, linked to this thread as a subagent, and give it a task. The new agent sees only `prompt` (not this conversation). Returns immediately. Its result arrives automatically as a CodeWide notice that starts this thread's next turn once it is idle, so you do not need to poll; call codewide_wait_agent only when you must block on the answer now. If the agent asks a question or needs an approval, a notice with status awaitingInput arrives the same way (once per request); answer it with codewide_answer_agent.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -139,7 +145,7 @@ fn agent_specs() -> Vec<ClientToolSpec> {
         },
         ClientToolSpec {
             name: WAIT_AGENT.into(),
-            description: "Wait until an agent of this thread finishes its current turn, or until the timeout. Returns its status and, when finished, its final message. A finished result returned here is not delivered again as a notice.".into(),
+            description: "Wait until an agent of this thread finishes its current turn, its turn becomes blocked on a request to the user, or the timeout. Returns its status and, when finished, its final message. Status awaitingInput means the agent waits for an answer: pendingInput lists each request (requestId, kind userInput with its questions and options, or kind approval with the command, reason and accepted decisions); answer it with codewide_answer_agent or leave it to the user in the agent's thread. A finished result or a pending request returned here is not delivered again as a notice.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -152,7 +158,7 @@ fn agent_specs() -> Vec<ClientToolSpec> {
         },
         ClientToolSpec {
             name: SEND_AGENT.into(),
-            description: "Send a follow-up message to an agent of this thread. mode \"queue\" (default) starts a new turn when the agent is idle and otherwise delivers the message after its current turn; that turn's result arrives automatically as its own notice. \"steer\" adds it to the running turn, whose single result covers it.".into(),
+            description: "Send a follow-up message to an agent of this thread. mode \"queue\" (default) starts a new turn when the agent is idle and otherwise delivers the message after its current turn; that turn's result arrives automatically as its own notice. \"steer\" adds it to the running turn, whose single result covers it. Neither answers a pending question or approval (status awaitingInput): use codewide_answer_agent.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -176,8 +182,32 @@ fn agent_specs() -> Vec<ClientToolSpec> {
         },
         ClientToolSpec {
             name: LIST_AGENTS.into(),
-            description: "List the agents this thread started, with their provider, model, name and status.".into(),
+            description: "List the agents this thread started, with their provider, model, name and status. Status awaitingInput means the agent's turn is blocked on a request to the user; pendingInput lists it (answer with codewide_answer_agent).".into(),
             input_schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
+        },
+        ClientToolSpec {
+            name: ANSWER_AGENT.into(),
+            description: "Answer a pending request of an agent of this thread (status awaitingInput): the answers to its questions (kind userInput) or a decision on an approval (kind approval). Give exactly one of answers or decision. The agent's turn then continues. The user can also answer in the agent's thread; the first answer wins, and a later one fails with an error saying the request is no longer pending.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agentThreadId": agent_thread_id,
+                    "requestId": {"type": "string", "description": "pendingInput[].requestId from codewide_wait_agent, codewide_list_agents, codewide_wait_task or the awaitingInput notice."},
+                    "answers": {
+                        "type": "object",
+                        "description": "For kind userInput: question id -> the chosen option label(s), or free text when the question allowsOther.",
+                        "additionalProperties": {
+                            "oneOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}}
+                            ]
+                        }
+                    },
+                    "decision": {"type": "string", "enum": ["accept", "acceptForSession", "decline", "cancel"], "description": "For kind approval: one of the request's decisions."}
+                },
+                "required": ["agentThreadId", "requestId"],
+                "additionalProperties": false
+            }),
         },
     ]
 }
@@ -253,6 +283,21 @@ pub struct SendRequest {
     pub mode: SendMode,
 }
 
+/// A parent's answer to one pending request of its agent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InputAnswer {
+    /// Question id -> answers (option labels or free text).
+    Answers(BTreeMap<String, Vec<String>>),
+    Decision(ApprovalDecision),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnswerRequest {
+    pub child: AppThreadId,
+    pub request_id: String,
+    pub answer: InputAnswer,
+}
+
 /// One validated tool call.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ToolRequest {
@@ -264,6 +309,7 @@ pub enum ToolRequest {
     Send(SendRequest),
     Cancel(AppThreadId),
     List,
+    Answer(AnswerRequest),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -340,6 +386,22 @@ struct SendArguments {
 }
 
 #[derive(Deserialize)]
+#[serde(untagged)]
+enum AnswerValue {
+    One(String),
+    Many(Vec<String>),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AnswerArguments {
+    agent_thread_id: String,
+    request_id: String,
+    answers: Option<BTreeMap<String, AnswerValue>>,
+    decision: Option<ApprovalDecision>,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ChildArguments {
     agent_thread_id: String,
@@ -404,6 +466,36 @@ fn delegate_workspace(workspace: Option<WorkspaceArguments>) -> Result<Workspace
             }
         }
     })
+}
+
+/// Decodes `codewide_answer_agent`: exactly one of answers or decision.
+fn parse_answer(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
+    let arguments: AnswerArguments = decode(tool, arguments)?;
+    let request_id = arguments.request_id.trim().to_owned();
+    if request_id.is_empty() {
+        return Err("requestId must not be empty".into());
+    }
+    let answer = match (arguments.answers, arguments.decision) {
+        (Some(answers), None) => InputAnswer::Answers(
+            answers
+                .into_iter()
+                .map(|(question, value)| {
+                    let values = match value {
+                        AnswerValue::One(value) => vec![value],
+                        AnswerValue::Many(values) => values,
+                    };
+                    (question, values)
+                })
+                .collect(),
+        ),
+        (None, Some(decision)) => InputAnswer::Decision(decision),
+        _ => return Err("give exactly one of answers or decision".into()),
+    };
+    Ok(ToolRequest::Answer(AnswerRequest {
+        child: child(&arguments.agent_thread_id)?,
+        request_id,
+        answer,
+    }))
 }
 
 /// Decodes and validates one call's arguments.
@@ -493,6 +585,7 @@ pub fn parse(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
             Ok(ToolRequest::Cancel(child(&arguments.agent_thread_id)?))
         }
         LIST_AGENTS => Ok(ToolRequest::List),
+        ANSWER_AGENT => parse_answer(tool, arguments),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -502,6 +595,8 @@ pub fn parse(tool: &str, arguments: &Value) -> Result<ToolRequest, String> {
 #[serde(rename_all = "camelCase")]
 pub enum AgentStatus {
     Running,
+    /// Running, but the turn waits for an answer to a request to the user.
+    AwaitingInput,
     Completed,
     Failed,
     Interrupted,
@@ -537,6 +632,9 @@ pub struct WaitResult {
     pub final_message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
+    /// The requests an `awaitingInput` agent waits on.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pending_input: Vec<PendingInput>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -563,6 +661,31 @@ pub struct ListedAgent {
     pub name: Option<String>,
     /// `null` when the agent's provider cannot report it right now.
     pub status: Option<AgentStatus>,
+    /// The requests an `awaitingInput` agent waits on.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pending_input: Vec<PendingInput>,
+}
+
+/// The outcome of `codewide_answer_agent`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AnswerStatus {
+    /// The provider took the answer; the agent's turn continues.
+    Answered,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct AnswerResult {
+    pub status: AnswerStatus,
+}
+
+impl AnswerResult {
+    #[must_use]
+    pub const fn answered() -> Self {
+        Self {
+            status: AnswerStatus::Answered,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -591,7 +714,8 @@ mod tests {
                 WAIT_AGENT,
                 SEND_AGENT,
                 CANCEL_AGENT,
-                LIST_AGENTS
+                LIST_AGENTS,
+                ANSWER_AGENT
             ]
         );
         assert!(
@@ -646,6 +770,43 @@ mod tests {
         assert!(parse(SPAWN_AGENT, &json!({"prompt": " "})).is_err());
         assert!(parse(SPAWN_AGENT, &json!({"prompt": "p", "cwd": "rel"})).is_err());
         assert_eq!(parse(LIST_AGENTS, &Value::Null)?, ToolRequest::List);
+        assert_eq!(
+            parse(
+                ANSWER_AGENT,
+                &json!({"agentThreadId": "c", "requestId": "r", "answers": {"q1": "Rust", "q2": ["a", "b"]}})
+            )?,
+            ToolRequest::Answer(AnswerRequest {
+                child: AppThreadId::from_static("c"),
+                request_id: "r".into(),
+                answer: InputAnswer::Answers(
+                    [
+                        ("q1".to_owned(), vec!["Rust".to_owned()]),
+                        ("q2".to_owned(), vec!["a".to_owned(), "b".to_owned()]),
+                    ]
+                    .into_iter()
+                    .collect()
+                ),
+            })
+        );
+        assert_eq!(
+            parse(
+                ANSWER_AGENT,
+                &json!({"agentThreadId": "c", "requestId": "r", "decision": "acceptForSession"})
+            )?,
+            ToolRequest::Answer(AnswerRequest {
+                child: AppThreadId::from_static("c"),
+                request_id: "r".into(),
+                answer: InputAnswer::Decision(ApprovalDecision::AcceptForSession),
+            })
+        );
+        for invalid in [
+            json!({"agentThreadId": "c", "requestId": "r"}),
+            json!({"agentThreadId": "c", "requestId": "r", "decision": "accept", "answers": {}}),
+            json!({"agentThreadId": "c", "requestId": " ", "decision": "accept"}),
+            json!({"agentThreadId": "c", "requestId": "r", "decision": "maybe"}),
+        ] {
+            assert!(parse(ANSWER_AGENT, &invalid).is_err(), "{invalid}");
+        }
         Ok(())
     }
 
@@ -655,7 +816,8 @@ mod tests {
             serde_json::to_value(WaitResult {
                 status: AgentStatus::Running,
                 final_message: None,
-                turn_id: None
+                turn_id: None,
+                pending_input: Vec::new(),
             })?,
             json!({"status": "running"})
         );

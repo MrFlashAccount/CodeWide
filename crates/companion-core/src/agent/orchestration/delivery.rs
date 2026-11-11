@@ -76,6 +76,7 @@ impl OrchestrationService {
     ) -> Result<TaskSnapshot, ToolError> {
         let mut task_events = self.task_signals.subscribe();
         let mut turn_ends = self.turn_ends.subscribe();
+        let mut inputs = self.subscribe_inputs();
         let caller_turn = (
             caller.provider.descriptor().id,
             caller.thread.as_str().to_owned(),
@@ -84,11 +85,21 @@ impl OrchestrationService {
         let wait = async {
             loop {
                 let snapshot = self.task_snapshot(task_id).await?;
-                if snapshot.status.is_terminal() {
+                if snapshot.status.is_terminal()
+                    || snapshot.status == PublicTaskStatus::AwaitingInput
+                {
                     return Ok(snapshot);
                 }
                 tokio::select! {
                     _ = task_events.recv() => {}
+                    // Any request change re-reads the snapshot; a request of
+                    // this task's child ends the wait as `awaitingInput`.
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) = async {
+                        match inputs.as_mut() {
+                            Some(inputs) => inputs.recv().await,
+                            None => std::future::pending().await,
+                        }
+                    } => {}
                     event = turn_ends.recv() => {
                         if matches!(event, Ok((ref provider, ref thread, ref turn))
                             if provider == &caller_turn.0 && thread == &caller_turn.1 && turn == &caller_turn.2) {
@@ -102,6 +113,15 @@ impl OrchestrationService {
             Ok(result) => result,
             Err(_) => self.task_snapshot(task_id).await,
         }?;
+        if snapshot.status == PublicTaskStatus::AwaitingInput
+            && let Some(child) = snapshot
+                .agent_thread_id
+                .as_deref()
+                .and_then(AppThreadId::parse)
+        {
+            // Returned here, the requests are not announced again.
+            self.take_inputs(&child, &snapshot.pending_input).await;
+        }
         if snapshot.status.is_terminal() {
             let bundle = self
                 .task_journal
@@ -171,6 +191,16 @@ impl OrchestrationService {
             | TaskState::Starting
             | TaskState::Running => PublicTaskStatus::Running,
         };
+        let child = bundle.attempt.state.child_thread_id().cloned();
+        let pending_input = match (&child, status) {
+            (Some(child), PublicTaskStatus::Running) => self.pending_input(child).await,
+            _ => Vec::new(),
+        };
+        let status = if pending_input.is_empty() {
+            status
+        } else {
+            PublicTaskStatus::AwaitingInput
+        };
         Ok(TaskSnapshot {
             task_id: bundle.task.task_id.as_str().to_owned(),
             attempt_id: bundle.attempt.attempt_id.as_str().to_owned(),
@@ -186,6 +216,7 @@ impl OrchestrationService {
                 .then_some(RecoveryAction::WaitTask),
             final_message,
             cost,
+            pending_input,
         })
     }
 

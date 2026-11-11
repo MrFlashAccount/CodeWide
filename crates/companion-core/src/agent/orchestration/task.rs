@@ -9,6 +9,7 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+use super::input_requests::PendingInput;
 use crate::agent::model::{AppThreadId, ProviderCost, ProviderId, TurnId};
 
 macro_rules! durable_id {
@@ -580,12 +581,18 @@ pub struct TaskSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub final_message: Option<String>,
     pub cost: Option<ProviderCost>,
+    /// The requests an `awaitingInput` task's child waits on.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pending_input: Vec<PendingInput>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PublicTaskStatus {
     Running,
+    /// Running, but the child's turn waits for an answer to a request to the
+    /// user (`pendingInput`).
+    AwaitingInput,
     StartUncertain,
     Cancelling,
     Succeeded,

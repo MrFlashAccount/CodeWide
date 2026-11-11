@@ -387,11 +387,78 @@ pub fn runtime_response(request_method: &str, response: &Value) -> RuntimeRespon
     }
 }
 
+/// The client-wire `result` of a neutral answer to a runtime request: the
+/// inverse of [`runtime_response`] for the answers a person gives (an approval
+/// decision or user-input answers). `None` when the answer does not fit the
+/// request's method.
+#[must_use]
+pub fn runtime_response_result(request_method: &str, response: &RuntimeResponse) -> Option<Value> {
+    match (request_method, response) {
+        (
+            "item/commandExecution/requestApproval" | "item/fileChange/requestApproval",
+            RuntimeResponse::Approval { decision },
+        ) => Some(serde_json::json!({"decision": match decision {
+            ApprovalDecision::Accept => "accept",
+            ApprovalDecision::AcceptForSession => "acceptForSession",
+            ApprovalDecision::Decline => "decline",
+            ApprovalDecision::Cancel => "cancel",
+        }})),
+        ("item/tool/requestUserInput", RuntimeResponse::UserInput { answers }) => {
+            let answers = answers
+                .iter()
+                .map(|(question, answer)| {
+                    (
+                        question.clone(),
+                        serde_json::json!({"answers": answer.answers}),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>();
+            Some(serde_json::json!({"answers": answers}))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn encoded_answers_decode_to_the_same_neutral_response() {
+        let approval = RuntimeResponse::Approval {
+            decision: ApprovalDecision::AcceptForSession,
+        };
+        let answers = RuntimeResponse::UserInput {
+            answers: [(
+                "q1".to_owned(),
+                UserInputAnswer {
+                    answers: vec!["Rust".into(), "Go".into()],
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        for (method, response) in [
+            ("item/commandExecution/requestApproval", &approval),
+            ("item/fileChange/requestApproval", &approval),
+            ("item/tool/requestUserInput", &answers),
+        ] {
+            let result = runtime_response_result(method, response);
+            assert!(result.is_some(), "{method}");
+            let decoded = runtime_response(method, &json!({"id": 1, "result": result}));
+            assert_eq!(&decoded, response, "{method}");
+        }
+        assert_eq!(
+            runtime_response_result("item/tool/requestUserInput", &approval),
+            None
+        );
+        assert_eq!(
+            runtime_response_result("mcpServer/elicitation/request", &answers),
+            None
+        );
+    }
 
     #[test]
     fn routes_follow_capabilities_not_provider_names() {

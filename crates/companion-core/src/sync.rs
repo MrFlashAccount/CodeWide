@@ -41,14 +41,12 @@ use crate::{
         ReplayPage,
     },
     sync_live::{
-        LiveChannelRegistry, LiveControlResult, classify_pending_request_method,
-        is_realtime_notification, realtime_startup_notification_method,
+        LiveChannelRegistry, LiveControlResult, is_realtime_notification,
+        realtime_startup_notification_method,
     },
     sync_pending::{
-        PendingServerRequests, clear_user_requests_on_disconnect,
-        enforce_dynamic_tool_output_limit, observe_server_requests,
-        reject_oversized_dynamic_tool_requests, remove_server_request,
-        retry_oversized_dynamic_tool_rejections, rpc_id_key,
+        PendingServerRequests, clear_user_requests_on_disconnect, observe_server_requests,
+        reject_oversized_dynamic_tool_requests, retry_oversized_dynamic_tool_rejections,
     },
     thread_view::ThreadViewService,
     workspaces::WorkspaceService,
@@ -62,6 +60,7 @@ mod provider_rpc;
 mod queue;
 mod replay;
 mod search_routing;
+mod server_responses;
 
 #[cfg(test)]
 use crate::turn_delivery::turn_with_client_message;
@@ -503,7 +502,9 @@ impl SyncHub {
         let (events, _) = tokio::sync::broadcast::channel(MAX_LIVE_SIGNALS);
         let (local_events, ingest_rx) = tokio::sync::mpsc::channel(MAX_REPLAY_ENTRIES);
         let (ordered_ingest, ordered_ingest_rx) = tokio::sync::mpsc::channel(MAX_REPLAY_ENTRIES);
-        let server_requests = Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default()));
+        let pending_requests = PendingServerRequests::default();
+        let user_request_changes = pending_requests.user_request_changes();
+        let server_requests = Arc::new(tokio::sync::Mutex::new(pending_requests));
         let live_channels = Arc::new(LiveChannelRegistry::default());
         let recent_turn_starts = Arc::new(tokio::sync::Mutex::new(RecentTurnStarts::default()));
         let outbox_wakeup = Arc::new(tokio::sync::Notify::new());
@@ -533,6 +534,16 @@ impl SyncHub {
             workspaces: workspaces.clone(),
         }
         .compose();
+        if let Some(orchestration) = &agents.orchestration {
+            orchestration.install_input_desk(Arc::new(server_responses::ChildInputDeskAdapter {
+                resolver: server_responses::ServerRequestResolver {
+                    requests: server_requests.clone(),
+                    gateway: gateway.clone(),
+                    local_events: local_events.clone(),
+                },
+                changes: user_request_changes,
+            }));
+        }
         // One ordered forwarder per provider; each keeps its own fence order.
         for provider in registry.enabled() {
             tokio::spawn(forward_provider_events(
@@ -1308,7 +1319,7 @@ impl SyncHub {
         socket: &SessionSocket,
         response: Option<Value>,
     ) -> Result<(), ()> {
-        let Some(mut response) = response else {
+        let Some(response) = response else {
             close_with(socket, 1008, "invalid_server_response").await;
             return Err(());
         };
@@ -1322,82 +1333,18 @@ impl SyncHub {
             close_with(socket, 1008, "invalid_server_response").await;
             return Err(());
         }
-        let key = rpc_id_key(&id);
-        let (request_class, request_method, request_thread_id) = {
-            let mut pending = self.server_requests.lock().await;
-            let Some(request) = pending.requests.get(&key) else {
-                return send_json(
-                    socket,
-                    &json!({"type": "serverResponseRejected", "id": id, "reason": "already_resolved_or_unknown"}),
-                )
-                .await
-                .map_err(|_| ());
-            };
-            let request_method = request
-                .get("method")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned();
-            let request_thread_id = request
-                .pointer("/params/threadId")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            let request_class = classify_pending_request_method(&request_method);
-            if !pending.resolving.insert(key.clone()) {
-                return send_json(
-                    socket,
-                    &json!({"type": "serverResponseRejected", "id": id, "reason": "already_resolving"}),
-                )
-                .await
-                .map_err(|_| ());
-            }
-            (request_class, request_method, request_thread_id)
+        let resolver = server_responses::ServerRequestResolver {
+            requests: self.server_requests.clone(),
+            gateway: self.gateway.clone(),
+            local_events: self.local_events.clone(),
         };
-        response = enforce_dynamic_tool_output_limit(response, request_class);
-        let delivered = provider_rpc::deliver_server_response(
-            &self.gateway,
-            &request_method,
-            request_thread_id.as_deref(),
-            response,
-        )
-        .await;
-        match delivered {
-            Ok(()) => {
-                remove_server_request(&self.server_requests, &key).await;
-                if self
-                    .local_events
-                    .send(json!({
-                        "method": "serverRequest/resolved",
-                        "params": {"requestId": id, "reason": "responded"}
-                    }))
-                    .await
-                    .is_err()
-                {
-                    warn!("local replay ingestor closed after server response");
-                }
-                send_json(socket, &json!({"type": "serverResponseAccepted", "id": id}))
-                    .await
-                    .map_err(|_| ())
+        let reply = match resolver.resolve(response).await {
+            Ok(()) => json!({"type": "serverResponseAccepted", "id": id}),
+            Err(rejection) => {
+                json!({"type": "serverResponseRejected", "id": id, "reason": rejection.reason()})
             }
-            Err(error) => {
-                self.server_requests.lock().await.resolving.remove(&key);
-                let reason = match error {
-                    ProviderError::Backpressure(_) => "upstream_backpressure",
-                    ProviderError::Reconnecting(_) | ProviderError::Disconnected(_) => {
-                        "app_server_reconnecting"
-                    }
-                    ProviderError::Protocol(_) | ProviderError::Rejected(_) => {
-                        "upstream_delivery_failed"
-                    }
-                };
-                send_json(
-                    socket,
-                    &json!({"type": "serverResponseRejected", "id": id, "reason": reason}),
-                )
-                .await
-                .map_err(|_| ())
-            }
-        }
+        };
+        send_json(socket, &reply).await.map_err(|_| ())
     }
 
     #[allow(clippy::too_many_lines)]

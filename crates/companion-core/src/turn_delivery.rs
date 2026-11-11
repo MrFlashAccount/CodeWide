@@ -154,6 +154,75 @@ impl TurnDelivery {
         self.wakeup.notify_one();
     }
 
+    /// Enqueues one standalone hidden notice to a parent thread: idle-only
+    /// dispatch like a child-result notice. Repeating the same command id
+    /// and text is a no-op.
+    ///
+    /// # Errors
+    /// Returns the store failure, or a conflict when the id carries
+    /// another notice.
+    pub(crate) async fn enqueue_notice(
+        &self,
+        command_id: &str,
+        parent_thread_id: &str,
+        message: String,
+    ) -> Result<(), StoreError> {
+        let store = self.store.clone();
+        let command_id = command_id.to_owned();
+        let parent_thread_id = parent_thread_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let write = store.database().begin_write()?;
+            enqueue_completion_in_write(&write, &command_id, &parent_thread_id, &message)?;
+            write.commit()?;
+            Ok::<(), StoreError>(())
+        })
+        .await
+        .map_err(|error| StoreError::CorruptedIndex(error.to_string()))??;
+        self.wakeup.notify_one();
+        Ok(())
+    }
+
+    /// Withdraws every not-yet-dispatched notice whose command id starts
+    /// with `prefix`. Returns how many were withdrawn.
+    ///
+    /// # Errors
+    /// Returns the store failure.
+    pub(crate) async fn retract_open_notices(&self, prefix: &str) -> Result<usize, StoreError> {
+        let store = self.store.clone();
+        let prefix = prefix.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let write = store.database().begin_write()?;
+            let mut retracted = 0;
+            for (command_id, _) in open_commands_in_write(&write, &prefix)? {
+                if retract_notice_in_write(&write, &command_id)? {
+                    retracted += 1;
+                }
+            }
+            write.commit()?;
+            Ok::<usize, StoreError>(retracted)
+        })
+        .await
+        .map_err(|error| StoreError::CorruptedIndex(error.to_string()))?
+    }
+
+    /// Withdraws a standalone notice that has not been dispatched. Returns
+    /// `false` when it may have reached the provider.
+    ///
+    /// # Errors
+    /// Returns the store failure.
+    pub(crate) async fn retract_notice(&self, command_id: &str) -> Result<bool, StoreError> {
+        let store = self.store.clone();
+        let command_id = command_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let write = store.database().begin_write()?;
+            let retracted = retract_notice_in_write(&write, &command_id)?;
+            write.commit()?;
+            Ok::<bool, StoreError>(retracted)
+        })
+        .await
+        .map_err(|error| StoreError::CorruptedIndex(error.to_string()))?
+    }
+
     /// Lists durable commands without exposing the storage owner, including
     /// hidden notices. Internal owners only; clients use [`Self::client_list`].
     pub(crate) async fn list(

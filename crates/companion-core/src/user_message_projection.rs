@@ -536,6 +536,7 @@ mod tests {
             result_truncated: false,
             note: None,
             cost: None,
+            pending_input: None,
         }
     }
 

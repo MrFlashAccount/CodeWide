@@ -1,6 +1,6 @@
 //! Stable thread-addressed controls for cross-provider agents.
 //!
-//! These five tools intentionally use agent/current-turn semantics. Durable
+//! These thread-addressed tools intentionally use agent/current-turn semantics. Durable
 //! task reads, acknowledgements and cancellation stay in the separate
 //! task-addressed owner.
 
@@ -49,7 +49,7 @@ pub(super) const CANCEL_ACK_WINDOW: Duration = Duration::from_secs(1);
 
 impl OrchestrationService {
     /// The provider of one of the caller's agents.
-    async fn child_provider(
+    pub(super) async fn child_provider(
         &self,
         caller: &Caller,
         child: &AppThreadId,
@@ -144,6 +144,7 @@ impl OrchestrationService {
             .tracker
             .subscribe(request.child.as_str())
             .ok_or_else(|| format!("agent not found: {}", request.child))?;
+        let inputs = self.subscribe_inputs();
         let mut turn_ends = self.turn_ends.subscribe();
         let caller_turn = (
             caller.provider.descriptor().id,
@@ -168,17 +169,32 @@ impl OrchestrationService {
             }
         };
         let settled = tokio::select! {
+            biased;
             settled = tokio::time::timeout(
                 request.timeout,
                 receiver.wait_for(|state| !state.is_running()),
             ) => settled.ok().and_then(Result::ok).map(|state| state.clone()),
+            // The turn is blocked on a request to a person: the parent
+            // learns it now instead of waiting out the timeout.
+            _ = self.next_awaiting(&request.child, inputs) => None,
             // The calling turn ended: the provider no longer waits for this
             // answer, so the wait is abandoned.
             () = caller_ended => None,
         };
-        // A timeout, an ended calling turn or a closed channel reports the
-        // current state.
+        // A timeout, a blocked turn, an ended calling turn or a closed
+        // channel reports the current state.
         let state = settled.unwrap_or_else(|| receiver.borrow().clone());
+        if state.is_running() {
+            let pending_input = self.pending_input(&request.child).await;
+            if !pending_input.is_empty() {
+                // Returned here, the request is not announced again.
+                self.take_inputs(&request.child, &pending_input).await;
+                let mut result = wait_result(state);
+                result.status = AgentStatus::AwaitingInput;
+                result.pending_input = pending_input;
+                return Ok(result);
+            }
+        }
         // A terminal result returned here is the parent's: it is not pushed
         // again, and a notice still queued for it is retracted.
         if let ChildState::Settled {
@@ -408,16 +424,25 @@ impl OrchestrationService {
             })?;
         let mut agents = Vec::with_capacity(links.len());
         for link in links {
-            let status = match (
+            let (status, pending_input) = match (
                 AppThreadId::parse(&link.child_thread_id),
                 self.gateway.registry().get(&link.provider),
             ) {
-                (Some(child), Some(provider)) => self
-                    .ensure_tracked(provider, &child)
-                    .await
-                    .ok()
-                    .map(|state| state.status()),
-                _ => None,
+                (Some(child), Some(provider)) => {
+                    match self.ensure_tracked(provider, &child).await.ok() {
+                        Some(state) if state.is_running() => {
+                            let pending_input = self.pending_input(&child).await;
+                            let status = if pending_input.is_empty() {
+                                state.status()
+                            } else {
+                                AgentStatus::AwaitingInput
+                            };
+                            (Some(status), pending_input)
+                        }
+                        state => (state.map(|state| state.status()), Vec::new()),
+                    }
+                }
+                _ => (None, Vec::new()),
             };
             agents.push(ListedAgent {
                 agent_thread_id: link.child_thread_id,
@@ -427,6 +452,7 @@ impl OrchestrationService {
                 model_label: None,
                 name: link.name,
                 status,
+                pending_input,
             });
         }
         Ok(ListResult { agents })
@@ -454,6 +480,7 @@ fn wait_result(state: ChildState) -> WaitResult {
             status,
             final_message: None,
             turn_id,
+            pending_input: Vec::new(),
         },
         ChildState::Settled {
             turn_id,
@@ -463,6 +490,7 @@ fn wait_result(state: ChildState) -> WaitResult {
             status,
             final_message,
             turn_id,
+            pending_input: Vec::new(),
         },
     }
 }
