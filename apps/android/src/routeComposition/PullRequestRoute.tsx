@@ -1,4 +1,5 @@
 import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
+import { useState } from "react";
 
 import { parsePullRequestKeyParam, type PullRequestKey } from "../data/forgeContract";
 import { threadUnreadReader } from "../data/project-unread-model";
@@ -8,6 +9,7 @@ import type {
 } from "../features/pullRequestDetail/pullRequestScreenModel";
 import { workspaceFeatures } from "../features/workspace/createWorkspaceFeatures";
 import { useEvent } from "../react/useEvent";
+import { useAndroidBackHandler } from "../ui/use-android-back-handler";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { RecoverableRenderBoundary } from "../ui/RecoverableRenderBoundary";
 import { useLinkedThreadDescriptions } from "./linkedThreadDescriptions";
@@ -82,13 +84,13 @@ function PullRequestRouteContent({
     router.dismissTo("/pulls");
   });
   // Changes is a nested route pushed over Details, so Back returns to Details.
-  const openChanges = useEvent((nextView: ChangesView): void => {
+  const pushChanges = useEvent((nextView: ChangesView): void => {
     router.push({
       params: { connectionId, pullRequestKey: pullRequest, view: nextView },
       pathname: "/pulls/[connectionId]/[pullRequestKey]/changes",
     });
   });
-  const closeChanges = useEvent((): void => {
+  const popChanges = useEvent((): void => {
     if (router.canGoBack()) {
       router.back();
       return;
@@ -99,6 +101,7 @@ function PullRequestRouteContent({
       pathname: "/pulls/[connectionId]/[pullRequestKey]",
     });
   });
+  const changes = usePaneChanges({ desktop, popChanges, pushChanges, tab, view });
   const chat = reviewChat.chat;
   return (
     <RecoverableRenderBoundary
@@ -115,7 +118,7 @@ function PullRequestRouteContent({
               connectionId={connectionId}
               describeThread={(threadId) => describeLinkedThread(connectionId, threadId)}
               desktop={desktop}
-              initialChangesView={view}
+              initialChangesView={changes.view}
               isThreadUnread={threadUnreadReader(
                 runtime.threadSummaries?.projectUnread ?? null,
                 connectionId,
@@ -123,14 +126,14 @@ function PullRequestRouteContent({
               navigation={{
                 // A wide PR sits beside its catalog, so Details has nothing behind it.
                 back: desktop ? null : back,
-                closeChanges,
+                closeChanges: changes.close,
                 deferReviewChatScenario: reviewChat.deferScenario,
-                openChanges,
+                openChanges: changes.open,
                 openReviewChat: reviewChat.openReviewChat,
                 openThread: reviewChat.openThread,
               }}
               pullRequest={pullRequest}
-              tab={tab}
+              tab={changes.tab}
             />
           ),
           label: "pull request",
@@ -165,4 +168,53 @@ function PullRequestRouteContent({
       />
     </RecoverableRenderBoundary>
   );
+}
+
+/**
+ * Changes shown inside a wide Details pane, so the review chat beside it stays and the panes keep
+ * their arrangement; a phone, or the Changes route itself, navigates with `pushChanges` and
+ * `popChanges` instead. Android Back returns from pane Changes to Details first.
+ */
+function usePaneChanges({
+  desktop,
+  popChanges,
+  pushChanges,
+  tab,
+  view,
+}: {
+  readonly desktop: boolean;
+  readonly popChanges: () => void;
+  readonly pushChanges: (view: ChangesView) => void;
+  readonly tab: PullRequestTab;
+  /** The view the Changes route opens on. */
+  readonly view: ChangesView;
+}): {
+  readonly close: () => void;
+  readonly open: (view: ChangesView) => void;
+  readonly tab: PullRequestTab;
+  readonly view: ChangesView;
+} {
+  const [paneView, setPaneView] = useState<ChangesView | null>(null);
+  const inPane = desktop && tab === "overview";
+  const open = useEvent((next: ChangesView): void => {
+    if (inPane) {
+      setPaneView(next);
+    } else {
+      pushChanges(next);
+    }
+  });
+  const close = useEvent((): void => {
+    if (paneView === null) {
+      popChanges();
+    } else {
+      setPaneView(null);
+    }
+  });
+  const back = useEvent((): void => {
+    setPaneView(null);
+  });
+  useAndroidBackHandler(paneView !== null, back);
+  return paneView === null
+    ? { close, open, tab, view }
+    : { close, open, tab: "changes", view: paneView };
 }

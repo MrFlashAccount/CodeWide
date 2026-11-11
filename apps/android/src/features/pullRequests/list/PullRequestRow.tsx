@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useSelector } from "@legendapp/state/react";
+import { useContext } from "react";
 import { Pressable, View } from "react-native";
 
 import type { ProviderIcon } from "../../../data/forgeProviderIcon";
@@ -23,6 +24,7 @@ import {
 } from "../../../ui/CatalogRow";
 import { catalogRowFrameStyles } from "../../../ui/CatalogRow.styles";
 import { listStyles as styles } from "./list.styles";
+import { SelectedPullRequestContext } from "./selectedPullRequest";
 import {
   checkGlyph,
   rowAccessibilityLabel,
@@ -67,6 +69,7 @@ export function PullRequestRow({
       attentionRevision !== null &&
       displayedPullRequestAttention[row.pullRequest]?.get() === attentionRevision,
   );
+  const selected = useContext(SelectedPullRequestContext) === row.pullRequest;
   const handlePress = useEvent((): void => {
     onPress(row);
   });
@@ -74,9 +77,11 @@ export function PullRequestRow({
     <Pressable
       accessibilityLabel={rowAccessibilityLabel(row, glyph)}
       accessibilityRole="button"
+      accessibilityState={{ selected }}
       onPress={handlePress}
       style={({ pressed }) => [
         catalogRowFrameStyles.frame,
+        selected && catalogRowFrameStyles.selected,
         pressed && catalogRowFrameStyles.pressed,
       ]}
       testID={`pull-request-row-${row.number}`}

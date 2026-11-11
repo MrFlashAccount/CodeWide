@@ -23,11 +23,14 @@ type PullRequestRouteScreenNavigation = {
 /** Minimal PR detail surface exposing route intents to route-composition render tests. */
 export function PullRequestScreen({
   navigation,
+  tab,
 }: {
   readonly navigation: PullRequestRouteScreenNavigation;
+  readonly tab?: "changes" | "overview";
 }): React.JSX.Element {
   return (
     <>
+      <Text testID="pull-request-tab">{tab}</Text>
       <Pressable accessibilityRole="button" onPress={navigation.back} testID="close-pull-request">
         <Text>Close pull request</Text>
       </Pressable>

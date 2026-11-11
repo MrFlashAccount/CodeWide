@@ -42,7 +42,12 @@ route keys and nested state while inactive.
   scenarios started on the PR present the same canonical thread through this one owner
   (`usePullRequestReviewChat`): `openReviewChat` opens the chat the overview names at once, and
   `openThread` opens a scenario's result. It declares its panes through `WorkspaceCenterLayout` (PR
-  as center, chat as right) and owns no layout, fullscreen or chrome state of its own.
+  as center, chat as right) and owns no layout, fullscreen or chrome state of its own. A wide
+  Details opens Changes in its own pane (pane-local state; Android Back and the Changes Back return
+  to Details), so the review chat stays beside it and the panes keep their arrangement; a phone
+  pushes the `changes` route, which also serves deep links. The Pull requests catalog marks the
+  row of the pull request its wide destination shows (`SelectedPullRequestContext`), as Threads
+  marks the shown thread.
 - A PR without a review chat opens its review-chat draft at once, exactly like New chat: the right
   pane (or the compact pane on a phone) renders `PullRequestReviewChatDraftPane`, the shared
   draft conversation (empty state, inline project control, composer) with a hosted

@@ -1,6 +1,8 @@
 import { Stack } from "expo-router";
 import { createContext, useContext, type ComponentProps, type ReactElement } from "react";
 
+import { parsePullRequestKeyParam, type PullRequestKey } from "../data/forgeContract";
+import { SelectedPullRequestContext } from "../features/pullRequests/list/selectedPullRequest";
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
 import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
 import { PullRequestsPreviewRoute } from "./PullRequestsCatalogRoute";
@@ -41,13 +43,17 @@ export function PullRequestsWorkspaceRouteLayout(): React.JSX.Element {
 /** Places the real Pull requests catalog descriptor around its subtree-owned destinations. */
 export function PullRequestsWorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
   const { desktop, viewportWidth } = useWorkspaceRouteResources();
-  const focusedRouteName = props.state.routes[props.state.index]?.name ?? null;
-  const catalogFocused = focusedRouteName === "pulls/index";
+  const focused = props.state.routes[props.state.index];
+  const catalogFocused = focused?.name === "pulls/index";
   const catalog = pullRequestsCatalogPresentation(props);
   return (
     <WorkspacePaneFrame
       catalog={
-        <WorkspaceCatalogMaster mode="pullRequests">{catalog.content}</WorkspaceCatalogMaster>
+        <SelectedPullRequestContext.Provider
+          value={desktop && !catalogFocused ? shownPullRequest(focused?.params) : null}
+        >
+          <WorkspaceCatalogMaster mode="pullRequests">{catalog.content}</WorkspaceCatalogMaster>
+        </SelectedPullRequestContext.Provider>
       }
       catalogFocused={catalogFocused}
       catalogStatus={catalog.status}
@@ -79,6 +85,13 @@ function PullRequestsCatalogPlacement({
 }): React.JSX.Element | null {
   const destination = useContext(PullRequestsDestinationPlacement);
   return destination ? <PullRequestsPreviewRoute /> : children;
+}
+
+/** The pull request a focused destination route shows, from its `pullRequestKey` param. */
+function shownPullRequest(params: unknown): PullRequestKey | null {
+  return typeof params === "object" && params !== null && "pullRequestKey" in params
+    ? parsePullRequestKeyParam(params.pullRequestKey)
+    : null;
 }
 
 function pullRequestsCatalogPresentation(props: PaneLayoutProps) {

@@ -577,7 +577,23 @@ it("closes every PR tab to the canonical pull-request catalog route", () => {
   expect(mockDismissTo).toHaveBeenCalledWith("/pulls");
 });
 
-it("pushes Changes over Details and steps back to it", () => {
+it("opens wide Changes in the PR pane beside the review chat and steps back to Details", async () => {
+  const view = renderInWideFrame();
+  await openLinkedThreadBeside(view);
+  fireEvent.press(view.getByTestId("open-changes"));
+  expect(view.getByTestId("pull-request-tab")).toHaveTextContent("changes");
+  expect(view.getByTestId("canonical-conversation")).toHaveTextContent("linked-thread");
+  expect(view.getByTestId("pull-request-chat-pane")).toBeVisible();
+  expect(view.getByTestId("catalog", { includeHiddenElements: true })).not.toBeVisible();
+  expect(mockPush).not.toHaveBeenCalled();
+  fireEvent.press(view.getByTestId("open-details"));
+  expect(view.getByTestId("pull-request-tab")).toHaveTextContent("overview");
+  expect(mockBack).not.toHaveBeenCalled();
+});
+
+it("pushes phone Changes over Details and steps back to it", () => {
+  mockDesktop = false;
+  mockViewportWidth = 400;
   const details = render(<PullRequestRoute tab="overview" />);
   fireEvent.press(details.getByTestId("open-changes"));
   expect(mockPush).toHaveBeenLastCalledWith({

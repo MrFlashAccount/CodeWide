@@ -3,6 +3,7 @@ import { StyleSheet, type TextStyle, type ViewStyle } from "react-native";
 
 import { parsePullRequestListPage } from "../src/data/forgePullRequestContract";
 import { PullRequestRow } from "../src/features/pullRequests/list/PullRequestRow";
+import { SelectedPullRequestContext } from "../src/features/pullRequests/list/selectedPullRequest";
 import { ThreadRowContent } from "../src/features/threadList/ThreadRowContent";
 import { ThreadRowLinkTrigger } from "../src/features/threadList/ThreadRowLinkTrigger";
 import { threadListRowHeight } from "../src/features/threadList/threadListModel";
@@ -54,16 +55,16 @@ function pullRequestRow() {
   return row;
 }
 
-function renderThreadRow() {
+function renderThreadRow(selected = false) {
   return render(
     <ThreadRowLinkTrigger
       onLongPress={() => undefined}
-      selected={false}
+      selected={selected}
       swipeEnabled={false}
       testID="thread-row-frame"
     >
       <ThreadRowContent
-        selected={false}
+        selected={selected}
         thread={{
           id: "thread",
           pinned: false,
@@ -78,17 +79,19 @@ function renderThreadRow() {
   );
 }
 
-function renderPullRequestRow() {
+function renderPullRequestRow(selected = false) {
   const row = pullRequestRow();
   return {
     row,
     view: render(
-      <PullRequestRow
-        icon={null}
-        nowMs={Date.parse(row.updatedAt) + 60_000}
-        onPress={() => undefined}
-        row={row}
-      />,
+      <SelectedPullRequestContext.Provider value={selected ? row.pullRequest : null}>
+        <PullRequestRow
+          icon={null}
+          nowMs={Date.parse(row.updatedAt) + 60_000}
+          onPress={() => undefined}
+          row={row}
+        />
+      </SelectedPullRequestContext.Provider>,
     ),
   };
 }
@@ -119,6 +122,23 @@ it("renders thread and pull-request titles and subtitles in the same type roles"
   expect(pick(pullRequestAge, TYPOGRAPHY_KEYS)).toEqual(pick(threadAge, TYPOGRAPHY_KEYS));
   expect(row.attention.state).toBe("new");
   expect(pullRequestMarker).toEqual(threadMarker);
+});
+
+it("marks the shown pull request's row the way the shown thread's row is marked", () => {
+  const thread = renderThreadRow(true);
+  const selectedThread = viewStyle(thread.getByTestId("thread-row-frame"));
+  thread.unmount();
+
+  const { row, view } = renderPullRequestRow(true);
+  const selectedRow = view.getByTestId(`pull-request-row-${row.number}`);
+  expect(selectedRow).toBeSelected();
+  expect(viewStyle(selectedRow).backgroundColor).toBe(selectedThread.backgroundColor);
+  view.unmount();
+
+  const other = renderPullRequestRow(false);
+  const unselectedRow = other.view.getByTestId(`pull-request-row-${other.row.number}`);
+  expect(unselectedRow).not.toBeSelected();
+  expect(viewStyle(unselectedRow).backgroundColor).not.toBe(selectedThread.backgroundColor);
 });
 
 it("gives equivalent thread and pull-request rows the same card geometry", () => {
