@@ -154,6 +154,7 @@ function PortForwardingList({
       <AppList
         contentContainerStyle={styles.listContent}
         data={rows}
+        extraData={[portActions.pendingPort, portActions.pendingId]}
         footer={
           segment === "available" && query === "" ? (
             <AppListRow

@@ -125,6 +125,8 @@ function ContentDocumentList({
       contentContainerStyle={styles.content}
       data={snapshot.rows}
       estimatedItemSize={160}
+      // A row re-renders only for its item or `extraData`: the shimmer moves with the loading row.
+      extraData={loadingKey}
       keyExtractor={rowKey}
       ListFooterComponent={<ContentTail onRetry={onRetry} tail={snapshot.tail} />}
       onEndReached={onEndReached}

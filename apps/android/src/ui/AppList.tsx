@@ -14,6 +14,11 @@ type AppListCommonProps<ItemT> = {
   readonly contentContainerStyle?: NonNullable<ScrollViewProps["contentContainerStyle"]>;
   readonly data: readonly ItemT[];
   readonly empty?: ReactElement | null;
+  /**
+   * What rows read besides their item: a virtualized row re-renders only for
+   * its item or this value, not for a new `renderItem` closure.
+   */
+  readonly extraData?: unknown;
   readonly footer?: ReactElement | null;
   readonly header?: ReactElement | null;
   readonly keyboardShouldPersistTaps?: NonNullable<ScrollViewProps["keyboardShouldPersistTaps"]>;
@@ -60,7 +65,8 @@ function VirtualizedAppList<ItemT>({
     <LegendList
       contentContainerStyle={props.contentContainerStyle}
       data={props.data}
-      extraData={itemCount}
+      // The last row's state follows the count; callers add what their rows read.
+      extraData={[itemCount, props.extraData]}
       keyboardShouldPersistTaps={props.keyboardShouldPersistTaps}
       keyExtractor={props.keyExtractor}
       ListEmptyComponent={props.empty ?? null}

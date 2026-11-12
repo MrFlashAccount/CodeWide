@@ -58,6 +58,8 @@ export function MarkdownDocumentView({
             data={blocks}
             drawDistance={300}
             estimatedItemSize={240}
+            // A row re-renders only for its item or `extraData`: the reading width reaches each block.
+            extraData={maxWidth}
             initialScrollIndex={initialIndex}
             keyboardShouldPersistTaps="handled"
             keyExtractor={documentBlockKey}
