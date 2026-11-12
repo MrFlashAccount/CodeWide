@@ -1,7 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import { type AccessibilityActionEvent, StyleSheet, View } from "react-native";
+import { useEffect, useState } from "react";
+import { type AccessibilityActionEvent, AppState, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
+import { useWindowLayout } from "../workspace/useWindowLayout";
 import { catalogModeBarHeight } from "../../presentation/layouts/catalogModeBarGeometry";
 import { spacing, typeScale } from "../../theme";
 import { type IMaskedTabIconState, MaskedTabBar } from "../../vendor/reacticx/masked-tab-bar";
@@ -67,11 +69,13 @@ function CatalogMaskedTabs({
   readonly onValueChange: (value: string) => void;
   readonly pullRequestsLabel: string;
 }): React.JSX.Element {
+  const instance = useFreshTabBarKey();
   return (
     <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       <MaskedTabBar
         fontSize={typeScale.label.fontSize}
         height={catalogModeBarHeight}
+        key={instance}
         onSelectedValueActivate={onSelectedValueActivate}
         onValueChange={onValueChange}
         palette={MASKED_TAB_PALETTE}
@@ -197,6 +201,32 @@ function AccessibleTab({
       testID={`catalog-mode-${mode}`}
     />
   );
+}
+
+/**
+ * A key that gives the tab bar a fresh instance whenever the app returns to
+ * the foreground or the window changes width (a fold opened or closed). The
+ * bar's press gesture keeps its grab and press state on the UI thread and
+ * places the pill only while nothing is grabbed; a touch that never finished
+ * (the screen went off mid-press) would otherwise leave the pill unplaced at
+ * the old screen's geometry and the stale gesture holding later touches.
+ */
+function useFreshTabBarKey(): string {
+  const { width } = useWindowLayout();
+  const [foregrounds, setForegrounds] = useState(0);
+  const returnToForeground = useEvent((state: string) => {
+    if (state === "active") {
+      setForegrounds((count) => count + 1);
+    }
+  });
+  // WHY: the app's foreground state is an external system this subscription follows.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", returnToForeground);
+    return () => {
+      subscription.remove();
+    };
+  }, [returnToForeground]);
+  return `${String(width)}:${String(foregrounds)}`;
 }
 
 function parseCatalogMode(value: string): CatalogMode | null {

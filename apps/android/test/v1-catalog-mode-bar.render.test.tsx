@@ -1,6 +1,6 @@
 import { act, fireEvent, render } from "@testing-library/react-native";
 import * as Reanimated from "react-native-reanimated";
-import { View } from "react-native";
+import { AppState, View } from "react-native";
 import { Gesture, GestureDetector, State } from "react-native-gesture-handler";
 import { fireGestureHandler } from "react-native-gesture-handler/jest-utils";
 
@@ -143,4 +143,41 @@ it("commits only successful tap and drag gestures", () => {
   });
   expect(onSelect).toHaveBeenCalledTimes(1);
   expect(onSelect).toHaveBeenLastCalledWith("pullRequests");
+});
+
+it("starts a fresh tab gesture with the pill on the selected tab after returning to the foreground", () => {
+  let foreground: ((state: string) => void) | undefined;
+  const subscribe = jest
+    .spyOn(AppState, "addEventListener")
+    .mockImplementation((_type, listener) => {
+      foreground = listener;
+      return { remove: jest.fn() };
+    });
+  const onSelect = jest.fn();
+  const view = render(<CatalogModeBar mode="threads" onSelect={onSelect} />);
+  layOutMaskedTabs(view);
+  const stale = view.UNSAFE_getByType(GestureDetector).props.gesture;
+  // A press the screen turned off in the middle of: it began and never finished.
+  act(() => {
+    fireGestureHandler<ReturnType<typeof Gesture.Pan>>(stale, [
+      { state: State.BEGAN, translationX: 0, translationY: 0, x: 75 },
+    ]);
+  });
+
+  act(() => {
+    foreground?.("background");
+    foreground?.("active");
+  });
+  layOutMaskedTabs(view);
+  const fresh = view.UNSAFE_getByType(GestureDetector).props.gesture;
+  expect(fresh).not.toBe(stale);
+  act(() => {
+    fireGestureHandler<ReturnType<typeof Gesture.Pan>>(fresh, [
+      { state: State.BEGAN, translationX: 0, translationY: 0, x: 225 },
+      { state: State.ACTIVE, translationX: 0, translationY: 0, x: 225 },
+      { state: State.END, translationX: 0, translationY: 0, x: 225 },
+    ]);
+  });
+  expect(onSelect).toHaveBeenLastCalledWith("pullRequests");
+  subscribe.mockRestore();
 });
