@@ -37,6 +37,10 @@ const MAX_RESET_GRANTS: usize = 32;
 const MAX_RESET_ID_LENGTH: usize = 40;
 const MAX_RESET_LABEL_LENGTH: usize = 128;
 const MAX_RESET_REASON_LENGTH: usize = 64;
+/// Model-scoped weekly windows read from one usage answer.
+const MAX_MODEL_SCOPED_WINDOWS: usize = 8;
+/// A model display name longer than this is not a model's name.
+const MAX_MODEL_NAME_LENGTH: usize = 40;
 
 /// Reports of one window disagree on its reset by a rounding second (the
 /// usage read's RFC 3339 time keeps fractions the streamed epoch seconds
@@ -204,7 +208,7 @@ pub fn usage_read_windows(response: &Value) -> Vec<ProviderRateLimitWindow> {
     let Some(limits) = response.get("rate_limits").and_then(Value::as_object) else {
         return Vec::new();
     };
-    USAGE_READ_WINDOWS
+    let mut windows: Vec<ProviderRateLimitWindow> = USAGE_READ_WINDOWS
         .iter()
         .filter_map(|&id| {
             let window = limits.get(id)?.as_object()?;
@@ -218,7 +222,60 @@ pub fn usage_read_windows(response: &Value) -> Vec<ProviderRateLimitWindow> {
                 },
             ))
         })
-        .collect()
+        .collect();
+    let named: Vec<ProviderRateLimitWindow> = model_scoped_windows(limits)
+        .filter(|scoped| windows.iter().all(|window| window.id != scoped.id))
+        .collect();
+    windows.extend(named);
+    windows
+}
+
+/// The weekly windows Claude scopes to one model (`model_scoped`: a display
+/// name such as `Fable`, a 0–100 `utilization` and an RFC 3339 `resets_at`),
+/// with the id the fixed per-model keys use (`seven_day_<model>`), so a model
+/// Claude also reports under its own key is listed once.
+fn model_scoped_windows(
+    limits: &Map<String, Value>,
+) -> impl Iterator<Item = ProviderRateLimitWindow> + '_ {
+    limits
+        .get("model_scoped")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(MAX_MODEL_SCOPED_WINDOWS)
+        .filter_map(|value| {
+            let window = value.as_object()?;
+            let name = bounded_text(window.get("display_name"), MAX_MODEL_NAME_LENGTH)?.trim();
+            let slug = model_slug(name)?;
+            let utilization = number(window, "utilization")?;
+            Some(ProviderRateLimitWindow {
+                id: format!("seven_day_{slug}"),
+                kind: RateLimitWindowKind::Weekly,
+                label: format!("Weekly · {name}"),
+                resets_at: rfc3339_seconds(window.get("resets_at")),
+                status: None,
+                used_percent: Some(percent(utilization)),
+                window_duration_mins: Some(WEEK_MINUTES),
+            })
+        })
+}
+
+/// A model display name as a window id part: lowercase ASCII letters and
+/// digits, other characters as `_`; `None` for a name with neither.
+fn model_slug(name: &str) -> Option<String> {
+    let slug: String = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    slug.chars()
+        .any(|character| character.is_ascii_alphanumeric())
+        .then_some(slug)
 }
 
 /// Whether one usage answer changed the reset program. `Unreported` keeps the
@@ -563,6 +620,49 @@ mod tests {
                 "seven_day_opus": null,
             },
         })
+    }
+
+    #[test]
+    fn reads_a_model_scoped_weekly_window_once() {
+        let windows = usage_read_windows(&json!({
+            "rate_limits_available": true,
+            "rate_limits": {
+                "seven_day": { "utilization": 35, "resets_at": "2025-10-09T12:00:00Z" },
+                "seven_day_opus": { "utilization": 7, "resets_at": "2025-10-09T12:00:00Z" },
+                "model_scoped": [
+                    { "display_name": "Fable", "utilization": 18, "resets_at": "2025-10-09T12:00:00Z" },
+                    { "display_name": "Opus", "utilization": 7, "resets_at": "2025-10-09T12:00:00Z" },
+                    { "display_name": "", "utilization": 1 },
+                ],
+            },
+        }));
+        let listed = windows
+            .iter()
+            .map(|window| {
+                (
+                    window.id.as_str(),
+                    window.label.as_str(),
+                    window.used_percent,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            listed,
+            [
+                ("seven_day", "Weekly", Some(35)),
+                ("seven_day_opus", "Weekly · Opus", Some(7)),
+                ("seven_day_fable", "Weekly · Fable", Some(18)),
+            ]
+        );
+        let fable = windows.iter().find(|window| window.id == "seven_day_fable");
+        assert_eq!(
+            fable.map(|window| window.kind),
+            Some(RateLimitWindowKind::Weekly)
+        );
+        assert_eq!(
+            fable.and_then(|window| window.window_duration_mins),
+            Some(WEEK_MINUTES)
+        );
     }
 
     fn reset_answer() -> Value {
