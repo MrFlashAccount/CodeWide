@@ -1,7 +1,9 @@
 import { Column, Host, RNHostView } from "@expo/ui/jetpack-compose";
 import { fillMaxSize, imePadding } from "@expo/ui/jetpack-compose/modifiers";
 import { StyleSheet, View } from "react-native";
-import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
+import Reanimated, { useAnimatedStyle } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { KeyboardDockProps } from "./KeyboardDock.types";
 import { useOverlaySurface } from "./OverlaySurfaceContext";
@@ -17,18 +19,36 @@ const DIALOG_DOCK_MODIFIERS = [fillMaxSize(), imePadding()];
  */
 export function KeyboardDock(props: KeyboardDockProps): React.JSX.Element {
   const { surface } = useOverlaySurface();
-  if (surface !== "fullscreen-modal") {
-    return (
-      <KeyboardAvoidingView
-        automaticOffset
-        behavior="padding"
-        pointerEvents="box-none"
-        style={styles.layer}
-      >
-        {props.children}
-      </KeyboardAvoidingView>
-    );
-  }
+  return surface === "fullscreen-modal" ? (
+    <DialogKeyboardDock>{props.children}</DialogKeyboardDock>
+  ) : (
+    <ActivityKeyboardDock>{props.children}</ActivityKeyboardDock>
+  );
+}
+
+/**
+ * The Activity's dock, which keeps its children above the keyboard from the
+ * keyboard's height every frame, exactly as the conversation composer's sticky
+ * view does: a dock ends at the pane's bottom, one navigation-bar inset above
+ * the window's bottom, so the keyboard covers that much less of it. It measures
+ * nothing: a moving or rearranged pane cannot leave it with a stale position.
+ */
+function ActivityKeyboardDock(props: KeyboardDockProps): React.JSX.Element {
+  const { height } = useReanimatedKeyboardAnimation();
+  const { bottom } = useSafeAreaInsets();
+  const lift = useAnimatedStyle(() => ({
+    // The animation reports the open keyboard as a negative height.
+    paddingBottom: Math.max(0, -height.get() - bottom),
+  }));
+  return (
+    <Reanimated.View pointerEvents="box-none" style={[styles.layer, lift]} testID="keyboard-dock">
+      {props.children}
+    </Reanimated.View>
+  );
+}
+
+/** The Compose dialog's dock, from the dialog's own IME insets. */
+function DialogKeyboardDock(props: KeyboardDockProps): React.JSX.Element {
   return (
     <Host
       colorScheme="dark"

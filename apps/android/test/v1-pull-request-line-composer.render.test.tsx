@@ -15,6 +15,7 @@ import { createReviewTargetAdapter } from "../src/features/review/reviewTargetAd
 import type { AppVoiceInputRuntime } from "../src/ui/VoiceInputRuntime";
 import { connectedAccount, githubProvider, overview91 } from "./fixtures/forgeWireFixtures";
 import { createMemoryQueryPersister } from "./fixtures/queryPersister";
+import { setKeyboardHeightForTest } from "./mocks/KeyboardController";
 import { latestWebViewProps, webViewPostedMessages } from "./mocks/ReactNativeWebView";
 
 // WHY: Expo's filesystem bridge cannot initialize in Node; the editor's suggestion popup imports it.
@@ -243,7 +244,10 @@ afterEach(async () => {
   });
 });
 
-async function renderChanges(server: ReturnType<typeof companion>) {
+async function renderChanges(
+  server: ReturnType<typeof companion>,
+  { bottomInset = 0 }: { readonly bottomInset?: number } = {},
+) {
   if (PULL_REQUEST === null) {
     throw new Error("the pull request key fixture must parse");
   }
@@ -253,7 +257,7 @@ async function renderChanges(server: ReturnType<typeof companion>) {
     <SafeAreaProvider
       initialMetrics={{
         frame: { height: 900, width: 420, x: 0, y: 0 },
-        insets: { bottom: 0, left: 0, right: 0, top: 0 },
+        insets: { bottom: bottomInset, left: 0, right: 0, top: 0 },
       }}
     >
       <Suspense fallback={<Text>Loading pull request</Text>}>
@@ -397,6 +401,17 @@ it("docks one composer under the diff on a line tap, with no modal, picker or ti
   expect(view.getByTestId("review-dock-submit")).toBeOnTheScreen();
   expect(postedCommands().map(({ command }) => command)).not.toContain("composer");
   expect(highlighted()).toMatchObject({ line: 4, path: PATH, side: "new" });
+});
+
+it("keeps the docked composer above the open keyboard, less the navigation bar it covers", async () => {
+  setKeyboardHeightForTest(600);
+  try {
+    const view = await renderChanges(companion(), { bottomInset: 48 });
+    await tapLine();
+    expect(view.getByTestId("keyboard-dock")).toHaveStyle({ paddingBottom: 552 });
+  } finally {
+    setKeyboardHeightForTest(0);
+  }
 });
 
 it("morphs the microphone into Add to review once there is text", async () => {

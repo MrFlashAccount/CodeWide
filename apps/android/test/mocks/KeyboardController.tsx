@@ -37,6 +37,16 @@ export function useKeyboardState<Value>(
   return selector(keyboardState);
 }
 
+/** The open keyboard as the controller animates it: a negative height, `0` when closed. */
+export function useReanimatedKeyboardAnimation() {
+  const height = -keyboardState.height;
+  const progress = keyboardState.isVisible ? 1 : 0;
+  return {
+    height: { get: () => height, value: height },
+    progress: { get: () => progress, value: progress },
+  };
+}
+
 export function useKeyboardContext() {
   return { reanimated: keyboardGeometry };
 }
