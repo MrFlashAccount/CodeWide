@@ -55,24 +55,20 @@ export function MarkdownDocumentView({
       {viewportWidth > 0 && (
         <RichContentWidthProvider width={contentWidth}>
           <LegendList
+            // The reading width belongs to the column the list lays rows into: every row spans it.
+            contentContainerStyle={[styles.column, maxWidth === undefined ? null : { maxWidth }]}
             data={blocks}
             drawDistance={300}
             estimatedItemSize={240}
-            // A row re-renders only for its item or `extraData`: the reading width reaches each block.
-            extraData={maxWidth}
             initialScrollIndex={initialIndex}
             keyboardShouldPersistTaps="handled"
             keyExtractor={documentBlockKey}
-            ListFooterComponent={
-              <View style={[styles.block, maxWidth === undefined ? null : { maxWidth }]}>
-                {footer}
-              </View>
-            }
+            ListFooterComponent={<View style={styles.block}>{footer}</View>}
             onScroll={scroll}
             recycleItems={false}
             ref={list}
             renderItem={({ item }) => (
-              <View style={[styles.block, maxWidth === undefined ? null : { maxWidth }]}>
+              <View style={styles.block}>
                 <RichMarkdownDocumentBlockView
                   block={item}
                   {...(reviewTarget === undefined ? {} : { reviewTarget })}
@@ -94,9 +90,12 @@ function documentBlockKey(block: MarkdownDocumentBlock): string {
 
 const styles = StyleSheet.create({
   block: {
-    alignSelf: "center",
     paddingBottom: spacing.sm,
     paddingHorizontal: spacing.md,
+  },
+  /** The scrolled column, centered when the reading width narrows it. */
+  column: {
+    alignSelf: "center",
     width: "100%",
   },
   root: {
