@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
+  cancelAnimation,
   useAnimatedReaction,
   useAnimatedStyle,
   useFrameCallback,
@@ -194,19 +195,22 @@ var MaskedTabBarRoot = ({
     setValue(boxes[0].value);
   }, [value, boxes, setValue]);
   const activeBox = boxMap[value];
-  const placedRef = useRef(false);
+  const placedValueRef = useRef(null);
   useEffect(() => {
     if (!activeBox) return;
     if (grabbed.value) return;
-    if (!placedRef.current) {
-      placedRef.current = true;
-      pillX.value = activeBox.x;
-      pillWidth.value = activeBox.width;
+    if (placedValueRef.current !== value && placedValueRef.current !== null) {
+      placedValueRef.current = value;
+      pillX.value = withSpring2(activeBox.x, PILL_SPRING);
+      pillWidth.value = withSpring2(activeBox.width, PILL_SPRING);
       return;
     }
-    pillX.value = withSpring2(activeBox.x, PILL_SPRING);
-    pillWidth.value = withSpring2(activeBox.width, PILL_SPRING);
-  }, [activeBox, pillX, pillWidth, grabbed]);
+    placedValueRef.current = value;
+    cancelAnimation(pillX);
+    cancelAnimation(pillWidth);
+    pillX.value = activeBox.x;
+    pillWidth.value = activeBox.width;
+  }, [activeBox, pillX, pillWidth, grabbed, value]);
   const ctx = useMemo(
     () => ({
       value,

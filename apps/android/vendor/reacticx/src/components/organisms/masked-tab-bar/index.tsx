@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
+  cancelAnimation,
   useAnimatedReaction,
   useAnimatedStyle,
   useFrameCallback,
@@ -195,20 +196,26 @@ const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
   }, [value, boxes, setValue]);
 
   const activeBox = boxMap[value];
-  const placedRef = useRef<boolean>(false);
+  // The value the pill last moved to; `null` before it is first placed.
+  const placedValueRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!activeBox) return;
     if (grabbed.value) return;
-    if (!placedRef.current) {
-      placedRef.current = true;
-      pillX.value = activeBox.x;
-      pillWidth.value = activeBox.width;
+    // The pill springs only to a newly selected tab. When the selected tab
+    // itself moves or resizes (a relayout, a fold), the pill follows at once.
+    if (placedValueRef.current !== value && placedValueRef.current !== null) {
+      placedValueRef.current = value;
+      pillX.value = withSpring(activeBox.x, PILL_SPRING);
+      pillWidth.value = withSpring(activeBox.width, PILL_SPRING);
       return;
     }
-    pillX.value = withSpring(activeBox.x, PILL_SPRING);
-    pillWidth.value = withSpring(activeBox.width, PILL_SPRING);
-  }, [activeBox, pillX, pillWidth, grabbed]);
+    placedValueRef.current = value;
+    cancelAnimation(pillX);
+    cancelAnimation(pillWidth);
+    pillX.value = activeBox.x;
+    pillWidth.value = activeBox.width;
+  }, [activeBox, pillX, pillWidth, grabbed, value]);
 
   const ctx = useMemo<IMaskedTabBarContext>(
     () => ({

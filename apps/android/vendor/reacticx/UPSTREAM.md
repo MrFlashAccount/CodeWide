@@ -46,3 +46,7 @@ The upstream MIT license is preserved in `LICENSE`. Run
 `pnpm sync:reacticx` from `apps/android` to mechanically regenerate the
 application artifacts at `src/vendor/reacticx/tray.js` and
 `src/vendor/reacticx/masked-tab-bar.js` without modifying generated output.
+
+The MaskedTabBar pill springs only when the selected tab changes. When the
+selected tab's own box moves or resizes (a relayout, a fold opening or
+closing), the pill takes the new box at once instead of springing to it.

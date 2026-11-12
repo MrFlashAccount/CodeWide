@@ -179,5 +179,36 @@ it("starts a fresh tab gesture with the pill on the selected tab after returning
     ]);
   });
   expect(onSelect).toHaveBeenLastCalledWith("pullRequests");
+  view.unmount();
+  subscribe.mockRestore();
+});
+
+it("moves the pill without a spring when only the layout of the selected tab changes", () => {
+  const subscribe = jest.spyOn(AppState, "addEventListener").mockReturnValue({ remove: jest.fn() });
+  const view = render(<CatalogModeBar mode="threads" onSelect={jest.fn()} />);
+  layOutMaskedTabs(view);
+  const spring = jest.spyOn(Reanimated, "withSpring");
+  spring.mockClear();
+  // The window widens: the same selected tab gets a new box.
+  const layoutNodes = view
+    .UNSAFE_getAllByType(View)
+    .filter((node) => typeof node.props.onLayout === "function");
+  const [list, ...triggers] = layoutNodes;
+  if (list === undefined) {
+    throw new Error("Expected the masked tab list");
+  }
+  fireEvent(list, "layout", { nativeEvent: { layout: { width: 400 } } });
+  for (const trigger of triggers) {
+    const pullRequests = trigger.findAllByProps({ children: "Pull requests" }).length > 0;
+    fireEvent(trigger, "layout", {
+      nativeEvent: { layout: { width: 200, x: pullRequests ? 200 : 0 } },
+    });
+  }
+  expect(spring).not.toHaveBeenCalled();
+
+  view.rerender(<CatalogModeBar mode="pullRequests" onSelect={jest.fn()} />);
+  expect(spring).toHaveBeenCalled();
+  spring.mockRestore();
+  view.unmount();
   subscribe.mockRestore();
 });
