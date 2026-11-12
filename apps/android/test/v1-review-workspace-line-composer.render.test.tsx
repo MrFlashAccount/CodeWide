@@ -54,9 +54,10 @@ function documentRequestId(): number | null {
   return null;
 }
 
-it("adds a current-thread line comment for the agent from the docked composer without a picker", async () => {
-  webViewPostedMessages.length = 0;
-  const attached: (readonly CodeReviewComment[])[] = [];
+/** The current-thread workspace with one changed file, ready to take line taps. */
+async function renderWorkspace(
+  attached: (readonly CodeReviewComment[])[],
+): Promise<ReturnType<typeof render>> {
   const view = render(
     <SafeAreaProvider
       initialMetrics={{
@@ -99,11 +100,15 @@ it("adds a current-thread line comment for the agent from the docked composer wi
     expect(documentRequestId()).not.toBeNull();
   });
 
+  return view;
+}
+
+async function tapLine(reference: Readonly<Record<string, unknown>>): Promise<void> {
   await act(async () => {
     latestWebViewProps?.onMessage?.({
       nativeEvent: {
         data: JSON.stringify({
-          reference: { coordinate: "file", line: 2, path: PATH, side: "new" },
+          reference,
           requestId: documentRequestId(),
           type: "lineTap",
           version: 1,
@@ -112,6 +117,13 @@ it("adds a current-thread line comment for the agent from the docked composer wi
     });
     await Promise.resolve();
   });
+}
+
+it("adds a current-thread line comment for the agent from the docked composer without a picker", async () => {
+  webViewPostedMessages.length = 0;
+  const attached: (readonly CodeReviewComment[])[] = [];
+  const view = await renderWorkspace(attached);
+  await tapLine({ coordinate: "file", line: 2, path: PATH, side: "new" });
 
   const composer = view.getByTestId("review-line-composer");
   expect(within(composer).getByTestId("review-line-composer-anchor")).toHaveTextContent(
@@ -140,5 +152,62 @@ it("adds a current-thread line comment for the agent from the docked composer wi
   });
   expect(attached).toEqual([
     [expect.objectContaining({ body: "Split this constant", line: 2, path: PATH, side: "new" })],
+  ]);
+});
+
+it("expands into a document: quoted line, top editor and a labelled submit bar", async () => {
+  webViewPostedMessages.length = 0;
+  const attached: (readonly CodeReviewComment[])[] = [];
+  const view = await renderWorkspace(attached);
+  await tapLine({
+    context: "const b = 2;",
+    coordinate: "file",
+    line: 2,
+    path: PATH,
+    side: "new",
+  });
+
+  // Collapsed stays the compact pill: no quote and no bottom bar.
+  expect(view.queryByTestId("review-line-composer-quote")).toBeNull();
+  expect(view.queryByTestId("review-line-composer-actions")).toBeNull();
+  const editor = within(view.getByTestId("review-line-composer")).getByTestId("native-editor");
+
+  fireEvent.press(within(view.getByTestId("review-line-composer")).getByLabelText("Expand"));
+
+  const composer = view.getByTestId("review-line-composer");
+  expect(within(composer).getByTestId("review-line-composer-quote")).toHaveTextContent(
+    "2const b = 2;",
+  );
+  expect(within(composer).getByTestId("native-editor")).toBe(editor);
+  expect(editor).toHaveStyle({ height: "100%" });
+  const actions = within(composer).getByTestId("review-line-composer-actions");
+  // Without dictation the bar has no microphone; the submit is labelled text.
+  expect(within(actions).queryByLabelText("Voice input")).toBeNull();
+  const submit = within(actions).getByTestId("review-comment-send");
+  expect(submit).toHaveTextContent("Add comment");
+  expect(submit).toBeDisabled();
+
+  act(() => {
+    editor.props.onChangeText("Split this constant");
+    editor.props.onChangeMarkdown("Split this constant");
+  });
+  expect(within(actions).getByTestId("review-comment-send")).toBeEnabled();
+
+  fireEvent.press(within(actions).getByTestId("review-comment-send"));
+
+  expect(view.queryByTestId("review-line-composer")).toBeNull();
+  await act(async () => {
+    fireEvent.press(view.getByLabelText("Attach review"));
+    await Promise.resolve();
+  });
+  expect(attached).toEqual([
+    [
+      expect.objectContaining({
+        body: "Split this constant",
+        context: "const b = 2;",
+        line: 2,
+        path: PATH,
+      }),
+    ],
   ]);
 });

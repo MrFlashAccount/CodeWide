@@ -76,6 +76,13 @@ const PATCH = "@@ -2,4 +2,4 @@ use std::io;\n \n fn main() {\n-    old();\n+    
 const DRAFT_PUT = "companion/review/draft/put";
 const LINE = { coordinate: "file", line: 4, path: PATH, side: "new" } as const;
 const OTHER_LINE = { coordinate: "file", line: 3, path: PATH, side: "new" } as const;
+const QUOTED_OLD_LINE = {
+  context: "    old();",
+  coordinate: "file",
+  line: 4,
+  path: PATH,
+  side: "old",
+} as const;
 
 function filesPage() {
   return {
@@ -344,7 +351,9 @@ function inlineComments(): readonly CodeReviewInlineComment[] {
   return (last?.payload ?? []) as readonly CodeReviewInlineComment[];
 }
 
-async function tapLine(reference: typeof LINE | typeof OTHER_LINE = LINE): Promise<void> {
+async function tapLine(
+  reference: typeof LINE | typeof OTHER_LINE | typeof QUOTED_OLD_LINE = LINE,
+): Promise<void> {
   await act(async () => {
     latestWebViewProps?.onMessage?.({
       nativeEvent: {
@@ -488,6 +497,49 @@ it("expands to fill the pane and collapses with the same editor, text and anchor
   );
   expect(within(composer).getByTestId("native-editor")).toBe(editor);
   expect(editor).toHaveProp("defaultValue", "A longer review comment");
+});
+
+it("expanded quotes the tapped line and submits from its bottom bar beside the microphone", async () => {
+  const server = companion();
+  const view = await renderChanges(server);
+  await tapLine(QUOTED_OLD_LINE);
+  fireEvent.press(within(view.getByTestId("review-line-composer")).getByLabelText("Expand"));
+
+  const composer = view.getByTestId("review-line-composer");
+  expect(within(composer).getByTestId("review-line-composer-anchor")).toHaveTextContent(
+    "main.rs · old line 4",
+  );
+  expect(within(composer).getByTestId("review-line-composer-quote")).toHaveTextContent(
+    "4    old();",
+  );
+  const actions = within(composer).getByTestId("review-line-composer-actions");
+  expect(within(actions).getByLabelText("Voice input")).toBeOnTheScreen();
+  expect(within(actions).getByTestId("review-comment-send")).toHaveTextContent("Add to review");
+  expect(within(actions).getByTestId("review-comment-send")).toBeDisabled();
+
+  typeComment(view, "Why keep the old call?");
+
+  // The microphone stays beside the labelled submit while there is text.
+  expect(within(actions).getByLabelText("Voice input")).toBeOnTheScreen();
+  fireEvent.press(within(actions).getByTestId("review-comment-send"));
+
+  expect(view.queryByTestId("review-line-composer")).toBeNull();
+  await waitFor(() => {
+    expect(server.puts).toHaveLength(1);
+  });
+  expect(server.puts[0]?.params.draft).toMatchObject({
+    anchor: { path: PATH, side: "old", startLine: 4 },
+    body: "Why keep the old call?",
+  });
+});
+
+it("expanded has no quote when the tap did not carry the line text", async () => {
+  const view = await renderChanges(companion());
+  await tapLine();
+  fireEvent.press(within(view.getByTestId("review-line-composer")).getByLabelText("Expand"));
+
+  expect(view.queryByTestId("review-line-composer-quote")).toBeNull();
+  expect(view.getByTestId("review-line-composer-actions")).toBeOnTheScreen();
 });
 
 it("keeps unsent text on its line after Close", async () => {

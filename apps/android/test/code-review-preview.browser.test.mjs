@@ -441,7 +441,13 @@ test("renders suppressed blank context and retains authoritative line references
             () => window.reviewEvents.filter((event) => event.type === "lineTap").at(-1)?.reference,
           ),
         )
-        .toMatchObject({ path: "file.ts", line: 21, side: "new", coordinate: "file" });
+        .toMatchObject({
+          path: "file.ts",
+          line: 21,
+          side: "new",
+          coordinate: "file",
+          context: "afterBlank",
+        });
     }
     assert.equal(
       await page.evaluate(() => window.reviewEvents.some((event) => event.type === "error")),
@@ -480,7 +486,7 @@ test("anchors a tapped line for the native composer and draws pending and refuse
           () => window.reviewEvents.filter((event) => event.type === "lineTap").at(-1)?.reference,
         ),
       )
-      .toMatchObject({ path: "file.ts", line: 20, side: "new" });
+      .toMatchObject({ path: "file.ts", line: 20, side: "new", context: "after" });
     // The native line composer is the only one: the document never grows an inline editor.
     await expect(page.locator("textarea")).toHaveCount(0);
 

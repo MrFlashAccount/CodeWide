@@ -21,6 +21,12 @@ import { useLineCommentVoice, type LineCommentVoice } from "./lineCommentVoice";
 
 /** The line the composer comments on. */
 export type LineCommentTarget = {
+  /**
+   * The line's text when the tapped document held it, quoted by the expanded
+   * composer. It is not part of the line's identity: drafts are keyed by path,
+   * line and side.
+   */
+  readonly context?: string;
   readonly line: number;
   readonly path: string;
   readonly side: "new" | "old";
@@ -34,7 +40,7 @@ export type LineCommentComposerProps = {
   readonly onClose: () => void;
   /** Receives the trimmed comment for its line after the composer asked to close; the owner saves it. */
   readonly onSubmit: (target: LineCommentTarget, body: string) => void;
-  /** Accessibility label of Send, which names where the comment goes. */
+  /** Names where the comment goes: Send's accessibility label, and the expanded composer's submit text. */
   readonly submitLabel: string;
   /** The anchored line; changing it re-anchors the open composer. */
   readonly target: LineCommentTarget;
@@ -52,9 +58,12 @@ async function noMentions(): Promise<readonly never[]> {
  * The line comment composer docked above the keyboard, like a chat reply: an
  * anchor row (`file · line N`, Expand, Close) over the chat composer's input
  * row, whose one trailing action is the microphone while there is nothing to
- * send and Send once there is. Expand fills the dock with the same editor; it
- * switches without a layout transition, because the dock's frame already moves
- * with the keyboard every frame and a transition would trail it.
+ * send and Send once there is. Expand fills the dock with the same editor as a
+ * document: the quoted line, a borderless editor drawn from the top, and a
+ * bottom bar with the microphone and the labelled submit. It switches without
+ * a layout transition, because the dock's frame already moves with the
+ * keyboard every frame and a transition would trail it. Both states keep one
+ * tree, so the editor, its text and focus survive the switch.
  * Send never waits for a write: the composer closes at once and hands the text
  * to its owner.
  */
@@ -86,6 +95,7 @@ export function LineCommentComposer(
     props.onClose();
     props.onSubmit(line, body);
   });
+  const hasText = text.plainText.trim() !== "";
   const toggleExpanded = useEvent((): void => {
     setExpanded(!expanded);
   });
@@ -110,16 +120,29 @@ export function LineCommentComposer(
         onToggleExpanded={toggleExpanded}
         target={target}
       />
+      {expanded && target.context !== undefined ? (
+        <LineQuote context={target.context} target={target} />
+      ) : null}
       <View style={[styles.inputRow, expanded && styles.expanded]}>
         <InputShell drafts={drafts} expanded={expanded} target={target} text={text} voice={voice} />
-        <TrailingAction
-          hasText={text.plainText.trim() !== ""}
+        {expanded ? null : (
+          <TrailingAction
+            hasText={hasText}
+            onSend={submit}
+            submitLabel={props.submitLabel}
+            voice={voice}
+          />
+        )}
+      </View>
+      <VoiceError resource={voice.resource} />
+      {expanded ? (
+        <ExpandedActions
+          hasText={hasText}
           onSend={submit}
           submitLabel={props.submitLabel}
           voice={voice}
         />
-      </View>
-      <VoiceError resource={voice.resource} />
+      ) : null}
     </View>
   );
 }
@@ -175,6 +198,30 @@ function AnchorRow({
   );
 }
 
+/**
+ * One line of the commented code, ellipsized, on a muted surface with the
+ * diff side's accent bar on its square left edge.
+ */
+function LineQuote({
+  context,
+  target,
+}: {
+  readonly context: string;
+  readonly target: LineCommentTarget;
+}): React.JSX.Element {
+  return (
+    <View
+      style={[styles.quote, target.side === "old" ? styles.quoteOld : styles.quoteNew]}
+      testID="review-line-composer-quote"
+    >
+      <Text style={styles.quoteNumber}>{String(target.line)}</Text>
+      <Text ellipsizeMode="tail" numberOfLines={1} style={styles.quoteCode}>
+        {context}
+      </Text>
+    </View>
+  );
+}
+
 /** The chat composer's input shell around the editor or the recording meter. */
 function InputShell(props: {
   readonly drafts: LineCommentDrafts;
@@ -186,6 +233,45 @@ function InputShell(props: {
   return (
     <View style={[styles.inputShell, props.expanded && styles.shellExpanded]}>
       <CommentEditor {...props} />
+    </View>
+  );
+}
+
+/** The expanded composer's bottom bar: the microphone, then the labelled submit. */
+function ExpandedActions({
+  hasText,
+  onSend,
+  submitLabel,
+  voice,
+}: {
+  readonly hasText: boolean;
+  readonly onSend: () => void;
+  readonly submitLabel: string;
+  readonly voice: LineCommentVoice;
+}): React.JSX.Element {
+  return (
+    <View style={styles.actionBar} testID="review-line-composer-actions">
+      <View style={styles.actionBarLead}>
+        {voice.scope === null ? null : <Microphone voice={voice} />}
+      </View>
+      <Pressable
+        accessibilityLabel={submitLabel}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: !hasText }}
+        disabled={!hasText}
+        hitSlop={controlHitSlop.compact}
+        onPress={onSend}
+        style={({ pressed }) => [
+          styles.submit,
+          pressed && styles.submitPressed,
+          !hasText && styles.submitDisabled,
+        ]}
+        testID="review-comment-send"
+      >
+        <Text style={[styles.submitLabel, !hasText && styles.submitLabelDisabled]}>
+          {submitLabel}
+        </Text>
+      </Pressable>
     </View>
   );
 }
@@ -209,19 +295,7 @@ function TrailingAction({
   const phase = phaseOf(voice.resource);
   const retryAvailable = voice.resource?.retryAvailable ?? false;
   if (voice.scope !== null && (!hasText || phase !== "idle" || retryAvailable)) {
-    return (
-      <ComposerMicrophone
-        disabled={false}
-        finishVoice={voice.stop}
-        microphoneAccess={voice.microphoneAccess}
-        microphoneButtonRef={voice.microphoneButtonRef}
-        retryVoice={voice.retry}
-        toggleVoice={voice.toggle}
-        voiceDisabled={voice.voiceDisabled}
-        voicePhase={phase}
-        voiceRetryAvailable={retryAvailable}
-      />
-    );
+    return <Microphone voice={voice} />;
   }
   return (
     <ComposerSendButton
@@ -229,6 +303,23 @@ function TrailingAction({
       disabled={!hasText}
       onPress={onSend}
       testID="review-comment-send"
+    />
+  );
+}
+
+/** The chat microphone over the line's retained voice binding. */
+function Microphone({ voice }: { readonly voice: LineCommentVoice }): React.JSX.Element {
+  return (
+    <ComposerMicrophone
+      disabled={false}
+      finishVoice={voice.stop}
+      microphoneAccess={voice.microphoneAccess}
+      microphoneButtonRef={voice.microphoneButtonRef}
+      retryVoice={voice.retry}
+      toggleVoice={voice.toggle}
+      voiceDisabled={voice.voiceDisabled}
+      voicePhase={phaseOf(voice.resource)}
+      voiceRetryAvailable={voice.resource?.retryAvailable ?? false}
     />
   );
 }

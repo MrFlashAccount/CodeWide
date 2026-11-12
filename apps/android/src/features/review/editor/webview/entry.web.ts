@@ -17,6 +17,7 @@ import {
   type TreeThemeInput,
 } from "@pierre/trees";
 import { canonicalPatch } from "./canonicalPatch.web";
+import { lineReference, patchLineText, sourceLineText } from "./lineText.web";
 import { materializeBeforeSource as reconstructBeforeSource } from "./materializeRecordedDiff.web";
 
 import {
@@ -173,7 +174,10 @@ const fileHost = document.createElement("div");
 const diffHost = document.createElement("div");
 const patchHost = document.createElement("div");
 const patchFallbackLabel = document.createElement("div");
-const patchRenderers: { host: HTMLElement; renderer: FileDiff<AnnotationMetadata> }[] = [];
+const patchRenderers: {
+  host: HTMLElement;
+  renderer: FileDiff<AnnotationMetadata>;
+}[] = [];
 fileHost.className = "pierre-preview-host";
 diffHost.className = "pierre-preview-host";
 patchHost.className = "pierre-preview-host";
@@ -345,7 +349,11 @@ function ensureTree(payload: CodeReviewWorkspaceState): FileTree {
       if (selected.path === currentWorkspace.selectedPath) {
         return;
       }
-      post({ path: selected.path, requestId: latestRequestId, type: "fileSelect" });
+      post({
+        path: selected.path,
+        requestId: latestRequestId,
+        type: "fileSelect",
+      });
     },
     overscan: FILE_TREE_OVERSCAN,
     renderRowDecoration: ({ row }) => {
@@ -354,7 +362,10 @@ function ensureTree(payload: CodeReviewWorkspaceState): FileTree {
         return null;
       }
       if (file.sourceOnly === true) {
-        return { parts: [{ color: "#8b949e", text: "Attachment" }], text: "Attachment" };
+        return {
+          parts: [{ color: "#8b949e", text: "Attachment" }],
+          text: "Attachment",
+        };
       }
       if (file.review !== undefined) {
         // PR rows keep the lane for review state; counts live in the file toolbar.
@@ -637,7 +648,8 @@ function renderRecordedPatches(
     removed?.host.remove();
   }
   for (const [index, patch] of payload.patches.entries()) {
-    const metadata = processFile(canonicalPatch(payload.path, patch), {
+    const patchText = canonicalPatch(payload.path, patch);
+    const metadata = processFile(patchText, {
       cacheKey: `${payload.revision}:recorded:${String(index)}`,
       throwOnError: true,
     });
@@ -648,7 +660,10 @@ function renderRecordedPatches(
     if (entry === undefined) {
       const host = document.createElement("section");
       patchHost.append(host);
-      entry = { host, renderer: new FileDiff<AnnotationMetadata>(diffOptions(mode)) };
+      entry = {
+        host,
+        renderer: new FileDiff<AnnotationMetadata>(diffOptions(mode)),
+      };
       patchRenderers.push(entry);
     }
     const instance = entry.renderer;
@@ -657,7 +672,15 @@ function renderRecordedPatches(
       onLineNumberClick: (event) => {
         activeFileRenderer = null;
         activeDiffRenderer = instance;
-        selectLine(referenceForDiffLine(payload.path, event));
+        const side = diffSide(event);
+        selectLine(
+          lineReference({
+            line: event.lineNumber,
+            path: payload.path,
+            side,
+            text: patchLineText(patchText, side, event.lineNumber),
+          }),
+        );
       },
     });
     activeFileRenderer = null;
@@ -698,7 +721,14 @@ function fileOptions(): FileOptions<AnnotationMetadata> {
     lineHoverHighlight: "number",
     onLineNumberClick: (event: OnLineClickProps) => {
       if (currentDocument !== null) {
-        selectLine(referenceForFileLine(currentDocument.path, event.lineNumber));
+        selectLine(
+          lineReference({
+            line: event.lineNumber,
+            path: currentDocument.path,
+            side: "new",
+            text: sourceLineText(currentDocument.source, event.lineNumber),
+          }),
+        );
       }
     },
     onPostRender: () => {
@@ -725,7 +755,7 @@ function diffOptions(
     lineHoverHighlight: "number",
     onLineNumberClick: (event: OnDiffLineClickProps) => {
       if (currentDocument !== null) {
-        selectLine(referenceForDiffLine(currentDocument.path, event));
+        selectLine(referenceForDiffLine(currentDocument, event));
       }
     },
     onPostRender: () => {
@@ -775,17 +805,23 @@ function rememberMaterialized(revision: string, source: string | null): void {
   }
 }
 
-function referenceForFileLine(path: string, line: number): CodeReviewLineReference {
-  return { coordinate: "file", line, path, side: "new" };
+/** A line of the before/after diff, quoting its text from that side's complete file. */
+function referenceForDiffLine(
+  payload: CodeReviewDocument,
+  event: OnDiffLineClickProps,
+): CodeReviewLineReference {
+  const side = diffSide(event);
+  const source = side === "old" ? materializeBeforeSource(payload) : payload.source;
+  return lineReference({
+    line: event.lineNumber,
+    path: payload.path,
+    side,
+    text: sourceLineText(source, event.lineNumber),
+  });
 }
 
-function referenceForDiffLine(path: string, event: OnDiffLineClickProps): CodeReviewLineReference {
-  return {
-    coordinate: "file",
-    line: event.lineNumber,
-    path,
-    side: event.annotationSide === "deletions" ? "old" : "new",
-  };
+function diffSide(event: OnDiffLineClickProps): CodeReviewLineReference["side"] {
+  return event.annotationSide === "deletions" ? "old" : "new";
 }
 
 /** A tapped line becomes the composer's anchor at once; the native host then opens its composer. */
