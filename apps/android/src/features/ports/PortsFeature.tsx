@@ -10,11 +10,11 @@ export function PortsFeature({
   portForwarding,
 }: {
   portForwarding: PortForwardingManagerProps | undefined;
-}) {
+}): React.JSX.Element {
   if (portForwarding === undefined) {
     return <Text style={styles.notice}>Port forwarding is unavailable for this server</Text>;
   }
-  return <PortForwardingManager {...portForwarding} renderScrollComponent={AppSheetScrollView} />;
+  return <PortForwardingManager {...portForwarding} scrollComponent={AppSheetScrollView} />;
 }
 const styles = StyleSheet.create({
   notice: {

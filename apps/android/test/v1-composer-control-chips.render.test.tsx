@@ -180,7 +180,7 @@ const claudeAgent = {
   provider: "claude",
   providerName: "Claude",
 };
-const codexAgent = { capabilities: {}, primary: true, provider: "codex", providerName: "Codex" };
+const codexAgent = { capabilities: { "codex.native": true }, provider: "codex", providerName: "Codex" };
 
 function thread(
   settings: {

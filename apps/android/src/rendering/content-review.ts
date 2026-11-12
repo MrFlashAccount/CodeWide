@@ -34,11 +34,20 @@ type ImageReviewAnchor = {
   y: number;
 };
 
+type VideoReviewAnchor = {
+  kind: "video";
+  target: ContentReviewTarget;
+  timeSeconds: number;
+  x: number;
+  y: number;
+};
+
 export type ContentReviewAnchor =
   | TextReviewAnchor
   | MermaidReviewAnchor
   | ResponseReviewAnchor
-  | ImageReviewAnchor;
+  | ImageReviewAnchor
+  | VideoReviewAnchor;
 
 export type ContentReviewComment = {
   anchor: ContentReviewAnchor;
@@ -46,6 +55,14 @@ export type ContentReviewComment = {
   createdAt: number;
   id: string;
 };
+
+type VisualReviewAnchor = Extract<ContentReviewAnchor, { kind: "image" | "video" }>;
+
+const MILLISECONDS_PER_SECOND = 1000;
+const MILLISECONDS_PER_MINUTE = 60_000;
+const MILLISECONDS_PER_HOUR = 3_600_000;
+const CLOCK_DIGIT_WIDTH = 2;
+const MILLISECOND_DIGIT_WIDTH = 3;
 
 export function contentReviewTextHighlights(
   anchors: readonly ContentReviewAnchor[],
@@ -115,13 +132,8 @@ export function serializeContentReviewAttachment(
       lines.push(comment.body.trim(), "");
       return;
     }
-    if (anchor.kind === "image") {
-      lines.push(`### Comment ${String(ordinal)} · image point`, "");
-      lines.push(
-        `Point: **(${formatPercent(anchor.x)}, ${formatPercent(anchor.y)})** from the image top-left.`,
-        "",
-      );
-      lines.push(comment.body.trim(), "");
+    if (isVisualReviewAnchor(anchor)) {
+      appendVisualReview(lines, { anchor, body: comment.body, ordinal });
       return;
     }
     const diagramKey = `${anchor.target.id}\u0000${anchor.diagramId}`;
@@ -148,6 +160,45 @@ function quoteMarkdown(value: string): string[] {
 
 function formatPercent(value: number): string {
   return `${(normalizedReviewPoint(value) * 100).toFixed(1)}%`;
+}
+
+function formatVideoTime(value: number): string {
+  const totalMilliseconds = Math.max(0, Math.round(value * MILLISECONDS_PER_SECOND));
+  const hours = Math.floor(totalMilliseconds / MILLISECONDS_PER_HOUR);
+  const minutes = Math.floor((totalMilliseconds % MILLISECONDS_PER_HOUR) / MILLISECONDS_PER_MINUTE);
+  const seconds = Math.floor(
+    (totalMilliseconds % MILLISECONDS_PER_MINUTE) / MILLISECONDS_PER_SECOND,
+  );
+  const milliseconds = totalMilliseconds % MILLISECONDS_PER_SECOND;
+  const clock = `${String(minutes).padStart(CLOCK_DIGIT_WIDTH, "0")}:${String(seconds).padStart(CLOCK_DIGIT_WIDTH, "0")}.${String(milliseconds).padStart(MILLISECOND_DIGIT_WIDTH, "0")}`;
+  return hours === 0 ? clock : `${String(hours)}:${clock}`;
+}
+
+function isVisualReviewAnchor(anchor: ContentReviewAnchor): anchor is VisualReviewAnchor {
+  return anchor.kind === "image" || anchor.kind === "video";
+}
+
+function appendVisualReview(
+  lines: string[],
+  {
+    anchor,
+    body,
+    ordinal,
+  }: { readonly anchor: VisualReviewAnchor; readonly body: string; readonly ordinal: number },
+): void {
+  lines.push(
+    `### Comment ${String(ordinal)} · ${anchor.kind === "image" ? "image" : "video"} point`,
+    "",
+  );
+  if (anchor.kind === "video") {
+    lines.push(`Time: **${formatVideoTime(anchor.timeSeconds)}**`, "");
+  }
+  lines.push(
+    `Point: **(${formatPercent(anchor.x)}, ${formatPercent(anchor.y)})** from the ${anchor.kind} top-left.`,
+    "",
+    body.trim(),
+    "",
+  );
 }
 
 function markdownFence(value: string): string {

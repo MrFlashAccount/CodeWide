@@ -352,13 +352,24 @@ pub(crate) struct ScriptedProvider {
     /// `turn_start` answers `busy` while set.
     pub(crate) busy: Mutex<Option<String>>,
     pub(crate) created: Mutex<Vec<ThreadCreateParams>>,
+    pub(crate) inherited_policies: Mutex<Vec<crate::agent::provider::ExecutionPolicy>>,
+    pub(crate) execution_authorities:
+        Mutex<std::collections::HashMap<String, crate::agent::provider::ThreadExecutionAuthority>>,
     pub(crate) started: Mutex<Vec<TurnStartParams>>,
     pub(crate) steered: Mutex<Vec<TurnSteerParams>>,
     pub(crate) interrupted: Mutex<Vec<TurnInterruptParams>>,
+    /// `turn_interrupt` never answers while set.
+    pub(crate) interrupt_hangs: std::sync::atomic::AtomicBool,
     pub(crate) updated: Mutex<Vec<ThreadUpdateParams>>,
     pub(crate) forked: Mutex<Vec<ThreadForkParams>>,
+    /// Answers to runtime requests, in call order.
+    pub(crate) responded: Mutex<Vec<RequestRespondParams>>,
     /// Ids of `catalog.permissionProfiles`; empty lists none.
     profiles: Vec<&'static str>,
+    /// Threads whose history reads fail transiently.
+    unreadable: Mutex<std::collections::HashSet<String>>,
+    /// Threads `thread_observe` was called for, in call order.
+    observed: Mutex<Vec<String>>,
     next_id: std::sync::atomic::AtomicU64,
     status: watch::Sender<ProviderStatus>,
 }
@@ -384,14 +395,50 @@ impl ScriptedProvider {
             turns: Mutex::new(std::collections::HashMap::new()),
             busy: Mutex::new(None),
             created: Mutex::new(Vec::new()),
+            inherited_policies: Mutex::new(Vec::new()),
+            execution_authorities: Mutex::new(std::collections::HashMap::new()),
             started: Mutex::new(Vec::new()),
             steered: Mutex::new(Vec::new()),
             interrupted: Mutex::new(Vec::new()),
+            interrupt_hangs: std::sync::atomic::AtomicBool::new(false),
             updated: Mutex::new(Vec::new()),
             forked: Mutex::new(Vec::new()),
+            responded: Mutex::new(Vec::new()),
             profiles: Vec::new(),
+            unreadable: Mutex::new(std::collections::HashSet::new()),
+            observed: Mutex::new(Vec::new()),
             next_id: std::sync::atomic::AtomicU64::new(1),
             status,
+        }
+    }
+
+    /// Adds a thread after construction.
+    pub(crate) fn add_thread(&self, thread: AgentThread) {
+        locked(&self.threads).push(thread);
+    }
+
+    /// Deletes a thread and its history: later reads answer `thread not found`.
+    pub(crate) fn remove_thread(&self, id: &str) {
+        locked(&self.threads).retain(|thread| thread.app_thread_id.as_str() != id);
+        locked(&self.turns).remove(id);
+    }
+
+    pub(crate) fn set_archived(&self, id: &str, archived: bool) {
+        if let Some(thread) = locked(&self.threads)
+            .iter_mut()
+            .find(|thread| thread.app_thread_id.as_str() == id)
+        {
+            thread.archived = archived;
+        }
+    }
+
+    /// Makes a thread's history reads fail transiently (or read again).
+    pub(crate) fn set_history_unreadable(&self, id: &str, unreadable: bool) {
+        let mut threads = locked(&self.unreadable);
+        if unreadable {
+            threads.insert(id.to_owned());
+        } else {
+            threads.remove(id);
         }
     }
 
@@ -414,12 +461,30 @@ impl ScriptedProvider {
             .cloned()
     }
 
+    /// Changes the settings of an existing thread.
+    pub(crate) fn update_settings(&self, id: &str, change: impl FnOnce(&mut ThreadSettings)) {
+        if let Some(thread) = locked(&self.threads)
+            .iter_mut()
+            .find(|thread| thread.app_thread_id.as_str() == id)
+        {
+            change(&mut thread.settings);
+        }
+    }
+
     pub(crate) fn set_turns(&self, thread: &str, turns: Vec<crate::agent::model::AgentTurn>) {
         locked(&self.turns).insert(thread.to_owned(), turns);
     }
 
     pub(crate) fn set_busy(&self, active_turn: Option<&str>) {
         *locked(&self.busy) = active_turn.map(str::to_owned);
+    }
+
+    pub(crate) fn set_execution_authority(
+        &self,
+        thread: &str,
+        authority: crate::agent::provider::ThreadExecutionAuthority,
+    ) {
+        locked(&self.execution_authorities).insert(thread.to_owned(), authority);
     }
 
     pub(crate) fn set_status(&self, thread: &str, status: ThreadStatus) {
@@ -443,12 +508,22 @@ impl ScriptedProvider {
         locked(&self.steered).clone()
     }
 
+    pub(crate) fn hang_interrupts(&self) {
+        self.interrupt_hangs
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     pub(crate) fn interrupted(&self) -> Vec<TurnInterruptParams> {
         locked(&self.interrupted).clone()
     }
 
     pub(crate) fn updated(&self) -> Vec<ThreadUpdateParams> {
         locked(&self.updated).clone()
+    }
+
+    /// The threads `thread_observe` was called for, in call order.
+    pub(crate) fn observed(&self) -> Vec<String> {
+        locked(&self.observed).clone()
     }
 
     fn next(&self, prefix: &str) -> String {
@@ -501,8 +576,14 @@ impl AgentProvider for ScriptedProvider {
                 description: String::new(),
                 is_default: true,
                 hidden: false,
-                efforts: Vec::new(),
-                default_effort: None,
+                efforts: ["low", "high"]
+                    .into_iter()
+                    .map(|effort| crate::agent::model::ModelEffort {
+                        effort: effort.into(),
+                        description: String::new(),
+                    })
+                    .collect(),
+                default_effort: Some("high".into()),
                 input_modalities: Vec::new(),
             }],
             prices: std::collections::BTreeMap::new(),
@@ -541,6 +622,15 @@ impl AgentProvider for ScriptedProvider {
         Ok(created)
     }
 
+    async fn thread_create_with_policy(
+        &self,
+        params: ThreadCreateParams,
+        policy: &crate::agent::provider::ExecutionPolicy,
+    ) -> Result<AgentThread, ProviderError> {
+        locked(&self.inherited_policies).push(policy.clone());
+        self.thread_create(params).await
+    }
+
     async fn thread_read(&self, id: &AppThreadId) -> Result<ThreadReadResult, ProviderError> {
         let thread = self.thread(id.as_str()).ok_or_else(|| not_found(id))?;
         let active_turn_id = locked(&self.turns).get(id.as_str()).and_then(|turns| {
@@ -554,6 +644,15 @@ impl AgentProvider for ScriptedProvider {
             thread,
             active_turn_id,
         })
+    }
+
+    async fn thread_execution_authority(
+        &self,
+        thread: &AppThreadId,
+    ) -> Result<Option<crate::agent::provider::ThreadExecutionAuthority>, ProviderError> {
+        Ok(locked(&self.execution_authorities)
+            .get(thread.as_str())
+            .cloned())
     }
 
     async fn thread_read_fenced(
@@ -571,6 +670,14 @@ impl AgentProvider for ScriptedProvider {
         &self,
         params: ThreadTurnsParams,
     ) -> Result<ThreadTurnsResult, ProviderError> {
+        if locked(&self.unreadable).contains(params.app_thread_id.as_str()) {
+            return Err(ProviderError::Disconnected("history is unavailable".into()));
+        }
+        if self.thread(params.app_thread_id.as_str()).is_none()
+            && !locked(&self.turns).contains_key(params.app_thread_id.as_str())
+        {
+            return Err(not_found(&params.app_thread_id));
+        }
         let mut turns = locked(&self.turns)
             .get(params.app_thread_id.as_str())
             .cloned()
@@ -646,6 +753,11 @@ impl AgentProvider for ScriptedProvider {
         Err(unsupported())
     }
 
+    async fn thread_observe(&self, thread: &AppThreadId) -> Result<(), ProviderError> {
+        locked(&self.observed).push(thread.as_str().to_owned());
+        Ok(())
+    }
+
     async fn turn_start(&self, params: TurnStartParams) -> Result<TurnStartResult, ProviderError> {
         if self.thread(params.app_thread_id.as_str()).is_none() {
             return Err(not_found(&params.app_thread_id));
@@ -671,11 +783,18 @@ impl AgentProvider for ScriptedProvider {
 
     async fn turn_interrupt(&self, params: TurnInterruptParams) -> Result<(), ProviderError> {
         locked(&self.interrupted).push(params);
+        if self
+            .interrupt_hangs
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            std::future::pending::<()>().await;
+        }
         Ok(())
     }
 
-    async fn request_respond(&self, _: RequestRespondParams) -> Result<(), ProviderError> {
-        Err(unsupported())
+    async fn request_respond(&self, params: RequestRespondParams) -> Result<(), ProviderError> {
+        locked(&self.responded).push(params);
+        Ok(())
     }
 
     async fn capability_invoke(&self, _: CapabilityInvokeParams) -> Result<Value, ProviderError> {

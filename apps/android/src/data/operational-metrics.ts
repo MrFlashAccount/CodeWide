@@ -14,6 +14,7 @@ export type TimingMetric =
   | "markdown_parse_ms"
   | "native_json_decode_ms"
   | "native_journal_commit_ms"
+  | "pane_motion_frame_ms"
   | "projection_apply_ms"
   | "sqlite_checkpoint_ms"
   | "sqlite_subset_load_ms"

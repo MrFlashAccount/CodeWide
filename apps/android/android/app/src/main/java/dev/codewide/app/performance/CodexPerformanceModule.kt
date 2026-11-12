@@ -26,6 +26,7 @@ import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.facebook.react.modules.fresco.FrescoModule
 import com.facebook.soloader.SoLoader
+import dev.codewide.app.BuildConfig
 import dev.codewide.app.rendering.NativeCodeHighlighter
 import java.util.ArrayDeque
 import java.io.File
@@ -129,7 +130,10 @@ class CodexPerformanceModule(
   @Volatile private var listenerCount = 0
   private var sampler: ScheduledFuture<*>? = null
   private var attachedWindow: Window? = null
-  @Volatile private var enabled = preferences.getBoolean("enabled", false)
+  @Volatile private var enabled = preferences.getBoolean(
+    "enabled",
+    BuildConfig.PERFORMANCE_MONITORING_DEFAULT,
+  )
   private var sequence = 0L
   private var sessionStartedElapsedMs = 0L
   private var previousElapsedMs = 0L

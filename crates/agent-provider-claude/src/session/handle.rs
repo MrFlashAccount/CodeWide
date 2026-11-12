@@ -1,7 +1,7 @@
 //! The owner's handle on a session actor: commands with their answers, and
 //! the latest published state and status.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use agent_core::{
     model::{AgentTurn, NativeRequestId, RuntimeResponse, ThreadSettings, TurnId, TurnStartResult},
@@ -15,6 +15,7 @@ use super::{
     turn::{SteerMessage, TurnRequest},
 };
 use crate::{background_tasks::LiveTaskState, state::thread_state::ThreadState};
+use agent_core::model::{BackgroundCommandState, RunningBackgroundTask};
 
 /// Whether a turn runs and whether a query is open.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -33,6 +34,16 @@ pub type SessionRead = (
     Option<AgentTurn>,
     Option<oneshot::Receiver<Result<u64, ProviderError>>>,
 );
+
+/// What the open query knows of the background commands it launched.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveLaunches {
+    /// When the query's `claude` process started: a launch older than it
+    /// belongs to an earlier process generation, which is gone.
+    pub process_started_at_ms: i64,
+    /// The state of every background command the query launched, by task id.
+    pub states: HashMap<String, BackgroundCommandState>,
+}
 
 pub(super) enum Command {
     StartTurn {
@@ -69,6 +80,12 @@ pub(super) enum Command {
     BackgroundTask {
         task_id: String,
         reply: oneshot::Sender<Option<LiveTaskState>>,
+    },
+    BackgroundCommands {
+        reply: oneshot::Sender<Option<LiveLaunches>>,
+    },
+    RunningBackgroundTasks {
+        reply: oneshot::Sender<Vec<RunningBackgroundTask>>,
     },
     Dispose {
         reply: oneshot::Sender<()>,
@@ -233,6 +250,30 @@ impl SessionHandle {
         task_id: String,
     ) -> Result<Option<LiveTaskState>, SessionGone> {
         self.ask(|reply| Command::BackgroundTask { task_id, reply })
+            .await
+    }
+
+    /// The state of every background command the open query launched, by
+    /// task id; `None` without an open query.
+    ///
+    /// # Errors
+    ///
+    /// The session ended.
+    pub async fn background_commands(&self) -> Result<Option<LiveLaunches>, SessionGone> {
+        self.ask(|reply| Command::BackgroundCommands { reply })
+            .await
+    }
+
+    /// The background commands the open query launched that still run;
+    /// empty without an open query.
+    ///
+    /// # Errors
+    ///
+    /// The session ended.
+    pub async fn running_background_tasks(
+        &self,
+    ) -> Result<Vec<RunningBackgroundTask>, SessionGone> {
+        self.ask(|reply| Command::RunningBackgroundTasks { reply })
             .await
     }
 

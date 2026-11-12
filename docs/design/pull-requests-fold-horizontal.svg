@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1664" height="1500" viewBox="0 0 1664 1500">
+  <style>
+    text { font-family: Inter, Roboto, Arial, sans-serif; }
+    .title { fill:#f2f2f2; font-size:30px; font-weight:600; }
+    .h1 { fill:#f2f2f2; font-size:36px; font-weight:600; }
+    .body { fill:#b8b8b8; font-size:20px; }
+    .label { fill:#b8b8b8; font-size:17px; font-weight:500; }
+    .small { fill:#858585; font-size:14px; font-weight:500; }
+  </style>
+  <rect width="1664" height="1500" fill="#0f0f0f"/>
+  <rect y="52" width="1664" height="40" fill="#0b0b0b"/>
+  <circle cx="22" cy="72" r="5" fill="#35c778"/><text x="40" y="78" class="small">76 fps · CPU 25.9% · RSS 491 MB</text>
+  <text x="30" y="38" fill="#f2f2f2" font-size="24" font-weight="600">00:32  Fri, Oct 23</text>
+  <text x="1450" y="38" fill="#f2f2f2" font-size="18">⌁  4G+  ▮▮  16%</text>
+  <text x="28" y="150" class="title">Pull requests</text>
+
+  <g transform="translate(370 560)">
+    <circle cx="18" cy="18" r="9" fill="none" stroke="#858585" stroke-width="3"/>
+    <circle cx="18" cy="68" r="9" fill="none" stroke="#858585" stroke-width="3"/>
+    <circle cx="18" cy="118" r="9" fill="none" stroke="#858585" stroke-width="3"/>
+    <path d="M31 18h28c45 0 52 50 104 50h34M31 68h166M31 118h28c45 0 52-50 104-50" fill="none" stroke="#858585" stroke-width="3" stroke-linecap="round"/>
+    <rect x="218" y="26" width="84" height="84" rx="17" fill="none" stroke="#f2f2f2" stroke-width="5"/>
+    <path d="M241 68l14 14 27-32" fill="none" stroke="#f2f2f2" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="780" y="600" class="h1">Your review inbox</text>
+  <text x="780" y="650" class="body">Connect a code host to see every pull request</text>
+  <text x="780" y="680" class="body">that needs you.</text>
+  <rect x="780" y="724" width="400" height="70" rx="35" fill="#e6e6e6"/>
+  <text x="980" y="768" text-anchor="middle" fill="#111" font-size="20" font-weight="600">+  Connect a provider</text>
+  <g transform="translate(780 832)">
+    <path d="M14 0l12 5v9c0 10-7 16-12 19C9 30 2 24 2 14V5z" fill="none" stroke="#858585" stroke-width="2"/>
+    <text x="40" y="22" class="label">Credentials stay on your Companion.</text>
+  </g>
+
+  <rect x="28" y="1294" width="1608" height="90" rx="45" fill="#181818"/>
+  <text x="420" y="1348" text-anchor="middle" class="label">◯  Threads</text>
+  <rect x="836" y="1302" width="792" height="74" rx="37" fill="#e6e6e6"/>
+  <text x="1232" y="1348" text-anchor="middle" fill="#111" font-size="17" font-weight="600">Pull requests</text>
+  <rect y="1404" width="1664" height="96" fill="#0b0b0b"/>
+  <text x="830" y="1463" text-anchor="middle" fill="#f2f2f2" font-size="28">⠿   ◉   ◉   ◉   ◉      ◀       ●       ■</text>
+</svg>

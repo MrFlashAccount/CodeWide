@@ -1,0 +1,18 @@
+[package]
+name = "workspace-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Isolated, deadline-bound access to user workspace paths with a per-mount circuit breaker"
+
+[dependencies]
+thiserror = "2.0.16"
+tokio = { version = "1.47.1", features = ["macros", "process", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1.41"
+
+[dev-dependencies]
+tempfile = "3.21.0"
+
+[lints]
+workspace = true

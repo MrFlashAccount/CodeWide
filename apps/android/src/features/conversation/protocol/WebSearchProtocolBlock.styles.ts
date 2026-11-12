@@ -1,24 +1,49 @@
 import { StyleSheet } from "react-native";
-import { colors, spacing, typeScale, typeWeight } from "../../../theme";
+import { colors, spacing, touchTarget, typeScale, typeWeight } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  menuActionSubtitle: {
-    color: colors.textMuted,
-    ...typeScale.label,
-    marginTop: spacing.optical,
+  openIcon: {
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: touchTarget,
   },
-  menuActionTitle: {
-    color: colors.text,
+  openIconText: {
+    color: colors.textDim,
     ...typeScale.title,
   },
-  rawLink: {
-    color: colors.accent,
+  resultContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  resultDomain: {
+    color: colors.textMuted,
     ...typeScale.label,
+    marginBottom: spacing.xxs,
+  },
+  resultIndex: {
+    color: colors.textDim,
+    ...typeScale.label,
+    fontVariant: ["tabular-nums"],
+    paddingTop: spacing.optical,
+    width: spacing.lg,
+  },
+  resultSnippet: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.xxs,
+  },
+  resultTitle: {
+    color: colors.text,
+    ...typeScale.body,
     fontWeight: typeWeight.semibold,
   },
   searchResult: {
+    alignItems: "flex-start",
     borderBottomColor: colors.borderSoft,
     borderBottomWidth: 1,
-    paddingVertical: spacing.compact,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: touchTarget,
+    paddingVertical: spacing.sm,
   },
 });

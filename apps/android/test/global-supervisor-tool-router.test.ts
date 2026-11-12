@@ -6,6 +6,7 @@ import {
 } from "../src/data/globalSupervisorToolRouter";
 import { globalSupervisorQualifiedChatRef } from "../src/data/globalSupervisorBinding";
 import { globalSupervisorAttachmentLimits } from "../src/data/globalSupervisorChatAttachments";
+import { globalSupervisorToolNames } from "../src/data/globalSupervisorToolNames";
 
 const SUPERVISOR = globalSupervisorQualifiedChatRef("home-server", "supervisor-thread");
 
@@ -489,5 +490,65 @@ describe("GlobalSupervisorToolRouter", () => {
         },
       }),
     );
+  });
+
+  it("routes the declared codewide_ names and the legacy names restored on resumed threads", async () => {
+    const target = { connectionId: "target-server", threadId: "target-thread" };
+    const calls = [
+      ["listActiveWork", {}],
+      ["inspectChat", target],
+      ["interruptChat", target],
+      ["listChatAttachments", target],
+      ["readChat", { ...target, cursor: null }],
+      ["listChats", { cursor: null }],
+      ["followChat", target],
+      ["unfollowChat", target],
+    ] as const;
+    for (const [legacy, args] of calls) {
+      for (const tool of [globalSupervisorToolNames[legacy], legacy]) {
+        const lower = capabilities();
+        const router = createGlobalSupervisorToolRouter(lower);
+        await router.handle({
+          connectionId: SUPERVISOR.connectionId,
+          params: {
+            arguments: args,
+            callId: `call-${tool}`,
+            threadId: SUPERVISOR.threadId,
+            tool,
+            turnId: `turn-${tool}`,
+          },
+          requestId: `request-${tool}`,
+          supervisor: SUPERVISOR,
+        });
+
+        expect(lower[legacy], tool).toHaveBeenCalledTimes(1);
+        expect(lower.respond).toHaveBeenCalledWith(
+          expect.objectContaining({ result: expect.objectContaining({ success: true }) }),
+        );
+      }
+    }
+  });
+
+  it("does not route another CodeWide tool or a near miss of a supervisor tool", async () => {
+    for (const tool of ["codewide_spawn_agent", "codewide_listActiveWork", "list_active_work"]) {
+      const lower = capabilities();
+      await createGlobalSupervisorToolRouter(lower).handle({
+        connectionId: SUPERVISOR.connectionId,
+        params: {
+          arguments: {},
+          callId: "call-unknown",
+          threadId: SUPERVISOR.threadId,
+          tool,
+          turnId: "turn-unknown",
+        },
+        requestId: "unknown",
+        supervisor: SUPERVISOR,
+      });
+
+      expect(lower.listActiveWork).not.toHaveBeenCalled();
+      expect(lower.respond).toHaveBeenCalledWith(
+        expect.objectContaining({ result: expect.objectContaining({ success: false }) }),
+      );
+    }
   });
 });

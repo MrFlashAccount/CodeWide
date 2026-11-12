@@ -18,11 +18,7 @@ export const styles = StyleSheet.create({
   },
   messageActionButton: {
     alignItems: "flex-start",
-    borderRadius: radii.pill,
     flexShrink: 0,
-    height: controlSize.compact,
-    justifyContent: "center",
-    width: controlSize.compact,
   },
   messageActionRail: {
     alignItems: "flex-start",
@@ -31,5 +27,4 @@ export const styles = StyleSheet.create({
     minHeight: controlSize.compact,
     width: controlSize.compact,
   },
-  pressed: { opacity: 0.68 },
 });

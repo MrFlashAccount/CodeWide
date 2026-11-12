@@ -165,11 +165,7 @@ mod tests {
                 provider
             })
             .collect();
-        let registry = Arc::new(ProviderRegistry::new(
-            enabled,
-            &ProviderId::from_static("codex"),
-            Vec::new(),
-        )?);
+        let registry = Arc::new(ProviderRegistry::new(enabled)?);
         let bindings = Arc::new(BindingStore::new(store));
         bindings
             .bind(

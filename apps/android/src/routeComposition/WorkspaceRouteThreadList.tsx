@@ -13,6 +13,7 @@ type WorkspaceRouteThreadListProps = {
   readonly globalVoice: GlobalVoiceControl;
   readonly list: ReturnType<typeof useWorkspaceListBindings>;
   readonly listActions: ReturnType<typeof useThreadListActions>;
+  readonly openDownloads: () => void;
   readonly openGlobalSearch: () => void;
   readonly openProjects: () => void;
   readonly openSettings: () => void;
@@ -22,7 +23,6 @@ type WorkspaceRouteThreadListProps = {
   readonly refreshThreadListAccountRateLimits: () => Promise<void>;
   readonly sidebarSearch: React.JSX.Element | null;
   readonly threadListSources: ThreadListSources;
-  readonly viewportWidth: number;
 };
 
 /** Adapts mounted route resources to the shared V1 thread-list presentation. */
@@ -35,9 +35,7 @@ export function WorkspaceRouteThreadList(props: WorkspaceRouteThreadListProps): 
       changeSidebarFilter={list.listState.setThreadListFilter}
       changeSidebarMode={list.listState.setThreadListMode}
       closeSidebarProject={list.projectSelection.closeSidebarProject}
-      createSidebarThread={props.createSidebarThread}
       desktop={props.desktop}
-      globalVoice={props.globalVoice}
       loadMoreProjectThreads={project.loadMoreProjectThreads}
       loadMoreThreads={list.loadMoreThreads}
       mobileRemoteSearchResource={project.threadSearch.mobileRemoteSearchResource}
@@ -46,6 +44,7 @@ export function WorkspaceRouteThreadList(props: WorkspaceRouteThreadListProps): 
       mobileVisibleArchivedThreads={project.threadSearch.mobileVisibleArchivedThreads}
       mobileVisibleThreads={project.threadSearch.mobileVisibleThreads}
       normalizedMobileThreadQuery={project.threadSearch.normalizedMobileThreadQuery}
+      openDownloads={props.openDownloads}
       openGlobalSearch={props.openGlobalSearch}
       openProjects={props.openProjects}
       openSettings={props.openSettings}
@@ -75,7 +74,6 @@ export function WorkspaceRouteThreadList(props: WorkspaceRouteThreadListProps): 
       toggleListThreadPin={listActions.toggleListThreadPin}
       toggleListThreadRead={listActions.toggleListThreadRead}
       unarchiveListThread={listActions.unarchiveListThread}
-      viewportWidth={props.viewportWidth}
     />
   );
 }

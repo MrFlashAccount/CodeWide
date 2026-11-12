@@ -1,8 +1,10 @@
 import { testListStream } from "./fixtures/threadListRows";
-import type { RpcClient } from "@codewide/sync-client";
+import type { RpcClient, SyncSnapshotThread } from "@codewide/sync-client";
 import type { SqliteExecutor, SqliteValue } from "@codewide/tanstack-db-sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { subagentsForThread } from "../src/data/subagent-projection";
 import type { ThreadDetailDatabase } from "../src/data/thread-detail-database-contract";
+import type { StoredThreadSummary } from "../src/data/thread-summary-types";
 import { summary } from "./fixtures/thread-summary";
 import { createV1TestThread } from "./fixtures/v1Thread";
 
@@ -70,7 +72,7 @@ async function seedWorkingAgent() {
   return database;
 }
 
-function agentRow(running: boolean) {
+function agentRow(running: boolean | undefined) {
   return {
     agentNickname: "Explore", agentRole: null, archived: false, cliVersion: "claude", createdAt: 1,
     cwd: "/repo", id: "root:agent:a1", modelProvider: "anthropic", parentThreadId: "root",
@@ -146,6 +148,26 @@ describe("thread sync subagent snapshot", () => {
     database.close();
   });
 
+  it("keeps a working agent whose snapshot row does not know whether it runs", async () => {
+    const database = await seedWorkingAgent();
+    const { refreshSubagents, sync } = syncRuntime(
+      database,
+      syncAnswer({ threads: [agentRow(undefined)] }),
+    );
+
+    await sync.readThread("server", "root", undefined, true);
+
+    // An unknown state maps to `notLoaded`, which never replaces a live `active`;
+    // only an explicit `running: false` (the previous case) settles the agent.
+    await vi.waitFor(async () => {
+      expect((await database.get("server", "root:agent:a1"))?.updatedAt).toBe(2);
+    });
+    expect((await database.get("server", "root:agent:a1"))?.status.type).toBe("active");
+    expect((await database.get("server", "root"))?.activeSubagents).toBe(true);
+    expect(refreshSubagents).not.toHaveBeenCalled();
+    database.close();
+  });
+
   it("keeps the cached agents and reads the index separately without snapshot rows", async () => {
     const database = await seedWorkingAgent();
     const { refreshSubagents, sync } = syncRuntime(database, syncAnswer(null));
@@ -172,4 +194,82 @@ describe("thread sync subagent snapshot", () => {
     expect((await database.get("server", "root:agent:a1"))?.status.type).toBe("active");
     database.close();
   });
+
+  it("persists authoritative root membership when the returned parent is missing", async () => {
+    const database = await seedWorkingAgent();
+    const orphan = {
+      ...agentRow(false),
+      id: "root:agent:orphan",
+      parentThreadId: "missing-parent",
+    };
+    const { sync } = syncRuntime(database, syncAnswer({ threads: [orphan] }));
+
+    await sync.readThread("server", "root", undefined, true);
+
+    expect(await database.get("server", "root:agent:orphan")).toMatchObject({
+      parentThreadId: "missing-parent",
+      subagentRootThreadId: "root",
+    });
+    database.close();
+  });
+
+  it.each([
+    {
+      expectedMembership: "middle",
+      label: "ancestor then intermediate",
+      roots: ["root", "middle"],
+    },
+    {
+      expectedMembership: "root",
+      label: "intermediate then ancestor",
+      roots: ["middle", "root"],
+    },
+  ])(
+    "keeps a transitive descendant in both scopes after $label refresh",
+    async ({ expectedMembership, roots }) => {
+      const database = createThreadSummaryDatabase(testListStream().options);
+      await database.prepare();
+      const rootRows = [snapshot("middle", "root", 3), snapshot("grandchild", "middle", 2)];
+      const middleRows = [snapshot("grandchild", "middle", 2)];
+
+      for (const root of roots) {
+        await database.replaceSubagentCatalog(
+          "server",
+          root,
+          root === "root" ? rootRows : middleRows,
+        );
+      }
+      await database.replaceSubagentCatalog("server", "foreign-root", [
+        snapshot("foreign", "missing", 4),
+      ]);
+
+      const rows = await storedRows(database, ["middle", "grandchild", "foreign"]);
+      expect(subagentsForThread(rows, "root").map((row) => row.remoteThreadId)).toEqual([
+        "middle",
+        "grandchild",
+      ]);
+      expect(subagentsForThread(rows, "middle").map((row) => row.remoteThreadId)).toEqual([
+        "grandchild",
+      ]);
+      expect((await database.get("server", "grandchild"))?.subagentRootThreadId).toBe(
+        expectedMembership,
+      );
+      database.close();
+    },
+  );
 });
+
+function snapshot(id: string, parentThreadId: string, updatedAt: number): SyncSnapshotThread {
+  return {
+    archived: false,
+    thread: createV1TestThread(id, parentThreadId, updatedAt, []),
+  };
+}
+
+async function storedRows(
+  database: ReturnType<typeof createThreadSummaryDatabase>,
+  threadIds: readonly string[],
+): Promise<StoredThreadSummary[]> {
+  const rows = await Promise.all(threadIds.map((id) => database.get("server", id)));
+  return rows.filter((row): row is StoredThreadSummary => row !== null);
+}

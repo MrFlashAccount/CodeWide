@@ -1,6 +1,7 @@
 import { NativeEventEmitter, NativeModules } from "react-native";
 import { useSyncExternalStore } from "react";
 
+import { setOperationalDiagnosticsEnabled } from "../data/operational-metrics";
 import { resetPerformanceExperiments } from "../data/performance-experiments";
 import type { ThreadNavigationFrameProfile } from "../data/thread-navigation-metrics";
 import { parseWindowFrameReport, type WindowFrameReport } from "../data/window-frame-report";
@@ -159,6 +160,7 @@ let snapshot: PerformanceMetricsSnapshot = {
 };
 
 function publish(next: PerformanceMetricsSnapshot): void {
+  setOperationalDiagnosticsEnabled(next.enabled);
   const current = next.current;
   const recent =
     next.recent.length > 0 || current === null

@@ -161,6 +161,139 @@ describe("task notification reports", () => {
   });
 });
 
+describe("child agent result notices", () => {
+  const single = {
+    agentThreadId: "child-1",
+    delivery: "wake",
+    durationMs: null,
+    id: "m1",
+    kind: "agent",
+    name: "Review",
+    requestId: "r1",
+    result: null,
+    status: "interrupted",
+    taskId: "t1",
+    toolUses: null,
+    turnId: "turn-1",
+    type: "codewideTaskNotification",
+  };
+  const batched = {
+    agentThreadId: null,
+    delivery: "wake",
+    durationMs: null,
+    id: "m2",
+    kind: "agent",
+    name: "2 agent results",
+    reports: [
+      {
+        agentThreadId: "child-1",
+        id: "m2:0",
+        name: "Review",
+        requestId: "r1",
+        status: "completed",
+        taskId: "t1",
+        turnId: "turn-1",
+      },
+      {
+        agentThreadId: "child-2",
+        id: "m2:1",
+        name: "Tests",
+        requestId: "r2",
+        status: "failed",
+        taskId: "r2",
+        turnId: "turn-9",
+      },
+    ],
+    requestId: null,
+    result: null,
+    status: "failed",
+    taskId: "t1",
+    toolUses: null,
+    turnId: null,
+    type: "codewideTaskNotification",
+  };
+
+  it("reads an interrupted child agent as interrupted, not unknown", () => {
+    const [parsed] = turnTaskNotifications(turn("wake", [single]).turn).wake;
+
+    expect(parsed).toEqual({
+      agentThreadId: "child-1",
+      delivery: "wake",
+      durationMs: null,
+      id: "m1",
+      kind: "agent",
+      name: "Review",
+      result: null,
+      status: "interrupted",
+      taskId: "t1",
+      toolUses: null,
+    });
+    expect(reportLineSummary([parsed!])).toEqual({ label: "Review", phrase: "was interrupted" });
+  });
+
+  it("expands a batched notice into one report per child agent", () => {
+    const reports = turnTaskNotifications(turn("wake", [batched]).turn);
+
+    expect(reports.midTurn).toEqual([]);
+    expect(reports.wake).toEqual([
+      {
+        agentThreadId: "child-1",
+        delivery: "wake",
+        durationMs: null,
+        id: "m2:0",
+        kind: "agent",
+        name: "Review",
+        result: null,
+        status: "completed",
+        taskId: "t1",
+        toolUses: null,
+      },
+      {
+        agentThreadId: "child-2",
+        delivery: "wake",
+        durationMs: null,
+        id: "m2:1",
+        kind: "agent",
+        name: "Tests",
+        result: null,
+        status: "failed",
+        taskId: "r2",
+        toolUses: null,
+      },
+    ]);
+    expect(reportLineSummary(reports.wake)).toEqual({ label: "2 agents", phrase: "some failed" });
+  });
+
+  it("skips invalid batch entries and inherits the notice's delivery", () => {
+    const notice = {
+      ...batched,
+      delivery: "midTurn",
+      reports: [
+        { ...batched.reports[0], id: " " },
+        { ...batched.reports[1], taskId: "" },
+        "garbage",
+        { ...batched.reports[1], status: "exploded" },
+        { ...batched.reports[1], name: "Duplicate" },
+      ],
+    };
+
+    const reports = turnTaskNotifications(turn("wake", [notice]).turn);
+
+    expect(reports.wake).toEqual([]);
+    expect(reports.midTurn).toMatchObject([
+      { delivery: "midTurn", id: "m2:1", kind: "agent", name: "Tests", status: "unknown" },
+    ]);
+  });
+
+  it("falls back to the summary when no batch entry is valid", () => {
+    const notice = { ...batched, reports: [{ id: "", taskId: "t1" }] };
+
+    expect(turnTaskNotifications(turn("wake", [notice]).turn).wake).toMatchObject([
+      { agentThreadId: null, id: "m2", name: "2 agent results", status: "failed", taskId: "t1" },
+    ]);
+  });
+});
+
 describe("wake lines and stored turns", () => {
   it("keeps the first wake's row when later wakes join its line", () => {
     const first = turn("first", [report("a")]);

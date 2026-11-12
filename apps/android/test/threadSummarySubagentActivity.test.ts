@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { parseAgentProviderId } from "../src/data/threadAgent";
 import {
   reportedSubagentStates,
+  reportedSubagentStatesOfBatch,
   rootsWithChangedSubagentActivity,
   withActiveSubagents,
 } from "../src/data/threadSummarySubagentActivity";
@@ -44,5 +46,28 @@ describe("sub-agent activity on the root row", () => {
     expect(reportedSubagentStates(event("running"))).toEqual([{ active: true, threadId: "root:agent:a" }]);
     expect(reportedSubagentStates(event("completed"))).toEqual([{ active: false, threadId: "root:agent:a" }]);
     expect(reportedSubagentStates({ method: "item/completed", params: { item: { type: "commandExecution" } } })).toEqual([]);
+  });
+
+  it("applies reported states only from parents without the native Codex surface", () => {
+    const payload = {
+      method: "item/completed",
+      params: {
+        item: { agentsStates: { child: { status: "running" } }, type: "collabAgentToolCall" },
+        threadId: "parent",
+      },
+    };
+    const parent = (capabilities: readonly string[] | null) =>
+      summary("parent", {
+        codewideAgent:
+          capabilities === null
+            ? null
+            : { capabilities, provider: parseAgentProviderId("x"), providerName: "X" },
+      });
+    const reported = (row: ReturnType<typeof summary>) =>
+      reportedSubagentStatesOfBatch([{ parentThreadId: "parent", payload }], () => row);
+    expect(reported(parent([]))).toEqual(new Map([["child", true]]));
+    // Native children report through their own events; a legacy parent is native.
+    expect(reported(parent(["codex.native"])).size).toBe(0);
+    expect(reported(parent(null)).size).toBe(0);
   });
 });

@@ -6,6 +6,10 @@ import { unknownRecord } from "./unknownRecord";
 
 export const THREAD_CATALOG_PAGE_SIZE = 36;
 
+const THREAD_CATALOG_RETRY_COUNT = 3;
+const THREAD_CATALOG_RETRY_BASE_DELAY_MS = 250;
+const THREAD_CATALOG_RETRY_BACKOFF_MULTIPLIER = 2;
+
 export interface ThreadCatalogPageRequest {
   archived: boolean;
   cursor: string | null;
@@ -27,7 +31,7 @@ export async function loadThreadCatalogPage(
   request: ThreadCatalogPageRequest,
 ): Promise<ThreadCatalogPage> {
   const response = unknownRecord(
-    await session.rpc<unknown>("thread/list", {
+    await readThreadCatalogPage(session, {
       archived: request.archived,
       cursor: request.cursor,
       limit: THREAD_CATALOG_PAGE_SIZE,
@@ -71,4 +75,22 @@ export async function loadThreadCatalogPage(
     rows,
     threads,
   };
+}
+
+/** Retries only the idempotent wire read; response validation failures remain definitive. */
+async function readThreadCatalogPage(session: RpcClient, params: unknown): Promise<unknown> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await session.rpc<unknown>("thread/list", params);
+    } catch (error) {
+      if (attempt >= THREAD_CATALOG_RETRY_COUNT) {
+        throw error;
+      }
+      const delay =
+        THREAD_CATALOG_RETRY_BASE_DELAY_MS * THREAD_CATALOG_RETRY_BACKOFF_MULTIPLIER ** attempt;
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, delay);
+      });
+    }
+  }
 }

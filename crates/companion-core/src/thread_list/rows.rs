@@ -166,6 +166,11 @@ impl RowEvent {
         self.kind == EventKind::Excluded
     }
 
+    /// Whether the event starts or ends a turn or changes the thread status.
+    pub(super) fn is_lifecycle(&self) -> bool {
+        matches!(&self.kind, EventKind::Update(update) if update.status.is_some())
+    }
+
     /// Reduces a journaled payload (patch attached) at `cursor`. `streamed`
     /// is the accumulated answer preview observed before projection; `seed`
     /// the decorated row of a `thread/started`. `None` when the payload
@@ -309,7 +314,7 @@ impl RowStore {
     }
 
     /// Whether subscribers receive the row: a CLI or VS Code thread, a child
-    /// of another thread, or a non-primary provider's row. Unknown rows are
+    /// of another thread, or a row of a provider without `codex.native`. Unknown rows are
     /// not streamed.
     pub(super) fn streamable(&self, thread_id: &str) -> bool {
         self.rows
@@ -556,8 +561,9 @@ fn attach_meta(row: &mut Value, meta: &ListRowMeta) {
 }
 
 /// The merged `thread/list` rule: a CLI or VS Code thread, a child of
-/// another thread, or any row of a non-primary provider (listed whatever its
-/// `source`, which is `appServer` for neutral providers).
+/// another thread, or any row of a provider without the `codex.native`
+/// surface (merged into the list whatever its `source`, which is
+/// `appServer` for neutral providers).
 fn streamable_value(row: &Value) -> bool {
     row.get("parentThreadId")
         .is_some_and(|parent| !parent.is_null())
@@ -566,7 +572,7 @@ fn streamable_value(row: &Value) -> bool {
             .and_then(Value::as_str)
             .is_some_and(|source| ROW_SOURCE_KINDS.contains(&source))
         || row
-            .pointer("/codewideAgent/primary")
+            .pointer("/codewideAgent/capabilities/codex.native")
             .and_then(Value::as_bool)
             == Some(false)
 }

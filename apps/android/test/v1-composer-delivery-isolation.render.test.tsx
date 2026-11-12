@@ -26,6 +26,7 @@ function delivery(
     queuedComposerEditBusy: false,
     saveQueuedComposerEdit: jest.fn(),
     send,
+    sendAvailable: true,
     threadLifecycleActive: false,
     uploadsBlockSend: false,
     voiceError: null,
@@ -169,4 +170,23 @@ it("can discard pending voice finalization and send again without waiting for re
   expect(hook.result.current.sendDisabled).toBe(true);
   await act(async () => sending.resolve());
   expect(hook.result.current.sendDisabled).toBe(false);
+});
+
+it("keeps Send disabled while the scope cannot send, and enables it once it can", async () => {
+  const send = jest.fn(async () => undefined);
+  const hook = renderHook(useComposerDeliveryActions, {
+    initialProps: delivery("server:review-chat-draft", send, { sendAvailable: false }),
+  });
+
+  expect(hook.result.current.sendDisabled).toBe(true);
+  act(() => hook.result.current.activatePrimaryAction());
+  expect(send).not.toHaveBeenCalled();
+
+  hook.rerender(delivery("server:review-chat-draft", send, { sendAvailable: true }));
+  expect(hook.result.current.sendDisabled).toBe(false);
+  await act(async () => {
+    hook.result.current.activatePrimaryAction();
+    await Promise.resolve();
+  });
+  expect(send).toHaveBeenCalledTimes(1);
 });

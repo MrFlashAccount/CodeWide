@@ -45,13 +45,12 @@ user unit sets no `RUST_LOG`; read the records with
 ## Agent providers
 
 `codewide-companion providers status [--state-dir <dir>]` prints the
-configured providers from `agent-providers.json` as JSON and exits non-zero
-unless every configured provider could start. It is offline (configuration
-and file metadata only). Codex is always enabled; a host without Codex is not
-supported. Claude needs no setup and ships nothing: the companion drives the
-user's own `claude` CLI directly and runs Claude when a signed-in `claude` is
-found;
-`"claude": false` in `agent-providers.json` turns it off. See
+providers the companion would enable on this machine as JSON and exits
+non-zero when a found provider could not start. It is offline (file metadata
+and the login shell's `PATH` only). Codex is always enabled; a host without
+Codex is not supported. Claude needs no setup and ships nothing: the companion
+drives the user's own `claude` CLI directly and runs Claude when `claude` is
+found. There is no provider configuration file. See
 [docs/agent-providers.md](../../docs/agent-providers.md#install-and-configuration).
 
 ## Running locally
@@ -65,6 +64,25 @@ cargo run -p codewide-companion -- --help
 Do not infer production security from the default local listen address. The
 authenticated device protocol, relay route, administrator token, state paths,
 and mutation mode must be configured by the deployment owner.
+
+## Dictation proxy
+
+Companion owns its dictation proxy setting; it never reads a Codex `.env`
+file. With no saved setting, reqwest keeps its standard `HTTP_PROXY`,
+`HTTPS_PROXY`, and `NO_PROXY` process-environment behavior. A managed Linux
+host can persist an explicit override and then restart the service:
+
+```sh
+codewide-companion proxy configure --https-proxy http://127.0.0.1:3129
+systemctl --user restart codewide-companion.service
+```
+
+`--http-proxy` and `--no-proxy` are also accepted. Run
+`codewide-companion proxy clear` to remove the application override and return
+to process-environment discovery. The private settings file lives in the
+Companion state directory and stores no Codex configuration. It is internal
+state: if it is damaged or unreadable, Companion logs a warning and falls back
+to process-environment discovery; the next `configure` replaces it.
 
 ## Distribution
 
@@ -81,7 +99,8 @@ curl -fsSL https://raw.githubusercontent.com/MrFlashAccount/CodeWide/main/instal
 The same release asset feeds the `codewide-companion` formula in
 `MrFlashAccount/homebrew-codewide`. The curl installer owns user-systemd
 activation and rollback; the Homebrew formula uses `brew services` and prints
-the required one-time state and Git-provider initialization commands.
+the required one-time state initialization commands; Git is a built-in
+provider resolved from the formula's `libexec`.
 
 Managed installations use immutable directories under
 `~/.local/lib/codewide/generations/`. The stable systemd unit executes only

@@ -5,6 +5,7 @@ import type { ProjectsWorkspaceCapabilities } from "./workspaceCapabilities";
 import type {
   ProjectDestination,
   ProjectPickerChoice,
+  ProjectPickerConfirmation,
   ProjectPickerServer,
 } from "./projectPickerContract";
 import { useRemoteProjectCatalog } from "./useRemoteProjectCatalog";
@@ -33,13 +34,15 @@ function projectChoices(
 /** Qualified catalog reads and destination actions for creating or editing a local draft. */
 export type NewChatProjectPickerProps = {
   readonly busy?: boolean;
+  /** Explicit-choice mode for a destination that must be confirmed before it is used. */
+  readonly confirmation?: ProjectPickerConfirmation;
   readonly connections: readonly StoredConnection[];
   readonly current: ProjectDestination | null;
   readonly error?: string | null;
   readonly initialConnectionId: string | null;
   readonly native: boolean;
   readonly onClose: () => void;
-  readonly onManageProjects: (connectionId: string | null) => void;
+  readonly onManageProjects?: (connectionId: string | null) => void;
   readonly onSelect: (destination: ProjectDestination) => void | Promise<void>;
   readonly remote: Pick<
     ProjectsWorkspaceCapabilities,
@@ -58,6 +61,7 @@ export type NewChatProjectPickerBinding = Omit<
 /** Reads every server independently of the thread-list filter, then publishes a qualified choice. */
 export function NewChatProjectPicker({
   busy = false,
+  confirmation,
   connections,
   current,
   error = null,
@@ -94,7 +98,8 @@ export function NewChatProjectPicker({
       initialConnectionId={initialConnectionId}
       onAddProject={addProject}
       onClose={onClose}
-      onManageProjects={onManageProjects}
+      {...(confirmation === undefined ? {} : { confirmation })}
+      {...(onManageProjects === undefined ? {} : { onManageProjects })}
       onReadDirectory={remote.readDirectory}
       onReadHomeDirectory={remote.readProjectHome}
       onSelect={selectProject}

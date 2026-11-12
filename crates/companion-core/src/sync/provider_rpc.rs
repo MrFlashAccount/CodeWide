@@ -6,7 +6,7 @@
 //! pass the row hub (`codewideList`, journal head read before the page). Providers without
 //! the native surface are answered from neutral operations projected by
 //! `agent::client_wire`. Merged calls (`thread/list`, `model/list`,
-//! `permissionProfile/list`) take the primary provider's page and add the
+//! `permissionProfile/list`) take the lead provider's page and add the
 //! other providers' rows only in multi-provider mode.
 
 use std::sync::Arc;
@@ -224,7 +224,7 @@ pub(super) async fn forward_rpc_response(
     }
     if let (Some(orchestration), Some(result)) = (&observers.orchestration, response.get("result"))
     {
-        orchestration.observe_rpc_result(method, result);
+        orchestration.observe_rpc_result(&observers.wire.descriptor.id, method, result);
     }
     if let (Some(projects), Some(result)) = (observers.projects, response.get("result")) {
         projects.observe_rpc_result(method, result).await;
@@ -462,7 +462,8 @@ pub(super) async fn handle_neutral_fork(
     .await
 }
 
-/// A host-level call owned by the first provider declaring `owner`.
+/// A host-level call. Provider reset consumption is qualified by `providerId`;
+/// singleton host capabilities use their first declaring provider.
 pub(super) async fn handle_host(
     hub: &SyncHub,
     socket: &SessionSocket,
@@ -471,7 +472,16 @@ pub(super) async fn handle_host(
     method: &str,
     owner: Capability,
 ) -> Result<(), ()> {
-    let Some((provider, wire)) = hub.gateway.owner(owner) else {
+    let params = request.get("params").cloned().unwrap_or(Value::Null);
+    let selected = if owner == Capability::AccountsRateLimitResets {
+        match hub.gateway.provider_owner(owner, &params) {
+            Ok(selected) => Some(selected),
+            Err(failure) => return send_rpc_failure(socket, id, &failure).await,
+        }
+    } else {
+        hub.gateway.owner(owner)
+    };
+    let Some((provider, wire)) = selected else {
         return send_rpc_error(socket, id, -32_601, "Method is not supported on this host").await;
     };
     if let Some(native) = provider.native_surface() {
@@ -479,7 +489,6 @@ pub(super) async fn handle_host(
             .await
             .map(|_| ());
     }
-    let params = request.get("params").cloned().unwrap_or(Value::Null);
     match provider
         .capability_invoke(CapabilityInvokeParams {
             capability: owner.name().to_owned(),
@@ -544,7 +553,7 @@ pub(super) async fn handle_native_thread_rpc(
     };
     if !matches!(
         method,
-        "turn/start" | "thread/settings/update" | "thread/realtime/start"
+        "turn/start" | "turn/continue" | "thread/settings/update" | "thread/realtime/start"
     ) {
         let accepted = forward_rpc(hub, native, socket, request, id, method, &target.wire).await?;
         hub.gateway.confirm(target, accepted == Some(true)).await;
@@ -552,6 +561,7 @@ pub(super) async fn handle_native_thread_rpc(
     }
     let dispatched = match method {
         "turn/start" => native.dispatch_turn_start(request).await,
+        "turn/continue" => native.dispatch_turn_continue(request).await,
         "thread/settings/update" => native.dispatch_settings_update(request).await,
         _ => {
             let started_at = std::time::Instant::now();
@@ -590,7 +600,7 @@ pub(super) async fn handle_native_thread_rpc(
         Err(error) => {
             let code = match (&error, method) {
                 (_, "thread/realtime/start") => -32_020,
-                (_, "turn/start") | (DispatchError::Admission(_), _) => -32_040,
+                (_, "turn/start" | "turn/continue") | (DispatchError::Admission(_), _) => -32_040,
                 (DispatchError::Transport(error), _) => transport_code(error),
             };
             send_rpc_error(socket, id, code, &error.to_string()).await
@@ -608,8 +618,8 @@ pub(super) async fn handle_merged(
     method: &str,
     merged: MergedMethod,
 ) -> Result<(), ()> {
-    let (primary, wire) = hub.gateway.primary();
-    let Some(native) = primary.native_surface() else {
+    let (lead, wire) = hub.gateway.lead();
+    let Some(native) = lead.native_surface() else {
         return send_rpc_error(socket, id, -32_601, "Method is not supported on this host").await;
     };
     match merged {
@@ -643,10 +653,10 @@ async fn merge_catalog(
     hub: &SyncHub,
     mut response: Value,
     merged: MergedMethod,
-    primary: &WireProvider,
+    lead: &WireProvider,
     first_page: bool,
 ) -> Value {
-    if !primary.multi_provider {
+    if !lead.multi_provider {
         return response;
     }
     let Some(result) = response.get_mut("result") else {
@@ -657,7 +667,7 @@ async fn merge_catalog(
     let mut unavailable = Vec::new();
     let mut others = Vec::new();
     if asks_others {
-        for (provider, wire) in hub.gateway.non_primary() {
+        for (provider, wire) in hub.gateway.others() {
             if provider.status() == ProviderStatus::Live {
                 others.push((provider, wire));
             } else {
@@ -676,7 +686,7 @@ async fn merge_catalog(
                 }
             }
         }
-        catalog::merge_models(result.take(), primary, &catalogs, first_page)
+        catalog::merge_models(result.take(), lead, &catalogs, first_page)
     } else {
         let mut catalogs = Vec::new();
         for (provider, wire) in &others {
@@ -688,7 +698,7 @@ async fn merge_catalog(
                 }
             }
         }
-        catalog::merge_permission_profiles(result.take(), primary, &catalogs)
+        catalog::merge_permission_profiles(result.take(), lead, &catalogs)
     };
     catalog::attach_unavailable(&mut merged_result, &unavailable);
     *result = merged_result;
@@ -697,7 +707,7 @@ async fn merge_catalog(
 
 fn live_others(gateway: &ClientWireGateway) -> Vec<(Arc<dyn AgentProvider>, WireProvider)> {
     gateway
-        .non_primary()
+        .others()
         .into_iter()
         .filter(|(provider, _)| provider.status() == ProviderStatus::Live)
         .collect()
@@ -752,7 +762,7 @@ async fn handle_thread_list(
         None
     };
     // Only `thread/list` merges; the supervisor list is owned by the
-    // providers declaring `globalSupervisor`, which the primary leads.
+    // providers declaring `globalSupervisor`, which the lead provider leads.
     let plan = list::prepare(
         &params,
         wire.multi_provider && merged == MergedMethod::ThreadList,

@@ -16,8 +16,11 @@ export type TransferProgress = {
   total: number;
   transferred: number;
 };
+const PARTIAL_HASH_PREFIX_LENGTH = 16;
+const PARTIAL_DOWNLOAD_PREFIX = /^\.codex-part-[a-f0-9]{16}-/u;
+
 export type SelectedUpload = { mimeType: string; name: string; native: File; size: number };
-export type SelectedDirectory = { name: string; native: Directory };
+export type SelectedDirectory = { name: string; native: Directory; uri: string };
 export function selectedUploadUri(upload: SelectedUpload): string | null {
   return upload.native.uri;
 }
@@ -44,6 +47,10 @@ export type RunningTransfer = {
   cancel: () => void;
   promise: Promise<{ bytes: number; mimeType?: string; sha256: string; uri?: string }>;
 };
+
+/** A download can stop in two ways: `pause` keeps the partial file so a later
+ * start into the same folder resumes from it; `cancel` discards it. */
+export type RunningDownload = RunningTransfer & { pause: () => void };
 
 type FileTransferBridge = {
   copyContentDocument?: (
@@ -108,7 +115,47 @@ function safeUploadName(name: string, fallback: string): string {
 
 export async function pickDownloadDirectory(): Promise<SelectedDirectory> {
   const directory = await Directory.pickDirectoryAsync();
-  return { name: directory.name, native: directory };
+  return { name: directory.name, native: directory, uri: directory.uri };
+}
+
+/** Reopens a folder picked earlier. The picker took a persistable grant, so the
+ * folder stays writable across restarts until the user revokes it or deletes the
+ * folder; either makes the listing fail and the caller picks again. */
+export function restoreDownloadDirectory(uri: string): SelectedDirectory | null {
+  try {
+    const directory = new Directory(uri);
+    if (!directory.exists) {
+      return null;
+    }
+    directory.list();
+    return { name: directory.name, native: directory, uri: directory.uri };
+  } catch {
+    return null;
+  }
+}
+
+/** Deletes the partial file a paused download of `remotePath` left in `directory`.
+ * Partial names carry a content-hash prefix the caller no longer has, so every
+ * partial of that filename goes; a finished file is never touched. */
+export function discardPartialDownload(directory: SelectedDirectory, remotePath: string): void {
+  const filename = safeFilename(remotePath);
+  for (const entry of directory.native.list()) {
+    if (
+      !("list" in entry) &&
+      PARTIAL_DOWNLOAD_PREFIX.test(entry.name) &&
+      entry.name.replace(PARTIAL_DOWNLOAD_PREFIX, "") === filename
+    ) {
+      entry.delete();
+    }
+  }
+}
+
+/** Deletes a file this app saved; an already missing file counts as deleted. */
+export function deleteDownloadedFile(uri: string): void {
+  const file = new File(uri);
+  if (file.exists) {
+    file.delete();
+  }
 }
 
 export function startUpload(
@@ -318,7 +365,7 @@ export function startDownload(
   rootId: string,
   remotePath: string,
   onProgress: (progress: TransferProgress) => void,
-): RunningTransfer {
+): RunningDownload {
   return startDownloadFromUrl(
     getAccess,
     directory,
@@ -333,7 +380,7 @@ export function startPreviewDownload(
   directory: SelectedDirectory,
   absolutePath: string,
   onProgress: (progress: TransferProgress) => void,
-): RunningTransfer {
+): RunningDownload {
   if (!absolutePath.startsWith("/") || absolutePath.includes("\0")) {
     throw new Error("Preview download path must be absolute");
   }
@@ -352,12 +399,14 @@ function startDownloadFromUrl(
   source: PrivateAssetSource,
   remotePath: string,
   onProgress: (progress: TransferProgress) => void,
-): RunningTransfer {
+): RunningDownload {
   let cancelled = false;
+  let discardPartial = false;
   const isCancelled = (): boolean => cancelled;
   let activeRequest: AbortController | null = null;
   let destination: File | null = null;
-  const promise = (async () => {
+  let partialName: string | null = null;
+  const download = (async () => {
     const head = await fetchPrivateAsset(source, getAccess, { method: "HEAD" });
     if (!head.ok) {
       throw new Error(`Download metadata failed (${String(head.status)})`);
@@ -372,7 +421,7 @@ function startDownloadFromUrl(
       throw new Error("Server did not provide valid integrity metadata");
     }
     const filename = safeFilename(remotePath);
-    const partialName = `.codex-part-${expectedHash.slice(0, 16)}-${filename}`;
+    partialName = `.codex-part-${expectedHash.slice(0, PARTIAL_HASH_PREFIX_LENGTH)}-${filename}`;
     const listedPartial = directory.native
       .list()
       .find((entry): entry is File => entry instanceof File && entry.name === partialName);
@@ -469,8 +518,21 @@ function startDownloadFromUrl(
       ...(mimeType === null ? {} : { mimeType }),
     };
   })();
+  const promise = download.catch((error: unknown) => {
+    // Only the partial file is discarded: once it was renamed into place the
+    // download completed and a late cancel no longer owns it.
+    if (discardPartial && destination?.exists === true && destination.name === partialName) {
+      destination.delete();
+    }
+    throw error;
+  });
   return {
     cancel() {
+      cancelled = true;
+      discardPartial = true;
+      activeRequest?.abort();
+    },
+    pause() {
       cancelled = true;
       activeRequest?.abort();
     },

@@ -39,17 +39,17 @@ if [ "${1:-}" = "--" ]; then
   shift
 fi
 
-# Direct release APKs target physical Android devices. Keep the checked-in
+# Direct release-shaped APKs target physical Android devices. Keep the checked-in
 # architecture list broad for debug/emulator builds, but avoid shipping every
-# emulator ABI in the downloadable production APK. Callers can still override
+# emulator ABI in downloadable production or Preview APKs. Callers can still override
 # this explicitly, for example:
 #   CODEWIDE_RELEASE_ARCHITECTURES=arm64-v8a,x86_64 pnpm android:gradle -- :app:assembleRelease
-release_apk_requested=false
+release_shaped_apk_requested=false
 architectures_overridden=false
 for argument in "$@"; do
   case "$argument" in
-    assembleRelease|*:assembleRelease)
-      release_apk_requested=true
+    assembleRelease|*:assembleRelease|assemblePreview|*:assemblePreview)
+      release_shaped_apk_requested=true
       ;;
     -PreactNativeArchitectures=*)
       architectures_overridden=true
@@ -57,7 +57,7 @@ for argument in "$@"; do
   esac
 done
 
-if [ "$release_apk_requested" = true ] && [ "$architectures_overridden" = false ]; then
+if [ "$release_shaped_apk_requested" = true ] && [ "$architectures_overridden" = false ]; then
   release_architectures=${CODEWIDE_RELEASE_ARCHITECTURES:-arm64-v8a}
   set -- "-PreactNativeArchitectures=${release_architectures}" "$@"
 fi

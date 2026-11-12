@@ -421,8 +421,9 @@ pub(crate) fn summary_projection_state_from_file(
 /// Version of the projection client caches sealed. 12: the Companion projects
 /// user messages for display (model-only context hidden, envelopes removed),
 /// so cached raw user messages are replaced. 13: context compactions are
-/// summary items rather than activity.
-pub(crate) const SUMMARY_PROJECTION_VERSION: u8 = 13;
+/// summary items rather than activity. 14: image-gen extension items contribute
+/// generated-image artifact references.
+pub(crate) const SUMMARY_PROJECTION_VERSION: u8 = 14;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct SummaryProjectionState {
@@ -737,10 +738,13 @@ impl SummaryProjectionState {
                 let Some(item) = payload.get("item") else {
                     return;
                 };
-                if !matches!(
-                    item.get("type").and_then(Value::as_str),
-                    Some("imageGeneration" | "ImageGeneration")
-                ) {
+                let item_type = item.get("type").and_then(Value::as_str);
+                let image_generation =
+                    matches!(item_type, Some("imageGeneration" | "ImageGeneration"))
+                        || (item_type == Some("Extension")
+                            && item.get("kind").and_then(Value::as_str)
+                                == Some("image_gen.generation"));
+                if !image_generation {
                     return;
                 }
                 item
@@ -1188,6 +1192,48 @@ mod tests {
         );
         assert_eq!(projection["items"], serde_json::json!([]));
         assert!(!projection.to_string().contains("opaque binary output"));
+        Ok(())
+    }
+
+    #[test]
+    fn summary_recovers_multiple_image_gen_extensions_from_rollout()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut file = std::fs::File::create(&path)?;
+        let lines = [
+            json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"turn","started_at":10}}),
+            json!({"type":"event_msg","payload":{"type":"user_message","message":"show both"}}),
+            json!({"type":"event_msg","payload":{"type":"item_completed","item":{"type":"Extension","kind":"image_gen.generation","id":"image-1","status":"completed","savedPath":"/tmp/first.png","result":"first image bytes"}}}),
+            json!({"type":"event_msg","payload":{"type":"item_completed","item":{"type":"Extension","kind":"image_gen.generation","id":"image-2","status":"completed","savedPath":"/tmp/second.png","result":"second image bytes"}}}),
+            json!({"type":"event_msg","payload":{"type":"item_completed","item":{"type":"Extension","kind":"image_gen.generation","id":"image-1","status":"completed","savedPath":"/tmp/first.png","result":"duplicate image bytes"}}}),
+            json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn","last_agent_message":"done","completed_at":12,"duration_ms":2000}}),
+        ];
+        for line in lines {
+            writeln!(file, "{line}")?;
+        }
+        file.sync_all()?;
+
+        let projection = project_summary_turn(
+            &path,
+            &TurnRef {
+                id: "turn".into(),
+                start_offset: 0,
+                end_offset: file.metadata()?.len(),
+                completed: true,
+            },
+        )?;
+
+        assert_eq!(
+            projection["codewide"]["artifacts"],
+            json!([
+                {"savedPath":"/tmp/first.png"},
+                {"savedPath":"/tmp/second.png"}
+            ])
+        );
+        assert_eq!(projection["items"][0]["type"], "userMessage");
+        assert_eq!(projection["items"][1]["text"], "done");
+        assert!(!projection.to_string().contains("image bytes"));
         Ok(())
     }
 

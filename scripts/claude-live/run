@@ -71,7 +71,6 @@ if [ $# -eq 0 ]; then
 	set -- $("$binary" --list)
 fi
 
-config=$(printf '{"claudeExecutable":"%s"}' "$out/bin/claude")
 failed=0
 for scenario in "$@"; do
 	# Nothing inherited from the shell, or from a Claude Code session this
@@ -79,7 +78,7 @@ for scenario in "$@"; do
 	if env -i HOME="$HOME" USER="${USER:-}" LOGNAME="${USER:-}" LANG="${LANG:-C.UTF-8}" PATH="$PATH" \
 		XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" HTTP_PROXY="${HTTP_PROXY:-}" \
 		HTTPS_PROXY="${HTTPS_PROXY:-}" NO_PROXY="${NO_PROXY:-}" \
-		CODEWIDE_LIVE_CONFIG="$config" CODEWIDE_LIVE_OUT="$out/events" CODEWIDE_LIVE_WORK="$out/work" \
+		CODEWIDE_LIVE_CLAUDE_EXECUTABLE="$out/bin/claude" CODEWIDE_LIVE_OUT="$out/events" CODEWIDE_LIVE_WORK="$out/work" \
 		RUST_LOG="${RUST_LOG:-info}" \
 		"$binary" "$scenario" >"$out/events/$scenario.log" 2>&1; then
 		echo pass >"$out/events/$scenario.status"

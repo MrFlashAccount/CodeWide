@@ -11,6 +11,7 @@ case "$output_root" in
   *) output_root="$repo_root/$output_root" ;;
 esac
 arm_target=aarch64-apple-darwin
+intel_target=x86_64-apple-darwin
 
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-26.0}"
 
@@ -21,6 +22,16 @@ cargo build --manifest-path "$repo_root/Cargo.toml" \
 mkdir -p "$output_root"
 archive="$output_root/libcompanion_swift_ffi.a"
 cp "$repo_root/target/$arm_target/release/libcompanion_swift_ffi.a" "$archive"
+
+# The built-in GitHub forge plugin ships as a universal helper in
+# Contents/Helpers; build-app.sh joins both slices with lipo and signs it.
+rustup target add "$intel_target"
+for forge_target in "$arm_target" "$intel_target"; do
+  cargo build --manifest-path "$repo_root/Cargo.toml" \
+    --locked --release -p forge-github --bin codewide-forge-github --target "$forge_target"
+done
+cp "$repo_root/target/$arm_target/release/codewide-forge-github" "$output_root/codewide-forge-github-arm64"
+cp "$repo_root/target/$intel_target/release/codewide-forge-github" "$output_root/codewide-forge-github-x86_64"
 
 generated=$(mktemp -d "${TMPDIR:-/tmp}/codewide-uniffi-check.XXXXXX")
 trap 'rm -rf -- "$generated"' EXIT HUP INT TERM

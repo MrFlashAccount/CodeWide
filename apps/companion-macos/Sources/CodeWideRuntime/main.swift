@@ -22,7 +22,9 @@ do {
         sourceRevision: metadata.sourceRevision,
         hostVersion: metadata.version,
         computerName: computerName,
-        listenAddress: listenAddress
+        listenAddress: listenAddress,
+        bundledPluginDirectory: metadata.bundleURL
+            .appending(path: "Contents/Helpers", directoryHint: .isDirectory).path
     )
     runtimeLogger.notice("Companion network listener is ready on \(listenAddress, privacy: .public)")
     let service = RuntimeService(

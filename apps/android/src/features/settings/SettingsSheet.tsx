@@ -27,6 +27,7 @@ interface SettingsServer {
 interface SettingsSheetProps {
   readonly advanced: ReactNode;
   readonly chats: ReactNode;
+  readonly downloads: ReactNode;
   readonly entryPage?: "overview" | "voiceAssistant";
   readonly entryRequest?: string;
   readonly onAddServer: () => void;
@@ -186,6 +187,7 @@ export function SettingsSheet(props: SettingsSheetProps) {
                 />
               </SettingsSection>
               <SettingsSection title="Chats">{props.chats}</SettingsSection>
+              <SettingsSection title="Downloads">{props.downloads}</SettingsSection>
               <View testID="settings-navigation-list">
                 {props.security === null ? null : (
                   <AppListRow

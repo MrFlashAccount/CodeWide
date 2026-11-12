@@ -61,6 +61,11 @@ export function threadSummaryDescendantKeys(
   rootThreadId: string,
 ): Set<string> {
   const keys = new Set<string>();
+  for (const row of rows) {
+    if (row.subagentRootThreadId === rootThreadId) {
+      keys.add(threadSummaryKey(row.connectionId, row.remoteThreadId));
+    }
+  }
   for (const row of threadSummaryDescendants(rows, rootThreadId)) {
     keys.add(threadSummaryKey(row.connectionId, row.remoteThreadId));
   }
@@ -117,6 +122,7 @@ export function projectThreadSummarySnapshot(
     recencyAt: thread.recencyAt,
     skippedQuestions: previous?.skippedQuestions ?? null,
     status: normalizeThreadStatus(thread.status),
+    subagentRootThreadId: previous?.subagentRootThreadId ?? null,
     submittedQuestions: previous?.submittedQuestions ?? null,
     unread: previous?.unread ?? 0,
     updatedAt: thread.updatedAt,

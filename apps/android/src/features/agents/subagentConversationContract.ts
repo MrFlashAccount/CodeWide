@@ -8,6 +8,7 @@ export type SubagentThreadView = {
   readonly connectionId: string;
   readonly onBack?: () => void;
   readonly onOpenSubagent: (threadId: string) => void;
+  readonly parentBreadcrumb: string | null;
   readonly summary: StoredThreadSummary;
   readonly thread: Thread;
 };

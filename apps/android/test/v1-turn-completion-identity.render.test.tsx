@@ -93,6 +93,7 @@ function responseSurface(
           key={row.key}
           parts={row.parts}
           placement={row.placement}
+          trailingTasks={row.trailingTasks}
           presentation={presentation}
           requestPrompt={null}
           turn={turn}

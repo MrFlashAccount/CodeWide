@@ -10,6 +10,15 @@ use super::{
 /// The largest page a provider returns.
 pub const MAX_TURNS_PAGE: usize = 200;
 
+const INVALID_TURNS_CURSOR: &str = "invalid turns cursor";
+
+/// Whether `error` is the `page_turns` rejection of a cursor that names no
+/// turn of the list.
+#[must_use]
+pub fn is_invalid_turns_cursor(error: &RpcError) -> bool {
+    error.code == ERROR_INVALID_PARAMS && error.message == INVALID_TURNS_CURSOR
+}
+
 /// One page of `turns` (history order) after `cursor`, with `view` applied.
 ///
 /// # Errors
@@ -33,7 +42,7 @@ pub fn page_turns(
                 .position(|turn| turn.turn_id.as_str() == cursor)
                 .ok_or_else(|| RpcError {
                     code: ERROR_INVALID_PARAMS,
-                    message: "invalid turns cursor".into(),
+                    message: INVALID_TURNS_CURSOR.into(),
                     data: None,
                 })?
                 + 1
@@ -61,8 +70,9 @@ pub fn page_turns(
 /// Whether the `summary` items view keeps `item`: the user messages and the
 /// final answer (what delivery reconciliation and the thread preview read),
 /// the sub-agent launches (a client shows which agents a turn started and
-/// which still run), the background task reports and the context
-/// compactions (both shown outside the turn's collapsed body). No other
+/// which still run), the background commands (a client shows the state of
+/// each task the turn started), the background task reports and the context
+/// compactions (all shown outside the turn's collapsed body). No other
 /// activity item. The one summary rule:
 /// `thread.turns` pages and the wire projector both apply it.
 #[must_use]
@@ -73,6 +83,10 @@ pub const fn in_summary_view(item: &AgentItem) -> bool {
             | AgentItem::Subagent { .. }
             | AgentItem::TaskNotification { .. }
             | AgentItem::Compaction { .. }
+            | AgentItem::Command {
+                background: Some(_),
+                ..
+            }
             | AgentItem::AgentMessage {
                 phase: MessagePhase::Final,
                 ..
@@ -111,8 +125,9 @@ pub fn view_items(turn: &AgentTurn, view: ItemsView) -> AgentTurn {
 mod tests {
     use super::*;
     use crate::model::{
-        ExecutionStatus, ItemId, SubagentStatus, TaskNotificationDelivery, TaskNotificationSource,
-        TaskNotificationStatus, TurnId, TurnOrigin, TurnStatus,
+        BackgroundCommand, BackgroundCommandState, ExecutionStatus, ItemId, SubagentStatus,
+        TaskNotificationDelivery, TaskNotificationSource, TaskNotificationStatus, TurnId,
+        TurnOrigin, TurnStatus,
     };
 
     fn turn(id: &str) -> AgentTurn {
@@ -201,7 +216,23 @@ mod tests {
                 output: None,
                 exit_code: Some(0),
                 duration_ms: None,
-                background_task_id: None,
+                background: None,
+            },
+            AgentItem::Command {
+                item_id: ItemId::from_static("background"),
+                provenance: None,
+                command: "npm run dev".into(),
+                cwd: "/w".into(),
+                status: ExecutionStatus::Completed,
+                output: None,
+                exit_code: Some(0),
+                duration_ms: None,
+                background: Some(BackgroundCommand {
+                    task_id: "b2".into(),
+                    started_at: 1_760_000_100,
+                    description: None,
+                    state: BackgroundCommandState::Running,
+                }),
             },
             AgentItem::Subagent {
                 item_id: ItemId::from_static("launch"),
@@ -227,7 +258,13 @@ mod tests {
         let summary = page_turns(&turns, Some("a"), 5, SortDirection::Asc, ItemsView::Summary)?;
         assert_eq!(
             summary.turns.iter().map(item_ids).collect::<Vec<_>>(),
-            [vec!["report", "compaction", "launch", "final"]]
+            [vec![
+                "report",
+                "compaction",
+                "background",
+                "launch",
+                "final"
+            ]]
         );
         let full = page_turns(&turns, Some("a"), 5, SortDirection::Asc, ItemsView::Full)?;
         assert_eq!(full.turns[0].items, turns[1].items);

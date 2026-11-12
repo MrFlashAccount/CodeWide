@@ -3,6 +3,7 @@ import { StyleSheet, View } from "react-native";
 
 import { colors, radii, spacing } from "../theme";
 import { RecoverableRenderBoundary } from "../ui/RecoverableRenderBoundary";
+import { surfaceToneMessageStyle, useSurfaceTone } from "../ui/surfaceTone";
 import { FluidLayoutFrame } from "./FluidLayoutFrame";
 
 export type BubbleVariant = "agent" | "user";
@@ -40,9 +41,11 @@ export function Bubble({
   testID?: string;
   variant: BubbleVariant;
 }) {
+  const tone = useSurfaceTone();
   const surfaceStyle = [
     styles.surface,
     variant === "agent" ? styles.agentSurface : styles.userSurface,
+    surfaceToneMessageStyle(tone),
     variant === "agent" && segment !== "single" && styles.segmentedAgentSurface,
     variant === "agent" && segment === "start" && styles.segmentedAgentSurfaceStart,
     variant === "agent" && segment === "end" && styles.segmentedAgentSurfaceEnd,

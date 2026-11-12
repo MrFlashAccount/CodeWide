@@ -21,6 +21,9 @@ use crate::session::ports::SessionOutput;
 pub(super) enum Notice {
     /// Another process took or released these sessions.
     HeldChanged(HashSet<String>),
+    /// A process appeared, disappeared or changed generation, including a
+    /// process owned by this companion.
+    ActivityChanged(HashSet<String>),
 }
 
 /// The ordered stream of a [`super::ThreadService`]'s outputs.
@@ -71,6 +74,9 @@ impl ServiceOutputs {
                 }
                 Next::Notice(Notice::HeldChanged(sessions)) => {
                     self.ready.extend(held_changed(&service, &sessions));
+                }
+                Next::Notice(Notice::ActivityChanged(sessions)) => {
+                    return Some(ServiceOutput::SessionActivityChanged(sessions));
                 }
             }
         }

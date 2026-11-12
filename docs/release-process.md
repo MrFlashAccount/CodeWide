@@ -30,6 +30,10 @@ dependency graph.
 
 Current target policy:
 
+This planner and the workflows in this document own production inventories.
+The separate local `dev.codexremote.app.preview` candidate channel is outside
+the production release graph and is documented in [Development](development.md).
+
 - shared `companion-core` changes affect both the Linux Companion and macOS;
 - Swift/XPC/menu-app-only changes affect macOS only;
 - sync contract changes affect both Companion hosts and Android;

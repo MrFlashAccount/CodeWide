@@ -17,4 +17,11 @@ export type QueuedComposerEdit = {
   readonly initialText: string;
 };
 
-export type ComposerAccessoryAction = "files" | "drawing" | "skills" | "goal" | "terminal";
+export type ComposerAccessoryAction =
+  | "camera"
+  | "photos"
+  | "files"
+  | "drawing"
+  | "skills"
+  | "goal"
+  | "terminal";

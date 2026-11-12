@@ -1,5 +1,10 @@
 import type { CompanionTransport, CompanionTransportInit } from "../companionTransportContract";
-import type { CachedSourceRequest, CachedTransferOptions } from "./transfer-options";
+import type {
+  CachedSourceRequest,
+  CachedTransferOptions,
+  DirectImageRequest,
+  DirectImageResult,
+} from "./transfer-options";
 
 /** Web/Node fallback keeps the existing transport; Android supplies a disk-backed adapter. */
 export async function cachedAttachmentFetch({
@@ -32,6 +37,12 @@ export async function cachedAttachmentSourceFromResponse({
   uri,
 }: CachedSourceRequest): Promise<{ headers: Record<string, string>; uri: string }> {
   return transport.streamSource(uri, headers);
+}
+
+/** Web and Node have no disk cache: a live URL is used as is, an expired one is missing. */
+export async function cachedDirectImage(request: DirectImageRequest): Promise<DirectImageResult> {
+  await Promise.resolve();
+  return request.uri === null ? { status: "missing" } : { status: "ready", uri: request.uri };
 }
 
 export function retainCachedAttachment(_uri: string): () => void {

@@ -104,13 +104,11 @@ pub enum ProxyEnvironmentError {
     ValueNotString,
 }
 
-/// Claude's user settings file: `settings.json` in `claude_config_dir`
-/// (`CLAUDE_CONFIG_DIR`), else in `<home>/.claude`.
+/// Claude's user settings file the companion reads the proxy from:
+/// `<home>/.claude/settings.json`.
 #[must_use]
-pub fn user_settings_path(claude_config_dir: Option<&Path>, home: &Path) -> PathBuf {
-    claude_config_dir
-        .map_or_else(|| home.join(".claude"), Path::to_path_buf)
-        .join("settings.json")
+pub fn user_settings_path(home: &Path) -> PathBuf {
+    home.join(".claude").join("settings.json")
 }
 
 /// The standard proxy variables of a settings object's `env`.
@@ -180,7 +178,7 @@ mod tests {
     #[tokio::test]
     async fn only_standard_proxy_variables_of_the_user_settings_cross() {
         let directory = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
-        let path = user_settings_path(Some(directory.path()), Path::new("/nonexistent"));
+        let path = directory.path().join("settings.json");
         std::fs::write(
             &path,
             json!({
@@ -261,13 +259,9 @@ mod tests {
     }
 
     #[test]
-    fn the_user_settings_live_in_the_claude_config_directory_else_home() {
+    fn the_user_settings_live_in_the_home_claude_directory() {
         assert_eq!(
-            user_settings_path(Some(Path::new("/config")), Path::new("/home/me")),
-            Path::new("/config/settings.json")
-        );
-        assert_eq!(
-            user_settings_path(None, Path::new("/home/me")),
+            user_settings_path(Path::new("/home/me")),
             Path::new("/home/me/.claude/settings.json")
         );
     }

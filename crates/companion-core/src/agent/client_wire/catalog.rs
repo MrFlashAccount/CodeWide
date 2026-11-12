@@ -1,8 +1,8 @@
 //! `model/list` and `permissionProfile/list` across providers.
 //!
-//! The first page lists the primary provider's rows, then every other
+//! The first page lists the lead provider's rows, then every other
 //! provider's rows, each annotated with `codewideAgentProvider`. Exactly one
-//! row is the default (the primary's), at most 100 rows are returned, and a
+//! row is the default (the lead's), at most 100 rows are returned, and a
 //! duplicate model id keeps the earlier provider's row. Model names keep the
 //! provider's own `displayName`; clients identify the provider by the
 //! `codewideAgentProvider` annotation. A single-provider host keeps the lead
@@ -50,11 +50,11 @@ fn model_row(entry: &ModelEntry, provider: &WireProvider) -> Value {
 #[must_use]
 pub fn merge_models(
     mut lead_result: Value,
-    primary: &WireProvider,
+    lead: &WireProvider,
     others: &[(WireProvider, Vec<ModelEntry>)],
     first_page: bool,
 ) -> Value {
-    if !primary.multi_provider {
+    if !lead.multi_provider {
         return lead_result;
     }
     let Some(rows) = lead_result.get_mut("data").and_then(Value::as_array_mut) else {
@@ -67,7 +67,7 @@ pub fn merge_models(
             seen.insert(id.to_owned());
         }
         if let Some(object) = row.as_object_mut() {
-            object.insert(PROVIDER_FIELD.into(), json!(primary.descriptor.id.as_str()));
+            object.insert(PROVIDER_FIELD.into(), json!(lead.descriptor.id.as_str()));
             let is_default = object.get("isDefault").and_then(Value::as_bool) == Some(true);
             if is_default && default_seen {
                 object.insert("isDefault".into(), json!(false));
@@ -116,10 +116,10 @@ pub fn attach_unavailable(result: &mut Value, unavailable: &[ProviderId]) {
 #[must_use]
 pub fn merge_permission_profiles(
     mut lead_result: Value,
-    primary: &WireProvider,
+    lead: &WireProvider,
     others: &[(WireProvider, Vec<PermissionProfileEntry>)],
 ) -> Value {
-    if !primary.multi_provider {
+    if !lead.multi_provider {
         return lead_result;
     }
     let Some(rows) = lead_result.get_mut("data").and_then(Value::as_array_mut) else {
@@ -137,7 +137,7 @@ pub fn merge_permission_profiles(
         let Some(id) = row.get("id").and_then(Value::as_str).map(str::to_owned) else {
             continue;
         };
-        let mut providers = vec![primary.descriptor.id.as_str().to_owned()];
+        let mut providers = vec![lead.descriptor.id.as_str().to_owned()];
         providers.extend(offering(&id));
         if let Some(object) = row.as_object_mut() {
             object.insert(PROFILE_PROVIDERS_FIELD.into(), json!(providers));
@@ -176,7 +176,7 @@ mod tests {
                 version: String::new(),
             },
             capabilities: CapabilitySet::none(StartWhileActiveMode::Busy),
-            primary_id: ProviderId::from_static("codex"),
+            lead_id: ProviderId::from_static("codex"),
             multi_provider: multi,
         }
     }

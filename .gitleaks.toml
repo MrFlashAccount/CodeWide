@@ -28,3 +28,14 @@ condition = "AND"
 regexTarget = "match"
 paths = ['''^scripts/relay-installer-service\.test\.py$''']
 regexes = ['''^Sec-WebSocket-Key": "aW5zdGFsbGVyLXRlc3QhIQ=="$''']
+
+[[allowlists]]
+# WHY: Claude replay fixtures record the Anthropic API message id of each assistant
+# message (`msg_01…`), a public response identifier, not a credential. Constrain the
+# owner directory, the field and the id shape so any other key in these files still scans.
+description = "Claude replay fixture Anthropic API message ids"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "match"
+paths = ['''^crates/agent-provider-claude/fixtures/replay/[^/]+\.ndjson$''']
+regexes = ['''^api_message_id":"msg_[A-Za-z0-9]+"$''']

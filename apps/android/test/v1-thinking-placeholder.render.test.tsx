@@ -71,6 +71,7 @@ function turnView(turn: TurnItem, virtualized: boolean) {
         forceExpanded={false}
         parts={row.parts}
         placement={row.placement}
+        trailingTasks={row.trailingTasks}
         presentation={projectTurnPresentation(turn, null, false, false)}
       />
     ) : (

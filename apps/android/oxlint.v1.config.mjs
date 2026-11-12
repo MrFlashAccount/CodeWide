@@ -43,6 +43,7 @@ export default {
     "coverage/**",
     "dist/**",
     "node_modules/**",
+    "src/vendor/reacticx/**",
   ],
   jsPlugins: [
     ...base.jsPlugins,
@@ -53,6 +54,7 @@ export default {
     ...base.rules,
     "codewide-v1/imports-separated-from-code": "error",
     "codewide-v1/no-manual-react-memoization": "error",
+    "codewide-v1/overflow-menu-trigger": "error",
     "codewide-v1/require-public-export-jsdoc": "error",
     "codewide-v1/stylesheet-properties-multiline": "error",
     "no-restricted-imports": [
@@ -84,6 +86,11 @@ export default {
         "src/ui/**/*.tsx",
       ],
       rules: { "codewide-presentation/presentation-tokens": "error" },
+    },
+    {
+      // The shared trigger is the single owner of the overflow glyph.
+      files: ["src/ui/overflowMenuIcon.ts"],
+      rules: { "codewide-v1/overflow-menu-trigger": "off" },
     },
     {
       files: ["app/(workspace)/**/*.ts", "src/**/*.ts"],

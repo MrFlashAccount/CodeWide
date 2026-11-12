@@ -10,7 +10,13 @@ import {
   cachedResponseHeaders,
   type AttachmentMetadata,
 } from "./http-metadata";
-import type { CachedSourceRequest, CachedTransferOptions } from "./transfer-options";
+import { urlTransport } from "../urlTransport";
+import type {
+  CachedSourceRequest,
+  CachedTransferOptions,
+  DirectImageRequest,
+  DirectImageResult,
+} from "./transfer-options";
 
 let residentCache: AttachmentDiskCache | null = null;
 let state: Promise<{ cache: AttachmentDiskCache; storage: ExpoAttachmentStorage }> | null = null;
@@ -207,6 +213,61 @@ export async function cachedAttachmentSourceFromResponse(
     }
     retainUntilAbort(lease, signal);
     return { headers: {}, uri: lease.uri };
+  } finally {
+    await deleteAsync(partial, { idempotent: true });
+  }
+}
+
+/**
+ * Reads a credential-free image from the shared disk cache by its stable identity, or
+ * downloads it once from its current URL without any authorization header. A cached copy
+ * never consults the URL, so its expiry no longer matters. An image that cannot enter the
+ * cache is shown from the URL it was just downloaded from.
+ */
+export async function cachedDirectImage(request: DirectImageRequest): Promise<DirectImageResult> {
+  const { identity, scope, signal, uri } = request;
+  const sequence = responseDownloadSequence;
+  responseDownloadSequence += 1;
+  const [{ cache, storage }, fileSystem, key, provisionalKey, scopeKey] = await Promise.all([
+    cacheState(),
+    import("expo-file-system/legacy"),
+    digest(JSON.stringify(["direct-image", scope, identity])),
+    digest(JSON.stringify(["direct-image", scope, identity, sequence])),
+    attachmentScopeKey(scope),
+  ]);
+  const existing = await cache.acquireExisting(key);
+  if (existing !== null) {
+    retainUntilAbort(existing, signal);
+    return { status: "ready", uri: existing.uri };
+  }
+  if (uri === null) {
+    return { status: "missing" };
+  }
+  checkAborted(signal);
+  const { deleteAsync, getInfoAsync, moveAsync } = fileSystem;
+  const partial = `${storage.uri(provisionalKey)}.partial`;
+  try {
+    const downloaded = await urlTransport.download(
+      uri,
+      { headers: {}, signal },
+      { append: false, uri: partial },
+    );
+    checkAborted(signal);
+    if (!new Response(null, { status: downloaded.status }).ok) {
+      return { httpStatus: downloaded.status, status: "rejected" };
+    }
+    const info = await getInfoAsync(partial);
+    if (!info.exists || info.isDirectory || typeof info.size !== "number") {
+      throw new Error("Direct image download was incomplete");
+    }
+    const lease = await cache.acquire(key, { bytes: info.size, scopeKey }, async () => {
+      await moveAsync({ from: partial, to: storage.uri(key) });
+    });
+    if (lease === null) {
+      return { status: "ready", uri };
+    }
+    retainUntilAbort(lease, signal);
+    return { status: "ready", uri: lease.uri };
   } finally {
     await deleteAsync(partial, { idempotent: true });
   }

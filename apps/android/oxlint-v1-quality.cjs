@@ -1,7 +1,10 @@
 const path = require("node:path");
 
 function getModuleStem(filename) {
-  return path.basename(filename).replace(/\.(?:native|android|web)?\.[^.]+$/u, "").replace(/\.[^.]+$/u, "");
+  return path
+    .basename(filename)
+    .replace(/\.(?:native|android|web)?\.[^.]+$/u, "")
+    .replace(/\.[^.]+$/u, "");
 }
 
 function hasAdjacentJsDoc(sourceCode, node) {
@@ -26,7 +29,10 @@ function getDeclaredNames(declaration) {
     );
   }
 
-  if (declaration.type === "TSTypeAliasDeclaration" || declaration.type === "TSInterfaceDeclaration") {
+  if (
+    declaration.type === "TSTypeAliasDeclaration" ||
+    declaration.type === "TSInterfaceDeclaration"
+  ) {
     return [declaration.id.name];
   }
 
@@ -116,7 +122,9 @@ const importsSeparatedFromCode = {
   create(context) {
     return {
       Program(node) {
-        const firstImportIndex = node.body.findIndex((statement) => statement.type === "ImportDeclaration");
+        const firstImportIndex = node.body.findIndex(
+          (statement) => statement.type === "ImportDeclaration",
+        );
 
         if (firstImportIndex === -1) {
           return;
@@ -129,7 +137,10 @@ const importsSeparatedFromCode = {
 
         const lastImport = node.body[lastImportIndex];
         const nextStatement = node.body[lastImportIndex + 1];
-        if (nextStatement === undefined || nextStatement.loc.start.line > lastImport.loc.end.line + 1) {
+        if (
+          nextStatement === undefined ||
+          nextStatement.loc.start.line > lastImport.loc.end.line + 1
+        ) {
           return;
         }
 
@@ -298,10 +309,41 @@ const requirePublicExportJsDoc = {
   },
 };
 
+const OVERFLOW_GLYPHS = new Set(["ellipsis-horizontal", "ellipsis-vertical"]);
+
+/** Overflow-menu triggers come from ui/OverflowMenuButton; a hand-rolled dots glyph drifts. */
+const overflowMenuTrigger = {
+  meta: {
+    type: "problem",
+    docs: {
+      description: "Use ui/OverflowMenu or ui/OverflowMenuButton instead of an ellipsis glyph",
+    },
+    schema: [],
+    messages: {
+      handRolled:
+        "Overflow menus use ui/OverflowMenu (or ui/OverflowMenuButton / overflowMenuIcon); do not hand-roll an ellipsis glyph.",
+    },
+  },
+  create(context) {
+    return {
+      Literal(node) {
+        if (!OVERFLOW_GLYPHS.has(node.value)) {
+          return;
+        }
+        if (node.parent?.type === "Property" && node.parent.key === node) {
+          return;
+        }
+        context.report({ node, messageId: "handRolled" });
+      },
+    };
+  },
+};
+
 module.exports = {
   rules: {
     "imports-separated-from-code": importsSeparatedFromCode,
     "no-manual-react-memoization": noManualReactMemoization,
+    "overflow-menu-trigger": overflowMenuTrigger,
     "require-public-export-jsdoc": requirePublicExportJsDoc,
     "stylesheet-properties-multiline": styleSheetPropertiesMultiline,
   },

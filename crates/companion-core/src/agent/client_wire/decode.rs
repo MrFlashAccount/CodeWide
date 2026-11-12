@@ -18,6 +18,8 @@ use crate::agent::model::{
 /// Reads one page of a background task's output
 /// (`threads.backgroundTaskOutput`).
 pub const BACKGROUND_TASK_READ_METHOD: &str = "companion/thread/backgroundTask/read";
+/// The thread's background commands that still run (`thread.backgroundTasks.list`).
+pub const BACKGROUND_TASKS_LIST_METHOD: &str = "companion/thread/backgroundTasks/list";
 
 /// Methods answered from every enabled provider.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,7 +47,7 @@ pub enum MethodRoute {
 }
 
 /// Thread-scoped methods every provider supports through neutral operations.
-const CORE_THREAD_METHODS: [&str; 11] = [
+const CORE_THREAD_METHODS: [&str; 13] = [
     "thread/read",
     "thread/resume",
     "thread/turns/list",
@@ -56,7 +58,9 @@ const CORE_THREAD_METHODS: [&str; 11] = [
     "thread/delete",
     "thread/settings/update",
     "turn/start",
+    "turn/continue",
     "turn/interrupt",
+    BACKGROUND_TASKS_LIST_METHOD,
 ];
 
 /// The capability a thread-scoped method needs beyond the core operations.
@@ -106,6 +110,7 @@ pub fn host_capability(method: &str) -> Capability {
         }
         "account/rateLimits/read" => Capability::AccountsRateLimits,
         method if method.starts_with("companion/accountPool/") => Capability::AccountsPool,
+        "companion/providerRateLimits/reset/consume" => Capability::AccountsRateLimitResets,
         method if method.starts_with("companion/search") => Capability::HistoryMessageSearch,
         _ => Capability::CodexNative,
     }
@@ -382,11 +387,78 @@ pub fn runtime_response(request_method: &str, response: &Value) -> RuntimeRespon
     }
 }
 
+/// The client-wire `result` of a neutral answer to a runtime request: the
+/// inverse of [`runtime_response`] for the answers a person gives (an approval
+/// decision or user-input answers). `None` when the answer does not fit the
+/// request's method.
+#[must_use]
+pub fn runtime_response_result(request_method: &str, response: &RuntimeResponse) -> Option<Value> {
+    match (request_method, response) {
+        (
+            "item/commandExecution/requestApproval" | "item/fileChange/requestApproval",
+            RuntimeResponse::Approval { decision },
+        ) => Some(serde_json::json!({"decision": match decision {
+            ApprovalDecision::Accept => "accept",
+            ApprovalDecision::AcceptForSession => "acceptForSession",
+            ApprovalDecision::Decline => "decline",
+            ApprovalDecision::Cancel => "cancel",
+        }})),
+        ("item/tool/requestUserInput", RuntimeResponse::UserInput { answers }) => {
+            let answers = answers
+                .iter()
+                .map(|(question, answer)| {
+                    (
+                        question.clone(),
+                        serde_json::json!({"answers": answer.answers}),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>();
+            Some(serde_json::json!({"answers": answers}))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn encoded_answers_decode_to_the_same_neutral_response() {
+        let approval = RuntimeResponse::Approval {
+            decision: ApprovalDecision::AcceptForSession,
+        };
+        let answers = RuntimeResponse::UserInput {
+            answers: [(
+                "q1".to_owned(),
+                UserInputAnswer {
+                    answers: vec!["Rust".into(), "Go".into()],
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        for (method, response) in [
+            ("item/commandExecution/requestApproval", &approval),
+            ("item/fileChange/requestApproval", &approval),
+            ("item/tool/requestUserInput", &answers),
+        ] {
+            let result = runtime_response_result(method, response);
+            assert!(result.is_some(), "{method}");
+            let decoded = runtime_response(method, &json!({"id": 1, "result": result}));
+            assert_eq!(&decoded, response, "{method}");
+        }
+        assert_eq!(
+            runtime_response_result("item/tool/requestUserInput", &approval),
+            None
+        );
+        assert_eq!(
+            runtime_response_result("mcpServer/elicitation/request", &answers),
+            None
+        );
+    }
 
     #[test]
     fn routes_follow_capabilities_not_provider_names() {
@@ -399,6 +471,13 @@ mod tests {
         );
         assert_eq!(
             route("turn/start", &json!({"threadId": "t"})),
+            MethodRoute::Thread {
+                thread_id: "t".into(),
+                requires: None
+            }
+        );
+        assert_eq!(
+            route("turn/continue", &json!({"threadId": "t"})),
             MethodRoute::Thread {
                 thread_id: "t".into(),
                 requires: None
@@ -418,6 +497,15 @@ mod tests {
             }
         );
         assert_eq!(
+            route(
+                "companion/providerRateLimits/reset/consume",
+                &json!({"providerId": "claude", "grantId": "weekly"})
+            ),
+            MethodRoute::Host {
+                owner: Capability::AccountsRateLimitResets
+            }
+        );
+        assert_eq!(
             route("future/method", &json!({})),
             MethodRoute::Host {
                 owner: Capability::CodexNative
@@ -431,6 +519,13 @@ mod tests {
 
     #[test]
     fn a_background_task_read_needs_its_capability_and_a_bounded_page() {
+        assert_eq!(
+            route(BACKGROUND_TASKS_LIST_METHOD, &json!({"threadId": "t"})),
+            MethodRoute::Thread {
+                thread_id: "t".into(),
+                requires: None
+            }
+        );
         assert_eq!(
             route(
                 BACKGROUND_TASK_READ_METHOD,

@@ -1,6 +1,6 @@
 import { StyleSheet, View, type ColorValue, type StyleProp, type ViewStyle } from "react-native";
 
-import { colors } from "../theme";
+import { surfaceToneCanvasColor, useSurfaceTone } from "./surfaceTone";
 
 interface ConversationPanelUnderlayProps {
   style?: StyleProp<ViewStyle>;
@@ -11,7 +11,8 @@ interface ConversationPanelUnderlayProps {
 export function ConversationPanelUnderlay(
   props: ConversationPanelUnderlayProps,
 ): React.JSX.Element {
-  const { style, surfaceColor = colors.conversationSurface } = props;
+  const tone = useSurfaceTone();
+  const { style, surfaceColor = surfaceToneCanvasColor(tone) } = props;
   return (
     <View
       accessible={false}

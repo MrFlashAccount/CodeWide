@@ -57,7 +57,7 @@ import type { MarkupImageDimensions } from "./markup-image-dimensions";
 import { useContentReview, useContentReviewHighlights } from "./ContentReviewHost";
 import type { ContentReviewTarget } from "./content-review";
 import { ReviewableText } from "./ReviewableText";
-import { looksLikeAsciiDiagram } from "./ascii-diagram";
+import { isExplicitAsciiDiagram } from "./ascii-diagram";
 import { RichContentWidthProvider, useRichContentWidth } from "./RichContentLayout";
 import { usePrivateImageUri } from "./use-private-image-uri";
 import { NativeMarkup } from "./NativeMarkup";
@@ -592,7 +592,7 @@ function BlockNode({
           </View>
         );
       }
-      if (looksLikeAsciiDiagram(node.value, node.lang)) {
+      if (isExplicitAsciiDiagram(node.lang)) {
         return (
           <View style={styles.wideBlock}>
             <AsciiDiagram source={node.value} />
@@ -1180,12 +1180,17 @@ const styles = StyleSheet.create({
     color: colors.accent,
     textDecorationLine: "underline",
   },
+  // A list spans its parent so an item's body has the parent's width to give a
+  // block that takes all of it (a code block scrolls its lines and has no
+  // width of its own); in a bubble the parent's width is still its content's.
   list: {
-    alignSelf: "flex-start",
+    alignSelf: "stretch",
     gap: richMarkdownGeometry.listGap,
     minWidth: 0,
   },
   listBody: {
+    flexBasis: 0,
+    flexGrow: 1,
     flexShrink: 1,
     gap: richMarkdownGeometry.listBodyGap,
     minWidth: 0,
@@ -1198,7 +1203,7 @@ const styles = StyleSheet.create({
   },
   listRow: {
     alignItems: "flex-start",
-    alignSelf: "flex-start",
+    alignSelf: "stretch",
     flexDirection: "row",
     gap: richMarkdownGeometry.listRowGap,
     minWidth: 0,

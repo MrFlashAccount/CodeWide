@@ -157,7 +157,7 @@ export function ComposerFeature(props: ComposerFeatureProps) {
                 voiceResource={props.voiceResource}
               />
               <ComposerMicrophone
-                editingQueuedMessage={props.editingQueuedMessage}
+                disabled={props.editingQueuedMessage}
                 finishVoice={props.finishVoice}
                 microphoneAccess={props.microphoneAccess}
                 microphoneButtonRef={props.microphoneButtonRef}

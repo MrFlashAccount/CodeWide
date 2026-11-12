@@ -20,7 +20,10 @@ export type IndexedSubagent = {
   readonly id: string;
   readonly modelProvider: string;
   readonly parentThreadId: string | null;
-  /** Whether the sub-agent runs now, when its provider's index knows it (Claude). */
+  /**
+   * Whether the sub-agent runs now, when the Companion knows it: Claude from its own index, Codex
+   * from the child's rollout, CodeWide orchestration agents from the child's current turn.
+   */
   readonly running: boolean | undefined;
   readonly source: Thread["source"];
   readonly updatedAt: number;
@@ -125,9 +128,10 @@ function isRelayedSessionSource(value: unknown): value is Thread["source"] {
 }
 
 /**
- * The Companion says whether a sub-agent runs (Claude from its own index,
- * Codex from the child's rollout). A row without it (an older Companion, or a
- * child whose rollout is unreadable) stays `notLoaded` until a live event arrives.
+ * The Companion says whether a sub-agent runs (Claude from its own index, Codex from the child's
+ * rollout, orchestration agents from the child's current turn). An explicit `false` is `idle` and
+ * replaces a stale `active`. A row without it (an older Companion, or a child whose state is
+ * unreadable) is `notLoaded`, which never replaces `active`, until a live event arrives.
  */
 function indexedSubagentStatus(running: boolean | undefined): Thread["status"] {
   if (running === undefined) {

@@ -11,7 +11,9 @@
 //! client has a neutral or capability mapping and the client speaks the
 //! neutral protocol.
 
+mod execution;
 mod native_storage;
+mod session_instructions;
 mod stored_search;
 
 use std::{
@@ -25,19 +27,22 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::model::{
-    AgentEvent, AgentThread, AppThreadId, BackgroundTaskReadParams, BackgroundTaskReadResult,
-    Capability, CapabilityInvokeParams, CapabilitySet, ClientToolSpec,
-    ERROR_CAPABILITY_UNSUPPORTED, ModelCatalog, PermissionProfileCatalog, ProviderDescriptor,
-    ProviderId, ProviderRateLimits, RequestRespondParams, RpcError, ThreadCreateParams,
-    ThreadForkParams, ThreadListParams, ThreadListResult, ThreadReadResult, ThreadTurnsParams,
-    ThreadTurnsResult, ThreadUpdateParams, ThreadUpdateResult, ToolCallParams, ToolCallResult,
-    TurnInterruptParams, TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
+    AgentEvent, AgentThread, AppThreadId, BackgroundTaskListParams, BackgroundTaskListResult,
+    BackgroundTaskReadParams, BackgroundTaskReadResult, Capability, CapabilityInvokeParams,
+    CapabilitySet, ClientToolSpec, ERROR_CAPABILITY_UNSUPPORTED, ModelCatalog,
+    PermissionProfileCatalog, ProviderDescriptor, ProviderId, ProviderRateLimits,
+    RequestRespondParams, RpcError, ThreadCreateParams, ThreadForkParams, ThreadListParams,
+    ThreadListResult, ThreadReadResult, ThreadTurnsParams, ThreadTurnsResult, ThreadUpdateParams,
+    ThreadUpdateResult, ToolCallParams, ToolCallResult, TurnContinueParams, TurnInterruptParams,
+    TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
 };
 
+pub use execution::{ExecutionApproval, ExecutionPolicy, ExecutionReviewer, ExecutionSandbox};
 pub use native_storage::{
     HistoryPageError, HistorySyncRequest, NativeMessageSearch, NativeThreadResources,
-    NativeThreadStore,
+    NativeThreadStore, StoredThreadState,
 };
+pub use session_instructions::SessionInstructions;
 pub use stored_search::{SearchWindow, StoredMessageSearch};
 
 use crate::usage::ModelPricing;
@@ -50,6 +55,18 @@ use crate::usage::ModelPricing;
 pub enum ProviderStatus {
     Reconnecting,
     Live,
+}
+
+/// The execution authority of an existing thread as proven by its provider.
+///
+/// This is host-only state: models cannot supply it, and it is intentionally
+/// separate from the public thread DTO. Orchestration uses it as the immutable
+/// parent ceiling when the provider's ordinary `thread.read` projection is
+/// too lossy to carry the effective sandbox.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThreadExecutionAuthority {
+    pub permission_profile: String,
+    pub policy: Option<ExecutionPolicy>,
 }
 
 /// Sign-in state reported by a provider runtime. Never carries credentials or
@@ -244,6 +261,11 @@ pub trait AgentProvider: Send + Sync {
     /// Installs the single lossless ordered event stream. Called once.
     fn take_events(&self) -> mpsc::Receiver<ProviderEvent>;
 
+    /// The provider's current model list: a model the provider adds or drops
+    /// reaches a later read without a companion restart. A provider whose
+    /// list is costly to read may answer a cached list, refreshing it on its
+    /// own within a bounded age, but must not make a read wait for that
+    /// refresh once a list is known.
     async fn catalog_models(&self) -> Result<ModelCatalog, ProviderError>;
 
     async fn catalog_permission_profiles(&self) -> Result<PermissionProfileCatalog, ProviderError>;
@@ -251,7 +273,40 @@ pub trait AgentProvider: Send + Sync {
     async fn thread_create(&self, params: ThreadCreateParams)
     -> Result<AgentThread, ProviderError>;
 
+    /// Creates a delegated thread with the parent's frozen execution policy.
+    /// Adapters must reject policies they cannot reproduce rather than silently
+    /// replacing network or filesystem access with their own defaults.
+    async fn thread_create_with_policy(
+        &self,
+        params: ThreadCreateParams,
+        policy: &ExecutionPolicy,
+    ) -> Result<AgentThread, ProviderError> {
+        match policy.sandbox {
+            ExecutionSandbox::ConfiguredProfile | ExecutionSandbox::Unrestricted => {
+                self.thread_create(params).await
+            }
+            ExecutionSandbox::ReadOnly { .. } | ExecutionSandbox::Workspace { .. } => {
+                Err(ProviderError::Rejected(RpcError::new(
+                    ERROR_CAPABILITY_UNSUPPORTED,
+                    "the target provider cannot reproduce the parent's execution sandbox",
+                )))
+            }
+        }
+    }
+
     async fn thread_read(&self, thread: &AppThreadId) -> Result<ThreadReadResult, ProviderError>;
+
+    /// Reads the provider-owned execution authority of an existing thread.
+    /// `None` means that the provider has no independent durable authority;
+    /// callers may still use an authenticated live observation or the
+    /// provider's ordinary thread settings, but must fail closed when all are
+    /// unknown.
+    async fn thread_execution_authority(
+        &self,
+        _thread: &AppThreadId,
+    ) -> Result<Option<ThreadExecutionAuthority>, ProviderError> {
+        Ok(None)
+    }
 
     /// Reads a thread with a fence ordered after every event emitted before
     /// the read was answered.
@@ -285,6 +340,17 @@ pub trait AgentProvider: Send + Sync {
 
     async fn thread_compact(&self, thread: &AppThreadId) -> Result<(), ProviderError>;
 
+    /// Makes sure this host receives the thread's live events from now on,
+    /// without reading or returning its history. The companion calls it for a
+    /// thread it tracks after a restart or reconnect; a provider whose
+    /// connection is shared with other clients and scoped per thread
+    /// subscribes here. Idempotent. Default: every event of the provider's
+    /// threads already reaches the host.
+    async fn thread_observe(&self, thread: &AppThreadId) -> Result<(), ProviderError> {
+        let _ = thread;
+        Ok(())
+    }
+
     /// Copies a thread into a new thread of this provider (`thread.fork`).
     /// Only providers declaring `threads.fork` without the native surface
     /// implement it; the native surface forks through its own `thread/fork`.
@@ -313,10 +379,42 @@ pub trait AgentProvider: Send + Sync {
         )))
     }
 
+    /// The thread's background commands that still run
+    /// (`thread.backgroundTasks.list`), as the provider's live session knows
+    /// them; empty when no session of the thread runs. Only providers
+    /// declaring `threads.backgroundTaskOutput` implement it.
+    async fn thread_background_tasks(
+        &self,
+        params: BackgroundTaskListParams,
+    ) -> Result<BackgroundTaskListResult, ProviderError> {
+        let _ = params;
+        Err(ProviderError::Rejected(RpcError::new(
+            ERROR_CAPABILITY_UNSUPPORTED,
+            crate::model::capability_unsupported_message(
+                Capability::ThreadsBackgroundTaskOutput.name(),
+            ),
+        )))
+    }
+
     /// Starts a turn. Never steers: an active thread answers `busy`, or the
     /// provider joins natively when it declares `turns.startWhileActive:
     /// nativeJoin`.
     async fn turn_start(&self, params: TurnStartParams) -> Result<TurnStartResult, ProviderError>;
+
+    /// Starts a turn that resumes the thread's interrupted or failed last
+    /// turn without a user message (`turn.continue`). The provider owns how
+    /// its harness resumes; like [`Self::turn_start`], an active thread
+    /// answers `busy`. Default: unsupported (`-32601`).
+    async fn turn_continue(
+        &self,
+        params: TurnContinueParams,
+    ) -> Result<TurnStartResult, ProviderError> {
+        let _ = params;
+        Err(ProviderError::Rejected(RpcError::new(
+            -32_601,
+            "turn.continue is not supported by this provider",
+        )))
+    }
 
     async fn turn_steer(&self, params: TurnSteerParams) -> Result<TurnSteerResult, ProviderError>;
 
@@ -350,6 +448,16 @@ pub trait AgentProvider: Send + Sync {
     /// providers and every store they hold alive after the companion stops.
     fn install_client_tools(&self, host: Weak<dyn ClientToolHost>) {
         let _ = host;
+    }
+
+    /// Installs the host's instructions for every agent session. A provider
+    /// with a native instruction channel hands them to every session it
+    /// starts, resumes or forks afterwards, alongside the instructions the
+    /// session already has and without repeating them; a provider without
+    /// such a channel ignores them. Called at most once, before any thread
+    /// is started.
+    fn install_session_instructions(&self, instructions: SessionInstructions) {
+        let _ = instructions;
     }
 
     /// The provider's cleaner of its own envelopes and model-only context in
@@ -427,6 +535,11 @@ pub trait NativeSurface: Send + Sync {
     /// `turn/start` with turn admission and one safe resume-retry on a
     /// conclusive `thread not found` rejection.
     async fn dispatch_turn_start(&self, request: Value) -> Result<Value, DispatchError>;
+
+    /// Client-wire `turn/continue {threadId}`: the provider's own way to
+    /// resume the thread's interrupted or failed last turn, answered as a
+    /// `turn/start` response.
+    async fn dispatch_turn_continue(&self, request: Value) -> Result<Value, DispatchError>;
 
     /// `thread/settings/update` with one safe resume-retry.
     async fn dispatch_settings_update(&self, request: Value) -> Result<Value, DispatchError>;

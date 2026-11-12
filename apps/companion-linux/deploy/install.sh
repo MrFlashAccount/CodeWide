@@ -6,6 +6,7 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 binary=${CODEWIDE_COMPANION_BINARY:-"$repo_root/target/release/codewide-companion"}
 git_plugin_binary=${CODEWIDE_COMPANION_GIT_PLUGIN_BINARY:-"$repo_root/target/release/codewide-vcs-git"}
+forge_github_plugin_binary=${CODEWIDE_COMPANION_FORGE_GITHUB_PLUGIN_BINARY:-"$repo_root/target/release/codewide-forge-github"}
 update_guardian_binary=${CODEWIDE_COMPANION_UPDATE_GUARDIAN_BINARY:-"$repo_root/target/release/codewide-companion-update-guardian"}
 unit_source=${CODEWIDE_COMPANION_UNIT_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion.service"}
 update_unit_source=${CODEWIDE_COMPANION_UPDATE_UNIT_SOURCE:-"$repo_root/apps/companion-linux/deploy/codewide-companion-update.service"}
@@ -25,23 +26,46 @@ source_revision=${CODEWIDE_COMPANION_SOURCE_REVISION:-00000000000000000000000000
 build=${CODEWIDE_COMPANION_BUILD:-manual}
 activate=${CODEWIDE_COMPANION_ACTIVATE:-1}
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+sha256_stream() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    shasum -a 256 | awk '{print $1}'
+  fi
+}
+
 case "$activate" in 0|1) ;; *) printf '%s\n' 'CODEWIDE_COMPANION_ACTIVATE must be 0 or 1.' >&2; exit 2 ;; esac
 test -x "$binary"
 test -x "$git_plugin_binary"
+test -x "$forge_github_plugin_binary"
 test -x "$update_guardian_binary"
 version=$($binary --version | awk 'NR == 1 { print $2 }')
 case "$version" in ''|*[!0-9.]*) printf '%s\n' 'Companion binary reports an invalid version.' >&2; exit 2 ;; esac
+case "$source_revision" in ????????????????????????????????????????) ;; *) printf '%s\n' 'Invalid Companion source revision.' >&2; exit 2 ;; esac
+case "$source_revision" in *[!0-9a-f]*) printf '%s\n' 'Invalid Companion source revision.' >&2; exit 2 ;; esac
 if [ -z "$artifact_digest" ]; then
-  if command -v sha256sum >/dev/null 2>&1; then
-    artifact_digest=$(sha256sum "$binary" | awk '{print $1}')
-  else
-    artifact_digest=$(shasum -a 256 "$binary" | awk '{print $1}')
-  fi
+  artifact_digest=$(
+    {
+      printf 'version %s\n' "$version"
+      printf 'build %s\n' "$build"
+      printf 'sourceRevision %s\n' "$source_revision"
+      printf 'bin/codewide-companion %s\n' "$(sha256_file "$binary")"
+      printf 'libexec/codewide-vcs-git %s\n' "$(sha256_file "$git_plugin_binary")"
+      printf 'libexec/codewide-forge-github %s\n' "$(sha256_file "$forge_github_plugin_binary")"
+      printf 'libexec/codewide-companion-memory-watch %s\n' "$(sha256_file "$memory_watch_source")"
+    } | sha256_stream
+  )
 fi
 case "$artifact_digest" in ????????????????????????????????????????????????????????????????) ;; *) printf '%s\n' 'Invalid Companion artifact digest.' >&2; exit 2 ;; esac
 case "$artifact_digest" in *[!0-9a-f]*) printf '%s\n' 'Invalid Companion artifact digest.' >&2; exit 2 ;; esac
-case "$source_revision" in ????????????????????????????????????????) ;; *) printf '%s\n' 'Invalid Companion source revision.' >&2; exit 2 ;; esac
-case "$source_revision" in *[!0-9a-f]*) printf '%s\n' 'Invalid Companion source revision.' >&2; exit 2 ;; esac
 
 umask 077
 mkdir -p "$install_root/generations" "$install_root/bootstrap" "$update_state_root" "$unit_root"
@@ -54,6 +78,9 @@ if [ ! -d "$generation" ]; then
   mkdir -p "$staging/bin" "$staging/libexec"
   install -m 0755 "$binary" "$staging/bin/codewide-companion"
   install -m 0755 "$git_plugin_binary" "$staging/libexec/codewide-vcs-git"
+  # The built-in GitHub forge plugin: resolved from this generation's libexec
+  # at every spawn; it needs no registration.
+  install -m 0755 "$forge_github_plugin_binary" "$staging/libexec/codewide-forge-github"
   install -m 0755 "$memory_watch_source" "$staging/libexec/codewide-companion-memory-watch"
   printf '{"schemaVersion":1,"version":"%s","build":"%s","sourceRevision":"%s","artifactDigest":"%s"}\n' \
     "$version" "$build" "$source_revision" "$artifact_digest" >"$staging/metadata.json"
@@ -133,8 +160,8 @@ if [ -e "$state_root" ] && [ -d "$previous_state_root" ] && [ ! -L "$previous_st
   exit 1
 fi
 mkdir -p "$state_root"
-"$install_root/current/bin/codewide-companion" vcs plugin install \
-  --id git --executable "$install_root/current/libexec/codewide-vcs-git" --priority=-1000 >/dev/null
+# Git is a built-in VCS provider: the companion resolves bundled:git against
+# current/libexec at every spawn, so nothing is registered here.
 
 [ "$activate" -eq 1 ] || exit 0
 systemctl --user enable codewide-companion.service

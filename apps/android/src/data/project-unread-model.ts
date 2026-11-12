@@ -1,4 +1,4 @@
-import { observable } from "@legendapp/state";
+import { batch, beginBatch, endBatch, observable, type Observable } from "@legendapp/state";
 
 import { threadSummaryKey } from "./thread-summary-projection";
 import type { StoredThreadSummary } from "./thread-summary-types";
@@ -12,9 +12,38 @@ export function projectScopeKey(connectionId: string, cwd: string): string {
   return `${connectionId}\u0000${cwd}`;
 }
 
+/** Catalog-wide unread root chats, keyed by `threadSummaryKey`. */
+export type UnreadThreadIndex = {
+  readonly threads$: Observable<Readonly<Record<string, true>>>;
+};
+
+/** Whether one chat is unread; one connection's id space. */
+export type ThreadUnreadReader = (threadId: string) => boolean;
+
+/**
+ * Binds the unread index to one connection. The reader reads Legend state, so
+ * call it inside a selector; without an index every chat reads as read.
+ */
+export function threadUnreadReader(
+  index: UnreadThreadIndex | null,
+  connectionId: string,
+): ThreadUnreadReader {
+  return (threadId) =>
+    index !== null && index.threads$[threadSummaryKey(connectionId, threadId)]?.get() === true;
+}
+
+/** Root chats count toward unread membership; archived, child and deleting rows do not. */
+function isUnreadRootChat(row: StoredThreadSummary): boolean {
+  return (
+    row.unread > 0 && !row.archived && row.parentThreadId === null && row.deleteCommandId === null
+  );
+}
+
 /** Device-owned unread state spans the persisted catalog, not a visible page. */
-export class ProjectUnreadModel {
+export class ProjectUnreadModel implements UnreadThreadIndex {
   readonly projects$ = observable<readonly string[]>([]);
+  /** The same unread membership per chat, for surfaces that mark one known chat. */
+  readonly threads$ = observable<Record<string, true>>({});
   readonly #threads = new Map<string, string>();
   #pending: Map<string, SummaryChange> | null = new Map();
   #load: Promise<void> | null = null;
@@ -22,24 +51,33 @@ export class ProjectUnreadModel {
 
   #apply(change: SummaryChange): boolean {
     if (change.type === "delete") {
-      return this.#threads.delete(change.key);
+      return this.#remove(change.key);
     }
     const row = change.value;
     const key = threadSummaryKey(row.connectionId, row.remoteThreadId);
-    if (
-      row.unread > 0 &&
-      !row.archived &&
-      row.parentThreadId === null &&
-      row.deleteCommandId === null
-    ) {
-      const project = projectScopeKey(row.connectionId, row.cwd);
-      if (this.#threads.get(key) === project) {
-        return false;
-      }
-      this.#threads.set(key, project);
-      return true;
+    return isUnreadRootChat(row)
+      ? this.#add(key, projectScopeKey(row.connectionId, row.cwd))
+      : this.#remove(key);
+  }
+
+  #add(key: string, project: string): boolean {
+    const previous = this.#threads.get(key);
+    if (previous === project) {
+      return false;
     }
-    return this.#threads.delete(key);
+    this.#threads.set(key, project);
+    if (previous === undefined) {
+      this.threads$[key]?.set(true);
+    }
+    return true;
+  }
+
+  #remove(key: string): boolean {
+    if (!this.#threads.delete(key)) {
+      return false;
+    }
+    this.threads$[key]?.delete();
+    return true;
   }
 
   #publish(): void {
@@ -60,12 +98,14 @@ export class ProjectUnreadModel {
         if (this.#closed) {
           return;
         }
-        for (const row of rows) {
-          this.#apply({ type: "insert", value: row });
-        }
-        for (const change of this.#pending?.values() ?? []) {
-          this.#apply(change);
-        }
+        batch(() => {
+          for (const row of rows) {
+            this.#apply({ type: "insert", value: row });
+          }
+          for (const change of this.#pending?.values() ?? []) {
+            this.#apply(change);
+          }
+        });
         this.#pending = null;
         this.#publish();
       })
@@ -82,13 +122,18 @@ export class ProjectUnreadModel {
       return;
     }
     let changed = false;
-    for (const change of changes) {
-      const key =
-        change.type === "delete"
-          ? change.key
-          : threadSummaryKey(change.value.connectionId, change.value.remoteThreadId);
-      this.#pending?.set(key, change);
-      changed = this.#apply(change) || changed;
+    beginBatch();
+    try {
+      for (const change of changes) {
+        const key =
+          change.type === "delete"
+            ? change.key
+            : threadSummaryKey(change.value.connectionId, change.value.remoteThreadId);
+        this.#pending?.set(key, change);
+        changed = this.#apply(change) || changed;
+      }
+    } finally {
+      endBatch();
     }
     if (changed) {
       this.#publish();
@@ -98,6 +143,10 @@ export class ProjectUnreadModel {
   close(): void {
     this.#closed = true;
     this.#pending?.clear();
-    this.#threads.clear();
+    batch(() => {
+      for (const key of this.#threads.keys()) {
+        this.#remove(key);
+      }
+    });
   }
 }

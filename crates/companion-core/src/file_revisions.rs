@@ -11,6 +11,7 @@ use tokio::{
     io::AsyncReadExt,
     sync::{Mutex, Semaphore},
 };
+use workspace_io::WorkspaceIo;
 
 const MAX_HASH_ENTRIES: usize = 4_096;
 const MAX_CONCURRENT_HASHES: usize = 2;
@@ -58,8 +59,12 @@ impl FileRevisionCache {
         }
     }
 
+    /// The SHA-256 of a host file. The file may lie on a workspace mount, so
+    /// every access goes through [`WorkspaceIo`]: a hung mount fails here
+    /// before a hashing slot is taken.
     pub(crate) async fn sha256(&self, path: &Path) -> Result<String, std::io::Error> {
-        let initial = tokio::fs::metadata(path).await?;
+        let io = WorkspaceIo::shared();
+        let initial = io.metadata(path).await?;
         let initial_fingerprint = FileFingerprint::from(&initial);
         if let Some(hash) = self.cached(path, initial_fingerprint).await {
             return Ok(hash);
@@ -70,13 +75,16 @@ impl FileRevisionCache {
             .await
             .map_err(|_| std::io::Error::other("file hash service closed"))?;
         for _ in 0..2 {
-            let before = tokio::fs::metadata(path).await?;
+            let before = io.metadata(path).await?;
             let fingerprint = FileFingerprint::from(&before);
             if let Some(hash) = self.cached(path, fingerprint).await {
                 return Ok(hash);
             }
-            let hash = sha256_file(path).await?;
-            let after = tokio::fs::metadata(path).await?;
+            let owned = path.to_path_buf();
+            let hash = io
+                .run_within(path, HASH_DEADLINE, move || sha256_file_blocking(&owned))
+                .await?;
+            let after = io.metadata(path).await?;
             if FileFingerprint::from(&after) == fingerprint {
                 self.remember(path.to_path_buf(), fingerprint, hash.clone())
                     .await;
@@ -154,6 +162,24 @@ impl From<&std::fs::Metadata> for FileFingerprint {
             modified_seconds: metadata.mtime(),
         }
     }
+}
+
+/// How long hashing one host file may take.
+const HASH_DEADLINE: std::time::Duration = std::time::Duration::from_mins(2);
+
+fn sha256_file_blocking(path: &Path) -> Result<String, std::io::Error> {
+    use std::io::Read as _;
+    let mut file = std::fs::File::open(path)?;
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0_u8; 128 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hash.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hash.finalize()))
 }
 
 pub(crate) async fn sha256_file(path: &Path) -> Result<String, std::io::Error> {

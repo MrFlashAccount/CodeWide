@@ -13,10 +13,16 @@ it("preserves the virtual list ref and scroll events in one sheet-integrated scr
   const ref = createRef<ScrollView>();
   const onScroll = jest.fn();
   const onContentSizeChange = jest.fn();
-  const view = render(<AppSheetScrollView ref={ref} testID="attachments-scroll"
-    onScroll={onScroll} onContentSizeChange={onContentSizeChange}>
-    <Text>Attachment</Text>
-  </AppSheetScrollView>);
+  const view = render(
+    <AppSheetScrollView
+      ref={ref}
+      testID="attachments-scroll"
+      onScroll={onScroll}
+      onContentSizeChange={onContentSizeChange}
+    >
+      <Text>Attachment</Text>
+    </AppSheetScrollView>,
+  );
   expect(view.UNSAFE_getAllByType(ScrollView)).toHaveLength(1);
   expect(ref.current?.scrollTo).toEqual(expect.any(Function));
   const scroll = view.getByTestId("attachments-scroll");

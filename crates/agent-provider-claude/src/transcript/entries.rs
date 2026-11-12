@@ -18,6 +18,9 @@
 //!   message (a task report's `commandMode: task-notification` gives its
 //!   origin).
 //! - `[Request interrupted by user…]` ends the current turn as interrupted.
+//! - A meta message ending with Claude's resume prompt (written when Claude
+//!   resumes an interrupted turn, or offered for `turn.continue`) resumes the
+//!   conversation: it is never shown, but starts a turn.
 //! - The compact summary marks a compaction; the system message right before
 //!   it is the compact boundary, whose uuid anchors the turn the live
 //!   compaction ran in.
@@ -42,7 +45,9 @@ use super::{
 /// The prompt that opens a replacement session's history prefix; it is not
 /// the person's first prompt.
 pub const HISTORY_HEADER: &str = "[Historical conversation from this thread]";
-const INTERRUPT_MARKER: &str = "[Request interrupted by user";
+pub(crate) const INTERRUPT_MARKER: &str = "[Request interrupted by user";
+/// The prompt Claude resumes an interrupted turn with, as a meta message.
+pub const RESUME_PROMPT: &str = "Continue from where you left off.";
 
 /// One classified stored message.
 #[derive(Clone, Debug, PartialEq)]
@@ -55,6 +60,11 @@ pub enum HistoryEntry {
         uuid: String,
     },
     Interrupt {
+        timestamp_ms: i64,
+        uuid: String,
+    },
+    /// Claude's resume prompt: resumes the conversation without a prompt.
+    Resume {
         timestamp_ms: i64,
         uuid: String,
     },
@@ -83,6 +93,7 @@ impl HistoryEntry {
         match self {
             Self::Prompt { uuid, .. }
             | Self::Interrupt { uuid, .. }
+            | Self::Resume { uuid, .. }
             | Self::Wake { uuid, .. }
             | Self::Compaction { uuid, .. }
             | Self::Frame { uuid, .. } => uuid,
@@ -94,6 +105,7 @@ impl HistoryEntry {
         match self {
             Self::Prompt { timestamp_ms, .. }
             | Self::Interrupt { timestamp_ms, .. }
+            | Self::Resume { timestamp_ms, .. }
             | Self::Wake { timestamp_ms, .. }
             | Self::Compaction { timestamp_ms, .. }
             | Self::Frame { timestamp_ms, .. } => *timestamp_ms,
@@ -102,7 +114,7 @@ impl HistoryEntry {
 }
 
 /// Command echoes, local command output and injected reminders start with a tag.
-fn is_markup(text: &str) -> bool {
+pub(crate) fn is_markup(text: &str) -> bool {
     let trimmed = text.trim_start();
     let mut characters = trimmed.chars();
     if characters.next() != Some('<') {
@@ -156,6 +168,15 @@ fn has_tool_result(content: Option<&Value>) -> bool {
     })
 }
 
+/// Whether a meta message carries Claude's resume prompt. Claude may prefix
+/// an adapter message with a provenance line, and a replacement session's
+/// first offer leads with the history prefix, so the prompt ends a block.
+fn is_resume(content: &[UserContent]) -> bool {
+    content.iter().any(|block| {
+        matches!(block, UserContent::Text { text } if text.trim_end().ends_with(RESUME_PROMPT))
+    })
+}
+
 fn first_text(content: &[UserContent]) -> &str {
     content
         .iter()
@@ -198,6 +219,31 @@ fn wake_entry(message: &StoredMessage<'_>, text: &str) -> Option<HistoryEntry> {
     })
 }
 
+/// The task reports of every task-notification user message among `rows`,
+/// with the message's time, whichever branch of the session it sits on. A
+/// report is a fact about its agent, not part of a conversation: one stored
+/// before a compaction or on an abandoned branch still settles the agent
+/// whose spawning item a sub-agent transcript keeps.
+#[must_use]
+pub fn stored_task_reports_of_rows(rows: &[Value]) -> Vec<(TaskReport, i64)> {
+    rows.iter()
+        .filter_map(Value::as_object)
+        .filter(|row| str_of(row, "type") == Some("user"))
+        .filter(|row| origin_kind(row) == Some("task-notification"))
+        .filter_map(|row| {
+            let timestamp_ms = str_of(row, "timestamp").and_then(self::timestamp_ms)?;
+            let body = record_of(row, "message").and_then(|inner| inner.get("content"));
+            let content = user_blocks(body);
+            Some((first_text(&content).to_owned(), timestamp_ms))
+        })
+        .flat_map(|(text, timestamp_ms)| {
+            stored_task_reports(&text)
+                .into_iter()
+                .map(move |report| (report, timestamp_ms))
+        })
+        .collect()
+}
+
 fn user_entry(message: &StoredMessage<'_>) -> Option<HistoryEntry> {
     let body = record_of(message.raw, "message").and_then(|inner| inner.get("content"));
     if has_tool_result(body) {
@@ -209,6 +255,15 @@ fn user_entry(message: &StoredMessage<'_>) -> Option<HistoryEntry> {
     }
     let content = user_blocks(body);
     let text = first_text(&content);
+    let meta = is_true2(message.raw, "isMeta", "is_meta");
+    // Claude stamps an adapter message with a non-person origin; the resume
+    // prompt among them resumes the conversation instead of waking it.
+    if meta && is_resume(&content) {
+        return Some(HistoryEntry::Resume {
+            timestamp_ms: message.timestamp_ms,
+            uuid: message.uuid.to_owned(),
+        });
+    }
     if let Some(wake) = wake_entry(message, text) {
         return Some(wake);
     }
@@ -218,10 +273,7 @@ fn user_entry(message: &StoredMessage<'_>) -> Option<HistoryEntry> {
             uuid: message.uuid.to_owned(),
         });
     }
-    if is_true2(message.raw, "isMeta", "is_meta")
-        || is_true(message.raw, "isVisibleInTranscriptOnly")
-        || is_markup(text)
-    {
+    if meta || is_true(message.raw, "isVisibleInTranscriptOnly") || is_markup(text) {
         return None;
     }
     let prompt = content
@@ -269,8 +321,20 @@ pub fn history_entries(
     messages: &[&JsonRecord],
     parent_tool_use_id: Option<&str>,
 ) -> Vec<HistoryEntry> {
+    history_entries_after(messages, parent_tool_use_id, None)
+}
+
+/// [`history_entries`] of messages that follow a system message with uuid
+/// `previous_system` (a read that starts inside a history): a compaction
+/// summary first among them is anchored on that system message.
+#[must_use]
+pub fn history_entries_after(
+    messages: &[&JsonRecord],
+    parent_tool_use_id: Option<&str>,
+    previous_system: Option<String>,
+) -> Vec<HistoryEntry> {
     let mut entries = Vec::new();
-    let mut previous_system: Option<String> = None;
+    let mut previous_system = previous_system;
     for value in messages {
         let Some(message) = stored_message(value, parent_tool_use_id) else {
             continue;

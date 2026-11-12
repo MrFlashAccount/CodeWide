@@ -8,22 +8,41 @@ const MAX_CONTENT_SESSIONS = 4;
 
 export type ContentPresentation = "markdown" | "terminal" | "text";
 
-export type ReferenceContentRouteRequest = {
-  readonly getTransferAccess: GetTransferAccess;
-  readonly kind: "reference";
-  readonly pointer: string;
-  readonly presentation: ContentPresentation;
-  readonly reference: RenderContentReference;
-};
+/**
+ * One part of a content document: text the item holds inline, or a field the
+ * Companion keeps out of line, which the viewer reads chunk by chunk.
+ */
+export type ContentDocumentPart =
+  | {
+      readonly kind: "inline";
+      readonly label: string;
+      readonly presentation: ContentPresentation;
+      readonly text: string;
+    }
+  | {
+      readonly kind: "reference";
+      readonly label: string;
+      readonly presentation: ContentPresentation;
+      readonly reference: RenderContentReference;
+    };
 
-type InlineContentRouteRequest = {
-  readonly kind: "inline";
-  readonly presentation: ContentPresentation;
-  readonly text: string;
+/** Everything one item shows in the full-screen viewer, in reading order. */
+export type DocumentContentRouteRequest = {
+  /** Reads the out-of-line parts; null without a connection. */
+  readonly getTransferAccess: GetTransferAccess | null;
+  readonly kind: "document";
+  readonly parts: readonly [ContentDocumentPart, ...ContentDocumentPart[]];
   readonly title: string;
 };
 
 export type CommandContentRouteRequest = {
+  /**
+   * The command as launched, shown when its thread holds the item no longer;
+   * a preview when the Companion externalized the command.
+   */
+  readonly command: string;
+  /** The opened item's externalized command, read when its thread holds the item no longer. */
+  readonly commandReference: CommandOutputReference | null;
   readonly fallbackOutput: string;
   /** Reads output the Companion externalized as private content; null without a connection. */
   readonly getTransferAccess: GetTransferAccess | null;
@@ -36,14 +55,10 @@ export type CommandContentRouteRequest = {
    * conversation, not the thread whose route presents the viewer.
    */
   readonly threadId: string;
-  readonly title: string;
   readonly turnId: string;
 };
 
-export type LargeContentRouteRequest =
-  | ReferenceContentRouteRequest
-  | InlineContentRouteRequest
-  | CommandContentRouteRequest;
+export type LargeContentRouteRequest = DocumentContentRouteRequest | CommandContentRouteRequest;
 
 /** One retained large-content request addressed by an opaque route identifier. */
 type ContentRouteSession = {

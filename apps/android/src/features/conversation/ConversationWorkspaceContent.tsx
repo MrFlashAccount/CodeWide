@@ -16,6 +16,8 @@ import type { RenderConversationWorkspaceContentProps } from "./ConversationWork
  */
 export function renderConversationWorkspaceContent(props: RenderConversationWorkspaceContentProps) {
   const listedThread = props.visibleConversationThread;
+  // A hosted draft requires an explicit project and offers no workspace modes.
+  const hostedDraft = props.draftAdmission?.kind === "hosted" ? props.draftAdmission : null;
   const remoteThread = props.snapshot.remoteThread;
   const gated = threadAgentActions(
     remoteThread,
@@ -79,6 +81,11 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         onRefreshSubagents: async (rootThreadId: string) => {
           await props.features.agents.refreshSubagents(props.activeConnectionId, rootThreadId);
         },
+        onRunningBackgroundTasks:
+          props.activeConnectionId === ""
+            ? undefined
+            : (threadId: string) =>
+                props.features.agents.runningBackgroundTasks(props.activeConnectionId, threadId),
         subagentSummaryDatabase: props.snapshot.subagentSummaryDatabase,
         subagentThreadDetails: props.runtime.threadDetails,
       }}
@@ -134,14 +141,23 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         newChatPicker: props.newChatPicker,
         onAddProject: props.addActiveProject,
         onChangeProject: props.changeEmptyThreadProject,
-        onChangeWorkspaceMode: (workspaceMode) => {
-          if (props.newChatDraft !== null) {
-            props.onChangeDraftWorkspaceMode(props.newChatDraft.id, workspaceMode);
-          }
-        },
+        onChangeWorkspaceMode:
+          hostedDraft !== null
+            ? undefined
+            : (workspaceMode) => {
+                if (props.newChatDraft !== null) {
+                  props.onChangeDraftWorkspaceMode(props.newChatDraft.id, workspaceMode);
+                }
+              },
         onManageProjects: props.onManageProjects,
         onReadDirectory: props.readActiveDirectory,
         projectLoadError: props.activeProjectError,
+        projectRequirement:
+          hostedDraft === null || props.newChatDraft?.cwd !== null
+            ? "none"
+            : hostedDraft.suggesting
+              ? "suggesting"
+              : "required",
         projects: props.activeProjects,
         workspaceMode: props.newChatDraft?.workspaceMode ?? "current",
         workspaceSupport: props.activeWorkspaceSupport,
@@ -186,8 +202,10 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
       surface={{
         compact: !props.desktop,
         cwd: props.snapshot.cwd ?? "/workspace",
+        draftNotice: hostedDraft?.notice ?? null,
         firstUnreadAgentTurnId: props.snapshot.firstUnreadAgentTurnId ?? null,
         newChat: props.newChatDraft !== null,
+        // A closable pane shows its own `×` from ThreePanelsContext instead of this back.
         onBack: props.desktop ? undefined : props.closeActiveConversation,
         onViewedLatest: props.markActiveThreadRead,
         // A thread another process holds opens read-only until it lets go; a

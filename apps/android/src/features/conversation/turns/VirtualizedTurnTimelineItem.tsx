@@ -12,6 +12,7 @@ import { PrivateAssetRecoveryProvider } from "../../../rendering/use-private-ima
 import { RecoverableRenderBoundary } from "../../../ui/RecoverableRenderBoundary";
 import { MessageActionRail } from "./MessageActionRail";
 import { PreTurnLifecycleRows } from "./PreTurnLifecycleRows";
+import type { TaskLineEntry } from "./backgroundLaunches";
 import { TaskNotificationLine } from "./TaskNotificationLine";
 import type { projectTurnPresentation } from "./turnProjection";
 import { TurnMetricsProvider } from "./TurnMetricsProvider";
@@ -51,6 +52,8 @@ type VirtualizedTurnTimelineItemProps = {
   placement: VirtualizedTurnPlacement;
   presentation: TurnPresentation;
   requestPrompt: ReactNode;
+  /** The task line after the bubble; empty except on the turn's last slice. */
+  trailingTasks: readonly TaskLineEntry[];
   turn: TurnTimelineItemProps["turn"];
   usage?: TurnUsageProjection | null;
 };
@@ -212,17 +215,13 @@ function VirtualizedAgentMessage({
       />
     </View>
   );
-  // Reports that arrived while a person's turn answered follow its bubble; a
-  // wake turn lists them on its reason line instead.
-  const midTurn =
-    isTrailingSlice(props.placement) && presentation.userBlocks.length > 0
-      ? presentation.taskNotifications.midTurn
-      : [];
+  // The reports a person's turn received while it answered and the commands
+  // the turn started in the background follow its bubble (`trailingTasks`).
   return renderAgentBoundary(
     props,
     <ImagePreviewGroup id={`${props.turn.key}:agent`}>
       {row}
-      <TaskNotificationLine reports={midTurn} />
+      <TaskNotificationLine reports={props.trailingTasks} />
     </ImagePreviewGroup>,
   );
 }

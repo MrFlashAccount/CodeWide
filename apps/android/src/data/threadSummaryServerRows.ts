@@ -191,6 +191,7 @@ export function createServerRowWriter(ports: ServerRowWriterPorts): ServerRowWri
     batch.admitted.push(row);
     const previous = batch.current.get(key);
     const merged = serverRowSummary(connectionId, row, previous);
+    merged.subagentRootThreadId = previous?.subagentRootThreadId ?? null;
     batch.changed.set(
       key,
       previous === undefined ? overlay.replayInto(connectionId, merged) : merged,

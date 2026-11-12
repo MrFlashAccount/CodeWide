@@ -24,16 +24,16 @@ use tracing::{error, info, warn};
 
 use super::{
     client_tools::ClientToolCalls,
-    handle::{Command, SessionStatus},
+    handle::{Command, LiveLaunches, SessionStatus},
     ports::{SessionDeps, SessionOutput},
-    query::Query,
-    task_reports::LiveTaskReports,
+    query::{Offer, Query},
+    task_reports::{Launch, LiveTaskReports},
     turn::ActiveTurn,
 };
 use crate::{
     cli::{
         command::{QueryOptions, SessionIdentity},
-        process::ProcessEvent,
+        process::{ProcessError, ProcessEvent},
     },
     live::permissions::profile_of,
     state::thread_state::ThreadState,
@@ -54,6 +54,8 @@ pub(super) const fn seconds(ms: i64) -> i64 {
 pub(super) struct LiveQuery {
     pub handle: Arc<dyn Query>,
     pub events: mpsc::Receiver<ProcessEvent>,
+    /// When its process started (the companion's clock).
+    pub started_at_ms: i64,
 }
 
 /// A runtime request waiting for the user's answer.
@@ -68,6 +70,15 @@ pub(super) struct PendingRequest {
 pub(super) enum PendingKind {
     Approval { suggestions: Vec<Value> },
     UserInput { questions: Vec<UserInputQuestion> },
+}
+
+/// A message written to the open query that Claude has not completed or
+/// cancelled.
+pub(super) struct Unsettled {
+    pub uuid: String,
+    /// Claude queued or started it (`command_lifecycle`): once Claude is
+    /// `idle`, it holds the message no more.
+    pub acknowledged: bool,
 }
 
 /// Background work that reports back to the actor.
@@ -87,6 +98,11 @@ pub(super) enum Internal {
         turn_id: TurnId,
         lines: Vec<String>,
     },
+    /// The query's `claude` cannot report its session state.
+    Unsupported {
+        generation: u64,
+        version: String,
+    },
 }
 
 pub(super) struct Session {
@@ -101,6 +117,9 @@ pub(super) struct Session {
     /// earlier query compare against it.
     pub generation: u64,
     pub active: Option<ActiveTurn>,
+    /// The messages written to the open query that Claude has not completed
+    /// or cancelled; the active turn cannot end while one is left.
+    pub unsettled: Vec<Unsettled>,
     pub pending: HashMap<String, PendingRequest>,
     pub background_tasks: usize,
     /// Background tasks of the open query and their reports waiting for a turn.
@@ -140,6 +159,7 @@ impl Session {
             query: None,
             generation: 0,
             active: None,
+            unsettled: Vec::new(),
             pending: HashMap::new(),
             background_tasks: 0,
             task_reports: LiveTaskReports::default(),
@@ -235,6 +255,19 @@ impl Session {
             Command::BackgroundTask { task_id, reply } => {
                 let _ = reply.send(self.task_reports.state(&task_id));
             }
+            Command::RunningBackgroundTasks { reply } => {
+                let _ = reply.send(if self.query.is_some() {
+                    self.task_reports.running_launches()
+                } else {
+                    Vec::new()
+                });
+            }
+            Command::BackgroundCommands { reply } => {
+                let _ = reply.send(self.query.as_ref().map(|query| LiveLaunches {
+                    process_started_at_ms: query.started_at_ms,
+                    states: self.task_reports.launch_states(),
+                }));
+            }
             Command::Dispose { reply } => {
                 self.dispose().await;
                 let _ = reply.send(());
@@ -282,6 +315,14 @@ impl Session {
             Internal::HistoryLines { turn_id, lines } => {
                 self.offer_replacement(&turn_id, &lines);
             }
+            Internal::Unsupported {
+                generation,
+                version,
+            } => {
+                if generation == self.generation {
+                    self.on_unsupported(&version).await;
+                }
+            }
         }
     }
 
@@ -303,7 +344,15 @@ impl Session {
     /// Emits events in order. When an item started or completed, the
     /// in-flight snapshot is persisted first, so a restart can finalize the
     /// turn with every item the client has already seen.
-    pub(super) async fn emit_all(&self, events: Vec<AgentEvent>) {
+    ///
+    /// A completed `command` item that launched a background task is
+    /// remembered with its turn, so a later report can republish it.
+    pub(super) async fn emit_all(&mut self, events: Vec<AgentEvent>) {
+        for event in &events {
+            if let AgentEvent::ItemCompleted { turn_id, item, .. } = event {
+                self.task_reports.launched(turn_id, item);
+            }
+        }
         if let Some(active) = &self.active
             && events.iter().any(|event| {
                 matches!(
@@ -319,12 +368,25 @@ impl Session {
         }
     }
 
+    /// Republishes background command items whose state changed: the same
+    /// item of the same turn, completed again with the new state.
+    pub(super) async fn republish_launches(&self, launches: Vec<Launch>) {
+        for launch in launches {
+            self.output(SessionOutput::Event(Box::new(AgentEvent::ItemCompleted {
+                app_thread_id: self.app_thread_id.clone(),
+                turn_id: launch.turn_id,
+                item: launch.item,
+            })))
+            .await;
+        }
+    }
+
     pub(super) async fn emit_thread_updated(&self) {
         self.output(SessionOutput::ThreadUpdated(self.app_thread_id.clone()))
             .await;
     }
 
-    pub(super) async fn resolve_request(&self, request_id: &str, reason: RequestResolution) {
+    pub(super) async fn resolve_request(&mut self, request_id: &str, reason: RequestResolution) {
         self.emit_all(vec![AgentEvent::RequestResolved {
             app_thread_id: self.app_thread_id.clone(),
             request_id: agent_core::model::NativeRequestId::Text(request_id.to_owned()),
@@ -368,6 +430,13 @@ impl Session {
         if let Some(query) = &self.query {
             return Some(query.handle.clone());
         }
+        // A mount known to be hung is never entered: spawning would block this
+        // actor's thread until the mount answers.
+        if workspace_io::WorkspaceIo::shared().is_unavailable(std::path::Path::new(&self.state.cwd))
+        {
+            warn!(app_thread_id = %self.app_thread_id, "claude session not started: its working directory does not respond");
+            return None;
+        }
         let settings = self.state.settings.clone();
         let profile = profile_of(&settings.permission_profile).options();
         let session_id = self.state.current_session_id().to_owned();
@@ -383,6 +452,7 @@ impl Session {
                 SessionIdentity::New(session_id)
             },
             client_tools: !tools.is_empty(),
+            session_instructions: self.deps.session_instructions.get().copied(),
             profile,
         };
         match self.deps.runtime.open(&options) {
@@ -390,11 +460,14 @@ impl Session {
                 self.query = Some(LiveQuery {
                     handle: handle.clone(),
                     events,
+                    started_at_ms: self.now_ms(),
                 });
                 self.query_tools = tools;
                 self.query_allows_bypass = options.profile.allow_dangerously_skip_permissions;
                 self.query_mode_outdated = false;
+                self.unsettled.clear();
                 self.generation += 1;
+                self.check_protocol(handle.as_ref());
                 let live = self.deps.live_sessions.fetch_add(1, Ordering::Relaxed) + 1;
                 info!(
                     app_thread_id = %self.app_thread_id,
@@ -412,13 +485,57 @@ impl Session {
         }
     }
 
+    /// Writes `offer` to the open query; the active turn cannot end before
+    /// Claude completed or cancelled it.
+    pub(super) fn offer(&mut self, query: &dyn Query, offer: Offer) {
+        self.unsettled.push(Unsettled {
+            uuid: offer.uuid.clone(),
+            acknowledged: false,
+        });
+        query.offer(offer);
+    }
+
+    /// Reports a `claude` that cannot say when its turn ends.
+    fn check_protocol(&self, query: &dyn Query) {
+        let initialized = query.initialized();
+        let internal = self.internal.clone();
+        let generation = self.generation;
+        tokio::spawn(async move {
+            if let Err(ProcessError::Unsupported { version }) = initialized.await {
+                let _ = internal.send(Internal::Unsupported {
+                    generation,
+                    version,
+                });
+            }
+        });
+    }
+
+    /// Closes the query of a `claude` without session state and fails the
+    /// turn that opened it.
+    async fn on_unsupported(&mut self, version: &str) {
+        error!(
+            app_thread_id = %self.app_thread_id,
+            claude_code_version = %version,
+            "claude does not report its session state; the session is closed"
+        );
+        self.close_query().await;
+        self.finish_turn(TurnOutcome::Failed(TurnError {
+            kind: TurnErrorKind::Provider,
+            message: format!(
+                "Claude Code {version} cannot report when a turn ends. Update Claude Code (`claude update`) and try again."
+            ),
+        }))
+        .await;
+    }
+
     /// Closes the current query and ignores its remaining output.
     pub(super) async fn close_query(&mut self) {
         let Some(query) = self.query.take() else {
             return;
         };
         self.generation += 1;
-        self.task_reports.forget();
+        // A closed `claude` keeps running while its background tasks do.
+        self.task_reports.forget(None);
         query.handle.close();
         self.released().await;
         info!(
@@ -428,14 +545,17 @@ impl Session {
         );
     }
 
+    /// Reports the release before the process stops counting as live, so a
+    /// running-sessions read in between does not take the exiting process
+    /// for another one.
     async fn released(&self) {
-        self.deps.live_sessions.fetch_sub(1, Ordering::Relaxed);
-        self.publish_status();
         self.output(SessionOutput::Released {
             app_thread_id: self.app_thread_id.clone(),
             session_id: self.state.current_session_id().to_owned(),
         })
         .await;
+        self.deps.live_sessions.fetch_sub(1, Ordering::Relaxed);
+        self.publish_status();
     }
 
     async fn on_query_ended(&mut self, error: Option<String>) {
@@ -443,7 +563,9 @@ impl Session {
             return;
         }
         self.generation += 1;
-        self.task_reports.forget();
+        // The process exited: the tasks it ran stopped with it.
+        let ended = self.task_reports.forget(Some(self.now_ms()));
+        self.republish_launches(ended).await;
         self.released().await;
         match &error {
             None => info!(app_thread_id = %self.app_thread_id, "claude session ended"),

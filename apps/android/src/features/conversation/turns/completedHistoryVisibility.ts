@@ -21,9 +21,7 @@ export function hasCompletedTurnHistory(turn: Turn, historyIndexes: readonly num
 function hasHistoryContent(turn: Turn, historyIndexes: readonly number[]): boolean {
   const metadata = projectedTurnMetadata(turn);
   return (
-    historyIndexes.some((index) => hasHistoryItem(turn, index)) ||
-    metadata?.plan !== undefined ||
-    metadata?.diff !== undefined
+    historyIndexes.some((index) => hasHistoryItem(turn, index)) || metadata?.plan !== undefined
   );
 }
 
@@ -35,8 +33,6 @@ function hasHistoryItem(turn: Turn, index: number): boolean {
 }
 
 function summaryHasVisibleHistory(summary: Pick<ActivitySummary, "count" | "kinds">): boolean {
-  return (
-    summary.count > 0 &&
-    (summary.kinds.length === 0 || summary.kinds.some((kind) => kind !== "reasoning"))
-  );
+  const visibleKinds = summary.kinds.filter((kind) => kind !== "reasoning" && kind !== "turnDiff");
+  return summary.count > 0 && (summary.kinds.length === 0 || visibleKinds.length > 0);
 }

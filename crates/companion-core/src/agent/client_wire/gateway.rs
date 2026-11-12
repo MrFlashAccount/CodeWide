@@ -187,24 +187,24 @@ impl ClientWireGateway {
         WireProvider {
             descriptor: provider.descriptor(),
             capabilities: provider.capabilities(),
-            primary_id: self.registry.primary_id().clone(),
+            lead_id: self.registry.lead_id().clone(),
             multi_provider: self.registry.is_multi_provider(),
         }
     }
 
+    /// The lead provider (`ProviderRegistry::lead`) with its projection context.
     #[must_use]
-    pub fn primary(&self) -> (Arc<dyn AgentProvider>, WireProvider) {
-        let provider = self.registry.primary().clone();
+    pub fn lead(&self) -> (Arc<dyn AgentProvider>, WireProvider) {
+        let provider = self.registry.lead().clone();
         let wire = self.wire(&provider);
         (provider, wire)
     }
 
-    /// Every enabled provider except the primary, with its projection context.
+    /// Every enabled provider except the lead, with its projection context.
     #[must_use]
-    pub fn non_primary(&self) -> Vec<(Arc<dyn AgentProvider>, WireProvider)> {
+    pub fn others(&self) -> Vec<(Arc<dyn AgentProvider>, WireProvider)> {
         self.registry
-            .enabled()
-            .skip(1)
+            .others()
             .map(|provider| (provider.clone(), self.wire(provider)))
             .collect()
     }
@@ -215,6 +215,33 @@ impl ClientWireGateway {
         self.registry
             .owner(capability)
             .map(|provider| (provider.clone(), self.wire(provider)))
+    }
+
+    /// The owner of a provider-qualified host call. Unlike singleton host
+    /// capabilities, reset inventories can be declared by several providers.
+    ///
+    /// # Errors
+    /// Returns invalid params, disabled provider, or unsupported capability.
+    pub fn provider_owner(
+        &self,
+        capability: Capability,
+        params: &Value,
+    ) -> Result<(Arc<dyn AgentProvider>, WireProvider), RpcFailure> {
+        let id = params
+            .get("providerId")
+            .and_then(Value::as_str)
+            .and_then(ProviderId::parse)
+            .ok_or_else(|| RpcFailure::new(ERROR_INVALID_PARAMS, "providerId is invalid"))?;
+        let provider = self
+            .registry
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| RpcFailure::provider_disabled(&id))?;
+        if !provider.capabilities().supports(capability) {
+            return Err(RpcFailure::capability_unsupported(capability, &id));
+        }
+        let wire = self.wire(&provider);
+        Ok((provider, wire))
     }
 
     /// Resolves a thread-scoped call and checks `requires`.
@@ -322,18 +349,19 @@ impl ClientWireGateway {
     /// Decodes a client-wire runtime request id.
     #[must_use]
     pub fn decode_request_id(&self, id: &Value) -> Option<RuntimeRequestId> {
-        request_ids::decode(id, self.registry.primary_id())
+        request_ids::decode(id, self.registry.lead_id())
     }
 
     /// Chooses the provider of `thread/start`: the requested
-    /// `codewideAgentProvider`, else the primary provider (older clients).
+    /// `codewideAgentProvider`, else the lead provider: the native-wire
+    /// default of a request that names no provider (older clients).
     ///
     /// # Errors
     /// Returns `-32070` for a disabled provider and `-32602` for an invalid one.
     pub fn thread_start_route(&self, params: &Value) -> Result<ThreadStartRoute, RpcFailure> {
         let requested = params.get(PROVIDER_FIELD);
         let provider = match requested {
-            None | Some(Value::Null) => self.registry.primary().clone(),
+            None | Some(Value::Null) => self.registry.lead().clone(),
             Some(Value::String(id)) => {
                 let id = ProviderId::parse(id).ok_or_else(|| {
                     RpcFailure::new(ERROR_INVALID_PARAMS, "codewideAgentProvider is invalid")
@@ -460,18 +488,40 @@ impl ClientWireGateway {
             .capabilities()
             .supports(Capability::ThreadsHostMintedIds)
             .then(mint_app_thread_id);
+        self.create_thread_with_id(provider, wire, app_thread_id, cwd, settings, None)
+            .await
+    }
+
+    /// Creates a thread with a previously journaled host id, or lets the
+    /// provider mint one when `app_thread_id` is absent. Reusing a host id is
+    /// the restart-safe orchestration path for providers that declare
+    /// `threads.hostMintedIds`.
+    ///
+    /// # Errors
+    /// Returns the provider or binding failure.
+    pub async fn create_thread_with_id(
+        &self,
+        provider: &Arc<dyn AgentProvider>,
+        wire: &WireProvider,
+        app_thread_id: Option<AppThreadId>,
+        cwd: String,
+        settings: ThreadSettings,
+        execution_policy: Option<&crate::agent::provider::ExecutionPolicy>,
+    ) -> Result<crate::agent::model::AgentThread, RpcFailure> {
         if let Some(id) = &app_thread_id {
             self.bind_created(&wire.descriptor.id, id.as_str()).await?;
         }
-        let thread = provider
-            .thread_create(ThreadCreateParams {
-                app_thread_id,
-                cwd,
-                settings,
-                client_tools: None,
-            })
-            .await
-            .map_err(|error| RpcFailure::from_provider(&error))?;
+        let params = ThreadCreateParams {
+            app_thread_id,
+            cwd,
+            settings,
+            client_tools: None,
+        };
+        let created = match execution_policy {
+            Some(policy) => provider.thread_create_with_policy(params, policy).await,
+            None => provider.thread_create(params).await,
+        };
+        let thread = created.map_err(|error| RpcFailure::from_provider(&error))?;
         self.bind_created(&wire.descriptor.id, thread.app_thread_id.as_str())
             .await?;
         Ok(thread)
@@ -639,7 +689,6 @@ mod tests {
                 CapabilitySet::none(StartWhileActiveMode::NativeJoin),
             )
             .into_arc(),
-            Vec::new(),
         ));
         let gateway = ClientWireGateway::new(registry, bindings.clone());
         let mut page = json!({"data": [{"id": "app"}, {"id": "native-b"}, {"id": "other"}]});

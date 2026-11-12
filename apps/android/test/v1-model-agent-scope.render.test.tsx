@@ -22,6 +22,7 @@ jest.mock("@expo/ui/jetpack-compose", () => {
 
 // WHY: The modifier entrypoint imports native Expo internals unavailable in Jest.
 jest.mock("@expo/ui/jetpack-compose/modifiers", () => ({
+  fillMaxSize: () => ({ fillMaxSize: true }),
   width: (value: number) => ({ width: value }),
 }));
 

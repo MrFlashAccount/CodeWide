@@ -1,6 +1,7 @@
 //! `thread/list` across providers.
 //!
-//! The primary provider leads pagination. Each page covers a window of the
+//! The lead provider (the one declaring `codex.native`, whose raw surface
+//! answers the request and owns its opaque cursor) leads pagination. Each page covers a window of the
 //! sort key derived from the raw lead page (`desc`: `[b_k, b_(k-1))`, `asc`
 //! mirrored), clamped so windows never overlap; non-lead rows inside the
 //! window are merged in sort order. With one provider the lead cursor and

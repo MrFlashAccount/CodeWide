@@ -109,7 +109,7 @@ fn connect(frames: Vec<Value>) -> Result<Connected, Box<dyn std::error::Error>> 
     let mut projector = EventProjector::new(WireProvider {
         descriptor: provider.descriptor(),
         capabilities: provider.capabilities(),
-        primary_id: provider.descriptor().id,
+        lead_id: provider.descriptor().id,
         multi_provider: false,
     });
     let (projected_tx, projected) = mpsc::unbounded_channel();

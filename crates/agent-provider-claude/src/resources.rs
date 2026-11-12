@@ -1,5 +1,6 @@
 //! Thread resources of Claude threads: the shared `agent-resources` reads
-//! over projections built from the indexed neutral turns.
+//! over projections built from the resources each indexed turn's digest
+//! keeps (no turn is read for them).
 //!
 //! The VCS overlay needs only the thread's working directory. A thread whose
 //! sessions are not indexed yet (a new thread before its first index read,
@@ -18,7 +19,7 @@ use agent_resources::{ProjectionSource, ResourceError, ResourceProjection, Threa
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::store::ClaudeStore;
+use crate::index::history::IndexedHistory;
 
 /// A thread the index does not know and whose working directory was never
 /// reported live.
@@ -80,15 +81,15 @@ impl LiveThreadCwds {
 
 /// Projections of indexed Claude threads.
 pub struct IndexedProjections {
-    store: Arc<ClaudeStore>,
+    history: Arc<IndexedHistory>,
     live_cwds: LiveThreadCwds,
 }
 
 impl IndexedProjections {
     #[must_use]
-    pub fn new(store: Arc<ClaudeStore>) -> Self {
+    pub fn new(history: Arc<IndexedHistory>) -> Self {
         Self {
-            store,
+            history,
             live_cwds: LiveThreadCwds::default(),
         }
     }
@@ -99,33 +100,23 @@ impl ProjectionSource for IndexedProjections {
     type Projection = ResourceProjection;
 
     async fn refresh(&self, thread_id: &str) -> Result<ResourceProjection, ResourceError> {
-        let store = self.store.clone();
+        let history = self.history.clone();
         let live_cwd = self.live_cwds.get(thread_id);
         let thread_id = thread_id.to_owned();
         tokio::task::spawn_blocking(move || {
             let not_indexed = || ResourceError::Source(Box::new(NotIndexed(thread_id.clone())));
             let thread = AppThreadId::parse(&thread_id).ok_or_else(not_indexed)?;
-            let sessions = store
-                .thread_sessions(&thread)
-                .map_err(|error| ResourceError::Source(Box::new(error)))?;
-            let Some(turns) = store
-                .thread_turns(&thread)
+            match history
+                .resources(&thread, live_cwd.clone())
                 .map_err(|error| ResourceError::Source(Box::new(error)))?
-            else {
+            {
+                Some(projection) => Ok(projection),
                 // Not indexed yet: no recorded turns, but the live overlay
                 // and the workspace VCS still apply to its directory.
-                return live_cwd
+                None => live_cwd
                     .map(|cwd| ResourceProjection::from_turns(Some(cwd), &[]))
-                    .ok_or_else(not_indexed);
-            };
-            let cwd = sessions
-                .iter()
-                .rev()
-                .find_map(|stored| stored.session.cwd.clone())
-                .map(PathBuf::from)
-                .filter(|cwd| cwd.is_absolute())
-                .or(live_cwd);
-            Ok(ResourceProjection::from_turns(cwd, &turns))
+                    .ok_or_else(not_indexed),
+            }
         })
         .await
         .map_err(|_| ResourceError::Join)?
@@ -180,7 +171,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::test_support::{MemoryThreadIndex, RecordingPreviewFiles, session_read};
+    use crate::test_support::{RecordingPreviewFiles, StoreFixture, session_id};
 
     const REPOSITORY: &str = "/repo";
     const CHANGED: &str = "/repo/src/lib.rs";
@@ -281,22 +272,14 @@ mod tests {
         }
     }
 
-    fn resources_over(store: Arc<ClaudeStore>) -> ClaudeResources {
+    fn resources_over(fixture: &StoreFixture) -> ClaudeResources {
         ClaudeResources::new(
             ThreadResources::new(
-                Arc::new(IndexedProjections::new(store)),
+                Arc::new(IndexedProjections::new(fixture.history.clone())),
                 Arc::new(RecordingPreviewFiles),
             )
             .with_vcs(Arc::new(RepositoryVcs)),
         )
-    }
-
-    fn open_store(directory: &Path) -> Result<Arc<ClaudeStore>, Box<dyn std::error::Error>> {
-        let database = companion_host::database::open(directory.join("index.redb"), "test")?;
-        Ok(Arc::new(ClaudeStore::attach(
-            database,
-            Arc::new(MemoryThreadIndex::default()),
-        )?))
     }
 
     /// The repository's changes and the scopes the client offers for them.
@@ -329,21 +312,20 @@ mod tests {
     #[tokio::test]
     async fn indexed_thread_in_a_repository_offers_its_vcs_changes()
     -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let store = open_store(directory.path())?;
-        let mut read = session_read("session", "thread", 10, &["change the code"]);
-        read.session.cwd = Some(REPOSITORY.into());
-        store.replace_session(&read)?;
-        let resources = resources_over(store);
+        let fixture = StoreFixture::new()?;
+        let session = session_id(1);
+        fixture.exchange(&session, REPOSITORY, 1, &["change the code"])?;
+        fixture.index(&session)?;
+        let resources = resources_over(&fixture);
 
-        assert_repository_changes(&resources, "thread").await
+        assert_repository_changes(&resources, &session).await
     }
 
     #[tokio::test]
     async fn unindexed_thread_offers_vcs_changes_of_its_live_working_directory()
     -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let resources = resources_over(open_store(directory.path())?);
+        let fixture = StoreFixture::new()?;
+        let resources = resources_over(&fixture);
         let not_indexed = Some("Claude thread is not indexed: new-thread");
         let params = json!({"threadId": "new-thread"});
         let read_changes = || resources.read("companion/threadChanges/read", &params);
@@ -378,24 +360,19 @@ mod tests {
 
     #[tokio::test]
     async fn indexed_turns_serve_thread_resources() -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let database = companion_host::database::open(directory.path().join("index.redb"), "test")?;
-        let store = Arc::new(ClaudeStore::attach(
-            database,
-            Arc::new(MemoryThreadIndex::default()),
-        )?);
-        let mut read = session_read("session", "thread", 10, &["see [notes](notes.md)"]);
-        read.session.cwd = Some("/work".into());
-        store.replace_session(&read)?;
+        let fixture = StoreFixture::new()?;
+        let session = session_id(1);
+        fixture.exchange(&session, "/work", 1, &["see [notes](notes.md)"])?;
+        fixture.index(&session)?;
         let resources = ClaudeResources::new(ThreadResources::new(
-            Arc::new(IndexedProjections::new(store)),
+            Arc::new(IndexedProjections::new(fixture.history.clone())),
             Arc::new(RecordingPreviewFiles),
         ));
         assert!(resources.handles("companion/threadResources/read"));
         let attachments = resources
             .read(
                 "companion/threadAttachments/read",
-                &json!({"threadId": "thread"}),
+                &json!({"threadId": session}),
             )
             .await?;
         assert_eq!(attachments["attachments"][0]["path"], "/work/notes.md");

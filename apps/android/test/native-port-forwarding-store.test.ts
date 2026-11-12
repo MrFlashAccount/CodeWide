@@ -151,6 +151,24 @@ describe("native port forwarding store", () => {
     expect(native.start).not.toHaveBeenCalled();
   });
 
+  it("keeps a failed pushed inventory as an error instead of an endless scan", async () => {
+    // Regression: the Companion resends only on change, so an inventory the
+    // phone failed to apply left the sheet "Looking for open ports" forever.
+    const connectionId = "failed-inventory-server";
+    native.list.mockResolvedValue([]);
+    native.discover.mockResolvedValue({ ports: [], scannedAt: 0 });
+    const scope = nativePortForwardingStore.scope(connectionId);
+
+    scope.inventoryFailed();
+    await scope.refreshDiscovery();
+    expect(scope.getSnapshot().discoveryStatus).toBe("error");
+
+    native.discover.mockResolvedValue({ ports: [discoveredPort(false)], scannedAt: Date.now() });
+    await scope.refreshDiscovery();
+    expect(scope.getSnapshot().discoveryStatus).toBe("ready");
+    expect(scope.getSnapshot().discoveryError).toBeNull();
+  });
+
   it("publishes profile loading until the initial native list settles", async () => {
     const connectionId = "loading-chip-server";
     const list = Promise.withResolvers<ReturnType<typeof profile>[]>();

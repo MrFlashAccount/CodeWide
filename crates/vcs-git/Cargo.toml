@@ -1,0 +1,20 @@
+[package]
+name = "vcs-git"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Git implementation of the CodeWide VCS provider contract"
+
+[dependencies]
+companion-host = { path = "../companion-host" }
+blake3 = "1.8.2"
+serde_json = "1.0.143"
+tokio = { version = "1.47.1", features = ["fs", "io-util", "process"] }
+
+[dev-dependencies]
+tempfile = "3.21.0"
+tokio = { version = "1.47.1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread"] }
+
+[lints]
+workspace = true

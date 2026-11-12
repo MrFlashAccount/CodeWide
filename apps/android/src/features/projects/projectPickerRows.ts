@@ -21,6 +21,8 @@ type ProjectListItem =
       choice: ProjectPickerChoice;
       id: string;
       kind: "project";
+      /** Why a suggested row is offered; `null` for catalog rows. */
+      note: string | null;
       pinned: boolean;
       position: AppListRowProps["position"];
     }
@@ -41,23 +43,40 @@ type ProjectListItem =
       serverName: string;
     };
 
-/** Project sections retain query matching, pinned classification and expansion state across qualified servers. */
-export function useProjectPickerRows(
-  choices: readonly ProjectPickerChoice[],
-  normalizedQuery: string,
-  expandedSections: ReadonlySet<ProjectSectionId>,
-) {
+/** A suggested choice and the reason its row shows. */
+export type SuggestedProjectChoice = {
+  readonly choice: ProjectPickerChoice;
+  readonly note: string;
+};
+
+function choiceKey({ project, server }: ProjectPickerChoice): string {
+  return JSON.stringify([server.id, normalizeDirectoryPath(project.path)]);
+}
+
+/**
+ * Project sections retain query matching, pinned classification and expansion state across
+ * qualified servers. Suggestions lead in their own section and are not repeated below it.
+ */
+export function useProjectPickerRows({
+  choices: catalogChoices,
+  expandedSections,
+  normalizedQuery,
+  suggested,
+}: {
+  readonly choices: readonly ProjectPickerChoice[];
+  readonly expandedSections: ReadonlySet<ProjectSectionId>;
+  readonly normalizedQuery: string;
+  readonly suggested: readonly SuggestedProjectChoice[];
+}) {
+  const suggestedKeys = new Set(suggested.map(({ choice }) => choiceKey(choice)));
+  const choices = catalogChoices.filter((choice) => !suggestedKeys.has(choiceKey(choice)));
   const pinned = choices.filter((choice) => choice.project.pinned);
-  const pinnedPaths = new Set(
-    pinned.map(({ project, server }) =>
-      JSON.stringify([server.id, normalizeDirectoryPath(project.path)]),
-    ),
-  );
+  const pinnedPaths = new Set(pinned.map(choiceKey));
   const seen = new Set<string>();
   const unpinnedProjects = choices
-    .filter(({ project, server }) => {
-      const key = JSON.stringify([server.id, normalizeDirectoryPath(project.path)]);
-      if (project.pinned || pinnedPaths.has(key) || seen.has(key)) {
+    .filter((choice) => {
+      const key = choiceKey(choice);
+      if (choice.project.pinned || pinnedPaths.has(key) || seen.has(key)) {
         return false;
       }
       seen.add(key);
@@ -65,6 +84,7 @@ export function useProjectPickerRows(
     })
     .sort((left, right) => right.project.lastUsedAt - left.project.lastUsedAt);
   const projectRows: ProjectListItem[] = [];
+  const notes = new Map(suggested.map(({ choice, note }) => [choiceKey(choice), note]));
   const append = (
     title: string,
     entries: readonly ProjectPickerChoice[],
@@ -87,13 +107,18 @@ export function useProjectPickerRows(
         choice,
         id: JSON.stringify([choice.server.id, choice.project.path]),
         kind: "project",
+        note: notes.get(choiceKey(choice)) ?? null,
         pinned: choice.project.pinned,
         position: listRowPosition(index, entries.length),
       });
     }
   };
   if (normalizedQuery !== "") {
-    const matches = [...pinned, ...unpinnedProjects].filter(({ project, server }) =>
+    const matches = [
+      ...suggested.map(({ choice }) => choice),
+      ...pinned,
+      ...unpinnedProjects,
+    ].filter(({ project, server }) =>
       `${project.name}\n${project.path}\n${server.name}`
         .toLocaleLowerCase()
         .includes(normalizedQuery),
@@ -109,6 +134,13 @@ export function useProjectPickerRows(
       });
     }
   } else {
+    if (suggested.length > 0) {
+      append(
+        "Suggested",
+        suggested.map(({ choice }) => choice),
+        null,
+      );
+    }
     if (pinned.length > 0) {
       append("Pinned", pinned, null);
     }

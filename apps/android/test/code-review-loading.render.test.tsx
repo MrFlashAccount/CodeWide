@@ -18,16 +18,7 @@ it("shows loading before the editor is ready and until the selected document arr
     comments: [],
     selectedReference: null,
     revealReference: null,
-    commentDraft: "",
-    voicePhase: "idle" as const,
-    voicePermissionGranted: false,
-    voiceRetryAvailable: false,
-    voiceError: null,
     onLinePress: jest.fn(),
-    onCommentDraftChange: jest.fn(),
-    onCommentSelectionChange: jest.fn(),
-    onCommentSubmit: jest.fn(),
-    onVoicePress: jest.fn(),
     onFileSelect: jest.fn(),
   };
   const view = render(<CodeReviewEditor {...props} />);

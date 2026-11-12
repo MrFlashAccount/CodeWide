@@ -3,6 +3,9 @@ import { Pressable } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { styles } from "./NewThreadFloatingButton.styles";
 
+export { NEW_THREAD_FAB_SIZE } from "./NewThreadFloatingButton.styles";
+
+/** Round primary action; the thread list floating stack owns its placement and visibility. */
 export function NewThreadFloatingButton({
   onPress,
   projectName,
@@ -16,6 +19,7 @@ export function NewThreadFloatingButton({
       accessibilityRole="button"
       onPress={onPress}
       style={({ pressed }) => [styles.newThreadFab, pressed && styles.pressed]}
+      testID="new-thread-fab"
     >
       <Ionicons color={colors.onPrimary} name="create-outline" size={iconSize.navigation} />
     </Pressable>

@@ -94,7 +94,7 @@ async fn replay_with(
     let mut projector = EventProjector::new(WireProvider {
         descriptor: provider.descriptor(),
         capabilities: provider.capabilities(),
-        primary_id: provider.descriptor().id,
+        lead_id: provider.descriptor().id,
         multi_provider,
     });
     let mut projected = Vec::new();

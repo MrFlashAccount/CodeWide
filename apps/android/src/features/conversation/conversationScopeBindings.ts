@@ -12,12 +12,13 @@ import type {
 import type { ThreadChangeScope, ThreadGoalInput } from "../../data/workspace-resource-database";
 import type { NewThreadDraft } from "../../services/threads/newThreadService";
 import type { useGoalCommands } from "../goal/goalCommands";
-import type { createNewChatSubmission } from "../projects/newChatSubmission";
 import type { useQueueCommands } from "../queue/queueCommands";
 import type { ConversationWorkspaceFeatures } from "./conversationWorkspaceFeatures";
+import type { DraftSubmission } from "./ConversationWorkspace.types";
 
 type Scope =
-  | { draft: NewThreadDraft; kind: "draft"; onSend: ReturnType<typeof createNewChatSubmission> }
+  // A hosted draft without its required project has no send yet.
+  | { draft: NewThreadDraft; kind: "draft"; onSend: DraftSubmission | undefined }
   | { connectionId: string; kind: "thread"; threadId: string }
   | { kind: "empty" };
 /** Enables only the feature capabilities belonging to the captured selection scope. */

@@ -93,9 +93,10 @@ Pages: `thread/list` parameters are unchanged. Every response row carries
 
 The stream carries rows whose `source` is in `rowSourceKinds` (`cli`,
 `vscode`), child rows with a non-null `parentThreadId`, and every row of a
-non-primary provider (`codewideAgent.primary == false`, whose `source` is
+provider without the native Codex surface
+(`codewideAgent.capabilities["codex.native"] == false`, whose `source` is
 `appServer`), matching the merged `thread/list` membership. The
-`rowSourceKinds` literal stays `["cli", "vscode"]`; the non-primary rule is not
+`rowSourceKinds` literal stays `["cli", "vscode"]`; the provider rule is not
 a source kind. A row hidden by the catalog filter (`codewideCatalogExcluded`,
 the supervisor source) is sent as a tombstone.
 
@@ -128,8 +129,16 @@ Row lifecycle in the hub:
 - `Unknown → Seeded`: a page row, or `thread/started` carrying a `Thread`.
 - `Unknown → Materializing`: a journal event for an unknown thread.
 - `Materializing → Seeded`: one `thread/read` without turns plus decoration.
-- `Materializing → Unknown`: the read failed; a telemetry counter grows, no row
-  is pushed, and the row appears on the next page re-read.
+- `Materializing → Retrying`: the read failed; a telemetry counter grows, the
+  failure is logged with the thread id, and no row is pushed. A failure never
+  parks the thread: its next journal event reads it again, and up to five timed
+  retries follow a doubling delay (2 s up to 60 s).
+- `Materializing → Ignored`: the read confirmed the thread has no list row (no
+  owning provider, missing, hidden by the catalog, or a continuation); logged
+  with the thread id and that reason. Only a lifecycle event of the thread
+  (`turn/started`, `turn/completed`, a status change), a page row or
+  `thread/started` reads it again, so an ignored but active thread cannot stay
+  frozen.
 - `Seeded → Seeded`: a journal event changed a field; cursor = event cursor.
 - `Seeded → Removed`: `thread/deleted` or exclusion from the catalog; the
   tombstone is sent to subscribers.
@@ -342,7 +351,7 @@ Rollback triggers after release:
   of its deltas produce at most 41 frames while a status change goes out at once;
   `visible:false` produces no frames until `visible:true`; a hub update at
   `H+3` during a page read yields the hub's fields with cursor `H+3`; a
-  non-primary provider row is pushed live;
+  neutral provider row is pushed live;
   `hello` without `listStream` closes with `list_stream_required`.
   Gates: `pnpm test:companion`,
   `cargo clippy --workspace --all-targets -- -D warnings`,

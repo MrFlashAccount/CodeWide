@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { View, type PointerEvent } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
-import { styles } from "./ThreadRow.styles";
+import { catalogRowFrameStyles } from "../../ui/CatalogRow.styles";
 import {
   THREAD_ROW_LONG_PRESS_DURATION,
   THREAD_ROW_TAP_MAX_DISTANCE,
@@ -146,10 +146,10 @@ export function ThreadRowLinkTrigger({
         onPointerUp: pointerUp,
       }}
       style={[
-        styles.threadRow,
-        swipeEnabled && styles.threadRowSwipeChild,
-        selected && styles.threadRowSelected,
-        pressed && styles.pressed,
+        catalogRowFrameStyles.frame,
+        swipeEnabled && catalogRowFrameStyles.swipeChild,
+        selected && catalogRowFrameStyles.selected,
+        pressed && catalogRowFrameStyles.pressed,
       ]}
     />
   );

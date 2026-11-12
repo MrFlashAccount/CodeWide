@@ -8,9 +8,13 @@ import { ModelPickerOptions } from "../src/ui/ModelPickerOptions";
 
 function approval(params: Record<string, unknown>): PendingServerRequest {
   return {
-    connectionId: "server", requestKey: "request", requestId: 1,
-    method: "item/commandExecution/requestApproval", params,
-    state: "pending", createdAt: 0,
+    connectionId: "server",
+    requestKey: "request",
+    requestId: 1,
+    method: "item/commandExecution/requestApproval",
+    params,
+    state: "pending",
+    createdAt: 0,
   };
 }
 
@@ -18,7 +22,10 @@ it("titles a non-command tool approval with the server-provided title", () => {
   const screen = render(
     <ApprovalPrompt
       onRespond={jest.fn()}
-      request={approval({ codewideApprovalTitle: "Fetch https://example.com", reason: "Needs the page" })}
+      request={approval({
+        codewideApprovalTitle: "Fetch https://example.com",
+        reason: "Needs the page",
+      })}
       requestCount={1}
     />,
   );
@@ -29,7 +36,11 @@ it("titles a non-command tool approval with the server-provided title", () => {
 
 it("keeps the method-derived title without a server title", () => {
   const screen = render(
-    <ApprovalPrompt onRespond={jest.fn()} request={approval({ command: "make" })} requestCount={1} />,
+    <ApprovalPrompt
+      onRespond={jest.fn()}
+      request={approval({ command: "make" })}
+      requestCount={1}
+    />,
   );
   expect(screen.getByText("Command approval")).toBeOnTheScreen();
 });
@@ -37,7 +48,13 @@ it("keeps the method-derived title without a server title", () => {
 it("disables the skill entry when the thread's agent does not accept skills", () => {
   const select = jest.fn();
   const screen = render(
-    <ComposerAccessoryTray fileEnabled goalEnabled={false} onSelect={select} skillsEnabled={false} terminalEnabled />,
+    <ComposerAccessoryTray
+      fileEnabled
+      goalEnabled={false}
+      onSelect={select}
+      skillsEnabled={false}
+      terminalEnabled
+    />,
   );
   fireEvent.press(screen.getByLabelText("Skill"));
   fireEvent.press(screen.getByLabelText("Goal"));
@@ -48,9 +65,21 @@ it("disables the skill entry when the thread's agent does not accept skills", ()
 });
 
 it("shows every declared provider and reserves the same slot for a legacy row", () => {
-  const thread = { id: "t", pinned: false, preview: "Preview", serverId: "server", title: "Title", unread: 0, timestamp: 1 };
+  const thread = {
+    id: "t",
+    pinned: false,
+    preview: "Preview",
+    serverId: "server",
+    title: "Title",
+    unread: 0,
+    timestamp: 1,
+  };
   const badged = render(
-    <ThreadRowContent selected={false} server={undefined} thread={{ ...thread, agentBadge: "Claude", agentProvider: "claude" }} />,
+    <ThreadRowContent
+      selected={false}
+      server={undefined}
+      thread={{ ...thread, agentBadge: "Claude", agentProvider: "claude" }}
+    />,
   );
   const badge = badged.getByTestId("thread-agent-badge");
   // Icon only: the provider name is the accessibility label, never visible text.
@@ -72,7 +101,12 @@ it("shows every declared provider and reserves the same slot for a legacy row", 
 });
 
 it("marks provider-aware model rows with their provider and keeps a legacy catalog plain", () => {
-  const model = { defaultEffort: "high", efforts: ["high"], isDefault: false, supportsPersonality: false };
+  const model = {
+    defaultEffort: "high",
+    efforts: ["high"],
+    isDefault: false,
+    supportsPersonality: false,
+  };
   const claude = parseAgentProviderId("claude");
   const codex = parseAgentProviderId("codex");
   if (claude === null || codex === null) throw new Error("invalid provider fixture");
@@ -81,7 +115,12 @@ it("marks provider-aware model rows with their provider and keeps a legacy catal
       models={[
         { ...model, id: "gpt-5.5", label: "GPT-5.5", provider: codex },
         { ...model, id: "claude-opus", label: "Claude · Opus", provider: claude },
-        { ...model, id: "unknown-model", label: "Other · Model", provider: parseAgentProviderId("gemini") },
+        {
+          ...model,
+          id: "unknown-model",
+          label: "Other · Model",
+          provider: parseAgentProviderId("gemini"),
+        },
       ]}
       onSelect={jest.fn()}
       selectedModel="gpt-5.5"

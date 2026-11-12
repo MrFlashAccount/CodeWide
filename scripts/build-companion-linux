@@ -102,12 +102,14 @@ docker run --rm \
   "$build_image" \
   sh -eu -c '
     apk add --no-cache build-base cmake perl pkgconfig
-    cargo build --locked --release -p codewide-companion --bins --target x86_64-unknown-linux-musl
+    cargo build --locked --release -p codewide-companion -p forge-github --bins --target x86_64-unknown-linux-musl
     install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-companion /output/codewide-companion-x86_64-unknown-linux-musl/bin/codewide-companion
     install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-vcs-git /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-vcs-git
+    install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-forge-github /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-forge-github
     install -m 0755 /build-target/x86_64-unknown-linux-musl/release/codewide-companion-update-guardian /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-companion-update-guardian
     strip /output/codewide-companion-x86_64-unknown-linux-musl/bin/codewide-companion
     strip /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-vcs-git
+    strip /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-forge-github
     strip /output/codewide-companion-x86_64-unknown-linux-musl/libexec/codewide-companion-update-guardian
     # The GitHub cache archiver runs as the host user, not container root.
     if [ -n "$CODEWIDE_CACHE_OWNER" ]; then
@@ -130,7 +132,7 @@ printf '{"schemaVersion":1,"version":"%s","build":"%s","sourceRevision":"%s"}\n'
   >"$bundle_root/bootstrap/generation.json"
 chmod 0644 "$bundle_root/bootstrap/generation.json"
 
-for binary in "$bundle_root/bin/codewide-companion" "$bundle_root/libexec/codewide-vcs-git" "$bundle_root/libexec/codewide-companion-update-guardian"; do
+for binary in "$bundle_root/bin/codewide-companion" "$bundle_root/libexec/codewide-vcs-git" "$bundle_root/libexec/codewide-forge-github" "$bundle_root/libexec/codewide-companion-update-guardian"; do
   file "$binary" | grep -E 'statically linked|static-pie linked' >/dev/null || {
     printf 'Companion release binary is not statically linked: %s\n' "$binary" >&2
     exit 1

@@ -28,6 +28,8 @@ export type ComposerDeliveryCapabilities = {
   queuedComposerEditBusy: boolean;
   saveQueuedComposerEdit: () => void;
   send: (textOverride?: string, preference?: ComposerSendPreference) => Promise<void>;
+  /** Whether the scope can send at all; a hosted draft cannot until its project is chosen. */
+  sendAvailable: boolean;
   threadLifecycleActive: boolean;
   uploadsBlockSend: boolean;
   voiceError: string | null;

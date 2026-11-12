@@ -9,3 +9,5 @@ M4 ports/browser: V1 native/web/compatibility typing, ESLint and dependency gate
 M7 capability closure: `workspaceCapabilities.ts` exposes only this owner's qualified operations. Private `workspaceAdapter.ts` binds existing lower model/session authority through exact workspace composition; it does not own shared in-flight maps, runtime construction or global cleanup. The broad RemoteWorkspace facade is deleted.
 
 Browser rendering and developer tools belong to `features/browser`; ports supplies destinations through the injected capability only.
+
+Native profiles follow the Companion's pushed inventory. Applying an inventory never fails as a whole: each port settles on its own, and default-forwarded ports beyond the phone's profile capacity (64, one listener socket and accept thread each) get no automatic profile and stay in Available to enable by hand. The composer chip counts exactly the sheet's active forwards (neither excluded nor unavailable). An inventory the phone failed to apply stays a scan error until a newer one applies; the Companion resends only on change, so it must never read as a pending scan.

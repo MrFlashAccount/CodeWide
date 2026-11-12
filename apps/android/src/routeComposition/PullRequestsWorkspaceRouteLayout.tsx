@@ -1,0 +1,127 @@
+import { Stack } from "expo-router";
+import { createContext, useContext, type ComponentProps, type ReactElement } from "react";
+
+import { parsePullRequestKeyParam, type PullRequestKey } from "../data/forgeContract";
+import { SelectedPullRequestContext } from "../features/pullRequests/list/selectedPullRequest";
+import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
+import { useWorkspaceRouteResources } from "../services/workspace/workspaceRouteResources";
+import { PullRequestsPreviewRoute } from "./PullRequestsCatalogRoute";
+import { WorkspaceCatalogMaster } from "./WorkspaceCatalogMaster";
+import { WorkspacePaneFrame } from "./WorkspacePaneFrame";
+import {
+  v1CatalogRootScreenOptions,
+  v1DesktopRouteScreenOptions,
+  v1MobileRouteScreenOptions,
+  v1RouteScreenOptions,
+} from "./WorkspaceShell.styles";
+import type { WorkspaceFramePresentation } from "./workspacePanes";
+
+type PaneLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["layout"]>>[0];
+type ScreenLayoutProps = Parameters<NonNullable<ComponentProps<typeof Stack>["screenLayout"]>>[0];
+const PullRequestsDestinationPlacement = createContext(false);
+
+/** Owns the retained Pull requests Stack plus its catalog/detail pane composition. */
+export function PullRequestsWorkspaceRouteLayout(): React.JSX.Element {
+  const { desktop } = useWorkspaceRouteResources();
+  const reducedMotion = useReducedMotionPreference();
+  const routeScreenOptions = reducedMotion
+    ? v1RouteScreenOptions
+    : desktop
+      ? v1DesktopRouteScreenOptions
+      : v1MobileRouteScreenOptions;
+  return (
+    <Stack
+      layout={renderPullRequestsPaneLayout}
+      screenLayout={renderPullRequestsScreenLayout}
+      screenOptions={routeScreenOptions}
+    >
+      <Stack.Screen name="pulls/index" options={v1CatalogRootScreenOptions} />
+    </Stack>
+  );
+}
+
+/** Places the real Pull requests catalog descriptor around its subtree-owned destinations. */
+export function PullRequestsWorkspacePaneLayout(props: PaneLayoutProps): React.JSX.Element {
+  const { desktop, viewportWidth } = useWorkspaceRouteResources();
+  const focused = props.state.routes[props.state.index];
+  const catalogFocused = focused?.name === "pulls/index";
+  const catalog = pullRequestsCatalogPresentation(props);
+  return (
+    <WorkspacePaneFrame
+      catalog={
+        <SelectedPullRequestContext.Provider
+          value={desktop && !catalogFocused ? shownPullRequest(focused?.params) : null}
+        >
+          <WorkspaceCatalogMaster mode="pullRequests">{catalog.content}</WorkspaceCatalogMaster>
+        </SelectedPullRequestContext.Provider>
+      }
+      catalogFocused={catalogFocused}
+      catalogStatus={catalog.status}
+      desktop={desktop}
+      detail={
+        <PullRequestsDestinationPlacement.Provider value>
+          {props.children}
+        </PullRequestsDestinationPlacement.Provider>
+      }
+      presentation={pullRequestsPresentation({ catalogFocused, desktop })}
+      viewportWidth={viewportWidth}
+    />
+  );
+}
+
+/** Replaces the anchored catalog duplicate with its empty wide detail presentation. */
+export function PullRequestsWorkspaceScreenLayout(props: ScreenLayoutProps): React.JSX.Element {
+  return props.route.name === "pulls/index" ? (
+    <PullRequestsCatalogPlacement>{props.children}</PullRequestsCatalogPlacement>
+  ) : (
+    props.children
+  );
+}
+
+function PullRequestsCatalogPlacement({
+  children,
+}: {
+  readonly children: ReactElement;
+}): React.JSX.Element | null {
+  const destination = useContext(PullRequestsDestinationPlacement);
+  return destination ? <PullRequestsPreviewRoute /> : children;
+}
+
+/** The pull request a focused destination route shows, from its `pullRequestKey` param. */
+function shownPullRequest(params: unknown): PullRequestKey | null {
+  return typeof params === "object" && params !== null && "pullRequestKey" in params
+    ? parsePullRequestKeyParam(params.pullRequestKey)
+    : null;
+}
+
+function pullRequestsCatalogPresentation(props: PaneLayoutProps) {
+  const catalog = props.state.routes.find((route) => route.name === "pulls/index");
+  if (catalog === undefined) {
+    return { content: null, status: "missing-route" as const };
+  }
+  const descriptor = props.descriptors[catalog.key];
+  return descriptor === undefined
+    ? { content: null, status: "missing-descriptor" as const }
+    : { content: descriptor.render(), status: "present" as const };
+}
+
+function pullRequestsPresentation({
+  catalogFocused,
+  desktop,
+}: {
+  readonly catalogFocused: boolean;
+  readonly desktop: boolean;
+}): WorkspaceFramePresentation {
+  if (catalogFocused) {
+    return desktop ? { kind: "wide" } : { kind: "catalogOnly" };
+  }
+  return desktop ? { kind: "wide" } : { kind: "detailOnly" };
+}
+
+function renderPullRequestsPaneLayout(props: PaneLayoutProps): React.JSX.Element {
+  return <PullRequestsWorkspacePaneLayout {...props} />;
+}
+
+function renderPullRequestsScreenLayout(props: ScreenLayoutProps): React.JSX.Element {
+  return <PullRequestsWorkspaceScreenLayout {...props} />;
+}
