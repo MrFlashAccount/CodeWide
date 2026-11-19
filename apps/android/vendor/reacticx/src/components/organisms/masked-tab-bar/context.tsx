@@ -1,4 +1,5 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, type RefObject } from "react";
+import type { View } from "react-native";
 
 import type { IMaskedTabBarContext, TMaskedTabBarLayer } from "./types";
 
@@ -18,8 +19,12 @@ function useMaskedTabLayer(): TMaskedTabBarLayer {
   return useContext(MaskedTabLayerContext);
 }
 
+/** The base row the triggers lay out in, which a re-measure measures them against. */
+const MaskedTabRowContext = createContext<RefObject<View | null> | null>(null);
+
 export {
   MaskedTabBarContext,
+  MaskedTabRowContext,
   MaskedTabLayerContext,
   useMaskedTabBar,
   useMaskedTabLayer,

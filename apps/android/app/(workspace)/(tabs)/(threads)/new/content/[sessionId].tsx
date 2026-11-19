@@ -1,3 +1,4 @@
+import { BackgroundTerminalOutputScreen } from "../../../../../../src/features/conversation/turns/BackgroundTerminalOutputScreen";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { RouteUnavailable } from "../../../../../../src/components/navigation/RouteUnavailable";
@@ -52,6 +53,11 @@ export default function V1DraftContentRoute(): React.JSX.Element {
     <ConversationRouteFullscreenOverlay
       onDismiss={close}
       render={(closeOverlay) => {
+        if (session.request.kind === "backgroundTerminal") {
+          return (
+            <BackgroundTerminalOutputScreen onClose={closeOverlay} request={session.request} />
+          );
+        }
         if (session.request.kind === "document") {
           return <ContentDocumentViewer onClose={closeOverlay} request={session.request} />;
         }

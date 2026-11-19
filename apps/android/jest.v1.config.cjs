@@ -12,7 +12,7 @@ module.exports = {
     "<rootDir>/test/setup-expo-render-runtime.cjs",
     "react-native-gesture-handler/jestSetup.js",
   ],
-  setupFilesAfterEnv: ["<rootDir>/test/setup-render-console.cjs"],
+  setupFilesAfterEnv: ["<rootDir>/test/setup-render-console.cjs", "<rootDir>/test/setup-legend-list.cjs"],
   testMatch: [
     "<rootDir>/test/app-popover.native.test.tsx",
     "<rootDir>/test/global-search.render.test.tsx",
@@ -35,8 +35,8 @@ module.exports = {
     "^expo-haptics$": "<rootDir>/test/mocks/ExpoHaptics.ts",
     "^expo-image-picker$": "<rootDir>/test/mocks/ExpoImagePicker.ts",
     "^expo-router$": "<rootDir>/test/mocks/ExpoRouter.ts",
-    "^@legendapp/list/react-native$": "<rootDir>/test/mocks/LegendNativeList.tsx",
     "^@legendapp/list/keyboard$": "<rootDir>/test/mocks/LegendKeyboardList.tsx",
+    "^@legendapp/list/reanimated$": "<rootDir>/test/mocks/LegendKeyboardList.tsx",
     "^@quickdrawjs/react-native$": "<rootDir>/test/mocks/QuickdrawReactNative.tsx",
     "^react-native-webview$": "<rootDir>/test/mocks/ReactNativeWebView.tsx",
     "^react-native-gesture-handler/ReanimatedSwipeable$":

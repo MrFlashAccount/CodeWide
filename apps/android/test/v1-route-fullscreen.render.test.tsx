@@ -1,5 +1,6 @@
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { act, render } from "@testing-library/react-native";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { Text } from "react-native";
 
 import { RouteFullscreenOverlay } from "../src/components/navigation/RouteFullscreenOverlay";
@@ -12,7 +13,21 @@ import {
   useConversationRouteNavigation,
   type ConversationRouteNavigation,
 } from "../src/features/conversation/conversationRouteNavigation";
-import { AppFullscreenOverlayProvider } from "../src/ui/AppFullscreenOverlay";
+import {
+  AppFullscreenOverlayHost,
+  AppFullscreenOverlayProvider,
+} from "../src/ui/AppFullscreenOverlay";
+
+// WHY: Keep actual detached presentation in Node; only the native Android window is substituted.
+jest.mock("../src/ui/AppFullscreenModal", () => ({
+  AppFullscreenModal: ({
+    children,
+    isOpen,
+  }: {
+    readonly children: ReactNode;
+    readonly isOpen: boolean;
+  }) => (isOpen ? children : null),
+}));
 
 function RouteHarness({
   onDismiss,
@@ -95,3 +110,54 @@ function ConversationRouteNavigationProbe(): React.JSX.Element {
   useConversationRouteNavigation();
   return <Text>Conversation navigation ready</Text>;
 }
+
+function QueryProbe(): React.JSX.Element {
+  const query = useQuery({
+    queryKey: ["fullscreen-origin"],
+    queryFn: async () => "Unexpected fetch",
+    staleTime: Infinity,
+  });
+  return <Text>{query.data}</Text>;
+}
+
+it("preserves the originating query cache even when the detached host has a different client", () => {
+  const origin = new QueryClient();
+  const host = new QueryClient();
+  origin.setQueryData(["fullscreen-origin"], "Origin data");
+  host.setQueryData(["fullscreen-origin"], "Unrelated host data");
+  const view = render(
+    <AppFullscreenOverlayProvider>
+      <QueryClientProvider client={origin}>
+        <RouteFullscreenOverlay
+          onDismiss={jest.fn()}
+          render={() => <QueryProbe />}
+          scope="query-route"
+        />
+      </QueryClientProvider>
+      <QueryClientProvider client={host}>
+        <AppFullscreenOverlayHost />
+      </QueryClientProvider>
+    </AppFullscreenOverlayProvider>,
+  );
+  expect(view.getByText("Origin data")).toBeOnTheScreen();
+  expect(view.queryByText("Unrelated host data")).toBeNull();
+  expect(host.getQueryData(["fullscreen-origin"])).toBe("Unrelated host data");
+  view.unmount();
+  origin.clear();
+  host.clear();
+});
+
+it("still opens query-free routes when the origin has no query provider", () => {
+  const view = render(
+    <AppFullscreenOverlayProvider>
+      <RouteFullscreenOverlay
+        onDismiss={jest.fn()}
+        render={() => <Text>Query-free route</Text>}
+        scope="query-free-route"
+      />
+      <AppFullscreenOverlayHost />
+    </AppFullscreenOverlayProvider>,
+  );
+  expect(view.getByText("Query-free route")).toBeOnTheScreen();
+  view.unmount();
+});

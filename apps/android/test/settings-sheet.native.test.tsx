@@ -1,6 +1,6 @@
-import { fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
 import { useState, type ReactNode } from "react";
-import { I18nManager, Pressable, Text } from "react-native";
+import { I18nManager, NativeModules, Pressable, Text } from "react-native";
 
 import { SettingsSheet } from "../src/features/settings/SettingsSheet";
 import { useSheetBackHandler } from "../src/ui/sheetNavigation";
@@ -321,3 +321,51 @@ it.each([
     }
   },
 );
+
+it("opens agent notifications and restores each selection after disabling notifications and reopening the sheet", async () => {
+  let saved = { enabled: true, answer: "silent", input: "system", failure: "system" };
+  NativeModules.CodeWideAgentNotificationSettings = {
+    read: async () => saved,
+    setMode: async (event: "answer" | "input" | "failure", mode: string) => {
+      saved = { ...saved, [event]: mode };
+      return saved;
+    },
+    setEnabled: async (enabled: boolean) => {
+      saved = { ...saved, enabled };
+      return saved;
+    },
+  };
+  try {
+    const view = render(<SettingsSheet {...setup()} />);
+    const open = async () => {
+      await act(async () => {
+        fireEvent.press(view.getByLabelText("Notifications"));
+      });
+    };
+    await open();
+    expect(view.getByLabelText("Answer ready, Silent")).toBeTruthy();
+    fireEvent.press(view.getByLabelText("Agent error, Android default"));
+    await act(async () => {
+      fireEvent.press(view.getByLabelText("Agent error: Off"));
+    });
+    const switchValue = async (enabled: boolean) => {
+      await act(async () => {
+        fireEvent(
+          view.getByRole("switch", { name: "Agent notifications" }),
+          "valueChange",
+          enabled,
+        );
+      });
+    };
+    await switchValue(false);
+    fireEvent.press(view.getByLabelText("Back to settings"));
+    await open();
+    expect(view.getByLabelText("Agent error, Off")).toBeDisabled();
+    await switchValue(true);
+    expect(view.getByLabelText("Agent error, Off")).toBeEnabled();
+    expect(view.getByLabelText("Answer ready, Silent")).toBeEnabled();
+    expect(view.getByLabelText("Needs your input, Android default")).toBeEnabled();
+  } finally {
+    delete NativeModules.CodeWideAgentNotificationSettings;
+  }
+});

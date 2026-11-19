@@ -261,6 +261,13 @@ native resources, conversation host, both nested Stacks, route sessions, Global 
 fullscreen-window ownership. `unmountOnBlur` and `popToTopOnBlur` are forbidden. Explicit close and
 workspace teardown retain their existing cleanup authority.
 
+A route projected into the application fullscreen host retains its originating TanStack Query client
+through `components/navigation/RouteFullscreenOverlay`. The host sits outside the workspace provider;
+passing a React element to it does not preserve that provider context. The bridge reuses the same
+client, without creating a cache or repeating workspace restoration/focus lifecycle. Query-free
+routes remain usable without a query provider. Conversation navigation is captured separately by
+`ConversationRouteFullscreenOverlay`.
+
 No route publishes a presentation claim over the catalog or the shared bar: covering the catalog
 beside a right pane is the pane frame's rule, and the bar stays the Tabs layout's presentation.
 

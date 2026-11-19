@@ -86,7 +86,7 @@ impl VcsService {
         let plugin = self.owning_plugin(workspace, scope).await?;
         plugin::changes(&plugin, workspace, scope)
             .await
-            .map_err(|error| VcsError::Plugin(format!("{}: {error}", plugin.id)))
+            .map_err(|error| scoped_error(&plugin.id, workspace, scope, error))
     }
 
     /// Reads one file diff from the same provider that owns the workspace.
@@ -113,13 +113,13 @@ impl VcsService {
         let plugin = self.owning_plugin(workspace, scope).await?;
         let snapshot = plugin::changes(&plugin, workspace, scope)
             .await
-            .map_err(|error| VcsError::Plugin(format!("{}: {error}", plugin.id)))?;
+            .map_err(|error| scoped_error(&plugin.id, workspace, scope, error))?;
         let file = find_snapshot_file(&snapshot, path)
             .await
             .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
         plugin::diff(&plugin, workspace, file, &snapshot.snapshot_id, scope)
             .await
-            .map_err(|error| VcsError::Plugin(format!("{}: {error}", plugin.id)))
+            .map_err(|error| scoped_error(&plugin.id, workspace, scope, error))
     }
 
     /// Reads one bounded page of a file diff without materializing the whole diff.
@@ -147,7 +147,7 @@ impl VcsService {
         let provider = self.owning_plugin(workspace, scope).await?;
         let snapshot = plugin::changes(&provider, workspace, scope)
             .await
-            .map_err(|error| VcsError::Plugin(format!("{}: {error}", provider.id)))?;
+            .map_err(|error| scoped_error(&provider.id, workspace, scope, error))?;
         let file = find_snapshot_file(&snapshot, path)
             .await
             .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
@@ -161,7 +161,7 @@ impl VcsService {
             limit,
         )
         .await
-        .map_err(|error| VcsError::Plugin(format!("{}: {error}", provider.id)))
+        .map_err(|error| scoped_error(&provider.id, workspace, scope, error))
     }
 
     /// Resolves the provider that can create an isolated workspace for this
@@ -297,6 +297,24 @@ impl VcsService {
             }
         }
         Err(start_error.unwrap_or_else(|| VcsError::UnsupportedWorkspace(workspace.to_path_buf())))
+    }
+}
+
+fn scoped_error(
+    provider: &str,
+    workspace: &Path,
+    scope: VcsScope,
+    error: plugin::PluginCallError,
+) -> VcsError {
+    match error {
+        plugin::PluginCallError::Remote {
+            code: companion_host::vcs::UNSUPPORTED_SCOPE_CODE,
+            ..
+        } => VcsError::UnsupportedScope {
+            workspace: workspace.to_owned(),
+            scope,
+        },
+        error => VcsError::Plugin(format!("{provider}: {error}")),
     }
 }
 

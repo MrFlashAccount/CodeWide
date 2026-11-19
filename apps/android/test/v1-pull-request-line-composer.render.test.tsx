@@ -474,6 +474,7 @@ it("expands to fill the pane and collapses with the same editor, text and anchor
   const view = await renderChanges(server);
   await tapLine();
   typeComment(view, "A longer review comment");
+  const diff = view.getByTestId("pull-request-diff");
   const editor = within(view.getByTestId("review-line-composer")).getByTestId("native-editor");
 
   fireEvent.press(within(view.getByTestId("review-line-composer")).getByLabelText("Expand"));
@@ -486,10 +487,12 @@ it("expands to fill the pane and collapses with the same editor, text and anchor
     editor,
   );
   expect(editor).toHaveProp("defaultValue", "A longer review comment");
-  expect(view.getByTestId("pull-request-diff")).toBeOnTheScreen();
+  expect(diff).not.toBeVisible();
 
   fireEvent.press(within(view.getByTestId("review-line-composer")).getByLabelText("Collapse"));
 
+  expect(view.getByTestId("pull-request-diff")).toBe(diff);
+  expect(diff).toBeVisible();
   const composer = view.getByTestId("review-line-composer");
   expect(composer).not.toHaveStyle({ flex: 1 });
   expect(within(composer).getByTestId("review-line-composer-anchor")).toHaveTextContent(
@@ -602,6 +605,45 @@ it("closes at once on send and shows the PR draft while it is saved", async () =
     expect.objectContaining({ body: "Rename this call", id: draftId, state: "saved" }),
   ]);
   expect(view.getByTestId("review-dock-submit")).toBeOnTheScreen();
+});
+
+it("edits a saved inline PR draft with its original anchor, identity and version", async () => {
+  const server = companion();
+  const view = await renderChanges(server);
+  await tapLine();
+  typeComment(view, "Original");
+  fireEvent.press(view.getByTestId("review-comment-send"));
+  await waitFor(() => expect(server.puts).toHaveLength(1));
+  await act(async () => {
+    server.puts[0]?.resolve();
+    await Promise.resolve();
+  });
+  await waitFor(() =>
+    expect(inlineComments()[0]).toMatchObject({ editable: true, state: "saved" }),
+  );
+  const original = server.puts[0]?.params.draft;
+  await act(async () => {
+    latestWebViewProps?.onMessage?.({
+      nativeEvent: {
+        data: JSON.stringify({
+          id: original?.id,
+          requestId: documentRequestId(),
+          type: "commentTap",
+          version: 1,
+        }),
+      },
+    });
+    await Promise.resolve();
+  });
+  expect(view.getByTestId("native-editor")).toHaveProp("defaultValue", "Original");
+  expect(view.queryByLabelText("Start linked review chat")).toBeNull();
+  typeComment(view, "Edited in place");
+  fireEvent.press(view.getByTestId("review-comment-send"));
+  await waitFor(() => expect(server.puts).toHaveLength(2));
+  expect(server.puts[1]?.params).toMatchObject({
+    draft: { ...original, body: "Edited in place" },
+    expectedVersion: 1,
+  });
 });
 
 it("shows the companion's reason on a refused draft and Edit reopens the docked composer with its text", async () => {

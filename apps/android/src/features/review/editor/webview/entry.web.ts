@@ -10,12 +10,7 @@ import {
   type OnDiffLineClickProps,
   type OnLineClickProps,
 } from "@pierre/diffs";
-import {
-  FileTree,
-  themeToTreeStyles,
-  type GitStatusEntry,
-  type TreeThemeInput,
-} from "@pierre/trees";
+import { createFileNavigation, editorElement as requiredElement } from "./fileNavigation.web";
 import { canonicalPatch } from "./canonicalPatch.web";
 import { lineReference, patchLineText, sourceLineText } from "./lineText.web";
 import { materializeBeforeSource as reconstructBeforeSource } from "./materializeRecordedDiff.web";
@@ -24,7 +19,6 @@ import {
   CODE_REVIEW_BRIDGE_VERSION,
   type CodeReviewClientEvent,
   type CodeReviewDocument,
-  type CodeReviewFileItem,
   type CodeReviewHostCommand,
   type CodeReviewInlineComment,
   type CodeReviewViewMode,
@@ -47,7 +41,6 @@ type CodeReviewClientPayload = CodeReviewClientEvent extends infer Event
     : never
   : never;
 
-const FILE_TREE_OVERSCAN = 4;
 const MATERIALIZED_SOURCE_CACHE_LIMIT = 24;
 
 let latestRequestId = 0;
@@ -65,10 +58,6 @@ let currentWorkspace: CodeReviewWorkspaceState = {
 let currentSelection: CodeReviewLineReference | null = null;
 let currentMode: CodeReviewViewMode = "source";
 let wrapLines = false;
-let tree: FileTree | null = null;
-let treePathToFile = new Map<string, CodeReviewFileItem>();
-let selectedTreePath: string | null = null;
-let currentReviewSignature = "";
 let fileRenderer: PierreFile<AnnotationMetadata> | null = null;
 let diffRenderer: FileDiff<AnnotationMetadata> | null = null;
 let activeFileRenderer: PierreFile<AnnotationMetadata> | null = null;
@@ -78,98 +67,12 @@ let pendingReveal: CodeReviewLineReference | null = null;
 let revealedReference: CodeReviewLineReference | null = null;
 const materializedBefore = new Map<string, string | null>();
 
-const treeTheme = {
-  colors: {
-    "gitDecoration.addedResourceForeground": "#55c58a",
-    "gitDecoration.deletedResourceForeground": "#f0757b",
-    "gitDecoration.modifiedResourceForeground": "#68cdf2",
-    "input.background": "#181a1e",
-    "input.border": "rgba(255,255,255,.12)",
-    "input.foreground": "#f1f3f5",
-    "list.activeSelectionBackground": "#242a33",
-    "list.activeSelectionForeground": "#f1f3f5",
-    "list.focusBackground": "#242a33",
-    "list.focusOutline": "#78a9ff",
-    "scrollbarSlider.background": "rgba(255,255,255,.18)",
-    "sideBar.background": "#101113",
-    "sideBar.border": "rgba(255,255,255,.12)",
-    "sideBar.foreground": "#f1f3f5",
-    "sideBarSectionHeader.foreground": "#8d939c",
-  },
-  name: "codewide-dark",
-  type: "dark",
-} satisfies TreeThemeInput;
-const treeThemeStyles = themeToTreeStyles(treeTheme);
-/** Status glyphs drawn as boxed icons (plus, dot, minus, arrow) instead of Pierre's letters. */
-const STATUS_ICON_PATHS: Readonly<Record<"added" | "deleted" | "modified" | "renamed", string>> = {
-  added:
-    "<path d='M8 4.75v6.5M4.75 8h6.5' stroke='black' stroke-width='1.5' stroke-linecap='round'/>",
-  deleted: "<path d='M4.75 8h6.5' stroke='black' stroke-width='1.5' stroke-linecap='round'/>",
-  modified: "<circle cx='8' cy='8' r='2.25' fill='black'/>",
-  renamed:
-    "<path d='M4.5 8h6.25M8.5 5.5 11 8l-2.5 2.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/>",
-};
-
-function statusIconMask(inner: string): string {
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='1.75' y='1.75' width='12.5' height='12.5' rx='3' fill='none' stroke='black' stroke-width='1.5'/>${inner}</svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
-}
-
-const STATUS_ICON_CSS = Object.entries(STATUS_ICON_PATHS)
-  .map(
-    ([status, inner]) =>
-      `[data-item-git-status="${status}"] [data-item-section="git"] { --review-status-icon: ${statusIconMask(inner)}; }`,
-  )
-  .join("\n");
-
-const TOUCH_FILE_TREE_CSS = `
-@media (hover: none), (pointer: coarse) {
-  [data-type="item"]:hover:not([data-item-selected="true"]) {
-    background-color: var(--trees-bg);
-    --truncate-marker-background-overlay-color: transparent;
-  }
-
-  [data-type="item"][data-item-focused="true"]::before,
-  [data-type="item"]:focus-visible::before {
-    display: none;
-  }
-
-  [data-item-flattened-subitem]:hover {
-    text-decoration: none;
-  }
-
-  :host(:hover) [data-item-section="spacing-item"] {
-    opacity: 0;
-  }
-}
-
-[data-item-git-status] [data-item-section="git"] {
-  font-size: 0;
-  min-width: 16px;
-  overflow: visible;
-}
-
-[data-item-git-status] [data-item-section="git"]::before {
-  content: "";
-  display: inline-block;
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  background-color: currentColor;
-  -webkit-mask: var(--review-status-icon) center / contain no-repeat;
-  mask: var(--review-status-icon) center / contain no-repeat;
-}
-
-${STATUS_ICON_CSS}
-`;
-
-const treeHost = requiredElement("tree");
 const treeEmptyHost = requiredElement("tree-empty");
 const previewHost = requiredElement("preview");
 const previewEmptyHost = requiredElement("preview-empty");
 const imageHost = requiredElement("image-preview");
 const imageElement = requiredElement("review-image");
-const workspaceHost = requiredElement("workspace");
+
 const fileHost = document.createElement("div");
 const diffHost = document.createElement("div");
 const patchHost = document.createElement("div");
@@ -188,39 +91,14 @@ patchFallbackLabel.hidden = true;
 patchHost.append(patchFallbackLabel);
 previewHost.replaceChildren(fileHost, diffHost, patchHost, imageHost);
 
-// Pierre reports selection changes, not activation of an already selected file.
-// Its row path attribute is the adapter seam for reopening that file on touch.
-treeHost.addEventListener("click", (event) => {
-  if (!currentWorkspace.compact || !currentWorkspace.sidebarOpen) {
-    return;
-  }
-  for (const target of event.composedPath()) {
-    if (!hasElementDataset(target)) {
-      continue;
-    }
-    const path = target.dataset.itemPath;
-    if (path === undefined) {
-      continue;
-    }
-    const file = treePathToFile.get(path);
-    if (file?.path === currentWorkspace.selectedPath) {
-      post({ path: file.path, requestId: latestRequestId, type: "fileSelect" });
-    }
-    return;
-  }
-});
-
-function hasElementDataset(value: EventTarget): value is HTMLElement {
-  return "dataset" in value;
-}
-
-function requiredElement(id: string): HTMLElement {
-  const element = document.getElementById(id);
-  if (element === null) {
-    throw new Error(`Code review element #${id} is missing`);
-  }
-  return element;
-}
+const updateFileNavigation = createFileNavigation(
+  (path) => {
+    post({ path, requestId: latestRequestId, type: "fileSelect" });
+  },
+  (open) => {
+    post({ open, type: "filesOpen" });
+  },
+);
 
 function post(payload: CodeReviewClientPayload): void {
   window.ReactNativeWebView?.postMessage(
@@ -302,177 +180,11 @@ function isHostCommandName(value: string): boolean {
 }
 
 function updateWorkspace(payload: CodeReviewWorkspaceState): void {
-  const pathsChanged = tree === null || payload.revision !== currentWorkspace.revision;
   currentWorkspace = payload;
-  workspaceHost.dataset.compact = payload.compact ? "true" : "false";
-  workspaceHost.dataset.sidebarOpen = payload.sidebarOpen ? "true" : "false";
-  treePathToFile = new Map(payload.files.map((file) => [file.treePath, file]));
-  treeHost.hidden = payload.files.length === 0;
+  updateFileNavigation(payload);
   setEmptyState(treeEmptyHost, payload.files.length === 0 ? EMPTY_CHANGES_TREE_STATE : null);
-  const instance = ensureTree(payload);
-  if (pathsChanged && tree !== null) {
-    instance.resetPaths(payload.files.map((file) => file.treePath));
-    instance.setGitStatus(gitStatus(payload.files));
-  } else {
-    instance.setGitStatus(gitStatus(payload.files));
-  }
-  refreshReviewDecorations(instance, payload.files);
-  selectTreeFile(payload.selectedPath, pathsChanged);
   if (currentDocument === null) {
     renderCurrentDocument();
-  }
-}
-
-function ensureTree(payload: CodeReviewWorkspaceState): FileTree {
-  if (tree !== null) {
-    return tree;
-  }
-  tree = new FileTree({
-    density: "compact",
-    flattenEmptyDirectories: true,
-    gitStatus: gitStatus(payload.files),
-    icons: "complete",
-    initialExpansion: "open",
-    paths: payload.files.map((file) => file.treePath),
-    // Pierre recomputes sticky ancestors on every scroll event. The Changes
-    // tree does not need that desktop affordance, and disabling it keeps the
-    // Android WebView scroll path limited to virtual-window updates.
-    fileTreeSearchMode: "expand-matches",
-    onSelectionChange: (selectedPaths) => {
-      const selected = selectedPaths
-        .map((path) => treePathToFile.get(path))
-        .find((file) => file !== undefined);
-      if (selected === undefined) {
-        return;
-      }
-      selectedTreePath = selected.treePath;
-      if (selected.path === currentWorkspace.selectedPath) {
-        return;
-      }
-      post({
-        path: selected.path,
-        requestId: latestRequestId,
-        type: "fileSelect",
-      });
-    },
-    overscan: FILE_TREE_OVERSCAN,
-    renderRowDecoration: ({ row }) => {
-      const file = treePathToFile.get(row.path);
-      if (file === undefined) {
-        return null;
-      }
-      if (file.sourceOnly === true) {
-        return {
-          parts: [{ color: "#8b949e", text: "Attachment" }],
-          text: "Attachment",
-        };
-      }
-      if (file.review !== undefined) {
-        // PR rows keep the lane for review state; counts live in the file toolbar.
-        const review = reviewDecoration(file.review);
-        return review.length === 0 ? null : decorationText(review);
-      }
-      if (file.countsAreNet === false) {
-        return null;
-      }
-      return decorationText([
-        { color: "#3fb950", text: `+${String(file.additions)}` },
-        { color: "#f85149", text: ` −${String(file.deletions)}` },
-      ]);
-    },
-    search: true,
-    stickyFolders: false,
-    unsafeCSS: TOUCH_FILE_TREE_CSS,
-  });
-  tree.render({ containerWrapper: treeHost });
-  const treeContainer = tree.getFileTreeContainer();
-  if (treeContainer !== undefined) {
-    for (const [property, value] of Object.entries(treeThemeStyles)) {
-      treeContainer.style.setProperty(property, value);
-    }
-  }
-  return tree;
-}
-
-type DecorationPart = { readonly color: string; readonly text: string };
-
-/** `✎2 ✓`: pending drafts and the viewed mark of a PR file. */
-function reviewDecoration(review: NonNullable<CodeReviewFileItem["review"]>): DecorationPart[] {
-  const parts: DecorationPart[] = [];
-  if (review.drafts > 0) {
-    parts.push({ color: "#78a9ff", text: `✎${String(review.drafts)}` });
-  }
-  if (review.viewed) {
-    parts.push({ color: "#3fb950", text: parts.length === 0 ? "✓" : " ✓" });
-  }
-  return parts;
-}
-
-/** Redraws row decorations when a viewed mark or draft count changed. */
-function refreshReviewDecorations(instance: FileTree, files: readonly CodeReviewFileItem[]): void {
-  const nextReviewSignature = reviewSignature(files);
-  if (nextReviewSignature === currentReviewSignature) {
-    return;
-  }
-  currentReviewSignature = nextReviewSignature;
-  // Row decorations read the file map lazily; re-rendering the root redraws them
-  // without resetting paths, expansion or scroll.
-  instance.setComposition(instance.getComposition());
-}
-
-function reviewSignature(files: readonly CodeReviewFileItem[]): string {
-  return files
-    .map((file) =>
-      file.review === undefined
-        ? ""
-        : `${file.treePath}:${String(file.review.drafts)}:${file.review.viewed ? "1" : "0"}`,
-    )
-    .join("|");
-}
-
-function decorationText(parts: readonly DecorationPart[]): {
-  parts: readonly DecorationPart[];
-  text: string;
-} {
-  return { parts, text: parts.map((part) => part.text).join("") };
-}
-
-function gitStatus(files: readonly CodeReviewFileItem[]): GitStatusEntry[] {
-  return files.map((file) => ({ path: file.treePath, status: file.status }));
-}
-
-function selectTreeFile(path: string | null, scroll: boolean): void {
-  const instance = tree;
-  if (instance === null) {
-    return;
-  }
-  const nextTreePath = treePathForFile(path);
-  if (nextTreePath === selectedTreePath && !scroll) {
-    return;
-  }
-  selectedTreePath = nextTreePath;
-  for (const selected of instance.getSelectedPaths()) {
-    if (selected !== nextTreePath) {
-      instance.getItem(selected)?.deselect();
-    }
-  }
-  if (nextTreePath === null) {
-    return;
-  }
-  selectTreeItem(instance, nextTreePath, scroll);
-}
-
-function treePathForFile(path: string | null): string | null {
-  return currentWorkspace.files.find((file) => file.path === path)?.treePath ?? null;
-}
-
-function selectTreeItem(instance: FileTree, path: string, scroll: boolean): void {
-  const item = instance.getItem(path);
-  if (item?.isSelected() !== true) {
-    item?.select();
-  }
-  if (scroll) {
-    instance.scrollToPath(path, { focus: false, offset: "nearest" });
   }
 }
 
@@ -669,7 +381,7 @@ function renderRecordedPatches(
     const instance = entry.renderer;
     instance.setOptions({
       ...diffOptions(mode),
-      onLineNumberClick: (event) => {
+      onLineClick: (event) => {
         activeFileRenderer = null;
         activeDiffRenderer = instance;
         const side = diffSide(event);
@@ -719,7 +431,7 @@ function fileOptions(): FileOptions<AnnotationMetadata> {
   return {
     disableFileHeader: true,
     lineHoverHighlight: "number",
-    onLineNumberClick: (event: OnLineClickProps) => {
+    onLineClick: (event: OnLineClickProps) => {
       if (currentDocument !== null) {
         selectLine(
           lineReference({
@@ -753,7 +465,7 @@ function diffOptions(
     hunkSeparators: "simple",
     lineDiffType: "word-alt",
     lineHoverHighlight: "number",
-    onLineNumberClick: (event: OnDiffLineClickProps) => {
+    onLineClick: (event: OnDiffLineClickProps) => {
       if (currentDocument !== null) {
         selectLine(referenceForDiffLine(currentDocument, event));
       }
@@ -765,10 +477,16 @@ function diffOptions(
     renderAnnotation,
     stickyHeader: false,
     themeType: "dark",
+    // WebView 124 crashes when painting Pierre's relative rgb() word backgrounds.
+    unsafeCSS: `:host {
+      --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--review-green) 32%, var(--review-canvas));
+      --diffs-bg-deletion-emphasis-override: color-mix(in srgb, var(--review-red) 32%, var(--review-canvas));
+    }`,
   };
 }
 
 function finishRender(): void {
+  revealPendingLine(activeFileRenderer ?? activeDiffRenderer);
   const pending = pendingRender;
   if (pending === null || pending.requestId !== latestRequestId) {
     return;
@@ -826,6 +544,9 @@ function diffSide(event: OnDiffLineClickProps): CodeReviewLineReference["side"] 
 
 /** A tapped line becomes the composer's anchor at once; the native host then opens its composer. */
 function selectLine(reference: CodeReviewLineReference): void {
+  if (window.getSelection()?.isCollapsed === false) {
+    return;
+  }
   currentSelection = reference;
   post({ reference, requestId: latestRequestId, type: "lineTap" });
   highlightSelection();
@@ -844,13 +565,17 @@ function refreshAnnotations(): void {
   if (document === null || active === null) {
     return;
   }
-  if (activeFileRenderer !== null) {
-    activeFileRenderer.setLineAnnotations(fileAnnotations(document));
+  if (patchHost.hidden === false) {
+    const annotations = diffAnnotations(document);
+    for (const { renderer } of patchRenderers) {
+      renderer.setLineAnnotations(annotations);
+      renderer.rerender();
+    }
+  } else {
+    activeFileRenderer?.setLineAnnotations(fileAnnotations(document));
+    activeDiffRenderer?.setLineAnnotations(diffAnnotations(document));
+    active.rerender();
   }
-  if (activeDiffRenderer !== null) {
-    activeDiffRenderer.setLineAnnotations(diffAnnotations(document));
-  }
-  active.rerender();
   selectPreviewLine(active);
 }
 
@@ -884,27 +609,29 @@ function revealPendingLine(
     return;
   }
   const reveal = pendingReveal;
-  pendingReveal = null;
-  instance.setSelectedLines(
-    {
-      end: reveal.line,
-      side: reveal.side === "old" ? "deletions" : "additions",
-      start: reveal.line,
-    },
-    { notify: false },
-  );
   requestAnimationFrame(() => {
-    const host = currentMode === "source" ? fileHost : diffHost;
-    const candidates = host.querySelectorAll<HTMLElement>(
-      `[data-column-number="${String(reveal.line)}"]`,
-    );
-    if (candidates.length === 0) {
+    if (pendingReveal !== reveal || currentDocument?.path !== reveal.path) {
       return;
     }
-    const target =
-      reveal.side === "old" ? candidates.item(0) : candidates.item(candidates.length - 1);
-    target.scrollIntoView({ block: "center", inline: "nearest" });
+    const host =
+      patchHost.hidden === false ? patchHost : currentMode === "source" ? fileHost : diffHost;
+    if (scrollToReference(host, reveal)) {
+      pendingReveal = null;
+    }
   });
+}
+
+function scrollToReference(host: HTMLElement, reveal: CodeReviewLineReference): boolean {
+  const opposite = reveal.side === "old" ? "change-addition" : "change-deletion";
+  const selector = `[data-column-number="${String(reveal.line)}"]:not([data-line-type="${opposite}"])`;
+  for (const content of host.querySelectorAll("diffs-container")) {
+    const target = content.shadowRoot?.querySelector(selector) ?? null;
+    if (target !== null) {
+      target.scrollIntoView({ block: "center", inline: "nearest" });
+      return true;
+    }
+  }
+  return false;
 }
 
 function fileAnnotations(payload: CodeReviewDocument): LineAnnotation<AnnotationMetadata>[] {
@@ -939,7 +666,14 @@ function renderAnnotation(
   annotation: LineAnnotation<AnnotationMetadata> | DiffLineAnnotation<AnnotationMetadata>,
 ): HTMLElement {
   const { comment } = annotation.metadata;
-  const root = document.createElement("div");
+  const root = document.createElement(comment.editable === true ? "button" : "div");
+  if (comment.editable === true) {
+    root.setAttribute("aria-label", "Edit comment: " + comment.body);
+    root.onclick = (event) => {
+      event.stopPropagation();
+      post({ id: comment.id, requestId: latestRequestId, type: "commentTap" });
+    };
+  }
   root.className = "review-comment";
   root.dataset.state = comment.state;
   const body = document.createElement("div");
@@ -979,7 +713,6 @@ function startEditor(): void {
   window.addEventListener("message", receiveWindowMessage);
   document.addEventListener("message", receiveDocumentMessage);
   window.addEventListener("beforeunload", () => {
-    tree?.cleanUp();
     fileRenderer?.cleanUp();
     diffRenderer?.cleanUp();
   });

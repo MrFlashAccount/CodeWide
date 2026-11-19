@@ -1189,7 +1189,6 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   listBody: {
-    flexBasis: 0,
     flexGrow: 1,
     flexShrink: 1,
     gap: richMarkdownGeometry.listBodyGap,
@@ -1197,6 +1196,7 @@ const styles = StyleSheet.create({
   },
   listMarker: {
     color: colors.textMuted,
+    marginStart: -richMarkdownGeometry.listInset,
     textAlign: "right",
     width: richMarkdownGeometry.listMarkerWidth,
     ...typeScale.body,
@@ -1207,6 +1207,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: richMarkdownGeometry.listRowGap,
     minWidth: 0,
+    // Reserve the marker gutter during intrinsic text measurement. Both markers hang
+    // into this padding, so the final wrap width also determines the row's height.
+    paddingStart: richMarkdownGeometry.listInset,
   },
   localImageLink: {
     alignItems: "center",
@@ -1277,6 +1280,7 @@ const styles = StyleSheet.create({
   taskMarker: {
     alignItems: "flex-end",
     justifyContent: "center",
+    marginStart: -richMarkdownGeometry.listInset,
     minHeight: typeScale.body.lineHeight,
     width: richMarkdownGeometry.listMarkerWidth,
   },

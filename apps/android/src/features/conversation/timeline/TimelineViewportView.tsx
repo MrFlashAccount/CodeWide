@@ -30,6 +30,8 @@ import {
 import { useTimelineResponsePositioning } from "./timelineResponsePositioning";
 import { timelineMarkdownContentWidth, timelineRowHeight } from "./timelineRowPremeasurement";
 import { useTimelineScrollDiagnostics, useTimelineScrollPolicy } from "./timelineScrollDiagnostics";
+import { useRunningTaskPlacement } from "./useRunningTaskPlacement";
+import { TaskNotificationLine } from "../turns/TaskNotificationLine";
 import { styles } from "./TimelineViewport.styles";
 import type { TimelineViewportProps } from "./TimelineViewportContract";
 
@@ -39,6 +41,13 @@ const TIMELINE_HISTORY_PREFETCH_THRESHOLD_RATIO = 1.5;
 const MINIMUM_TIMELINE_RENDER_AHEAD_PX = 250;
 
 export function TimelineViewport(props: TimelineViewportProps): ReactElement {
+  const rows = projectTimelineRows(props.displayedTimeline, {
+    enabled: true,
+    searchMessageItemId: props.searchMessageItemId,
+    threadSearchActive: props.threadSearchActive,
+  });
+  const placement = useRunningTaskPlacement(rows, showsConversationTail(props));
+  const timelineRows = placement.rows;
   const rowPremeasurementEnabled = useSelector(timelineRowPremeasurementEnabled$);
   const canvas = surfaceToneCanvasStyle(useSurfaceTone());
   const {
@@ -53,11 +62,6 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
     timelineViewportRef,
   } = props;
   const diagnostics = useTimelineScrollDiagnostics(props);
-  const timelineRows = projectTimelineRows(props.displayedTimeline, {
-    enabled: true,
-    searchMessageItemId: props.searchMessageItemId,
-    threadSearchActive: props.threadSearchActive,
-  });
   const responsePositioningEnabled = responsePositioningIsEnabled(props);
   const responsePositioning = useTimelineResponsePositioning({
     awayFromLatest: props.awayFromLatest,
@@ -226,6 +230,12 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
     responseRequest: responsePositioning.request,
     rowCount: timelineRows.length,
   });
+  const listFooter = (
+    <>
+      <TaskNotificationLine reports={placement.footer} />
+      {props.footerContent}
+    </>
+  );
   const listHeader = timelineListHeader(props);
   return (
     <RichMarkdownPremeasurementProvider
@@ -276,7 +286,7 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
         keyboardShouldPersistTaps="handled"
         keyExtractor={timelineRowKey}
         ListEmptyComponent={props.emptyContent}
-        ListFooterComponent={props.footerContent}
+        ListFooterComponent={listFooter}
         ListHeaderComponent={listHeader}
         maintainScrollAtEnd
         maintainScrollAtEndThreshold={TIMELINE_TAIL_MODE_THRESHOLD_RATIO}
@@ -317,6 +327,10 @@ function shouldInitiallyScrollToEnd(
   timelinePositioned: boolean,
 ): boolean {
   return anchor === null && !timelinePositioned;
+}
+
+function showsConversationTail(props: TimelineViewportProps): boolean {
+  return props.historyViewport.containsLatest && !props.threadSearchActive;
 }
 
 function timelineListHeader(props: TimelineViewportProps): ReactElement | null {

@@ -206,7 +206,7 @@ function dynamicPresentationReason(
   if (isLeadingPlacement(row.placement) && presentation.preTurnBlocks.length > 0) {
     return "leading-activity";
   }
-  if (drawsMidTurnReports(row, presentation)) {
+  if (row.trailingTasks.length > 0) {
     return "composite-row";
   }
   // WHY: Exact hints are lifetime-fixed sizes in LegendList. Expansion lives inside
@@ -480,18 +480,6 @@ function rowOuterVerticalChrome(
 
 function isStreamingPart(part: VirtualizedTurnPart): boolean {
   return part.kind === "markdownBlock" && part.streaming;
-}
-
-/** A person's turn draws reports that arrived during its answer below the bubble. */
-function drawsMidTurnReports(
-  row: MeasurableTimelineRow,
-  presentation: ReturnType<typeof projectTurnPresentation>,
-): boolean {
-  return (
-    isTrailingPlacement(row.placement) &&
-    presentation.userBlocks.length > 0 &&
-    presentation.taskNotifications.midTurn.length > 0
-  );
 }
 
 function isLeadingPlacement(placement: VirtualizedTurnPlacement): boolean {

@@ -180,7 +180,8 @@ android {
     }
     signingConfigs {
         debug {
-            storeFile file('debug.keystore')
+            // Retain a checkout's debug identity when present; AGP supplies the user debug key otherwise.
+            if (file('debug.keystore').exists()) storeFile file('debug.keystore')
             storePassword 'android'
             keyAlias 'androiddebugkey'
             keyPassword 'android'

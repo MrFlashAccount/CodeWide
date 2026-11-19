@@ -254,3 +254,39 @@ smoke, lifecycle and layout plan. Select a device with `--serial` and an APK wit
 `--apk`; upgrade coverage additionally uses `--suite upgrade --previous-apk`. Source checks are
 not device evidence. The retired two-generation Appium runner no longer certifies
 releases; no replacement live-conversation E2E coverage is claimed.
+
+## Local Android emulator for agents
+
+On Linux x86_64 with KVM, run the following from the checkout with its pnpm dependencies installed.
+The launcher uses Python 3.11+, JDK 17, the project's Android build SDK and Android command-line tools.
+Accept the Google SDK licenses during SDK setup. On first use it installs Callstack agent-device
+0.21.39 locally, provisions the API 35 Google APIs image with sdkmanager if needed, and creates
+a dedicated Pixel 5 AVD. Reserve loopback ports 5584/5585 (emulator), 8194 (Metro), and
+18767 (test Companion).
+
+```sh
+pnpm dev:android:agent
+./scripts/android-agent/device snapshot -i
+./scripts/android-agent/device screenshot /tmp/codewide.png
+```
+
+The launcher builds and installs the x86_64 debug APK, grants notification permission on this
+AVD, opens the app and waits for its UI. Metro stays running. JS/TS edits use Fast Refresh;
+rerun the launcher after a native change. The emulator accesses Metro through adb reverse.
+
+```sh
+pnpm test:android:notifications
+pnpm dev:android:agent --stop
+```
+
+The notifications command also starts the lab on its own. It builds the local Companion with Cargo,
+pairs the dedicated debug app with a synthetic provider, exercises the settings and the Android
+notification shade, restarts the app to check persistence, and prints the Markdown report path.
+It uses the English UI of the dedicated AVD and restores the three event modes to their defaults
+on success. App and emulator state persist between runs. The temporary provider and Companion
+stop when the test exits. The stop command terminates the emulator and Metro started by this checkout.
+
+Use `CODEWIDE_ANDROID_LAB` for the AVD, private test identity, tool cache, logs, and reports
+(default `$XDG_DATA_HOME/codewide-android-lab`, falling back to `~/.local/share/codewide-android-lab`).
+Set `ANDROID_HOME` for the build SDK and optionally `CODEWIDE_EMULATOR_SDK` for a separate
+runtime SDK. Set `CODEWIDE_TEST_COMPANION` to an absolute executable path to use a prebuilt Companion.

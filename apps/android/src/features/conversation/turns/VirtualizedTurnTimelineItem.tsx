@@ -67,7 +67,7 @@ export function VirtualizedTurnLeadItem(props: VirtualizedTurnLeadItemProps): Re
   return (
     <View style={styles.virtualizedTurnLead}>
       {user}
-      <TaskNotificationLine reports={props.notifications} />
+      <TaskNotificationLine key={props.turn.key} reports={props.notifications} />
       {renderCompactionLines(props, props.presentation.leadCompactionBlocks)}
     </View>
   );
@@ -221,7 +221,7 @@ function VirtualizedAgentMessage({
     props,
     <ImagePreviewGroup id={`${props.turn.key}:agent`}>
       {row}
-      <TaskNotificationLine reports={props.trailingTasks} />
+      <TaskNotificationLine key={props.turn.key} reports={props.trailingTasks} />
     </ImagePreviewGroup>,
   );
 }

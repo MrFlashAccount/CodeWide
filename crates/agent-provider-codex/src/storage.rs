@@ -34,6 +34,16 @@ pub struct CodexStorage {
 }
 
 impl CodexStorage {
+    pub(crate) async fn thread_history_files(
+        &self,
+        thread_id: &str,
+    ) -> Result<Vec<std::path::PathBuf>, String> {
+        self.history
+            .thread_history_files(thread_id)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     #[must_use]
     pub fn new(history: HistoryService) -> Self {
         Self {

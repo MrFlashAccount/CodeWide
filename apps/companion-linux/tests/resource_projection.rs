@@ -19,6 +19,96 @@ use tokio::io::AsyncWriteExt;
 const THREAD_ID: &str = "019fe7af-e2fa-70f3-88e8-99d59e10bd63";
 
 #[tokio::test]
+async fn git_changes_and_diff_remain_available_without_a_rollout()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let temp = tempfile::tempdir()?;
+    let root = temp.path();
+    let workspace = root.join("repo");
+    let init = tokio::process::Command::new("git")
+        .args(["init", "-q", "-b", "topic"])
+        .arg(&workspace)
+        .status()
+        .await?;
+    assert!(init.success());
+    let file = workspace.canonicalize()?.join("example.txt");
+    tokio::fs::write(&file, "repository change\n").await?;
+    let db = rusqlite::Connection::open(root.join("state_5.sqlite"))?;
+    db.execute(
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, rollout_path TEXT)",
+        [],
+    )?;
+    db.execute(
+        "INSERT INTO threads VALUES (?1, ?2, ?3)",
+        rusqlite::params![
+            THREAD_ID,
+            workspace.to_str(),
+            root.join("missing.jsonl").to_str()
+        ],
+    )?;
+    let files = Arc::new(FileService::open(HashMap::new(), Vec::new(), None, None).await?);
+    let vcs = codewide_companion::vcs::VcsService::new(
+        root.join("plugins.json"),
+        Path::new(env!("CARGO_BIN_EXE_codewide-vcs-git"))
+            .parent()
+            .map(Path::to_owned),
+    );
+    let service = ResourceService::open(
+        root.join("resources.redb"),
+        Arc::new(SessionCatalog::empty(root)),
+        rollout_index(&root.join("index.redb"))?,
+        files,
+    )?
+    .with_vcs(Arc::new(vcs));
+    let snapshot = service
+        .handle(
+            "companion/threadChanges/read",
+            &json!({"threadId":THREAD_ID}),
+        )
+        .await?;
+    assert_eq!(snapshot["changeScope"], "uncommitted");
+    assert_eq!(snapshot["changeScopes"], json!(["session", "uncommitted"]));
+    assert_eq!(snapshot["changes"][0]["path"], json!(file));
+    assert!(snapshot.get("attachments").is_none());
+    let diff = service
+        .handle(
+            "companion/threadChange/read",
+            &json!({
+                "threadId": THREAD_ID, "path": file, "changeScope": "uncommitted"
+            }),
+        )
+        .await?;
+    assert!(
+        diff["patches"][0]["diff"]
+            .as_str()
+            .is_some_and(|text| text.contains("+repository change"))
+    );
+    for (method, params) in [
+        (
+            "companion/threadAttachments/read",
+            json!({"threadId":THREAD_ID}),
+        ),
+        (
+            "companion/threadChanges/read",
+            json!({"threadId":THREAD_ID,"changeScope":"session"}),
+        ),
+        (
+            "companion/threadChanges/read",
+            json!({"threadId":THREAD_ID,"changeScope":"branch"}),
+        ),
+        (
+            "companion/threadChanges/read",
+            json!({"threadId":"unknown","cwd":workspace}),
+        ),
+    ] {
+        assert!(
+            service.handle(method, &params).await.is_err(),
+            "{method} {params}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn canonical_resources_are_incremental_crash_safe_and_live()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

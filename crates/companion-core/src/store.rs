@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -217,6 +217,7 @@ type ReceiptObserverSlot = std::sync::RwLock<Option<Arc<dyn TurnReceiptObserver>
 
 pub struct IndexStore {
     database: Arc<Database>,
+    path: PathBuf,
     /// The single owner-installed observer of delivery receipts; the newest
     /// installation wins (a restarted owner takes over).
     receipt_observer: ReceiptObserverSlot,
@@ -305,8 +306,14 @@ impl IndexStore {
         }
         Ok(Self {
             database: companion_host::database::share(database, "index"),
+            path: path.to_path_buf(),
             receipt_observer: std::sync::RwLock::new(None),
         })
+    }
+
+    /// Location of this host's database, for colocating durable host artifacts.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
     }
 
     /// Installs the observer that runs inside every delivery-receipt

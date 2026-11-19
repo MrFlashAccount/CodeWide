@@ -198,6 +198,26 @@ impl SessionCatalog {
         Ok(path)
     }
 
+    /// Codex indexes a thread's working directory independently of its rollout file.
+    pub(crate) fn indexed_workspace(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<PathBuf>, CatalogError> {
+        if !valid_thread_id(thread_id) || !self.state_db.is_file() {
+            return Ok(None);
+        }
+        let db = Connection::open_with_flags(&self.state_db, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        db.busy_timeout(std::time::Duration::ZERO)?;
+        let cwd: Option<String> = db
+            .query_row(
+                "SELECT cwd FROM threads WHERE id = ?1",
+                [thread_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(cwd.map(PathBuf::from).filter(|path| path.is_absolute()))
+    }
+
     fn authoritative_path(&self, thread_id: &str) -> Result<Option<PathBuf>, CatalogError> {
         if !self.state_db.is_file() {
             return Ok(None);

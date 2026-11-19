@@ -13,7 +13,7 @@ import type { ThreePanelsBack } from "../../ui/ThreePanelsHeader";
 import { ExtensionInputSheet } from "./actions/ExtensionInputSheet";
 import { FloatingActions } from "./FloatingActions";
 import { alertOfflineWrite } from "./actions/offlineRefusal";
-import { linkMenuItems } from "./actions/linkMenuItems";
+import { pullRequestMenuItems } from "./actions/pullRequestMenuItems";
 import type { ExtraMenuItem } from "./actions/OverflowActionsMenu";
 import { usePullRequestActions } from "./actions/usePullRequestActions";
 import type { VerdictChoice } from "./overview/verdictChoice";
@@ -99,11 +99,11 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
     dialog.error(title, error);
   });
   const extra = [
-    ...linkMenuItems({
+    ...pullRequestMenuItems({
       forgeName: data.providerName,
       host,
       onError: reportLinkError,
-      webUrl: overview.webUrl,
+      overview,
     }),
     ...submitReviewMenuItem(props.tab, data.verdictChoice, openReview),
   ];
@@ -123,6 +123,16 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
   );
   const getTransferAccess = useEvent(async (forceRefresh = false) =>
     props.capabilities.transferAccess(props.connectionId, forceRefresh),
+  );
+  const floatingActions = (
+    <FloatingActions
+      agentThread={data.agentThread}
+      conversation={data.conversation}
+      details={props.tab === "overview"}
+      isThreadUnread={props.isThreadUnread}
+      onComment={data.writes.comment}
+      onOpenChat={openReviewChat}
+    />
   );
   return (
     // Description and comment images resolve through the same companion media access as the
@@ -157,6 +167,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
             connectionId={props.connectionId}
             describeThread={(threadId) => threadTitle(props.describeThread, threadId)}
             fileActions={data.slots.anchored.files}
+            floatingActions={floatingActions}
             forge={props.forge}
             host={host}
             model={model}
@@ -183,14 +194,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
             onSubmit={actions.submitInput}
           />
         )}
-        <FloatingActions
-          agentThread={data.agentThread}
-          conversation={data.conversation}
-          details={props.tab === "overview"}
-          isThreadUnread={props.isThreadUnread}
-          onComment={data.writes.comment}
-          onOpenChat={openReviewChat}
-        />
+        {props.tab === "overview" ? floatingActions : null}
       </View>
     </PrivateImageAccessProvider>
   );
@@ -211,6 +215,7 @@ function submitReviewMenuItem(
   const { lead } = choice;
   return [
     {
+      icon: "send-outline",
       id: "submitReview",
       label: "Submit review",
       onSelect: () => {

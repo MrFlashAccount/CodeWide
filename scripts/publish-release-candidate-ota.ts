@@ -4,6 +4,7 @@ import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/pr
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
+import { readPublicArtifact } from "./read-public-artifact";
 
 type PublishArguments = {
   readonly outputRoot: string;
@@ -315,14 +316,9 @@ async function verifyPublicUpdate(
   if (!manifestBody.includes(release.updateId) || !manifestBody.includes("expo-signature")) {
     throw new Error("Public OTA manifest does not contain the signed published update");
   }
-  const launchResponse = await fetch(launchAsset.url, { cache: "no-store" });
-  if (!launchResponse.ok) {
-    throw new Error(`Public OTA launch asset failed with HTTP ${launchResponse.status}`);
-  }
-  const launchBytes = Buffer.from(await launchResponse.arrayBuffer());
-  const launchHash = createHash("sha256").update(launchBytes).digest("base64url");
-  if (launchHash !== launchAsset.hash) {
-    throw new Error(`Public OTA launch asset hash mismatch: ${launchHash}`);
+  const launch = await readPublicArtifact(new URL(launchAsset.url), {});
+  if (launch.sha256 !== Buffer.from(launchAsset.hash, "base64url").toString("hex")) {
+    throw new Error(`Public OTA launch asset hash mismatch: ${launch.sha256}`);
   }
   const currentResponse = await fetch(updateUrl, {
     cache: "no-store",

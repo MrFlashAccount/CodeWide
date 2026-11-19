@@ -49,4 +49,11 @@ application artifacts at `src/vendor/reacticx/tray.js` and
 
 The MaskedTabBar pill springs only when the selected tab changes. When the
 selected tab's own box moves or resizes (a relayout, a fold opening or
-closing), the pill takes the new box at once instead of springing to it.
+closing), the pill takes the new box at once instead of springing to it. A changed
+`measureRevision` makes the list and its base-layer triggers measure
+themselves again (`measure` / `measureLayout` against the row), for a layout
+that may have changed while layout events could not arrive; nothing remounts.
+The native row and measured views stay non-collapsible. Replies from an older
+request, a superseded layout, or an unmounted view are ignored; empty or
+non-finite measurements do not erase usable geometry. Foreground policy lives
+in `CatalogModeBar`; the vendor accepts only the explicit refresh revision.

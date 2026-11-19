@@ -2,7 +2,7 @@ import {
   SIDEBAR_FRAME_SHARE,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
-} from "../../src/routeComposition/paneGeometry";
+} from "../../src/ui/sidebarDimensions";
 
 /**
  * The catalog's settled sidebar box: relative to the pane frame and bounded, so Yoga resolves it

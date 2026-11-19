@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useState, type ReactNode } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { startTransition, Suspense, useState, type ReactNode } from "react";
+import { Platform, Pressable, StyleSheet, View } from "react-native";
 
+import { readAgentNotificationSettings } from "../../native/agentNotificationSettings";
 import { useEvent } from "../../react/useEvent";
 import { colors, iconSize, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
 import { AppListRow } from "../../ui/AppListRow";
@@ -9,6 +10,7 @@ import { listRowHeight, listRowPosition } from "../../ui/AppListRow.types";
 import { AppSheet, AppSheetScrollView } from "../../ui/AppSheet";
 import { SheetPageTransition } from "../../ui/sheetNavigation";
 import { AppText as Text } from "../../ui/Typography";
+import { NotificationSettings } from "./NotificationSettings";
 
 /** Display content stays with its owner; this sheet owns only settings navigation. */
 interface SettingsServer {
@@ -45,6 +47,10 @@ interface SettingsSheetProps {
 
 type SettingsPage =
   | { readonly kind: "overview" }
+  | {
+      readonly initial: ReturnType<typeof readAgentNotificationSettings>;
+      readonly kind: "notifications";
+    }
   | { readonly kind: "advanced" }
   | { readonly kind: "security" }
   | { readonly kind: "voiceAssistant" }
@@ -55,7 +61,23 @@ type SettingsNavigation = {
   readonly page: SettingsPage;
 };
 
-export function SettingsSheet(props: SettingsSheetProps) {
+export function SettingsSheet(props: SettingsSheetProps): React.JSX.Element {
+  return (
+    <Suspense fallback={null}>
+      <SettingsSheetNavigation {...props} />
+    </Suspense>
+  );
+}
+
+const pageTitles = {
+  advanced: "Advanced",
+  notifications: "Notifications",
+  overview: "Settings",
+  security: "Security",
+  voiceAssistant: "Voice Assistant",
+} as const;
+
+function SettingsSheetNavigation(props: SettingsSheetProps) {
   const [navigation, setNavigation] = useState<SettingsNavigation>({
     direction: null,
     page: { kind: props.entryPage ?? "overview" },
@@ -71,15 +93,14 @@ export function SettingsSheet(props: SettingsSheetProps) {
   // A removed server returns to the overview without retaining its editor or account data.
   const overview =
     page.kind === "overview" || (page.kind === "server" && selectedServer === undefined);
-  const title = overview
-    ? "Settings"
-    : page.kind === "advanced"
-      ? "Advanced"
-      : page.kind === "security"
-        ? "Security"
-        : page.kind === "voiceAssistant"
-          ? "Voice Assistant"
-          : (selectedServer?.title ?? "Settings");
+  const title =
+    page.kind === "server" ? (selectedServer?.title ?? "Settings") : pageTitles[page.kind];
+  const openNotifications = useEvent(() => {
+    const initial = readAgentNotificationSettings();
+    startTransition(() => {
+      setNavigation({ direction: "forward", page: { initial, kind: "notifications" } });
+    });
+  });
   const back = useEvent(() => {
     setNavigation({ direction: "back", page: { kind: "overview" } });
   });
@@ -123,13 +144,11 @@ export function SettingsSheet(props: SettingsSheetProps) {
         routeKey={
           overview
             ? "overview"
-            : page.kind === "advanced"
-              ? "advanced"
-              : page.kind === "security"
-                ? "security"
-                : page.kind === "voiceAssistant"
-                  ? "voice-assistant"
-                  : (selectedServer?.id ?? "overview")
+            : page.kind === "server"
+              ? `server:${page.id}`
+              : page.kind === "voiceAssistant"
+                ? "voice-assistant"
+                : page.kind
         }
       >
         <View style={styles.header}>
@@ -208,6 +227,27 @@ export function SettingsSheet(props: SettingsSheetProps) {
                     }}
                   />
                 )}
+                {Platform.OS === "android" && (
+                  <AppListRow
+                    description="Agent activity and sounds"
+                    fixedHeight={listRowHeight.double}
+                    leading={
+                      <Ionicons
+                        color={colors.textMuted}
+                        name="notifications-outline"
+                        size={iconSize.action}
+                      />
+                    }
+                    onPress={openNotifications}
+                    position={props.security === null ? "first" : "middle"}
+                    title="Notifications"
+                    trailingIcon={{
+                      color: colors.textMuted,
+                      name: "chevron-forward",
+                      size: iconSize.inline,
+                    }}
+                  />
+                )}
                 <AppListRow
                   description={props.voiceAssistant.description}
                   fixedHeight={listRowHeight.double}
@@ -217,7 +257,9 @@ export function SettingsSheet(props: SettingsSheetProps) {
                     size: iconSize.action,
                   }}
                   onPress={openVoiceAssistant}
-                  position={props.security === null ? "first" : "middle"}
+                  position={
+                    props.security === null && Platform.OS !== "android" ? "first" : "middle"
+                  }
                   title="Voice Assistant"
                   trailingIcon={{
                     color: colors.textMuted,
@@ -245,6 +287,8 @@ export function SettingsSheet(props: SettingsSheetProps) {
               </View>
               {props.version}
             </>
+          ) : page.kind === "notifications" ? (
+            <NotificationSettings initial={page.initial} onRetry={openNotifications} />
           ) : page.kind === "advanced" ? (
             props.advanced
           ) : page.kind === "security" ? (
@@ -261,7 +305,13 @@ export function SettingsSheet(props: SettingsSheetProps) {
 }
 
 /** Section rhythm uses the same type and spacing tokens as the surrounding app lists. */
-export function SettingsSection({ children, title }: { children: ReactNode; title: string }) {
+export function SettingsSection({
+  children,
+  title,
+}: {
+  children: ReactNode;
+  title: string;
+}): React.JSX.Element {
   return (
     <View style={styles.section}>
       <Text accessibilityRole="header" style={styles.sectionTitle}>

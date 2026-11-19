@@ -50,6 +50,9 @@ pnpm --filter @codewide/android lint
 pnpm test
 pnpm security:scan-secrets
 
+# Node fetch must honor the caller's HTTPS_PROXY/NO_PROXY for public verification.
+export NODE_USE_ENV_PROXY="${NODE_USE_ENV_PROXY:-1}"
+
 pnpm exec tsx scripts/publish-release-candidate-ota.ts \
   --output-root "$SITE_ROOT/ota" \
   --runtime-version "$RUNTIME_VERSION" \

@@ -179,6 +179,7 @@ export function ConversationComposition(
 
   const workingAgentsContent = (
     <WorkingSubagentsMenu
+      key={scoped.activation.composerScope}
       onOpen={(threadId) => {
         toolsBinding.openSubagents(subagents.catalog, threadId);
       }}

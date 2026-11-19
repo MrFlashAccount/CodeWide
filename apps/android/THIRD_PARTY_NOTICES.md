@@ -315,8 +315,8 @@ This section is generated from the exact inputs used by the code-review, Mermaid
 | `@pierre/diffs` | `1.2.12` | apache-2.0 |
 | `@pierre/theme` | `1.1.0` | MIT |
 | `@pierre/theming` | `0.0.2` | apache-2.0 |
-| `@pierre/theming` | `1.0.0` | apache-2.0 |
-| `@pierre/trees` | `1.0.0-beta.6` | apache-2.0 |
+| `@pierre/theming` | `1.0.2` | apache-2.0 |
+| `@pierre/trees` | `1.0.0` | apache-2.0 |
 | `@shikijs/core` | `4.4.3` | MIT |
 | `@shikijs/engine-javascript` | `4.4.3` | MIT |
 | `@shikijs/engine-oniguruma` | `4.4.3` | MIT |
@@ -376,7 +376,7 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-### `@pierre/diffs@1.2.12`, `@pierre/theming@1.0.0`, `@pierre/trees@1.0.0-beta.6`
+### `@pierre/diffs@1.2.12`, `@pierre/theming@1.0.2`, `@pierre/trees@1.0.0`
 
 Apache License
                            Version 2.0, January 2004
@@ -1195,7 +1195,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Required dependency notices
 
-### `@pierre/trees@1.0.0-beta.6` — NOTICE.md
+### `@pierre/trees@1.0.0` — NOTICE.md
 
 This project includes some code derived from
 [@headless-tree/core](https://github.com/lukasbach/headless-tree).

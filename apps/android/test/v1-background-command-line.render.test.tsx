@@ -6,6 +6,11 @@ import {
 } from "@codewide/sync-client";
 import { act, fireEvent, render, type RenderResult } from "@testing-library/react-native";
 import { View } from "react-native";
+import { layOutContentMenus } from "./fixtures/contentMenuLayout";
+import { placeRunningTasks } from "../src/features/conversation/timeline/runningTaskPlacement";
+import { TaskNotificationLine } from "../src/features/conversation/turns/TaskNotificationLine";
+import { BackgroundTaskContext } from "../src/features/conversation/turns/turnContexts";
+import type { RunningBackgroundTask } from "../src/data/runningBackgroundTasks";
 import { AppText } from "../src/ui/Typography";
 import type { BackgroundTaskOutputPage } from "../src/data/backgroundTaskOutput";
 import {
@@ -123,12 +128,13 @@ function timelineItem(turn: Turn): TurnItem {
 }
 
 /** The production turn rows of `turns`, as the virtualized timeline draws them. */
-function timelineSurface(turns: readonly Turn[]) {
-  const rows = projectTimelineRows(turns.map(timelineItem), {
+function timelineSurface(turns: readonly Turn[], running: readonly RunningBackgroundTask[] = []) {
+  const history = projectTimelineRows(turns.map(timelineItem), {
     enabled: true,
     searchMessageItemId: null,
     threadSearchActive: false,
   });
+  const { rows, footer } = placeRunningTasks(history, running, true);
   return (
     <View>
       {rows.map((row) =>
@@ -155,6 +161,7 @@ function timelineSurface(turns: readonly Turn[]) {
           />
         ),
       )}
+      <TaskNotificationLine reports={footer} />
     </View>
   );
 }
@@ -304,6 +311,97 @@ it("draws one element per task: the launch pill, not also the command's report",
   const view = render(timelineSurface([launch, wake]));
 
   expect(pillLabels(view)).toEqual([`${TITLE} 2m`, "Review the diff finished"]);
+});
+
+function listed(taskId: string, title: string): RunningBackgroundTask {
+  return {
+    kind: "task",
+    command: "watch",
+    itemId: `call-${taskId}`,
+    turnId: "launch",
+    task: { description: title, startedAt: LAUNCHED_AT, status: "running", taskId },
+  };
+}
+
+it("shows one link for a launch listed as running and keeps distinct same-name tasks in one picker", async () => {
+  const open = jest.fn(async () => undefined);
+  const history = [
+    completedTurn("launch", [
+      prompt,
+      command("call-first", {
+        description: TITLE,
+        status: "running",
+        taskId: "first",
+      }),
+      answer("answer"),
+    ]),
+  ];
+  const screen = (live: readonly RunningBackgroundTask[]) => (
+    <BackgroundTaskContext.Provider value={open}>
+      {timelineSurface(history, live)}
+    </BackgroundTaskContext.Provider>
+  );
+  const first = listed("first", TITLE);
+  const view = render(screen([first]));
+  expect(pillLabels(view)).toEqual([`${TITLE} 3m`]);
+  await act(async () => {
+    fireEvent.press(view.getByTestId("task-notification-line"));
+  });
+  expect(open).toHaveBeenLastCalledWith({ name: TITLE, taskId: "first" });
+
+  view.rerender(screen([first, listed("second", TITLE)]));
+  expect(pillLabels(view)).toEqual(["2 background tasks running"]);
+  fireEvent.press(view.getByTestId("task-notification-line"));
+  layOutContentMenus(view);
+  const entries = view.getAllByTestId("task-notification-row");
+  expect(entries).toHaveLength(2);
+  await act(async () => {
+    fireEvent.press(entries[1]);
+  });
+  expect(open).toHaveBeenLastCalledWith({ name: TITLE, taskId: "second" });
+});
+
+it("settles both previous launches from wake and mid-turn completion while a new task runs", () => {
+  const launch = (id: string) =>
+    command(`call-${id}`, { description: id, status: "running", taskId: id });
+  const before = completedTurn("before", [
+    prompt,
+    launch("first"),
+    launch("second"),
+    answer("before-answer"),
+  ]);
+  const after = completedTurn("after", [
+    report("first", "command", "first"),
+    { ...report("second", "command", "second"), delivery: "midTurn" },
+    launch("third"),
+    answer("after-answer"),
+  ]);
+  const view = render(
+    timelineSurface(
+      [before, after],
+      [listed("first", "first"), listed("second", "second"), listed("third", "third")],
+    ),
+  );
+  expect(pillLabels(view)).toEqual(["2 background tasks finished", "third 3m"]);
+  fireEvent.press(view.getAllByTestId("task-notification-line")[0]);
+  layOutContentMenus(view);
+  expect(view.getByLabelText("first, finished, completed")).toBeOnTheScreen();
+  expect(view.getByLabelText("second, finished, completed")).toBeOnTheScreen();
+});
+
+it("keeps interim reports from finishing a launch, and a final failure wins over a stale live listing", () => {
+  const launch = completedTurn("launch", [
+    prompt,
+    command("single", { description: TITLE, status: "running", taskId: "first" }),
+    answer("done"),
+  ]);
+  const wake = (status: string) =>
+    completedTurn("wake", [{ ...report("first", "command", TITLE), status }]);
+  const live = [listed("first", TITLE)];
+  const view = render(timelineSurface([launch, wake("interim")], live));
+  expect(pillLabels(view)).toEqual([`${TITLE} 3m`]);
+  view.rerender(timelineSurface([launch, wake("failed")], live));
+  expect(pillLabels(view)).toEqual([`${TITLE} failed`]);
 });
 
 it("updates a sealed turn's pill live when the Companion republishes its command", () => {

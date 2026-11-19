@@ -40,6 +40,26 @@ async function send(page, command, payload) {
   );
 }
 
+async function samePixels(page, first, second) {
+  const sources = [first, second].map((png) => "data:image/png;base64," + png.toString("base64"));
+  return page.evaluate(async (images) => {
+    async function pixels(src) {
+      const image = new Image();
+      image.src = src;
+      await image.decode();
+      const context = new OffscreenCanvas(image.width, image.height).getContext("2d");
+      context.drawImage(image, 0, 0);
+      return context.getImageData(0, 0, image.width, image.height);
+    }
+    const [before, after] = await Promise.all(images.map(pixels));
+    return (
+      before.width === after.width &&
+      before.height === after.height &&
+      before.data.every((value, index) => value === after.data[index])
+    );
+  }, sources);
+}
+
 const patch = (before, after) => ({
   kind: "update",
   diff: `--- a/file.ts\n+++ b/file.ts\n@@ -20 +20 @@\n-${before}\n+${after}\n`,
@@ -268,6 +288,21 @@ test("renders every recorded edit even when no complete current file exists", as
   }
 });
 
+// A short document must share the editor surface down to the bottom of the viewport.
+async function expectFullHeightCanvas(page) {
+  const pre = page.locator("#preview diffs-container pre:visible").first();
+  await expect(pre).toBeVisible();
+  const codeColor = await pre.evaluate((node) => getComputedStyle(node).backgroundColor);
+  const canvas = await page.locator("#preview").evaluate((preview) => {
+    const bounds = preview.getBoundingClientRect();
+    return {
+      color: getComputedStyle(preview).backgroundColor,
+      reachesBottom: Math.abs(bounds.bottom - innerHeight) < 1,
+    };
+  });
+  assert.deepEqual(canvas, { color: codeColor, reachesBottom: true });
+}
+
 test("still renders a complete source file and a reconstructed diff", async () => {
   const page = await openReview();
   try {
@@ -297,10 +332,12 @@ test("still renders a complete source file and a reconstructed diff", async () =
     await expect(
       page.getByText("currentValue", { exact: true }).filter({ visible: true }),
     ).toBeVisible();
+    await expectFullHeightCanvas(page);
     await send(page, "settings", { mode: "source", wrapLines: false });
     await expect(
       page.getByText("currentValue", { exact: true }).filter({ visible: true }),
     ).toBeVisible();
+    await expectFullHeightCanvas(page);
   } finally {
     await page.close();
   }
@@ -522,6 +559,132 @@ test("anchors a tapped line for the native composer and draws pending and refuse
       await page.evaluate(() => window.reviewEvents.some((event) => event.type === "error")),
       false,
     );
+  } finally {
+    await page.close();
+  }
+});
+
+test("a long filename has its settled appearance when scrolled into view", async () => {
+  const page = await openReview();
+  try {
+    await page.setViewportSize({ width: 720, height: 650 });
+    const basename = "WorkspaceNotificationPreferences.tsx";
+    const target = "src/notifications/" + basename;
+    const paths = Array.from({ length: 80 }, (_, i) => "src/notifications/Channel" + i + ".ts");
+    paths.push(target);
+    const workspace = {
+      compact: false,
+      files: paths.map((path) => ({ ...files[0], path, treePath: path })),
+      revision: "long-filenames",
+      sidebarOpen: true,
+    };
+    await send(page, "workspace", { ...workspace, selectedPath: paths[0] });
+    await expect(page.getByRole("treeitem", { name: "Channel0.ts" })).toBeVisible();
+    const row = page.getByRole("treeitem", { name: basename });
+    await expect(row).toHaveCount(0);
+
+    // Hold the first painted state independently of how long a screenshot takes on CI.
+    const session = await page.context().newCDPSession(page);
+    await session.send("Animation.enable");
+    await session.send("Animation.setPlaybackRate", { playbackRate: 0 });
+    await send(page, "workspace", { ...workspace, selectedPath: target });
+    await expect(row).toBeInViewport();
+    const firstPaint = await row.screenshot();
+    await session.send("Animation.setPlaybackRate", { playbackRate: 1 });
+    await row.evaluate(async (element) => {
+      const animations = element.getAnimations({ subtree: true });
+      await Promise.all(animations.map((animation) => animation.finished));
+    });
+    const settled = await row.screenshot();
+    assert.ok(await samePixels(page, firstPaint, settled), "the visible filename should not flash");
+  } finally {
+    await page.close();
+  }
+});
+
+test("keeps file navigation available in the mobile sheet and beside a pending diff", async () => {
+  const page = await openReview();
+  try {
+    const items = [
+      "src/ui/index.ts",
+      "tests/ui/index.ts",
+      "src/ui/NotificationPreferencesForTheCurrentWorkspace.test.tsx",
+    ].map((path) => ({ ...files[0], path, treePath: path }));
+    let state = {
+      files: items,
+      selectedPath: items[0].path,
+      revision: "sidebar-files",
+      compact: true,
+      sidebarOpen: false,
+    };
+    const update = async (next) => {
+      state = { ...state, ...next };
+      await send(page, "workspace", state);
+    };
+    const lastOpen = () =>
+      page.evaluate(() => window.reviewEvents.filter((e) => e.type === "filesOpen").at(-1)?.open);
+    await update({});
+    await update({ sidebarOpen: true });
+    const dialog = page.getByRole("dialog", { name: "Changed files" });
+    await expect(dialog).toBeVisible();
+    assert.equal(await dialog.evaluate((d) => d.matches(":modal")), true);
+    await expect(dialog.getByText("Files", { exact: true })).toHaveCount(0);
+    const longName = dialog.getByRole("treeitem", {
+      name: "NotificationPreferencesForTheCurrentWorkspace.test.tsx",
+    });
+    await expect(longName).toBeVisible();
+    const duplicate = dialog.locator('[role="treeitem"][data-item-path="tests/ui/index.ts"]');
+    const shortName = dialog.locator('[data-item-path="src/ui/index.ts"]');
+    assert.equal(
+      await longName.evaluate((row) => row.clientHeight),
+      await shortName.evaluate((row) => row.clientHeight),
+      "a long name occupies the same single row as a short name",
+    );
+    await update({
+      files: items.map((file) =>
+        file === items[2] ? { ...file, review: { drafts: 2, viewed: true } } : file,
+      ),
+    });
+    await expect(longName).toContainText("✎2 ✓");
+    await dialog.getByRole("treeitem", { name: "tests / ui" }).click();
+    await expect(duplicate).toHaveCount(0);
+    const filter = dialog.getByRole("searchbox", { name: "Filter changed files" });
+    await filter.fill("Tests/UI/index");
+    await expect(filter).toHaveValue("Tests/UI/index");
+    await expect(duplicate).toBeVisible();
+    await expect(longName).toHaveCount(0);
+    await filter.fill("missing path");
+    await expect(dialog.getByText("No matching files")).toBeVisible();
+    await expect(dialog.getByRole("tree")).toBeHidden();
+    await filter.fill("");
+    await expect(duplicate).toHaveCount(0);
+    await dialog.press("Escape");
+    assert.equal(await lastOpen(), false);
+    await update({ sidebarOpen: false });
+    await expect(dialog).toHaveCount(0);
+    await page.setViewportSize({ width: 740, height: 650 });
+    await update({ compact: false });
+    await update({ sidebarOpen: true });
+    assert.equal(await dialog.evaluate((d) => d.matches(":modal")), false);
+    await expect(filter).toBeVisible();
+    await expect(filter).not.toBeFocused();
+    await filter.fill("index");
+    await send(page, "document", { requestId: 2, document: null });
+    await update({ selectedPath: items[1].path });
+    await expect(filter).toHaveValue("index");
+    await expect(dialog.getByText("Loading file…")).toHaveCount(0);
+    await expect(page.locator("#preview-panel").getByText("Loading file…")).toBeVisible();
+    for (const [width, expected] of [[740, 320], [1200, 408], [1600, 480]]) {
+      await page.setViewportSize({ width, height: 650 });
+      const tree = await dialog.boundingBox();
+      const diff = await page.locator("#preview-panel").boundingBox();
+      assert.equal(tree.width, expected);
+      assert.equal(diff.x, expected);
+      assert.equal(diff.width, width - expected);
+    }
+    await update({ sidebarOpen: false });
+    await expect(dialog).toHaveCount(0);
+    assert.equal((await page.locator("#preview-panel").boundingBox()).x, 0);
   } finally {
     await page.close();
   }

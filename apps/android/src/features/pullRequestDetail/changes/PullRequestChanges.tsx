@@ -58,44 +58,27 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
   const [width, setWidth] = useState(0);
   const besideDiff = width >= TREE_BESIDE_DIFF_MIN_WIDTH;
   // The tree opens by itself only where it leaves the diff a readable width.
-  const filesOpen = data.filesPanelOpen ?? besideDiff;
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const filesOpen = isFileListOpen(besideDiff, data.filesPanelOpen, pickerOpen);
+  const setFilesOpen = useEvent((open: boolean) => {
+    if (besideDiff) {
+      model.filesPanelOpen.set(open);
+    } else {
+      setPickerOpen(open);
+    }
+  });
   return (
     <View
       onLayout={(event) => {
-        setWidth(event.nativeEvent.layout.width);
+        const next = event.nativeEvent.layout.width;
+        if (next >= TREE_BESIDE_DIFF_MIN_WIDTH) {
+          setPickerOpen(false);
+        }
+        setWidth(next);
       }}
       style={styles.fill}
       testID="pull-request-changes"
     >
-      {props.renderAppBar(
-        data.view === "guide" ? "Review guide" : "Files changed",
-        <ReviewSubmitControl
-          bothTargetTitle={agentTitle}
-          drafts={data.drafts}
-          host={props.host}
-          offline={props.offline}
-          result={result}
-          submit={submit}
-          verdicts={props.verdicts}
-        />,
-      )}
-      <ChangesToolbar
-        file={toolbarFile(props, data)}
-        filesOpen={filesOpen}
-        host={props.host}
-        onFiles={() => {
-          if (data.view === "guide") {
-            model.changesView.set("files");
-          } else {
-            model.filesPanelOpen.set(!filesOpen);
-          }
-        }}
-        onRun={props.onRun}
-        summary={data.page === null ? "" : viewedSummary(data.page.files)}
-        tablet={props.tablet}
-        view={data.view}
-      />
-      {result === null ? null : <ReviewOutcome host={props.host} result={result} />}
       <LineCommentFrame
         composer={
           composer.line === null
@@ -104,12 +87,41 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
                 drafts: composer.drafts,
                 onClose: composer.close,
                 onSubmit: composer.add,
-                submitLabel: "Add to review",
+                submitLabel: composer.editing ? "Save comment" : "Add to review",
                 target: composer.line,
                 voice: props.voiceRuntime,
               }
         }
       >
+        {props.renderAppBar(
+          data.view === "guide" ? "Review guide" : "Files changed",
+          <ReviewSubmitControl
+            bothTargetTitle={agentTitle}
+            drafts={data.drafts}
+            host={props.host}
+            offline={props.offline}
+            result={result}
+            submit={submit}
+            verdicts={props.verdicts}
+          />,
+        )}
+        <ChangesToolbar
+          file={toolbarFile(props, data)}
+          filesOpen={filesOpen}
+          host={props.host}
+          onFiles={() => {
+            if (data.view === "guide") {
+              model.changesView.set("files");
+            } else {
+              setFilesOpen(!filesOpen);
+            }
+          }}
+          onRun={props.onRun}
+          summary={data.page === null ? "" : viewedSummary(data.page.files)}
+          tablet={besideDiff}
+          view={data.view}
+        />
+        {result === null ? null : <ReviewOutcome host={props.host} result={result} />}
         <ChangesBody
           besideDiff={besideDiff}
           composer={composer}
@@ -118,10 +130,21 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
           onLinePress={composer.tapLine}
           onSendToAgent={sendToAgent}
           props={props}
+          setFilesOpen={setFilesOpen}
         />
       </LineCommentFrame>
+      {visibleFloatingActions(composer, pickerOpen, props.floatingActions)}
     </View>
   );
+}
+
+/** Keep the linked-chat shortcut clear of the file sheet and the line composer's Send button. */
+function visibleFloatingActions(
+  composer: DraftComposer,
+  pickerOpen: boolean,
+  actions: React.ReactNode,
+): React.ReactNode {
+  return composer.line === null && !pickerOpen ? actions : null;
 }
 
 /**
@@ -136,6 +159,7 @@ function ChangesBody({
   onLinePress,
   onSendToAgent,
   props,
+  setFilesOpen,
 }: {
   readonly besideDiff: boolean;
   readonly composer: DraftComposer;
@@ -144,6 +168,7 @@ function ChangesBody({
   readonly onLinePress: (reference: CodeReviewLineReference) => void;
   readonly onSendToAgent: (draftIds: readonly DraftId[]) => void;
   readonly props: PullRequestChangesProps;
+  readonly setFilesOpen: (open: boolean) => void;
 }): React.JSX.Element {
   const { connectionId, model, overview } = props;
   const dialog = useAppDialog();
@@ -182,7 +207,9 @@ function ChangesBody({
             });
           }}
           onDiscardPut={composer.discard}
+          onEditDraft={composer.edit}
           onEditPut={composer.restore}
+          onFilesOpenChange={setFilesOpen}
           onGuide={() => {
             model.changesView.set("guide");
           }}
@@ -199,7 +226,7 @@ function ChangesBody({
             model.selectedPath.set(path);
             if (!besideDiff) {
               // The narrow tree takes the diff's place; choosing a file reveals it.
-              model.filesPanelOpen.set(false);
+              setFilesOpen(false);
             }
           }}
           onSendToAgent={(draft) => {
@@ -258,7 +285,7 @@ function toolbarFile(props: PullRequestChangesProps, data: ChangesData): Toolbar
 }
 
 /** Tree column (248dp) plus a diff of roughly 80 code columns. */
-const TREE_BESIDE_DIFF_MIN_WIDTH = 720;
+const TREE_BESIDE_DIFF_MIN_WIDTH = 620;
 const SKELETON_ROWS = ["first", "second", "third", "fourth"] as const;
 const ALTERNATING_ROW_DIVISOR = 2;
 const SHORT_ROW_REMAINDER = 1;
@@ -319,3 +346,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
 });
+
+function isFileListOpen(wide: boolean, sidebar: boolean | null, sheet: boolean): boolean {
+  return wide ? (sidebar ?? true) : sheet;
+}

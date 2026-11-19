@@ -59,11 +59,21 @@ it("floats nothing while no subagent works", () => {
   expect(view.queryByTestId("working-subagents-chip")).toBeNull();
 });
 
+it("opens a single working child directly", () => {
+  const open = jest.fn();
+  const view = render(
+    <WorkingSubagentsMenu onOpen={open} working={[child("a", "Map sources", true)]} />,
+  );
+  fireEvent.press(view.getByTestId("working-subagents-chip"));
+  expect(open).toHaveBeenCalledWith("a");
+  expect(view.queryByTestId("working-subagents-list")).toBeNull();
+});
+
 it("opens the list centred on the chip with a gap, and draws no arrows", () => {
   const view = render(
     <WorkingSubagentsMenu
       onOpen={() => undefined}
-      working={[child("a", "Map sources", true)]}
+      working={[child("a", "Map sources", true), child("b", "Review spec", true)]}
     />,
   );
   fireEvent.press(view.getByTestId("working-subagents-chip"));
@@ -98,7 +108,5 @@ it("re-renders the chip's content in the same commit, with no width of its own",
   expect(view.queryByText("2 working")).toBeNull();
   const chip = StyleSheet.flatten(view.getByTestId("working-subagents-chip").props.style);
   expect(chip.width).toBeUndefined();
-  expect(
-    StyleSheet.flatten(view.getByTestId("content-menu-anchor").props.style).width,
-  ).toBeUndefined();
+  expect(view.queryByTestId("content-menu-anchor")).toBeNull();
 });

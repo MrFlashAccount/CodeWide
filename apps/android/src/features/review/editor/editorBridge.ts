@@ -71,6 +71,7 @@ export type CodeReviewWorkspaceState = {
  */
 export type CodeReviewInlineComment = {
   readonly body: string;
+  readonly editable?: boolean;
   readonly id: string;
   readonly line: number;
   readonly path: string;
@@ -91,6 +92,8 @@ export type CodeReviewHostCommand =
 
 export type CodeReviewClientEvent =
   | BridgeEvent<"ready">
+  | BridgeEvent<"commentTap", { id: string; requestId: number }>
+  | BridgeEvent<"filesOpen", { open: boolean }>
   | BridgeEvent<"rendered", { renderMs: number; requestId: number }>
   | BridgeEvent<"fileSelect", { path: string; requestId: number }>
   | BridgeEvent<"lineTap", { reference: CodeReviewLineReference; requestId: number }>

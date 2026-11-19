@@ -13,9 +13,9 @@ use std::{
 
 pub use companion_host::vcs::{
     CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, INSPECT_CAPABILITY,
-    REMOTES_CAPABILITY, UpstreamRef, VcsDiff, VcsDiffPage, VcsError, VcsFile, VcsFileStatus,
-    VcsRemote, VcsRemotes, VcsRepository, VcsScope, VcsSnapshot, VcsState, VcsSummary,
-    WORKSPACE_CREATE_CAPABILITY, WorkspaceCreateResult, WorkspaceSupport,
+    REMOTES_CAPABILITY, UNSUPPORTED_SCOPE_CODE, UpstreamRef, VcsDiff, VcsDiffPage, VcsError,
+    VcsFile, VcsFileStatus, VcsRemote, VcsRemotes, VcsRepository, VcsScope, VcsSnapshot, VcsState,
+    VcsSummary, WORKSPACE_CREATE_CAPABILITY, WorkspaceCreateResult, WorkspaceSupport,
 };
 use tokio::{io::AsyncReadExt, process::Command};
 
@@ -86,19 +86,26 @@ impl GitProvider {
         if !output.status.success() {
             return Err(command_failure("git status", &output.stderr));
         }
-        if scope == VcsScope::Uncommitted {
-            return git_uncommitted_snapshot(&root, &output.stdout).await;
+        let mut snapshot = if scope == VcsScope::Uncommitted {
+            git_uncommitted_snapshot(&root, &output.stdout).await?
+        } else {
+            let mut snapshot = parse_git_status(&root, &output.stdout, scope)?;
+            populate_git_diff_stats(&root, scope, None, &mut snapshot.files).await?;
+            snapshot.snapshot_id = snapshot_id(
+                &root,
+                snapshot.repository.branch.as_deref(),
+                snapshot.repository.head.as_deref(),
+                None,
+                scope,
+                &snapshot.files,
+            )?;
+            snapshot
+        };
+        if snapshot.repository.head.is_none() || git_default_branch(&root).await?.is_none() {
+            snapshot
+                .available_scopes
+                .retain(|scope| *scope != VcsScope::Branch);
         }
-        let mut snapshot = parse_git_status(&root, &output.stdout, scope)?;
-        populate_git_diff_stats(&root, scope, None, &mut snapshot.files).await?;
-        snapshot.snapshot_id = snapshot_id(
-            &root,
-            snapshot.repository.branch.as_deref(),
-            snapshot.repository.head.as_deref(),
-            None,
-            scope,
-            &snapshot.files,
-        )?;
         Ok(snapshot)
     }
 

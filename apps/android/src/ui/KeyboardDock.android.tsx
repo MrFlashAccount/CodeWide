@@ -1,5 +1,5 @@
-import { Column, Host, RNHostView } from "@expo/ui/jetpack-compose";
-import { fillMaxSize, imePadding } from "@expo/ui/jetpack-compose/modifiers";
+import { Host, Spacer } from "@expo/ui/jetpack-compose";
+import { defaultMinSize, imePadding } from "@expo/ui/jetpack-compose/modifiers";
 import { StyleSheet, View } from "react-native";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Reanimated, { useAnimatedStyle } from "react-native-reanimated";
@@ -7,8 +7,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { KeyboardDockProps } from "./KeyboardDock.types";
 import { useOverlaySurface } from "./OverlaySurfaceContext";
-
-const DIALOG_DOCK_MODIFIERS = [fillMaxSize(), imePadding()];
 
 /**
  * Android keyboard dock. Keyboard avoidance belongs to the window that holds
@@ -47,39 +45,29 @@ function ActivityKeyboardDock(props: KeyboardDockProps): React.JSX.Element {
   );
 }
 
-/** The Compose dialog's dock, from the dialog's own IME insets. */
+/**
+ * The dialog's safe area already excludes the navigation bar. Reserve only the
+ * part of the IME above that edge. Compose measures the actual dialog IME on
+ * the UI thread; the composer stays in the same RN tree as the review toolbar.
+ */
 function DialogKeyboardDock(props: KeyboardDockProps): React.JSX.Element {
+  const { bottom } = useSafeAreaInsets();
   return (
-    <Host
-      colorScheme="dark"
-      ignoreSafeAreaKeyboardInsets
-      pointerEvents="box-none"
-      style={styles.layer}
-    >
-      <Column modifiers={DIALOG_DOCK_MODIFIERS}>
-        <DialogDockContent>{props.children}</DialogDockContent>
-      </Column>
-    </Host>
-  );
-}
-
-/** React Native content inside the Compose column; its children dock at the bottom. */
-function DialogDockContent(props: KeyboardDockProps): React.JSX.Element {
-  return (
-    <RNHostView matchContents={false}>
-      <View pointerEvents="box-none" style={styles.content}>
-        {props.children}
-      </View>
-    </RNHostView>
+    <View pointerEvents="box-none" style={styles.layer} testID="keyboard-dock">
+      {props.children}
+      <Host
+        ignoreSafeAreaKeyboardInsets
+        matchContents={{ vertical: true }}
+        pointerEvents="none"
+        style={{ marginBottom: -bottom }}
+      >
+        <Spacer modifiers={[defaultMinSize({ minHeight: bottom }), imePadding()]} />
+      </Host>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  content: {
-    flex: 1,
-    justifyContent: "flex-end",
-    minHeight: 0,
-  },
   layer: {
     ...StyleSheet.absoluteFill,
     justifyContent: "flex-end",

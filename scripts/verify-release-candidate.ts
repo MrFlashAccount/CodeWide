@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { readPublicArtifact } from "./read-public-artifact";
 
 const { manifestPath, publicUrl } = parseArguments(process.argv.slice(2));
 const manifest = readCandidateManifest(JSON.parse(await readFile(manifestPath, "utf8")));
@@ -26,21 +26,14 @@ if (
 ) {
   throw new Error("Public candidate manifest is stale");
 }
-const apkResponse = await fetch(new URL(manifest.artifact.file, publicUrl), {
-  cache: "no-store",
-  headers: { "accept-encoding": "gzip" },
+const apk = await readPublicArtifact(new URL(manifest.artifact.file, publicUrl), {
+  "accept-encoding": "gzip",
 });
-if (!apkResponse.ok || apkResponse.body === null) {
-  throw new Error(`Public candidate APK failed with HTTP ${apkResponse.status}`);
-}
-if (apkResponse.headers.get("content-encoding") !== "gzip") {
+if (apk.contentEncoding !== "gzip") {
   throw new Error("Public candidate APK is not served with gzip compression");
 }
-const digest = createHash("sha256");
-for await (const chunk of apkResponse.body) digest.update(chunk);
-const publicSha256 = digest.digest("hex");
-if (publicSha256 !== manifest.artifact.sha256) {
-  throw new Error(`Public candidate APK hash mismatch: ${publicSha256}`);
+if (apk.sha256 !== manifest.artifact.sha256) {
+  throw new Error(`Public candidate APK hash mismatch: ${apk.sha256}`);
 }
 process.stdout.write(
   `${JSON.stringify(

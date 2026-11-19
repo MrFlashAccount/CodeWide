@@ -53,6 +53,7 @@ interface IMaskedTabBarContext {
   fontSize: number;
   fontWeight: TextStyle["fontWeight"];
   draggable: boolean;
+  measureRevision: number;
 }
 
 interface IMaskedTabBarRoot {
@@ -71,6 +72,12 @@ interface IMaskedTabBarRoot {
   readonly fontSize?: number;
   readonly fontWeight?: TextStyle["fontWeight"];
   readonly draggable?: boolean;
+  /**
+   * Changing it makes the list and its triggers measure themselves again, for
+   * a layout that changed while layout events could not arrive (the screen
+   * was off). It does not remount anything.
+   */
+  readonly measureRevision?: number;
   readonly style?: StyleProp<ViewStyle>;
 }
 

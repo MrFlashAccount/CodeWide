@@ -63,7 +63,7 @@ export function reportLineSummary(reports: readonly TaskLineEntry[]): ReportLine
   if (badges.has("waiting")) {
     return { label, phrase: "reported" };
   }
-  return { label, phrase: "finished" };
+  return { label, phrase: badges.has("running") ? "running" : "finished" };
 }
 
 /**
@@ -73,6 +73,13 @@ export function reportLineSummary(reports: readonly TaskLineEntry[]): ReportLine
 export function reportDetails(report: TaskLineEntry, nowMs: number): string {
   if (isBackgroundLaunch(report)) {
     return launchDetail(report, nowMs) ?? reportOutcome(report).phrase;
+  }
+  return reportDeliveryDetails(report);
+}
+
+function reportDeliveryDetails(report: TaskLineEntry): string {
+  if ("terminal" in report) {
+    return reportOutcome(report).phrase;
   }
   const parts: string[] = [];
   if (report.delivery === "midTurn") {
@@ -96,13 +103,12 @@ export function launchDetail(report: TaskLineEntry, nowMs: number): string | nul
   if (!isBackgroundLaunch(report)) {
     return null;
   }
-  const { launch } = report;
-  if (launch.status === "running") {
-    return runningDetail(launch.startedAt, nowMs);
+  if (report.status === "running") {
+    return runningDetail(report.startedAt, nowMs);
   }
-  return launch.status === "unknown"
+  return report.status === "unknown"
     ? UNKNOWN_LAUNCH.phrase
-    : endedDetail(launch.status, report.durationMs);
+    : endedDetail(report.status, report.durationMs);
 }
 
 const MS_PER_SECOND = 1000;

@@ -224,6 +224,12 @@ describe("capability-gated thread actions", () => {
     );
     const legacy = threadAgentActions(createV1TestThread("t", null, 1, []), scope, fork);
     expect(Object.values(legacy).every((value) => value !== undefined)).toBe(true);
+    const terminals = threadAgentActions(
+      { codewideAgent: { capabilities: ["backgroundTerminals"], provider: "codex" } },
+      scope,
+      fork,
+    );
+    expect(terminals.onListTerminals).toBe(actions.onListTerminals);
   });
 });
 

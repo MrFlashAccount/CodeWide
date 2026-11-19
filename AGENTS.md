@@ -17,6 +17,10 @@
   - Background refreshes and WebSocket/native events invalidate or patch the process-owned query outside React effects. Local model events continue to publish to their owning Legend State model. When React-owned navigation, range, or Promise-selection state changes, schedule that state change in a Transition; do not assume that merely wrapping an external-store mutation makes it deferred.
 - Effects remain valid only for synchronizing with external systems after commit: subscriptions, timers, native listeners, imperative handles, and cleanup/retention. They must not be used as a data-loading scheduler. If retention is required, prefer hiding it behind the store subscription lifecycle rather than coupling it to a component fetch effect.
 
+## Render-test doubles
+
+- Keep the real implementation of hooks whose behavior depends on a provider, native events, recycling, or component lifetime. Exercise the relevant owner in a test. A native layout or I/O double may replace that boundary only. In particular, Jest must preserve every LegendList hook when replacing its viewport for render tests.
+
 ## Frequently changing interaction state
 
 - Keep frequently changing interaction state that React needs in a stable owner-held Legend State observable, whether one or several components consume it. Pass the observable owner through a narrow context or typed props when needed, and subscribe with `useSelector` only where a value is rendered. Do not mirror the same state into component-local React state or force a parent to rerender on every update.

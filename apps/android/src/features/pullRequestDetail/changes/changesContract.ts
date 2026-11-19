@@ -20,6 +20,7 @@ export type PullRequestChangesProps = {
   readonly connectionId: string;
   readonly describeThread: (threadId: ThreadId) => string;
   readonly fileActions: ReadonlyMap<string, readonly ActionDescriptor[]>;
+  readonly floatingActions: React.ReactNode;
   readonly forge: Pick<ForgeResources, "fileContent" | "files" | "loadMoreFiles">;
   readonly host: string;
   readonly model: Observable<PullRequestScreenState>;

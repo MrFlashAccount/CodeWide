@@ -2,7 +2,7 @@ import { fireEvent, render } from "@testing-library/react-native";
 import * as Clipboard from "expo-clipboard";
 import { Linking, Share } from "react-native";
 
-import { linkMenuItems } from "../src/features/pullRequestDetail/actions/linkMenuItems";
+import { pullRequestMenuItems } from "../src/features/pullRequestDetail/actions/pullRequestMenuItems";
 import { ReviewOutcome } from "../src/features/pullRequestDetail/changes/ReviewOutcome";
 
 // A review URL comes from the provider plugin; the Submit outcome opens it only
@@ -44,42 +44,57 @@ const UNSAFE_URLS = [
   "https://user:secret@github.com/acme/app/pull/91",
 ];
 
-function links(webUrl: string, forgeName: string | null = "GitHub") {
-  return linkMenuItems({ forgeName, host: "github.com", onError: () => undefined, webUrl });
+const metadata = { number: "91", title: "Fix отображения ⋮ в PR" };
+
+function menu(webUrl: string, forgeName: string | null = "GitHub") {
+  return pullRequestMenuItems({
+    forgeName,
+    host: "github.com",
+    onError: () => undefined,
+    overview: { ...metadata, webUrl },
+  });
 }
 
-it("copies, shares and opens the PR page in the forge, and offers nothing for another URL", async () => {
+it("copies the PR metadata verbatim and copies, shares and opens its forge link", async () => {
   const copy = jest.spyOn(Clipboard, "setStringAsync").mockResolvedValue(true);
   const share = jest.spyOn(Share, "share").mockResolvedValue({ action: "sharedAction" });
-  const items = links("https://github.com/acme/app/pull/91");
-  expect(items.map((item) => item.label)).toEqual(["Copy link", "Share", "Open in GitHub"]);
+  const items = menu("https://github.com/acme/app/pull/91");
   for (const item of items) {
     item.onSelect();
   }
   await Promise.resolve();
   expect(copy).toHaveBeenCalledWith("https://github.com/acme/app/pull/91");
+  expect(copy).toHaveBeenCalledWith(metadata.number);
+  expect(copy).toHaveBeenCalledWith(metadata.title);
   expect(share).toHaveBeenCalledWith(
     expect.objectContaining({ message: "https://github.com/acme/app/pull/91" }),
   );
   expect(Linking.openURL).toHaveBeenCalledWith("https://github.com/acme/app/pull/91");
   // Until the accounts snapshot names the forge, the host stands in.
-  expect(links("https://github.com/acme/app/pull/91", null).at(-1)?.label).toBe(
+  expect(menu("https://github.com/acme/app/pull/91", null).at(-1)?.label).toBe(
     "Open in github.com",
   );
-  for (const url of UNSAFE_URLS) {
-    expect(links(url)).toEqual([]);
-  }
+});
+
+it.each(UNSAFE_URLS)("keeps only the local copy actions for %s", (url) => {
+  const copy = jest.spyOn(Clipboard, "setStringAsync").mockResolvedValue(true);
+  const items = menu(url);
+  expect(items.map((item) => item.label)).toEqual(["Copy ID", "Copy title"]);
+  items[0]?.onSelect();
+  expect(copy).toHaveBeenLastCalledWith(metadata.number);
+  items[1]?.onSelect();
+  expect(copy).toHaveBeenLastCalledWith(metadata.title);
 });
 
 it("reports a failed copy with its real error", async () => {
   const failure = new Error("clipboard unavailable");
   jest.spyOn(Clipboard, "setStringAsync").mockRejectedValue(failure);
   const onError = jest.fn<undefined, [string, unknown]>();
-  const [copy] = linkMenuItems({
+  const [copy] = pullRequestMenuItems({
     forgeName: "GitHub",
     host: "github.com",
     onError,
-    webUrl: "https://github.com/acme/app/pull/91",
+    overview: { ...metadata, webUrl: "https://github.com/acme/app/pull/91" },
   });
   copy?.onSelect();
   await Promise.resolve();

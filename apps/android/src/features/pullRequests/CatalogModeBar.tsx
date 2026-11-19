@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { type AccessibilityActionEvent, AppState, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
-import { useWindowLayout } from "../workspace/useWindowLayout";
 import { catalogModeBarHeight } from "../../presentation/layouts/catalogModeBarGeometry";
 import { spacing, typeScale } from "../../theme";
 import { type IMaskedTabIconState, MaskedTabBar } from "../../vendor/reacticx/masked-tab-bar";
@@ -69,13 +68,13 @@ function CatalogMaskedTabs({
   readonly onValueChange: (value: string) => void;
   readonly pullRequestsLabel: string;
 }): React.JSX.Element {
-  const instance = useFreshTabBarKey();
+  const measureRevision = useForegroundRevision();
   return (
     <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       <MaskedTabBar
         fontSize={typeScale.label.fontSize}
         height={catalogModeBarHeight}
-        key={instance}
+        measureRevision={measureRevision}
         onSelectedValueActivate={onSelectedValueActivate}
         onValueChange={onValueChange}
         palette={MASKED_TAB_PALETTE}
@@ -204,15 +203,11 @@ function AccessibleTab({
 }
 
 /**
- * A key that gives the tab bar a fresh instance whenever the app returns to
- * the foreground or the window changes width (a fold opened or closed). The
- * bar's press gesture keeps its grab and press state on the UI thread and
- * places the pill only while nothing is grabbed; a touch that never finished
- * (the screen went off mid-press) would otherwise leave the pill unplaced at
- * the old screen's geometry and the stale gesture holding later touches.
+ * Requests fresh native tab geometry on foreground entry, without remounting.
+ * This reconciles a layout change made while inactive even if its layout event
+ * did not reach the bar. Ordinary resizing still uses the tab's layout events.
  */
-function useFreshTabBarKey(): string {
-  const { width } = useWindowLayout();
+function useForegroundRevision(): number {
   const [foregrounds, setForegrounds] = useState(0);
   const returnToForeground = useEvent((state: string) => {
     if (state === "active") {
@@ -226,7 +221,7 @@ function useFreshTabBarKey(): string {
       subscription.remove();
     };
   }, [returnToForeground]);
-  return `${String(width)}:${String(foregrounds)}`;
+  return foregrounds;
 }
 
 function parseCatalogMode(value: string): CatalogMode | null {

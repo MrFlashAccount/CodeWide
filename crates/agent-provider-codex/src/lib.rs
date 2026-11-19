@@ -574,6 +574,33 @@ impl AgentProvider for CodexProvider {
         self.read_result(&result)
     }
 
+    async fn thread_history_files(
+        &self,
+        thread: &AppThreadId,
+    ) -> Result<Vec<std::path::PathBuf>, ProviderError> {
+        let Some(storage) = &self.storage else {
+            return Ok(Vec::new());
+        };
+        storage
+            .thread_history_files(thread.as_str())
+            .await
+            .map_err(ProviderError::Protocol)
+    }
+
+    async fn model_context_window(
+        &self,
+        _model: &str,
+        cwd: &str,
+    ) -> Result<Option<usize>, ProviderError> {
+        let result = self
+            .rpc("config/read", json!({"cwd": cwd, "includeLayers": false}))
+            .await?;
+        Ok(result
+            .pointer("/config/model_context_window")
+            .and_then(Value::as_u64)
+            .and_then(|size| usize::try_from(size).ok()))
+    }
+
     async fn thread_execution_authority(
         &self,
         thread: &AppThreadId,

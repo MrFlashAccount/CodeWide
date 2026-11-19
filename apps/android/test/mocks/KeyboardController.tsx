@@ -12,23 +12,23 @@ const DEFAULT_KEYBOARD_STATE = {
   type: "default" as const,
 };
 let keyboardState = DEFAULT_KEYBOARD_STATE;
-const keyboardGeometry = {
-  height: {
+function keyboardSharedValue() {
+  return {
     value: 0,
+    get() {
+      return this.value;
+    },
     set(value: number) {
       this.value = value;
     },
-  },
-  progress: {
-    value: 0,
-    set(value: number) {
-      this.value = value;
-    },
-  },
-};
+  };
+}
+const keyboardGeometry = { height: keyboardSharedValue(), progress: keyboardSharedValue() };
 
 export function setKeyboardHeightForTest(height: number): void {
   keyboardState = { ...DEFAULT_KEYBOARD_STATE, height, isVisible: height > 0 };
+  keyboardGeometry.height.set(height > 0 ? -height : 0);
+  keyboardGeometry.progress.set(height > 0 ? 1 : 0);
 }
 
 export function useKeyboardState<Value>(
@@ -39,12 +39,7 @@ export function useKeyboardState<Value>(
 
 /** The open keyboard as the controller animates it: a negative height, `0` when closed. */
 export function useReanimatedKeyboardAnimation() {
-  const height = -keyboardState.height;
-  const progress = keyboardState.isVisible ? 1 : 0;
-  return {
-    height: { get: () => height, value: height },
-    progress: { get: () => progress, value: progress },
-  };
+  return keyboardGeometry;
 }
 
 export function useKeyboardContext() {

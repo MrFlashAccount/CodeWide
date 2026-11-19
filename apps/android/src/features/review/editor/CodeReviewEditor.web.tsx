@@ -11,6 +11,11 @@ import {
   controlSize,
   layoutSize,
 } from "../../../theme";
+import {
+  SIDEBAR_FRAME_SHARE,
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+} from "../../../ui/sidebarDimensions";
 import { AppText as Text } from "../../../ui/Typography";
 import type { CodeReviewEditorProps } from "./codeReviewEditorProps";
 import {
@@ -45,7 +50,7 @@ export function CodeReviewEditor({
   return (
     <View style={[styles.workspace, compact && sidebarOpen && styles.compactSidebar]}>
       {sidebarOpen && (
-        <View style={[styles.sidebar, compact && styles.sidebarCompact]}>
+        <View style={compact ? styles.sidebarCompact : styles.sidebar}>
           <ScrollView
             contentContainerStyle={styles.sidebarContent}
             keyboardShouldPersistTaps="handled"
@@ -299,8 +304,9 @@ const styles = StyleSheet.create({
   sidebar: {
     borderRightColor: colors.outline,
     borderRightWidth: StyleSheet.hairlineWidth,
-    minWidth: 220,
-    width: 300,
+    maxWidth: SIDEBAR_MAX_WIDTH,
+    minWidth: SIDEBAR_MIN_WIDTH,
+    width: SIDEBAR_FRAME_SHARE,
   },
   sidebarCompact: {
     borderRightWidth: 0,

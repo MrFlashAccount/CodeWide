@@ -5,7 +5,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -42,6 +42,11 @@ const COMPLETED_TURN_REFRESH_DELAYS: [Duration; 6] = [
 #[async_trait]
 pub trait ProjectionSource: Send + Sync + 'static {
     type Projection: AsRef<ResourceProjection> + Send + Sync + 'static;
+
+    /// A provider-indexed workspace, when it can be read independently of turn history.
+    async fn indexed_workspace(&self, _thread_id: &str) -> Result<Option<PathBuf>, ResourceError> {
+        Ok(None)
+    }
 
     /// The thread's projection, refreshed from the provider's history.
     ///
@@ -136,14 +141,45 @@ impl<S: ProjectionSource> ThreadResources<S> {
         )
     }
 
-    /// Refreshes the immutable projection from the canonical rollout and then
-    /// overlays only the currently mutable turn observed on the live stream.
+    /// Reads repository changes from the indexed workspace, or refreshes the
+    /// history projection and overlays the mutable turn for session resources.
     ///
     /// # Errors
     ///
     /// Returns an error when the thread is invalid, its rollout cannot be
     /// read, or the compact projection cannot be committed.
     pub async fn handle(&self, method: &str, params: &Value) -> Result<Value, ResourceError> {
+        let id = request_thread_id(params)?;
+        // Repository lists and patches depend only on the provider-owned working directory.
+        // Combined and attachment reads still require the real history projection.
+        if matches!(
+            method,
+            "companion/threadChanges/read" | "companion/threadChange/read"
+        ) && let Some(vcs) = self.vcs()
+            && let Some(scope) = requested_scope(params)?.vcs()
+            && let Some(cwd) = self.source.indexed_workspace(id).await?
+        {
+            if method == "companion/threadChange/read" {
+                let path = resolve_path(request_path(params)?, Some(&cwd));
+                if let Some(diff) =
+                    vcs_change_response(Some(vcs), Some(&cwd), id, &path, scope).await?
+                {
+                    return Ok(diff);
+                }
+            } else if let Some(snapshot) =
+                workspace_snapshot(vcs, &cwd, scope, params.get("changeScope").is_some()).await?
+            {
+                let mut value = thread_resources_from_vcs(
+                    id.to_owned(),
+                    snapshot,
+                    &ResourceData::default(),
+                    &*self.files,
+                )
+                .await?;
+                remove_attachments_for_changes(&mut value, ResourceSelection::Changes);
+                return Ok(value);
+            }
+        }
         let context = self.context(params).await?;
         if method == "companion/threadChange/read" {
             return self.handle_thread_change(params, &context).await;
@@ -169,12 +205,7 @@ impl<S: ProjectionSource> ThreadResources<S> {
         &self,
         params: &Value,
     ) -> Result<ResourceRequestContext<S::Projection>, ResourceError> {
-        let thread_id = params
-            .get("threadId")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or(ResourceError::MissingThreadId)?
-            .to_owned();
+        let thread_id = request_thread_id(params)?.to_owned();
         let projection = self.refresh_projection(&thread_id).await?;
 
         let mut live = self.live.write().await;
@@ -189,12 +220,7 @@ impl<S: ProjectionSource> ThreadResources<S> {
         let overlays = live.get(&thread_id).cloned().unwrap_or_default();
         drop(live);
         let latest_live_turn = self.latest_live_turns.read().await.get(&thread_id).cloned();
-        let requested_scope = params
-            .get("changeScope")
-            .cloned()
-            .map(serde_json::from_value::<ChangeScope>)
-            .transpose()?
-            .unwrap_or(ChangeScope::Branch);
+        let requested_scope = requested_scope(params)?;
         Ok(ResourceRequestContext {
             thread_id,
             projection,
@@ -209,11 +235,7 @@ impl<S: ProjectionSource> ThreadResources<S> {
         params: &Value,
         context: &ResourceRequestContext<S::Projection>,
     ) -> Result<Value, ResourceError> {
-        let requested = params
-            .get("path")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or(ResourceError::MissingPath)?;
+        let requested = request_path(params)?;
         let resolved = resolve_path(requested, context.projection.as_ref().cwd.as_deref());
         let mut effective_scope = context.requested_scope;
         if let Some(vcs_scope) = context.requested_scope.vcs() {
@@ -283,21 +305,7 @@ impl<S: ProjectionSource> ThreadResources<S> {
             projection.cwd.as_deref(),
             context.requested_scope.vcs(),
         ) {
-            match vcs.changes(cwd, vcs_scope).await {
-                Ok(snapshot) => Some(snapshot),
-                Err(VcsError::UnsupportedWorkspace(_)) => None,
-                Err(VcsError::UnsupportedScope { .. })
-                    if !explicit_scope && vcs_scope == VcsScope::Branch =>
-                {
-                    effective_scope = ChangeScope::Uncommitted;
-                    match vcs.changes(cwd, VcsScope::Uncommitted).await {
-                        Ok(snapshot) => Some(snapshot),
-                        Err(VcsError::UnsupportedWorkspace(_)) => None,
-                        Err(error) => return Err(error.into()),
-                    }
-                }
-                Err(error) => return Err(error.into()),
-            }
+            workspace_snapshot(&**vcs, cwd, vcs_scope, explicit_scope).await?
         } else {
             None
         };
@@ -732,6 +740,50 @@ impl From<VcsScope> for ChangeScope {
     }
 }
 
+fn request_thread_id(params: &Value) -> Result<&str, ResourceError> {
+    params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or(ResourceError::MissingThreadId)
+}
+
+fn request_path(params: &Value) -> Result<&str, ResourceError> {
+    params
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .ok_or(ResourceError::MissingPath)
+}
+
+fn requested_scope(params: &Value) -> Result<ChangeScope, ResourceError> {
+    Ok(params
+        .get("changeScope")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()?
+        .unwrap_or(ChangeScope::Branch))
+}
+
+async fn workspace_snapshot(
+    vcs: &dyn WorkspaceVcs,
+    cwd: &Path,
+    scope: VcsScope,
+    explicit: bool,
+) -> Result<Option<VcsSnapshot>, ResourceError> {
+    let result = match vcs.changes(cwd, scope).await {
+        Err(VcsError::UnsupportedScope { .. }) if !explicit && scope == VcsScope::Branch => {
+            vcs.changes(cwd, VcsScope::Uncommitted).await
+        }
+        result => result,
+    };
+    match result {
+        Ok(snapshot) => Ok(Some(snapshot)),
+        Err(VcsError::UnsupportedWorkspace(_)) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub(crate) async fn available_change_scopes(
     vcs: Option<&dyn WorkspaceVcs>,
     cwd: Option<&Path>,
@@ -740,18 +792,7 @@ pub(crate) async fn available_change_scopes(
     let (Some(vcs), Some(cwd)) = (vcs, cwd) else {
         return Ok(scopes);
     };
-    let snapshot = match vcs.changes(cwd, VcsScope::Branch).await {
-        Ok(snapshot) => Some(snapshot),
-        Err(VcsError::UnsupportedScope { .. }) => {
-            match vcs.changes(cwd, VcsScope::Uncommitted).await {
-                Ok(snapshot) => Some(snapshot),
-                Err(VcsError::UnsupportedWorkspace(_)) => None,
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Err(VcsError::UnsupportedWorkspace(_)) => None,
-        Err(error) => return Err(error.into()),
-    };
+    let snapshot = workspace_snapshot(vcs, cwd, VcsScope::Branch, false).await?;
     if let Some(snapshot) = snapshot {
         scopes = changes_menu_scopes(&snapshot.available_scopes);
     }

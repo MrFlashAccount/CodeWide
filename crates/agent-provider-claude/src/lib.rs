@@ -837,6 +837,21 @@ impl AgentProvider for ClaudeProvider {
         Ok(read)
     }
 
+    async fn thread_history_files(
+        &self,
+        thread: &AppThreadId,
+    ) -> Result<Vec<std::path::PathBuf>, ProviderError> {
+        self.service().await?.history_files(thread).await
+    }
+
+    async fn model_context_window(
+        &self,
+        model: &str,
+        _cwd: &str,
+    ) -> Result<Option<usize>, ProviderError> {
+        Ok(live::usage::model_context_window(model).and_then(|size| usize::try_from(size).ok()))
+    }
+
     async fn thread_read_fenced(
         &self,
         thread: &AppThreadId,

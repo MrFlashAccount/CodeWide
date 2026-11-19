@@ -10,7 +10,10 @@ import type { CodeReviewComment } from "../../features/review/comments/reviewCom
 import type { TurnChangedFile } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
 import type { AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
-import type { ChangesPreferences } from "../../features/changes/changePresentation";
+import type {
+  ChangesPreferences,
+  selectChangePresentation,
+} from "../../features/changes/changePresentation";
 import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
 import type { CodeReviewFileResource } from "../../features/review/resources/reviewFiles";
 import { RouteSessionRegistry, ROUTE_SESSION_TTL_MS } from "../routeSessionPolicy";
@@ -27,7 +30,7 @@ type SharedChangeRouteRequest = {
 };
 
 export type CurrentChangesRouteRequest = SharedChangeRouteRequest & {
-  readonly initialResource: ThreadResourcesValue | null;
+  readonly initialPresentation: ReturnType<typeof selectChangePresentation>;
   readonly kind: "current";
   readonly loadDiff?: (path: string, scope?: ThreadChangeScope) => Promise<ThreadChangeDiffValue>;
   readonly loadResources?: (

@@ -1,12 +1,5 @@
 // @ts-check
-import React, {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   LayoutChangeEvent,
   StyleSheet,
@@ -25,6 +18,7 @@ import Animated, {
   withSpring,
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
+import { useEvent } from "@/react/useEvent";
 
 import {
   DEFAULT_FONT_SIZE,
@@ -45,6 +39,7 @@ import {
 import {
   MaskedTabBarContext,
   MaskedTabLayerContext,
+  MaskedTabRowContext,
   useMaskedTabBar,
   useMaskedTabLayer,
 } from "./context";
@@ -132,6 +127,7 @@ const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
   fontSize = DEFAULT_FONT_SIZE,
   fontWeight = "600",
   draggable = true,
+  measureRevision = 0,
   style,
 }: IMaskedTabBarRoot): React.JSX.Element => {
   const isControlled = valueProp !== undefined;
@@ -239,8 +235,10 @@ const MaskedTabBarRoot: React.FC<IMaskedTabBarRoot> &
       fontSize,
       fontWeight,
       draggable,
+      measureRevision,
     }),
     [
+      measureRevision,
       value,
       setValue,
       onSelectedValueActivate,
@@ -302,6 +300,7 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
     padding,
     gap,
     draggable,
+    measureRevision,
     value,
     onSelectedValueActivate,
   } = useMaskedTabBar("MaskedTabBar.List");
@@ -311,10 +310,26 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
     boxesValue.value = boxes;
   }, [boxes, boxesValue]);
 
-  const onLayout = useCallback(
-    (e: LayoutChangeEvent) => setListWidth(e.nativeEvent.layout.width),
-    [setListWidth],
-  );
+  const layoutRevision = useRef(0);
+  const onLayout = useEvent((e: LayoutChangeEvent) => {
+    layoutRevision.current += 1;
+    setListWidth(e.nativeEvent.layout.width);
+  });
+  const listRef = useRef<View>(null);
+  const rowRef = useRef<View>(null);
+  useEffect(() => {
+    if (measureRevision === 0) return;
+    const requestedLayout = layoutRevision.current;
+    let cancelled = false;
+    listRef.current?.measure((_x, _y, width) => {
+      // A newer layout event or foreground request owns the geometry now.
+      if (cancelled || layoutRevision.current !== requestedLayout) return;
+      if (Number.isFinite(width) && width > 0) setListWidth(width);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [measureRevision, setListWidth]);
   const grabOffset = useSharedValue<number>(0);
   const dragTarget = useSharedValue<number>(0);
   const dragVelocity = useSharedValue<number>(0);
@@ -492,9 +507,13 @@ const MaskedTabBarList: React.FC<IMaskedTabBarList> &
 
   return (
     <GestureDetector gesture={gesture}>
-      <View style={[styles.list, style]} onLayout={onLayout}>
+      <View ref={listRef} collapsable={false} style={[styles.list, style]} onLayout={onLayout}>
         <MaskedTabLayerContext.Provider value="base">
-          <View style={[styles.row, rowStyle]}>{children}</View>
+          <MaskedTabRowContext.Provider value={rowRef}>
+            <View ref={rowRef} collapsable={false} style={[styles.row, rowStyle]}>
+              {children}
+            </View>
+          </MaskedTabRowContext.Provider>
         </MaskedTabLayerContext.Provider>
 
         <Animated.View
@@ -528,20 +547,38 @@ const MaskedTabBarTrigger: React.FC<IMaskedTabBarTrigger> &
   disabled = false,
   style,
 }: IMaskedTabBarTrigger): React.JSX.Element => {
-  const { registerTrigger } = useMaskedTabBar("MaskedTabBar.Trigger");
+  const { registerTrigger, measureRevision } = useMaskedTabBar("MaskedTabBar.Trigger");
   const layer = useMaskedTabLayer();
-
-  const onLayout = useCallback(
-    (e: LayoutChangeEvent) => {
-      if (layer !== "base") return;
-      const { x, width } = e.nativeEvent.layout;
+  const rowRef = useContext(MaskedTabRowContext);
+  const triggerRef = useRef<View>(null);
+  const layoutRevision = useRef(0);
+  useEffect(() => {
+    if (measureRevision === 0 || layer !== "base") return;
+    const row = rowRef?.current;
+    if (!row) return;
+    const requestedLayout = layoutRevision.current;
+    let cancelled = false;
+    triggerRef.current?.measureLayout(row, (x, _y, width) => {
+      if (cancelled || layoutRevision.current !== requestedLayout) return;
+      if (!Number.isFinite(x) || !Number.isFinite(width) || width <= 0) return;
       registerTrigger(value, { x, width }, disabled);
-    },
-    [layer, registerTrigger, value, disabled],
-  );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [measureRevision, layer, rowRef, registerTrigger, value, disabled]);
+
+  const onLayout = useEvent((e: LayoutChangeEvent) => {
+    if (layer !== "base") return;
+    layoutRevision.current += 1;
+    const { x, width } = e.nativeEvent.layout;
+    registerTrigger(value, { x, width }, disabled);
+  });
 
   return (
     <View
+      ref={triggerRef}
+      collapsable={false}
       onLayout={onLayout}
       style={[styles.trigger, disabled ? styles.disabled : null, style]}
     >

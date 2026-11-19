@@ -230,6 +230,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         backgroundTerminalsResourceId: props.activeThreadResourceId,
         onListTerminals: gated.onListTerminals,
         onTerminateTerminal: gated.onTerminateTerminal,
+        readTerminalCommand: props.features.terminal.readTerminalCommand,
       }}
     />
   );

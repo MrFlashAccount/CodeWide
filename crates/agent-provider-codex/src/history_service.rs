@@ -252,6 +252,31 @@ impl HistoryService {
         .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
     }
 
+    pub(crate) async fn thread_history_files(
+        &self,
+        thread_id: &str,
+    ) -> Result<Vec<std::path::PathBuf>, HistoryServiceError> {
+        let catalog = self.catalog.clone();
+        let store = self.store.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let own = match catalog.resolve(&thread_id) {
+                Ok(path) => path,
+                Err(CatalogError::NotFound(_)) => return Ok(Vec::new()),
+                Err(error) => return Err(HistoryServiceError::Catalog(error)),
+            };
+            let mut paths = vec![own.clone()];
+            let mut bases = BaseChain::new(&catalog, &store, &own);
+            while let Some(base) = bases.next()? {
+                paths.push(base.path);
+            }
+            paths.reverse();
+            Ok(paths)
+        })
+        .await
+        .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
+    }
+
     pub(crate) fn catalog_event(&self, payload: Value) -> Result<Value, rusqlite::Error> {
         self.catalog.visibility.event(payload)
     }

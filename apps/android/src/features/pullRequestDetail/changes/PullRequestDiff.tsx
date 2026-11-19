@@ -27,6 +27,7 @@ export type DiffTree = {
   /** The tree sits beside the diff rather than taking its place. */
   readonly besideDiff: boolean;
   readonly files: readonly PullRequestFile[];
+  readonly onOpenChange: (open: boolean) => void;
   readonly onSelect: (path: string) => void;
   readonly open: boolean;
 };
@@ -56,6 +57,7 @@ export function PullRequestDiff({
   content,
   draftPuts,
   drafts,
+  onCommentPress,
   onLinePress,
   reveal,
   selected,
@@ -67,6 +69,7 @@ export function PullRequestDiff({
   readonly content: DiffContent;
   readonly draftPuts: readonly DraftPut[];
   readonly drafts: readonly DraftComment[];
+  readonly onCommentPress?: (id: string) => void;
   readonly onLinePress: (reference: CodeReviewLineReference) => void;
   readonly reveal: CodeReviewLineReference | null;
   readonly selected: PullRequestFile;
@@ -87,7 +90,9 @@ export function PullRequestDiff({
         loadError={null}
         loading={content.state === "pending"}
         mode="unified"
+        onCommentPress={onCommentPress}
         onFileSelect={tree === null ? () => undefined : tree.onSelect}
+        onFilesOpenChange={tree?.onOpenChange}
         onLinePress={onLinePress}
         revealReference={reveal}
         selectedPath={selected.path}

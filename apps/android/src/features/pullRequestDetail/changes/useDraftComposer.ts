@@ -1,3 +1,4 @@
+import { useAppDialog } from "../../../ui/AppDialog";
 import { randomUUID } from "expo-crypto";
 import { useId, useState } from "react";
 
@@ -17,13 +18,15 @@ import { hunkAt } from "./changesPresentation";
 
 /** Draft creation, restoration and re-anchoring intents of the Changes tab. */
 export type DraftComposer = {
-  /** Sends a new PR draft in the background; it is listed at once by `data/reviewDraftPuts`. */
   readonly add: (target: LineCommentTarget, body: string) => void;
   readonly close: () => void;
   /** Forgets a refused draft without restoring it. */
   readonly discard: (put: DraftPut) => void;
   /** Unsent text per line, kept while the composer is closed. */
   readonly drafts: LineCommentDrafts;
+  readonly edit: (draft: DraftComment) => void;
+  /** The open composer is updating an existing versioned PR draft. */
+  readonly editing: boolean;
   /** The line whose composer is open, highlighted in the diff as its anchor. */
   readonly line: LineCommentTarget | null;
   /** Opens the composer at a line, or re-anchors the open one there with its text. */
@@ -55,7 +58,12 @@ export function useDraftComposer({
   readonly source: DiffSource;
 }): DraftComposer {
   const windowId = useId();
-  const drafts = useConstant(() => createLineCommentDrafts(windowId));
+  const dialog = useAppDialog();
+  const [edited, setEdited] = useState<{ draft: DraftComment; texts: LineCommentDrafts } | null>(
+    null,
+  );
+  const newDrafts = useConstant(() => createLineCommentDrafts(windowId));
+  const drafts = edited?.texts ?? newDrafts;
   const [line, setLine] = useState<LineCommentTarget | null>(null);
   const [reanchoring, setReanchoring] = useState<DraftComment | null>(null);
   const anchorAt = (target: LineCommentTarget) => {
@@ -69,8 +77,25 @@ export function useDraftComposer({
       startLine: target.line,
     };
   };
+  const openEdit = useEvent((draft: DraftComment, body: string) => {
+    const texts = createLineCommentDrafts(windowId + ":" + draft.id);
+    const target = {
+      line: draft.anchor.startLine,
+      path: draft.anchor.path,
+      side: draft.anchor.side,
+    };
+    texts.write(target, { markdown: body, plainText: body });
+    setEdited({ draft, texts });
+    setReanchoring(null);
+    setLine(target);
+  });
+  const edit = useEvent((draft: DraftComment) => {
+    openEdit(draft, draft.body);
+  });
   const openAt = useEvent((target: LineCommentTarget): void => {
-    if (line !== null) {
+    if (edited !== null) {
+      setEdited(null);
+    } else if (line !== null) {
       drafts.move(line, target);
     }
     setLine(target);
@@ -87,6 +112,22 @@ export function useDraftComposer({
       .catch(() => undefined);
   });
   const add = useEvent((target: LineCommentTarget, body: string): void => {
+    if (edited !== null) {
+      const original = edited.draft;
+      const input = { ...reinput(original, original.anchor, original.revision.revision), body };
+      void capabilities.putDraft(connectionId, input, original.version).catch((error: unknown) => {
+        dialog.error("Could not save draft", error, [
+          { text: "Close" },
+          {
+            onPress: () => {
+              openEdit(original, body);
+            },
+            text: "Edit again",
+          },
+        ]);
+      });
+      return;
+    }
     const draft: DraftInput = {
       anchor: anchorAt(target),
       body,
@@ -101,13 +142,15 @@ export function useDraftComposer({
     const { anchor } = put.draft;
     const target = { line: anchor.startLine, path: anchor.path, side: anchor.side };
     capabilities.dismissDraftPut(put.operationId);
-    drafts.write(target, { markdown: put.draft.body, plainText: put.draft.body });
+    setEdited(null);
+    newDrafts.write(target, { markdown: put.draft.body, plainText: put.draft.body });
     setLine(target);
   });
   const discard = useEvent((put: DraftPut): void => {
     capabilities.dismissDraftPut(put.operationId);
   });
   const close = useEvent((): void => {
+    setEdited(null);
     setLine(null);
   });
   return {
@@ -115,6 +158,8 @@ export function useDraftComposer({
     close,
     discard,
     drafts,
+    edit,
+    editing: edited !== null,
     line,
     openAt,
     reanchoring,

@@ -7,9 +7,10 @@ import type { PaneArrangement } from "../src/routeComposition/paneGeometry";
 
 const appRequire = createRequire(new URL("../package.json", import.meta.url));
 const { transformSync } = createRequire(appRequire.resolve("babel-jest"))("@babel/core");
-const sourceUrl = new URL("../src/routeComposition/paneGeometry.ts", import.meta.url);
-
-function compileGeometry(): Record<string, unknown> {
+function compileAndroidModule(
+  sourceUrl: URL,
+  dependencies: ReadonlyMap<string, Record<string, unknown>>,
+): Record<string, unknown> {
   const result = transformSync(readFileSync(sourceUrl, "utf8"), {
     filename: sourceUrl.pathname,
     babelrc: false,
@@ -23,8 +24,9 @@ function compileGeometry(): Record<string, unknown> {
     exports,
     __DEV__: false,
     require: (name: string) => {
-      if (name !== "./paneMotionSpec") throw new Error("Unexpected geometry dependency");
-      return { COVERED_CATALOG_OPACITY: 0 };
+      const dependency = dependencies.get(name);
+      if (!dependency) throw new Error(`Unexpected geometry dependency: ${name}`);
+      return dependency;
     },
   });
   runInContext("globalThis.global = globalThis", context);
@@ -62,7 +64,17 @@ function invoke(callable: unknown, args: readonly unknown[]): unknown {
 }
 
 describe("Android-transformed pane geometry", () => {
-  const geometry = compileGeometry();
+  const sidebarDimensions = compileAndroidModule(
+    new URL("../src/ui/sidebarDimensions.ts", import.meta.url),
+    new Map(),
+  );
+  const geometry = compileAndroidModule(
+    new URL("../src/routeComposition/paneGeometry.ts", import.meta.url),
+    new Map([
+      ["./paneMotionSpec", { COVERED_CATALOG_OPACITY: 0 }],
+      ["../ui/sidebarDimensions", sidebarDimensions],
+    ]),
+  );
   const lefts = ["alone", "beside", "covered", "under"] as const;
   const rights = ["beside", "cover", "offscreen"] as const;
 

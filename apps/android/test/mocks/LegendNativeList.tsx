@@ -9,9 +9,6 @@ import {
 } from "react";
 import { View } from "react-native";
 
-// These mounted test rows never recycle into another item, so their state has React's lifetime.
-export { useState as useRecyclingState } from "react";
-
 type RowProps<ItemT> = {
   readonly extraData: unknown;
   readonly index: number;

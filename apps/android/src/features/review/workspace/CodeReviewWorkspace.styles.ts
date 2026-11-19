@@ -1,186 +1,88 @@
 import { StyleSheet } from "react-native";
-import {
-  colors,
-  controlSize,
-  layoutSize,
-  radii,
-  spacing,
-  typeScale,
-  typeWeight,
-} from "../../../theme";
+import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
 
 export const styles = StyleSheet.create({
   attachButton: {
     alignItems: "center",
-    backgroundColor: colors.surfaceContainer,
-    borderColor: colors.border,
+    backgroundColor: colors.primary,
     borderRadius: radii.medium,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: spacing.xs,
-    minHeight: controlSize.regular,
-    paddingHorizontal: spacing.sm,
-  },
-  attachButtonCompact: {
     justifyContent: "center",
-    minHeight: controlSize.regular,
-    paddingHorizontal: 0,
-    width: controlSize.regular,
+    minHeight: controlSize.touch,
+    paddingHorizontal: spacing.md,
   },
-  attachButtonReady: { backgroundColor: colors.surfaceContainerHigh },
-  attachButtonText: {
-    color: colors.text,
+  attachLabel: {
     ...typeScale.body,
-    fontWeight: typeWeight.semibold,
+    color: colors.onPrimary,
   },
-  center: {
-    alignItems: "center",
-    flex: 1,
-    gap: spacing.sm,
-    justifyContent: "center",
-  },
-  commentChip: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainerHighest,
-    borderRadius: radii.pill,
-    flexDirection: "row",
-    gap: spacing.xs,
-    maxWidth: "100%",
-    minHeight: controlSize.compact,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xxs,
-  },
-  commentChipBody: {
+  body: {
+    ...typeScale.body,
     color: colors.text,
-    flexShrink: 1,
-    ...typeScale.label,
   },
-  commentChipLocation: {
-    color: colors.accent,
-    ...typeScale.label,
-    fontWeight: typeWeight.semibold,
-  },
-  commentStrip: {
-    backgroundColor: "#111214",
-    flexGrow: 0,
-    maxHeight: 48,
-  },
-  commentStripContent: {
-    alignItems: "center",
-    gap: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xxs,
-  },
-  disabled: { opacity: 0.38 },
-  documentStatus: {
-    color: colors.textDim,
-    flexShrink: 1,
-    ...typeScale.label,
-  },
-  editorPane: {
-    backgroundColor: "#0B0C0E",
-    flex: 1,
-    minHeight: 0,
-    minWidth: 0,
-  },
-  header: {
+  chrome: {
     alignItems: "center",
     backgroundColor: colors.surface,
     flexDirection: "row",
-    gap: spacing.compact,
-    minHeight: layoutSize.header,
-    paddingHorizontal: spacing.xs,
+    gap: spacing.xxs,
+    height: controlSize.touch,
   },
-  headerTitle: {
-    flex: 1,
-    minWidth: 80,
+  disabled: { opacity: 0.4 },
+  hint: {
+    ...typeScale.body,
+    color: colors.textMuted,
+    padding: spacing.md,
   },
   iconButton: {
     alignItems: "center",
-    backgroundColor: colors.surfaceContainer,
-    borderRadius: radii.medium,
-    height: controlSize.regular,
+    height: controlSize.touch,
     justifyContent: "center",
-    width: controlSize.regular,
+    width: controlSize.touch,
   },
-  modeButton: {
-    alignItems: "center",
-    borderRadius: radii.pill,
-    justifyContent: "center",
-    minHeight: controlSize.compact,
-    minWidth: controlSize.compact,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xxs,
-  },
-  modeButtonSelected: { backgroundColor: "#26292E" },
-  modeButtonText: {
-    color: colors.textMuted,
+  location: {
     ...typeScale.label,
+    color: colors.textMuted,
   },
-  modeButtonTextSelected: {
-    color: colors.text,
-    fontWeight: typeWeight.semibold,
+  note: {
+    flex: 1,
+    gap: spacing.xxs,
+    padding: spacing.sm,
   },
-  modeSwitch: {
-    backgroundColor: "#090A0C",
-    borderRadius: radii.pill,
-    flexDirection: "row",
-    padding: spacing.xxs,
-  },
-  muted: { color: colors.textMuted },
-  reviewToolbar: {
+  noteRow: {
     alignItems: "center",
-    backgroundColor: "#111214",
     flexDirection: "row",
-    justifyContent: "space-between",
-    minHeight: controlSize.touch,
-    paddingBottom: spacing.xxs,
-    paddingHorizontal: spacing.sm,
+  },
+  review: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xxs,
+    height: controlSize.touch,
+    justifyContent: "center",
+    minWidth: controlSize.touch,
+  },
+  right: {
+    alignItems: "center",
+    flexDirection: "row",
+    paddingRight: spacing.xxs,
   },
   root: {
     backgroundColor: colors.background,
     flex: 1,
     minHeight: 0,
   },
-  subtitle: {
-    color: colors.textMuted,
-    flexShrink: 1,
-    ...typeScale.label,
+  sheetBackdrop: {
+    backgroundColor: colors.scrim,
+    inset: 0,
+    position: "absolute",
   },
-  subtitleRow: {
+  sheetHeader: {
     alignItems: "center",
     flexDirection: "row",
-    gap: spacing.xxs,
-    minWidth: 0,
+    justifyContent: "space-between",
+    paddingBottom: spacing.sm,
   },
-  title: {
-    color: colors.text,
-    ...typeScale.body,
-    fontWeight: typeWeight.semibold,
-  },
-  workspace: {
-    flex: 1,
-    flexDirection: "row",
-    minHeight: 0,
-    position: "relative",
-  },
-  wrapButton: {
-    alignItems: "center",
-    backgroundColor: "#17191C",
-    borderRadius: radii.pill,
-    flexDirection: "row",
-    gap: spacing.xxs,
-    minHeight: controlSize.compact,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xxs,
-  },
-  wrapButtonSelected: { backgroundColor: "#242A33" },
-  wrapButtonText: {
-    color: colors.textMuted,
-    ...typeScale.label,
-  },
-  wrapButtonTextSelected: {
+  sheetTitle: {
+    ...typeScale.title,
     color: colors.text,
     fontWeight: typeWeight.semibold,
+    padding: spacing.sm,
   },
 });

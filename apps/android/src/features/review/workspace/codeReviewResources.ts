@@ -25,7 +25,7 @@ import {
 export function useCodeReviewResources(
   props: CodeReviewWorkspaceProps,
   resourceOwnerId: string,
-  requestedScope: ThreadChangeScope,
+  requestedScope: ThreadChangeScope | null,
   scopeRevision: number,
   selectedPath: string | null,
 ) {
@@ -45,15 +45,13 @@ export function useCodeReviewResources(
     sourceOverrides,
     thread,
   } = props;
-  const shouldLoadInitialScope =
-    requestedScope === initialChangeScope && onInitialLoad !== undefined;
-  const shouldLoadAlternateScope =
-    requestedScope !== initialChangeScope && onLoadScope !== undefined;
+  const shouldLoadInitialScope = requestedScope === null && onInitialLoad !== undefined;
+  const shouldLoadAlternateScope = requestedScope !== null && onLoadScope !== undefined;
   const scopeResource = useAsyncResource<ThreadResourcesValue>(
     shouldLoadInitialScope || shouldLoadAlternateScope
       ? `code-review-scope:${resourceOwnerId}:${thread?.id ?? "none"}`
       : null,
-    `${requestedScope}:${String(scopeRevision)}`,
+    `${requestedScope ?? "initial"}:${String(scopeRevision)}`,
     async () => {
       if (shouldLoadInitialScope) {
         return onInitialLoad();
@@ -102,7 +100,7 @@ export function useCodeReviewResources(
     selectedChange === null
       ? null
       : `code-review:${resourceOwnerId}:${thread?.id ?? "none"}:${selectedChange.path}`,
-    `${documentRevision}:${sourceAsset === undefined ? "host-path" : privateAssetCacheKey(sourceAsset)}`,
+    `${documentRevision}:${String(scopeRevision)}:${sourceAsset === undefined ? "host-path" : privateAssetCacheKey(sourceAsset)}`,
     async (publish, signal) => {
       if (selectedChange === null) {
         throw new Error("No changed file selected");

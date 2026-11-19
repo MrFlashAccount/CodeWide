@@ -4,7 +4,7 @@ module.exports = {
   resolver: "react-native-worklets/jest/resolver.js",
   rootDir: ".",
   setupFiles: ["react-native-gesture-handler/jestSetup.js"],
-  setupFilesAfterEnv: ["<rootDir>/test/setup-render-console.cjs"],
+  setupFilesAfterEnv: ["<rootDir>/test/setup-render-console.cjs", "<rootDir>/test/setup-legend-list.cjs"],
   // WHY: Shared UI keeps its original platform environment; V1 owns every suite matched by its config.
   testMatch: [
     "<rootDir>/test/**/*.render.test.tsx",
@@ -40,8 +40,8 @@ module.exports = {
     "^expo-haptics$": "<rootDir>/test/mocks/ExpoHaptics.ts",
     "^expo-image-picker$": "<rootDir>/test/mocks/ExpoImagePicker.ts",
     "^expo-router$": "<rootDir>/test/mocks/ExpoRouter.ts",
-    "^@legendapp/list/react-native$": "<rootDir>/test/mocks/LegendNativeList.tsx",
     "^@legendapp/list/keyboard$": "<rootDir>/test/mocks/LegendKeyboardList.tsx",
+    "^@legendapp/list/reanimated$": "<rootDir>/test/mocks/LegendKeyboardList.tsx",
     "^@quickdrawjs/react-native$": "<rootDir>/test/mocks/QuickdrawReactNative.tsx",
     "^react-native-webview$": "<rootDir>/test/mocks/ReactNativeWebView.tsx",
     "^react-native-gesture-handler/ReanimatedSwipeable$":

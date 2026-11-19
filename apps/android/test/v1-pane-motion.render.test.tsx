@@ -1,3 +1,4 @@
+import { sidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "../src/ui/sidebarDimensions";
 import { act, fireEvent, render } from "@testing-library/react-native";
 import { StyleSheet, Text, View } from "react-native";
 import * as Reanimated from "react-native-reanimated";
@@ -15,9 +16,6 @@ import {
 import {
   interpolatePaneGeometry,
   paneGeometry,
-  sidebarWidth,
-  SIDEBAR_MAX_WIDTH,
-  SIDEBAR_MIN_WIDTH,
   type PaneArrangement,
   type PaneGeometry,
 } from "../src/routeComposition/paneGeometry";

@@ -1,5 +1,6 @@
 import type { SyncEvent } from "@codewide/sync-client";
 import { describe, expect, it, vi } from "vitest";
+import { terminalOutputEvents } from "../src/data/terminalOutputEvents";
 import { createThreadSyncProjection } from "../src/data/thread-sync-projection";
 import { projectThreadSummaryEvent } from "../src/data/thread-summary-projection";
 import { summary } from "./fixtures/thread-summary";
@@ -73,7 +74,9 @@ describe("event projection without catalog repair", () => {
     const test = harness();
     test.remove();
     for (let cursor = 1; cursor <= 20; cursor += 1) {
-      await (await test.store.applyEvents("server", [progress(cursor)])).checkpoint;
+      await (
+        await test.store.applyEvents("server", [progress(cursor)])
+      ).checkpoint;
     }
     const lifecycle = (cursor: number, method: string, kind: string): SyncEvent => ({
       cursor,
@@ -164,4 +167,41 @@ it("reads a root's subagents again once the Companion invalidates them, open or 
     ["server", "other-root"],
   ]);
   expect(test.catalog.refreshInvalidatedThread).not.toHaveBeenCalled();
+});
+
+it("delivers qualified terminal output alongside the normalized thread projection", async () => {
+  const test = harness();
+  const receive = vi.fn();
+  const release = terminalOutputEvents.subscribe({
+    connectionId: "server",
+    threadId: "worker",
+    itemId: "command",
+    emit: receive,
+  });
+  const delta = {
+    cursor: 1,
+    payload: {
+      method: "item/commandExecution/outputDelta",
+      params: { threadId: "worker", itemId: "command", delta: "new output" },
+      codewideThreadPatch: {
+        version: 1,
+        threadId: "worker",
+        operation: { kind: "threadProgress" },
+      },
+    },
+  };
+  try {
+    await test.store.applyEvents("another server", [delta]);
+    expect(receive).not.toHaveBeenCalled();
+    await test.store.applyEvents("server", [delta]);
+    expect(receive).toHaveBeenCalledExactlyOnceWith({
+      kind: "delta",
+      reference: null,
+      text: "new output",
+    });
+  } finally {
+    release();
+  }
+  await test.store.applyEvents("server", [delta]);
+  expect(receive).toHaveBeenCalledTimes(1);
 });

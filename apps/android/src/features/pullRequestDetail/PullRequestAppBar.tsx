@@ -14,7 +14,7 @@ import { repositoryShortName } from "./pullRequestPresentation";
  * `←  [icon] repo #91  ⤢ ⋮ ×` on Details, whose header carries the full title, and
  * `←  #91 · Files changed  [Review]  ⤢ ⋮ ×` on the Changes route pushed over it. One compact
  * `ThreePanelsHeader` row: the pane decides Back versus `×` and the fullscreen toggle, wherever the
- * screen is placed; the one ⋮ holds Copy link, Share, Open in the forge, the screen's own
+ * screen is placed; the one ⋮ holds Copy link, Share, Copy ID, Copy title, Open in the forge, the screen's own
  * entries (Submit review on Details when no verdict button is shown) and every overflowed catalog
  * action, destructive ones (Close, Discard) marked destructive.
  */

@@ -1,16 +1,14 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useRecyclingState } from "@legendapp/list/react-native";
-import { createElement, useContext, useEffect, useState } from "react";
+import { createElement, useContext, useEffect, useState, type ContextType } from "react";
 import { Pressable, View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import { colors, iconSize } from "../../../theme";
 import { AgentAvatar, AgentAvatarStack } from "../../../ui/AgentAvatar";
-import { AnchoredMenuList, AnchoredMenuRow } from "../../../ui/AnchoredMenuList";
-import { ContentMenu } from "../../../ui/ContentMenu";
-import { useAnchoredMenuSize } from "../../../ui/useAnchoredMenuSize";
+import { AnchoredMenuRow } from "../../../ui/AnchoredMenuList";
+import { TaskPillPicker } from "../../../ui/TaskPillPicker";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "./AgentChip.styles";
-import { isBackgroundLaunch, type TaskLineEntry } from "./backgroundLaunches";
+import type { TaskLineEntry } from "./backgroundLaunches";
 import {
   launchDetail,
   reportDetails,
@@ -18,7 +16,11 @@ import {
   reportName,
   reportOutcome,
 } from "./taskNotificationPresentation";
-import { BackgroundTaskContext, SubagentNavigationContext } from "./turnContexts";
+import {
+  BackgroundTaskContext,
+  BackgroundTerminalsContext,
+  SubagentNavigationContext,
+} from "./turnContexts";
 
 /** How often a running background command's elapsed time advances. */
 const ELAPSED_TICK_MS = 1000;
@@ -39,23 +41,35 @@ export function TaskNotificationLine({
   if (reports.length === 0) {
     return null;
   }
-  const [only] = reports;
+  const rows = (close: () => void) =>
+    reports.map((report) => <ReportRow key={report.id} onNavigate={close} report={report} />);
   return (
     <View style={styles.lineRow} testID="task-notification-line-row">
-      {reports.length === 1 && only !== undefined ? (
-        <SingleReportPill report={only} />
-      ) : (
-        <ReportListPill reports={reports} />
-      )}
+      <TaskPillPicker
+        anchorStyle={styles.pillBound}
+        entries={reports}
+        listTestID="task-notification-list"
+        placement="bottom"
+        renderSingle={(report) => <SingleReportPill key={report.id} report={report} />}
+        renderTrigger={(open, toggle) =>
+          createElement(TaskNotificationPill, {
+            bounded: false,
+            loading: false,
+            onPress: toggle,
+            open,
+            reports,
+          })
+        }
+      >
+        {rows}
+      </TaskPillPicker>
     </View>
   );
 }
 
 /** One report: the pill is the report's own link, without a list. */
 function SingleReportPill({ report }: { readonly report: TaskLineEntry }): React.JSX.Element {
-  // The pill lives in a recycled list cell.
-  const [opening, setOpening] = useRecyclingState<OpeningState>(NOT_OPENING);
-  const target = useReportTarget(report, [opening, setOpening], noop);
+  const target = useReportTarget(report, noop);
   return (
     <>
       <TaskNotificationPill
@@ -71,46 +85,6 @@ function SingleReportPill({ report }: { readonly report: TaskLineEntry }): React
         </Text>
       )}
     </>
-  );
-}
-
-/** Several reports: the pill opens their list centered on it, above or below. */
-function ReportListPill({
-  reports,
-}: {
-  readonly reports: readonly TaskLineEntry[];
-}): React.JSX.Element {
-  const [open, setOpen] = useRecyclingState(false);
-  const menu = useAnchoredMenuSize();
-  const toggleOpen = useEvent(() => {
-    setOpen((current) => !current);
-  });
-  const close = useEvent(() => {
-    setOpen(false);
-  });
-  const trigger = createElement(TaskNotificationPill, {
-    bounded: false,
-    loading: false,
-    onPress: toggleOpen,
-    open,
-    reports,
-  });
-  return (
-    <ContentMenu
-      align="center"
-      anchorStyle={styles.pillBound}
-      onOpenChange={setOpen}
-      open={open}
-      placement="bottom"
-      trigger={trigger}
-      width={menu.width}
-    >
-      <AnchoredMenuList testID="task-notification-list">
-        {reports.map((report) => (
-          <ReportRow key={report.id} onNavigate={close} report={report} />
-        ))}
-      </AnchoredMenuList>
-    </ContentMenu>
   );
 }
 
@@ -183,10 +157,8 @@ function ReportRow({
   readonly onNavigate: () => void;
   readonly report: TaskLineEntry;
 }): React.JSX.Element {
-  // The list renders in the anchored popover, outside any recycled list cell.
-  const [opening, setOpening] = useState<OpeningState>(NOT_OPENING);
-  const target = useReportTarget(report, [opening, setOpening], onNavigate);
-  const running = isBackgroundLaunch(report) && report.status === "running";
+  const target = useReportTarget(report, onNavigate);
+  const running = report.status === "running";
   const now = useNow(running);
   const details = reportDetails(report, now);
   return (
@@ -234,42 +206,71 @@ function failedOpening(error: unknown): OpeningState {
  * What a report row opens: an agent's thread or a background task's output
  * (loaded on press); without either it opens nothing.
  */
-function useReportTarget(
-  report: TaskLineEntry,
-  [opening, setOpening]: readonly [OpeningState, (next: OpeningState) => void],
-  onNavigate: () => void,
-) {
+function useReportTarget(report: TaskLineEntry, onNavigate: () => void) {
+  const [opening, setOpening] = useState<OpeningState>(NOT_OPENING);
   const openThread = useContext(SubagentNavigationContext);
   const openTask = useContext(BackgroundTaskContext);
-  const agentThreadId = report.agentThreadId;
-  const kind =
-    agentThreadId !== null && openThread !== null
-      ? "thread"
-      : report.kind !== "agent" && openTask !== null
-        ? "task"
-        : "none";
-  const press = useEvent(async () => {
-    if (kind === "thread" && agentThreadId !== null && openThread !== null) {
-      onNavigate();
-      openThread(agentThreadId);
-    } else if (kind === "task" && openTask !== null) {
-      setOpening(OPENING);
-      const next = await openTask({ name: reportName(report), taskId: report.taskId }).then(
-        () => NOT_OPENING,
-        failedOpening,
-      );
-      setOpening(next);
-      if (next.status === "idle") {
-        onNavigate();
-      }
+  const openTerminal = useContext(BackgroundTerminalsContext);
+  const target = reportTarget(report, { openTask, openTerminal, openThread });
+  const kind = target.kind;
+  const press = useEvent(() => {
+    if (target.kind === "none") {
+      return;
     }
+    setOpening(OPENING);
+    Promise.resolve()
+      .then(target.open)
+      .then(() => {
+        setOpening(NOT_OPENING);
+        onNavigate();
+      })
+      .catch((error: unknown) => {
+        setOpening(failedOpening(error));
+      });
   });
   return {
     error: opening.status === "failed" ? opening.message : null,
     kind,
     loading: opening.status === "loading",
-    press: () => void press(),
+    press,
   } as const;
+}
+
+type ReportTarget =
+  | { readonly kind: "none" }
+  | { readonly kind: "open"; readonly open: () => Promise<void> };
+type ReportOpeners = {
+  readonly openTask: ContextType<typeof BackgroundTaskContext>;
+  readonly openTerminal: ContextType<typeof BackgroundTerminalsContext>;
+  readonly openThread: ContextType<typeof SubagentNavigationContext>;
+};
+
+function reportTarget(
+  report: TaskLineEntry,
+  { openTask, openTerminal, openThread }: ReportOpeners,
+): ReportTarget {
+  if ("terminal" in report) {
+    return openTerminal === null
+      ? { kind: "none" }
+      : { kind: "open", open: async () => openTerminal(report.terminal) };
+  }
+  const threadId = report.agentThreadId;
+  if (threadId !== null && openThread !== null) {
+    return {
+      kind: "open",
+      open: async () => {
+        openThread(threadId);
+        await Promise.resolve();
+      },
+    };
+  }
+  if (report.kind !== "agent" && openTask !== null) {
+    return {
+      kind: "open",
+      open: async () => openTask({ name: reportName(report), taskId: report.taskId }),
+    };
+  }
+  return { kind: "none" };
 }
 
 function ReportRowText({

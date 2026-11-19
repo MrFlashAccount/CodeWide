@@ -7,10 +7,12 @@ import { AppText as Text } from "./Typography";
 import { WaveText } from "./WaveText";
 
 export function ComposerContextLabel({
+  error = false,
   loading = false,
   testID,
   text,
 }: {
+  error?: boolean;
   loading?: boolean;
   testID?: string;
   text: string;
@@ -23,7 +25,11 @@ export function ComposerContextLabel({
       text={text}
     />
   ) : (
-    <Text numberOfLines={1} style={styles.composerContextText} testID={testID}>
+    <Text
+      numberOfLines={1}
+      style={[styles.composerContextText, error && styles.errorText]}
+      testID={testID}
+    >
       {text}
     </Text>
   );

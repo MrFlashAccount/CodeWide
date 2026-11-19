@@ -1,5 +1,6 @@
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import type { Insets, LegendListProps, LegendListRef } from "@legendapp/list/react-native";
+import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
   forwardRef,
   type ForwardedRef,
@@ -9,6 +10,7 @@ import {
   useImperativeHandle,
   useRef,
 } from "react";
+import { Platform } from "react-native";
 import type { SharedValue } from "react-native-reanimated";
 
 import { observeLegendScrollDiagnostic } from "../data/legendScrollDiagnostic";
@@ -16,6 +18,7 @@ import type { TimelineScrollSource } from "../data/timelineScrollDiagnosticContr
 import type { TimelineScrollDiagnostics } from "../data/timelineScrollDiagnostics";
 import { windowLayoutStore } from "../native/window-layout-store";
 import { useEvent } from "../react/useEvent";
+import { TimelineKeyboardViewport } from "./TimelineKeyboardViewport";
 import { measureTimelineItemViewport } from "./timelineItemViewport";
 import {
   observeTimelineScrollCommand,
@@ -82,6 +85,7 @@ function ThreadTimelineListInner<ItemT>(
     keyboardLiftBehavior = "whenAtEnd",
     keyboardOffset = 0,
     overscanDistance,
+    refScrollView,
     renderRevision,
     ...props
   }: ThreadTimelineListProps<ItemT>,
@@ -221,6 +225,37 @@ function ThreadTimelineListInner<ItemT>(
     ],
   );
 
+  const listProps = {
+    ...(diagnostics === undefined ? {} : { onScrollDiagnostic }),
+    ref: internalRef,
+    ...(anchoredEndSpace === undefined ? {} : { anchoredEndSpace }),
+    ...(initialScrollIndex === undefined ? {} : { initialScrollIndex }),
+    ...props,
+    ...legendListItemSizeHintProps(itemSizeHint),
+    ...diagnosticHandlers,
+    alignItemsAtEnd: true,
+    dataKey: renderRevision,
+    drawDistance: overscanDistance,
+    estimatedItemSize: itemSizeEstimate,
+    itemsAreEqual: itemsAreEqual ?? referenceEqual,
+    recycleItems: false,
+    showsHorizontalScrollIndicator: false,
+    showsVerticalScrollIndicator: false,
+  };
+  const keyboard = timelineKeyboardLayout({
+    contentInsetEndAdjustment,
+    keyboardLiftBehavior,
+    keyboardOffset,
+    refScrollView,
+  });
+  if (keyboard.kind === "viewport") {
+    return (
+      <TimelineKeyboardViewport offset={keyboard.offset}>
+        <AnimatedLegendList {...listProps} />
+      </TimelineKeyboardViewport>
+    );
+  }
+
   const keyboardAwareLegendList: unknown = KeyboardAwareLegendList;
   // WHY: LegendList's forwardRef declaration erases the generic item parameter. This local adapter
   // restores the same public props, keyboard wrapper props and our pinned patch's validated observer.
@@ -234,28 +269,37 @@ function ThreadTimelineListInner<ItemT>(
       ref: ForwardedRef<LegendListRef>;
     },
   ) => ReactElement;
-  return (
-    <KeyboardAwareTimelineList
-      keyboardLiftBehavior={keyboardLiftBehavior}
-      keyboardOffset={keyboardOffset}
-      {...(diagnostics === undefined ? {} : { onScrollDiagnostic })}
-      ref={internalRef}
-      {...(contentInsetEndAdjustment === undefined ? {} : { contentInsetEndAdjustment })}
-      {...(anchoredEndSpace === undefined ? {} : { anchoredEndSpace })}
-      {...(initialScrollIndex === undefined ? {} : { initialScrollIndex })}
-      {...props}
-      {...legendListItemSizeHintProps(itemSizeHint)}
-      {...diagnosticHandlers}
-      alignItemsAtEnd
-      dataKey={renderRevision}
-      drawDistance={overscanDistance}
-      estimatedItemSize={itemSizeEstimate}
-      itemsAreEqual={itemsAreEqual ?? referenceEqual}
-      recycleItems={false}
-      showsHorizontalScrollIndicator={false}
-      showsVerticalScrollIndicator={false}
-    />
-  );
+  return <KeyboardAwareTimelineList {...listProps} {...keyboard.props} />;
+}
+
+function timelineKeyboardLayout({
+  contentInsetEndAdjustment,
+  keyboardLiftBehavior,
+  keyboardOffset,
+  refScrollView,
+}: {
+  contentInsetEndAdjustment: SharedValue<number> | undefined;
+  keyboardLiftBehavior: NonNullable<ThreadTimelineListProps<unknown>["keyboardLiftBehavior"]>;
+  keyboardOffset: number;
+  refScrollView: LegendListProps<unknown>["refScrollView"];
+}) {
+  if (
+    Platform.OS === "android" &&
+    keyboardLiftBehavior === "always" &&
+    contentInsetEndAdjustment === undefined &&
+    refScrollView === undefined
+  ) {
+    return { kind: "viewport", offset: keyboardOffset } as const;
+  }
+  return {
+    kind: "keyboard-aware",
+    props: {
+      keyboardLiftBehavior,
+      keyboardOffset,
+      ...(contentInsetEndAdjustment === undefined ? {} : { contentInsetEndAdjustment }),
+      ...(refScrollView === undefined ? {} : { refScrollView }),
+    },
+  } as const;
 }
 
 function legendListItemSizeHintProps<ItemT>(

@@ -2,7 +2,9 @@ import { projectCompleteMarkdown } from "@codewide/rendering-core";
 import { markdownDocumentBlocks } from "../../../rendering/markdown-document-blocks";
 import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
 import {
-  launchedTaskIds,
+  isBackgroundLaunch,
+  launchAwaitsEnd,
+  reportedCommandEnd,
   turnBackgroundLaunches,
   withoutLaunchedReports,
   type TaskLineEntry,
@@ -81,7 +83,7 @@ export function projectTimelineRows(
       rows.push(...projectTimelineItemRows(item, timelineIndex, options));
     }
   }
-  const merged = mergeEmptyWakeLeads(withoutDuplicateTasks(rows, items));
+  const merged = mergeEmptyWakeLeads(withoutDuplicateTasks(rows));
   timelineRowsCache.set(items, { key: cacheKey, rows: merged });
   return merged;
 }
@@ -96,15 +98,21 @@ type TimelineLeadRow = Extract<TimelineRow, { kind: "turnLead" }>;
  * other reports, and reports of commands launched outside the shown range,
  * keep their own line.
  */
-function withoutDuplicateTasks(
-  rows: readonly TimelineRow[],
-  items: readonly TimelineItem[],
-): TimelineRow[] {
-  const launched = launchedTaskIds(
-    items.flatMap((item) => (item.kind === "turn" ? [item.turn] : [])),
-  );
+function withoutDuplicateTasks(rows: TimelineRow[]): TimelineRow[] {
+  const launched = new Set<string>();
+  const ends = new Map<string, ReportedEnd>();
+  for (const entry of timelineTaskEntries(rows)) {
+    if (isBackgroundLaunch(entry)) {
+      launched.add(entry.taskId);
+    } else if (!("terminal" in entry) && !ends.has(entry.taskId)) {
+      const status = reportedCommandEnd(entry);
+      if (status !== null) {
+        ends.set(entry.taskId, { durationMs: entry.durationMs, status });
+      }
+    }
+  }
   if (launched.size === 0) {
-    return [...rows];
+    return rows;
   }
   return rows.flatMap((row): TimelineRow[] => {
     if (row.kind === "turnLead") {
@@ -115,12 +123,51 @@ function withoutDuplicateTasks(
       return notifications.length === 0 && isReportLead(row) ? [] : [{ ...row, notifications }];
     }
     if (row.kind === "turnSlice") {
-      const trailingTasks = withoutLaunchedReports(row.trailingTasks, launched);
+      const kept = withoutLaunchedReports(row.trailingTasks, launched);
+      const trailingTasks = settleReportedLaunches(kept, ends);
       return [trailingTasks === row.trailingTasks ? row : { ...row, trailingTasks }];
     }
     return [row];
   });
 }
+
+/** The visible task line of one physical row. */
+export function taskLineEntries(row: TimelineRow): readonly TaskLineEntry[] {
+  if (row.kind === "turnLead") {
+    return row.notifications;
+  }
+  return row.kind === "turnSlice" ? row.trailingTasks : NO_TASKS;
+}
+
+export function* timelineTaskEntries(rows: readonly TimelineRow[]): Iterable<TaskLineEntry> {
+  for (const row of rows) {
+    yield* taskLineEntries(row);
+  }
+}
+
+type ReportedEnd = {
+  readonly durationMs: number | null;
+  readonly status: NonNullable<ReturnType<typeof reportedCommandEnd>>;
+};
+
+function settleReportedLaunches(
+  entries: readonly TaskLineEntry[],
+  ends: ReadonlyMap<string, ReportedEnd>,
+): readonly TaskLineEntry[] {
+  if (ends.size === 0) {
+    return entries;
+  }
+  let settled: TaskLineEntry[] | undefined;
+  for (const [index, entry] of entries.entries()) {
+    const report = ends.get(entry.taskId);
+    if (report !== undefined && isBackgroundLaunch(entry) && launchAwaitsEnd(entry)) {
+      settled ??= entries.slice();
+      settled[index] = { ...entry, durationMs: report.durationMs, status: report.status };
+    }
+  }
+  return settled ?? entries;
+}
+
 type TimelineTurnItem = Extract<TimelineItem, { kind: "turn" }>;
 
 /**
@@ -164,7 +211,7 @@ function joinPendingLine(
 }
 
 /** A lead row that draws only report lines; one with a person's message or a compaction keeps its turn. */
-function isReportLead(row: TimelineRow): row is TimelineLeadRow {
+export function isReportLead(row: TimelineRow): row is TimelineLeadRow {
   return (
     row.kind === "turnLead" &&
     row.notifications.length > 0 &&

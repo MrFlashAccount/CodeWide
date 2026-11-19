@@ -43,7 +43,7 @@ export type RenderConversationWorkspaceContentProps = {
   draftAdmission: DraftAdmission | null;
   features: Pick<
     ConversationWorkspaceFeatures,
-    "composer" | "conversation" | "accounts" | "agents" | "requests"
+    "composer" | "conversation" | "accounts" | "agents" | "requests" | "terminal"
   >;
   fileTransferController: FileTransferController | null;
   forkCurrentThread: ReturnType<typeof useActiveThreadActions>["forkCurrentThread"];

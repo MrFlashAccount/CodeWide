@@ -15,9 +15,12 @@ export type CodeReviewEditorProps = {
   readonly loadError: string | null;
   readonly loading: boolean;
   readonly mode: CodeReviewViewMode;
+  readonly onCommentPress?: ((id: string) => void) | undefined;
   readonly onFileSelect: (path: string) => void;
+  readonly onFilesOpenChange?: ((open: boolean) => void) | undefined;
   /** A line was tapped; the owner opens its line composer. */
   readonly onLinePress: (reference: CodeReviewLineReference) => void;
+  readonly onRetryLoad?: () => void;
   readonly revealReference: CodeReviewLineReference | null;
   readonly selectedPath: string | null;
   /** The line whose composer is open, highlighted as its anchor; `null` while none is. */

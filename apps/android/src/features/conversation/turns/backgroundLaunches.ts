@@ -1,3 +1,4 @@
+import type { RunningBackgroundTask } from "../../../data/runningBackgroundTasks";
 import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { BackgroundCommandProjection } from "@codewide/sync-client";
 import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
@@ -19,20 +20,62 @@ export type BackgroundLaunchEntry = {
   readonly durationMs: number | null;
   readonly id: string;
   readonly kind: "command";
-  readonly launch: BackgroundCommandProjection;
   readonly name: string;
   readonly result: null;
+  readonly source: "launch";
+  readonly startedAt: number | null;
   readonly status: BackgroundCommandProjection["status"];
   readonly taskId: string;
   readonly toolUses: null;
 };
 
 /** One element of a task line: a report delivered to the agent, or a background command. */
-export type TaskLineEntry = TaskNotificationReport | BackgroundLaunchEntry;
+export type TaskLineEntry =
+  | TaskNotificationReport
+  | BackgroundLaunchEntry
+  | BackgroundTerminalEntry;
+
+/** A provider-owned process uses the same task-line presentation and a distinct output target. */
+export type BackgroundTerminalEntry = {
+  readonly agentThreadId: null;
+  readonly delivery: "midTurn";
+  readonly durationMs: null;
+  readonly id: string;
+  readonly kind: "command";
+  readonly name: string;
+  readonly result: null;
+  readonly status: "running";
+  readonly taskId: string;
+  readonly terminal: Extract<RunningBackgroundTask, { readonly kind: "terminal" }>;
+  readonly toolUses: null;
+};
+
+/** Projects a provider terminal into the common single-or-list task interaction. */
+export function terminalLineEntry(
+  terminal: BackgroundTerminalEntry["terminal"],
+): BackgroundTerminalEntry {
+  return {
+    agentThreadId: null,
+    delivery: "midTurn",
+    durationMs: null,
+    id: `terminal:${terminal.itemId}`,
+    kind: "command",
+    name: commandTitle(terminal.command),
+    result: null,
+    status: "running",
+    taskId: terminal.processId,
+    terminal,
+    toolUses: null,
+  };
+}
 
 /** Whether a line entry is a background command rather than a delivered report. */
 export function isBackgroundLaunch(entry: TaskLineEntry): entry is BackgroundLaunchEntry {
-  return "launch" in entry;
+  return "source" in entry;
+}
+
+export function launchAwaitsEnd(entry: BackgroundLaunchEntry): boolean {
+  return entry.status === "running" || entry.status === "unknown";
 }
 
 const launchCache = new WeakMap<Turn, readonly BackgroundLaunchEntry[]>();
@@ -72,24 +115,35 @@ export function backgroundLaunchEntry(
     durationMs: runDurationMs(task),
     id: itemId,
     kind: "command",
-    launch: task,
     name: task.description ?? commandTitle(command),
     result: null,
+    source: "launch",
+    startedAt: task.startedAt,
     status: task.status,
     taskId: task.taskId,
     toolUses: null,
   };
 }
 
-/** The task ids of every background command `turns` started. */
-export function launchedTaskIds(turns: Iterable<Turn>): ReadonlySet<string> {
-  const ids = new Set<string>();
-  for (const turn of turns) {
-    for (const launch of turnBackgroundLaunches(turn)) {
-      ids.add(launch.taskId);
-    }
-  }
-  return ids;
+/** A final delivery can reach the phone before the launch item's final update. */
+const COMMAND_END = {
+  completed: "completed",
+  failed: "failed",
+  interim: null,
+  interrupted: "stopped",
+  killed: "stopped",
+  lost: "stopped",
+  stopped: "stopped",
+  unknown: null,
+} as const satisfies Record<
+  TaskNotificationReport["status"],
+  BackgroundLaunchEntry["status"] | null
+>;
+
+export function reportedCommandEnd(
+  report: TaskNotificationReport,
+): (typeof COMMAND_END)[TaskNotificationReport["status"]] {
+  return report.kind === "command" ? COMMAND_END[report.status] : null;
 }
 
 /**
@@ -118,7 +172,7 @@ function runDurationMs(task: BackgroundCommandProjection): number | null {
 }
 
 /** A command's first line, shortened, as the name of a command without a description. */
-export function commandTitle(command: string): string {
+function commandTitle(command: string): string {
   const line = command.trim().split("\n")[0] ?? "";
   if (line === "") {
     return "Background command";

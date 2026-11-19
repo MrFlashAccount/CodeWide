@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+/// JSON-RPC error for an implemented scope that this particular workspace cannot serve.
+pub const UNSUPPORTED_SCOPE_CODE: i64 = -32_005;
+
 pub const CHANGES_CAPABILITY: &str = "vcs.changes@2";
 pub const INSPECT_CAPABILITY: &str = "vcs.inspect@1";
 pub const DIFF_CAPABILITY: &str = "vcs.diff@2";

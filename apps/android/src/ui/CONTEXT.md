@@ -2,7 +2,7 @@
 
 ## Keyboard dock
 
-`ui/KeyboardDock` is a layer over its positioned parent that docks its children at the bottom above the keyboard and passes other touches through to the content beneath. It resizes rather than translates, so a child with `flex: 1` fills the room the keyboard leaves. Outside a fullscreen modal it is Keyboard Controller's `KeyboardAvoidingView` with `automaticOffset` (measured in the window, so a pane that stops above the screen edge avoids only the overlap); inside `AppFullscreenModal` on Android, whose Compose dialog Keyboard Controller does not observe, it reads the dialog's IME insets through Compose. A docked child pads itself with `useKeyboardDockBottomInset()` (`ui/keyboardDockInset.ts`): the navigation bar inset while the keyboard is closed outside a fullscreen modal, otherwise none.
+`ui/KeyboardDock` is a layer over its positioned parent that docks its children at the bottom above the keyboard and passes other touches through to the content beneath. It resizes rather than translates, so a child with `flex: 1` fills the room the keyboard leaves. On Android the Activity follows Keyboard Controller's animated height. Inside `AppFullscreenModal`, a Compose spacer measures the dialog's IME. Both subtract the navigation bar already reserved below the pane. The dialog's docked controls stay in the pane's React Native hierarchy. Other platforms use Keyboard Controller's `KeyboardAvoidingView` with `automaticOffset`. A docked child pads itself with `useKeyboardDockBottomInset()` (`ui/keyboardDockInset.ts`): the navigation bar inset while the keyboard is closed outside a fullscreen modal, otherwise none.
 
 ## Overflow menus
 

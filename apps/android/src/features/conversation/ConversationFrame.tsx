@@ -1,3 +1,6 @@
+import type { GetTransferAccess } from "../../data/private-transfer";
+import type { ConversationTerminalCapabilities } from "../terminal/conversationTerminalCapabilities";
+import { BackgroundTerminalOutputHost } from "./turns/BackgroundTerminalOutputHost";
 import type { ConversationSurfaceCapabilities } from "./conversationSurfaceCapabilities";
 import type { RunningBackgroundTasksQuery } from "../../data/runningBackgroundTaskResource";
 import type { ConversationAgentCapabilities } from "../agents/conversationAgentCapabilities";
@@ -17,11 +20,7 @@ import type { useConversationTools } from "./ConversationTools";
 import type { useConversationTimelineState } from "./timeline/conversationTimelineState";
 import type { useOverlayScrollOwnership } from "./timeline/overlayScrollOwnership";
 import type { useConversationPaneGeometry } from "./timeline/timelineViewport";
-import {
-  BackgroundTerminalsContext,
-  RunningBackgroundTasksContext,
-  SubagentNavigationContext,
-} from "./turns/turnContexts";
+import { RunningBackgroundTasksContext, SubagentNavigationContext } from "./turns/turnContexts";
 
 export function createConversationFrame({
   agentsInputs,
@@ -35,9 +34,10 @@ export function createConversationFrame({
   conversationPaneGeometryBinding,
   draftConnectionId,
   draftThreadId,
-  openTerminals,
+  getTransferAccess,
   overlayScrollOwnershipBinding,
   surfaceInputs,
+  terminal,
   threadRenameBinding,
   timelineState,
   timelineView,
@@ -54,10 +54,10 @@ export function createConversationFrame({
   conversationPaneGeometryBinding: ReturnType<typeof useConversationPaneGeometry>;
   draftConnectionId: string | null;
   draftThreadId: string | null;
-  /** Opens the thread's background terminals; `null` where it has none to open. */
-  openTerminals: (() => void) | null;
+  getTransferAccess: GetTransferAccess;
   overlayScrollOwnershipBinding: ReturnType<typeof useOverlayScrollOwnership>;
   surfaceInputs: ConversationSurfaceCapabilities;
+  terminal: ConversationTerminalCapabilities;
   threadRenameBinding: ReturnType<typeof useThreadRename>;
   timelineState: ReturnType<typeof useConversationTimelineState>;
   timelineView: ReturnType<typeof createConversationTimelineContent>;
@@ -89,7 +89,12 @@ export function createConversationFrame({
         >
           <BackgroundTaskOutputHost read={readTaskOutput}>
             <RunningBackgroundTasksContext.Provider value={runningTasks}>
-              <BackgroundTerminalsContext.Provider value={openTerminals}>
+              <BackgroundTerminalOutputHost
+                connectionId={draftConnectionId}
+                getTransferAccess={getTransferAccess}
+                readTerminalCommand={terminal.readTerminalCommand}
+                threadId={draftThreadId}
+              >
                 <LargeContentViewerHost>
                   <ConversationLayout
                     bottomChrome={chromeView.bottomChrome}
@@ -121,7 +126,7 @@ export function createConversationFrame({
                     timelineSurface={timelineView.timelineSurface}
                   />
                 </LargeContentViewerHost>
-              </BackgroundTerminalsContext.Provider>
+              </BackgroundTerminalOutputHost>
             </RunningBackgroundTasksContext.Provider>
           </BackgroundTaskOutputHost>
         </SubagentNavigationContext.Provider>

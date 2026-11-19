@@ -10,7 +10,7 @@ import { useConstant } from "../../../react/useConstant";
 import { colors, controlHitSlop, iconSize, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import type { CodeReviewLineReference } from "../../review/comments/reviewComment";
-import { viewedSummary } from "./changesPresentation";
+import { canEditDraft, viewedSummary } from "./changesPresentation";
 import { FileDrafts } from "./FileDrafts";
 import { createHeadFileViews, type HeadFileSource, type HeadFileViews } from "./headFileViews";
 import { PullRequestDiff } from "./PullRequestDiff";
@@ -29,7 +29,9 @@ type FilesViewProps = {
   readonly host: string;
   readonly onDeleteDraft: (draft: DraftComment) => void;
   readonly onDiscardPut: (put: DraftPut) => void;
+  readonly onEditDraft: (draft: DraftComment) => void;
   readonly onEditPut: (put: DraftPut) => void;
+  readonly onFilesOpenChange: (open: boolean) => void;
   readonly onGuide: () => void;
   readonly onLinePress: (reference: CodeReviewLineReference) => void;
   readonly onLoadMore: (() => void) | null;
@@ -90,12 +92,19 @@ function SelectedFileDiff(
       content={content}
       draftPuts={props.draftPuts}
       drafts={props.drafts}
+      onCommentPress={(id) => {
+        const draft = props.drafts.find((d) => d.id === id);
+        if (draft !== undefined && canEditDraft(draft)) {
+          props.onEditDraft(draft);
+        }
+      }}
       onLinePress={props.onLinePress}
-      reveal={null}
+      reveal={props.composerLine}
       selected={shown ?? props.selected}
       tree={{
         besideDiff: props.besideDiff,
         files: props.page.files,
+        onOpenChange: props.onFilesOpenChange,
         onSelect: props.onSelect,
         open: props.filesOpen,
       }}

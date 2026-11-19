@@ -1,3 +1,4 @@
+import type { TerminalOutputRequest } from "./terminalOutputRequest";
 import type { CommandOutputReference } from "@codewide/sync-client";
 import type { RenderContentReference } from "@codewide/renderers";
 import type { GetTransferAccess } from "../../data/private-transfer";
@@ -58,7 +59,10 @@ export type CommandContentRouteRequest = {
   readonly turnId: string;
 };
 
-export type LargeContentRouteRequest = DocumentContentRouteRequest | CommandContentRouteRequest;
+export type LargeContentRouteRequest =
+  | DocumentContentRouteRequest
+  | CommandContentRouteRequest
+  | TerminalOutputRequest;
 
 /** One retained large-content request addressed by an opaque route identifier. */
 type ContentRouteSession = {

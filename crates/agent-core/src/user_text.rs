@@ -107,6 +107,10 @@ pub fn is_companion_context(text: &str) -> bool {
     let text = text.trim_start();
     text.starts_with("Context handoff (fork):")
         || text
+            .strip_prefix("Continue the unfinished work from the ")
+            .and_then(|rest| rest.split_once(" session.\n\n[CodeWide session handoff]\n"))
+            .is_some_and(|(provider, _)| !provider.is_empty() && !provider.contains('\n'))
+        || text
             .strip_prefix(DELEGATED_TASK_CONTEXT_PREFIX)
             .is_some_and(|payload| payload.starts_with('\n'))
 }
@@ -159,6 +163,21 @@ mod tests {
             Some("Plain")
         );
         assert_eq!(display_text("[wrapped] context", &Wrapped), None);
+        assert_eq!(
+            display_text(
+                "Continue the unfinished work from the Claude session.\n\n[CodeWide session handoff]\ncontext",
+                &NoUserTextFormats
+            ),
+            None
+        );
+        assert_eq!(
+            display_text(
+                "Continue the unfinished work from the Claude session.",
+                &NoUserTextFormats
+            )
+            .as_deref(),
+            Some("Continue the unfinished work from the Claude session.")
+        );
         assert_eq!(
             display_text(
                 "Context handoff (fork):\nUser: hi\n\nUser message:",

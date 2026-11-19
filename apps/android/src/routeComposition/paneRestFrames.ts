@@ -1,11 +1,7 @@
 import type { DimensionValue } from "react-native";
 
-import {
-  SIDEBAR_FRAME_SHARE,
-  SIDEBAR_MAX_WIDTH,
-  SIDEBAR_MIN_WIDTH,
-  type PaneArrangement,
-} from "./paneGeometry";
+import { SIDEBAR_FRAME_SHARE, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "../ui/sidebarDimensions";
+import type { PaneArrangement } from "./paneGeometry";
 import { COVERED_CATALOG_OPACITY } from "./paneMotionSpec";
 
 /**

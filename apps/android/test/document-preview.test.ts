@@ -18,14 +18,6 @@ const changes = readFileSync(
   "utf8",
 );
 const screen = readFileSync(new URL("../app/(workspace)/_layout.tsx", import.meta.url), "utf8");
-const workspace = readFileSync(
-  new URL("../src/features/review/workspace/CodeReviewWorkspace.tsx", import.meta.url),
-  "utf8",
-);
-const nativeEditor = readFileSync(
-  new URL("../src/features/review/editor/CodeReviewEditor.native.tsx", import.meta.url),
-  "utf8",
-);
 const editorRuntime = readFileSync(
   new URL("../src/features/review/editor/webview/entry.web.ts", import.meta.url),
   "utf8",
@@ -164,10 +156,6 @@ describe("document preview", () => {
     expect(attachmentRouteActions).toContain('if (request.kind === "text") {');
     expect(changes).toContain("<CodeReviewWorkspace");
     expect(changes).toContain("onClose={onClose}");
-    expect(workspace).toContain(
-      "revealReference={selectedReference === null ? revealReference : null}",
-    );
-    expect(nativeEditor).toContain('send({ command: "reveal", payload: revealReference })');
     expect(editorRuntime).toContain("revealedReference = parsed.payload");
     expect(editorRuntime).toContain('scrollIntoView({ block: "center", inline: "nearest" })');
   });

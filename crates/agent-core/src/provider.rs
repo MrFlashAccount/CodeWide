@@ -296,6 +296,26 @@ pub trait AgentProvider: Send + Sync {
 
     async fn thread_read(&self, thread: &AppThreadId) -> Result<ThreadReadResult, ProviderError>;
 
+    /// Original local transcript files behind a thread, in history order.
+    /// Host-only provenance for a cross-provider snapshot, not an export or
+    /// a model-facing file reader. Empty when the provider has no local files.
+    async fn thread_history_files(
+        &self,
+        _thread: &AppThreadId,
+    ) -> Result<Vec<std::path::PathBuf>, ProviderError> {
+        Ok(Vec::new())
+    }
+
+    /// Known context-window tokens for a model in this workspace. None means
+    /// unknown, never an unlimited window. No inference request is made.
+    async fn model_context_window(
+        &self,
+        _model: &str,
+        _cwd: &str,
+    ) -> Result<Option<usize>, ProviderError> {
+        Ok(None)
+    }
+
     /// Reads the provider-owned execution authority of an existing thread.
     /// `None` means that the provider has no independent durable authority;
     /// callers may still use an authenticated live observation or the

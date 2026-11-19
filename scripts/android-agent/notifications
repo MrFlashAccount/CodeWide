@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Run the notification feature against Android SystemUI and report real screenshots."""
+
+import fcntl
+import os
+import re
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+
+sys.dont_write_bytecode = True
+from lab import HERE, LAB, PACKAGE, adb, click, device, launch, ref, run, screen, wait_for
+from peer import fixture_peer, pair_if_needed
+
+os.umask(0o077)
+LAB.mkdir(parents=True, exist_ok=True)
+lock = (LAB / "notifications.lock").open("a")
+fcntl.flock(lock, fcntl.LOCK_EX)
+subprocess.run([HERE / "start"], check=True)
+out = LAB / "reports" / datetime.now(timezone.utc).strftime("notifications-%Y%m%dT%H%M%S.%fZ")
+out.mkdir(parents=True)
+results = []
+pictures = []
+events = [
+    ("answer", "Answer ready", "Agent turn completed"),
+    ("input", "Needs your input", "Agent needs your input"),
+    ("failure", "Agent error", "Agent turn failed"),
+]
+
+
+def capture(filename, caption):
+    device("screenshot", str(out / filename))
+    pictures.append((filename, caption))
+
+
+def open_settings():
+    if "Back to settings" in screen():
+        return
+    click("button", "Thread list menu")
+    snap = screen()
+    if "DevTools" in snap or "Performance monitor" in snap:
+        click("button", "Toggle Dev Menu, Tools button", scroll=True)
+        click("button", "Close")
+        click("button", "Thread list menu")
+    click("button", "Settings", scroll=True)
+    wait_for("test server settings", lambda: "Settings for Notification Lab" in screen())
+    click("button", "Notifications", scroll=True)
+    wait_for("notification settings", lambda: "Answer ready," in screen())
+
+
+def toggle():
+    click("switch", "Agent notifications")
+
+
+def enabled(snap):
+    return any('[switch] "Agent notifications" [checked]' in line for line in snap.splitlines())
+
+
+def set_mode(row, value, menu_shot=False):
+    current = re.search(r'\[button\] "' + re.escape(row) + r', ([^"]+)"', screen())
+    if not current:
+        raise RuntimeError(f"Could not read {row}")
+    if current[1] == value:
+        return
+    click("button", f"{row}, {current[1]}")
+    wait_for("notification modes", lambda: ref(screen(), "group", value))
+    if menu_shot:
+        capture("02-modes.png", "Выбор режима доставки для готового ответа")
+    click("group", value)
+    wait_for(row, lambda: ref(screen(), "button", f"{row}, {value}"))
+
+
+def active():
+    # Only active child notifications from this package and this channel, excluding Android's group summary and history.
+    dump = adb("shell", "dumpsys", "notification", "--noredact").split("  Snoozed notifications:", 1)[0]
+    rows = {}
+    for block in re.split(r"(?m)^    NotificationRecord\(", dump)[1:]:
+        header = block.splitlines()[0]
+        if (
+            f"pkg={PACKAGE} " not in header
+            or "channel=codewide_turn_updates " not in header
+            or "tag=null " not in header
+        ):
+            continue
+        title = re.search(r"android.title=String \(([^\n]+?)\)", block)
+        policy = re.search(r"groupAlertBehavior=(\d+)", block)
+        if title and policy:
+            rows[re.search(r" id=(-?\d+) ", header)[1]] = (title[1], int(policy[1]))
+    return rows
+
+
+def emit(control, kind):
+    run("curl", "-fsS", "-X", "POST", "--unix-socket", control, "http://localhost/" + kind)
+
+
+def delivered(control, kind, title, policy):
+    before = set(active())
+    emit(control, kind)
+
+    def posted():
+        return any(key not in before and row == (title, policy) for key, row in active().items())
+
+    wait_for(title, posted, 15)
+
+
+def suppressed(control, kind, title, witness):
+    before = set(active())
+    emit(control, kind)
+    delivered(control, witness[0], witness[2], 0)
+    if any(k not in before and row[0] == title for k, row in active().items()):
+        raise RuntimeError(f"Disabled {kind} generated an alert")
+
+
+def run_checks(control):
+    open_settings()
+    if not enabled(screen()):
+        toggle()
+        wait_for("enabled", lambda: enabled(screen()))
+    for _, row, _ in events:
+        set_mode(row, "Silent" if row == "Answer ready" else "Android default")
+    capture("01-settings.png", "Исходная конфигурация прогона")
+    for kind, _, title in events:
+        delivered(control, kind, title, 1 if kind == "answer" else 0)
+    results.append(
+        "Три разных события дошли через Companion до Android. Для ответа Android записал groupAlertBehavior=1, для запроса ввода и ошибки — 0."
+    )
+    adb("shell", "cmd", "statusbar", "expand-notifications")
+    try:
+        wait_for("Android notification shade", lambda: "notification_stack_scroller" in device("snapshot"))
+        # Expand the app group when SystemUI collapses multiple events into a summary.
+        if ' [button] "Expand"' in device("snapshot"):
+            device("find", "label", "Expand", "click", "--first")
+        time.sleep(0.4)
+        capture("03-shade.png", "Уведомления CodeWide в системной шторке Android")
+    finally:
+        adb("shell", "cmd", "statusbar", "collapse")
+    wait_for("settings after SystemUI", lambda: "Answer ready," in screen())
+    set_mode("Answer ready", "Off", menu_shot=True)
+    suppressed(control, "answer", "Agent turn completed", events[2])
+    results.append(
+        "При Answer ready = Off ответ не появился. Следующая ошибка в том же соединении создала уведомление."
+    )
+    # Exercise the remaining per-event choices, using another enabled event as a delivery witness for Off.
+    set_mode("Answer ready", "Android default")
+    delivered(control, "answer", "Agent turn completed", 0)
+    for event, witness in [(events[1], events[2]), (events[2], events[1])]:
+        kind, row, title = event
+        set_mode(row, "Silent")
+        delivered(control, kind, title, 1)
+        set_mode(row, "Off")
+        suppressed(control, kind, title, witness)
+        set_mode(row, "Android default")
+    results.append(
+        "Все девять сочетаний события и режима проверены на Android. Для каждого Off следом отправлено контрольное событие другого типа."
+    )
+    set_mode("Answer ready", "Off")
+    toggle()
+    wait_for("disabled", lambda: not enabled(screen()) and "Answer ready, Off" in screen())
+    capture("04-master-off.png", "Общий выключатель отключён, режим ответа сохранён")
+    # Recreate the application process and its service. Preferences must survive.
+    adb("shell", "am", "force-stop", PACKAGE)
+    launch()
+    open_settings()
+    snap = screen()
+    if enabled(snap) or "Answer ready, Off" not in snap:
+        raise RuntimeError("Preference lost on process restart")
+    results.append(
+        "После остановки и запуска процесса общий выключатель остался выключен, режим ответа остался Off."
+    )
+    before = set(active())
+    muted_count = approval_count()
+    for kind in ("answer", "failure", "input"):
+        emit(control, kind)
+    # The service updates its foreground notification when an approval arrives even when alerts are muted.
+    # Wait for this delivery witness before re-enabling alerts or issuing the positive control.
+    wait_for("approval received while muted", lambda: approval_count() > muted_count, 15)
+    if set(active()) - before:
+        raise RuntimeError("An alert was posted while all agent notifications were disabled")
+    toggle()
+    wait_for("enabled again", lambda: enabled(screen()))
+    delivered(control, "input", "Agent needs your input", 0)
+    set_mode("Answer ready", "Silent")
+    delivered(control, "answer", "Agent turn completed", 1)
+    results.append(
+        "Общий выключатель подавил все три события. Служба отразила полученный запрос в своём счётчике. После включения запрос и тихий ответ снова появились."
+    )
+
+
+def approval_count():
+    dump = adb("shell", "dumpsys", "notification", "--noredact").split("  Snoozed notifications:", 1)[0]
+    for block in re.split(r"(?m)^    NotificationRecord\(", dump)[1:]:
+        if (
+            f"pkg={PACKAGE} " in block.splitlines()[0]
+            and "channel=codewide_connections " in block.splitlines()[0]
+        ):
+            match = re.search(r"android.text=String \([^\n)]*?(\d+) approvals?", block)
+            return int(match[1]) if match else 0
+    return 0
+
+
+status = "FAIL"
+try:
+    with fixture_peer() as (control, invitation):
+        adb("shell", "am", "force-stop", PACKAGE)
+        launch()
+        pair_if_needed(invitation)
+        run_checks(control)
+    status = "PASS"
+finally:
+    lines = [
+        f"# Проверка уведомлений CodeWide — {status}",
+        "",
+        "Android Emulator API 35, x86_64. Управление и снимки через Callstack agent-device 0.21.39. "
+        "Сценарий отправляет синтетические события в отдельный локальный Companion, затем сверяет активные записи Android NotificationManager. Акустический выход не измеряется.",
+        "",
+    ]
+    lines += ["- " + r for r in results]
+    lines += [
+        "",
+        *[
+            f"![{caption}]({out / filename})\n\n[{caption}]({out / filename})\n"
+            for filename, caption in pictures
+        ],
+    ]
+    (out / "report.md").write_text("\n".join(lines) + "\n")
+    print(f"{status} {out / 'report.md'}", flush=True)

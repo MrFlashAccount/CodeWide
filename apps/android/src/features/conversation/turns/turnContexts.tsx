@@ -1,3 +1,4 @@
+import type { RunningBackgroundTask } from "../../../data/runningBackgroundTasks";
 /** V1 turnContexts owner, extracted without changing interaction or resource lifetime. */
 import type { ActivityMetrics, TurnUsageProjection } from "@codewide/sync-client";
 import { createContext } from "react";
@@ -66,7 +67,10 @@ export const RunningBackgroundTasksContext = createContext<RunningBackgroundTask
 );
 
 /**
- * Opens the thread's background terminals (list and stop); `null` where the
+ * Opens one background terminal's output; `null` where the
  * thread has none to open.
  */
-export const BackgroundTerminalsContext = createContext<(() => void) | null>(null);
+export const BackgroundTerminalsContext = createContext<
+  | ((terminal: Extract<RunningBackgroundTask, { readonly kind: "terminal" }>) => Promise<void>)
+  | null
+>(null);

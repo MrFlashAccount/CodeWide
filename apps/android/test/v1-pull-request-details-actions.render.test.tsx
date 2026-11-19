@@ -110,9 +110,9 @@ describe("Checks section actions", () => {
     fireEvent.press(start);
     expect(runAction.mock.calls.map(([, request]) => request.actionId)).toEqual(["startCi"]);
     // The pending run keeps its label in place and refuses a second tap.
-    expect(within(view.getByTestId("pull-request-status-checks")).getByTestId(
-      "catalog-action-startCi",
-    )).toHaveProp("accessibilityState", { busy: true, disabled: true });
+    expect(
+      within(view.getByTestId("pull-request-status-checks")).getByTestId("catalog-action-startCi"),
+    ).toHaveProp("accessibilityState", { busy: true, disabled: true });
   });
 
   it("keeps a Checks row for Start CI when the forge reports no checks", async () => {
@@ -146,18 +146,27 @@ describe("Checks section actions", () => {
 });
 
 describe("app bar menu", () => {
-  it("leads with Copy link, Share and Open in the forge, then the overflowed actions with Close destructive", async () => {
+  it("shows single-tap copy and share actions and an icon for each PR menu entry", async () => {
     const view = await renderDetails({});
     fireEvent.press(await view.findByLabelText("Pull request menu"));
 
     const labels = view
       .getAllByLabelText(/^Pull request menu: /u)
       .map((item) => String(item.props.accessibilityLabel).replace("Pull request menu: ", ""));
-    expect(labels.slice(0, 3)).toEqual(["Copy link", "Share", "Open in GitHub"]);
+    expect(labels.slice(0, 5)).toEqual([
+      "Copy link",
+      "Share",
+      "Copy ID",
+      "Copy title",
+      "Open in GitHub",
+    ]);
     expect(labels).toContain("Close pull request");
     const menu = view
       .UNSAFE_getAllByType(ActionMenu)
       .find((candidate) => candidate.props.accessibilityLabel === "Pull request menu");
+    for (const item of menu?.props.actions ?? []) {
+      expect(item.icon).toEqual(expect.any(String));
+    }
     expect(
       menu?.props.actions.find(
         (item: { readonly label: string }) => item.label === "Close pull request",

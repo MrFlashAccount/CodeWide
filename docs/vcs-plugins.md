@@ -127,8 +127,11 @@ snapshot declares the scopes its provider serves natively in
 `availableScopes`; clients offer only those. The companion forwards the
 requested scope unchanged to the owning provider and never composes,
 synthesizes, or advertises a scope on a provider's behalf, nor branches on a
-provider id. A provider rejects a scope it does not serve with an error, which
-is terminal for that owned workspace. Paging (`vcs.diffPage`) is likewise
+provider id. A provider returns `-32005` when the workspace cannot serve the
+requested scope. An explicit scope request surfaces that error. For a default
+changes list, the companion then requests `uncommitted` from the same provider
+if its preferred `branch` scope is unavailable. Other failures propagate.
+Paging (`vcs.diffPage`) is likewise
 available for a scope only when the provider advertises `vcs.diffPage@1`.
 
 ### `vcs.diff`

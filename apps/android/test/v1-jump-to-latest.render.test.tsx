@@ -1,9 +1,13 @@
-import { createRef } from "react";
+import { QueryClient, QueryClientProvider, queryOptions } from "@tanstack/react-query";
+import type { RunningBackgroundTask } from "../src/data/runningBackgroundTasks";
+import { RunningBackgroundTasksContext } from "../src/features/conversation/turns/turnContexts";
+import { TaskNotificationLine } from "../src/features/conversation/turns/TaskNotificationLine";
+import { createRef, useState } from "react";
 import { Pressable, View, type View as NativeView } from "react-native";
 import { act, fireEvent, render, renderHook, waitFor } from "@testing-library/react-native";
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../src/data/use-thread-history-controller";
 import { timelineRowPremeasurementEnabled$ } from "../src/data/timelineRowPremeasurementPreference";
-import { TimelineViewport } from "../src/features/conversation/timeline/TimelineViewportView";
+import { TimelineViewport as ConversationViewport } from "../src/features/conversation/timeline/TimelineViewportView";
 import { JumpToLatest } from "../src/features/conversation/timeline/JumpToLatest";
 import { TimelineJumpVisibility } from "../src/features/conversation/timeline/timelineJumpVisibility";
 import type { TimelineViewportProps } from "../src/features/conversation/timeline/TimelineViewportContract";
@@ -20,6 +24,7 @@ import {
   conversationHeaderChromeHeight,
   conversationTopContentInset,
 } from "../src/ui/conversation-chrome-layout";
+import { setKeyboardHeightForTest } from "./mocks/KeyboardController";
 import {
   legendListScrollToEnd,
   legendListScrollToIndex,
@@ -27,6 +32,15 @@ import {
   setLegendListItemViewport,
   setLegendListWithinEndThreshold,
 } from "./mocks/LegendKeyboardList";
+
+function TimelineViewport(props: TimelineViewportProps) {
+  const [client] = useState(() => new QueryClient());
+  return (
+    <QueryClientProvider client={client}>
+      <ConversationViewport {...props} />
+    </QueryClientProvider>
+  );
+}
 
 const unreadRow = {
   completedAt: null,
@@ -173,7 +187,69 @@ beforeEach(() => {
   setLegendListItemViewport(-100);
 });
 
-afterEach(() => setLegendListAnchorReadyDuringLayout(false));
+afterEach(() => {
+  setLegendListAnchorReadyDuringLayout(false);
+  setKeyboardHeightForTest(0);
+});
+
+it("groups the last launch and the live footer when the provider's list arrives", async () => {
+  const client = new QueryClient();
+  const live = queryOptions<readonly RunningBackgroundTask[]>({
+    queryFn: async () => [],
+    queryKey: ["thread/backgroundTasks", "server", "thread"],
+    staleTime: Infinity,
+  });
+  client.setQueryData(live.queryKey, []);
+  const item = responseTurn("completed");
+  const marker = {
+    description: "Watch the build",
+    startedAt: null,
+    status: "running",
+    taskId: "build",
+  } as const;
+  const command = {
+    aggregatedOutput: null,
+    codewideBackgroundTask: marker,
+    command: "watch-build",
+    commandActions: [],
+    cwd: "/workspace",
+    durationMs: null,
+    exitCode: null,
+    id: "build-call",
+    processId: null,
+    source: "agent" as const,
+    status: "completed" as const,
+    type: "commandExecution" as const,
+  };
+  const props = timelineViewportProps(() => undefined);
+  const view = render(
+    <QueryClientProvider client={client}>
+      <RunningBackgroundTasksContext.Provider value={live}>
+        <ConversationViewport
+          {...props}
+          displayedTimeline={[
+            { ...item, turn: { ...item.turn, items: [...item.turn.items, command] } },
+          ]}
+          renderTimelineItem={({ item: row }) => (
+            <View>
+              {row.kind === "turnSlice" && <TaskNotificationLine reports={row.trailingTasks} />}
+            </View>
+          )}
+        />
+      </RunningBackgroundTasksContext.Provider>
+    </QueryClientProvider>,
+  );
+  expect(view.getByLabelText("Watch the build running")).toBeOnTheScreen();
+  act(() => {
+    client.setQueryData(live.queryKey, [
+      { command: command.command, itemId: command.id, kind: "task", task: marker, turnId: item.id },
+      { command: "watch-tests", itemId: "tests-call", kind: "terminal", processId: "12" },
+    ]);
+  });
+  expect(await view.findByLabelText("2 background tasks running")).toBeOnTheScreen();
+  expect(view.getAllByTestId("task-notification-line")).toHaveLength(1);
+});
+
 
 it("defaults to a 115 dp estimate and lets LegendList measure timeline rows", () => {
   const props = timelineViewportProps(() => undefined);
@@ -639,12 +715,15 @@ it("revokes a pending response jump when a manual gesture starts", () => {
 it("keeps new-chat content stationary while the keyboard opens", () => {
   const props = timelineViewportProps(() => undefined);
   props.newChat = true;
+  props.conversationInsets.bottom = 109;
+  setKeyboardHeightForTest(923);
   const view = render(<TimelineViewport {...props} />);
 
   expect(view.getByTestId("conversation-timeline").props.keyboardLiftBehavior).toBe("never");
+  expect(view.queryByTestId("conversation-keyboard-viewport")).toBeNull();
 
   view.rerender(<TimelineViewport {...props} newChat={false} />);
-  expect(view.getByTestId("conversation-timeline").props.keyboardLiftBehavior).toBe("always");
+  expect(view.getByTestId("conversation-keyboard-viewport")).toHaveStyle({ marginBottom: 814 });
 });
 
 it("preserves the two-percent viewport boundary for tail-follow state", () => {
@@ -974,7 +1053,7 @@ it("keeps timeline keyboard behavior independent of the docked question editor",
   const props = timelineViewportProps(() => undefined);
   const view = render(<TimelineViewport {...props} newChat={false} />);
   expect(view.getByTestId("conversation-timeline").props.maintainScrollAtEnd).toBe(true);
-  expect(view.getByTestId("conversation-timeline").props.keyboardLiftBehavior).toBe("always");
+  expect(view.getByTestId("conversation-keyboard-viewport")).toHaveStyle({ marginBottom: 0 });
   expect(view.getByTestId("conversation-timeline").props.maintainVisibleContentPosition).toBe(true);
 });
 

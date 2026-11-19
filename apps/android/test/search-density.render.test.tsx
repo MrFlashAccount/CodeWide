@@ -1,4 +1,4 @@
-import { sidebarWidth } from "../src/routeComposition/paneGeometry";
+import { sidebarWidth } from "../src/ui/sidebarDimensions";
 
 it("gives the narrow split view more catalog room without consuming the conversation", () => {
   for (const width of [840, 900, 1024, 1440]) {

@@ -1,3 +1,4 @@
+import { renderLegendListCell } from "./fixtures/LegendListCell";
 import type { Turn } from "@codewide/codex-protocol/v0.155.1/v2";
 import type { RenderBlock } from "@codewide/renderers";
 import { fireEvent, render, within } from "@testing-library/react-native";
@@ -107,7 +108,9 @@ it("opens the same group in the sheet once its turn has finished", () => {
 });
 
 it("opens the collapsed earlier activity of a running turn in the sheet", () => {
-  const view = render(<CollapsedTurnActivity compact indexes={[0]} item={runningTurn()} />);
+  const view = renderLegendListCell(
+    <CollapsedTurnActivity compact indexes={[0]} item={runningTurn()} />,
+  );
 
   fireEvent.press(view.getByRole("button", { name: /^Open activity/ }));
   expect(view.queryByTestId("turn-activity-list")).toBeNull();
@@ -116,7 +119,7 @@ it("opens the collapsed earlier activity of a running turn in the sheet", () => 
 
 it("shows a running turn's current action without inventing a fallback destination", () => {
   const running: RenderBlock = { ...commandBlock, status: "inProgress" };
-  const view = render(
+  const view = renderLegendListCell(
     <ActiveTurnActivity
       compact
       earlierIndexes={[]}

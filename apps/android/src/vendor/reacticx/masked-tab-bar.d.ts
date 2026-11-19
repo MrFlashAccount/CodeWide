@@ -20,6 +20,8 @@ export interface IMaskedTabBarRoot {
   readonly children: ReactNode;
   readonly defaultValue?: string;
   readonly draggable?: boolean;
+  /** Changing it makes the list and its triggers measure themselves again; nothing remounts. */
+  readonly measureRevision?: number;
   readonly fontSize?: number;
   readonly fontWeight?: TextStyle["fontWeight"];
   readonly gap?: number;

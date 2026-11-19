@@ -59,6 +59,15 @@ struct RolloutProjections {
 impl ProjectionSource for RolloutProjections {
     type Projection = PersistedProjection;
 
+    async fn indexed_workspace(&self, thread_id: &str) -> Result<Option<PathBuf>, ResourceError> {
+        let catalog = self.catalog.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::task::spawn_blocking(move || catalog.indexed_workspace(&thread_id))
+            .await
+            .map_err(|_| ResourceError::Join)?
+            .map_err(|error| ResourceError::Source(Box::new(error)))
+    }
+
     async fn refresh(&self, thread_id: &str) -> Result<PersistedProjection, ResourceError> {
         let catalog = self.catalog.clone();
         let store = self.store.clone();

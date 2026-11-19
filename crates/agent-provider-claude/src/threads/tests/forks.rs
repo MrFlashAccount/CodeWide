@@ -15,6 +15,26 @@ use crate::cli::command::SessionIdentity;
 
 const FORK: &str = "6b8f0c2a-1d3e-4f5a-8b9c-0d1e2f3a4b5c";
 
+#[tokio::test]
+async fn history_file_references_are_readable_without_starting_a_query() -> TestResult {
+    let harness = harness(Options::default())?;
+    store_with_two_turns(&harness)?;
+    let files = harness.service.history_files(&id(TERMINAL)?).await?;
+    assert_eq!(files.len(), 1);
+    let contents = std::fs::read_to_string(&files[0])?;
+    assert!(contents.contains("Fix the flaky test"));
+    let subagents = files[0].with_extension("").join("subagents");
+    std::fs::create_dir_all(&subagents)?;
+    let child = subagents.join("agent-worker.jsonl");
+    std::fs::write(&child, "{\"type\":\"user\"}\n")?;
+    let child_id =
+        crate::subagents::child_thread_id(&id(TERMINAL)?, "worker").ok_or("invalid child")?;
+    assert_eq!(harness.service.history_files(&child_id).await?, vec![child]);
+    assert!(super::lock(&harness.runtime.queries).is_empty());
+    harness.close().await;
+    Ok(())
+}
+
 fn store_with_two_turns(harness: &Harness) -> TestResult {
     write_session(
         &harness.projects(),

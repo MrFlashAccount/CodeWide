@@ -5,7 +5,7 @@ import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
 import { colors, controlHitSlop, controlSize, iconSize, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
-import { OverflowActionsMenu } from "../actions/OverflowActionsMenu";
+import { OverflowActionsMenu, type ExtraMenuItem } from "../actions/OverflowActionsMenu";
 import { DiffCounts, ViewedToggle } from "./FileMarks";
 
 /** The selected file and what the toolbar can do with it. */
@@ -43,17 +43,26 @@ export function ChangesToolbar({
   readonly tablet: boolean;
   readonly view: "files" | "guide";
 }): React.JSX.Element {
+  const fileControls = view === "files" ? file : null;
   return (
     <View style={styles.bar} testID="changes-toolbar">
-      <ToolButton
-        accessibilityLabel={filesOpen && view === "files" ? "Hide files" : "Show files"}
-        icon="folder-open-outline"
-        onPress={onFiles}
-        selected={view === "files" && filesOpen}
-        testID="changes-view-files"
-      />
-      {view === "files" && file !== null ? (
-        <FileControls file={file} host={host} onRun={onRun} tablet={tablet} />
+      {(tablet || fileControls === null) && (
+        <ToolButton
+          accessibilityLabel={filesOpen && view === "files" ? "Hide files" : "Show files"}
+          icon="albums-outline"
+          onPress={onFiles}
+          selected={view === "files" && filesOpen}
+          testID="changes-view-files"
+        />
+      )}
+      {fileControls !== null ? (
+        <FileControls
+          file={fileControls}
+          host={host}
+          onFiles={onFiles}
+          onRun={onRun}
+          tablet={tablet}
+        />
       ) : (
         <Text numberOfLines={1} style={styles.summary}>
           {summary}
@@ -66,11 +75,13 @@ export function ChangesToolbar({
 function FileControls({
   file: selected,
   host,
+  onFiles,
   onRun,
   tablet,
 }: {
   readonly file: ToolbarFile;
   readonly host: string;
+  readonly onFiles: () => void;
   readonly onRun: (action: ActionDescriptor) => void;
   readonly tablet: boolean;
 }): React.JSX.Element {
@@ -78,6 +89,24 @@ function FileControls({
   const slash = file.path.lastIndexOf("/");
   return (
     <>
+      {tablet ? (
+        <Text ellipsizeMode="head" numberOfLines={1} style={styles.path}>
+          {file.path.slice(slash + 1)}
+        </Text>
+      ) : (
+        <Pressable
+          accessibilityLabel={`Choose file, ${file.path}`}
+          accessibilityRole="button"
+          onPress={onFiles}
+          style={styles.picker}
+          testID="changes-view-files"
+        >
+          <Text numberOfLines={1} style={styles.name}>
+            {file.path.slice(slash + 1)}
+          </Text>
+          <Ionicons color={colors.textMuted} name="chevron-down" size={iconSize.inline} />
+        </Pressable>
+      )}
       <View style={styles.tool} testID="changes-file-viewed">
         <ViewedToggle
           file={file}
@@ -86,10 +115,6 @@ function FileControls({
           pending={selected.viewedPending}
         />
       </View>
-      <Text ellipsizeMode="head" numberOfLines={1} style={styles.path}>
-        <Text style={styles.directory}>{file.path.slice(0, slash + 1)}</Text>
-        {file.path.slice(slash + 1)}
-      </Text>
       {tablet ? <DiffCounts file={file} /> : null}
       {tablet ? (
         <>
@@ -115,10 +140,32 @@ function FileControls({
         accessibilityLabel={`Actions for ${file.path}`}
         actions={selected.actions}
         compact
+        extra={tablet ? [] : fileNavigationActions(selected)}
         onRun={onRun}
       />
     </>
   );
+}
+
+function fileNavigationActions(selected: ToolbarFile): ExtraMenuItem[] {
+  const actions: ExtraMenuItem[] = [];
+  if (selected.previous !== null) {
+    actions.push({
+      icon: "chevron-up",
+      id: "previous-file",
+      label: "Previous file",
+      onSelect: selected.previous,
+    });
+  }
+  if (selected.next !== null) {
+    actions.push({
+      icon: "chevron-down",
+      id: "next-file",
+      label: "Next file",
+      onSelect: selected.next,
+    });
+  }
+  return actions;
 }
 
 function ToolButton({
@@ -168,8 +215,10 @@ const styles = StyleSheet.create({
     height: controlSize.regular,
     paddingHorizontal: spacing.xxs,
   },
-  directory: {
-    color: colors.textMuted,
+  name: {
+    ...typeScale.label,
+    color: colors.text,
+    flexShrink: 1,
   },
   path: {
     ...typeScale.label,
@@ -177,6 +226,13 @@ const styles = StyleSheet.create({
     flex: 1,
     fontFamily: "monospace",
     minWidth: 0,
+  },
+  picker: {
+    alignItems: "center",
+    columnGap: spacing.xs,
+    flex: 1,
+    flexDirection: "row",
+    minHeight: controlSize.regular,
   },
   summary: {
     ...typeScale.label,

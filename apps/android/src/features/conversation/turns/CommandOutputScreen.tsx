@@ -74,6 +74,7 @@ export function CommandOutputScreen({
   commandLoading = false,
   details,
   error,
+  footer,
   loading,
   onClose,
   output,
@@ -88,6 +89,8 @@ export function CommandOutputScreen({
   /** Exit code, size and similar facts after the status word. */
   readonly details?: readonly string[];
   readonly error: string | null;
+  /** Output-specific recovery actions below the shared output. */
+  readonly footer?: React.ReactNode;
   /** True while the output is still being read for the first time. */
   readonly loading: boolean;
   readonly onClose: () => void;
@@ -169,6 +172,7 @@ export function CommandOutputScreen({
         )}
       </View>
       {details === undefined ? null : <CommandOutputFooter details={details} status={status} />}
+      {footer}
     </View>
   );
 }

@@ -1,3 +1,4 @@
+import { BackgroundTerminalOutputScreen } from "../features/conversation/turns/BackgroundTerminalOutputScreen";
 import type { ThreadDetailDatabase } from "../data/thread-detail-database";
 import { threadResourceKey } from "../data/workspace-resource-keys";
 import { SubagentSheet } from "../features/agents/SubagentSheet";
@@ -38,6 +39,9 @@ export function ContentDestination({
   readonly onClose: () => void;
   readonly request: LargeContentRouteRequest;
 }): React.JSX.Element {
+  if (request.kind === "backgroundTerminal") {
+    return <BackgroundTerminalOutputScreen onClose={onClose} request={request} />;
+  }
   if (request.kind === "document") {
     return <ContentDocumentViewer onClose={onClose} request={request} />;
   }

@@ -81,6 +81,11 @@ async fn dispatch(request: Request) -> Response {
             WORKSPACE_NOT_OWNED,
             "workspace is not owned by Git",
         ),
+        Err(ProviderError::Vcs(error @ VcsError::UnsupportedScope { .. })) => failure(
+            request.id,
+            vcs_git::UNSUPPORTED_SCOPE_CODE,
+            &error.to_string(),
+        ),
         Err(ProviderError::MethodNotFound(method)) => {
             failure(request.id, -32_601, &format!("method not found: {method}"))
         }

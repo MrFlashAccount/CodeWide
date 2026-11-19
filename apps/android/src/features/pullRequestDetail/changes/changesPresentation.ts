@@ -185,6 +185,7 @@ export function draftEditorComments(
     if (draft.anchor.path === path) {
       comments.push({
         body: draft.body,
+        editable: canEditDraft(draft),
         id: draft.id,
         line: draft.anchor.startLine,
         path: draft.anchor.path,
@@ -220,4 +221,12 @@ export function draftEditorComments(
     );
   }
   return comments;
+}
+
+/** Mirrors the Companion's editable delivery states for a body update. */
+export function canEditDraft(draft: DraftComment): boolean {
+  if (draft.destination === "agent") {
+    return draft.agent.state !== "sent";
+  }
+  return draft.pr.state !== "published" && draft.pr.state !== "submitting";
 }

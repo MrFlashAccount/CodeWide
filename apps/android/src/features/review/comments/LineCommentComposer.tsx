@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useSelector } from "@legendapp/state/react";
-import { useLayoutEffect, useRef, useState, type ComponentRef } from "react";
+import { useLayoutEffect, useRef, type ComponentRef } from "react";
 import { Pressable, View, type LayoutChangeEvent } from "react-native";
 
 import type { VoiceInputRow } from "../../../data/workspace-resource-database";
@@ -69,13 +69,14 @@ async function noMentions(): Promise<readonly never[]> {
  */
 export function LineCommentComposer(
   props: LineCommentComposerProps & {
+    readonly expanded: boolean;
     /** Receives the collapsed composer's height, which the content keeps clear. */
     readonly onCollapsedHeight: (height: number) => void;
+    readonly onToggleExpanded: () => void;
   },
 ): React.JSX.Element {
-  const { drafts, target } = props;
+  const { drafts, expanded, target } = props;
   const voice = useLineCommentVoice({ drafts, runtime: props.voice, target });
-  const [expanded, setExpanded] = useState(false);
   const bottomInset = useKeyboardDockBottomInset();
   const canvas = surfaceToneCanvasColor(useSurfaceTone());
   const text = useSelector(() => drafts.read(target));
@@ -92,13 +93,10 @@ export function LineCommentComposer(
     }
     voice.release();
     drafts.clear(line);
-    props.onClose();
     props.onSubmit(line, body);
+    props.onClose();
   });
   const hasText = text.plainText.trim() !== "";
-  const toggleExpanded = useEvent((): void => {
-    setExpanded(!expanded);
-  });
   const measure = useEvent((event: LayoutChangeEvent): void => {
     if (!expanded) {
       props.onCollapsedHeight(event.nativeEvent.layout.height);
@@ -117,7 +115,7 @@ export function LineCommentComposer(
       <AnchorRow
         expanded={expanded}
         onClose={close}
-        onToggleExpanded={toggleExpanded}
+        onToggleExpanded={props.onToggleExpanded}
         target={target}
       />
       {expanded && target.context !== undefined ? (

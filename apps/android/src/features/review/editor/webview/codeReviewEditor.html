@@ -9,20 +9,6 @@
     <style>
       :root {
         color-scheme: dark;
-        --review-canvas: #0b0c0e;
-        --review-panel: #101113;
-        --review-panel-raised: #181a1e;
-        --review-panel-soft: #1e2126;
-        --review-border: rgba(255, 255, 255, 0.075);
-        --review-border-strong: rgba(255, 255, 255, 0.12);
-        --review-text: #f1f3f5;
-        --review-muted: #8d939c;
-        --review-dim: #686e77;
-        --review-accent: #78a9ff;
-        --review-accent-soft: rgba(120, 169, 255, 0.14);
-        --review-green: #55c58a;
-        --review-red: #f0757b;
-        --review-shadow: none;
         /* Dense IDE-like code: more reviewed lines per screen than Pierre's 13px/20px default. */
         --diffs-font-size: 12px;
         --diffs-line-height: 17px;
@@ -43,46 +29,200 @@
       input {
         font: inherit;
       }
+      [hidden] {
+        display: none !important;
+      }
       #workspace {
-        width: 100%;
         height: 100%;
         display: flex;
-        gap: 0;
-        padding: 10px;
-        overflow: hidden;
-        background: var(--review-canvas);
+        flex-direction: column;
+        color: var(--review-text);
+        font:
+          14px/1.35 system-ui,
+          sans-serif;
       }
-      .review-panel {
-        position: relative;
+      button {
+        border: 0;
+        background: none;
+        color: inherit;
+        cursor: pointer;
+      }
+      #close-files {
+        display: grid;
+        place-items: center;
+        min-width: var(--review-control-regular);
+        height: 100%;
+        padding: 0;
+      }
+      .review-icon {
+        display: block;
+        flex: none;
+        width: var(--review-icon-inline);
+        height: var(--review-icon-inline);
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      #close-files svg {
+        width: var(--review-icon-action);
+        height: var(--review-icon-action);
+      }
+      #review-body {
+        display: flex;
+        flex: 1;
         min-height: 0;
-        overflow: hidden;
-        border: 1px solid var(--review-border-strong);
         background: var(--review-panel);
-        box-shadow: var(--review-shadow);
       }
       #tree-panel {
-        width: 37%;
-        min-width: 300px;
-        max-width: 460px;
+        height: 100%;
+        min-height: 0;
+        max-height: 100%;
+        position: relative;
+        inset: auto;
+        margin: 0;
+        padding: 0;
+        flex: none;
+        width: var(--review-sidebar-width);
+        border: 0;
+        color: var(--review-text);
+        background: var(--review-panel);
+        overflow: hidden;
+      }
+      #tree-panel[open] {
         display: flex;
         flex-direction: column;
-        border-right: 0;
-        border-radius: 16px 0 0 16px;
+      }
+      #tree-panel:modal {
+        position: fixed;
+        inset: auto 0 0;
+        width: 100%;
+        max-width: none;
+        height: 60%;
+        max-height: 94%;
+        border: 0;
+        border-radius: 20px 20px 0 0;
+        background: var(--review-panel-raised);
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+      #tree-panel:modal[data-tall="true"] {
+        height: 94%;
+      }
+      #tree-panel::backdrop {
+        background: var(--review-scrim);
+      }
+      #file-grip {
+        display: none;
+      }
+      #tree-panel:modal #file-grip {
+        display: grid;
+        place-items: center;
+        min-height: 32px;
+        touch-action: none;
+      }
+      #file-grip::after {
+        content: "";
+        background: var(--review-dim);
+        height: 4px;
+        width: 34px;
+        border-radius: 3px;
+      }
+      #file-tools {
+        display: flex;
+        align-items: center;
+        flex: none;
+        gap: 4px;
+        padding: 4px 8px;
+      }
+      #no-matches {
+        color: var(--review-muted);
+      }
+      #close-files {
+        height: var(--review-control-regular);
+      }
+      #tree-panel:not(:modal) #close-files {
+        display: none;
+      }
+      #search-field {
+        display: flex;
+        flex: 1;
+        min-width: 0;
+        height: var(--review-control-regular);
+        align-items: center;
+        gap: 6px;
+        padding: 0 12px;
+        border-radius: var(--review-search-radius);
+        background: var(--review-panel-soft);
+        color: var(--review-muted);
+      }
+      #search-field:focus-within {
+        outline: 1px solid var(--review-muted);
+        outline-offset: -1px;
+      }
+      #file-search {
+        width: 100%;
+        min-width: 0;
+        height: 100%;
+        padding: 0;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--review-text);
+        font-size: 13px;
+      }
+      #file-search::placeholder {
+        color: var(--review-muted);
+      }
+      #no-matches {
+        padding: 6px 12px;
+        font-size: 13px;
       }
       #tree {
         flex: 1;
         min-height: 0;
         overflow: hidden;
-        padding-top: 10px;
-        background: var(--review-panel);
-        color-scheme: dark;
+        --trees-font-size-override: 12px;
+        --trees-bg-override: var(--review-panel);
+        --trees-fg-override: var(--review-muted);
+        --trees-selected-fg-override: var(--review-text);
+        --trees-selected-bg-override: var(--review-panel-soft);
+        --trees-accent-override: var(--review-accent);
+        --trees-status-added-override: var(--review-green);
+        --trees-status-modified-override: var(--review-text);
+        --trees-status-renamed-override: var(--review-muted);
+        --trees-status-untracked-override: var(--review-green);
+        --trees-status-deleted-override: var(--review-red);
+        --trees-padding-inline-override: 6px;
+        --truncate-marker-fade-in-duration: 0s;
+      }
+      #tree-panel:modal #tree {
+        --trees-bg-override: var(--review-panel-raised);
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        #tree-panel:modal {
+          animation: sheet-in 0.17s ease-out;
+          transition: height 0.16s ease-out;
+        }
+        #tree-panel[data-dragging="true"] {
+          transition: none;
+        }
+        @keyframes sheet-in {
+          from {
+            transform: translateY(100%);
+          }
+        }
       }
       #preview-panel {
         flex: 1;
         min-width: 0;
+        min-height: 0;
+        position: relative;
         display: flex;
-        flex-direction: column;
-        border-radius: 0 16px 16px 0;
+      }
+      #tree-panel[open]:not(:modal) + #preview-panel {
+        border-radius: var(--review-pane-radius) 0 0 var(--review-pane-radius);
+        overflow: hidden;
       }
       #preview {
         flex: 1;
@@ -91,12 +231,14 @@
         overflow: auto;
         overscroll-behavior: contain;
         touch-action: pan-x pan-y;
-        background: #0e0f11;
-        scrollbar-color: rgba(255, 255, 255, 0.17) transparent;
+        background: var(--review-canvas);
       }
       .pierre-preview-host {
         min-width: 100%;
         min-height: 100%;
+      }
+      .pierre-preview-host diffs-container {
+        --diffs-bg: var(--review-canvas);
       }
       #image-preview {
         align-items: center;
@@ -203,32 +345,8 @@
       #preview::-webkit-scrollbar-thumb {
         border: 2px solid transparent;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.18);
+        background: var(--review-border-strong);
         background-clip: content-box;
-      }
-      #workspace[data-sidebar-open="false"] #tree-panel {
-        display: none;
-      }
-      #workspace[data-sidebar-open="false"] #preview-panel {
-        border-radius: 16px;
-      }
-      #workspace[data-compact="true"] {
-        padding: 0;
-        gap: 0;
-      }
-      #workspace[data-compact="true"] .review-panel {
-        border-radius: 0;
-        border-inline: 0;
-        border-bottom: 0;
-      }
-      #workspace[data-compact="true"][data-sidebar-open="true"] #tree-panel {
-        width: 100%;
-        min-width: 100%;
-        max-width: none;
-        border-right: 0;
-      }
-      #workspace[data-compact="true"][data-sidebar-open="true"] #preview-panel {
-        display: none;
       }
       .review-comment {
         position: relative;
@@ -236,8 +354,7 @@
         padding: 10px 13px 10px 34px;
         border: 1px solid var(--review-border);
         border-radius: 12px;
-        background:
-          linear-gradient(180deg, rgba(120, 169, 255, 0.055), transparent), var(--review-panel-soft);
+        background: var(--review-panel-soft);
         color: var(--review-text);
         font:
           13px/18px system-ui,
@@ -262,7 +379,7 @@
             100deg,
             var(--review-text) 0%,
             var(--review-text) 38%,
-            rgba(241, 243, 245, 0.32) 50%,
+            var(--review-dim) 50%,
             var(--review-text) 62%,
             var(--review-text) 100%
           )
@@ -273,11 +390,11 @@
         animation: review-shimmer 1.6s linear infinite;
       }
       .review-comment[data-state="failed"] {
-        border-color: rgba(240, 117, 123, 0.42);
+        border-color: var(--review-red);
       }
       .review-comment[data-state="failed"]::before {
         background: var(--review-red);
-        box-shadow: 0 0 0 4px rgba(240, 117, 123, 0.16);
+        box-shadow: 0 0 0 4px var(--review-error-container);
       }
       .review-comment-error {
         padding-top: 6px;
@@ -304,25 +421,49 @@
     </style>
   </head>
   <body>
-    <div id="workspace" data-sidebar-open="false" data-compact="false">
-      <section id="tree-panel" class="review-panel">
-        <div id="tree"></div>
-        <div id="tree-empty" class="review-empty" hidden>
-          <div class="review-empty-mark">—</div>
-          <div class="review-empty-title" data-empty-title></div>
-          <div class="review-empty-message" data-empty-message></div>
-        </div>
-      </section>
-      <section id="preview-panel" class="review-panel">
-        <div id="preview">
-          <div id="image-preview" hidden><img id="review-image" alt="Changed image" /></div>
-        </div>
-        <div id="preview-empty" class="review-empty" hidden>
-          <div class="review-empty-mark">—</div>
-          <div class="review-empty-title" data-empty-title></div>
-          <div class="review-empty-message" data-empty-message></div>
-        </div>
-      </section>
+    <div id="workspace">
+      <main id="review-body">
+        <dialog id="tree-panel" aria-label="Changed files" autofocus>
+          <button id="file-grip"></button>
+          <div id="file-tools">
+            <label id="search-field">
+              <svg class="review-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="10.5" cy="10.5" r="7"></circle>
+                <path d="m16 16 5 5"></path>
+              </svg>
+              <input
+                id="file-search"
+                type="search"
+                aria-label="Filter changed files"
+                placeholder="Find file…"
+                autocomplete="off"
+              />
+            </label>
+            <button id="close-files" aria-label="Close file picker">
+              <svg class="review-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m6 6 12 12m0-12L6 18"></path>
+              </svg>
+            </button>
+          </div>
+          <div id="no-matches" role="status" hidden>No matching files</div>
+          <div id="tree"></div>
+          <div id="tree-empty" class="review-empty" hidden>
+            <div class="review-empty-mark">—</div>
+            <div class="review-empty-title" data-empty-title></div>
+            <div class="review-empty-message" data-empty-message></div>
+          </div>
+        </dialog>
+        <section id="preview-panel" class="review-panel">
+          <div id="preview">
+            <div id="image-preview" hidden><img id="review-image" alt="Changed image" /></div>
+          </div>
+          <div id="preview-empty" class="review-empty" hidden>
+            <div class="review-empty-mark">—</div>
+            <div class="review-empty-title" data-empty-title></div>
+            <div class="review-empty-message" data-empty-message></div>
+          </div>
+        </section>
+      </main>
     </div>
     <script src="code-review-editor.js"></script>
   </body>

@@ -24,6 +24,7 @@ class CodeWidePackage : ReactPackage {
   override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
     listOf(
       CodeWideModule(reactContext),
+      AgentNotificationSettingsModule(reactContext),
       AppNoticeWindowModule(reactContext),
       CodexPerformanceModule(reactContext),
       WindowDiagnosticsModule(reactContext),
