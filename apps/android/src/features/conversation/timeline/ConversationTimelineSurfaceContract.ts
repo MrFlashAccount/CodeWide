@@ -1,3 +1,4 @@
+import type { Observable } from "@legendapp/state";
 import type { LiveTurnPlan } from "../../../rendering/live-turn-plan";
 import type { ReactElement, ReactNode } from "react";
 import type { TimelineItem } from "./timelineTypes";
@@ -18,6 +19,7 @@ export type ConversationTimelineSurfaceProps = {
   draftConnectionId: string | null;
   draftThreadId: string | null;
   fullscreenCovered: boolean;
+  gestureActive$: Observable<boolean>;
   historyActivityModel: ThreadHistoryModel | null;
   historyActivityResourceId: string | null;
   historyViewport: ThreadHistoryViewport;
@@ -34,7 +36,6 @@ export type ConversationTimelineSurfaceProps = {
   timeline: TimelineItem[];
   timelineContent: ReactElement;
   timelineDidLoad: boolean;
-  timelineGestureActive: boolean;
   timelineModelReady: boolean;
   timelinePositioned: boolean;
   timelineViewportRef: RefObject<View | null>;

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet } from "react-native";
+import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 
 import type { DraftComment } from "../../../data/reviewDraftContract";
 import type { DraftPut } from "../../../data/reviewDraftPuts";
@@ -44,7 +44,7 @@ export function FileDrafts({
   const refused = puts.filter((put) => put.status === "failed").length;
   const expanded = choice ?? refused > 0;
   return (
-    <>
+    <View style={styles.aboveActions}>
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded }}
@@ -81,11 +81,12 @@ export function FileDrafts({
           ))}
         </ScrollView>
       ) : null}
-    </>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  aboveActions: { marginBottom: controlSize.touch + spacing.lg },
   disclosure: {
     borderTopColor: colors.borderSoft,
     borderTopWidth: StyleSheet.hairlineWidth,

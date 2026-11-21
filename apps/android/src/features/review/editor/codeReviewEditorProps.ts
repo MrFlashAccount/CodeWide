@@ -12,6 +12,7 @@ export type CodeReviewEditorProps = {
   readonly compact: boolean;
   readonly document: CodeReviewDocument | null;
   readonly files: readonly CodeReviewFileItem[];
+  readonly filesComplete?: boolean;
   readonly loadError: string | null;
   readonly loading: boolean;
   readonly mode: CodeReviewViewMode;
@@ -25,6 +26,7 @@ export type CodeReviewEditorProps = {
   readonly selectedPath: string | null;
   /** The line whose composer is open, highlighted as its anchor; `null` while none is. */
   readonly selectedReference: CodeReviewLineReference | null;
+  readonly showLineNumbers?: boolean;
   readonly sidebarOpen: boolean;
   readonly workspaceRevision: string;
   readonly wrapLines: boolean;

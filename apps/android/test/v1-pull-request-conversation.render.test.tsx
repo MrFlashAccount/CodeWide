@@ -1,9 +1,10 @@
 import { RpcResponseError } from "@codewide/sync-client";
 import { act, fireEvent, waitFor, within } from "@testing-library/react-native";
 import type { ReactNode } from "react";
-import { ScrollView, View } from "react-native";
+import { ScrollView, StyleSheet, View } from "react-native";
 import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markdown";
 
+import { spacing } from "../src/theme";
 import { conversation91, conversationArcanum } from "./fixtures/forgeWireFixtures";
 import {
   PULL_REQUEST,
@@ -416,6 +417,7 @@ it("renders an Arcanum-shaped discussion: the Issues row, iterations, verdict ro
 });
 
 it("starts settled issues collapsed and reveals one from the Issues row", async () => {
+  const threadTop = 480;
   const measure = jest
     .spyOn(
       View.prototype as unknown as { measureLayout: (...args: unknown[]) => void },
@@ -423,7 +425,7 @@ it("starts settled issues collapsed and reveals one from the Issues row", async 
     )
     .mockImplementation((_relative: unknown, success: unknown) => {
       if (typeof success === "function") {
-        success(0, 480);
+        success(0, threadTop);
       }
     });
   const scrollTo = jest.spyOn(ScrollView.prototype, "scrollTo");
@@ -436,7 +438,9 @@ it("starts settled issues collapsed and reveals one from the Issues row", async 
     fireEvent.press(view.getByTestId("discussion-issue-is-resolved-reveal"));
 
     expect(view.getByTestId("conversation-comment-ic-4")).toBeOnTheScreen();
-    expect(scrollTo).toHaveBeenCalledWith({ animated: true, y: 480 });
+    const pageStyle = view.getByTestId("pull-request-overview").props.contentContainerStyle;
+    const pageTop = Number(StyleSheet.flatten(pageStyle).paddingTop ?? 0);
+    expect(scrollTo).toHaveBeenCalledWith({ animated: true, y: pageTop + threadTop - spacing.md });
   } finally {
     measure.mockRestore();
     scrollTo.mockRestore();

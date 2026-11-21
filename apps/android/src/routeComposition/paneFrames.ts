@@ -1,8 +1,9 @@
-import { paneChromeInset, type PaneBox } from "./paneGeometry";
+import { paneChromeInset, paneGeometry, type PaneBox } from "./paneGeometry";
 import { movingPaneGeometry, type PaneMotionState } from "./paneMotion";
 import {
   REST_CENTER_CONTENT_FRAME,
   restCatalogFrame,
+  restChromeInset,
   restCenterClipFrame,
   restDestinationFrame,
   restRightFrame,
@@ -16,7 +17,8 @@ import {
 /*
  * Each pane box's animated style. At rest it is the relative Yoga frame of the settled
  * arrangement (`paneRestFrames.ts`); only while the frame's one progress moves does it carry
- * explicit pixels, in the same shape, so settling hands the box back to Yoga.
+ * explicit pixels. Positions stay in Yoga throughout: a render transform and its replacement
+ * layout offset must never be visible together during the final native layout.
  */
 
 /** The catalog box. */
@@ -45,9 +47,8 @@ export function destinationFrame(state: PaneMotionState): DestinationFrame {
     borderBottomLeftRadius: pane.centerLeftRadius,
     borderTopLeftRadius: pane.centerLeftRadius,
     flexGrow: 0,
-    left: 0,
+    left: pane.detailX,
     position: "absolute",
-    transform: [{ translateX: pane.detailX }],
     width: pane.detailWidth,
   };
 }
@@ -82,14 +83,32 @@ export function rightFrame(state: PaneMotionState): RightFrame {
   }
   const pane = movingPaneGeometry(state);
   return {
-    left: 0,
-    transform: [{ translateX: pane.rightX - pane.detailX }],
+    left: pane.rightX - pane.detailX,
     width: pane.rightWidth,
   };
 }
 
-/** How far `box`'s content extends past its visible edge now; `0` at rest. */
-export function currentChromeInset(state: PaneMotionState, box: PaneBox): number {
+/** Trailing space outside the visible pane. At rest Yoga resolves a fully covered edge. */
+export function currentChromeInset(state: PaneMotionState, box: PaneBox): number | "100%" {
   "worklet";
-  return state.moving.get() ? paneChromeInset(movingPaneGeometry(state), box) : 0;
+  return state.moving.get()
+    ? paneChromeInset(movingPaneGeometry(state), box)
+    : restChromeInset(state.arrangement.get(), box);
+}
+
+/** Caps descendants while a native screen still reports a wider size after a shrinking motion. */
+export function landedViewportMaxWidth(
+  state: PaneMotionState,
+  frameWidth: number,
+  screenWidth: number,
+): number | "100%" {
+  "worklet";
+  // Folding or rotating invalidates the measured motion. Yoga owns the new frame immediately.
+  const motionWidth = state.frameWidth.get();
+  if (frameWidth <= 0 || Math.abs(frameWidth - motionWidth) > 1) {
+    return "100%";
+  }
+  const target = paneGeometry(state.arrangement.get(), motionWidth).detailWidth;
+  // Android reports the screen on the physical pixel grid, while the split can be fractional.
+  return target < state.from.get().detailWidth && screenWidth - target > 1 ? target : "100%";
 }

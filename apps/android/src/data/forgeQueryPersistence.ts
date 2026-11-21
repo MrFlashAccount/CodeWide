@@ -14,6 +14,7 @@ import {
 import { appLogger } from "../observability/logger";
 import { parseForgeMutationEnvelope } from "./forgeMutationEnvelope";
 
+const BEFORE_FILE_DRAFTS = "forge-query-cache-7ea41d187db7";
 const CACHE_MAX_AGE_MS = 604_800_000;
 
 /**
@@ -31,9 +32,9 @@ const CACHE_MAX_AGE_MS = 604_800_000;
  * History: v1 → v2 added the required PR attention discriminant. v2 → this
  * value covers decoded shapes changed without a bump: conversation events
  * gained `commits`, review threads gained `excerpt` and issue resolutions
- * `viewerCanToggle`, and conversation pages became newest-first.
+ * `viewerCanToggle`, and conversation pages became newest-first. The current signature includes whole-file draft anchors.
  */
-const FORGE_QUERY_CACHE_BUSTER = "forge-query-cache-7ea41d187db7";
+const FORGE_QUERY_CACHE_BUSTER = "forge-query-cache-62c395d04b03";
 
 /**
  * The only `[owner, kind]` query families restored from disk. An allowlist, so
@@ -62,6 +63,7 @@ function isForgeServerQuery(query: Query): boolean {
   return (
     typeof owner === "string" &&
     typeof kind === "string" &&
+    query.meta?.persist !== false &&
     persistedQueryKinds.has(`${owner}/${kind}`) &&
     defaultShouldDehydrateQuery(query)
   );
@@ -73,6 +75,33 @@ function isDurableForgeMutation(mutation: Mutation): boolean {
     mutation.meta?.durableForgeMutation === true &&
     parseForgeMutationEnvelope(mutation.state.variables) !== null
   );
+}
+
+/** The previous version wrote compatible mutation envelopes. Preserve offline edits when discarding its decoded queries. */
+function preserveQueuedEdits(persister: Persister): Persister {
+  return {
+    persistClient: (snapshot) => persister.persistClient(snapshot),
+    removeClient: () => persister.removeClient(),
+    async restoreClient() {
+      const saved = await persister.restoreClient();
+      if (saved?.buster !== BEFORE_FILE_DRAFTS) {
+        return saved;
+      }
+      return {
+        buster: FORGE_QUERY_CACHE_BUSTER,
+        clientState: {
+          mutations: saved.clientState.mutations.filter(
+            (mutation) =>
+              mutation.state.isPaused &&
+              mutation.meta?.durableForgeMutation === true &&
+              parseForgeMutationEnvelope(mutation.state.variables) !== null,
+          ),
+          queries: [],
+        },
+        timestamp: saved.timestamp,
+      };
+    },
+  };
 }
 
 /**
@@ -94,7 +123,7 @@ export function persistForgeQueryClient(
       defaultOptions: { queries: { gcTime: CACHE_MAX_AGE_MS } },
     },
     maxAge: CACHE_MAX_AGE_MS,
-    persister,
+    persister: preserveQueuedEdits(persister),
     queryClient,
   };
   const [initialStop, restore] = persistQueryClient(options);

@@ -365,3 +365,35 @@ fn children_and_cli_or_vscode_rows_stream() {
     assert!(!store.streamable("exec"));
     assert!(!store.streamable("unknown"));
 }
+
+#[test]
+fn settings_push_replaces_the_list_controls_without_reordering_the_thread() {
+    let mut store = RowStore::default();
+    seeded(&mut store, "t", 1);
+    let initial = json!({"method":"thread/settings/updated","params":{"threadId":"t",
+        "threadSettings":{"model":"m","modelLabel":"Model","effort":"high",
+            "activePermissionProfile":{"id":":workspace"}}}});
+    store.apply(&event(&initial, 5), NOW);
+    let first = wire(&store, "t");
+    assert_eq!(first["codewidePermissions"], ":workspace");
+    assert_eq!(first["reasoningEffort"], "high");
+    let mut next = initial;
+    next["params"]["threadSettings"] = json!({"model":"replacement","effort":null,
+        "activePermissionProfile":null, "sandboxPolicy":{"type":"externalSandbox"}});
+    store.apply(&event(&next, 6), NOW);
+    let row = wire(&store, "t");
+    assert_eq!(row["model"], "replacement");
+    assert!(row["codewidePermissions"].is_null());
+    assert_eq!(
+        row["codewideAccessPolicy"]["sandboxPolicy"],
+        "externalSandbox"
+    );
+    assert!(row["reasoningEffort"].is_null());
+    assert!(row["codewideModelLabel"].is_null());
+    assert_eq!(row["recencyAt"], first["recencyAt"]);
+    // A late catalog page must not restore its older model or access.
+    let mut stale = vec![first];
+    store.observe_page(&mut stale, 4, false);
+    assert_eq!(stale[0]["model"], "replacement");
+    assert!(stale[0]["codewidePermissions"].is_null());
+}

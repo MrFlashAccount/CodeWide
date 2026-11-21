@@ -13,7 +13,7 @@ import { checkOutcome, mergeBox } from "../src/features/pullRequestDetail/overvi
 import { defaultPullRequestFilter } from "../src/features/pullRequests/pullRequestListModel";
 import { pullRequestEmptyStateCopy } from "../src/features/pullRequests/list/pullRequestEmptyState";
 import { pullRequestListItems } from "../src/features/pullRequests/list/pullRequestListItems";
-import { hunkAt, viewedLabel } from "../src/features/pullRequestDetail/changes/changesPresentation";
+import { hunkAt } from "../src/features/pullRequestDetail/changes/changesPresentation";
 import {
   dockCounts,
   submittableDraftIds,
@@ -50,16 +50,7 @@ describe("provider URLs", () => {
 
 describe("Changes presentation", () => {
   const page = parseFilesPage(filesPage);
-  const [present, , notProvided] = page?.files ?? [];
-
-  it("says where each viewed mark lives", () => {
-    expect(present === undefined ? null : viewedLabel(present, "github.com")).toBe(
-      "Viewed · github.com",
-    );
-    expect(notProvided === undefined ? null : viewedLabel(notProvided, "github.com")).toBe(
-      "Viewed · this companion",
-    );
-  });
+  const [present] = page?.files ?? [];
 
   it("finds the hunk under a new-side line for the draft anchor", () => {
     expect(present === undefined ? null : hunkAt(present, 210, "new")?.ordinal).toBe(1);

@@ -1,10 +1,12 @@
+import { observable, type Observable } from "@legendapp/state";
 import { act, cleanup, fireEvent, render } from "@testing-library/react-native";
-import { useEffect, useState, type ReactElement } from "react";
+import { useContext, useEffect, useState, type ReactElement } from "react";
 import { Text, View } from "react-native";
 
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../src/data/use-thread-history-controller";
+import { TimelineMotionContext } from "../src/rendering/TimelineMotionContext";
 import { ConversationBottomChrome } from "../src/features/conversation/ConversationBottomChrome";
-import { ConversationComposerSlot } from "../src/features/conversation/ConversationComposerSlot";
+import { ComposerDock } from "../src/features/composer/ComposerDock";
 import { ConversationEmptyState } from "../src/features/conversation/ConversationEmptyState";
 import { ConversationLayout } from "../src/features/conversation/ConversationLayout";
 import { ConversationTimelineSurface } from "../src/features/conversation/timeline/ConversationTimelineSurface";
@@ -21,7 +23,9 @@ afterEach(() => {
 });
 
 function Timeline({
+  awayFromLatest = false,
   bottomChromeHeight = 0,
+  gestureActive$ = observable(false),
   bottomChromeMeasured = true,
   children = <View testID="ready-timeline" />,
   liveStatusVisible = false,
@@ -31,7 +35,9 @@ function Timeline({
   timelineModelReady = state.status === "ready",
   timelinePositioned = state.status === "ready",
 }: {
+  awayFromLatest?: boolean;
   bottomChromeHeight?: number;
+  gestureActive$?: Observable<boolean>;
   bottomChromeMeasured?: boolean;
   children?: ReactElement;
   liveStatusVisible?: boolean;
@@ -43,7 +49,7 @@ function Timeline({
 }) {
   return (
     <ConversationTimelineSurface
-      awayFromLatest={false}
+      awayFromLatest={awayFromLatest}
       bottomChromeHeight={bottomChromeHeight}
       bottomChromeMeasured={bottomChromeMeasured}
       commitUnreadReceipt={() => () => undefined}
@@ -51,6 +57,7 @@ function Timeline({
       draftConnectionId={null}
       draftThreadId={null}
       fullscreenCovered={false}
+      gestureActive$={gestureActive$}
       historyActivityModel={null}
       historyActivityResourceId={null}
       historyViewport={COMPLETE_STATIC_THREAD_HISTORY}
@@ -66,14 +73,45 @@ function Timeline({
       threadSearchVisible={threadSearchVisible}
       timeline={[]}
       timelineContent={children}
-      timelineDidLoad={false}
-      timelineGestureActive={false}
+      timelineDidLoad={timelinePositioned}
       timelineModelReady={timelineModelReady}
       timelinePositioned={timelinePositioned}
       timelineViewportRef={{ current: null }}
     />
   );
 }
+
+it("enables layout motion only at the idle tail and reads the current gesture when returning", () => {
+  const active$ = observable(false);
+  function MotionStatus() {
+    const allowed = useContext(TimelineMotionContext);
+    return <Text>{allowed ? "motion enabled" : "motion paused"}</Text>;
+  }
+  function screen(awayFromLatest: boolean) {
+    return (
+      <Timeline
+        awayFromLatest={awayFromLatest}
+        gestureActive$={active$}
+        state={{ status: "ready" }}
+      >
+        <MotionStatus />
+      </Timeline>
+    );
+  }
+  const view = render(screen(false));
+  expect(view.getByText("motion enabled")).toBeVisible();
+  act(() => {
+    active$.set(true);
+  });
+  expect(view.getByText("motion paused")).toBeVisible();
+  view.rerender(screen(true));
+  act(() => {
+    active$.set(false);
+  });
+  expect(view.getByText("motion paused")).toBeVisible();
+  view.rerender(screen(false));
+  expect(view.getByText("motion enabled")).toBeVisible();
+});
 
 it("keeps one mounted conversation layout while timeline and composer become ready", () => {
   const headerMounted = jest.fn();
@@ -89,27 +127,9 @@ it("keeps one mounted conversation layout while timeline and composer become rea
     return (
       <ConversationLayout
         bottomChrome={
-          <ConversationComposerSlot
-            state={
-              loading
-                ? { status: "loading" }
-                : {
-                    status: "ready",
-                    value: {
-                      attachments: [],
-                      connectionId: "server",
-                      draftText: "",
-                      id: "server\u0000thread",
-                      preferences: null,
-                      scrollOffset: null,
-                      threadId: "thread",
-                      updatedAt: 1,
-                    },
-                  }
-            }
-          >
+          <ComposerDock controls={<Text>Catalog model</Text>} restoringDraft={loading}>
             <View testID="ready-composer" />
-          </ConversationComposerSlot>
+          </ComposerDock>
         }
         compact={false}
         conversationInsets={{ bottom: 0, left: 0, right: 0, top: 0 }}

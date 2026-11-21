@@ -18,12 +18,14 @@ export function LinkedChatButton({
   label,
   onPress,
   reviewThreadId,
+  secondary = false,
 }: {
   readonly disabled: boolean;
   readonly isThreadUnread: ThreadUnreadReader;
   readonly label: string;
   readonly onPress: () => void;
   readonly reviewThreadId: ThreadId | null;
+  readonly secondary?: boolean;
 }): React.JSX.Element {
   const unread = useSelector(() => reviewThreadId !== null && isThreadUnread(reviewThreadId));
   // The ring cuts the dot out of the button in the surface of the pane the screen sits on.
@@ -35,10 +37,18 @@ export function LinkedChatButton({
       accessibilityState={{ busy: disabled, disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.chatButton, (disabled || pressed) && styles.chatButtonMuted]}
+      style={({ pressed }) => [
+        styles.chatButton,
+        secondary && styles.secondary,
+        (disabled || pressed) && styles.chatButtonMuted,
+      ]}
       testID="pull-request-linked-chat"
     >
-      <Ionicons color={colors.onPrimary} name="chatbubble-outline" size={iconSize.navigation} />
+      <Ionicons
+        color={secondary ? colors.text : colors.onPrimary}
+        name="chatbubble-outline"
+        size={iconSize.navigation}
+      />
       {unread ? (
         <View
           style={[styles.unreadBadge, { borderColor: ring }]}
@@ -65,6 +75,9 @@ const styles = StyleSheet.create({
   },
   chatButtonMuted: {
     opacity: MUTED_CONTROL_OPACITY,
+  },
+  secondary: {
+    backgroundColor: colors.surfaceContainerHigh,
   },
   unreadBadge: {
     backgroundColor: colors.primary,

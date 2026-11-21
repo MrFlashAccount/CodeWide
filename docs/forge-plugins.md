@@ -317,7 +317,8 @@ them:
 | Kind | Floor |
 |---|---|
 | `merge`, `close` | `destructive` |
-| `autoMerge` (on and off) | `confirm` |
+| `autoMerge` with a toggle state and no additional input | plugin level |
+| other `autoMerge` actions | `confirm` |
 | `updateBranch` | `confirm` |
 | `verdict` | plugin level; `destructive` when the plugin marks it |
 | `extension` | plugin level |
@@ -555,7 +556,7 @@ Owned by the companion (`forge/limits.rs`):
     after 10 minutes; a successful or invalid result is final for that declaration.
   - Anything else is dropped to `null`.
 - The GitHub plugin declares the published GitHub mark under GitHub's logo guidelines. The Arcanum
-  plugin declares a neutral glyph until an Arcanum asset with confirmed usage terms exists.
+  plugin declares its official favicon outline as a monochrome glyph that takes the UI text color.
 - Logs may contain opaque ids only: the `PullRequestKey` hash, `actionId`, `ActionRunId` and
   request ids. Never PR titles or bodies, comment, draft or guide text, remote URLs with
   credentials, tokens, one-time login codes, raw `gh` or `arc` output, or the params of
@@ -639,10 +640,12 @@ supported only after it passes the harness.
 
 ## Arcanum plugin guidance
 
-The Arcanum plugin is built outside this repository, after experiment E2 settles its endpoints
-for listing, patches, verdict writes, Block and Sticky semantics and auto-merge (**unknown**
-today). The protocol does not change for it.
+The Arcanum plugin is built outside this repository and uses the same forge protocol.
 
+- Conversation authors with a Staff login carry the same portrait URL as in Arcanum. The plugin declares
+  `center.yandex-team.ru` in `mediaHosts` and leaves `avatarDirect` false. Companion can then
+  serve the portrait to a phone outside the corporate network. The plugin fetches the canonical
+  portrait URL without credentials and rejects redirects.
 - Credentials, in order: `ARC_OAUTH_TOKEN` or `ARCANUM_OAUTH_TOKEN`, `~/.arc/token`, then
   `arc token show`.
 - Methods: `linkExisting` when that token is found; otherwise `instructions` explaining how to
@@ -658,6 +661,10 @@ today). The protocol does not change for it.
   give stay `disabled` with Arcanum's reason.
 - Start CI is anchored `{ "kind": "checksSection" }`; Discard is a `close` action with
   `placement: "overflow"` and `confirm: "destructive"`.
+- Regular auto-merge uses one `autoMerge` switch in Status. Its `toggle.on` reflects the PR's
+  policy and its action ID names the selected direction (`enableAutoMerge` or
+  `disableAutoMerge`). The plugin calls `PUT` or `DELETE /v1/pull-requests/{id}/auto-merge`
+  respectively. Arcanum enforces access and decides whether an in-progress merge can still be cancelled.
 - Partial review publication must be reported per comment.
 - `forge.resolve@1`: `forge.repository.resolve` maps the Arc VCS plugin's `arc://arcadia` remote to
   `arcanum.yandex.net` / `arc_vcs` (the repository of Arcanum pull request refs) and answers `-32004`

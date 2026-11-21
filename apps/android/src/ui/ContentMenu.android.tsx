@@ -57,17 +57,19 @@ export function ContentMenu(props: ContentMenuProps): React.JSX.Element {
       style={[styles.anchor, props.anchorStyle]}
       testID="content-menu-anchor"
     >
-      <NativeMenuHost
-        align={props.align ?? "start"}
-        dismiss={dismiss}
-        height={height}
-        measureContent={measureContent}
-        open={props.open}
-        revealed={props.open && height !== null}
-        width={props.width}
-      >
-        {props.children}
-      </NativeMenuHost>
+      {(props.open || contentHeight !== null) && (
+        <NativeMenuHost
+          align={props.align ?? "start"}
+          dismiss={dismiss}
+          height={height}
+          measureContent={measureContent}
+          open={props.open}
+          revealed={props.open && height !== null}
+          width={props.width}
+        >
+          {props.children}
+        </NativeMenuHost>
+      )}
       {props.trigger}
     </View>
   );

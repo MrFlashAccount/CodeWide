@@ -104,6 +104,7 @@ export function renderMainConversationPublication({
         currentOutcome: history.projection.currentOutcome,
         currentUsage: history.projection.currentUsage,
         cwd: history.conversationCwd,
+        detailCursor: history.projection.detailCursor,
         firstUnreadAgentTurnId: storedThread?.firstUnreadAgentTurnId ?? null,
         historyActivityModel: historyModel,
         historyActivityResourceId: historyResourceId,

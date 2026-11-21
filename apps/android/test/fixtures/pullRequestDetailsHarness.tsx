@@ -18,6 +18,7 @@ import { PullRequestScreen } from "../../src/features/pullRequestDetail/PullRequ
 import type { PullRequestDetailWorkspaceCapabilities } from "../../src/features/pullRequestDetail/workspaceCapabilities";
 import type { ReviewTargetCapabilities } from "../../src/features/review/reviewTargetCapabilities";
 import {
+  arcanumProvider,
   connectedAccount,
   conversation91,
   githubConversationProvider,
@@ -58,6 +59,7 @@ export function companion({
       accounts: [connectedAccount],
       flows: [],
       providers: [
+        arcanumProvider,
         {
           ...(conversationDeclared ? githubConversationProvider : githubProvider),
           capabilities: [

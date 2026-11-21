@@ -18,6 +18,7 @@ import { TIMELINE_ROW_FALLBACK_ESTIMATE, type TimelineRow } from "./timelineRows
 const TIMELINE_ROW_GEOMETRY_VERSION = 4;
 const TIMELINE_ROW_GEOMETRY_CACHE_LIMIT = 8;
 const HORIZONTAL_SIDES = 2;
+const VERTICAL_SIDES = 2;
 const MINIMUM_FONT_SCALE = 0.1;
 const TIMELINE_ITEM_MAX_WIDTH = 880;
 const AGENT_BUBBLE_HORIZONTAL_CHROME = spacing.md * HORIZONTAL_SIDES + controlSize.compact;
@@ -241,6 +242,14 @@ function exactTimelineRowSize(options: {
   );
 }
 
+/** One caption line plus its vertical padding. Native layout measures wrapping and font scale. */
+export function historyBeginningSizeEstimate(fontScale: number): number {
+  return (
+    spacing.md * VERTICAL_SIDES +
+    typeScale.caption.lineHeight * Math.min(fontScale, APP_MAX_FONT_SIZE_MULTIPLIER)
+  );
+}
+
 function estimateDynamicTimelineRow(options: {
   readonly dimensions: { readonly contentWidth: number; readonly fontScale: number };
   readonly geometry: TimelineRowMeasurementGeometry;
@@ -359,10 +368,13 @@ function estimatedTurnSliceSize(options: {
 }
 
 function estimateStandaloneTimelineItem(
-  row: Extract<TimelineRow, { kind: "item" }>,
+  row: Extract<TimelineRow, { kind: "item" | "historyBeginning" }>,
   geometry: TimelineRowMeasurementGeometry,
   dimensions: { readonly contentWidth: number; readonly fontScale: number },
 ): number {
+  if (row.kind === "historyBeginning") {
+    return historyBeginningSizeEstimate(dimensions.fontScale);
+  }
   const item = row.item;
   if (item.kind === "meta") {
     return roundToPhysicalPixel(

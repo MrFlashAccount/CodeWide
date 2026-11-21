@@ -44,6 +44,7 @@ pub fn thread(thread: &AgentThread, provider: &WireProvider, turns: &[Value]) ->
         "modelProvider": provider.descriptor.model_provider,
         "model": thread.settings.model,
         "reasoningEffort": thread.settings.effort,
+        "codewidePermissions": thread.settings.permission_profile.as_str(),
         "createdAt": thread.created_at,
         "updatedAt": thread.updated_at,
         // The neutral order key: a thread without its own recency (a session

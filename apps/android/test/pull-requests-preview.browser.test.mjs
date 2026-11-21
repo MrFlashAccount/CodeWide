@@ -193,9 +193,14 @@ test("the welcome action opens the server-declared provider tray", async () => {
 test("a stale head writes once, shows the banner and keeps the screen", async () => {
   const { errors, page } = await open("pr", 360);
   try {
-    await page.getByText("Update branch", { exact: true }).first().click();
-    await page.waitForTimeout(500);
-    // The confirmation's action is the last "Update branch"; the web sheet animates in from below.
+    const menu = page.getByRole("button", { name: "Pull request menu", exact: true });
+    await menu.waitFor();
+    assert.equal(await page.getByText("Update branch", { exact: true }).count(), 0);
+    await menu.click();
+    await page.getByRole("menuitem", { name: /Update branch/u }).click();
+    await page.getByText("Update branch?", { exact: true }).waitFor();
+    assert.deepEqual(await page.evaluate(() => window.previewWrites), []);
+    // The web confirmation sheet animates over the PR menu.
     await page.getByText("Update branch", { exact: true }).last().dispatchEvent("click");
     await page.getByText("PR changed since this screen loaded", { exact: false }).waitFor();
     const writes = await page.evaluate(() => window.previewWrites);

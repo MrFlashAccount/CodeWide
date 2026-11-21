@@ -842,10 +842,29 @@ pub enum DiffSide {
 pub struct ReviewComment {
     pub draft_id: String,
     pub path: String,
-    pub side: DiffSide,
-    pub start_line: u32,
-    pub end_line: u32,
+    #[serde(flatten)]
+    pub subject: ReviewCommentSubject,
     pub body: String,
+}
+
+/// Line subjects retain the original plugin wire format. File subjects require `FILE_REVIEW`.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged, rename_all_fields = "camelCase", deny_unknown_fields)]
+pub enum ReviewCommentSubject {
+    Line {
+        side: DiffSide,
+        start_line: u32,
+        end_line: u32,
+    },
+    File {
+        kind: FileReviewSubject,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum FileReviewSubject {
+    File,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

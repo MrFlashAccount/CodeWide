@@ -2,6 +2,7 @@ import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { Ionicons } from "@expo/vector-icons";
 import {
   createContext,
+  type ReactElement,
   type ReactNode,
   useContext,
   useEffect,
@@ -324,6 +325,32 @@ export function useContentReview(): (anchor: ContentReviewAnchor) => void {
   return useEvent((anchor: ContentReviewAnchor) => {
     controller?.begin(anchor);
   });
+}
+
+/** Uses the ordinary paragraph renderer when an active or saved text anchor needs highlighting. */
+export function ContentReviewTextFallback({
+  children,
+  fallback,
+  paragraphs,
+  targetId,
+}: {
+  children: ReactElement;
+  fallback: ReactElement;
+  paragraphs: readonly { readonly path: string }[];
+  targetId: string | undefined;
+}): ReactElement {
+  const controller = useContext(ContentReviewContext);
+  if (controller === null || targetId === undefined) {
+    return children;
+  }
+  const matches = (anchor: ContentReviewAnchor) =>
+    anchor.kind === "text" &&
+    anchor.target.id === targetId &&
+    paragraphs.some((paragraph) => paragraph.path === anchor.blockPath);
+  const highlighted =
+    (controller.active !== null && matches(controller.active.anchor)) ||
+    controller.comments.some((comment) => matches(comment.anchor));
+  return highlighted ? fallback : children;
 }
 
 export function useContentReviewHighlights(

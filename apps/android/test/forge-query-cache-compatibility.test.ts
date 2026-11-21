@@ -133,7 +133,16 @@ const samples: Readonly<Record<PersistedKind, readonly unknown[]>> = {
       "forge/overview",
     ),
   ],
-  "review/drafts": [decoded(parseDrafts(draftsSnapshot), "review/drafts")],
+  "review/drafts": [
+    decoded(parseDrafts(draftsSnapshot), "review/drafts"),
+    decoded(
+      parseDrafts({
+        ...draftsSnapshot,
+        drafts: [{ ...draftsSnapshot.drafts[0], anchor: { kind: "file", path: "src/example.rs" } }],
+      }),
+      "review/drafts file anchor",
+    ),
+  ],
   "review/guide": [decoded(parseGuideState(guideState), "review/guide")],
   "review/hunks": [
     decoded(

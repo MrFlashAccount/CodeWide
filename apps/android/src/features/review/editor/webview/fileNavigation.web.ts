@@ -61,6 +61,19 @@ export function createFileNavigation(
   }
   return (state: CodeReviewWorkspaceState) => {
     const opened = show(state.compact, state.sidebarOpen);
+    const totals = editorElement("tree-totals");
+    const prFiles = state.files[0]?.review !== undefined;
+    editorElement("preview").toggleAttribute("data-review-actions", prFiles);
+    totals.hidden = !prFiles;
+    if (prFiles && state.sidebarOpen) {
+      let additions = 0;
+      let deletions = 0;
+      for (const file of state.files) {
+        additions += file.additions;
+        deletions += file.deletions;
+      }
+      totals.textContent = `${String(state.files.length)} files loaded · +${String(additions)} −${String(deletions)}`;
+    }
     if (state.sidebarOpen) {
       tree.update(state);
     }

@@ -1,3 +1,4 @@
+import { useNativeListGroups } from "../../../rendering/nativeMarkdownListHost";
 import {
   ThreadTimelineList,
   type ThreadTimelineListProps,
@@ -7,14 +8,18 @@ import { timelineRowPremeasurementEnabled$ } from "../../../data/timelineRowPrem
 import { useSelector } from "@legendapp/state/react";
 import { useEvent } from "../../../react/useEvent";
 import { useLayoutEffect, useRef, type ReactElement } from "react";
+import { observablePrimitive } from "@legendapp/state";
+import { useConstant } from "../../../react/useConstant";
+import { usePaneBodyMode } from "../../../ui/paneBodyTransition";
 import {
   conversationBottomContentInset,
   conversationHeaderChromeHeight,
   conversationTopContentInset,
 } from "../../../ui/conversation-chrome-layout";
 import { surfaceToneCanvasStyle, useSurfaceTone } from "../../../ui/surfaceTone";
-import { AppText as Text } from "../../../ui/Typography";
-import { useTimelineGestureBindings } from "./timelineGestureBindings";
+import { prepareTimelineOpening } from "./timelineInitialReveal";
+import { savedReadingIndex, useThreadReadingPosition } from "./threadReadingPosition";
+import { useTimelineReadingGestures } from "./timelineReadingGestures";
 import { TIMELINE_TAIL_MODE_THRESHOLD_RATIO } from "./historyAnchor";
 import { useTimelineJumpExecution } from "./timelineJump";
 import { useTimelineMeasurementBindings } from "./timelineMeasurementBindings";
@@ -28,7 +33,11 @@ import {
   type TimelineRow,
 } from "./timelineRows";
 import { useTimelineResponsePositioning } from "./timelineResponsePositioning";
-import { timelineMarkdownContentWidth, timelineRowHeight } from "./timelineRowPremeasurement";
+import {
+  historyBeginningSizeEstimate,
+  timelineMarkdownContentWidth,
+  timelineRowHeight,
+} from "./timelineRowPremeasurement";
 import { useTimelineScrollDiagnostics, useTimelineScrollPolicy } from "./timelineScrollDiagnostics";
 import { useRunningTaskPlacement } from "./useRunningTaskPlacement";
 import { TaskNotificationLine } from "../turns/TaskNotificationLine";
@@ -41,14 +50,19 @@ const TIMELINE_HISTORY_PREFETCH_THRESHOLD_RATIO = 1.5;
 const MINIMUM_TIMELINE_RENDER_AHEAD_PX = 250;
 
 export function TimelineViewport(props: TimelineViewportProps): ReactElement {
+  const rowPremeasurementEnabled = useSelector(timelineRowPremeasurementEnabled$);
+  const bodyWidth = useTimelineBodyWidth(props.windowLayout.width, rowPremeasurementEnabled);
+  const nativeLists = useNativeListGroups(rowPremeasurementEnabled);
   const rows = projectTimelineRows(props.displayedTimeline, {
+    containsBeginning: props.historyViewport.containsBeginning,
     enabled: true,
+    nativeLists,
+    packMarkdown: !rowPremeasurementEnabled,
     searchMessageItemId: props.searchMessageItemId,
     threadSearchActive: props.threadSearchActive,
   });
   const placement = useRunningTaskPlacement(rows, showsConversationTail(props));
   const timelineRows = placement.rows;
-  const rowPremeasurementEnabled = useSelector(timelineRowPremeasurementEnabled$);
   const canvas = surfaceToneCanvasStyle(useSurfaceTone());
   const {
     awayFromLatestRef,
@@ -62,12 +76,17 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
     timelineViewportRef,
   } = props;
   const diagnostics = useTimelineScrollDiagnostics(props);
-  const responsePositioningEnabled = responsePositioningIsEnabled(props);
+  const reading = useThreadReadingPosition(props.draftConnectionId, props.draftThreadId);
+  const { readingIndex, responsePositioningEnabled, unreadTurnId } = timelineOpeningPosition(
+    props,
+    timelineRows,
+    reading,
+  );
   const responsePositioning = useTimelineResponsePositioning({
     awayFromLatest: props.awayFromLatest,
     composerScope: props.composerScope,
     enabled: responsePositioningEnabled,
-    latestUnreadAgentTurnId: props.latestUnreadAgentTurnId,
+    latestUnreadAgentTurnId: unreadTurnId,
     rows: timelineRows,
     timelinePositioned: props.timelinePositioned,
   });
@@ -83,25 +102,15 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
     props.liveStatusVisible,
   );
   const getTimelineList = useEvent(() => timelineRef.current);
-  const getTimelineRowSizeHint = useEvent((row: TimelineRow) => {
-    const startedAt = performance.now();
-    const dateLabels = props.timelineDateLabels.get(row.item);
-    const result = timelineRowHeight(row, {
-      agentDateVisible: timelineRowStartsAgentResponse(row) && (dateLabels?.agent ?? null) !== null,
-      beforeDateVisible: timelineRowStartsTurn(row) && (dateLabels?.before ?? null) !== null,
-      density: props.windowLayout.scale,
-      fontScale: props.windowLayout.fontScale,
-      viewportWidth: props.windowLayout.width,
-    });
-    diagnostics.fixedSize(performance.now() - startedAt, result, row.kind);
-    return result.status === "exact"
-      ? { size: result.size, status: "exact" as const }
-      : { size: result.estimate, status: "estimated" as const };
+  const timelineRowSizeHint = useTimelineRowSizeHint({
+    diagnostics,
+    fontScale: props.windowLayout.fontScale,
+    markdownWidth: bodyWidth.markdown,
+    premeasured: rowPremeasurementEnabled,
+    rows,
+    scale: props.windowLayout.scale,
+    timelineDateLabels: props.timelineDateLabels,
   });
-  const timelineRowSizeHint = selectTimelineRowSizeHint(
-    rowPremeasurementEnabled,
-    getTimelineRowSizeHint,
-  );
   const rowMeasurementRevision = timelineRowMeasurementRevision(
     props.composerScope,
     rowPremeasurementEnabled,
@@ -127,7 +136,12 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
       });
     },
   );
-  const gestures = useTimelineGestureBindings(props);
+  const gestures = useTimelineReadingGestures(props, {
+    clearResponseStartRequest: responsePositioning.clearResponseStartRequest,
+    reading,
+    responseStartTopInset,
+    timelineRows,
+  });
   const loadedScopeRef = useRef<string | null>(null);
   const reconcileJumpVisibility = useEvent(() => {
     if (
@@ -142,24 +156,23 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
       props.jumpVisibility.update(distance, props.historyViewport.containsLatest);
     }
   });
-  const prepareInitialReveal = useEvent(async () => {
-    const list = timelineRef.current;
-    if (list === null) {
-      return;
-    }
-    await responsePositioning.request?.prepareInitialReveal({
+  const prepareInitialReveal = useEvent(async () =>
+    prepareTimelineOpening({
       anchor: responseStartAnchor,
       bottomInset: responseStartBottomInset,
-      list,
+      list: timelineRef.current,
       offset: responseStartOffset,
+      readingIndex,
+      request: responsePositioning.request,
       topInset: responseStartTopInset,
-    });
-  });
-  const measurement = useTimelineMeasurementBindings(
-    props,
-    reconcileJumpVisibility,
-    prepareInitialReveal,
+      unreadOpening: reading?.opening.kind === "unread",
+    }),
   );
+  const measurement = useTimelineMeasurementBindings(props, {
+    measureWidth: bodyWidth.measure,
+    onGeometryChanged: reconcileJumpVisibility,
+    prepareInitialReveal,
+  });
   const reconcileEndThreshold = useEvent((withinThreshold: boolean) => {
     diagnostics.record({ kind: "end-threshold", withinThreshold });
     if (
@@ -191,12 +204,6 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
     loadedScopeRef.current = props.composerScope;
     reconcileCurrentEndThreshold();
   });
-  const onScrollBeginDrag = useEvent<
-    NonNullable<ThreadTimelineListProps<TimelineRow>["onScrollBeginDrag"]>
-  >((event) => {
-    responsePositioning.clearResponseStartRequest();
-    gestures.onScrollBeginDrag(event);
-  });
   useLayoutEffect(() => {
     loadedScopeRef.current = null;
     const unsubscribe = props.timelineRef.current?.subscribeEndThreshold(reconcileEndThreshold);
@@ -214,7 +221,10 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
     fullscreenCovered,
     latestUnreadAgentRef,
     onJumpStart: responsePositioning.clearResponseStartRequest,
-    persistTimelineAtEnd,
+    persistTimelineAtEnd: useEvent(() => {
+      reading?.session.atEnd();
+      persistTimelineAtEnd();
+    }),
     scrollOffsetRef,
     timelineJumpRequest,
     timelineRef,
@@ -222,7 +232,12 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
   });
   const initialScrollAtEnd = shouldInitiallyScrollToEnd(
     responseStartAnchor,
+    props.timelinePositioned || readingIndex !== undefined,
+  );
+  const initialScrollIndex = timelineInitialIndex(
     props.timelinePositioned,
+    readingIndex,
+    responsePositioning.request?.initialPosition(responseStartAnchor, responseStartOffset),
   );
   useTimelineScrollPolicy(diagnostics, props, {
     anchor: responseStartAnchor,
@@ -236,12 +251,11 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
       {props.footerContent}
     </>
   );
-  const listHeader = timelineListHeader(props);
   return (
     <RichMarkdownPremeasurementProvider
       enabled={rowPremeasurementEnabled}
       fontScale={props.windowLayout.fontScale}
-      width={timelineMarkdownContentWidth(props.windowLayout.width)}
+      width={timelineMarkdownContentWidth(bodyWidth.markdown)}
     >
       <ThreadTimelineList
         anchoredEndSpace={responsePositioning.request?.anchorSpace({
@@ -272,11 +286,7 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
         diagnostics={diagnostics}
         extraData={`${props.threadSearch}:${String(props.threadSearchMatch)}:${props.windowLayout.measurementRevision}:${String(rowPremeasurementEnabled)}:${props.renderTimelineItemRevision}`}
         initialScrollAtEnd={initialScrollAtEnd}
-        initialScrollIndex={
-          props.timelinePositioned
-            ? undefined
-            : responsePositioning.request?.initialPosition(responseStartAnchor, responseStartOffset)
-        }
+        initialScrollIndex={initialScrollIndex}
         itemSizeEstimate={timelineRowSizeEstimate()}
         itemSizeHint={timelineRowSizeHint}
         key={props.composerScope}
@@ -287,10 +297,10 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
         keyExtractor={timelineRowKey}
         ListEmptyComponent={props.emptyContent}
         ListFooterComponent={listFooter}
-        ListHeaderComponent={listHeader}
         maintainScrollAtEnd
         maintainScrollAtEndThreshold={TIMELINE_TAIL_MODE_THRESHOLD_RATIO}
         maintainVisibleContentPosition
+        measureInitialBuffer={readingIndex !== undefined}
         nestedScrollEnabled
         onContentSizeChange={measurement.onContentSizeChange}
         onEndReached={props.loadNewerAtTimelineEnd}
@@ -303,7 +313,7 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
         onMomentumScrollEnd={gestures.onMomentumScrollEnd}
         onReady={measurement.onReady}
         onScroll={gestures.onScroll}
-        onScrollBeginDrag={onScrollBeginDrag}
+        onScrollBeginDrag={gestures.onScrollBeginDrag}
         onScrollEndDrag={gestures.onScrollEndDrag}
         onStartReached={props.loadOlderAtTimelineStart}
         onStartReachedThreshold={TIMELINE_HISTORY_PREFETCH_THRESHOLD_RATIO}
@@ -322,6 +332,27 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
   );
 }
 
+function useTimelineBodyWidth(windowWidth: number, premeasured: boolean) {
+  const resizing = usePaneBodyMode() !== "fixed";
+  const width$ = useConstant(() => observablePrimitive(0));
+  // Only the opt-in exact Markdown layout subscribes. Native rows already measure themselves.
+  const markdown = useSelector(() => (resizing && premeasured ? width$.get() : windowWidth));
+  const measure = useEvent((width: number) => {
+    if (resizing) {
+      width$.set(width);
+    }
+  });
+  return { markdown, measure };
+}
+
+function timelineInitialIndex(
+  positioned: boolean,
+  saved: ReturnType<typeof savedReadingIndex>,
+  unread: ReturnType<typeof savedReadingIndex>,
+) {
+  return positioned ? undefined : (saved ?? unread);
+}
+
 function shouldInitiallyScrollToEnd(
   anchor: ResponseStartAnchor,
   timelinePositioned: boolean,
@@ -333,16 +364,6 @@ function showsConversationTail(props: TimelineViewportProps): boolean {
   return props.historyViewport.containsLatest && !props.threadSearchActive;
 }
 
-function timelineListHeader(props: TimelineViewportProps): ReactElement | null {
-  return props.historyViewport.containsBeginning &&
-    !props.threadSearchActive &&
-    props.displayedTimeline.length > 0 ? (
-    <Text style={styles.historyBeginning} testID="history-beginning">
-      You’re at the beginning of this conversation
-    </Text>
-  ) : null;
-}
-
 function resolveResponseStartAnchor(
   enabled: boolean,
   rows: readonly TimelineRow[],
@@ -351,13 +372,88 @@ function resolveResponseStartAnchor(
   return !enabled || turnId === null ? null : timelineResponseStartRow(rows, turnId);
 }
 
-function responsePositioningIsEnabled(props: TimelineViewportProps): boolean {
+function timelineOpeningPosition(
+  props: TimelineViewportProps,
+  timelineRows: readonly TimelineRow[],
+  reading: ReturnType<typeof useThreadReadingPosition>,
+) {
+  const regular = {
+    readingIndex: undefined,
+    responsePositioningEnabled: responsePositioningIsEnabled(props, false),
+    unreadTurnId: props.latestUnreadAgentTurnId,
+  };
+  if (reading === null || props.threadSearchActive) {
+    return regular;
+  }
+  const { opening, session } = reading;
+  if (opening.kind === "saved") {
+    return {
+      ...regular,
+      readingIndex: props.timelinePositioned
+        ? undefined
+        : savedReadingIndex(timelineRows, opening.bookmark),
+      unreadTurnId: session.hasReturnedToEnd ? regular.unreadTurnId : null,
+    };
+  }
+  if (opening.kind === "unread" && !props.timelinePositioned) {
+    return {
+      ...regular,
+      responsePositioningEnabled: responsePositioningIsEnabled(props, true),
+      unreadTurnId: opening.turnId,
+    };
+  }
+  return regular;
+}
+
+function responsePositioningIsEnabled(
+  props: TimelineViewportProps,
+  openingUnread: boolean,
+): boolean {
   return (
     !props.fullscreenCovered &&
     !props.threadSearchActive &&
-    props.historyViewport.containsLatest &&
+    (openingUnread || props.historyViewport.containsLatest) &&
     props.timelineJumpRequest === null
   );
+}
+
+function useTimelineRowSizeHint(input: {
+  diagnostics: ReturnType<typeof useTimelineScrollDiagnostics>;
+  fontScale: number;
+  markdownWidth: number;
+  premeasured: boolean;
+  rows: readonly TimelineRow[];
+  scale: number;
+  timelineDateLabels: TimelineViewportProps["timelineDateLabels"];
+}) {
+  const getTimelineRowSizeHint = useEvent((row: TimelineRow) => {
+    const startedAt = performance.now();
+    const dateLabels = input.timelineDateLabels.get(row.item);
+    const result = timelineRowHeight(row, {
+      agentDateVisible: timelineRowStartsAgentResponse(row) && (dateLabels?.agent ?? null) !== null,
+      beforeDateVisible: timelineRowStartsTurn(row) && (dateLabels?.before ?? null) !== null,
+      density: input.scale,
+      fontScale: input.fontScale,
+      viewportWidth: input.markdownWidth,
+    });
+    input.diagnostics.fixedSize(performance.now() - startedAt, result, row.kind);
+    return result.status === "exact"
+      ? { size: result.size, status: "exact" as const }
+      : { size: result.estimate, status: "estimated" as const };
+  });
+  const estimatedRowSizeHint = useEvent((row: TimelineRow) =>
+    row.kind === "historyBeginning"
+      ? {
+          size: historyBeginningSizeEstimate(input.fontScale),
+          status: "estimated" as const,
+        }
+      : packedRowSizeHint(row),
+  );
+  return input.premeasured
+    ? getTimelineRowSizeHint
+    : hasEstimatedRows(input.rows)
+      ? estimatedRowSizeHint
+      : undefined;
 }
 
 function timelineRowStartsAgentResponse(row: TimelineRow): boolean {
@@ -375,11 +471,18 @@ function isLeadingTimelinePlacement(placement: "end" | "middle" | "single" | "st
   return placement === "single" || placement === "start";
 }
 
-function selectTimelineRowSizeHint(
-  enabled: boolean,
-  getItemSizeHint: NonNullable<ThreadTimelineListProps<TimelineRow>["itemSizeHint"]>,
-): ThreadTimelineListProps<TimelineRow>["itemSizeHint"] {
-  return enabled ? getItemSizeHint : undefined;
+function hasEstimatedRows(rows: readonly TimelineRow[]): boolean {
+  return rows.some(
+    (row) =>
+      row.kind === "historyBeginning" ||
+      (row.kind === "turnSlice" && row.packedSizeEstimate !== undefined),
+  );
+}
+
+function packedRowSizeHint(row: TimelineRow) {
+  return row.kind === "turnSlice" && row.packedSizeEstimate !== undefined
+    ? { size: row.packedSizeEstimate, status: "estimated" as const }
+    : undefined;
 }
 
 function timelineRowMeasurementRevision(composerScope: string, enabled: boolean): string {

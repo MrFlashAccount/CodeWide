@@ -47,6 +47,8 @@ pub mod capability {
     pub const ACTIONS: &str = "forge.actions@1";
     /// `forge.pullRequest.review.submit`.
     pub const REVIEW: &str = "forge.review@1";
+    /// Optional: file-level comments in a submitted review.
+    pub const FILE_REVIEW: &str = "forge.review.file@1";
     /// Optional: `forge.pullRequest.checks`.
     pub const CHECKS: &str = "forge.checks@1";
     /// Optional: `forge.pullRequest.viewed.set`.

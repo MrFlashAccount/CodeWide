@@ -1,3 +1,4 @@
+import { sameThreadCatalogControls } from "./threadCatalogControls";
 import {
   reportedSubagentStatesOfBatch,
   rootsWithChangedSubagentActivity,
@@ -1010,6 +1011,7 @@ function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary
     left.preview === right.preview &&
     left.cwd === right.cwd &&
     (left.gitOriginUrl ?? null) === (right.gitOriginUrl ?? null) &&
+    sameThreadCatalogControls(left.catalogControls ?? null, right.catalogControls ?? null) &&
     sameThreadAgent(left.codewideAgent ?? null, right.codewideAgent ?? null) &&
     left.updatedAt === right.updatedAt &&
     left.recencyAt === right.recencyAt &&

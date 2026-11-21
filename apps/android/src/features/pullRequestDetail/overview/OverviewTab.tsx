@@ -1,5 +1,6 @@
+import { PaneBody } from "../../../ui/PaneBody";
 import { useRef } from "react";
-import { RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { RefreshControl, ScrollView, StyleSheet, View, type LayoutChangeEvent } from "react-native";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import type { ReviewThreadId } from "../../../data/forgeConversationContract";
@@ -10,6 +11,7 @@ import type {
   PullRequestRow,
 } from "../../../data/forgePullRequestContract";
 import { useConstant } from "../../../react/useConstant";
+import { useEvent } from "../../../react/useEvent";
 import { colors, controlSize, spacing } from "../../../theme";
 import type { ActionSlots } from "../actions/actionSlotting";
 import { ConversationSection } from "../conversation/ConversationSection";
@@ -21,7 +23,6 @@ import {
 import type { ConversationWrites } from "../conversation/useConversationWrites";
 import type { PullRequestConversation } from "../conversation/usePullRequestConversation";
 import type { ActionNotice, ChangesView } from "../pullRequestScreenModel";
-import { SectionBand } from "../sections/SectionBand";
 import { StatusSection } from "../sections/StatusSection";
 import { ActionNoticeBanner } from "./ActionNoticeBanner";
 import { ActionRow } from "./ActionRow";
@@ -31,6 +32,7 @@ import { DescriptionSection } from "./DescriptionSection";
 import { DetailsReview, type DetailsReviewProps } from "./DetailsReview";
 import { ReviewLinks } from "./ReviewLinks";
 import { StatusHeader } from "./StatusHeader";
+import { VerdictSplitButton } from "./VerdictSplitButton";
 
 /** Everything the Overview tab renders; the screen owns data and intents. */
 export type OverviewTabProps = {
@@ -72,13 +74,21 @@ const READING_MAX_WIDTH = 760;
 
 /**
  * Details is one reading column at every width: the PR's status and actions,
- * the description, then full-width banded sections: Changes (Files changed
- * and the review guide), Status (issues, reviews, checks and the merge
+ * the description, then full-width links to Files changed and the review
+ * guide, Status (issues, reviews, checks and the merge
  * state) and the Conversation (or, without `forge.conversation@1`, the
  * activity list). The page owns the conversation's projection and the
  * thread navigator, so the Issues row can reveal a thread below it.
  */
 export function OverviewTab(props: OverviewTabProps): React.JSX.Element {
+  return (
+    <PaneBody keepScrollEnd>
+      <OverviewReadingColumn {...props} />
+    </PaneBody>
+  );
+}
+
+function OverviewReadingColumn(props: OverviewTabProps): React.JSX.Element {
   const scroll = useRef<ScrollView>(null);
   const content = useRef<View>(null);
   const navigator = useConstant(() =>
@@ -104,7 +114,11 @@ export function OverviewTab(props: OverviewTabProps): React.JSX.Element {
       <View ref={content} style={styles.page}>
         <WorkHeader {...props} />
         <Description description={props.overview.description} />
-        <ChangesSection {...props} />
+        <ReviewLinks
+          draftCount={props.draftCount}
+          onOpen={props.onOpenChanges}
+          stats={props.overview.stats}
+        />
         <StatusSection
           addressing={props.addressing}
           discussion={discussion}
@@ -136,35 +150,31 @@ function Description({ description }: { readonly description: string }): React.J
   );
 }
 
-/** The Changes band and its rows into Files changed and the review guide. */
-function ChangesSection(props: OverviewTabProps): React.JSX.Element {
-  return (
-    <View>
-      <SectionBand testID="pull-request-changes-band" title="Changes" />
-      <ReviewLinks
-        draftCount={props.draftCount}
-        onOpen={props.onOpenChanges}
-        stats={props.overview.stats}
-      />
-    </View>
-  );
-}
-
 /** Status, the verdict button, the forge action row, the Agent section and the action notices. */
 function WorkHeader(props: OverviewTabProps): React.JSX.Element {
+  const onLayout = useEvent((event: LayoutChangeEvent) => {
+    props.onActionRowWidth(event.nativeEvent.layout.width);
+  });
   const run = (action: ActionDescriptor): void => {
     props.onRun(action, null);
   };
   return (
-    <View style={[styles.inset, styles.header, styles.lead]}>
-      <StatusHeader listRow={props.listRow} nowMs={props.nowMs} overview={props.overview} />
+    <View
+      onLayout={onLayout}
+      style={[styles.header, styles.lead]}
+      testID="pull-request-work-header"
+    >
+      <StatusHeader listRow={props.listRow} nowMs={props.nowMs} overview={props.overview}>
+        {props.review.choice.kind === "prominent" ? (
+          <VerdictSplitButton
+            lead={props.review.choice.lead}
+            onOpenReview={props.review.onOpen}
+            verdicts={props.review.choice.verdicts}
+          />
+        ) : null}
+      </StatusHeader>
       <DetailsReview {...props.review} />
-      <ActionRow
-        onLayoutWidth={props.onActionRowWidth}
-        onRun={run}
-        pending={props.pending}
-        slots={props.slots}
-      />
+      <ActionRow onRun={run} pending={props.pending} slots={props.slots} />
       <AgentSection
         actions={props.slots.agent}
         nowMs={props.nowMs}
@@ -217,7 +227,7 @@ function Activity(
 }
 
 /** Where the page starts inside the scroll view; a revealed thread is measured from the page. */
-const PAGE_TOP = spacing.md;
+const PAGE_TOP = spacing.xs;
 
 /**
  * Space below the last entry for the floating Comment and linked-chat buttons
@@ -235,13 +245,14 @@ const styles = StyleSheet.create({
   },
   header: {
     gap: spacing.sm,
+    marginHorizontal: spacing.md,
   },
   inset: {
     paddingHorizontal: spacing.md,
   },
   // Space under the lead content; the banded sections below sit flush on each other.
   lead: {
-    paddingBottom: spacing.lg,
+    paddingBottom: spacing.md,
   },
   page: {
     alignSelf: "center",

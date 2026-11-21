@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native";
-import { colors, spacing, typeScale } from "../../../theme";
+import { colors, spacing } from "../../../theme";
 
 export const styles = StyleSheet.create({
   conversationContent: {
@@ -17,11 +17,5 @@ export const styles = StyleSheet.create({
   conversationScroll: {
     backgroundColor: colors.conversationSurface,
     flex: 1,
-  },
-  historyBeginning: {
-    color: colors.textDim,
-    ...typeScale.caption,
-    paddingVertical: spacing.md,
-    textAlign: "center",
   },
 });

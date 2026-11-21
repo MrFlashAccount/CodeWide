@@ -1,5 +1,3 @@
-import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { createContext, createElement, type ReactNode, useContext } from "react";
 
 import type {
@@ -9,6 +7,7 @@ import type {
 } from "../data/private-transfer";
 import { materializePrivateAsset } from "./private-asset";
 import { useAsyncResource } from "./async-resource-store";
+import { imageReferenceIdentity } from "./imageReferenceIdentity";
 import { privateImageResourceKey } from "./private-image-resource-key";
 import { incrementMetric, recordTiming } from "../data/operational-metrics";
 import { cachedDirectImage } from "../native/attachment-cache/cached-transfer";
@@ -147,9 +146,7 @@ function useDirectImageUri(
   const key =
     request === null
       ? null
-      : `direct-image:${request.sources.cacheScope}:${String(revision)}:${bytesToHex(
-          sha256(utf8ToBytes(request.grant.identity)),
-        )}`;
+      : `direct-image:${request.sources.cacheScope}:${String(revision)}:${imageReferenceIdentity(request.grant, request.grant.identity)}`;
   const resource = useAsyncResource<PrivateImageLoadState>(
     key,
     key ?? "none",
@@ -233,10 +230,14 @@ export function usePrivateAssetUri(
   const getAccess = accessOverride ?? inheritedAccess;
   const inheritedAccessScope = usePrivateFileAccessScope();
   const accessScope = accessScopeOverride ?? inheritedAccessScope;
-  const identity = privateImageIdentity({ accessScope, revision, source, variant });
+  const { detail, key } = privateImageRequests(
+    source,
+    { accessScope, getAccess, revision },
+    variant,
+  );
   const resource = useAsyncResource<PrivateImageLoadState>(
-    identity.key,
-    identity.key ?? "none",
+    key,
+    key ?? "none",
     async (_publish, signal) =>
       loadPrivateImage({
         getAccess,
@@ -247,10 +248,6 @@ export function usePrivateAssetUri(
       }),
   );
   const state = currentPrivateImageState(resource.status, resource.value);
-  const detail =
-    variant === "preview"
-      ? createPrivateImageDetailRequest(source, { accessScope, getAccess, revision })
-      : null;
   return {
     detail,
     failed: state.failed,
@@ -270,23 +267,18 @@ function currentPrivateImageState(
   return value ?? EMPTY_PRIVATE_IMAGE;
 }
 
-function privateImageIdentity({
-  accessScope,
-  revision,
-  source,
-  variant,
-}: {
-  accessScope: string;
-  revision: number;
-  source: PrivateAssetSource | null;
-  variant: PrivateAssetImageVariant;
-}): { key: string | null } {
+function privateImageRequests(
+  source: PrivateAssetSource | null,
+  options: PrivateImageDetailOptions,
+  variant: PrivateAssetImageVariant,
+): { readonly detail: PrivateImageDetailRequest | null; readonly key: string | null } {
   if (source === null) {
-    return { key: null };
+    return { detail: null, key: null };
   }
   const sourceKey = privateImageResourceKey(source);
   return {
-    key: `private-asset:${accessScope}:${String(revision)}:${variant}:${sourceKey}`,
+    detail: variant === "preview" ? privateImageDetailRequest(source, options, sourceKey) : null,
+    key: `private-asset:${options.accessScope}:${String(options.revision)}:${variant}:${sourceKey}`,
   };
 }
 
@@ -295,10 +287,18 @@ export function createPrivateImageDetailRequest(
   source: PrivateAssetSource | null,
   options: PrivateImageDetailOptions,
 ): PrivateImageDetailRequest | null {
+  return privateImageDetailRequest(source, options, null);
+}
+
+function privateImageDetailRequest(
+  source: PrivateAssetSource | null,
+  options: PrivateImageDetailOptions,
+  previewKey: string | null,
+): PrivateImageDetailRequest | null {
   if (source === null || source.kind === "direct" || options.getAccess === null) {
     return null;
   }
-  const sourceKey = privateImageResourceKey(source);
+  const sourceKey = previewKey ?? privateImageResourceKey(source);
   return {
     accessScope: options.accessScope,
     getAccess: options.getAccess,
@@ -352,6 +352,9 @@ async function loadPrivateImage({
 function imageAssetSource(uri: string, headers?: Record<string, string>): PrivateAssetSource {
   if (headers !== undefined) {
     return { headers, kind: "direct", uri };
+  }
+  if (uri.startsWith("data:") || uri.startsWith("file:")) {
+    return { kind: "direct", uri };
   }
   try {
     const url = new URL(uri);

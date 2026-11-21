@@ -5,9 +5,8 @@ import { colors, spacing, typeScale } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 
 /**
- * A full-width band on the pane's surface, under a hairline, that opens one Details section ("Changes", "Status",
- * "Conversation 6"), GitHub Mobile style: the title, an optional count and an
- * optional trailing hint aligned to the right edge.
+ * Opens a Details section with a full-width hairline and a heading. An optional
+ * count follows the title and a trailing hint sits at the right edge.
  */
 export function SectionBand({
   count = null,

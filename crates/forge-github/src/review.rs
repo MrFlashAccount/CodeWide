@@ -2,7 +2,8 @@
 //! GitHub review) and viewed marks.
 
 use forge_protocol::{
-    CommentOutcome, CommentOutcomeState, DiffSide, PluginError, ReviewComment, ReviewSubmitResult,
+    CommentOutcome, CommentOutcomeState, DiffSide, PluginError, ReviewComment,
+    ReviewCommentSubject, ReviewSubmitResult,
 };
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
@@ -36,24 +37,29 @@ pub async fn submit(
         _ => return Err(PluginError::invalid_params("unknown verdict")),
     };
     target.fetch_at_head(api, head_revision).await?;
+    let has_files = comments
+        .iter()
+        .any(|comment| matches!(comment.subject, ReviewCommentSubject::File { .. }));
     let mut request = json!({
         "commit_id": head_revision,
-        "event": event,
-        "comments": comments.iter().map(review_comment).collect::<Vec<_>>(),
+        "comments": comments.iter().filter_map(review_comment).collect::<Vec<_>>(),
     });
-    if let Some(body) = body.filter(|body| !body.trim().is_empty()) {
-        request["body"] = json!(body);
+    let mut verdict = json!({ "event": event });
+    if let Some(text) = body.filter(|text| !text.trim().is_empty()) {
+        verdict["body"] = json!(text);
     }
-    let (status, response, headers) = api
-        .send_raw(Method::POST, &target.path("/reviews"), request)
-        .await?;
-    if !status.is_success() {
-        let error = status_error(status, &headers, &response);
-        if status == StatusCode::UNPROCESSABLE_ENTITY {
-            return Err(stale_or(api, target, head_revision, error).await);
+    if !has_files {
+        request["event"] = json!(event);
+        if let Some(text) = verdict.get("body") {
+            request["body"] = text.clone();
         }
-        return Err(error);
     }
+    let response = post_at_head(api, target, head_revision, "/reviews", request).await?;
+    let response = if has_files {
+        finish_file_review(api, target, head_revision, &response, comments, verdict).await?
+    } else {
+        response
+    };
     Ok(ReviewSubmitResult {
         review_url: response
             .get("html_url")
@@ -70,22 +76,120 @@ pub async fn submit(
     })
 }
 
-fn review_comment(comment: &ReviewComment) -> Value {
-    let side = match comment.side {
+/// File threads can only be staged on a pending GitHub review. The initial POST creates a
+/// fresh pending review (GitHub refuses if one already exists); its returned ID is the only
+/// review this operation edits. Nothing is published until the final verdict.
+async fn finish_file_review(
+    api: &Api,
+    target: &PullTarget,
+    head: &str,
+    pending: &Value,
+    comments: &[ReviewComment],
+    verdict: Value,
+) -> Result<Value, PluginError> {
+    let id = pending["id"]
+        .as_u64()
+        .ok_or_else(|| PluginError::internal("Missing pending review ID"))?;
+    let path = format!("/reviews/{id}");
+    let staged = async {
+        let node = node_id(pending)?;
+        for file in comments {
+            if matches!(file.subject, ReviewCommentSubject::File { .. }) {
+                stage_file_thread(api, &node, file).await?;
+            }
+        }
+        target.fetch_at_head(api, head).await
+    }
+    .await;
+    if let Err(error) = staged {
+        // The review is still private and is known to be ours.
+        api.send(Method::DELETE, &target.path(&path), Value::Null)
+            .await?;
+        return Err(error);
+    }
+    let (status, response, headers) = api
+        .send_raw(
+            Method::POST,
+            &target.path(&format!("{path}/events")),
+            verdict,
+        )
+        .await?;
+    if !status.is_success() {
+        if status.is_client_error() {
+            api.send(Method::DELETE, &target.path(&path), Value::Null)
+                .await?;
+        }
+        return Err(stale_or(api, target, head, status_error(status, &headers, &response)).await);
+    }
+    Ok(response)
+}
+
+/// GitHub must acknowledge the new thread before the pending review can be published.
+async fn stage_file_thread(api: &Api, node: &str, file: &ReviewComment) -> Result<(), PluginError> {
+    let variables = json!({"input":{
+        "pullRequestReviewId":node,
+        "path":file.path,
+        "body":file.body,
+        "subjectType":"FILE",
+    }});
+    let data = api.graphql(
+        "mutation($input:AddPullRequestReviewThreadInput!){addPullRequestReviewThread(input:$input){thread{id}}}",
+        variables,
+    ).await?;
+    if data
+        .pointer("/addPullRequestReviewThread/thread/id")
+        .and_then(Value::as_str)
+        .is_none()
+    {
+        return Err(PluginError::internal(
+            "GitHub did not confirm the file comment",
+        ));
+    }
+    Ok(())
+}
+
+async fn post_at_head(
+    api: &Api,
+    target: &PullTarget,
+    head: &str,
+    path: &str,
+    body: Value,
+) -> Result<Value, PluginError> {
+    let (status, response, headers) = api.send_raw(Method::POST, &target.path(path), body).await?;
+    if status.is_success() {
+        return Ok(response);
+    }
+    let error = status_error(status, &headers, &response);
+    if status == StatusCode::UNPROCESSABLE_ENTITY {
+        return Err(stale_or(api, target, head, error).await);
+    }
+    Err(error)
+}
+
+fn review_comment(comment: &ReviewComment) -> Option<Value> {
+    let ReviewCommentSubject::Line {
+        side,
+        start_line,
+        end_line,
+    } = comment.subject
+    else {
+        return None;
+    };
+    let side = match side {
         DiffSide::New => "RIGHT",
         DiffSide::Old => "LEFT",
     };
     let mut value = json!({
         "path": comment.path,
         "body": comment.body,
-        "line": comment.end_line,
+        "line": end_line,
         "side": side,
     });
-    if comment.start_line < comment.end_line {
-        value["start_line"] = json!(comment.start_line);
+    if start_line < end_line {
+        value["start_line"] = json!(start_line);
         value["start_side"] = json!(side);
     }
-    value
+    Some(value)
 }
 
 /// `forge.pullRequest.viewed.set` at an expected head.
@@ -123,15 +227,19 @@ mod tests {
         let comment = ReviewComment {
             draft_id: "d".into(),
             path: "src/a.rs".into(),
-            side: DiffSide::Old,
-            start_line: 3,
-            end_line: 5,
+            subject: ReviewCommentSubject::Line {
+                side: DiffSide::Old,
+                start_line: 3,
+                end_line: 5,
+            },
             body: "note".into(),
         };
         assert_eq!(
             review_comment(&comment),
-            json!({"path": "src/a.rs", "body": "note", "line": 5, "side": "LEFT",
+            Some(
+                json!({"path": "src/a.rs", "body": "note", "line": 5, "side": "LEFT",
                    "start_line": 3, "start_side": "LEFT"})
+            )
         );
     }
 }

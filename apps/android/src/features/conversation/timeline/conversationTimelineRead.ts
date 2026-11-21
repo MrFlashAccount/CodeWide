@@ -3,6 +3,7 @@ import type { ConversationSurfaceCapabilities } from "../conversationSurfaceCapa
 import type { useConversationOwner } from "../../../ui/use-conversation-owner";
 import { projectConversationPresentation } from "../conversationPresentation";
 import type { useConversationTimelineState } from "./conversationTimelineState";
+import { useThreadReadingPosition } from "./threadReadingPosition";
 import { useHistoryAnchorActions, useTimelineCleanup } from "./historyAnchor";
 import type { useOverlayScrollOwnership, useOverlayScrollState } from "./overlayScrollOwnership";
 import { projectConversationTimeline, projectTimelineDateLabels } from "./timelineProjection";
@@ -46,6 +47,7 @@ export function useConversationTimelineRead({
   timelineState: ReturnType<typeof useConversationTimelineState>;
   unread: Exclude<ConversationSurfaceCapabilities["unread"], undefined>;
 }) {
+  const reading = useThreadReadingPosition(draftConnectionId, draftThreadId);
   const newItemCount = timelineState.historyAnchorStateBinding.awayFromLatest ? unread : 0;
   const conversationTimelineBinding = projectConversationTimeline({
     composerScope,
@@ -141,8 +143,9 @@ export function useConversationTimelineRead({
     draftThreadId,
     initialReadCommittedRef: timelineState.historyAnchorStateBinding.initialReadCommittedRef,
     latestUnreadReceiptKey: unreadReceiptBinding.latestUnreadReceiptKey,
-    markThreadReadOnOpen: surfaceInputs.onViewedLatest,
-    saveScrollOffset: readInputs.saveScrollOffset,
+    markThreadReadOnOpen:
+      reading?.opening.kind === "saved" ? undefined : surfaceInputs.onViewedLatest,
+    saveScrollOffset: reading?.session.save ?? readInputs.saveScrollOffset,
     scrollOffsetRef: timelineState.timelineViewportStateBinding.scrollOffsetRef,
     scrollSaveTimerRef: timelineState.historyAnchorStateBinding.scrollSaveTimerRef,
     setAwayFromLatest: timelineState.historyAnchorStateBinding.setAwayFromLatest,

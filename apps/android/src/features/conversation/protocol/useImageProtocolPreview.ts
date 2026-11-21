@@ -122,6 +122,9 @@ function projectImage(block: RenderBlock): ImageProjection {
 }
 
 function privateSourceForImageUri(uri: string): PrivateAssetSource {
+  if (uri.startsWith("data:")) {
+    return { kind: "direct", uri };
+  }
   try {
     const url = new URL(uri);
     if (url.protocol === "http:" || url.protocol === "https:") {

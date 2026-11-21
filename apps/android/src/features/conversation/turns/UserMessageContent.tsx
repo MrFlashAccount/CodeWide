@@ -13,6 +13,7 @@ import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import { SearchHighlightQuery } from "../../../rendering/SearchMessageFocus";
 import { TwoRowHorizontalScroller } from "../../../rendering/TwoRowHorizontalScroller";
 import {
+  attachmentRenderKey,
   projectUserMessageAttachments,
   type UserMessageAttachment,
 } from "../../../rendering/user-message-attachments";
@@ -24,9 +25,7 @@ import { usePersistentExpansion } from "./Card";
 import { styles } from "./UserMessageContent.styles";
 import type { TransferAccess } from "../../../data/private-transfer";
 
-const USER_MESSAGE_COLLAPSED_LINES = 25;
-
-const USER_MESSAGE_COLLAPSED_CHARS = 1800;
+import { isShortUserMessage, USER_MESSAGE_COLLAPSED_LINES } from "./userMessageBubbleText";
 
 export interface UserMessageContentProps {
   content: unknown[];
@@ -61,6 +60,12 @@ export function UserMessageContent(props: UserMessageContentProps) {
         typeof part.type === "string" ? part.type : "",
       ),
   );
+  const only = bodyParts.length === 1 ? bodyParts[0] : undefined;
+  if (attachments.length === 0 && only?.type === "text" && typeof only.text === "string") {
+    return only.text.trim() === "" ? null : (
+      <CollapsibleUserMessage partIndex={0} pending={pendingText} text={only.text} />
+    );
+  }
   const bodyPartOccurrences = new Map<string, number>();
   return (
     <View style={userMessageContentStyle(imageAttachments.length)}>
@@ -145,15 +150,42 @@ interface CollapsibleUserMessageProps {
 function CollapsibleUserMessage(props: CollapsibleUserMessageProps) {
   const { partIndex, pending = false, text } = props;
   const highlighted = useContext(SearchHighlightQuery) !== "";
-  const canCollapse =
-    !highlighted &&
-    (text.length > USER_MESSAGE_COLLAPSED_CHARS ||
-      text.split("\n").length > USER_MESSAGE_COLLAPSED_LINES);
-  const [expanded, setExpanded] = usePersistentExpansion(
-    `user-message:${String(partIndex)}:${textFingerprint(text)}`,
-    false,
+  const canCollapse = !highlighted && !isShortUserMessage(text);
+  if (!canCollapse) {
+    return pending ? (
+      <WaveText
+        containerStyle={styles.pendingUserMessageShimmer}
+        numberOfLines={0}
+        style={styles.userBubbleText}
+        testID="pending-user-message-shimmer"
+        text={text}
+      />
+    ) : (
+      <RichMarkdown source={text} />
+    );
+  }
+  const expansionKey = `user-message:${String(partIndex)}:${textFingerprint(text)}`;
+  return (
+    <ExpandableUserMessage
+      expansionKey={expansionKey}
+      key={expansionKey}
+      pending={pending}
+      text={text}
+    />
   );
-  const maxLines = !expanded && canCollapse ? USER_MESSAGE_COLLAPSED_LINES : 0;
+}
+
+function ExpandableUserMessage({
+  expansionKey,
+  pending,
+  text,
+}: {
+  expansionKey: string;
+  pending: boolean;
+  text: string;
+}) {
+  const [expanded, setExpanded] = usePersistentExpansion(expansionKey, false);
+  const maxLines = !expanded ? USER_MESSAGE_COLLAPSED_LINES : 0;
   return (
     <View style={styles.userMessageTextBlock}>
       {pending ? (
@@ -167,43 +199,31 @@ function CollapsibleUserMessage(props: CollapsibleUserMessageProps) {
       ) : (
         <RichMarkdown
           source={text}
-          {...(!expanded && canCollapse ? { maxLines: USER_MESSAGE_COLLAPSED_LINES } : {})}
+          {...(!expanded ? { maxLines: USER_MESSAGE_COLLAPSED_LINES } : {})}
         />
       )}
-      {canCollapse && (
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            setExpanded((current) => !current);
-          }}
-          style={styles.userMessageExpandButton}
-        >
-          <Text style={styles.userMessageExpandText}>
-            {expanded ? "Collapse" : "Show full message"}
-          </Text>
-          <Ionicons
-            color={colors.textMuted}
-            name={expanded ? "chevron-up" : "chevron-down"}
-            size={iconSize.inline}
-          />
-        </Pressable>
-      )}
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => {
+          setExpanded((current) => !current);
+        }}
+        style={styles.userMessageExpandButton}
+      >
+        <Text style={styles.userMessageExpandText}>
+          {expanded ? "Collapse" : "Show full message"}
+        </Text>
+        <Ionicons
+          color={colors.textMuted}
+          name={expanded ? "chevron-up" : "chevron-down"}
+          size={iconSize.inline}
+        />
+      </Pressable>
     </View>
   );
 }
 
 export function userMessageAttachmentReference(attachment: UserMessageAttachment): string {
-  const source = attachment.source;
-  if (source.type === "path") {
-    return source.path;
-  }
-  if (source.type === "content") {
-    return source.asset.id;
-  }
-  if (source.type === "url") {
-    return source.url;
-  }
-  return `${source.rootId}:${source.path}`;
+  return attachmentRenderKey(attachment.source);
 }
 
 export function UserImageGallery({

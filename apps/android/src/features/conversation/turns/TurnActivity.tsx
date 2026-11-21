@@ -323,14 +323,10 @@ function TurnActivityToggle({
         pressed && styles.pressed,
       ]}
     >
-      <View style={styles.activityIconSlot}>
-        <InlineIcon color={colors.textMuted} name="construct-outline" {...LABEL_ICON_PROPS} />
-      </View>
+      <InlineIcon color={colors.textMuted} name="construct-outline" {...LABEL_ICON_PROPS} />
       {labelContent}
       <OutputFootprintMetric footprint={outputFootprint} />
-      <View style={styles.activityChevronSlot}>
-        <InlineIcon color={colors.textDim} name={chevron} {...LABEL_ICON_PROPS} />
-      </View>
+      <InlineIcon color={colors.textDim} name={chevron} {...LABEL_ICON_PROPS} />
     </Pressable>
   );
 }

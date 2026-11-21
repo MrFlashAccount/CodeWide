@@ -20,9 +20,12 @@ function maxConfirmLevel(left: ConfirmLevel, right: ConfirmLevel): ConfirmLevel 
   return LEVELS.indexOf(left) >= LEVELS.indexOf(right) ? left : right;
 }
 
-/** Plugin level raised by the kind floor (`merge`/`close` destructive, `autoMerge`/`updateBranch` confirm). */
+/** A plain auto-merge switch uses the provider's level. Other actions retain their kind floor. */
 export function effectiveConfirmation(
-  action: Pick<ActionDescriptor, "confirm" | "kind">,
+  action: Pick<ActionDescriptor, "confirm" | "input" | "kind" | "toggle">,
 ): ConfirmLevel {
+  if (action.kind === "autoMerge" && action.toggle !== null && action.input === null) {
+    return action.confirm;
+  }
   return maxConfirmLevel(action.confirm, KIND_FLOORS[action.kind] ?? "none");
 }

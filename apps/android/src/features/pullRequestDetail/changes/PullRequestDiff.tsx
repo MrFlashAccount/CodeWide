@@ -1,3 +1,4 @@
+import type { DiffDisplay } from "./diffDisplay";
 import { StyleSheet, View } from "react-native";
 
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
@@ -26,6 +27,7 @@ const MIN_DIFF_HEIGHT = 160;
 export type DiffTree = {
   /** The tree sits beside the diff rather than taking its place. */
   readonly besideDiff: boolean;
+  readonly complete: boolean;
   readonly files: readonly PullRequestFile[];
   readonly onOpenChange: (open: boolean) => void;
   readonly onSelect: (path: string) => void;
@@ -42,7 +44,7 @@ const TREE_STATUS: Readonly<Record<PullRequestFile["status"], CodeReviewFileItem
 
 /**
  * The PR's files in the Pierre review editor: its file tree (type icons,
- * change status, viewed mark and draft count) beside or instead of the
+ * change status, line statistics and draft count) beside or instead of the
  * selected file's diff. When the whole head file was read and lines up with the
  * patch, the diff is that whole file with the changes inline; otherwise it is
  * the recorded patch. `content` is already decided, so the editor receives one
@@ -55,6 +57,7 @@ const TREE_STATUS: Readonly<Record<PullRequestFile["status"], CodeReviewFileItem
 export function PullRequestDiff({
   composerLine,
   content,
+  display,
   draftPuts,
   drafts,
   onCommentPress,
@@ -63,10 +66,11 @@ export function PullRequestDiff({
   selected,
   tree,
 }: {
-  /** The line whose composer is open, or `null`. */
   readonly composerLine: LineCommentTarget | null;
   /** What the selected file's diff shows. */
   readonly content: DiffContent;
+  /** The line whose composer is open, or `null`. */
+  readonly display: DiffDisplay;
   readonly draftPuts: readonly DraftPut[];
   readonly drafts: readonly DraftComment[];
   readonly onCommentPress?: (id: string) => void;
@@ -77,29 +81,37 @@ export function PullRequestDiff({
   readonly tree: DiffTree | null;
 }): React.JSX.Element {
   const document = content.state === "pending" ? null : selectedDocument(selected, content);
-  const items = (tree === null ? [selected] : tree.files).map((file) =>
-    treeItem(file, drafts, draftPuts),
-  );
+  const navigation = tree ?? {
+    besideDiff: false,
+    complete: true,
+    files: [selected],
+    onOpenChange: undefined,
+    onSelect: () => undefined,
+    open: false,
+  };
+  const items = navigation.files.map((file) => treeItem(file, drafts, draftPuts));
   return (
     <View style={styles.editor} testID="pull-request-diff">
       <CodeReviewEditor
         comments={draftEditorComments(drafts, draftPuts, selected.path)}
-        compact={tree === null || !tree.besideDiff}
+        compact={!navigation.besideDiff}
         document={document}
         files={items}
+        filesComplete={navigation.complete}
         loadError={null}
         loading={content.state === "pending"}
-        mode="unified"
+        mode={display.mode}
         onCommentPress={onCommentPress}
-        onFileSelect={tree === null ? () => undefined : tree.onSelect}
-        onFilesOpenChange={tree?.onOpenChange}
+        onFileSelect={navigation.onSelect}
+        onFilesOpenChange={navigation.onOpenChange}
         onLinePress={onLinePress}
         revealReference={reveal}
         selectedPath={selected.path}
         selectedReference={composerLine}
-        sidebarOpen={tree !== null && tree.open}
+        showLineNumbers={display.showNumbers}
+        sidebarOpen={navigation.open}
         workspaceRevision={codeReviewWorkspaceRevision(items)}
-        wrapLines={false}
+        wrapLines={display.wrapLines}
       />
     </View>
   );
@@ -132,7 +144,6 @@ function treeItem(
       drafts:
         drafts.filter((draft) => draft.anchor.path === file.path).length +
         puts.filter((put) => put.draft.anchor.path === file.path).length,
-      viewed: file.viewed.viewed,
     },
     status: TREE_STATUS[file.status],
     treePath: file.path,

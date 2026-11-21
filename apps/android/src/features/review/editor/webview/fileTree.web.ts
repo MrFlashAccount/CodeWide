@@ -1,4 +1,4 @@
-import { FileTree } from "@pierre/trees";
+import { FileTree, type FileTreeBatchOperation } from "@pierre/trees";
 import type { CodeReviewFileItem, CodeReviewWorkspaceState } from "../editorBridge";
 
 const ROW_HEIGHT = 30;
@@ -20,9 +20,7 @@ function badge(file: CodeReviewFileItem | undefined): string {
   if (review === undefined) {
     return "";
   }
-  return [review.drafts > 0 ? `✎${String(review.drafts)}` : "", review.viewed ? "✓" : ""]
-    .filter(Boolean)
-    .join(" ");
+  return review.drafts > 0 ? `✎${String(review.drafts)}` : "";
 }
 
 /** Adapts the selected review file and PR badges to Pierre's virtualized tree. */
@@ -61,10 +59,23 @@ export function createFileTree(host: HTMLElement, select: (path: string) => void
     },
     paths: [],
     renderRowDecoration: ({ row }) => {
-      const text = badge(files.get(row.path));
+      const file = files.get(row.path);
+      const text = badge(file);
+      if (file?.review !== undefined) {
+        const parts = [
+          { color: "var(--review-green)", text: `+${String(file.additions)}` },
+          { color: "var(--review-red)", text: ` −${String(file.deletions)}` },
+        ];
+        if (text !== "") {
+          parts.push({ color: "var(--review-muted)", text: " " + text });
+        }
+        return { parts, text: parts.map((part) => part.text).join("") };
+      }
       return text === "" ? null : { text };
     },
     stickyFolders: false,
+    unsafeCSS:
+      "[data-file-tree-virtualized-scroll] { padding-block-end: var(--review-tree-end-space, 0px); }",
   });
   search.oninput = () => {
     tree.setSearch(search.value === "" ? null : search.value);
@@ -98,27 +109,58 @@ export function createFileTree(host: HTMLElement, select: (path: string) => void
       tree.scrollToPath(selected.treePath, { focus: false, offset: "nearest" });
     }
   }
-  function update(state: CodeReviewWorkspaceState): void {
+  const update = (state: CodeReviewWorkspaceState): void => {
+    empty.textContent =
+      state.filesComplete === false ? "No matches in the files loaded so far" : "No matching files";
     const prior = files;
     files = new Map(state.files.map((file) => [file.treePath, file]));
     selected = state.files.find((file) => file.path === state.selectedPath);
     if (state.revision !== revision) {
       revision = state.revision;
-      if (prior.size !== files.size || state.files.some((file) => !prior.has(file.treePath))) {
-        tree.resetPaths(state.files.map((file) => file.treePath));
-      }
+      updateTreePaths(tree, prior, files);
       tree.setGitStatus(state.files.map((file) => ({ path: file.treePath, status: file.status })));
     }
     if (
       tree.getFileTreeContainer() === undefined ||
-      state.files.some((file) => badge(prior.get(file.treePath)) !== badge(file))
+      state.files.some(
+        (file) =>
+          badge(prior.get(file.treePath)) !== badge(file) ||
+          prior.get(file.treePath)?.additions !== file.additions ||
+          prior.get(file.treePath)?.deletions !== file.deletions,
+      )
     ) {
       tree.render({ containerWrapper: host });
     }
     syncSelection(tree, selected?.treePath);
     updateSearchStatus();
-  }
+  };
   return { reveal, update };
+}
+
+/** Applying path changes keeps Pierre's active search index and folder expansion in sync. */
+function updateTreePaths(
+  tree: FileTree,
+  prior: ReadonlyMap<string, CodeReviewFileItem>,
+  next: ReadonlyMap<string, CodeReviewFileItem>,
+): void {
+  if (prior.size === 0 && !tree.isSearchOpen()) {
+    tree.resetPaths([...next.keys()]);
+    return;
+  }
+  const operations: FileTreeBatchOperation[] = [];
+  for (const path of prior.keys()) {
+    if (!next.has(path)) {
+      operations.push({ path, type: "remove" });
+    }
+  }
+  for (const path of next.keys()) {
+    if (!prior.has(path)) {
+      operations.push({ path, type: "add" });
+    }
+  }
+  if (operations.length > 0) {
+    tree.batch(operations);
+  }
 }
 
 function syncSelection(tree: FileTree, path: string | undefined): void {

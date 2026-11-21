@@ -93,24 +93,25 @@ describe("Android-transformed pane geometry", () => {
         const sidebar = 408;
         const detailX = left === "alone" ? 1200 : left === "beside" ? sidebar : 0;
         const detailWidth = left === "beside" ? 1200 - sidebar : 1200;
-        const centerWidth = right === "beside" ? detailWidth / 2 : detailWidth;
+        const centerWidth = right === "offscreen" ? detailWidth : detailWidth / 2;
         const catalogWidth = left === "beside" || left === "covered" ? sidebar : 1200;
         const rightWidth = right === "cover" ? detailWidth : detailWidth / 2;
-        // Settled, every pane shows its whole content box.
+        const detailVisibleWidth = 1200 - detailX;
+        const rightVisibleWidth = left === "alone" || right === "offscreen" ? 0 : rightWidth;
         expect(invoke(resolve, [arrangement, 1200])).toEqual({
           catalogOpacity: left === "covered" ? 0 : 1,
-          catalogVisibleWidth: catalogWidth,
+          catalogVisibleWidth: detailX,
           catalogWidth,
-          centerClipWidth: centerWidth,
+          centerClipWidth: detailVisibleWidth - rightVisibleWidth,
           centerLeftRadius: 12,
           centerRightRadius: 12,
           centerWidth,
-          detailVisibleWidth: detailWidth,
+          detailVisibleWidth,
           detailWidth,
           detailX,
-          rightVisibleWidth: rightWidth,
+          rightVisibleWidth,
           rightWidth,
-          rightX: right === "cover" ? detailX : detailX + centerWidth,
+          rightX: 1200 - rightVisibleWidth,
         });
       }
     }
@@ -123,7 +124,7 @@ describe("Android-transformed pane geometry", () => {
         : geometry.interpolatePaneGeometry;
     expect(invoke(resolve, [FROM, TO, 0.5])).toEqual({
       catalogOpacity: 0.5,
-      catalogVisibleWidth: 300,
+      catalogVisibleWidth: 150,
       catalogWidth: 300,
       centerClipWidth: 750,
       centerLeftRadius: 6,
@@ -132,11 +133,32 @@ describe("Android-transformed pane geometry", () => {
       detailVisibleWidth: 1050,
       detailWidth: 1200,
       detailX: 150,
-      rightVisibleWidth: 525,
+      rightVisibleWidth: 300,
       rightWidth: 600,
       rightX: 900,
     });
   });
+
+  it.each(["RN", "UI"] as const)(
+    "keeps a snapshot body's target width through a reversal on %s",
+    (runtime) => {
+      const worklet = (fn: unknown) => (runtime === "UI" ? transferToUi(fn) : fn);
+      const interpolate = worklet(geometry.interpolatePaneGeometry);
+      const inset = worklet(geometry.paneChromeInset);
+      const margin = worklet(geometry.snapshotBodyMargin);
+      const interrupted = invoke(interpolate, [FROM, TO, 0.6]);
+      const midwayBack = invoke(interpolate, [interrupted, FROM, 0.5]);
+      for (const [box, heldWidth, expected] of [
+        ["catalog", 300, 300],
+        ["center", 900, 900],
+        ["destination", 1200, 900],
+        ["right", 600, 450],
+      ] as const) {
+        const viewport = heldWidth - Number(invoke(inset, [midwayBack, box]));
+        expect(viewport - Number(invoke(margin, [midwayBack, FROM, box]))).toBeCloseTo(expected);
+      }
+    },
+  );
 
   it.each(["RN", "UI"] as const)("derives the pane chrome inset on %s", (runtime) => {
     const interpolate =
@@ -147,11 +169,11 @@ describe("Android-transformed pane geometry", () => {
       runtime === "UI" ? transferToUi(geometry.paneChromeInset) : geometry.paneChromeInset;
     const halfway = invoke(interpolate, [FROM, TO, 0.5]);
     // Content holds the larger layout width; chrome gives up what lies past the visible edge.
-    expect(invoke(inset, [halfway, "catalog"])).toBe(0);
+    expect(invoke(inset, [halfway, "catalog"])).toBe(150);
     expect(invoke(inset, [halfway, "center"])).toBe(150);
     expect(invoke(inset, [halfway, "destination"])).toBe(150);
-    expect(invoke(inset, [halfway, "right"])).toBe(75);
-    for (const box of ["catalog", "center", "destination", "right"]) {
+    expect(invoke(inset, [halfway, "right"])).toBe(300);
+    for (const box of ["center", "destination", "right"]) {
       expect(invoke(inset, [TO, box])).toBe(0);
     }
   });
@@ -169,13 +191,13 @@ const FROM = {
   detailVisibleWidth: 900,
   detailWidth: 900,
   detailX: 300,
-  rightVisibleWidth: 450,
+  rightVisibleWidth: 0,
   rightWidth: 450,
   rightX: 1200,
 };
 const TO = {
   catalogOpacity: 0,
-  catalogVisibleWidth: 300,
+  catalogVisibleWidth: 0,
   catalogWidth: 300,
   centerClipWidth: 600,
   centerLeftRadius: 0,

@@ -31,6 +31,7 @@ export function PullRequestRoute({
   readonly tab: PullRequestTab;
 }): React.JSX.Element | null {
   const params = useLocalSearchParams<{
+    composeReview?: string;
     connectionId?: string;
     pullRequestKey?: string;
     view?: string;
@@ -42,6 +43,7 @@ export function PullRequestRoute({
   }
   return (
     <PullRequestRouteContent
+      composeReview={params.composeReview === "1"}
       connectionId={connectionId}
       key={`${connectionId}:${pullRequest}`}
       pullRequest={pullRequest}
@@ -56,11 +58,13 @@ export function PullRequestRoute({
  * The shared pane layout owns their placement, radii, fullscreen and chrome.
  */
 function PullRequestRouteContent({
+  composeReview,
   connectionId,
   pullRequest,
   tab,
   view,
 }: {
+  readonly composeReview: boolean;
   readonly connectionId: string;
   readonly pullRequest: PullRequestKey;
   readonly tab: PullRequestTab;
@@ -72,6 +76,7 @@ function PullRequestRouteContent({
   const { desktop, list, runtime } = useWorkspaceRouteResources();
   const describeLinkedThread = useLinkedThreadDescriptions(list.loadedThreadSummaries);
   const reviewChat = usePullRequestReviewChat({
+    composeReview,
     connectionId,
     desktop,
     ensureReviewChat: workspaceFeatures.pullRequestDetail.ensureReviewChat,
@@ -132,6 +137,7 @@ function PullRequestRouteContent({
                 openReviewChat: reviewChat.openReviewChat,
                 openThread: reviewChat.openThread,
               }}
+              openAttachedDraft={reviewChat.openAttachedDraft}
               pullRequest={pullRequest}
               tab={changes.tab}
             />

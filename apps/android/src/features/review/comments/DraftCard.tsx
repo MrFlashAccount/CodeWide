@@ -113,7 +113,7 @@ export function DraftPutCard({ onDiscard, onEdit, put }: DraftPutCardProps): Rea
     <View style={styles.card} testID={`review-draft-put-${put.draft.id}`}>
       <View style={styles.header}>
         <Text numberOfLines={1} style={styles.location}>
-          {`You · line ${String(anchor.startLine)}`}
+          {anchor.kind === "file" ? "You · whole file" : `You · line ${String(anchor.startLine)}`}
         </Text>
         {put.status === "failed" ? (
           <CaptionBadge label="Not saved" tone="danger" />

@@ -1,3 +1,4 @@
+import { PaneBody } from "../../ui/PaneBody";
 import { StyleSheet, View } from "react-native";
 import { KeyboardGestureArea, KeyboardStickyView } from "react-native-keyboard-controller";
 import { ThreadCodeDocumentContext } from "../../rendering/ThreadCodeDocumentContext";
@@ -67,7 +68,9 @@ export function ConversationLayout({
               <ThreadCwdContext.Provider value={cwd}>
                 <TurnChangesContext.Provider value={presentTurnChanges}>
                   <MessageActionMenuProvider>
-                    <CostBreakdownMenuProvider>{timelineSurface}</CostBreakdownMenuProvider>
+                    <CostBreakdownMenuProvider>
+                      <PaneBody>{timelineSurface}</PaneBody>
+                    </CostBreakdownMenuProvider>
                   </MessageActionMenuProvider>
                 </TurnChangesContext.Provider>
               </ThreadCwdContext.Provider>

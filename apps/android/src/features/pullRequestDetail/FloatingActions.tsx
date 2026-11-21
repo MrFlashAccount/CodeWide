@@ -1,7 +1,8 @@
-import { StyleSheet, View } from "react-native";
+import { StyleSheet } from "react-native";
 
 import type { ThreadUnreadReader } from "../../data/project-unread-model";
 import { spacing } from "../../theme";
+import { PaneChrome } from "../../ui/PaneChrome";
 import { useThreePanels } from "../../ui/threePanels";
 import type { MessageSendResult } from "../messageContent/messageContent";
 import { NewCommentButton } from "./conversation/NewCommentButton";
@@ -18,6 +19,7 @@ type FloatingActionsProps = {
   readonly isThreadUnread: ThreadUnreadReader;
   readonly onComment: (markdown: string) => Promise<MessageSendResult>;
   readonly onOpenChat: () => void;
+  readonly review?: React.ReactNode;
 };
 
 /**
@@ -31,14 +33,15 @@ type FloatingActionsProps = {
 export function FloatingActions(props: FloatingActionsProps): React.JSX.Element | null {
   const chatBeside = useThreePanels().neighbour?.kind === "conversation";
   const comment = commentsOffered(props);
-  if (chatBeside && !comment) {
+  if (chatBeside && !comment && props.review === undefined) {
     return null;
   }
   return (
-    <View pointerEvents="box-none" style={styles.floating}>
+    <PaneChrome pointerEvents="box-none" style={styles.floating}>
       {comment ? <NewCommentButton onSend={props.onComment} /> : null}
       {chatBeside ? null : <ChatButton {...props} />}
-    </View>
+      {props.review}
+    </PaneChrome>
   );
 }
 
@@ -48,6 +51,7 @@ function commentsOffered({ conversation, details }: FloatingActionsProps): boole
 
 function ChatButton({
   agentThread,
+  details,
   isThreadUnread,
   onOpenChat,
 }: FloatingActionsProps): React.JSX.Element {
@@ -62,6 +66,7 @@ function ChatButton({
       }
       onPress={onOpenChat}
       reviewThreadId={agentThread?.threadId ?? null}
+      secondary={!details}
     />
   );
 }
@@ -72,7 +77,10 @@ const styles = StyleSheet.create({
     bottom: spacing.lg,
     columnGap: spacing.sm,
     flexDirection: "row",
+    justifyContent: "flex-end",
+    left: 0,
+    paddingHorizontal: spacing.md,
     position: "absolute",
-    right: spacing.md,
+    right: 0,
   },
 });

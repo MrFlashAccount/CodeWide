@@ -134,10 +134,12 @@ export function renderAgentTurnBody(
           )}
         {presentation.artifacts.length > 0 && (
           <View style={styles.userMessageContent} testID="agent-artifacts">
-            <UserImageGallery
-              attachments={artifactGroups.images}
-              {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
-            />
+            {artifactGroups.images.length > 0 && (
+              <UserImageGallery
+                attachments={artifactGroups.images}
+                {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+              />
+            )}
             {artifactGroups.videos.length > 0 && (
               <MessageVideoGallery style={styles.agentAttachmentGrid}>
                 {artifactGroups.videos.map((attachment) => (

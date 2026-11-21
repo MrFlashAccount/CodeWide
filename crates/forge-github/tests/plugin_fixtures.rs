@@ -53,6 +53,8 @@ struct FakeGithub {
     seen: Vec<(String, String)>,
     search_queries: Vec<String>,
     submitted_reviews: usize,
+    pending_review: Option<Vec<Value>>,
+    file_review_submissions: Vec<Vec<Value>>,
     /// `PRRT_1`'s resolution, and every resolve mutation GitHub received.
     thread_resolved: bool,
     resolve_mutations: Vec<String>,
@@ -165,6 +167,9 @@ fn respond(
     if let Some(response) = conversation_rest(&mut state, method, uri, &login, body) {
         return response;
     }
+    if let Some(response) = reviews_rest(&mut state, method, uri, body) {
+        return response;
+    }
     if let Some(response) = contents_rest(&mut state, uri, headers) {
         return response;
     }
@@ -182,6 +187,18 @@ fn respond(
         ("POST", "/graphql") => {
             let query: Value = serde_json::from_slice(body).expect("graphql body");
             let text = query["query"].as_str().unwrap_or_default();
+            if text.contains("addPullRequestReviewThread(") {
+                let input = &query["variables"]["input"];
+                assert_eq!(input["subjectType"], "FILE");
+                assert_eq!(input["pullRequestReviewId"], "PRR_7");
+                assert!(input.get("line").is_none());
+                let pending = state.pending_review.as_mut().expect("pending review");
+                if input["path"] == "refused.rs" {
+                    return json(json!({"errors":[{"message":"invalid path"}]}));
+                }
+                pending.push(input.clone());
+                return json(json!({"data":{"addPullRequestReviewThread":{"thread":{"id":"T1"}}}}));
+            }
             if let Some(response) = conversation_graphql(&mut state, &query) {
                 response
             } else if text.contains("search(") {
@@ -219,10 +236,6 @@ fn respond(
         ("GET", path) if path.ends_with("/comments") || path.ends_with("/reviews") => {
             json(json!([]))
         }
-        ("POST", "/repos/octo/repo/pulls/1/reviews") => {
-            state.submitted_reviews += 1;
-            json(json!({"html_url": "https://github.com/octo/repo/pull/1#review-1"}))
-        }
         _ => (
             StatusCode::NOT_FOUND,
             axum::Json(json!({"message": "Not Found"})),
@@ -232,6 +245,44 @@ fn respond(
 }
 
 /// The conversation GraphQL operations: a page, a thread's owner and a reply.
+fn reviews_rest(
+    state: &mut FakeGithub,
+    method: &Method,
+    uri: &Uri,
+    body: &Bytes,
+) -> Option<Response> {
+    let json = |value: Value| axum::Json(value).into_response();
+    Some(match (method.as_str(), uri.path()) {
+        ("DELETE", "/repos/octo/repo/pulls/1/reviews/7") => {
+            state.pending_review.take().expect("own pending review");
+            json(json!({}))
+        }
+        ("POST", "/repos/octo/repo/pulls/1/reviews/7/events") => {
+            let event: Value = serde_json::from_slice(body).expect("verdict");
+            assert_eq!(event["event"], "COMMENT");
+            let staged = state.pending_review.take().expect("pending review");
+            state.file_review_submissions.push(staged);
+            json(json!({"html_url":"https://github.com/octo/repo/pull/1#review-7"}))
+        }
+        ("POST", "/repos/octo/repo/pulls/1/reviews") => {
+            let request: Value = serde_json::from_slice(body).expect("review body");
+            if request.get("event").is_none() {
+                assert!(state.pending_review.is_none());
+                state.pending_review = Some(
+                    request["comments"]
+                        .as_array()
+                        .expect("line comments")
+                        .clone(),
+                );
+                return Some(json(json!({"id":7, "node_id":"PRR_7"})));
+            }
+            state.submitted_reviews += 1;
+            json(json!({"html_url": "https://github.com/octo/repo/pull/1#review-1"}))
+        }
+        _ => return None,
+    })
+}
+
 fn conversation_graphql(state: &mut FakeGithub, query: &Value) -> Option<Response> {
     let json = |value: Value| axum::Json(value).into_response();
     let text = query["query"].as_str().unwrap_or_default();
@@ -1079,6 +1130,35 @@ async fn linked_hubot() -> Harness {
 
 fn pull_ref() -> Value {
     json!({"host": "github.com", "repository": "octo/repo", "number": "1"})
+}
+
+#[tokio::test]
+async fn file_threads_publish_only_with_the_successful_review() {
+    let mut harness = linked_hubot().await;
+    let pr = pull_ref();
+    for (path, succeeds) in [("refused.rs", false), ("a.rs", true)] {
+        let reviewed = harness.call("forge.pullRequest.review.submit", json!({
+            "account":account("hubot"), "ref":pr, "headRevision":"abc123","verdictActionId":"comment",
+            "body":"whole review","idempotencyKey": path,"comments":[
+                {"draftId":"line","path":"a.rs","side":"new","startLine":1,"endLine":1,"body":"inline"},
+                {"draftId":"file","kind":"file","path":path,"body":"whole file"}
+            ]
+        })).await;
+        let state = harness.api.lock().expect("state");
+        assert!(state.pending_review.is_none());
+        if succeeds {
+            assert_eq!(
+                reviewed["result"]["comments"][1]["state"], "published",
+                "{reviewed}"
+            );
+            let staged = &state.file_review_submissions[0];
+            assert_eq!(staged[0]["body"], "inline");
+            assert_eq!(staged[1]["path"], "a.rs");
+        } else {
+            assert!(reviewed["error"].is_object());
+            assert!(state.file_review_submissions.is_empty());
+        }
+    }
 }
 
 #[tokio::test]

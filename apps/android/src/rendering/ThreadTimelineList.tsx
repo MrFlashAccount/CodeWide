@@ -19,6 +19,8 @@ import type { TimelineScrollDiagnostics } from "../data/timelineScrollDiagnostic
 import { windowLayoutStore } from "../native/window-layout-store";
 import { useEvent } from "../react/useEvent";
 import { TimelineKeyboardViewport } from "./TimelineKeyboardViewport";
+import { timelineViewportTailProps } from "./timelineViewportTailProps";
+import { timelineReadingRow } from "./timelineReadingRow";
 import { measureTimelineItemViewport } from "./timelineItemViewport";
 import {
   observeTimelineScrollCommand,
@@ -31,6 +33,7 @@ export interface ThreadTimelineListRef {
   indexForItemKey: (itemKey: string) => number | null;
   isWithinEndThreshold: () => boolean | null;
   measureItemViewport: (itemKey: string) => ReturnType<typeof measureTimelineItemViewport>;
+  readingRow?: (topInset: number) => ReturnType<typeof timelineReadingRow>;
   reportContentInset: (inset?: Partial<Insets> | null) => void;
   scrollToEnd: (options?: { animated?: boolean }, source?: TimelineScrollSource) => Promise<void>;
   scrollToIndex: (
@@ -104,6 +107,7 @@ function ThreadTimelineListInner<ItemT>(
     () => windowLayoutStore.subscribeMeasurementInvalidation(invalidateMeasurements),
     [invalidateMeasurements],
   );
+  const readingRow = useEvent((inset: number) => timelineReadingRow(internalRef.current, inset));
   const getItemViewportOffset = useEvent((itemKey: string): number | null => {
     const state = internalRef.current?.getState();
     if (state === undefined) {
@@ -205,6 +209,7 @@ function ThreadTimelineListInner<ItemT>(
       indexForItemKey,
       isWithinEndThreshold,
       measureItemViewport,
+      readingRow,
       reportContentInset,
       scrollToEnd,
       scrollToIndex,
@@ -217,6 +222,7 @@ function ThreadTimelineListInner<ItemT>(
       indexForItemKey,
       isWithinEndThreshold,
       measureItemViewport,
+      readingRow,
       reportContentInset,
       scrollToEnd,
       scrollToIndex,
@@ -251,7 +257,7 @@ function ThreadTimelineListInner<ItemT>(
   if (keyboard.kind === "viewport") {
     return (
       <TimelineKeyboardViewport offset={keyboard.offset}>
-        <AnimatedLegendList {...listProps} />
+        <AnimatedLegendList {...listProps} {...timelineViewportTailProps(props)} />
       </TimelineKeyboardViewport>
     );
   }

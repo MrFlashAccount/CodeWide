@@ -131,16 +131,6 @@ function hunkHeader(raw: string): { readonly count: number; readonly start: numb
   };
 }
 
-/** `3 of 14 viewed`. */
-export function viewedSummary(files: readonly PullRequestFile[]): string {
-  return `${String(files.filter((file) => file.viewed.viewed).length)} of ${String(files.length)} viewed`;
-}
-
-/** Where a viewed mark lives: `Viewed · github.com` or `Viewed · this companion` (Q6). */
-export function viewedLabel(file: PullRequestFile, host: string): string {
-  return file.viewed.source === "forge" ? `Viewed · ${host}` : "Viewed · this companion";
-}
-
 /** The hunk containing a line on one side, for a draft anchor. */
 export function hunkAt(file: PullRequestFile, line: number, side: "new" | "old"): Hunk | null {
   if (file.patch.state !== "present") {
@@ -182,7 +172,7 @@ export function draftEditorComments(
 ): readonly CodeReviewInlineComment[] {
   const comments: CodeReviewInlineComment[] = [];
   for (const draft of drafts) {
-    if (draft.anchor.path === path) {
+    if (draft.anchor.kind !== "file" && draft.anchor.path === path) {
       comments.push({
         body: draft.body,
         editable: canEditDraft(draft),
@@ -196,7 +186,7 @@ export function draftEditorComments(
   }
   for (const put of puts) {
     const { anchor, body, id } = put.draft;
-    if (anchor.path !== path) {
+    if (anchor.kind === "file" || anchor.path !== path) {
       continue;
     }
     comments.push(

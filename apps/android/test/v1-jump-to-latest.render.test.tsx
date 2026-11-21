@@ -1,3 +1,4 @@
+import { observable } from "@legendapp/state";
 import { QueryClient, QueryClientProvider, queryOptions } from "@tanstack/react-query";
 import type { RunningBackgroundTask } from "../src/data/runningBackgroundTasks";
 import { RunningBackgroundTasksContext } from "../src/features/conversation/turns/turnContexts";
@@ -8,10 +9,17 @@ import { act, fireEvent, render, renderHook, waitFor } from "@testing-library/re
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../src/data/use-thread-history-controller";
 import { timelineRowPremeasurementEnabled$ } from "../src/data/timelineRowPremeasurementPreference";
 import { TimelineViewport as ConversationViewport } from "../src/features/conversation/timeline/TimelineViewportView";
+import {
+  ReadingPositionContext,
+  ThreadReadingSession,
+  useThreadOpening,
+} from "../src/features/conversation/timeline/threadReadingPosition";
+import type { ThreadUiStateRead } from "../src/data/use-thread-ui-state";
 import { JumpToLatest } from "../src/features/conversation/timeline/JumpToLatest";
 import { TimelineJumpVisibility } from "../src/features/conversation/timeline/timelineJumpVisibility";
 import type { TimelineViewportProps } from "../src/features/conversation/timeline/TimelineViewportContract";
 import { timelineItemKey } from "../src/features/conversation/timeline/timelineProjection";
+import type { TimelineRow } from "../src/features/conversation/timeline/timelineRows";
 import type { TimelineItem } from "../src/features/conversation/timeline/timelineTypes";
 import { useHistoryAnchorActions } from "../src/features/conversation/timeline/historyAnchor";
 import {
@@ -32,6 +40,8 @@ import {
   setLegendListItemViewport,
   setLegendListWithinEndThreshold,
 } from "./mocks/LegendKeyboardList";
+
+const followContentChanges = { on: { dataChange: true, footerLayout: true, itemLayout: true } };
 
 function TimelineViewport(props: TimelineViewportProps) {
   const [client] = useState(() => new QueryClient());
@@ -90,6 +100,13 @@ function responseTurn(
   return turn as Extract<TimelineItem, { kind: "turn" }>;
 }
 
+function responseIndex(props: TimelineViewportProps, turnId = "response-turn") {
+  const key = timelineItemKey(responseTurn("completed", turnId));
+  const index = props.timelineRef.current?.indexForItemKey(key);
+  expect(typeof index).toBe("number");
+  return index;
+}
+
 function measuredView(y: () => number, height: number): NativeView {
   const view = {
     measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => {
@@ -144,7 +161,7 @@ function timelineViewportProps(
     scrollGestureStartedAtRef: { current: null },
     scrollOffsetRef: { current: 0 },
     setAwayFromLatest: () => undefined,
-    setTimelineGestureActive: () => undefined,
+    gestureActive$: observable(false),
     threadSearch: "",
     threadSearchActive: false,
     threadSearchMatch: 0,
@@ -254,11 +271,25 @@ it("groups the last launch and the live footer when the provider's list arrives"
 it("defaults to a 115 dp estimate and lets LegendList measure timeline rows", () => {
   const props = timelineViewportProps(() => undefined);
   props.displayedTimeline = [responseTurn("completed")];
+  const rendered: TimelineRow[] = [];
+  props.renderTimelineItem = ({ item }) => {
+    rendered.push(item);
+    return <View />;
+  };
   const view = render(<TimelineViewport {...props} />);
   const timeline = view.getByTestId("conversation-timeline");
 
   expect(timeline.props.estimatedItemSize).toBe(115);
-  expect(timeline.props.getItemSizeHint).toBeUndefined();
+  expect(responseIndex(props)).toBeGreaterThan(0);
+  for (const row of rendered) {
+    const hint = timeline.props.getItemSizeHint(row);
+    if (row.kind === "historyBeginning") {
+      expect(hint).toMatchObject({ status: "estimated" });
+    } else {
+      expect(hint).toBeUndefined();
+    }
+  }
+  expect(rendered.filter(row => row.kind === "historyBeginning")).toHaveLength(1);
   expect(timeline.props.dataKey).toBe("server\u0000thread:estimated");
 });
 
@@ -363,7 +394,7 @@ it("keeps the initial timeline hidden until the unread start clears the composer
 
   expect(legendListScrollToIndex).toHaveBeenCalledWith({
     animated: false,
-    index: 1,
+    index: responseIndex(props),
     viewOffset: conversationTopContentInset(false),
     viewPosition: 0,
   });
@@ -405,7 +436,7 @@ it("delegates tail maintenance to LegendList without retaining bootstrap positio
 
   const timeline = view.getByTestId("conversation-timeline");
   expect(timeline.props.initialScrollAtEnd).toBe(false);
-  expect(timeline.props.maintainScrollAtEnd).toBe(true);
+  expect(timeline.props.maintainScrollAtEnd).toEqual(followContentChanges);
   expect(timeline.props.maintainVisibleContentPosition).toBe(true);
   expect(timeline.props.maintainScrollAtEndThreshold).toBe(0.02);
 });
@@ -420,16 +451,16 @@ it("opens the unread last row at its start without an imperative correction", as
 
   expect(timeline.props.initialScrollAtEnd).toBe(false);
   expect(timeline.props.initialScrollIndex).toEqual({
-    index: 1,
+    index: responseIndex(props),
     viewOffset: conversationTopContentInset(false),
     viewPosition: 0,
   });
-  expect(timeline.props.anchoredEndSpace.anchorIndex).toBe(1);
+  expect(timeline.props.anchoredEndSpace.anchorIndex).toBe(responseIndex(props));
   expect(timeline.props.anchoredEndSpace.anchorOffset).toBe(props.windowLayout.height);
 
   await act(async () => {
     timeline.props.anchoredEndSpace.onReady({
-      anchorIndex: 1,
+      anchorIndex: responseIndex(props),
       anchorKey: timelineItemKey(responseTurn("completed")),
       size: 0,
     });
@@ -471,11 +502,11 @@ it("keeps the first unread response anchored while a later queued response strea
 
   expect(initial.props.initialScrollAtEnd).toBe(false);
   expect(initial.props.initialScrollIndex).toEqual({
-    index: 1,
+    index: responseIndex(props, firstUnread.id),
     viewOffset: conversationTopContentInset(false),
     viewPosition: 0,
   });
-  expect(initial.props.anchoredEndSpace.anchorIndex).toBe(1);
+  expect(initial.props.anchoredEndSpace.anchorIndex).toBe(responseIndex(props, firstUnread.id));
 
   view.rerender(
     <TimelineViewport
@@ -487,7 +518,7 @@ it("keeps the first unread response anchored while a later queued response strea
   );
 
   const completed = view.getByTestId("conversation-timeline");
-  expect(completed.props.anchoredEndSpace.anchorIndex).toBe(1);
+  expect(completed.props.anchoredEndSpace.anchorIndex).toBe(responseIndex(props, firstUnread.id));
 
   fireEvent(completed, "scrollBeginDrag", timelineScrollEvent(200));
 
@@ -514,11 +545,11 @@ it.each([false, true])(
     expect(timeline.props.initialScrollIndex).toEqual(
       positioned
         ? undefined
-        : { index: 1, viewOffset: conversationTopContentInset(false), viewPosition: 0 },
+        : { index: responseIndex(props), viewOffset: conversationTopContentInset(false), viewPosition: 0 },
     );
     await act(async () => {
       const ready = {
-        anchorIndex: 1,
+        anchorIndex: responseIndex(props),
         anchorKey: timelineItemKey(responseTurn("completed")),
         size: 300,
       };
@@ -547,7 +578,7 @@ it("moves a completed streamed response to its start only while tail-following",
   );
 
   await waitFor(() => {
-    expect(view.getByTestId("conversation-timeline").props.anchoredEndSpace.anchorIndex).toBe(1);
+    expect(view.getByTestId("conversation-timeline").props.anchoredEndSpace.anchorIndex).toBe(responseIndex(props));
   });
 });
 
@@ -582,7 +613,7 @@ it("accepts completion readiness from the child's layout before parent event han
   await waitFor(() => expect(legendListScrollToIndex).toHaveBeenCalledTimes(1));
   expect(legendListScrollToIndex).toHaveBeenCalledWith({
     animated: false,
-    index: 1,
+    index: responseIndex(props),
     viewOffset: conversationTopContentInset(false),
     viewPosition: 0,
   });
@@ -597,12 +628,12 @@ it("does not issue a correction after bootstrap positioning is retired", () => {
   const view = render(<TimelineViewport {...props} />);
   const initial = view.getByTestId("conversation-timeline");
   const ready = {
-    anchorIndex: 1,
+    anchorIndex: responseIndex(props),
     anchorKey: timelineItemKey(responseTurn("completed")),
     size: 600,
   };
   expect(initial.props.initialScrollIndex).toEqual({
-    index: 1,
+    index: responseIndex(props),
     viewOffset: conversationTopContentInset(false),
     viewPosition: 0,
   });
@@ -613,7 +644,7 @@ it("does not issue a correction after bootstrap positioning is retired", () => {
   const positioned = view.getByTestId("conversation-timeline");
   expect(positioned.props.initialScrollIndex).toBeUndefined();
   expect(positioned.props.anchoredEndSpace).toMatchObject({
-    anchorIndex: 1,
+    anchorIndex: responseIndex(props),
     anchorOffset: props.windowLayout.height,
   });
   act(() => positioned.props.anchoredEndSpace.onReady(ready));
@@ -627,7 +658,7 @@ it("does not reapply the response anchor after another size measurement", async 
   const view = render(<TimelineViewport {...props} />);
   const anchor = view.getByTestId("conversation-timeline").props.anchoredEndSpace;
   const ready = {
-    anchorIndex: 1,
+    anchorIndex: responseIndex(props),
     anchorKey: timelineItemKey(responseTurn("completed")),
     size: 600,
   };
@@ -650,11 +681,11 @@ it.each([conversationHeaderChromeHeight(false), conversationTopContentInset(fals
     const view = render(<TimelineViewport {...props} />);
     const ready = view.getByTestId("conversation-timeline").props.anchoredEndSpace.onReady;
     await act(async () =>
-      ready({ anchorIndex: 1, anchorKey: timelineItemKey(responseTurn("completed")), size: 0 }),
+      ready({ anchorIndex: responseIndex(props), anchorKey: timelineItemKey(responseTurn("completed")), size: 0 }),
     );
     setLegendListItemViewport(-100);
     await act(async () =>
-      ready({ anchorIndex: 1, anchorKey: timelineItemKey(responseTurn("completed")), size: 0 }),
+      ready({ anchorIndex: responseIndex(props), anchorKey: timelineItemKey(responseTurn("completed")), size: 0 }),
     );
     expect(legendListScrollToIndex).not.toHaveBeenCalled();
   },
@@ -671,7 +702,7 @@ it.each([-100, conversationHeaderChromeHeight(false) - 1, 500, 700, null])(
     const view = render(<TimelineViewport {...props} />);
     await act(async () =>
       view.getByTestId("conversation-timeline").props.anchoredEndSpace.onReady({
-        anchorIndex: 1,
+        anchorIndex: responseIndex(props),
         anchorKey: timelineItemKey(responseTurn("completed")),
         size: 0,
       }),
@@ -688,7 +719,7 @@ it("revokes an in-flight visibility measurement when a manual gesture starts", a
   const timeline = view.getByTestId("conversation-timeline");
   await act(async () => {
     timeline.props.anchoredEndSpace.onReady({
-      anchorIndex: 1,
+      anchorIndex: responseIndex(props),
       anchorKey: timelineItemKey(responseTurn("completed")),
       size: 0,
     });
@@ -706,7 +737,7 @@ it("revokes a pending response jump when a manual gesture starts", () => {
   const onReady = timeline.props.anchoredEndSpace.onReady;
   fireEvent(timeline, "scrollBeginDrag", timelineScrollEvent(0));
   act(() =>
-    onReady({ anchorIndex: 1, anchorKey: timelineItemKey(responseTurn("completed")), size: 0 }),
+    onReady({ anchorIndex: responseIndex(props), anchorKey: timelineItemKey(responseTurn("completed")), size: 0 }),
   );
   expect(legendListScrollToIndex).not.toHaveBeenCalled();
   expect(view.getByTestId("conversation-timeline").props.anchoredEndSpace).toBeUndefined();
@@ -863,7 +894,7 @@ it("does not gate LegendList callbacks behind custom bootstrap state", () => {
   const bootstrapTimeline = view.getByTestId("conversation-timeline");
 
   expect(bootstrapTimeline.props.initialScrollAtEnd).toBe(true);
-  expect(bootstrapTimeline.props.maintainScrollAtEnd).toBe(true);
+  expect(bootstrapTimeline.props.maintainScrollAtEnd).toEqual(followContentChanges);
   fireEvent(bootstrapTimeline, "startReached");
   fireEvent(bootstrapTimeline, "endReached");
   fireEvent(bootstrapTimeline, "layout", { nativeEvent: { layout: { height: 800 } } });
@@ -875,7 +906,7 @@ it("does not gate LegendList callbacks behind custom bootstrap state", () => {
   view.rerender(<TimelineViewport {...props} timelinePositioned />);
   const positionedTimeline = view.getByTestId("conversation-timeline");
   expect(positionedTimeline.props.initialScrollAtEnd).toBe(false);
-  expect(positionedTimeline.props.maintainScrollAtEnd).toBe(true);
+  expect(positionedTimeline.props.maintainScrollAtEnd).toEqual(followContentChanges);
   fireEvent(positionedTimeline, "startReached");
   fireEvent(positionedTimeline, "endReached");
   fireEvent(positionedTimeline, "layout", { nativeEvent: { layout: { height: 800 } } });
@@ -897,7 +928,7 @@ it("leaves positioning to LegendList and unlocks paging for a new user gesture",
   fireEvent(timeline, "scrollEndDrag", timelineScrollEvent(700));
 
   expect(view.getByTestId("conversation-timeline").props.initialScrollAtEnd).toBe(false);
-  expect(view.getByTestId("conversation-timeline").props.maintainScrollAtEnd).toBe(true);
+  expect(view.getByTestId("conversation-timeline").props.maintainScrollAtEnd).toEqual(followContentChanges);
 });
 
 it("executes a ready latest-jump request through the LegendList ref", async () => {
@@ -1052,7 +1083,7 @@ it("loads the authoritative latest range once before asking LegendList to reveal
 it("keeps timeline keyboard behavior independent of the docked question editor", () => {
   const props = timelineViewportProps(() => undefined);
   const view = render(<TimelineViewport {...props} newChat={false} />);
-  expect(view.getByTestId("conversation-timeline").props.maintainScrollAtEnd).toBe(true);
+  expect(view.getByTestId("conversation-timeline").props.maintainScrollAtEnd).toEqual(followContentChanges);
   expect(view.getByTestId("conversation-keyboard-viewport")).toHaveStyle({ marginBottom: 0 });
   expect(view.getByTestId("conversation-timeline").props.maintainVisibleContentPosition).toBe(true);
 });
@@ -1076,4 +1107,72 @@ it("redraws the in-progress turn row when a request prompt arrives without new r
   );
   expect(view.getAllByText("approve command").length).toBeGreaterThan(0);
   expect(view.queryAllByText("no request")).toHaveLength(0);
+});
+
+it("waits for the bookmark and supplies the saved physical row on the first list mount despite later unread replies", async () => {
+  const old = responseTurn("completed", "reading");
+  const fresh = responseTurn("completed", "new");
+  const props = timelineViewportProps(jest.fn());
+  const commitInitialTimelineLoad = jest.fn();
+  props.commitInitialTimelineLoad = commitInitialTimelineLoad;
+  const saveScrollOffset = jest.fn(async () => undefined);
+  const session = new ThreadReadingSession("server", "thread", { saveScrollOffset });
+  const ui: ThreadUiStateRead = {
+    status: "ready",
+    value: {
+      connectionId: "server",
+      threadId: "thread",
+      id: "key",
+      updatedAt: 1,
+      preferences: null,
+      attachments: [],
+      draftText: "",
+      scrollOffset: 1234,
+      historyAnchorTurnId: old.id,
+      historyAnchorRowKey: timelineItemKey(old),
+      historyAnchorOffsetPx: -137.5,
+    },
+  };
+  function Destination({ read }: { read: ThreadUiStateRead }) {
+    const opening = useThreadOpening({
+      scope: "thread",
+      ui: read,
+      summaryReady: true,
+      unreadId: fresh.id,
+    });
+    if (opening.kind === "pending") return null;
+    return (
+      <ReadingPositionContext.Provider value={{ opening, session }}>
+        <TimelineViewport
+          {...props}
+          draftConnectionId="server"
+          draftThreadId="thread"
+          latestUnreadAgentTurnId={fresh.id}
+          displayedTimeline={[old, fresh]}
+          timelinePositioned={false}
+        />
+      </ReadingPositionContext.Provider>
+    );
+  }
+  const screen = render(<Destination read={{ status: "loading" }} />);
+  expect(screen.queryByTestId("conversation-timeline")).toBeNull();
+  screen.rerender(<Destination read={ui} />);
+  const list = screen.getByTestId("conversation-timeline");
+  expect(list.props.initialScrollAtEnd).toBe(false);
+  expect(list.props.initialScrollIndex).toEqual({ index: responseIndex(props, old.id), viewOffset: -137.5, viewPosition: 0 });
+  expect(list.props.anchoredEndSpace).toBeUndefined();
+  fireEvent(list, "ready");
+  await waitFor(() => expect(commitInitialTimelineLoad).toHaveBeenCalledTimes(1));
+  expect(legendListScrollToEnd).not.toHaveBeenCalled();
+  expect(legendListScrollToIndex).not.toHaveBeenCalled();
+  await session.save("server", "thread", 1234);
+  expect(saveScrollOffset).not.toHaveBeenCalled();
+});
+
+it("does not acknowledge a later resident response while the first unread belongs to another page", () => {
+  const later = responseTurn("completed", "later");
+  expect(
+    projectUnreadReceipt([later], 1, "on-an-older-page", "server/thread", "server", "thread")
+      .latestUnreadReceiptKey,
+  ).toBeNull();
 });

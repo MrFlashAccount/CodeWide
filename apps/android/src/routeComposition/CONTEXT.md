@@ -116,30 +116,45 @@ but it does not own transport, persistence, protocol reduction or application da
   measures the frame on the UI thread (`measure` on the frame's animated ref) when it starts,
   takes the start from where the panes stand (the settled geometry in that measured frame, or the
   current frame of an interrupted motion), and springs a single progress (`paneMotionSpec`, one
-  spring). While it moves, every pane frame (catalog width and opacity, destination translation
-  and leading radius, center clip and right radius, right pane translation and width) is derived
+  spring). While it moves, every pane frame (catalog width and opacity, destination position
+  and leading radius, center clip and right radius, right pane position and width) is derived
   in worklets from that one progress (`paneFrames.ts`, `paneGeometry.ts`, pure functions); when it
   settles the boxes return to their relative frames, which Yoga lays out to exactly the motion's
   explicit end (`sidebarWidth` and the halves use the same formulas; `pane-rest-layout-yoga.test.ts`
-  checks it with Yoga). A stale measurement can therefore affect at most one motion, never the
-  settled layout. A frame that cannot be measured settles at once. While panes move they lie
-  absolutely and move by translation and clipping: content layout widths
+  checks it with Yoga). Android's native Stack can publish its smaller screen bounds a layout
+  pass later. On landing, `DestinationViewport` caps the inner panes at the destination width
+  until the enclosing screen fits; an unconstrained outer view observes the real screen size.
+  A new motion or a changed workspace frame releases that cap. A frame that cannot be measured
+  settles at once. While panes move they lie
+  absolutely and move by their Yoga left offsets and clipping: content layout widths
   hold the larger end of a motion and change at most at its start and settle, never per frame. No
   pane uses layout transitions, entering/exiting animations or its own spring. A closed right pane
   stays mounted, hidden, while it slides out, until the motion settles. Reduced motion (system or
   app preference) and changes that are not rearrangements settle into the Yoga layout at once.
-- Pane chrome is the one exception to fixed content widths. Each pane box also has a visible
-  width that moves with the same progress; `ThreePanelsPane` derives, on the UI thread, how far
+- In the default mode pane chrome follows the moving edge. Each pane box also has a visible
+  width between its neighbours’ edges. A covered or offscreen pane contributes zero to that
+  width and opens from zero on return. The covered tablet center keeps its split reading width
+  underneath a fullscreen right pane. During motion, `ThreePanelsPane` derives, on the UI thread, how far
   its box's content extends past that visible edge (`paneChromeInset`) and publishes it as
   `chromeInset` in `ThreePanelsContext`. `PaneChrome` (`ui/PaneChrome.tsx`) gives up that much
   trailing margin every frame, so headers and bottom bars lay out to the width the pane shows and
-  settle with the panes; the heavy body keeps the fixed layout width. `ThreePanelsHeader`,
+  settle with the panes. `ThreePanelsHeader`,
   `ConversationBottomChrome` (composer, prompts, notices), the thread search bar and the jump
   control use it; other pane content opts in by rendering its chrome inside `PaneChrome`. Chrome
   is a few rows, so the per-frame relayout stays small; JavaScript sees nothing until the motion
   settles (a measured box around chrome keeps the content width). Data for geeks samples the
   UI-thread frame intervals of each rearrangement (`pane_motion_frame_ms`); otherwise no frame
   callback runs.
+- Android runtimes with the native snapshot view use snapshots for pane rearrangements by
+  default. Older runtimes keep the fixed body layout. Set `EXPO_PUBLIC_PANE_BODY_MODE` to
+  `live` or `fixed` for local comparisons. Only `PaneBody` reading surfaces participate.
+  In live mode the body follows the same visible edge as chrome. In snapshot mode the frame asks mounted reading
+  surfaces to capture their visible area before the spring starts. A single mounted subtree
+  takes the destination width. Its outgoing drawing stays at its original pixel scale and fades
+  over the resized content when the child's width changes. Capture is local to the Android
+  view, skips focused text editors and is bounded in pixels and time. Headers and composers
+  keep using the frame's normal geometry. The PR overview retains its bottom edge if the reader
+  was at the end of the page before the width changed.
 - `features/pullRequests` and `features/pullRequestDetail` must not import each other. They meet only
   through typed route intents owned here.
 - Tab activation and compact linked-chat handoff must not use `router.replace`, `dismissTo`,

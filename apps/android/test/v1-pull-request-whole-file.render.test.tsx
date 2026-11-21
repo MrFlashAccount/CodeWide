@@ -68,10 +68,12 @@ function companion({
   answerAtOnce = false,
   declared,
   paths = [PATH],
+  readFiles,
 }: {
   readonly answerAtOnce?: boolean;
   readonly declared: boolean;
   readonly paths?: readonly string[];
+  readonly readFiles?: (cursor: unknown) => Promise<unknown>;
 }) {
   const reads: { readonly method: string; readonly params: unknown }[] = [];
   const pending = new Map<
@@ -119,7 +121,13 @@ function companion({
         ? answerAtOnce
           ? { content: HEAD_FILE, state: "text" }
           : await contentOf(pathOf(params)).promise
-        : answers[method];
+        : method === "companion/pullRequest/files/read" && readFiles !== undefined
+          ? await readFiles(
+              typeof params === "object" && params !== null && "cursor" in params
+                ? params.cursor
+                : null,
+            )
+          : answers[method];
     if (answer === undefined) {
       throw new RpcResponseError(-32_601, `Unknown ${method}`);
     }
@@ -474,3 +482,66 @@ it("never asks for the whole file when the plugin does not declare it", async ()
   expect(lastDocument()).toMatchObject({ source: "" });
   expect(revisionsOf(PATH)).toHaveLength(1);
 });
+
+it("opens the first diff immediately and indexes subsequent pages as the file picker needs them", async () => {
+  const later = Promise.withResolvers<unknown>();
+  const last = Promise.withResolvers<unknown>();
+  const readFiles = jest.fn(async (cursor: unknown) => {
+    if (cursor === "next") return later.promise;
+    if (cursor === "last") return last.promise;
+    return { ...filesPage([PATH]), nextCursor: "next" };
+  });
+  const server = companion({ declared: false, readFiles });
+  const view = renderChanges(server);
+  await view.findByTestId("pull-request-diff");
+  await editorReady();
+  await waitFor(() => expect(lastDocument()?.path).toBe(PATH));
+  expect(readFiles.mock.calls).toEqual([[null]]);
+  fireEvent.press(view.getByTestId("changes-view-files"));
+  await waitFor(() => expect(readFiles.mock.calls).toEqual([[null], ["next"]]));
+  expect(view.queryByText("Show more files")).toBeNull();
+  await act(async () => later.resolve({ ...filesPage(["src/middle.rs"]), nextCursor: "last" }));
+  await waitFor(() => expect(treePaths()).toEqual([PATH, "src/middle.rs"]));
+  await act(async () =>
+    last.resolve({ ...filesPage(["src/final.rs"]), truncated: { shown: 3, total: 7 } }),
+  );
+  await waitFor(() => expect(treePaths()).toEqual([PATH, "src/middle.rs", "src/final.rs"]));
+  expect(view.getByText("Forge shows 3 of 7 files")).toBeTruthy();
+  await selectInTree("src/final.rs");
+  await waitFor(() => expect(lastDocument()?.path).toBe("src/final.rs"));
+  fireEvent.press(view.getByTestId("changes-view-files"));
+  expect(readFiles.mock.calls).toEqual([[null], ["next"], ["last"]]);
+});
+
+it("retries only the missing page after a failure without losing the loaded tree", async () => {
+  let failed = false;
+  const readFiles = jest.fn(async (cursor: unknown) => {
+    if (cursor === null) return { ...filesPage([PATH]), nextCursor: "middle" };
+    if (cursor === "middle") return { ...filesPage(["src/b.rs"]), nextCursor: "last" };
+    if (!failed) {
+      failed = true;
+      throw new RpcResponseError(-32087, "Rate limited");
+    }
+    return filesPage(["src/c.rs"]);
+  });
+  const view = renderChanges(companion({ declared: false, readFiles }));
+  await view.findByTestId("pull-request-diff");
+  await editorReady();
+  const pane = view.getByTestId("pull-request-changes");
+  fireEvent(pane, "layout", { nativeEvent: { layout: { width: 1200 } } });
+  const retry = await view.findByText("Try again");
+  expect(treePaths()).toEqual([PATH, "src/b.rs"]);
+  fireEvent.press(retry);
+  await waitFor(() => expect(treePaths()).toEqual([PATH, "src/b.rs", "src/c.rs"]));
+  expect(readFiles.mock.calls).toEqual([[null], ["middle"], ["last"], ["last"]]);
+});
+
+function treePaths(): readonly string[] {
+  for (const serialized of webViewPostedMessages.toReversed()) {
+    const message = JSON.parse(serialized);
+    if (message.command === "workspace") {
+      return message.payload.files.map((item: { path: string }) => item.path);
+    }
+  }
+  return [];
+}

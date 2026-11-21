@@ -142,17 +142,29 @@ describe("confirmation policy", () => {
     expect(close === undefined ? null : effectiveConfirmation(close)).toBe("destructive");
   });
 
-  it("raises auto-merge and update branch to confirm, and never lowers a plugin level", () => {
-    const [auto, update, extension] = catalog([
-      action("a", { kind: "autoMerge", toggle: { on: false } }),
+  it("uses the provider level for plain auto-merge switches and keeps the other floors", () => {
+    const actions = catalog([
+      action("off", { kind: "autoMerge", toggle: { on: false } }),
+      action("on", { confirm: "confirm", kind: "autoMerge", toggle: { on: true } }),
+      action("strong", { confirm: "destructive", kind: "autoMerge", toggle: { on: true } }),
+      action("unknown", { kind: "autoMerge" }),
+      action("input", {
+        input: { label: "Option", type: "boolean" },
+        kind: "autoMerge",
+        toggle: { on: false },
+      }),
       action("u", { kind: "updateBranch" }),
       action("e", { confirm: "destructive" }),
     ]);
-    expect(
-      [auto, update, extension].map((item) =>
-        item === undefined ? null : effectiveConfirmation(item),
-      ),
-    ).toEqual(["confirm", "confirm", "destructive"]);
+    expect(actions.map(effectiveConfirmation)).toEqual([
+      "none",
+      "confirm",
+      "destructive",
+      "confirm",
+      "confirm",
+      "confirm",
+      "destructive",
+    ]);
   });
 
   it("names the forge host in every consequence", () => {

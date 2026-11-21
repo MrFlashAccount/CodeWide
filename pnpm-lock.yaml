@@ -14,8 +14,11 @@ patchedDependencies:
     hash: 21364302609f1a7e07ecda331478ecf45fba107e4ddd63b03035c6647a041693
     path: patches/@expo__ui@57.0.9.patch
   '@legendapp/list@3.4.0':
-    hash: 6d2f24f37969d04025311c3bbf3c8836286eb61a412d1f144ea297013a3f8210
+    hash: 2569709acacef6c73a62f8f17de1a3ec3385c220b116c9cca45a4872c58e6c23
     path: patches/@legendapp__list@3.4.0.patch
+  '@pierre/trees@1.0.0':
+    hash: 13cd028a3c5df279c3d567cc67c142eaa0cbb8b75cb90a92415ccd38bfffe8bc
+    path: patches/@pierre__trees@1.0.0.patch
   '@quickdrawjs/react-native@0.2.0':
     hash: 8a0c443b275b3c773c55fe75aa8dce968443bc88844ba665f3c0f2c8b9c7aa16
     path: patches/@quickdrawjs__react-native@0.2.0.patch
@@ -113,7 +116,7 @@ importers:
         version: 15.1.1(expo-font@57.0.1)(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       '@legendapp/list':
         specifier: 3.4.0
-        version: 3.4.0(patch_hash=6d2f24f37969d04025311c3bbf3c8836286eb61a412d1f144ea297013a3f8210)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
+        version: 3.4.0(patch_hash=2569709acacef6c73a62f8f17de1a3ec3385c220b116c9cca45a4872c58e6c23)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       '@legendapp/state':
         specifier: 2.1.15
         version: 2.1.15(react@19.2.3)
@@ -134,7 +137,7 @@ importers:
         version: 1.2.12(@shikijs/themes@4.4.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@pierre/trees':
         specifier: 1.0.0
-        version: 1.0.0(@pierre/theme@1.1.0)(@shikijs/themes@4.4.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(shiki@4.4.3)
+        version: 1.0.0(patch_hash=13cd028a3c5df279c3d567cc67c142eaa0cbb8b75cb90a92415ccd38bfffe8bc)(@pierre/theme@1.1.0)(@shikijs/themes@4.4.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(shiki@4.4.3)
       '@quickdrawjs/react-native':
         specifier: 0.2.0
         version: 0.2.0(patch_hash=8a0c443b275b3c773c55fe75aa8dce968443bc88844ba665f3c0f2c8b9c7aa16)(react-native-webview@13.16.1(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
@@ -10221,7 +10224,7 @@ snapshots:
       react: 19.2.3
       react-native: 0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3)
 
-  '@legendapp/list@3.4.0(patch_hash=6d2f24f37969d04025311c3bbf3c8836286eb61a412d1f144ea297013a3f8210)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)':
+  '@legendapp/list@3.4.0(patch_hash=2569709acacef6c73a62f8f17de1a3ec3385c220b116c9cca45a4872c58e6c23)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)':
     dependencies:
       react: 19.2.3
       use-sync-external-store: 1.6.0(react@19.2.3)
@@ -11033,7 +11036,7 @@ snapshots:
       react-dom: 19.2.3(react@19.2.3)
       shiki: 4.4.3
 
-  '@pierre/trees@1.0.0(@pierre/theme@1.1.0)(@shikijs/themes@4.4.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(shiki@4.4.3)':
+  '@pierre/trees@1.0.0(patch_hash=13cd028a3c5df279c3d567cc67c142eaa0cbb8b75cb90a92415ccd38bfffe8bc)(@pierre/theme@1.1.0)(@shikijs/themes@4.4.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(shiki@4.4.3)':
     dependencies:
       '@pierre/theming': 1.0.2(@pierre/theme@1.1.0)(@shikijs/themes@4.4.3)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(shiki@4.4.3)
       preact: 11.0.0-beta.0

@@ -76,7 +76,6 @@ function FileMessageAttachmentCard({
 }: MessageAttachmentCardProps): React.JSX.Element {
   const openDocument = useDocumentPreview();
   const openRouteDocument = useContext(ThreadCodeDocumentContext);
-  const source = attachmentPrivateSource(attachment);
   const kind = remoteFileKind(attachment.name, attachment.name);
   const open = useEvent(() => {
     if (getAccess === undefined) {
@@ -87,7 +86,7 @@ function FileMessageAttachmentCard({
       kind,
       name: attachment.name,
       path: attachmentPath(attachment),
-      source,
+      source: attachmentPrivateSource(attachment),
     };
     if (openRouteDocument !== null && kind !== "download") {
       openRouteDocument(request);

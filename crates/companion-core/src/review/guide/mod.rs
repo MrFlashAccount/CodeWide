@@ -436,7 +436,7 @@ fn create_remarks(
                 source: source.clone(),
                 revision: pending.revision.clone(),
             },
-            anchor: DraftAnchor {
+            anchor: DraftAnchor::Line {
                 path,
                 side: remark.side,
                 start_line: remark.start_line,

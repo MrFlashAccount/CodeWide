@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { useAndroidBackHandler } from "../../../ui/use-android-back-handler";
+import { KeyboardDockSpacer } from "../../../ui/KeyboardDock";
 import {
   SIDEBAR_FRAME_SHARE,
   SIDEBAR_MIN_WIDTH,
@@ -37,6 +38,7 @@ export function CodeReviewEditor({
   compact,
   document,
   files,
+  filesComplete = true,
   loadError,
   mode,
   onCommentPress,
@@ -47,6 +49,7 @@ export function CodeReviewEditor({
   revealReference,
   selectedPath,
   selectedReference,
+  showLineNumbers = true,
   sidebarOpen,
   workspaceRevision,
   wrapLines,
@@ -75,8 +78,8 @@ export function CodeReviewEditor({
     if (!ready) {
       return;
     }
-    send({ command: "settings", payload: { mode, wrapLines } });
-  }, [ready, mode, wrapLines]);
+    send({ command: "settings", payload: { mode, showLineNumbers, wrapLines } });
+  }, [ready, mode, showLineNumbers, wrapLines]);
 
   useEffect(() => {
     if (!ready) {
@@ -103,12 +106,13 @@ export function CodeReviewEditor({
       payload: {
         compact,
         files,
+        filesComplete,
         revision: workspaceRevision,
         selectedPath,
         sidebarOpen,
       },
     });
-  }, [ready, files, workspaceRevision, selectedPath, sidebarOpen, compact]);
+  }, [ready, files, filesComplete, workspaceRevision, selectedPath, sidebarOpen, compact]);
 
   useEffect(() => {
     if (!ready) {
@@ -220,6 +224,7 @@ export function CodeReviewEditor({
         style={styles.webView}
         testID="code-review-editor"
       />
+      {compact && sidebarOpen && <KeyboardDockSpacer />}
       {visibleError === null && selectedPath !== null && !ready && (
         <View accessibilityLiveRegion="polite" pointerEvents="none" style={styles.loading}>
           <ActivityIndicator color={colors.accent} />

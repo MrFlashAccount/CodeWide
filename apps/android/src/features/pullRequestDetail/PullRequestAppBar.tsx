@@ -10,14 +10,7 @@ import { AppText as Text } from "../../ui/Typography";
 import { OverflowActionsMenu, type ExtraMenuItem } from "./actions/OverflowActionsMenu";
 import { repositoryShortName } from "./pullRequestPresentation";
 
-/**
- * `←  [icon] repo #91  ⤢ ⋮ ×` on Details, whose header carries the full title, and
- * `←  #91 · Files changed  [Review]  ⤢ ⋮ ×` on the Changes route pushed over it. One compact
- * `ThreePanelsHeader` row: the pane decides Back versus `×` and the fullscreen toggle, wherever the
- * screen is placed; the one ⋮ holds Copy link, Share, Copy ID, Copy title, Open in the forge, the screen's own
- * entries (Submit review on Details when no verdict button is shown) and every overflowed catalog
- * action, destructive ones (Close, Discard) marked destructive.
- */
+/** The PR overview owns the actions menu. Nested routes show the PR number and section as a heading. */
 export function PullRequestAppBar({
   back,
   extra,
@@ -36,19 +29,20 @@ export function PullRequestAppBar({
   readonly overview: PullRequestOverview;
   /** The nested route's name (`Files changed`); `null` on Details. */
   readonly section: string | null;
-  /** Route controls before ⤢ and ⋯, such as Submit review. */
-  readonly trailing: React.ReactNode;
+  readonly trailing?: React.ReactNode;
 }): React.JSX.Element {
   return (
     <ThreePanelsHeader
       back={back}
       menu={
-        <OverflowActionsMenu
-          accessibilityLabel="Pull request menu"
-          actions={overflow}
-          extra={extra}
-          onRun={onRun}
-        />
+        section === null ? (
+          <OverflowActionsMenu
+            accessibilityLabel="Pull request menu"
+            actions={overflow}
+            extra={extra}
+            onRun={onRun}
+          />
+        ) : null
       }
       style={styles.bar}
       testID="pull-request-app-bar"

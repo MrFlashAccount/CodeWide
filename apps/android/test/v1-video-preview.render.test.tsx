@@ -1,5 +1,7 @@
 import { act, fireEvent, render, waitFor, within } from "@testing-library/react-native";
 import { useState } from "react";
+import { Text, View } from "react-native";
+import { InlineVideoPoster } from "../src/rendering/InlineVideoPoster";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { RouteDocumentPreview } from "../src/features/attachments/RouteDocumentPreview";
@@ -20,6 +22,14 @@ import { AppFullscreenOverlayProvider } from "../src/ui/AppFullscreenOverlay";
 import { AppNoticeProvider } from "../src/ui/AppNotice";
 import { radii } from "../src/theme";
 import { urlTransport } from "../src/native/urlTransport";
+
+jest.mock("../src/rendering/nativeVideoPosterHost", () => ({
+  PosterHost: (props: Record<string, unknown>) =>
+    jest.requireActual("react").createElement(jest.requireActual("react-native").View, {
+      ...props,
+      testID: "native-video-frame",
+    }),
+}));
 
 jest.mock("expo", () => ({
   ...jest.requireActual("expo"),
@@ -128,13 +138,31 @@ it("renders MP4 as an image-sized paused preview in the message", async () => {
   const preview = view.getByLabelText("Open comparison.mp4");
   expect(view.getByTestId("message-video-preview")).toHaveStyle({ height: 180, width: 320 });
   expect(view.getByTestId("message-video-gallery")).toBeTruthy();
-  await waitFor(() => {
-    expect(view.getByTestId("mock-video-view").props.nativeControls).toBe(false);
-  });
+  const frame = await view.findByTestId("native-video-frame");
+  expect(frame.props.sourceUri).toBe("file:///comparison.mp4");
+  expect(view.queryByTestId("mock-video-view")).toBeNull();
   fireEvent.press(preview);
   await waitFor(() => {
     expect(view.getByLabelText("Close video")).toBeTruthy();
   });
+});
+
+it("uses the player for streams and falls back when a cached frame cannot be decoded", () => {
+  const inline = (uri: string) => (
+    <View>
+      <InlineVideoPoster key={uri} uri={uri}>
+        <Text>Playable preview</Text>
+      </InlineVideoPoster>
+    </View>
+  );
+  const view = render(inline("https://example.test/movie"));
+  expect(view.getByText("Playable preview")).toBeVisible();
+  view.rerender(inline("file:///invalid-video"));
+  fireEvent(view.getByTestId("native-video-frame"), "posterError");
+  expect(view.getByText("Playable preview")).toBeVisible();
+  view.rerender(inline("file:///another-video"));
+  expect(view.getByTestId("native-video-frame").props.sourceUri).toBe("file:///another-video");
+  expect(view.queryByText("Playable preview")).toBeNull();
 });
 
 function FullscreenProviders({

@@ -1,3 +1,6 @@
+import { StyleSheet, View } from "react-native";
+import { controlSize, spacing } from "../../../theme";
+import type { DiffDisplay } from "./diffDisplay";
 import type { PullRequestFile } from "../../../data/forgeMutationContract";
 import type { DiffSource, ThreadId } from "../../../data/reviewContract";
 import type { DraftComment } from "../../../data/reviewDraftContract";
@@ -21,6 +24,7 @@ export function PullRequestGuide({
   composerLine,
   connectionId,
   describeThread,
+  display,
   draftPuts,
   drafts,
   files,
@@ -40,6 +44,7 @@ export function PullRequestGuide({
   readonly composerLine: LineCommentTarget | null;
   readonly connectionId: string;
   readonly describeThread: (threadId: ThreadId) => string;
+  readonly display: DiffDisplay;
   readonly draftPuts: readonly DraftPut[];
   readonly drafts: readonly DraftComment[];
   readonly files: readonly PullRequestFile[];
@@ -53,50 +58,61 @@ export function PullRequestGuide({
 }): React.JSX.Element {
   const locations = hunkLocations(files);
   return (
-    <GuidePanel
-      author={
-        offline
-          ? null
-          : agentThread === null
-            ? { kind: "newThread", workspace: localWorkspace }
-            : { kind: "thread", threadId: agentThread.threadId }
-      }
-      authorLabel={agentThread?.title ?? "A new read-only thread"}
-      capabilities={capabilities}
-      connectionId={connectionId}
-      describeThread={describeThread}
-      nowMs={nowMs}
-      onComment={(stop) => {
-        const first = stop.hunkIds
-          .map((id) => locations.get(id))
-          .find((location) => location !== undefined);
-        if (first !== undefined) {
-          onComment({ line: first.line, path: first.path, side: "new" });
+    <View style={styles.guide}>
+      <GuidePanel
+        author={
+          offline
+            ? null
+            : agentThread === null
+              ? { kind: "newThread", workspace: localWorkspace }
+              : { kind: "thread", threadId: agentThread.threadId }
         }
-      }}
-      renderStopDiff={(stop) => {
-        const first = stop.hunkIds
-          .map((id) => locations.get(id))
-          .find((location) => location !== undefined);
-        const file =
-          first === undefined
-            ? undefined
-            : files.find((candidate) => candidate.path === first.path);
-        return file === undefined || first === undefined ? null : (
-          <PullRequestDiff
-            composerLine={composerLine}
-            content={{ state: "patch" }}
-            draftPuts={draftPuts}
-            drafts={drafts}
-            onLinePress={onLinePress}
-            reveal={{ line: first.line, path: first.path, side: "new" }}
-            selected={file}
-            tree={null}
-          />
-        );
-      }}
-      resources={resources}
-      source={source}
-    />
+        authorLabel={agentThread?.title ?? "A new read-only thread"}
+        capabilities={capabilities}
+        connectionId={connectionId}
+        describeThread={describeThread}
+        nowMs={nowMs}
+        onComment={(stop) => {
+          const first = stop.hunkIds
+            .map((id) => locations.get(id))
+            .find((location) => location !== undefined);
+          if (first !== undefined) {
+            onComment({ line: first.line, path: first.path, side: "new" });
+          }
+        }}
+        renderStopDiff={(stop) => {
+          const first = stop.hunkIds
+            .map((id) => locations.get(id))
+            .find((location) => location !== undefined);
+          const file =
+            first === undefined
+              ? undefined
+              : files.find((candidate) => candidate.path === first.path);
+          return file === undefined || first === undefined ? null : (
+            <PullRequestDiff
+              composerLine={composerLine}
+              content={{ state: "patch" }}
+              display={display}
+              draftPuts={draftPuts}
+              drafts={drafts}
+              onLinePress={onLinePress}
+              reveal={{ line: first.line, path: first.path, side: "new" }}
+              selected={file}
+              tree={null}
+            />
+          );
+        }}
+        resources={resources}
+        source={source}
+      />
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  guide: {
+    flex: 1,
+    marginBottom: controlSize.touch + spacing.lg,
+    minHeight: 0,
+  },
+});

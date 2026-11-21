@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 
-import { privateAssetCacheKey } from "../../data/private-transfer";
+import { privateImageResourceKey } from "../../rendering/private-image-resource-key";
 import { useEphemeralAsyncResource } from "../../rendering/async-resource-store";
 import {
   useDocumentDownload,
@@ -25,7 +25,7 @@ export function RouteImageDocumentPreview({
   const downloadDocument = useDocumentDownload();
   const source = request.source ?? { kind: "path" as const, path: request.path };
   const image = useEphemeralAsyncResource<{ headers: Record<string, string>; uri: string }>(
-    `route-image:${ownerId}:${privateAssetCacheKey(source)}`,
+    `route-image:${ownerId}:${privateImageResourceKey(source)}`,
     revision,
     async (_publish, signal) =>
       materializePrivateAsset(source, {

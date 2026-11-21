@@ -15,7 +15,7 @@ import {
 import { ActionMenu } from "../../../ui/ActionMenu";
 import { AppText as Text } from "../../../ui/Typography";
 
-/** Compact `Review · 2 | ▾` in the Changes toolbar: opens the Submit sheet, or picks another plugin verdict. */
+/** Compact `Review · 2 | ▾` over the Changes reading surface: opens the Submit sheet, or picks another plugin verdict. */
 export function SubmitSplitButton({
   accessibilityLabel,
   disabled,
@@ -83,6 +83,7 @@ function VerdictMenu({
         selected: item.actionId === verdict?.actionId,
       }))}
       onSelect={onSelect}
+      triggerSize={MENU_TRIGGER_SIZE}
     >
       <Pressable
         accessibilityLabel="Verdict"
@@ -90,7 +91,7 @@ function VerdictMenu({
         hitSlop={controlHitSlop.compact}
         style={styles.toggle}
       >
-        <Ionicons color={colors.onPrimary} name="chevron-down" size={iconSize.inline} />
+        <Ionicons color={colors.onPrimary} name="chevron-down" size={iconSize.indicator} />
       </Pressable>
     </ActionMenu>
   );
@@ -98,6 +99,7 @@ function VerdictMenu({
 
 /** Matches AppButton's disabled feedback. */
 const DISABLED_OPACITY = 0.5;
+const MENU_TRIGGER_SIZE = { height: controlSize.touch, width: controlSize.compact };
 
 const styles = StyleSheet.create({
   danger: {
@@ -109,11 +111,11 @@ const styles = StyleSheet.create({
   main: {
     alignItems: "center",
     backgroundColor: colors.primary,
-    borderBottomLeftRadius: radii.small,
-    borderTopLeftRadius: radii.small,
-    height: controlSize.compact,
+    borderBottomLeftRadius: radii.pill,
+    borderTopLeftRadius: radii.pill,
+    height: controlSize.touch,
     justifyContent: "center",
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.md,
   },
   mainLabel: {
     ...typeScale.label,
@@ -121,8 +123,8 @@ const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
   },
   mainSolo: {
-    borderBottomRightRadius: radii.small,
-    borderTopRightRadius: radii.small,
+    borderBottomRightRadius: radii.pill,
+    borderTopRightRadius: radii.pill,
   },
   split: {
     columnGap: StyleSheet.hairlineWidth,
@@ -132,10 +134,10 @@ const styles = StyleSheet.create({
   toggle: {
     alignItems: "center",
     backgroundColor: colors.primary,
-    borderBottomRightRadius: radii.small,
-    borderTopRightRadius: radii.small,
-    height: controlSize.compact,
+    borderBottomRightRadius: radii.pill,
+    borderTopRightRadius: radii.pill,
+    height: controlSize.touch,
     justifyContent: "center",
-    width: controlSize.compact - spacing.xs,
+    width: MENU_TRIGGER_SIZE.width,
   },
 });

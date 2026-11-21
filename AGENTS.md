@@ -21,6 +21,28 @@
 
 - Keep the real implementation of hooks whose behavior depends on a provider, native events, recycling, or component lifetime. Exercise the relevant owner in a test. A native layout or I/O double may replace that boundary only. In particular, Jest must preserve every LegendList hook when replacing its viewport for render tests.
 
+## Android UI testing with Callstack Agent Device
+
+- For a physical-phone check, enable USB or wireless debugging, authorize this computer, and select the intended phone by model and serial from `adb devices -l` (state `device`). Set `CW_PHONE_SERIAL` to that serial and `CW_ANDROID_APP` to the installed package under test, such as `dev.codexremote.app.dev` or `dev.codexremote.app.preview`. If the phone is absent or unauthorized, report physical verification as pending.
+- Use the lab's pinned `agent-device` CLI directly for the phone. Run these commands from the repository root, setting the two variables above after identifying the phone.
+
+  ```sh
+  cw_lab=${CODEWIDE_ANDROID_LAB:-${XDG_DATA_HOME:-$HOME/.local/share}/codewide-android-lab}
+  export PATH="${ANDROID_HOME:-$cw_lab/sdk}/platform-tools:$PATH"
+  adb devices -l
+  # On a host without the CLI, install the version pinned in scripts/android-agent/start:
+  # npm install --prefix "$cw_lab/tools" --no-audit --no-fund agent-device@0.21.39
+  cw_phone() {
+    "$cw_lab/tools/node_modules/.bin/agent-device" "$@" --platform android \
+      --serial "${CW_PHONE_SERIAL:?select the phone serial}" --session "${CW_PHONE_SESSION:-codewide-phone}"
+  }
+  cw_phone open "${CW_ANDROID_APP:?select the installed package}" --foreground
+  cw_phone snapshot -i
+  ```
+
+- Act on a ref from the current snapshot (for example, `cw_phone press @e7`), then take a fresh snapshot and check the expected visible result. For visual bugs, capture the affected screen with `cw_phone screenshot <output.png>`. For scroll performance, verify that the viewport moved and measure the first appearance of rows separately from a repeat pass. Report the device model, build, scenario and observed result. Run `cw_phone close` when the session is finished.
+- For an emulator run, `pnpm dev:android:agent` starts the dedicated AVD and Metro with Fast Refresh. Use `./scripts/android-agent/device` for the same interactions. That wrapper checks the lab AVD and pins its serial. Label emulator results explicitly. [Android lab setup](docs/development.md#local-android-emulator-for-agents)
+
 ## Frequently changing interaction state
 
 - Keep frequently changing interaction state that React needs in a stable owner-held Legend State observable, whether one or several components consume it. Pass the observable owner through a narrow context or typed props when needed, and subscribe with `useSelector` only where a value is rendered. Do not mirror the same state into component-local React state or force a parent to rerender on every update.
@@ -104,7 +126,8 @@ Use only the repository-owned one-shot release commands:
 
 Rules:
 
-- In the local `integration/release-candidate` context, Sergey's unqualified instruction to publish, release, deploy, or make the current test build available means a complete Preview release: run exactly `./scripts/release-candidate-companion` and then `./scripts/release-candidate-android`. It never means a production release. For an explicitly requested Preview OTA, run exactly `./scripts/release-candidate-android-ota`. Agents must not manually run their lower-level build, validation, Gradle, install, restart, artifact-copy, bundle-signing, manifest, page, or zrok steps. Diagnose and fix a failed one-shot, then rerun that same one-shot.
+- In the local `integration/release-candidate` context, an unqualified release request targets Preview. Publish the requested products and any counterpart update required for compatibility. When the request leaves products unspecified, select them from the changes being delivered. Use `./scripts/release-candidate-companion` for Companion, `./scripts/release-candidate-android-ota` for a compatible Android JS or asset update, and `./scripts/release-candidate-android` for a native change, a new runtime, or an explicitly requested APK.
+- When publishing both products, finish the Companion one-shot before starting the selected Android one-shot. For a single product, run only its one-shot. Each one-shot owns its build, validation, installation or restart, artifact signing, manifest and download-site updates, and zrok setup.
 - Each release-candidate one-shot is the sole validator and publisher for its path. Do not run separate preflight or postflight commands, including Git status/diff checks, tests, service checks, HTTP requests, manifest reads, checksum verification, or a second successful release for independent confirmation. Start the documented one-shot, wait silently on that same process until it exits, then report its final JSON. Run diagnostics only after that one-shot itself fails, and only to identify and fix the reported failing stage before rerunning the same one-shot.
 - The Preview OTA one-shot is only for JavaScript, TypeScript and bundled asset changes compatible with the runtime already named by the published Preview manifest. Any change to `apps/android/android/**`, native dependencies or patches, the update certificate, application configuration that changes native output, or a required native module must use `./scripts/release-candidate-android` and a new version code instead.
 - The release-candidate rule does not authorize a production publish. Production release commands still require Sergey to name or explicitly authorize the production release.

@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import type { ReactNode } from "react";
 import { StyleSheet, View, type TextStyle, type ViewStyle } from "react-native";
 
 import type { PullRequestOverview, PullRequestRow } from "../../../data/forgePullRequestContract";
@@ -7,15 +8,16 @@ import { AppText as Text } from "../../../ui/Typography";
 import { colors, iconSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
 
 /**
- * The PR's identity as the forge presents it: the full title, a filled state
- * pill, who merges which branch into which, and the change stats. The age comes
- * from the PR's list row when one is loaded; the overview read does not carry it.
+ * The PR title, state, author and source-to-target branches. The status line
+ * also hosts the available verdict and the update age from a loaded list row.
  */
 export function StatusHeader({
+  children,
   listRow,
   nowMs,
   overview,
 }: {
+  readonly children: ReactNode;
   readonly listRow: PullRequestRow | null;
   readonly nowMs: number;
   readonly overview: PullRequestOverview;
@@ -26,24 +28,39 @@ export function StatusHeader({
       <Text accessibilityRole="header" selectable style={styles.title}>
         {overview.title}
       </Text>
-      <StatePill state={overview.state} />
-      <Text style={styles.byline}>
-        <Text style={styles.author}>{overview.author}</Text>
-        {" wants to merge into "}
-        <Text style={styles.branch}>{overview.baseBranch}</Text>
-        {" from "}
-        <Text style={styles.branch}>{overview.headBranch}</Text>
-      </Text>
-      <View style={styles.stats}>
-        <Text style={styles.meta}>{`${String(overview.stats.files)} files`}</Text>
-        <Text
-          style={[styles.meta, styles.additions]}
-        >{`+${String(overview.stats.additions)}`}</Text>
-        <Text
-          style={[styles.meta, styles.deletions]}
-        >{`−${String(overview.stats.deletions)}`}</Text>
-        {age === "" ? null : <Text style={styles.meta}>{`· updated ${age}`}</Text>}
+      <View style={styles.statusLine}>
+        <StatusByline age={age} author={overview.author} state={overview.state} />
+        {children}
       </View>
+      <Text
+        accessibilityLabel={`From ${overview.headBranch} into ${overview.baseBranch}`}
+        selectable
+        style={styles.branches}
+      >
+        {overview.headBranch}
+        <Text style={styles.arrow}>{" → "}</Text>
+        <Text style={styles.target}>{overview.baseBranch}</Text>
+      </Text>
+    </View>
+  );
+}
+
+function StatusByline({
+  age,
+  author,
+  state,
+}: {
+  readonly age: string;
+  readonly author: string;
+  readonly state: PullRequestOverview["state"];
+}): React.JSX.Element {
+  return (
+    <View style={styles.metadata}>
+      <StatePill state={state} />
+      <Text style={styles.byline}>
+        <Text style={styles.author}>{author}</Text>
+        {age === "" ? null : ` · updated ${age}`}
+      </Text>
     </View>
   );
 }
@@ -59,21 +76,21 @@ function StatePill({ state }: { readonly state: PullRequestOverview["state"] }) 
 }
 
 const styles = StyleSheet.create({
-  additions: {
-    color: colors.success,
+  arrow: {
+    color: colors.textDim,
   },
   author: {
     color: colors.text,
     fontWeight: typeWeight.medium,
   },
-  branch: {
+  branches: {
     ...typeScale.code,
-    backgroundColor: colors.surfaceContainerHigh,
-    color: colors.text,
+    color: colors.textMuted,
   },
   byline: {
-    ...typeScale.body,
+    ...typeScale.label,
     color: colors.textMuted,
+    flexShrink: 1,
   },
   closedLabel: {
     color: colors.error,
@@ -81,16 +98,16 @@ const styles = StyleSheet.create({
   closedSurface: {
     backgroundColor: colors.errorContainer,
   },
-  deletions: {
-    color: colors.error,
-  },
   header: {
-    alignItems: "flex-start",
-    gap: spacing.xs,
+    gap: spacing.xxs,
   },
-  meta: {
-    ...typeScale.label,
-    color: colors.textMuted,
+  metadata: {
+    alignItems: "center",
+    columnGap: spacing.xs,
+    flexDirection: "row",
+    flexGrow: 1,
+    flexShrink: 1,
+    maxWidth: "100%",
   },
   neutralLabel: {
     color: colors.textMuted,
@@ -116,12 +133,15 @@ const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
-  stats: {
+  statusLine: {
     alignItems: "center",
     columnGap: spacing.xs,
     flexDirection: "row",
     flexWrap: "wrap",
     rowGap: spacing.xxs,
+  },
+  target: {
+    color: colors.text,
   },
   title: {
     ...typeScale.heading,

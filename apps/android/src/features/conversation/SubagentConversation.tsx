@@ -67,9 +67,10 @@ export function SubagentConversation({
   const scope = `${connectionId}\u0000${thread.id}`;
   const viewport = useTimelineViewportState(scope);
   const overlayState = useOverlayScrollState();
+  const historyViewport = { ...COMPLETE_STATIC_THREAD_HISTORY, ...view.historyBounds };
   const pagination = usePaginationTrim({
     fullscreenScrollOwnership: overlayState.fullscreenScrollOwnership,
-    historyViewport: COMPLETE_STATIC_THREAD_HISTORY,
+    historyViewport,
     paginationEdgeLockRef: viewport.paginationEdgeLockRef,
     paginationTrimTimerRef: viewport.paginationTrimTimerRef,
   });
@@ -189,6 +190,7 @@ export function SubagentConversation({
       getStableTransferAccess={getStableTransferAccess}
       getTransferAccess={getTransferAccess}
       headerSubtitle={view.parentBreadcrumb}
+      historyViewport={historyViewport}
       onBack={onBack}
       onFixUnsupportedBlock={fixUnsupportedBlock}
       onOpenSubagentThread={onOpenSubagent}

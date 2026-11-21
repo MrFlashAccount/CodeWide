@@ -1,4 +1,13 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
+import type { PullRequestKey } from "../data/forgeContract";
+
 import type { ReviewChatWorkspaceCandidate } from "../data/forgeMutationContract";
+
+/** The draft for a PR survives route changes and is isolated by the composer connection. */
+export function reviewChatDraftId(pullRequest: PullRequestKey): string {
+  return "review-chat-draft-" + bytesToHex(sha256(utf8ToBytes(pullRequest)));
+}
 
 /** A scenario that starts in the review chat once the user confirms the draft's project. */
 export type ReviewChatDraftScenario =
@@ -12,7 +21,7 @@ export type ReviewChatDraftScenario =
 export type ReviewChatDraft = {
   /** The project the chat will run in; there is no server default. */
   readonly cwd: string | null;
-  /** The composer draft identity, stable for the route. */
+  /** The composer draft identity, stable for the pull request on this connection. */
   readonly id: string;
   readonly scenario: ReviewChatDraftScenario | null;
   /** The Companion's ranked projects for the PR; `null` until it answers. */

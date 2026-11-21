@@ -388,9 +388,11 @@ it("docks one composer under the diff on a line tap, with no modal, picker or ti
   const server = companion();
   const view = await renderChanges(server);
 
+  expect(view.getByTestId("pull-request-linked-chat")).toBeVisible();
   await tapLine();
 
   const composer = view.getByTestId("review-line-composer");
+  expect(view.queryByTestId("pull-request-linked-chat")).toBeNull();
   expect(within(composer).getByTestId("review-line-composer-anchor")).toHaveTextContent(
     "main.rs · line 4",
   );
@@ -407,7 +409,7 @@ it("docks one composer under the diff on a line tap, with no modal, picker or ti
   // No sheet or scrim covers the diff; it stays mounted and keeps taking line taps.
   expect(sheetRenders).toBe(0);
   expect(view.getByTestId("pull-request-diff")).toBeOnTheScreen();
-  expect(view.getByTestId("review-dock-submit")).toBeOnTheScreen();
+  expect(view.queryByTestId("review-dock-submit")).toBeNull();
   expect(postedCommands().map(({ command }) => command)).not.toContain("composer");
   expect(highlighted()).toMatchObject({ line: 4, path: PATH, side: "new" });
 });
@@ -554,6 +556,7 @@ it("keeps unsent text on its line after Close", async () => {
   fireEvent.press(within(view.getByTestId("review-line-composer")).getByLabelText("Close"));
 
   expect(view.queryByTestId("review-line-composer")).toBeNull();
+  expect(view.getByTestId("pull-request-linked-chat")).toBeVisible();
   await tapLine();
   expect(within(view.getByTestId("review-line-composer")).getByTestId("native-editor")).toHaveProp(
     "defaultValue",

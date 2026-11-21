@@ -76,15 +76,15 @@ impl DiffCatalogSource for PullRequestCatalog {
         for _ in 0..MAX_PAGES {
             let page = files_page(&context, &key, &identity, &head, cursor).await?;
             for file in page.files {
-                if let PatchWire::Present { text, .. } = &file.patch {
-                    let hunks = parse_patch(&file.path, text);
-                    if !hunks.is_empty() {
-                        files.push(CatalogFile {
-                            path: file.path.clone(),
-                            hunks,
-                        });
-                    }
-                }
+                // File drafts also survive binary, rename-only and mode-only changes.
+                let hunks = match &file.patch {
+                    PatchWire::Present { text, .. } => parse_patch(&file.path, text),
+                    _ => Vec::new(),
+                };
+                files.push(CatalogFile {
+                    path: file.path,
+                    hunks,
+                });
             }
             match page.next_cursor {
                 Some(next) => cursor = Some(next),

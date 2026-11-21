@@ -16,6 +16,7 @@
 pub mod account_pool;
 mod active_compactions;
 pub mod catalog;
+mod catalog_access;
 mod catalog_summary;
 mod catalog_visibility;
 mod client_tools;
@@ -29,6 +30,7 @@ pub mod history_service;
 pub mod host;
 mod mapping;
 pub mod message_search;
+mod model_names;
 pub mod pricing;
 pub mod resources;
 pub mod rollout;
@@ -57,7 +59,7 @@ use agent_core::{
         TurnStartParams, TurnStartResult, TurnSteerParams, TurnSteerResult,
         thread_not_found_message,
     },
-    naming::{CatalogNames, ModelNaming},
+    naming::ModelNaming,
     provider::{
         AdmissionError, AgentProvider, ClientToolHost, DispatchError, NativeMessageSearch,
         NativeSurface, NativeThreadResources, NativeThreadStore, ProviderError, ProviderEvent,
@@ -131,7 +133,7 @@ pub struct CodexProvider {
     session_instructions: session_instructions::CodexSessionInstructions,
     compactions: Arc<ActiveCompactions>,
     /// The display names of the last model list read.
-    names: Arc<CatalogNames>,
+    names: model_names::ModelNames,
     /// Threads this App Server connection generation is subscribed to.
     subscriptions: Arc<subscriptions::ThreadSubscriptions>,
     id: ProviderId,
@@ -148,7 +150,7 @@ impl CodexProvider {
             client_tools: Arc::new(CodexClientTools::default()),
             session_instructions: session_instructions::CodexSessionInstructions::default(),
             compactions: Arc::new(ActiveCompactions::default()),
-            names: Arc::new(CatalogNames::default()),
+            names: model_names::ModelNames::default(),
             subscriptions: Arc::new(subscriptions::ThreadSubscriptions::default()),
             id: codex_provider_id(),
         }
@@ -213,18 +215,42 @@ impl CodexProvider {
         Ok(thread)
     }
 
+    fn begin_request(&self, method: &str) -> u64 {
+        let generation = self.upstream.generation();
+        if method == "thread/list"
+            && let Some(names) = self.names.connection(generation)
+        {
+            names.start(&self.upstream, generation);
+        }
+        generation
+    }
+
+    async fn observe_response(&self, generation: u64, method: &str, response: &Value) {
+        self.subscriptions
+            .observe_response(generation, method, response);
+        if matches!(method, "thread/list" | "model/list")
+            && let Some(rows) = response.pointer("/result/data").and_then(Value::as_array)
+            && let Some(names) = self.names.connection(generation)
+        {
+            if method == "model/list" {
+                names.observe_page(rows);
+            } else {
+                names.wait_for_list(rows).await;
+            }
+        }
+    }
+
     async fn rpc(&self, method: &str, mut params: Value) -> Result<Value, ProviderError> {
         self.session_instructions
             .apply(&self.upstream, method, &mut params)
             .await;
-        let generation = self.upstream.generation();
+        let generation = self.begin_request(method);
         let response = self
             .upstream
             .request(json!({"id": format!("codex-adapter:{method}"), "method": method, "params": params}))
             .await
             .map_err(transport_error)?;
-        self.subscriptions
-            .observe_response(generation, method, &response);
+        self.observe_response(generation, method, &response).await;
         rpc_result(response)
     }
 
@@ -257,14 +283,13 @@ impl CodexProvider {
         self.session_instructions
             .apply(&self.upstream, method, &mut params)
             .await;
-        let generation = self.upstream.generation();
+        let generation = self.begin_request(method);
         let (response, fence) = self
             .upstream
             .request_fenced(json!({"id": format!("codex-adapter:{method}"), "method": method, "params": params}))
             .await
             .map_err(transport_error)?;
-        self.subscriptions
-            .observe_response(generation, method, &response);
+        self.observe_response(generation, method, &response).await;
         let fence = ProviderFence::new(async move { fence.wait().await.map_err(transport_error) });
         Ok((rpc_result(response)?, fence))
     }
@@ -520,14 +545,6 @@ impl AgentProvider for CodexProvider {
             .and_then(Value::as_array)
             .map(|rows| rows.iter().filter_map(mapping::model).collect())
             .unwrap_or_default();
-        if !models.is_empty() {
-            self.names.replace(models.iter().flat_map(|model| {
-                [
-                    (model.id.clone(), model.display_name.clone()),
-                    (model.model.clone(), model.display_name.clone()),
-                ]
-            }));
-        }
         Ok(ModelCatalog {
             models,
             prices: pricing::openai_prices().collect(),
@@ -880,7 +897,9 @@ impl AgentProvider for CodexProvider {
     }
 
     fn model_names(&self) -> Option<Arc<dyn ModelNaming>> {
-        Some(self.names.clone())
+        self.names
+            .connection(self.upstream.generation())
+            .map(|names| -> Arc<dyn ModelNaming> { names.table.clone() })
     }
 
     fn user_text_cleaner(&self) -> Option<Arc<dyn agent_core::user_text::UserTextCleaner>> {
@@ -897,14 +916,13 @@ impl NativeSurface for CodexProvider {
             .await;
         let page = TurnsPage::of(&request);
         let method = request_method(&request);
-        let generation = self.upstream.generation();
+        let generation = self.begin_request(&method);
         let mut response = self
             .upstream
             .request(request)
             .await
             .map_err(transport_error)?;
-        self.subscriptions
-            .observe_response(generation, &method, &response);
+        self.observe_response(generation, &method, &response).await;
         if let Some(page) = &page {
             self.compactions.complete_turns_page(page, &mut response);
         }
@@ -921,14 +939,13 @@ impl NativeSurface for CodexProvider {
             .await;
         let page = TurnsPage::of(&request);
         let method = request_method(&request);
-        let generation = self.upstream.generation();
+        let generation = self.begin_request(&method);
         let (mut response, fence) = self
             .upstream
             .request_fenced(request)
             .await
             .map_err(transport_error)?;
-        self.subscriptions
-            .observe_response(generation, &method, &response);
+        self.observe_response(generation, &method, &response).await;
         if let Some(page) = &page {
             self.compactions.complete_turns_page(page, &mut response);
         }

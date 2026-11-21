@@ -1,13 +1,13 @@
 import { setStringAsync } from "expo-clipboard";
 import { Linking, Share } from "react-native";
 
-import { safeProviderUrl } from "../../../data/forgeProviderUrl";
+import { pullRequestPageUrl } from "../../../data/forgeProviderUrl";
 import type { PullRequestOverview } from "../../../data/forgePullRequestContract";
 import type { ExtraMenuItem } from "./OverflowActionsMenu";
 
 /**
- * Offers the displayed PR number and full title for copying. Link actions require an HTTPS
- * page on the account's host. The host stands in until the provider's name is available.
+ * Offers the displayed number and title for copying and the Companion-approved page for link
+ * actions. The account host stands in until the provider's name is available.
  */
 export function pullRequestMenuItems({
   forgeName,
@@ -27,7 +27,7 @@ export function pullRequestMenuItems({
   }
   const metadata: readonly ExtraMenuItem[] = [
     {
-      icon: "keypad-outline",
+      icon: "copy-outline",
       id: "copyId",
       label: "Copy ID",
       onSelect: () => {
@@ -43,7 +43,7 @@ export function pullRequestMenuItems({
       },
     },
   ];
-  const safe = safeProviderUrl(overview.webUrl, host);
+  const safe = pullRequestPageUrl(overview);
   if (safe === null) {
     return metadata;
   }

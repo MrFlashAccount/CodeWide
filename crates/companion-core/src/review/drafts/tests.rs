@@ -13,7 +13,7 @@ fn input(id: &str) -> DraftInput {
             },
             revision: "head-1".into(),
         },
-        anchor: DraftAnchor {
+        anchor: DraftAnchor::Line {
             path: "a.rs".into(),
             side: Side::New,
             start_line: 1,
@@ -121,4 +121,46 @@ fn an_identical_put_replays_the_acknowledged_create_or_edit() {
         .put(&edited, Some(created.version), Author::User, None, "t3")
         .expect("replay edit");
     assert_eq!(replayed_edit, updated);
+}
+
+#[test]
+fn whole_file_drafts_follow_the_path_without_a_hunk_and_stop_when_it_disappears() {
+    let directory = tempfile::tempdir().expect("dir");
+    let mut draft = input("00000000-0000-4000-8000-000000000003");
+    draft.anchor = DraftAnchor::File {
+        path: "binary.dat".into(),
+        kind: FileAnchorKind::File,
+    };
+    let key = draft.revision.source.storage_key();
+    let db = directory.path().join("state.redb");
+    {
+        let store = DraftStore::new(Arc::new(IndexStore::open(&db).expect("store")));
+        store
+            .put(&draft, None, Author::User, None, "t0")
+            .expect("save");
+    }
+    let store = DraftStore::new(Arc::new(IndexStore::open(&db).expect("reopen")));
+    let mut catalog = DiffCatalog {
+        revision: "head-2".into(),
+        files: vec![crate::review::source::CatalogFile {
+            path: "binary.dat".into(),
+            hunks: vec![],
+        }],
+    };
+    store.reanchor(&key, &catalog, "t1").expect("retain file");
+    let items = store.list(&key).expect("list");
+    assert_eq!(items[0].anchor, draft.anchor);
+    assert_eq!(items[0].revision.revision, "head-2");
+    assert_eq!(
+        items[0].routing.pr().map(|pr| pr.state),
+        Some(PrState::Pending)
+    );
+    catalog.files.clear();
+    catalog.revision = "head-3".into();
+    store.reanchor(&key, &catalog, "t2").expect("remove file");
+    let items = store.list(&key).expect("list");
+    assert_eq!(
+        items[0].routing.pr().map(|pr| pr.state),
+        Some(PrState::Outdated)
+    );
 }

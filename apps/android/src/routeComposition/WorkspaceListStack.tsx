@@ -1,3 +1,4 @@
+import { PaneBody } from "../ui/PaneBody";
 import { Stack, useRouter } from "expo-router";
 import { useEffect } from "react";
 import { View, type LayoutChangeEvent } from "react-native";
@@ -93,10 +94,12 @@ function CatalogHeader(): React.JSX.Element | null {
 function ListContentNavigator(): React.JSX.Element {
   const reducedMotion = useReducedMotionPreference();
   return (
-    <Stack screenOptions={reducedMotion ? v1RouteScreenOptions : v1ProjectListScreenOptions}>
-      <Stack.Screen name="index" />
-      <Stack.Screen name="project/[sessionId]" />
-    </Stack>
+    <PaneBody>
+      <Stack screenOptions={reducedMotion ? v1RouteScreenOptions : v1ProjectListScreenOptions}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="project/[sessionId]" />
+      </Stack>
+    </PaneBody>
   );
 }
 

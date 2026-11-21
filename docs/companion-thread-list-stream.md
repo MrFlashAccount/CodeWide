@@ -48,6 +48,15 @@ Machine-readable limits live only in `crates/companion-core/contract/v1.json`.
 
 ## Wire contract
 
+Rows carry the provider's selected `model` and `reasoningEffort` when available. The optional
+`codewideModelLabel` names this model and `codewidePermissions` identifies the effective profile
+last reported by the provider. Native Codex rows can also carry `codewideAccessPolicy`, containing
+the sandbox and approval mode. Companion reads these policies together from the Codex state index
+for the requested page. This lets a cold client display access even without a named profile.
+Settings notifications update these fields together without changing chat recency. Android
+persists them with the row cursor and can display them while loading the conversation. Controls
+in a list row are presentation data. Command admission uses the provider's own authority.
+
 Client → Companion:
 
 - `hello` carries the required field `"listStream": {"visible": boolean}`.

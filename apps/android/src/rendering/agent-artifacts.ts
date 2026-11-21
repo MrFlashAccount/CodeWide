@@ -5,7 +5,7 @@ import { compactTurnArtifactReferences } from "../data/turn-artifacts";
 
 import { hostFileUrlPath } from "./document-preview";
 import { privateImageAssetProjection, safeImageUri } from "./image-source";
-import { attachmentSourceKey, type UserMessageAttachment } from "./user-message-attachments";
+import { attachmentRenderKey, type UserMessageAttachment } from "./user-message-attachments";
 
 interface MessageArtifacts {
   readonly attachments: readonly UserMessageAttachment[];
@@ -21,7 +21,7 @@ export function projectAgentArtifacts(turn: unknown): UserMessageAttachment[] {
     if (attachment === null) {
       return;
     }
-    const key = attachmentSourceKey(attachment.source);
+    const key = attachmentRenderKey(attachment.source);
     if (seen.has(key)) {
       return;
     }

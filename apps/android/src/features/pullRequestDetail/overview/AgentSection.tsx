@@ -282,12 +282,11 @@ const styles = StyleSheet.create({
   row: {
     alignItems: "center",
     flexDirection: "row",
-    minHeight: controlSize.touch + spacing.xs,
+    minHeight: controlSize.touch,
     paddingRight: spacing.compact + spacing.optical,
   },
   section: {
     gap: spacing.xs,
-    paddingTop: spacing.xs,
   },
   // Inset to the label, as the Changes and Status rows inset theirs.
   separator: {

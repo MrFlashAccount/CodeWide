@@ -2,7 +2,8 @@ import { useConversationCleanup, useConversationRef } from "../ui/use-conversati
 
 import { useEvent } from "../react/useEvent";
 import { useLatest } from "../react/useLatest";
-import { threadHistoryContainsBeginning, type ThreadHistoryState } from "./thread-pagination";
+import type { ThreadWindowHistoryBounds } from "./threadWindowHistoryBounds";
+import type { ThreadHistoryState } from "./thread-pagination";
 import {
   recordThreadHistoryTelemetry,
   reportThreadHistoryLoadFailure,
@@ -14,10 +15,7 @@ import {
 } from "./thread-history-load-coordinator";
 import { ThreadHistoryViewportFill } from "./thread-history-viewport-fill";
 
-export type ThreadHistoryViewport = {
-  completeTurnHeaders: boolean;
-  containsBeginning: boolean;
-  containsLatest: boolean;
+export type ThreadHistoryViewport = ThreadWindowHistoryBounds & {
   loadLatest: () => Promise<void>;
   loadNewer: () => Promise<void>;
   loadOlder: () => Promise<void>;
@@ -27,12 +25,10 @@ export type ThreadHistoryViewport = {
 };
 
 type ThreadHistoryControllerOptions = {
+  bounds: ThreadWindowHistoryBounds;
   connectionId: string;
-  cursorState: Pick<ThreadHistoryState, "historyEpoch" | "nextCursor"> | null;
   enabled: boolean;
   historyEpoch: number;
-  isEarliestRange: boolean;
-  isLatestRange: boolean;
   pullRange: (direction: "older" | "newer" | "latest") => Promise<boolean>;
   putState: (state: ThreadHistoryState) => void;
   readHistoryCursor: () => string | null | undefined;
@@ -133,6 +129,9 @@ export function useThreadHistoryController(
       return existing;
     }
     const context = contextRef.current;
+    if (direction === "older" && context.bounds.containsBeginning) {
+      return false;
+    }
     if (runtime.coordinator.begin(direction)) {
       const current = context.readState();
       if (current !== null && current.historyEpoch === context.historyEpoch) {
@@ -223,12 +222,7 @@ export function useThreadHistoryController(
   });
 
   return {
-    completeTurnHeaders: options.isLatestRange && options.cursorState?.nextCursor === null,
-    containsBeginning: threadHistoryContainsBeginning(
-      options.isEarliestRange,
-      options.cursorState?.nextCursor,
-    ),
-    containsLatest: options.isLatestRange,
+    ...options.bounds,
     loadLatest,
     loadNewer,
     loadOlder,

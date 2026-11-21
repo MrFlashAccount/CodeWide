@@ -1,5 +1,4 @@
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { COMPLETE_STATIC_THREAD_HISTORY } from "../../data/use-thread-history-controller";
 import { useConversationOwner } from "../../ui/use-conversation-owner";
 import { useWindowLayout } from "../workspace/useWindowLayout";
 import { projectConversationPresentation } from "./conversationPresentation";
@@ -20,6 +19,7 @@ import { useUnreadReceiptActions, useUnreadReceiptState } from "./timeline/unrea
 
 /** Binds existing scoped owners in their original hook order; owns no replacement state. */
 export function useReadConversationTimelineBindings(props: {
+  historyViewport: ConversationReadSurfaceProps["historyViewport"];
   overlayState: ConversationReadSurfaceProps["overlayState"];
   remoteThread: ConversationReadSurfaceProps["remoteThread"];
   server: ConversationReadSurfaceProps["server"];
@@ -36,7 +36,7 @@ export function useReadConversationTimelineBindings(props: {
     setConversationPaneHeight: setPaneHeight,
     setNarrowConversationPane: setNarrow,
   } = useConversationPaneGeometry();
-  const historyViewport = COMPLETE_STATIC_THREAD_HISTORY;
+  const { historyViewport } = props;
   const search = useTimelineSearchState(composerScope, null);
   const anchor = useHistoryAnchorState(composerScope, connectionId, props.thread.id, undefined);
   const unread = useUnreadReceiptState(composerScope);
@@ -53,7 +53,7 @@ export function useReadConversationTimelineBindings(props: {
   });
   const presentation = projectConversationPresentation(
     props.remoteThread,
-    true,
+    historyViewport.completeTurnHeaders,
     timeline,
     props.thread.state,
     null,

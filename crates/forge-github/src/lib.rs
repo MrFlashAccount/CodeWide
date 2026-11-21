@@ -147,6 +147,7 @@ impl GithubPlugin {
                 capability::DIFF.into(),
                 capability::ACTIONS.into(),
                 capability::REVIEW.into(),
+                capability::FILE_REVIEW.into(),
                 capability::CHECKS.into(),
                 capability::VIEWED.into(),
                 capability::RESOLVE.into(),

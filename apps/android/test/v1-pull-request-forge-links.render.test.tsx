@@ -40,7 +40,6 @@ it("opens an https review page on the account host", () => {
 const UNSAFE_URLS = [
   "codewide://pair?token=x",
   "http://github.com/acme/app/pull/91",
-  "https://github.com.evil.example/acme/app/pull/91",
   "https://user:secret@github.com/acme/app/pull/91",
 ];
 
@@ -76,10 +75,12 @@ it("copies the PR metadata verbatim and copies, shares and opens its forge link"
   );
 });
 
-it.each(UNSAFE_URLS)("keeps only the local copy actions for %s", (url) => {
+// The Companion returns an empty webUrl for an undeclared host (forge::wire::page_on_host).
+it.each(["", ...UNSAFE_URLS])("keeps only the local copy actions for %s", (url) => {
   const copy = jest.spyOn(Clipboard, "setStringAsync").mockResolvedValue(true);
   const items = menu(url);
   expect(items.map((item) => item.label)).toEqual(["Copy ID", "Copy title"]);
+  expect(items[0]?.icon).toBe("copy-outline");
   items[0]?.onSelect();
   expect(copy).toHaveBeenLastCalledWith(metadata.number);
   items[1]?.onSelect();
@@ -102,8 +103,11 @@ it("reports a failed copy with its real error", async () => {
   expect(onError).toHaveBeenCalledWith("Could not copy the link", failure);
 });
 
-it.each(UNSAFE_URLS)("shows no forge link for %s", (reviewUrl) => {
-  const view = renderDock(reviewUrl);
-  expect(view.queryByText("View on forge")).toBeNull();
-  expect(Linking.openURL).not.toHaveBeenCalled();
-});
+it.each([...UNSAFE_URLS, "https://github.com.evil.example/acme/app/pull/91"])(
+  "shows no forge link for %s",
+  (reviewUrl) => {
+    const view = renderDock(reviewUrl);
+    expect(view.queryByText("View on forge")).toBeNull();
+    expect(Linking.openURL).not.toHaveBeenCalled();
+  },
+);

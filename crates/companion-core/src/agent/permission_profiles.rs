@@ -39,6 +39,7 @@ pub struct ProfileObservations {
 pub(crate) struct ObservedPermissions {
     pub(crate) profile: String,
     pub(crate) execution: Option<ExecutionPolicy>,
+    display_named: bool,
 }
 
 impl ProfileObservations {
@@ -52,6 +53,7 @@ impl ProfileObservations {
         let observed = ObservedPermissions {
             profile: profile.to_owned(),
             execution,
+            display_named: true,
         };
         let mut profiles = self
             .profiles
@@ -86,6 +88,14 @@ impl ProfileObservations {
                 profile,
                 execution::event_policy(payload),
             );
+        } else if payload["method"] == "thread/settings/updated"
+            && payload
+                .pointer("/params/threadSettings/sandboxPolicy/type")
+                .and_then(Value::as_str)
+                .is_some()
+            && let Some(id) = payload.pointer("/params/threadId").and_then(Value::as_str)
+        {
+            self.clear_display_name(provider, id);
         }
     }
 
@@ -96,13 +106,45 @@ impl ProfileObservations {
         method: &str,
         result: &Value,
     ) -> Option<ObservedPermissions> {
-        let (thread_id, profile) = observe::result_profile(method, result)?;
+        let Some((thread_id, profile)) = observe::result_profile(method, result) else {
+            if matches!(method, "thread/start" | "thread/resume" | "thread/fork")
+                && result
+                    .pointer("/sandbox/type")
+                    .and_then(Value::as_str)
+                    .is_some()
+                && let Some(id) = result.pointer("/thread/id").and_then(Value::as_str)
+            {
+                self.clear_display_name(provider, id);
+            }
+            return None;
+        };
         Some(self.record(
             provider,
             thread_id,
             profile,
             execution::result_policy(method, result),
         ))
+    }
+
+    fn clear_display_name(&self, provider: &ProviderId, id: &str) {
+        if let Some(entry) = self
+            .profiles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_mut(&(provider.clone(), id.to_owned()))
+        {
+            entry.display_named = false;
+        }
+    }
+
+    /// Current display name when the last policy still maps to a named profile.
+    pub(crate) fn display_name(&self, provider: &ProviderId, id: &str) -> Option<String> {
+        self.profiles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(provider.clone(), id.to_owned()))
+            .filter(|entry| entry.display_named)
+            .map(|entry| entry.profile.clone())
     }
 
     /// Returns the most recently observed effective profile of `thread_id`.
@@ -288,6 +330,21 @@ mod tests {
             None,
             "an external sandbox stays unknown"
         );
+    }
+
+    #[test]
+    fn external_sandbox_retires_the_previously_reported_list_label() {
+        let observations = ProfileObservations::default();
+        let provider = ProviderId::from_static("codex");
+        observations.record_created(&provider, "t", ":workspace", None);
+        assert_eq!(
+            observations.display_name(&provider, "t").as_deref(),
+            Some(":workspace")
+        );
+        observations.observe_event(&provider, &json!({"method":"thread/settings/updated","params":{
+            "threadId":"t","threadSettings":{"activePermissionProfile":null,"sandboxPolicy":{"type":"externalSandbox"}}
+        }}));
+        assert_eq!(observations.display_name(&provider, "t"), None);
     }
 
     #[test]

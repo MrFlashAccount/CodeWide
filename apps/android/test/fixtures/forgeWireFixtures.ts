@@ -294,6 +294,7 @@ export const overview91 = {
         kind: "updateBranch",
         label: "Update branch",
         order: 2,
+        placement: "overflow",
       }),
       action("address", { kind: "addressComments", label: "Address comments", order: 3 }),
       action("merge", {

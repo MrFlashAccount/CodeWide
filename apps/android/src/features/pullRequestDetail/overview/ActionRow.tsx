@@ -10,24 +10,19 @@ import { overviewStyles as styles } from "./overview.styles";
  * the app bar ⋯. Agent scenarios placed in the row show in the Agent section below instead.
  */
 export function ActionRow({
-  onLayoutWidth,
   onRun,
   pending,
   slots,
 }: {
-  readonly onLayoutWidth: (width: number) => void;
   readonly onRun: (action: ActionDescriptor) => void;
   readonly pending: Readonly<Record<string, true>>;
   readonly slots: Pick<ActionSlots, "primary" | "secondary">;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
+  if (slots.primary.length === 0 && slots.secondary.length === 0) {
+    return null;
+  }
   return (
-    <View
-      onLayout={(event) => {
-        onLayoutWidth(event.nativeEvent.layout.width);
-      }}
-      style={styles.row}
-      testID="pull-request-action-row"
-    >
+    <View style={styles.row} testID="pull-request-action-row">
       {slots.primary.map((action) => (
         <CatalogActionButton
           action={action}

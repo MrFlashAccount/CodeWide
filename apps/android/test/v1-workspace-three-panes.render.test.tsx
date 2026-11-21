@@ -218,7 +218,6 @@ describe("pane widths", () => {
     expect(view.getByTestId("center")).toHaveStyle({ width: "50%" });
     expect(view.getByTestId("right")).toHaveStyle({
       left: "50%",
-      transform: [{ translateX: 0 }],
       width: "50%",
     });
   });

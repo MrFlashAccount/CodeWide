@@ -1,5 +1,6 @@
 import type { ActionDescriptor, ActionKind } from "../../../data/forgeActionCatalog";
 import type { ActionMenuIconName, ActionMenuItem } from "../../../ui/ActionMenu.types";
+import { useEvent } from "../../../react/useEvent";
 import { OverflowMenu } from "../../../ui/OverflowMenu";
 
 const NO_EXTRA_ITEMS: readonly ExtraMenuItem[] = [];
@@ -43,6 +44,14 @@ export function OverflowActionsMenu({
   readonly extra?: readonly ExtraMenuItem[];
   readonly onRun: (action: ActionDescriptor) => void;
 }): React.JSX.Element | null {
+  const select = useEvent((id: string) => {
+    const action = actions.find((candidate) => `action:${candidate.actionId}` === id);
+    if (action !== undefined) {
+      onRun(action);
+      return;
+    }
+    extra.find((item) => `extra:${item.id}` === id)?.onSelect();
+  });
   if (actions.length === 0 && extra.length === 0) {
     return null;
   }
@@ -65,14 +74,7 @@ export function OverflowActionsMenu({
       accessibilityLabel={accessibilityLabel}
       actions={items}
       align="end"
-      onSelect={(id) => {
-        const action = actions.find((candidate) => `action:${candidate.actionId}` === id);
-        if (action !== undefined) {
-          onRun(action);
-          return;
-        }
-        extra.find((item) => `extra:${item.id}` === id)?.onSelect();
-      }}
+      onSelect={select}
       placement="bottom"
       size={compact ? "compact" : "touch"}
     />

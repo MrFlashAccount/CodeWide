@@ -32,17 +32,32 @@ export function KeyboardDock(props: KeyboardDockProps): React.JSX.Element {
  * nothing: a moving or rearranged pane cannot leave it with a stale position.
  */
 function ActivityKeyboardDock(props: KeyboardDockProps): React.JSX.Element {
-  const { height } = useReanimatedKeyboardAnimation();
-  const { bottom } = useSafeAreaInsets();
-  const lift = useAnimatedStyle(() => ({
-    // The animation reports the open keyboard as a negative height.
-    paddingBottom: Math.max(0, -height.get() - bottom),
-  }));
+  const lift = useActivityKeyboardLift();
   return (
     <Reanimated.View pointerEvents="box-none" style={[styles.layer, lift]} testID="keyboard-dock">
       {props.children}
     </Reanimated.View>
   );
+}
+
+function useActivityKeyboardLift() {
+  const { height } = useReanimatedKeyboardAnimation();
+  const { bottom } = useSafeAreaInsets();
+  return useAnimatedStyle(() => ({
+    // The animation reports the open keyboard as a negative height.
+    paddingBottom: Math.max(0, -height.get() - bottom),
+  }));
+}
+
+function ActivityKeyboardSpacer(): React.JSX.Element {
+  const lift = useActivityKeyboardLift();
+  return <Reanimated.View pointerEvents="none" style={lift} />;
+}
+
+/** Shrinks the preceding flex content to the space above the keyboard in its own window. */
+export function KeyboardDockSpacer(): React.JSX.Element {
+  const { surface } = useOverlaySurface();
+  return surface === "fullscreen-modal" ? <DialogKeyboardSpacer /> : <ActivityKeyboardSpacer />;
 }
 
 /**
@@ -51,19 +66,25 @@ function ActivityKeyboardDock(props: KeyboardDockProps): React.JSX.Element {
  * the UI thread; the composer stays in the same RN tree as the review toolbar.
  */
 function DialogKeyboardDock(props: KeyboardDockProps): React.JSX.Element {
-  const { bottom } = useSafeAreaInsets();
   return (
     <View pointerEvents="box-none" style={styles.layer} testID="keyboard-dock">
       {props.children}
-      <Host
-        ignoreSafeAreaKeyboardInsets
-        matchContents={{ vertical: true }}
-        pointerEvents="none"
-        style={{ marginBottom: -bottom }}
-      >
-        <Spacer modifiers={[defaultMinSize({ minHeight: bottom }), imePadding()]} />
-      </Host>
+      <DialogKeyboardSpacer />
     </View>
+  );
+}
+
+function DialogKeyboardSpacer(): React.JSX.Element {
+  const { bottom } = useSafeAreaInsets();
+  return (
+    <Host
+      ignoreSafeAreaKeyboardInsets
+      matchContents={{ vertical: true }}
+      pointerEvents="none"
+      style={{ marginBottom: -bottom }}
+    >
+      <Spacer modifiers={[defaultMinSize({ minHeight: bottom }), imePadding()]} />
+    </Host>
   );
 }
 

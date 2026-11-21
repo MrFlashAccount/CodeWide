@@ -247,6 +247,15 @@ impl SessionCatalog {
         Ok(crate::catalog_summary::read(&self.state_db)?)
     }
 
+    pub(crate) fn annotate_access(&self, rows: &mut [serde_json::Value]) {
+        if !rows.is_empty()
+            && self.state_db.is_file()
+            && let Err(error) = crate::catalog_access::annotate(&self.state_db, rows)
+        {
+            tracing::debug!(%error, "catalog access policies unavailable");
+        }
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.paths.read().map_or(0, |paths| paths.len())

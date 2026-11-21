@@ -2974,6 +2974,12 @@ async fn run_fake_app_server(
                 let Message::Text(raw) = frame else { continue; };
                 let request: Value = serde_json::from_str(&raw)?;
                 let method = request.get("method").and_then(Value::as_str);
+                // The transport assertions below observe the client's forwarded RPCs.
+                // The provider discovers display names independently of those requests.
+                if method == Some("model/list") && request["params"]["includeHidden"] == true {
+                    send_value(&mut socket, &json!({"id":request["id"],"result":{"data":[],"nextCursor":null}})).await?;
+                    continue;
+                }
                 if method.is_none()
                     && request.get("id").is_some()
                     && (request.get("result").is_some() || request.get("error").is_some())
@@ -3543,7 +3549,9 @@ async fn run_catalog_visibility_app_server(
         if request.get("id").is_none() {
             continue;
         }
-        let result = if request["method"] == "thread/resume" {
+        let result = if request["method"] == "model/list" {
+            json!({"data":[], "nextCursor":null})
+        } else if request["method"] == "thread/resume" {
             assert_eq!(request["params"]["threadId"], "home");
             resumed_thread(
                 &json!({"id":"home","threadSource":"codewide-global-supervisor:mine","status":{"type":"idle"},"turns":[]}),

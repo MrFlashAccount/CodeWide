@@ -1,5 +1,8 @@
-import type { PullRequestKey } from "../../data/forgeContract";
-import type { ReviewChatWorkspaceCandidate } from "../../data/forgeMutationContract";
+import type { PullRequestKey, HeadRevision } from "../../data/forgeContract";
+import type {
+  PullRequestFile,
+  ReviewChatWorkspaceCandidate,
+} from "../../data/forgeMutationContract";
 import type { ForgeResources } from "../../data/forgeResources";
 import type { ThreadUnreadReader } from "../../data/project-unread-model";
 import type { ThreadId } from "../../data/reviewContract";
@@ -29,6 +32,7 @@ type PullRequestScreenNavigation = {
    * Leaves Details; `null` where Details has nothing behind it. A pane that declares close shows
    * its `×` instead (`ThreePanelsHeader`).
    */
+  readonly attachFile?: (file: PullRequestFile, head: HeadRevision) => void;
   readonly back: (() => void) | null;
   /** Leaves Changes for the Details screen beneath it. */
   readonly closeChanges: () => void;

@@ -1,3 +1,4 @@
+import { PaneBody } from "../../../ui/PaneBody";
 import { LegendList } from "@legendapp/list/react-native";
 import { Animated, View } from "react-native";
 import { GestureDetector } from "react-native-gesture-handler";
@@ -106,7 +107,9 @@ function PullRequestCatalogRows({
 }): React.JSX.Element {
   return (
     <View style={styles.fill}>
-      <PullRequestRows items={items} page={page} props={props} pullToSearch />
+      <PaneBody>
+        <PullRequestRows items={items} page={page} props={props} pullToSearch />
+      </PaneBody>
       <CatalogSearchPullBackdrop testID="pull-request-list-pull-backdrop" />
     </View>
   );

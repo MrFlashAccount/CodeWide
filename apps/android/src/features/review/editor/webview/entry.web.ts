@@ -1,7 +1,6 @@
 import {
   File as PierreFile,
   FileDiff,
-  processFile,
   type DiffLineAnnotation,
   type FileContents,
   type FileDiffOptions,
@@ -11,7 +10,7 @@ import {
   type OnLineClickProps,
 } from "@pierre/diffs";
 import { createFileNavigation, editorElement as requiredElement } from "./fileNavigation.web";
-import { canonicalPatch } from "./canonicalPatch.web";
+import { readRecordedPatch, renderRawPatch } from "./recordedPatch.web";
 import { lineReference, patchLineText, sourceLineText } from "./lineText.web";
 import { materializeBeforeSource as reconstructBeforeSource } from "./materializeRecordedDiff.web";
 
@@ -58,6 +57,7 @@ let currentWorkspace: CodeReviewWorkspaceState = {
 let currentSelection: CodeReviewLineReference | null = null;
 let currentMode: CodeReviewViewMode = "source";
 let wrapLines = false;
+let showLineNumbers = true;
 let fileRenderer: PierreFile<AnnotationMetadata> | null = null;
 let diffRenderer: FileDiff<AnnotationMetadata> | null = null;
 let activeFileRenderer: PierreFile<AnnotationMetadata> | null = null;
@@ -76,19 +76,15 @@ const imageElement = requiredElement("review-image");
 const fileHost = document.createElement("div");
 const diffHost = document.createElement("div");
 const patchHost = document.createElement("div");
-const patchFallbackLabel = document.createElement("div");
-const patchRenderers: {
-  host: HTMLElement;
-  renderer: FileDiff<AnnotationMetadata>;
-}[] = [];
+type PatchView = {
+  readonly host: HTMLElement;
+  renderer: FileDiff<AnnotationMetadata> | null;
+};
+const patchViews: PatchView[] = [];
 fileHost.className = "pierre-preview-host";
 diffHost.className = "pierre-preview-host";
 patchHost.className = "pierre-preview-host";
 patchHost.hidden = true;
-patchFallbackLabel.className = "review-patch-fallback-label";
-patchFallbackLabel.textContent = "Recorded edits could not be aligned with the current file";
-patchFallbackLabel.hidden = true;
-patchHost.append(patchFallbackLabel);
 previewHost.replaceChildren(fileHost, diffHost, patchHost, imageHost);
 
 const updateFileNavigation = createFileNavigation(
@@ -126,6 +122,7 @@ function receiveHostMessage(data: string): void {
     case "settings":
       currentMode = parsed.payload.mode;
       wrapLines = parsed.payload.wrapLines;
+      showLineNumbers = parsed.payload.showLineNumbers !== false;
       // Pierre skips rendering when the file and annotations are unchanged.
       // Display-only options are not part of that equality check, so settings
       // changes must explicitly invalidate the fast path.
@@ -351,34 +348,32 @@ function renderRecordedPatches(
   mode: Exclude<CodeReviewViewMode, "source">,
   forceRender: boolean,
 ): void {
-  renderRecordedSource(payload, forceRender);
+  fileHost.hidden = true;
   diffHost.hidden = true;
   patchHost.hidden = false;
-  while (patchRenderers.length > payload.patches.length) {
-    const removed = patchRenderers.pop();
-    removed?.renderer.cleanUp();
-    removed?.host.remove();
-  }
+  patchHost.dataset.wrap = String(wrapLines);
+  activeFileRenderer = null;
+  activeDiffRenderer = null;
+  trimRecordedPatchViews(payload.patches.length);
+  const annotations = diffAnnotations(payload);
   for (const [index, patch] of payload.patches.entries()) {
-    const patchText = canonicalPatch(payload.path, patch);
-    const metadata = processFile(patchText, {
-      cacheKey: `${payload.revision}:recorded:${String(index)}`,
-      throwOnError: true,
-    });
-    if (metadata === undefined) {
-      throw new Error("The recorded patch could not be rendered");
+    const view = recordedPatchViewAt(index);
+    const parsed = readRecordedPatch(
+      payload.path,
+      patch,
+      `${payload.revision}:recorded:${String(index)}`,
+    );
+    if (parsed === null) {
+      view.renderer?.cleanUp();
+      view.renderer = null;
+      renderRawPatch(view.host, patch.diff);
+      continue;
     }
-    let entry = patchRenderers.at(index);
-    if (entry === undefined) {
-      const host = document.createElement("section");
-      patchHost.append(host);
-      entry = {
-        host,
-        renderer: new FileDiff<AnnotationMetadata>(diffOptions(mode)),
-      };
-      patchRenderers.push(entry);
+    if (view.renderer === null) {
+      view.host.replaceChildren();
+      view.renderer = new FileDiff<AnnotationMetadata>(diffOptions(mode));
     }
-    const instance = entry.renderer;
+    const instance = view.renderer;
     instance.setOptions({
       ...diffOptions(mode),
       onLineClick: (event) => {
@@ -390,31 +385,41 @@ function renderRecordedPatches(
             line: event.lineNumber,
             path: payload.path,
             side,
-            text: patchLineText(patchText, side, event.lineNumber),
+            text: patchLineText(parsed.text, side, event.lineNumber),
           }),
         );
       },
     });
-    activeFileRenderer = null;
     activeDiffRenderer = instance;
     instance.render({
-      containerWrapper: entry.host,
-      fileDiff: metadata,
+      containerWrapper: view.host,
+      fileDiff: parsed.metadata,
       forceRender,
-      lineAnnotations: diffAnnotations(payload),
+      lineAnnotations: annotations,
     });
+  }
+  // Plain text renders synchronously and has no Pierre onPostRender callback.
+  if (activeDiffRenderer === null) {
+    finishRender();
   }
 }
 
-function renderRecordedSource(payload: CodeReviewDocument, forceRender: boolean): void {
-  const showSource =
-    payload.fullFileDiff === true && payload.source !== "" && payload.displayState !== "deleted";
-  patchFallbackLabel.hidden = !showSource;
-  if (showSource) {
-    renderSource(payload, forceRender);
-    return;
+function trimRecordedPatchViews(count: number): void {
+  while (patchViews.length > count) {
+    const removed = patchViews.pop();
+    removed?.renderer?.cleanUp();
+    removed?.host.remove();
   }
-  fileHost.hidden = true;
+}
+
+function recordedPatchViewAt(index: number): PatchView {
+  let view = patchViews.at(index);
+  if (view === undefined) {
+    view = { host: document.createElement("section"), renderer: null };
+    patchHost.append(view.host);
+    patchViews.push(view);
+  }
+  return view;
 }
 
 function ensureFileRenderer(): PierreFile<AnnotationMetadata> {
@@ -430,6 +435,7 @@ function ensureDiffRenderer(): FileDiff<AnnotationMetadata> {
 function fileOptions(): FileOptions<AnnotationMetadata> {
   return {
     disableFileHeader: true,
+    disableLineNumbers: !showLineNumbers,
     lineHoverHighlight: "number",
     onLineClick: (event: OnLineClickProps) => {
       if (currentDocument !== null) {
@@ -461,6 +467,7 @@ function diffOptions(
     diffIndicators: "bars",
     diffStyle: mode === "split" ? "split" : "unified",
     disableFileHeader: true,
+    disableLineNumbers: !showLineNumbers,
     expandUnchanged: true,
     hunkSeparators: "simple",
     lineDiffType: "word-alt",
@@ -566,17 +573,23 @@ function refreshAnnotations(): void {
     return;
   }
   if (patchHost.hidden === false) {
-    const annotations = diffAnnotations(document);
-    for (const { renderer } of patchRenderers) {
-      renderer.setLineAnnotations(annotations);
-      renderer.rerender();
-    }
+    refreshPatchAnnotations(document);
   } else {
     activeFileRenderer?.setLineAnnotations(fileAnnotations(document));
     activeDiffRenderer?.setLineAnnotations(diffAnnotations(document));
     active.rerender();
   }
   selectPreviewLine(active);
+}
+
+function refreshPatchAnnotations(payload: CodeReviewDocument): void {
+  const annotations = diffAnnotations(payload);
+  for (const { renderer } of patchViews) {
+    if (renderer !== null) {
+      renderer.setLineAnnotations(annotations);
+      renderer.rerender();
+    }
+  }
 }
 
 /** Highlights the composer's line, else the last revealed line of this document. */

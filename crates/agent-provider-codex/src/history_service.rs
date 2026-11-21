@@ -1048,6 +1048,7 @@ fn enrich_thread_list_result(
     let Some(threads) = result.get_mut("data").and_then(Value::as_array_mut) else {
         return result;
     };
+    catalog.annotate_access(threads);
     for thread in threads {
         let Some(thread_id) = thread.get("id").and_then(Value::as_str) else {
             continue;

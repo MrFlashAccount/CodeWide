@@ -9,6 +9,7 @@
     <style>
       :root {
         color-scheme: dark;
+        -webkit-tap-highlight-color: transparent;
         /* Dense IDE-like code: more reviewed lines per screen than Pierre's 13px/20px default. */
         --diffs-font-size: 12px;
         --diffs-line-height: 17px;
@@ -29,6 +30,13 @@
       input {
         font: inherit;
       }
+      :focus:not(:focus-visible) {
+        outline: none;
+      }
+      :focus-visible {
+        outline: 2px solid var(--review-accent);
+        outline-offset: -2px;
+      }
       [hidden] {
         display: none !important;
       }
@@ -46,6 +54,11 @@
         background: none;
         color: inherit;
         cursor: pointer;
+        appearance: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        touch-action: manipulation;
       }
       #close-files {
         display: grid;
@@ -104,13 +117,14 @@
         border: 0;
         border-radius: 20px 20px 0 0;
         background: var(--review-panel-raised);
-        padding-bottom: env(safe-area-inset-bottom);
       }
-      #tree-panel:modal[data-tall="true"] {
-        height: 94%;
+      #tree-panel:focus {
+        /* The dialog receives initial focus without opening the search keyboard. */
+        outline: none;
       }
       #tree-panel::backdrop {
         background: var(--review-scrim);
+        opacity: var(--sheet-scrim-opacity, 1);
       }
       #file-grip {
         display: none;
@@ -127,6 +141,13 @@
         height: 4px;
         width: 34px;
         border-radius: 3px;
+      }
+      #file-grip:active::after {
+        background: var(--review-text);
+      }
+      #close-files:active {
+        background: var(--review-panel-soft);
+        border-radius: var(--review-search-radius);
       }
       #file-tools {
         display: flex;
@@ -178,6 +199,16 @@
         padding: 6px 12px;
         font-size: 13px;
       }
+      #tree-totals {
+        color: var(--review-muted);
+        font-size: 12px;
+        padding: 6px 12px;
+      }
+      #preview[data-review-actions]::after {
+        content: "";
+        display: block;
+        height: 72px;
+      }
       #tree {
         flex: 1;
         min-height: 0;
@@ -199,19 +230,8 @@
       #tree-panel:modal #tree {
         --trees-bg-override: var(--review-panel-raised);
       }
-      @media (prefers-reduced-motion: no-preference) {
-        #tree-panel:modal {
-          animation: sheet-in 0.17s ease-out;
-          transition: height 0.16s ease-out;
-        }
-        #tree-panel[data-dragging="true"] {
-          transition: none;
-        }
-        @keyframes sheet-in {
-          from {
-            transform: translateY(100%);
-          }
-        }
+      #tree-panel:modal file-tree-container {
+        --review-tree-end-space: var(--trees-item-height);
       }
       #preview-panel {
         flex: 1;
@@ -256,7 +276,7 @@
         max-width: 100%;
         object-fit: contain;
       }
-      .review-patch-fallback-label {
+      .review-raw-patch-label {
         padding: 14px 18px;
         border-top: 1px solid var(--review-border-strong);
         color: var(--review-muted);
@@ -264,8 +284,16 @@
           13px/19px system-ui,
           sans-serif;
       }
-      .review-patch-fallback-label[hidden] {
-        display: none;
+      .review-raw-patch {
+        margin: 0;
+        padding: 0 18px 14px;
+        font: var(--diffs-font-size) / var(--diffs-line-height) monospace;
+        white-space: pre;
+        user-select: text;
+      }
+      [data-wrap="true"] .review-raw-patch {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
       }
       .review-empty {
         position: absolute;
@@ -447,6 +475,7 @@
           </div>
           <div id="no-matches" role="status" hidden>No matching files</div>
           <div id="tree"></div>
+          <div id="tree-totals" hidden></div>
           <div id="tree-empty" class="review-empty" hidden>
             <div class="review-empty-mark">—</div>
             <div class="review-empty-title" data-empty-title></div>

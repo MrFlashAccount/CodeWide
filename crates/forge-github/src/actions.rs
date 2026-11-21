@@ -196,8 +196,10 @@ fn merge_actions(pull: &Value, repository: &Value, state: PullRequestState) -> V
     if pull.get("mergeable_state").and_then(Value::as_str) == Some("behind") {
         actions.push(Action {
             confirm: "confirm",
+            placement: "overflow",
             order: 3,
             is_default: true,
+            in_header: false,
             ..Action::new(
                 ACTION_UPDATE_BRANCH,
                 "updateBranch",
@@ -388,6 +390,14 @@ mod tests {
         assert_eq!(catalog.actions[0]["availability"]["state"], "disabled");
         assert_eq!(catalog.actions[3]["availability"]["state"], "disabled");
         assert_eq!(catalog.actions[3]["confirm"], "destructive");
+        let update = catalog
+            .actions
+            .iter()
+            .find(|action| action["actionId"] == ACTION_UPDATE_BRANCH)
+            .expect("behind offers update");
+        assert_eq!(update["placement"], "overflow");
+        assert!(update["anchor"].is_null());
+        assert_eq!(update["confirm"], "confirm");
         let options = catalog.actions[3]["input"]["options"]
             .as_array()
             .expect("options");

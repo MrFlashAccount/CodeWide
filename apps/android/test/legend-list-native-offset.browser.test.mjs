@@ -24,7 +24,14 @@ import { LegendList } from "@legendapp/list/react-native";
 import { ThreadTimelineList } from "./src/rendering/ThreadTimelineList";
 
 const rows = Array.from({ length: 40 }, (_, index) => ({ id: String(index) }));
-const bridge = { currentOffset: null, resets: 0, commits: [], commands: [], performance: [], sizeHintCalls: {} };
+function ProbeRow({ item }) {
+  useLayoutEffect(() => {
+    if (item === rows[0]) bridge.mountedOrigin = true;
+  }, [item]);
+  return <View style={{ height: 100 }}><Text>{item.id}</Text></View>;
+}
+
+const bridge = { mountedOrigin: false, currentOffset: null, resets: 0, commits: [], commands: [], performance: [], sizeHintCalls: {} };
 
 function getItemSizeHint(item) {
   bridge.sizeHintCalls[item.id] = (bridge.sizeHintCalls[item.id] ?? 0) + 1;
@@ -64,6 +71,7 @@ function Probe() {
   const unread = window.probeOptions.unread || conversation > 0;
   window.probe = {
     hydrate: () => setData(rows),
+    scrollToOrigin: () => list.current.scrollToOffset({ animated: false, offset: 0 }),
     newConversation: () => {
       setPositioned(false);
       setConversation(value => value + 1);
@@ -75,6 +83,7 @@ function Probe() {
     snapshot: () => {
       const scroller = document.querySelector('[data-testid="native-offset-probe"]');
       return {
+        mountedOrigin: bridge.mountedOrigin,
         commits: bridge.commits,
         commands: bridge.commands,
         performance: bridge.performance,
@@ -98,7 +107,7 @@ function Probe() {
       getItemSizeHint={window.probeOptions.perItemEstimate ? getItemSizeHint : undefined}
       estimatedListSize={{ height: 360, width: 420 }}
       extraData={revision}
-      initialScrollAtEnd={!positioned && !unread}
+      initialScrollAtEnd={!positioned && !unread && (!window.probeOptions.delayedTarget || data.length > 0)}
       onScrollDiagnostic={window.probeOptions.observe === false ? undefined : event => {
         if (window.probeOptions.throwObserver) throw new Error("Diagnostic failure");
         if (event.phase === "calculate" || event.phase === "size-batch") {
@@ -114,7 +123,7 @@ function Probe() {
       recycleItems={false}
       ref={list}
       renderScrollComponent={NativeOffsetScrollView}
-      renderItem={({ item }) => <View style={{ height: 100 }}><Text>{item.id}</Text></View>}
+      renderItem={({ item }) => <ProbeRow item={item} />}
     />
   </View>;
 }
@@ -193,6 +202,8 @@ createRoot(document.getElementById("root")).render(window.probeOptions.keyboard 
           builder.onLoad({ filter: /.*/, namespace: "probe" }, () => ({
             contents: `export * from "react-native-web";
 import { Platform as WebPlatform } from "react-native-web";
+// The probe supplies its own ScrollView. Mounting an Android-only host would bypass that boundary.
+export const requireNativeComponent = name => () => { throw new Error("Unexpected native host: " + name); };
 export const Platform = { ...WebPlatform, OS: "android", select: values => values.android ?? values.native ?? values.default };`,
             resolveDir: fileURLToPath(new URL("../", import.meta.url)),
           }));
@@ -221,6 +232,30 @@ after(async () => {
 });
 
 for (const extension of ["js", "mjs"]) {
+  test(`${extension}: opening at the tail of delayed history mounts the origin only when visited`, async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent('<div id="root"></div>');
+      await page.evaluate(() => {
+        window.probeOptions = { empty: true, delayedTarget: true };
+        window.nativeFabricUIManager = {};
+      });
+      await page.addScriptTag({ content: scripts.get(extension) });
+      await expect.poll(() => page.evaluate(() => window.probe?.snapshot().ready)).toBe(true);
+      await page.evaluate(() => window.probe.hydrate());
+      await expect.poll(() => page.evaluate(() => window.probe.snapshot().scroll)).toBeGreaterThan(0);
+      await expect.poll(() => page.evaluate(() => window.probe.snapshot().distance)).toBeLessThanOrEqual(1);
+      assert.equal(await page.evaluate(() => window.probe.snapshot().mountedOrigin), false);
+      await page.evaluate(() => {
+        window.probe.releaseBootstrap();
+        window.probe.scrollToOrigin();
+      });
+      await expect.poll(() => page.evaluate(() => window.probe.snapshot().mountedOrigin)).toBe(true);
+    } finally {
+      await page.close();
+    }
+  });
+
   test(`${extension}: Android transcript keeps the tail or reading position on terminal-only IME updates`, async () => {
     const page = await browser.newPage();
     try {

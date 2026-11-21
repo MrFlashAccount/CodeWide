@@ -8,7 +8,7 @@ import { SubmitReviewSheet } from "./SubmitReviewSheet";
 import { SubmitSplitButton } from "./SubmitSplitButton";
 
 /**
- * The toolbar's Submit review control: verdict choice (plugin default first)
+ * The floating Submit review control: verdict choice (plugin default first)
  * and the Submit sheet. Offline, Submit is disabled and nothing is queued.
  */
 export function ReviewSubmitControl({

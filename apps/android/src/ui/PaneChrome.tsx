@@ -14,18 +14,24 @@ import { useThreePanels } from "./threePanels";
 export function PaneChrome({
   children,
   pointerEvents,
+  retainHiddenWidth = false,
   style,
   testID,
 }: {
   readonly children: ReactNode;
   readonly pointerEvents?: "auto" | "box-none";
+  /** A parked reading surface keeps a usable layout width for its list and scroll position. */
+  readonly retainHiddenWidth?: boolean;
   /** Placement of the chrome box itself, such as an absolute fill over the pane. */
   readonly style?: StyleProp<ViewStyle>;
   readonly testID?: string;
 }): React.JSX.Element {
   const { chromeInset } = useThreePanels();
   // The trailing margin belongs to the wrapper alone, so content styles never fight over it.
-  const follow = useAnimatedStyle(() => ({ marginRight: chromeInset.get() }));
+  const follow = useAnimatedStyle(() => {
+    const inset = chromeInset.get();
+    return { marginRight: retainHiddenWidth && inset === "100%" ? 0 : inset };
+  });
   return (
     <Reanimated.View pointerEvents={pointerEvents} style={[style, follow]} testID={testID}>
       {children}

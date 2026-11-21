@@ -65,7 +65,7 @@ impl ActionKind {
         }
     }
 
-    /// The level a kind requires at least.
+    /// The default floor for this kind, before inspecting a specific descriptor.
     #[must_use]
     pub fn floor(self) -> Confirmation {
         match self {
@@ -118,7 +118,12 @@ pub struct ActionDescriptor {
 impl ActionDescriptor {
     #[must_use]
     pub fn effective_confirmation(&self) -> Confirmation {
-        self.confirm.max(self.kind.floor())
+        if self.kind == ActionKind::AutoMerge && self.toggle_on().is_some() && self.input.is_none()
+        {
+            self.confirm
+        } else {
+            self.confirm.max(self.kind.floor())
+        }
     }
 
     #[must_use]
@@ -574,6 +579,22 @@ mod tests {
         assert_eq!(merge.effective_confirmation(), Confirmation::Destructive);
         let auto = parse_descriptor(&raw("auto", "autoMerge", "none")).expect("auto");
         assert_eq!(auto.effective_confirmation(), Confirmation::Confirm);
+        for (level, expected) in [
+            ("none", Confirmation::None),
+            ("confirm", Confirmation::Confirm),
+            ("destructive", Confirmation::Destructive),
+        ] {
+            let mut switch = raw("enableAutoMerge", "autoMerge", level);
+            switch["toggle"] = json!({"on": false});
+            let parsed = parse_descriptor(&switch).expect("plain switch");
+            assert_eq!(parsed.effective_confirmation(), expected);
+            switch["input"] = json!({"type": "boolean", "label": "Additional option"});
+            let with_input = parse_descriptor(&switch).expect("switch with input");
+            assert_eq!(
+                with_input.effective_confirmation(),
+                expected.max(Confirmation::Confirm)
+            );
+        }
         let unknown = parse_descriptor(&raw("x", "teleport", "confirm")).expect("x");
         assert_eq!(unknown.kind, ActionKind::Extension);
         assert!(parse_descriptor(&raw("y", "merge", "maybe")).is_none());

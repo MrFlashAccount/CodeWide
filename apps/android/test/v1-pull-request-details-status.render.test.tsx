@@ -2,6 +2,7 @@ import { act, fireEvent, waitFor, within } from "@testing-library/react-native";
 import { isValidElement, type ReactNode } from "react";
 import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markdown";
 
+import { overview91 } from "./fixtures/forgeWireFixtures";
 import {
   renderScreen,
   type,
@@ -57,7 +58,7 @@ afterEach(async () => {
   await unmountScreens();
 });
 
-it("orders Details as description, Changes, Status and the Conversation band with its count", async () => {
+it("orders Details as description, file and guide links, Status and Conversation with its count", async () => {
   const { view } = renderScreen({});
   // The band renders before the first page; wait for the loaded count, not just the band.
   await view.findByTestId("pull-request-discussion-heading-count");
@@ -73,13 +74,13 @@ it("orders Details as description, Changes, Status and the Conversation band wit
   const page = view.getByTestId("pull-request-overview");
   const order = within(page)
     .getAllByTestId(
-      /^pull-request-(description|changes-band|status-band|conversation|open-changes)$/u,
+      /^pull-request-(description|status-band|conversation|open-changes|open-guide)$/u,
     )
     .map((node) => String(node.props.testID));
   expect(order).toEqual([
     "pull-request-description",
-    "pull-request-changes-band",
     "pull-request-open-changes",
+    "pull-request-open-guide",
     "pull-request-status-band",
     "pull-request-conversation",
   ]);
@@ -181,12 +182,17 @@ it("folds a long comment behind Read more until the reader unfolds it", async ()
   expect(view.queryByTestId("conversation-comment-c-2-read-more")).toBeNull();
 });
 
-it("keeps the local checkout out of the status line", async () => {
+it("shows the branch direction in the header and the change totals only on Files changed", async () => {
   const { view } = renderScreen({});
   await view.findByTestId("pull-request-discussion-heading-count");
   const header = view.getByTestId("pull-request-status-header");
 
-  expect(header).toHaveTextContent(/files/u);
+  const branches = within(header).getByLabelText(
+    `From ${overview91.headBranch} into ${overview91.baseBranch}`,
+  );
+  expect(branches).toHaveTextContent(`${overview91.headBranch} → ${overview91.baseBranch}`);
+  expect(header).not.toHaveTextContent(/14 files|\+412|−88/u);
+  expect(view.getByTestId("pull-request-open-changes")).toHaveTextContent(/14 files · \+412 −88/u);
   expect(within(header).queryByText("Local checkout")).toBeNull();
 });
 

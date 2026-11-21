@@ -6,6 +6,7 @@ import { useConstant } from "../react/useConstant";
 import { colors } from "../theme";
 import type { ThreePanelsContent } from "../ui/threePanels";
 import { threadListLayout } from "../ui/thread-list-layout";
+import { DestinationViewport } from "./DestinationViewport";
 import { centerClipFrame, centerContentFrame, rightFrame } from "./paneFrames";
 import { usePaneMotionArmed, type PaneMotionState } from "./paneMotion";
 import {
@@ -109,7 +110,7 @@ function FramedCenterLayout({
   // A closed right pane that is still sliding out is hidden like a stashed one.
   const placement = right === null ? "stashed" : rightPanePlacement(visibility);
   return (
-    <View style={[styles.layout, v1WorkspaceShellStyles.paneFrame]} testID={testID}>
+    <DestinationViewport geometry={geometry} testID={testID}>
       <FramedCenterPane
         covered={placement === "cover"}
         declaration={center}
@@ -125,7 +126,7 @@ function FramedCenterLayout({
           placement={placement}
         />
       )}
-    </View>
+    </DestinationViewport>
   );
 }
 

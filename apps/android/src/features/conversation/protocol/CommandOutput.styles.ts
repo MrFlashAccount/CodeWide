@@ -34,11 +34,8 @@ export const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   outputFootprintMetric: {
-    flexShrink: 0,
-    justifyContent: "center",
-  },
-  outputFootprintMetricText: {
     color: colors.textDim,
+    flexShrink: 0,
     ...typeScale.caption,
     fontVariant: ["tabular-nums"],
   },

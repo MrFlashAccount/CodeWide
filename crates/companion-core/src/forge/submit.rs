@@ -11,6 +11,8 @@
 //! agent halves of `both` drafts are forwarded only when the client's
 //! "Also send Both comments to agent" switch is on.
 
+use crate::review::drafts::DraftAnchor;
+use forge_protocol::{FileReviewSubject, ReviewCommentSubject};
 use std::collections::HashMap;
 
 use forge_protocol::{
@@ -281,18 +283,39 @@ async fn publish(
     head: &HeadRevision,
     drafts: &[DraftComment],
 ) -> Result<ReviewSubmitResult, ForgeError> {
+    if !session.supports(forge_protocol::capability::FILE_REVIEW)
+        && drafts
+            .iter()
+            .any(|draft| matches!(draft.anchor, DraftAnchor::File { .. }))
+    {
+        return Err(ForgeError::CapabilityUnavailable {
+            reason: "The provider does not support file-level review comments".into(),
+        });
+    }
     let comments: Vec<ReviewComment> = drafts
         .iter()
         .map(|draft| ReviewComment {
             draft_id: draft.id.clone(),
-            path: draft.anchor.path.clone(),
-            side: match draft.anchor.side {
-                Side::New => DiffSide::New,
-                Side::Old => DiffSide::Old,
-            },
-            start_line: draft.anchor.start_line,
-            end_line: draft.anchor.end_line,
+            path: draft.anchor.path().to_owned(),
             body: draft.body.clone(),
+            subject: match &draft.anchor {
+                DraftAnchor::File { .. } => ReviewCommentSubject::File {
+                    kind: FileReviewSubject::File,
+                },
+                DraftAnchor::Line {
+                    side,
+                    start_line,
+                    end_line,
+                    ..
+                } => ReviewCommentSubject::Line {
+                    side: match side {
+                        Side::New => DiffSide::New,
+                        Side::Old => DiffSide::Old,
+                    },
+                    start_line: *start_line,
+                    end_line: *end_line,
+                },
+            },
         })
         .collect();
     session

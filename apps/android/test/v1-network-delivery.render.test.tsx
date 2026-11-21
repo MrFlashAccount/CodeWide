@@ -95,7 +95,7 @@ function wireSnapshot(throughCursor: number) {
 }
 
 function Conversation({ details }: { details: ReturnType<typeof createThreadDetailDatabase> }) {
-  const window = useThreadChatWindow(details, request, false);
+  const window = useThreadChatWindow(details, request, "progressive");
   const projection =
     window === null ? null : projectThreadChatWindow(details, window, "server", "thread", false);
   return (
@@ -140,9 +140,6 @@ async function setup(
     getDetails: () => details,
     getSession: () => session,
     getSummaries: () => null,
-    loadTurnControls: async () => {
-      throw new Error("Not needed");
-    },
     readInvalidationArchived: () => undefined,
     refreshSubagents: async () => undefined,
     refreshThreadCatalog: async () => undefined,

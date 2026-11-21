@@ -84,7 +84,8 @@
       "react-native-reanimated@4.5.1": "patches/react-native-reanimated@4.5.1.patch",
       "react-native-webrtc@124.0.8": "patches/react-native-webrtc@124.0.8.patch",
       "react-native-keyboard-controller@1.21.9": "patches/react-native-keyboard-controller@1.21.9.patch",
-      "@legendapp/list@3.4.0": "patches/@legendapp__list@3.4.0.patch"
+      "@legendapp/list@3.4.0": "patches/@legendapp__list@3.4.0.patch",
+      "@pierre/trees@1.0.0": "patches/@pierre__trees@1.0.0.patch"
     }
   }
 }

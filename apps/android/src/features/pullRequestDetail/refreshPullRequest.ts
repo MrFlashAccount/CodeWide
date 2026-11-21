@@ -35,7 +35,7 @@ export async function refreshPullRequest(
     owners.forge.activity.invalidate(params),
     owners.forge.conversation.invalidate(params),
     owners.forge.scenarios.invalidate(params),
-    owners.forge.files.invalidate({ ...params, headRevision: target.headRevision }),
+    owners.forge.files.client.invalidateQueries({ queryKey: owners.forge.files.keyOf(target) }),
     owners.review.drafts.invalidate(review),
     owners.review.guide.invalidate(review),
   ]);

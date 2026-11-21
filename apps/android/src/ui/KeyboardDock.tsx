@@ -24,6 +24,11 @@ export function KeyboardDock(props: KeyboardDockProps): React.JSX.Element {
   );
 }
 
+/** Reserves the keyboard overlap below the preceding flex content. */
+export function KeyboardDockSpacer(): React.JSX.Element {
+  return <KeyboardAvoidingView automaticOffset behavior="padding" pointerEvents="none" />;
+}
+
 const styles = StyleSheet.create({
   layer: {
     ...StyleSheet.absoluteFill,

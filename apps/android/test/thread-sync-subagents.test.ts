@@ -119,7 +119,7 @@ function syncRuntime(database: ReturnType<typeof createThreadSummaryDatabase>, a
     getDetails: () => details,
     getSession: () => session,
     getSummaries: () => database,
-    loadTurnControls: async () => undefined,
+
     readInvalidationArchived: () => undefined,
     refreshSubagents,
     refreshThreadCatalog: async () => undefined,

@@ -1,15 +1,23 @@
 import { fireEvent, render } from "@testing-library/react-native";
 import { Platform, View, StyleSheet, Text } from "react-native";
 import { MarkdownDocumentView } from "../src/rendering/MarkdownDocumentView";
-import { spacing } from "../src/theme";
+import { productFonts } from "../src/ui/product-fonts";
+import { colors, spacing } from "../src/theme";
 import { NativeMarkup } from "../src/rendering/NativeMarkup";
-import { RichMarkdown } from "../src/rendering/RichMarkdown";
+import { markdownDocumentBlocks } from "../src/rendering/markdown-document-blocks";
+import { SearchHighlightQuery } from "../src/rendering/SearchMessageFocus";
+import { RichMarkdown, RichMarkdownDocumentBlockView } from "../src/rendering/RichMarkdown";
 import { RichContentWidthProvider } from "../src/rendering/RichContentLayout";
 import {
   RichMarkdownPremeasurementBoundary,
   RichMarkdownPremeasurementProvider,
 } from "../src/rendering/RichMarkdownPremeasurementProvider";
 import * as markdownGeometry from "../src/rendering/richMarkdownGeometry";
+
+// Drive the real table routing and sizing, replacing only the Android view manager.
+jest.mock("../src/rendering/nativeMarkdownTableHost", () => ({
+  MarkdownTableHost: require("react-native").View,
+}));
 
 let consoleErrors: jest.SpyInstance;
 beforeEach(() => {
@@ -256,4 +264,48 @@ it("propagates document viewport and reader width limits into an already mounted
     );
     expect(view.getAllByText("Alpha")).toHaveLength(1);
   }
+});
+
+it("switches a completed plain chat table between Android layout and highlighted search results", () => {
+  const [block] = markdownDocumentBlocks([source]);
+  if (!block) throw new Error("Missing fixture table");
+  const table = (query: string, completedChat: boolean) => (
+    <SearchHighlightQuery.Provider value={query}>
+      <RichMarkdownDocumentBlockView block={block} completedChat={completedChat} />
+    </SearchHighlightQuery.Provider>
+  );
+  const view = render(table("", false));
+  expect(view.getByText("Alpha")).toBeTruthy();
+  view.rerender(table("", true));
+  const native = view.UNSAFE_getAllByType(View).find((node) => node.props.onTableHeight);
+  if (!native) throw new Error("Completed table did not reach the Android view");
+  expect(native.props.grid.cells).toEqual(["Name", "Value", "Alpha", "One"]);
+  fireEvent(native, "tableHeight", { nativeEvent: { height: 123 } });
+  expect(StyleSheet.flatten(native.props.style).height).toBe(123);
+  view.rerender(table("alpha", true));
+  expect(view.getByText("Alpha")).toHaveStyle({ backgroundColor: colors.warningContainer });
+  view.rerender(table("", true));
+  expect(view.queryByText("Alpha")).toBeNull();
+});
+
+it("keeps inline formatting in completed chat tables", () => {
+  const [block] = markdownDocumentBlocks([source.replace("Alpha", "**Alpha**")]);
+  if (!block) throw new Error("Missing formatted table");
+  const view = render(<RichMarkdownDocumentBlockView block={block} completedChat />);
+  expect(view.getByText("Alpha")).toBeTruthy();
+  expect(view.getByText("Alpha")).toHaveStyle({ fontFamily: productFonts.semibold });
+});
+
+
+it("honors the existing line layout inside a premeasured chat boundary", () => {
+  const [block] = markdownDocumentBlocks([source]);
+  if (!block) throw new Error("Missing fixture table");
+  const view = render(
+    <RichMarkdownPremeasurementProvider enabled fontScale={1} width={280}>
+      <RichMarkdownPremeasurementBoundary>
+        <RichMarkdownDocumentBlockView completedChat block={block} />
+      </RichMarkdownPremeasurementBoundary>
+    </RichMarkdownPremeasurementProvider>,
+  );
+  expect(view.getByText("Alpha")).toBeTruthy();
 });

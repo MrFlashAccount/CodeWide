@@ -3,6 +3,7 @@ import { Suspense, type ReactNode } from "react";
 import { projectThreadChatWindow } from "../../data/thread-chat-projection";
 import type { ThreadDetailDatabase } from "../../data/thread-detail-database";
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
+import { threadWindowHistoryBounds } from "../../data/threadWindowHistoryBounds";
 import { useThreadChatWindow } from "../../data/use-thread-chat-window";
 import { RecoverableRenderBoundary } from "../../ui/RecoverableRenderBoundary";
 import { SubagentPendingDetail } from "./SubagentPendingDetail";
@@ -97,12 +98,13 @@ function SubagentConversationDetail({
       ? null
       : projectThreadChatWindow(threadDetails, detailWindow, connectionId, threadId, false, summary)
           .remoteThread;
-  if (thread === null) {
+  if (thread === null || detailWindow === null) {
     throw new Error(`Subagent conversation ${threadId} did not materialize from its ready window`);
   }
   return renderThread({
     compact,
     connectionId,
+    historyBounds: threadWindowHistoryBounds(detailWindow),
     ...(compact ? { onBack } : {}),
     onOpenSubagent,
     parentBreadcrumb,

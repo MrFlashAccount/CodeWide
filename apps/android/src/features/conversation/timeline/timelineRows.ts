@@ -1,5 +1,6 @@
 import { projectCompleteMarkdown } from "@codewide/rendering-core";
 import { markdownDocumentBlocks } from "../../../rendering/markdown-document-blocks";
+import { groupListParts } from "./chatListParts";
 import type { TaskNotificationReport } from "../../../rendering/taskNotifications";
 import {
   isBackgroundLaunch,
@@ -11,12 +12,19 @@ import {
 } from "../turns/backgroundLaunches";
 import { projectTurnPresentation } from "../turns/turnProjection";
 import type { VirtualizedTurnPart, VirtualizedTurnPlacement } from "../turns/virtualizedTurnTypes";
+import { packMarkdownRows } from "./packMarkdownRows";
 import { timelineItemKey } from "./timelineProjection";
 import type { TimelineItem } from "./timelineTypes";
 
 export const TIMELINE_ROW_FALLBACK_ESTIMATE = 115;
 
 export type TimelineRow =
+  | {
+      item: Extract<TimelineItem, { kind: "turn" }>;
+      key: string;
+      kind: "historyBeginning";
+      timelineIndex: number;
+    }
   | {
       item: TimelineItem;
       key: string;
@@ -36,6 +44,8 @@ export type TimelineRow =
       item: Extract<TimelineItem, { kind: "turn" }>;
       key: string;
       kind: "turnSlice";
+      /** Initial native estimate for neighbouring blocks mounted in one physical row. */
+      packedSizeEstimate?: number;
       parts: readonly VirtualizedTurnPart[];
       /** The slice's place within its turn's bubble. */
       placement: VirtualizedTurnPlacement;
@@ -58,7 +68,11 @@ type TimelineItemRowsCacheEntry = TimelineRowsCacheEntry & {
 };
 
 type TimelineRowsOptions = {
+  containsBeginning?: boolean;
   enabled: boolean;
+  nativeLists?: boolean;
+  /** The normal viewport packs nearby blocks. Exact per-block measurement uses individual rows. */
+  packMarkdown?: boolean;
   searchMessageItemId: string | null;
   threadSearchActive: boolean;
 };
@@ -71,7 +85,8 @@ export function projectTimelineRows(
   items: readonly TimelineItem[],
   options: TimelineRowsOptions,
 ): TimelineRow[] {
-  const cacheKey = timelineRowsOptionsKey(options);
+  const showBeginning = options.containsBeginning === true && !options.threadSearchActive;
+  const cacheKey = `${timelineRowsOptionsKey(options)}:${String(showBeginning)}`;
   const cached = timelineRowsCache.get(items);
   if (cached?.key === cacheKey) {
     return cached.rows;
@@ -83,9 +98,25 @@ export function projectTimelineRows(
       rows.push(...projectTimelineItemRows(item, timelineIndex, options));
     }
   }
-  const merged = mergeEmptyWakeLeads(withoutDuplicateTasks(rows));
+  const visible = withoutDuplicateTasks(rows);
+  const merged = mergeEmptyWakeLeads(visible, showBeginning ? historyBeginningRows(visible) : []);
   timelineRowsCache.set(items, { key: cacheKey, rows: merged });
   return merged;
+}
+
+function historyBeginningRows(rows: readonly TimelineRow[]): TimelineRow[] {
+  const first = rows.find((row) => row.item.kind === "turn");
+  if (first?.item.kind !== "turn") {
+    return [];
+  }
+  return [
+    {
+      item: first.item,
+      key: `history-beginning:${timelineItemKey(first.item)}`,
+      kind: "historyBeginning",
+      timelineIndex: first.timelineIndex,
+    },
+  ];
 }
 
 type TimelineLeadRow = Extract<TimelineRow, { kind: "turnLead" }>;
@@ -176,8 +207,7 @@ type TimelineTurnItem = Extract<TimelineItem, { kind: "turn" }>;
  * the next wake's line when that one answers. Only lines merge; no turn
  * content moves between turns.
  */
-function mergeEmptyWakeLeads(rows: readonly TimelineRow[]): TimelineRow[] {
-  const merged: TimelineRow[] = [];
+function mergeEmptyWakeLeads(rows: readonly TimelineRow[], merged: TimelineRow[]): TimelineRow[] {
   let pending: TimelineLeadRow | null = null;
   for (const [index, row] of rows.entries()) {
     const current = joinPendingLine(merged, pending, row);
@@ -291,8 +321,7 @@ function turnSlices({
   timelineIndex: number;
 }): TimelineRow[] {
   const parts = projectTurnParts(presentation);
-  const split = shouldSplitTurn({ options, parts, presentation });
-  const slices = split ? parts.map((part) => [part]) : [parts];
+  const slices = turnPartSlices(parts, options, presentation);
   const baseKey = timelineItemKey(item);
   const trailing = trailingTasks(presentation);
   return slices.map((slice, index) => ({
@@ -300,6 +329,9 @@ function turnSlices({
     item,
     key: index === 0 ? baseKey : `${baseKey}\u0000slice:${virtualizedPartKey(slice[0])}`,
     kind: "turnSlice" as const,
+    ...(slice !== parts && slice.length > 1
+      ? { packedSizeEstimate: slice.length * timelineRowSizeEstimate() }
+      : {}),
     parts: slice,
     placement: slicePlacement(index, slices.length),
     timelineIndex,
@@ -327,7 +359,7 @@ function trailingTasks(
 }
 
 function timelineRowsOptionsKey(options: TimelineRowsOptions): string {
-  return `${String(options.enabled)}:${String(options.threadSearchActive)}:${options.searchMessageItemId ?? ""}`;
+  return `${String(options.enabled)}:${String(options.packMarkdown === true)}:${String(options.nativeLists === true)}:${String(options.threadSearchActive)}:${options.searchMessageItemId ?? ""}`;
 }
 
 /**
@@ -390,21 +422,22 @@ function markdownParts(
   return blocks.map((block) => ({ block, kind: "markdownBlock", response, streaming }));
 }
 
-function shouldSplitTurn({
-  options,
-  parts,
-  presentation,
-}: {
-  options: TimelineRowsOptions;
-  parts: readonly VirtualizedTurnPart[];
-  presentation: ReturnType<typeof projectTurnPresentation>;
-}): boolean {
-  return (
-    presentation.rawTurn.status !== "inProgress" &&
-    presentation.agentBubbleFill &&
-    !options.threadSearchActive &&
-    parts.every((part) => part.kind === "markdownBlock")
-  );
+function turnPartSlices(
+  parts: VirtualizedTurnPart[],
+  options: TimelineRowsOptions,
+  presentation: ReturnType<typeof projectTurnPresentation>,
+): VirtualizedTurnPart[][] {
+  if (
+    presentation.rawTurn.status === "inProgress" ||
+    options.threadSearchActive ||
+    !parts.every((part) => part.kind === "markdownBlock")
+  ) {
+    return [parts];
+  }
+  const grouped = options.nativeLists === true ? groupListParts(parts) : parts;
+  return presentation.agentBubbleFill || grouped !== parts
+    ? packMarkdownRows(grouped, options.packMarkdown === true)
+    : [parts];
 }
 
 function slicePlacement(index: number, length: number): VirtualizedTurnPlacement {

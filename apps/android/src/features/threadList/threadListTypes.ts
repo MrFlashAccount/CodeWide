@@ -1,9 +1,12 @@
+import type { ThreadCatalogControls } from "../../data/threadCatalogControls";
+
 export type ThreadListItem = {
   /** Declared provider label; absent only for a legacy or malformed descriptor. */
   agentBadge?: string | null;
   /** Declared provider id for its mark; set with `agentBadge` when valid. */
   agentProvider?: string | null;
   archived?: boolean;
+  catalogControls?: ThreadCatalogControls | null;
   id: string;
   needsAttention?: boolean;
   pinned: boolean;

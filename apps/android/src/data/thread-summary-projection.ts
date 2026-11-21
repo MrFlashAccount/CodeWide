@@ -5,6 +5,7 @@ import {
   currentAsyncQuestions,
   hasAsyncQuestions,
 } from "./questionLifecycle";
+import { readThreadCatalogControls } from "./threadCatalogControls";
 import { readThreadAgent } from "./threadAgent";
 import { unknownRecord } from "./unknownRecord";
 import { isThread } from "./thread-cursor-sync";
@@ -86,6 +87,7 @@ export function projectThreadSummarySnapshot(
   return {
     agentNickname: thread.agentNickname,
     agentRole: thread.agentRole,
+    catalogControls: previous?.catalogControls ?? readThreadCatalogControls(thread),
     connectionId,
     name: thread.name,
     parentThreadId: thread.parentThreadId ?? null,

@@ -38,6 +38,32 @@ export function createReviewTargetAdapter({
   const refreshGuide = async (connectionId: string, source: DiffSource): Promise<void> => {
     await resources.guide.refresh({ connectionId, source });
   };
+  const guideRequests = new Map<string, Promise<void>>();
+  const startGuide: ReviewTargetCapabilities["requestGuide"] = async (connectionId, request) => {
+    const idempotencyKey = randomUUID();
+    try {
+      requireParsed(
+        await mutations.execute(
+          {
+            connectionId,
+            method: "companion/review/guide/request",
+            operationId: idempotencyKey,
+            params: {
+              author: request.author,
+              idempotencyKey,
+              revision: request.revision,
+              source: request.source,
+            },
+            scope: reviewScope(connectionId, request.source),
+          },
+          parseGuideRequest,
+        ),
+        "guide request",
+      );
+    } finally {
+      await refreshGuide(connectionId, request.source);
+    }
+  };
   return {
     async deleteDraft(connectionId, draft) {
       try {
@@ -94,29 +120,16 @@ export function createReviewTargetAdapter({
       }
     },
     async requestGuide(connectionId, request) {
-      const idempotencyKey = randomUUID();
-      try {
-        requireParsed(
-          await mutations.execute(
-            {
-              connectionId,
-              method: "companion/review/guide/request",
-              operationId: idempotencyKey,
-              params: {
-                author: request.author,
-                idempotencyKey,
-                revision: request.revision,
-                source: request.source,
-              },
-              scope: reviewScope(connectionId, request.source),
-            },
-            parseGuideRequest,
-          ),
-          "guide request",
-        );
-      } finally {
-        await refreshGuide(connectionId, request.source);
+      const key = JSON.stringify([connectionId, diffSourceKey(request.source), request.revision]);
+      const pending = guideRequests.get(key);
+      if (pending !== undefined) {
+        return pending;
       }
+      const active = startGuide(connectionId, request).finally(() => {
+        guideRequests.delete(key);
+      });
+      guideRequests.set(key, active);
+      return active;
     },
     async sendDraftsToAgent(connectionId, source, draftIds) {
       const idempotencyKey = randomUUID();

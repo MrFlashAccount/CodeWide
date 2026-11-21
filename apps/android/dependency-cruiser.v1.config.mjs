@@ -39,6 +39,7 @@ const featurePublicModules = {
     "accountCapabilities",
     "threadListAccountRefresh",
     "CostBreakdownMenu",
+    "useCostBreakdownTrigger",
     "conversationAccountCapabilities",
   ],
   settings: ["SettingsFeature"],

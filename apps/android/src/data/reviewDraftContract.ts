@@ -31,13 +31,16 @@ import {
 type DiffSourceRevision = { readonly revision: string; readonly source: DiffSource };
 
 /** Line anchor of a draft; the optional hunk lets the companion move it across pushes. */
-type DraftAnchor = {
-  readonly endLine: number;
-  readonly hunk: { readonly fingerprint: HunkFingerprint; readonly id: HunkId } | null;
-  readonly path: string;
-  readonly side: "new" | "old";
-  readonly startLine: number;
-};
+type DraftAnchor =
+  | { readonly kind: "file"; readonly path: string }
+  | {
+      readonly endLine: number;
+      readonly hunk: { readonly fingerprint: HunkFingerprint; readonly id: HunkId } | null;
+      readonly kind?: never;
+      readonly path: string;
+      readonly side: "new" | "old";
+      readonly startLine: number;
+    };
 
 /** Agent delivery axis; `sent` is terminal. */
 export type AgentAxis = {
@@ -89,6 +92,15 @@ export type DraftComment = DraftBase &
 
 function anchor(value: unknown, path: string): DraftAnchor {
   const entry = record(value, path);
+  if (entry.kind === "file") {
+    if (["startLine", "endLine", "side", "hunk"].some((name) => entry[name] !== undefined)) {
+      throw new ForgeWireError(path);
+    }
+    return { kind: "file", path: nonEmptyText(entry.path, `${path}.path`) };
+  }
+  if (entry.kind !== undefined) {
+    throw new ForgeWireError(path);
+  }
   const startLine = count(entry.startLine, `${path}.startLine`);
   const endLine = count(entry.endLine, `${path}.endLine`);
   const hunk =

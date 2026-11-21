@@ -18,7 +18,7 @@
 //! `expectedVersion` returns `-32088` with the current draft.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     ReviewError,
-    hunks::{HunkFingerprint, HunkId},
+    hunks::{HunkFingerprint, HunkId, ParsedHunk},
     source::{DiffCatalog, DiffSourceRevision, SourceKind},
 };
 use crate::store::{IndexStore, kv::KvOp, review_tables::REVIEW_DRAFTS};
@@ -49,14 +49,35 @@ pub struct AnchorHunk {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DraftAnchor {
-    pub path: String,
-    pub side: Side,
-    pub start_line: u32,
-    pub end_line: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hunk: Option<AnchorHunk>,
+#[serde(untagged, rename_all_fields = "camelCase", deny_unknown_fields)]
+pub enum DraftAnchor {
+    Line {
+        path: String,
+        side: Side,
+        start_line: u32,
+        end_line: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hunk: Option<AnchorHunk>,
+    },
+    File {
+        path: String,
+        kind: FileAnchorKind,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FileAnchorKind {
+    File,
+}
+
+impl DraftAnchor {
+    #[must_use]
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Line { path, .. } | Self::File { path, .. } => path,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -250,11 +271,11 @@ impl DraftInput {
             return Err(ReviewError::Invalid("invalid revision".into()));
         }
         let anchor = &self.anchor;
-        if anchor.path.is_empty()
-            || anchor.path.len() > 4_096
-            || anchor.path.contains('\0')
-            || anchor.start_line == 0
-            || anchor.end_line < anchor.start_line
+        if anchor.path().is_empty()
+            || anchor.path().len() > 4_096
+            || anchor.path().contains('\0')
+            || matches!(anchor, DraftAnchor::Line {start_line, end_line, ..} if *start_line == 0 || end_line < start_line)
+            || matches!(anchor, DraftAnchor::File {..} if self.revision.source.kind() != SourceKind::PullRequest)
         {
             return Err(ReviewError::Invalid("invalid anchor".into()));
         }
@@ -694,39 +715,12 @@ impl DraftStore {
             if frozen {
                 continue;
             }
-            let matched = stored.draft.anchor.hunk.as_ref().and_then(|hunk| {
-                index
-                    .get(hunk.fingerprint.as_str())
-                    .and_then(|candidates| {
-                        candidates
-                            .iter()
-                            .find(|candidate| {
-                                candidate
-                                    .hunk
-                                    .id
-                                    .as_str()
-                                    .starts_with(&format!("{}#", stored.draft.anchor.path))
-                            })
-                            .or_else(|| candidates.first())
-                    })
-                    .map(|parsed| parsed.hunk.clone())
-            });
-            if let (Some(hunk), Some(origin)) = (matched, stored.hunk_origin) {
-                let delta = match stored.draft.anchor.side {
-                    Side::New => i64::from(hunk.new_start) - i64::from(origin.new_start),
-                    Side::Old => i64::from(hunk.old_start) - i64::from(origin.old_start),
-                };
-                let shift = |line: u32| u32::try_from(i64::from(line) + delta).unwrap_or(1).max(1);
-                stored.draft.anchor.start_line = shift(stored.draft.anchor.start_line);
-                stored.draft.anchor.end_line = shift(stored.draft.anchor.end_line);
-                stored.draft.anchor.hunk = Some(AnchorHunk {
-                    id: hunk.id.clone(),
-                    fingerprint: hunk.fingerprint.clone(),
-                });
-                stored.hunk_origin = Some(HunkOrigin {
-                    old_start: hunk.old_start,
-                    new_start: hunk.new_start,
-                });
+            if reanchor_location(
+                &mut stored.draft.anchor,
+                &mut stored.hunk_origin,
+                catalog,
+                &index,
+            ) {
                 stored.draft.revision.revision.clone_from(&catalog.revision);
                 if let Some(pr) = stored.draft.routing.pr_mut()
                     && pr.state == PrState::Outdated
@@ -750,6 +744,58 @@ impl DraftStore {
             self.write(&changed)?;
         }
         Ok(())
+    }
+}
+
+fn reanchor_location(
+    anchor: &mut DraftAnchor,
+    hunk_origin: &mut Option<HunkOrigin>,
+    catalog: &DiffCatalog,
+    index: &HashMap<String, Vec<&ParsedHunk>>,
+) -> bool {
+    match anchor {
+        DraftAnchor::File { path, .. } => catalog.files.iter().any(|file| file.path == *path),
+        DraftAnchor::Line {
+            path,
+            side,
+            start_line,
+            end_line,
+            hunk: anchor_hunk,
+        } => {
+            let matched = anchor_hunk.as_ref().and_then(|hunk| {
+                index
+                    .get(hunk.fingerprint.as_str())
+                    .and_then(|candidates| {
+                        candidates
+                            .iter()
+                            .find(|candidate| {
+                                candidate.hunk.id.as_str().starts_with(&format!("{path}#"))
+                            })
+                            .or_else(|| candidates.first())
+                    })
+                    .map(|parsed| parsed.hunk.clone())
+            });
+            if let (Some(hunk), Some(origin)) = (matched, *hunk_origin) {
+                let delta = match side {
+                    Side::New => i64::from(hunk.new_start) - i64::from(origin.new_start),
+                    Side::Old => i64::from(hunk.old_start) - i64::from(origin.old_start),
+                };
+                let shift = |line: u32| u32::try_from(i64::from(line) + delta).unwrap_or(1).max(1);
+                *start_line = shift(*start_line);
+                *end_line = shift(*end_line);
+                *anchor_hunk = Some(AnchorHunk {
+                    id: hunk.id.clone(),
+                    fingerprint: hunk.fingerprint.clone(),
+                });
+                *hunk_origin = Some(HunkOrigin {
+                    old_start: hunk.old_start,
+                    new_start: hunk.new_start,
+                });
+                true
+            } else {
+                false
+            }
+        }
     }
 }
 

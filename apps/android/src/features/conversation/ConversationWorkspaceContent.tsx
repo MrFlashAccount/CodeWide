@@ -6,7 +6,7 @@ import {
 import { agentProviders } from "../../data/workspace-runtime";
 import { threadRefusesDirectInput } from "../../data/threadDirectInput";
 import { ConversationComposition } from "./ConversationComposition";
-import { forkOffer, type ForkThreadSettings } from "../turnActions/forkTargets";
+import { readThreadForkOffer, type ForkThreadSettings } from "../turnActions/forkTargets";
 import { threadAgentAccounts, threadAgentActions } from "./threadAgentActions";
 import type { RenderConversationWorkspaceContentProps } from "./ConversationWorkspaceContent.types";
 /**
@@ -51,13 +51,17 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         forkOffer:
           gated.onFork === undefined
             ? undefined
-            : () =>
-                forkOffer(
-                  remoteThread,
-                  serverThreadSettings(remoteThread),
-                  props.runtime.resources?.turnControls.get(props.activeControlsResourceId ?? "")
-                    ?.value?.models ?? [],
-                ),
+            : (receive) => {
+                readThreadForkOffer({
+                  cached: props.runtime.resources?.turnControls.get(
+                    props.activeControlsResourceId ?? "",
+                  )?.value,
+                  load: props.conversationActions.onLoadControls,
+                  receive,
+                  settings: serverThreadSettings(remoteThread),
+                  thread: remoteThread,
+                });
+              },
         onArchive: props.threadMutationActions.onArchive,
         onCompact: gated.onCompact,
         onDelete: props.threadMutationActions.onDelete,
@@ -174,6 +178,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         composerState: props.snapshot.composerState,
         currentOutcome: props.snapshot.currentOutcome ?? null,
         currentUsage: props.snapshot.currentUsage ?? null,
+        detailCursor: props.snapshot.detailCursor ?? 0,
         historyActivityModel: props.snapshot.historyActivityModel ?? null,
         historyActivityResourceId: props.snapshot.historyActivityResourceId ?? null,
         historyRestoreReady: props.snapshot.historyRestoreReady,

@@ -1,3 +1,4 @@
+import { useConstant } from "../../../react/useConstant";
 import type { RenderBlock } from "@codewide/renderers";
 import type { ReactElement } from "react";
 import { View } from "react-native";
@@ -36,7 +37,9 @@ type VirtualizedAgentTurnBodyProps = {
   compact: boolean;
   forceExpanded: boolean;
   getTransferAccess: TurnTimelineItemProps["getTransferAccess"];
+  latestAgentRef?: TurnTimelineItemProps["latestAgentRef"];
   onFixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
+  onLatestAgentLayout?: TurnTimelineItemProps["onLatestAgentLayout"];
   onLoadItems: TurnTimelineItemProps["onLoadItems"];
   parts: readonly VirtualizedTurnPart[];
   placement: VirtualizedTurnPlacement;
@@ -48,7 +51,13 @@ type VirtualizedAgentTurnBodyProps = {
 export function VirtualizedAgentTurnBody(props: VirtualizedAgentTurnBodyProps): ReactElement {
   return (
     <ArtifactImageReferences.Provider value={artifactImageReferences(props.presentation.artifacts)}>
-      <BubbleContent>
+      <BubbleContent
+        collapsable={props.latestAgentRef === undefined && props.onLatestAgentLayout === undefined}
+        {...(props.latestAgentRef === undefined ? {} : { ref: props.latestAgentRef })}
+        {...(props.onLatestAgentLayout === undefined
+          ? {}
+          : { onLayout: props.onLatestAgentLayout })}
+      >
         {isLeadingSlice(props.placement) ? <VirtualizedTurnLead {...props} /> : null}
         <VirtualizedTurnParts {...props} />
         {isTrailingSlice(props.placement) ? <VirtualizedTurnTail {...props} /> : null}
@@ -197,6 +206,8 @@ function VirtualizedMarkdownGroup({
   presentation: ReturnType<typeof projectTurnPresentation>;
 }): ReactElement | null {
   const first = parts[0];
+  // A completed row needs no streaming paint host. Keep the host if it already owns live text.
+  const mountedStreaming = useConstant(() => first?.streaming === true);
   if (first === undefined) {
     return null;
   }
@@ -215,6 +226,7 @@ function VirtualizedMarkdownGroup({
           <RichMarkdownDocumentBlockView
             animateStreaming={part.streaming && animateNew}
             block={part.block}
+            completedChat={!part.streaming && presentation.rawTurn.status !== "inProgress"}
             key={part.block.key}
             {...(reviewTarget === null ? {} : { reviewTarget })}
           />
@@ -225,6 +237,9 @@ function VirtualizedMarkdownGroup({
   );
   const itemId = first.response.raw.id;
   const message = renderSearchMessage(itemId, content);
+  if (!mountedStreaming && !first.streaming) {
+    return message;
+  }
   return (
     <StreamingRevealSurface
       animateNew={first.streaming && animateNew}
@@ -401,12 +416,14 @@ function AgentArtifacts(props: VirtualizedAgentTurnBodyProps): ReactElement | nu
   ));
   return (
     <View style={styles.userMessageContent} testID="agent-artifacts">
-      <UserImageGallery
-        attachments={images}
-        {...(props.getTransferAccess === undefined
-          ? {}
-          : { getTransferAccess: props.getTransferAccess })}
-      />
+      {images.length > 0 && (
+        <UserImageGallery
+          attachments={images}
+          {...(props.getTransferAccess === undefined
+            ? {}
+            : { getTransferAccess: props.getTransferAccess })}
+        />
+      )}
       {videos.length === 0 ? null : (
         <MessageVideoGallery style={styles.agentAttachmentGrid}>{videoCards}</MessageVideoGallery>
       )}

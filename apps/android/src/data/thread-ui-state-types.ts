@@ -39,8 +39,10 @@ export type ThreadUiStateRow = {
   attachments: StoredDraftAttachment[];
   connectionId: string;
   draftText: string;
-  /** Anchor row top relative to the viewport top in pixels. */
+  /** Signed row top relative to the viewport in layout units. */
   historyAnchorOffsetPx?: number | null;
+  /** Physical slice within a turn that spans several virtualized rows. */
+  historyAnchorRowKey?: string | null;
   /** Stable viewport cursor. Absent on pre-anchor cache rows. */
   historyAnchorTurnId?: string | null;
   id: string;

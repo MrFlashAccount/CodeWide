@@ -199,6 +199,7 @@ it("closes the right pane from Details with ×, without a Details Back", async (
   const { navigation, view } = renderPane("right");
   await view.findByTestId("pull-request-screen");
 
+  expect(view.getByLabelText("Pull request menu")).toBeOnTheScreen();
   expect(view.queryByLabelText("Back")).toBeNull();
   fireEvent.press(view.getByLabelText("Close pull request"));
   expect(navigation.closePane).toHaveBeenCalledTimes(1);
@@ -209,6 +210,8 @@ it("keeps × beside Back on the right pane's nested Changes view", async () => {
   const { navigation, view } = renderPane("right", "changes");
   await view.findByTestId("pull-request-changes");
 
+  expect(view.getByRole("header", { name: /Files changed/u })).toBeOnTheScreen();
+  expect(view.queryByLabelText("Pull request menu")).toBeNull();
   fireEvent.press(view.getByLabelText("Back"));
   expect(navigation.closeChanges).toHaveBeenCalledTimes(1);
   fireEvent.press(view.getByLabelText("Close pull request"));

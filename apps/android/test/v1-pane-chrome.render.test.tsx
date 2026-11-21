@@ -114,8 +114,10 @@ function stallSpringHalfway(): jest.SpyInstance {
 }
 
 describe("pane chrome follows the visible pane width", () => {
-  it("lays chrome out to the whole pane while nothing moves", () => {
+  it("lays both visible headers out to their whole pane once the split is placed", () => {
     const view = render(<Workspace />);
+    // Sample the derived styles after the right pane registers with the frame.
+    view.rerender(<Workspace />);
     for (const pane of ["center", "right"] as const) {
       for (const chrome of chromeInsets(view, pane)) {
         expect(chrome).toHaveStyle({ marginRight: 0 });
@@ -130,8 +132,11 @@ describe("pane chrome follows the visible pane width", () => {
     expect(spring).toHaveBeenCalled();
     // Re-read the pane context after the UI thread took the new arrangement.
     view.rerender(<Workspace />);
-    // Halfway from an equal split to a fullscreen right pane both content boxes hold the whole
-    // destination while each pane shows three quarters of it.
+    // The center keeps its half-width layout and shows one quarter of the frame. The
+    // right holds a full-width layout and shows the remaining three quarters.
+    expect(view.getByTestId("center", { includeHiddenElements: true })).toHaveStyle({
+      width: FRAME / 4,
+    });
     for (const pane of ["center", "right"] as const) {
       for (const chrome of chromeInsets(view, pane)) {
         expect(chrome).toHaveStyle({ marginRight: FRAME / 4 });
@@ -146,10 +151,11 @@ describe("pane chrome follows the visible pane width", () => {
     fireEvent.press(within(view.getByTestId("right")).getByLabelText("Open right fullscreen"));
     view.rerender(<Workspace />);
     expect(spring).not.toHaveBeenCalled();
-    for (const pane of ["center", "right"] as const) {
-      for (const chrome of chromeInsets(view, pane)) {
-        expect(chrome).toHaveStyle({ marginRight: 0 });
-      }
+    for (const chrome of chromeInsets(view, "center")) {
+      expect(chrome).toHaveStyle({ marginRight: "100%" });
+    }
+    for (const chrome of chromeInsets(view, "right")) {
+      expect(chrome).toHaveStyle({ marginRight: 0 });
     }
   });
 });

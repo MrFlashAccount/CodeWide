@@ -49,8 +49,8 @@ export type CodeReviewFileItem = {
   countsAreNet?: boolean;
   deletions: number;
   path: string;
-  /** Pull request review state shown on the tree row: viewed mark and pending drafts. */
-  review?: { readonly drafts: number; readonly viewed: boolean };
+  /** Pull request review state shown on the tree row: pending drafts beside the per-file change counts. */
+  review?: { readonly drafts: number };
   sourceOnly?: boolean;
   status: "added" | "deleted" | "modified" | "renamed";
   treePath: string;
@@ -59,6 +59,7 @@ export type CodeReviewFileItem = {
 export type CodeReviewWorkspaceState = {
   compact: boolean;
   files: readonly CodeReviewFileItem[];
+  filesComplete?: boolean;
   revision: string;
   selectedPath: string | null;
   sidebarOpen: boolean;
@@ -87,7 +88,10 @@ export type CodeReviewHostCommand =
   | BridgeCommand<"comments", readonly CodeReviewInlineComment[]>
   /** The line the native composer is open on, highlighted as its anchor; `null` clears it. */
   | BridgeCommand<"selection", CodeReviewLineReference | null>
-  | BridgeCommand<"settings", { mode: CodeReviewViewMode; wrapLines: boolean }>
+  | BridgeCommand<
+      "settings",
+      { mode: CodeReviewViewMode; showLineNumbers?: boolean; wrapLines: boolean }
+    >
   | BridgeCommand<"reveal", CodeReviewLineReference>;
 
 export type CodeReviewClientEvent =

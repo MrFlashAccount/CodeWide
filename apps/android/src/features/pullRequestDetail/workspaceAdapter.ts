@@ -16,6 +16,7 @@ import {
   parseScenarioStart,
   parseSubmitOutcome,
   parseViewedSet,
+  type PullRequestFilesPage,
   type ReviewChatOpening,
 } from "../../data/forgeMutationContract";
 import { parseLinks } from "../../data/forgePullRequestContract";
@@ -288,20 +289,22 @@ export function createPullRequestDetailWorkspaceAdapter({
         ),
         "viewed mark",
       );
-      const current = forge.files.data(target);
-      if (current !== null) {
-        forge.files.publish(target, {
-          ...current,
-          files: current.files.map((file) =>
-            file.path === mark.path
-              ? {
-                  ...file,
-                  viewed: { source: mark.source, viewed: mark.viewed },
-                }
-              : file,
-          ),
-        });
-      }
+      forge.files.client.setQueriesData<PullRequestFilesPage>(
+        { queryKey: forge.files.keyOf(target) },
+        (current) => {
+          if (current === undefined || !current.files.some((file) => file.path === mark.path)) {
+            return current;
+          }
+          return {
+            ...current,
+            files: current.files.map((file) =>
+              file.path === mark.path
+                ? { ...file, viewed: { source: mark.source, viewed: mark.viewed } }
+                : file,
+            ),
+          };
+        },
+      );
       return { source: mark.source, viewed: mark.viewed };
     },
     async startScenario(target, request) {

@@ -1,8 +1,10 @@
-import { randomUUID } from "expo-crypto";
 import { useLayoutEffect, useRef, useState } from "react";
 
 import type { PullRequestKey } from "../data/forgeContract";
-import type { ReviewChatOpening } from "../data/forgeMutationContract";
+import type {
+  ReviewChatOpening,
+  ReviewChatWorkspaceCandidate,
+} from "../data/forgeMutationContract";
 import type { ThreadId } from "../data/reviewContract";
 import type { DraftSubmission } from "../features/conversation/ConversationWorkspace.types";
 import type { ComposerWorkspaceCapabilities } from "../features/composer/workspaceCapabilities";
@@ -15,6 +17,7 @@ import { usePaneRearrangement } from "./paneMotion";
 import { linkedThreadSelectionKey, usePullRequestNavigation } from "./pullRequestNavigation";
 import {
   type ReviewChatDraft,
+  reviewChatDraftId,
   withProject,
   withScenario,
   withSuggestions,
@@ -51,6 +54,7 @@ type PendingScenario = {
  * route is inactive.
  */
 export function usePullRequestReviewChat({
+  composeReview = false,
   connectionId,
   desktop,
   ensureReviewChat,
@@ -59,6 +63,7 @@ export function usePullRequestReviewChat({
   routeActive,
   sendText,
 }: {
+  readonly composeReview?: boolean;
   readonly connectionId: string;
   readonly desktop: boolean;
   readonly ensureReviewChat: PullRequestDetailWorkspaceCapabilities["ensureReviewChat"];
@@ -72,6 +77,7 @@ export function usePullRequestReviewChat({
   /** Closes the chat at once; the pane layout runs it inside its own rearrangement. */
   readonly dismissChat: () => void;
   readonly draft: ReviewChatDraftCommands;
+  readonly openAttachedDraft: (candidates: readonly ReviewChatWorkspaceCandidate[]) => void;
   readonly openReviewChat: (reviewThread: ThreadId | null) => void;
   readonly openThread: (threadId: ThreadId) => void;
 } {
@@ -82,11 +88,15 @@ export function usePullRequestReviewChat({
   // changes immediately.
   const paneRearrangement = usePaneRearrangement();
   const rearrange = desktop ? paneRearrangement : applyImmediately;
-  const [chat, setChat] = useState<PullRequestChatState>({ status: "closed" });
+  const draftId = useConstant(() => reviewChatDraftId(pullRequest));
+  const [chat, setChat] = useState<PullRequestChatState>(() =>
+    composeReview
+      ? { draft: { cwd: null, id: draftId, scenario: null, suggestions: [] }, status: "draft" }
+      : { status: "closed" },
+  );
   const activeAttempt = useRef<number | null>(null);
   const nextAttemptId = useRef(0);
   const pendingScenario = useRef<PendingScenario | null>(null);
-  const draftId = useConstant(() => `review-chat-draft-${randomUUID()}`);
   // Any desktop layout (an unfolded Fold included) keeps the chat beside the PR, where the pane
   // frame lets it cover the catalog. Only phones navigate to the Threads tab.
   const wideChat = desktop;
@@ -184,6 +194,19 @@ export function usePullRequestReviewChat({
     presentDraft({ cwd: null, id: draftId, scenario: null, suggestions: null });
     requestSuggestions(attempt).catch(() => undefined);
   });
+  const openAttachedDraft = useEvent(
+    (candidates: readonly ReviewChatWorkspaceCandidate[]): void => {
+      if (!routeActive) {
+        return;
+      }
+      activeAttempt.current = null;
+      const base =
+        chat.status === "draft"
+          ? chat.draft
+          : { cwd: null, id: draftId, scenario: null, suggestions: null };
+      presentDraft(withSuggestions(base, candidates));
+    },
+  );
   const deferScenario = useEvent<DeferReviewChatScenario>(
     async ({ candidates, label, start }) =>
       new Promise<ThreadId | null>((resolve) => {
@@ -281,6 +304,7 @@ export function usePullRequestReviewChat({
     deferScenario,
     dismissChat,
     draft: { chooseProject, send, startScenario },
+    openAttachedDraft,
     openReviewChat,
     openThread,
   };

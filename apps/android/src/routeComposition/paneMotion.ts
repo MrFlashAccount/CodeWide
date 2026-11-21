@@ -30,17 +30,20 @@ const SETTLE_SLACK_MS = 80;
 export type PaneMotion = {
   /** Whether a rearrangement is armed or still moving; a leaving pane stays mounted meanwhile. */
   readonly armed$: Observable<boolean>;
+  readonly captureBodies: () => void;
   /** The armed rearrangement a geometry change belongs to, or `null` outside one. */
   readonly claim: () => number | null;
   /** Arms the pane motion and applies `change` at once; its geometry change springs. */
   readonly rearrange: (change: () => void) => void;
   /** Ends rearrangement `generation` once its panes have settled. */
   readonly settle: (generation: number) => void;
+  readonly subscribeCapture: (capture: () => void) => () => void;
 };
 
 /** A fresh, unarmed rearrangement window for one pane frame. */
 export function createPaneMotion(): PaneMotion {
   const armed$ = observable(false);
+  const captures = new Set<() => void>();
   let generation = 0;
   let fallback: ReturnType<typeof setTimeout> | null = null;
   const clearFallback = (): void => {
@@ -57,6 +60,11 @@ export function createPaneMotion(): PaneMotion {
   };
   return {
     armed$,
+    captureBodies() {
+      for (const capture of captures) {
+        capture();
+      }
+    },
     claim() {
       if (!armed$.peek()) {
         return null;
@@ -76,17 +84,25 @@ export function createPaneMotion(): PaneMotion {
       change();
     },
     settle,
+    subscribeCapture(capture) {
+      captures.add(capture);
+      return () => {
+        captures.delete(capture);
+      };
+    },
   };
 }
 
 /** Outside a pane frame nothing rearranges, so changes apply directly. */
 const UNARMED: PaneMotion = {
   armed$: observable(false),
+  captureBodies: () => undefined,
   claim: () => null,
   rearrange: (change) => {
     change();
   },
   settle: () => undefined,
+  subscribeCapture: () => () => undefined,
 };
 
 /** The pane frame's motion owner; `PaneMotionProvider` supplies it. */
@@ -131,6 +147,7 @@ function standingPaneGeometry(state: PaneMotionState, frameWidth: number): PaneG
 function settlePanes(state: PaneMotionState, next: PaneArrangement): void {
   "worklet";
   cancelAnimation(state.progress);
+  state.frameWidth.set(0);
   state.arrangement.set(next);
   state.moving.set(false);
   state.progress.set(1);
@@ -207,6 +224,9 @@ export function usePaneMotionState(
     const animate = generation !== null && !reducedMotion;
     if (generation !== null && !animate) {
       motion.settle(generation);
+    }
+    if (animate) {
+      motion.captureBodies();
     }
     scheduleOnUI(
       startPaneMotion,

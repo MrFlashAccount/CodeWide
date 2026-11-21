@@ -245,7 +245,7 @@ export function turnMetadataBlocks(scope: string, turn: Thread["turns"][number])
 
 import { projectAgentArtifacts } from "../../../rendering/agent-artifacts";
 import {
-  attachmentSourceKey,
+  attachmentRenderKey,
   type UserMessageAttachment,
 } from "../../../rendering/user-message-attachments";
 import type { ContentReviewTarget } from "../../../rendering/content-review";
@@ -530,7 +530,7 @@ function sameAttachments(
         candidate !== undefined &&
         value.kind === candidate.kind &&
         value.name === candidate.name &&
-        attachmentSourceKey(value.source) === attachmentSourceKey(candidate.source)
+        attachmentRenderKey(value.source) === attachmentRenderKey(candidate.source)
       );
     })
   );

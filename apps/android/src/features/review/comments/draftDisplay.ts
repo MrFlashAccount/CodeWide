@@ -50,6 +50,9 @@ function prBadge(state: PrAxis["state"], host: string | null): DraftBadge {
 /** `You · line 210` or `Agent · lines 12–18`. */
 export function draftLocation(draft: DraftComment): string {
   const who = draft.author.kind === "user" ? "You" : "Agent";
+  if (draft.anchor.kind === "file") {
+    return `${who} · whole file`;
+  }
   const { endLine, startLine } = draft.anchor;
   return startLine === endLine
     ? `${who} · line ${String(startLine)}`

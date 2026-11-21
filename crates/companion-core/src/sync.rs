@@ -529,7 +529,7 @@ impl SyncHub {
             gateway: &gateway,
             store: &store,
             local_events: &local_events,
-            permission_profiles,
+            permission_profiles: permission_profiles.clone(),
             turn_delivery: turn_delivery.clone(),
             workspaces: workspaces.clone(),
         }
@@ -597,7 +597,7 @@ impl SyncHub {
         {
             tokio::spawn(forward_subagent_changes(changes, local_events.clone()));
         }
-        let list_feed = RowFeed::new(gateway.clone(), store.clone());
+        let list_feed = RowFeed::new(gateway.clone(), store.clone(), permission_profiles);
         let ingest_context = IngestContext {
             store: store.clone(),
             events: events.clone(),

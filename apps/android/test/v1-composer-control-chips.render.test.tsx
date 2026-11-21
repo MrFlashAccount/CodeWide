@@ -180,7 +180,11 @@ const claudeAgent = {
   provider: "claude",
   providerName: "Claude",
 };
-const codexAgent = { capabilities: { "codex.native": true }, provider: "codex", providerName: "Codex" };
+const codexAgent = {
+  capabilities: { "codex.native": true },
+  provider: "codex",
+  providerName: "Codex",
+};
 
 function thread(
   settings: {
@@ -208,6 +212,9 @@ function runningTurn(): Turn {
 }
 
 type HarnessProps = {
+  readonly detailCursor?: number;
+  readonly listed?: import("../src/data/threadCatalogControls").ThreadCatalogControls;
+  readonly load?: import("../src/data/turn-controls-types").LoadTurnControls;
   readonly newChat?: boolean;
   readonly onUpdateSettings?: (settings: ThreadSettings) => Promise<void>;
   readonly permissions?: string | null;
@@ -219,6 +226,9 @@ const owner = { hasReplacement: () => false, isCurrent: () => true };
 
 /** The real settings owner wired to the real chips, as the composer composes them. */
 function Harness({
+  detailCursor,
+  listed,
+  load,
   newChat = false,
   onUpdateSettings,
   permissions = null,
@@ -249,6 +259,9 @@ function Harness({
   return (
     <>
       <ComposerControlChips
+        catalogControls={listed ?? null}
+        detailCursor={detailCursor ?? 0}
+        {...(load === undefined ? {} : { load })}
         controls$={settings.controls$}
         cwd="/workspace"
         error={settings.controlError}
@@ -302,6 +315,71 @@ const accessLabel = (view: ReturnType<typeof render>) =>
 const modelLabel = (view: ReturnType<typeof render>) => view.getByTestId("composer-model-label");
 
 describe("Codex thread", () => {
+  it("shows catalog controls before detail or menu data and then follows the live settings", async () => {
+    const load = jest.fn(async () => multiProvider);
+    const listed = {
+      cursor: 8,
+      model: "m",
+      modelLabel: "Catalog model",
+      effort: "high",
+      permissions: ":read-only",
+    };
+    const view = render(
+      <Harness listed={listed} load={load} remoteThread={null} resources={null} />,
+    );
+    expect(modelLabel(view)).toHaveTextContent("Catalog model · High");
+    expect(accessLabel(view)).toHaveTextContent("Read only");
+    const detail = thread(
+      { model: "sol", effort: "medium", permissions: ":workspace" },
+      codexAgent,
+    );
+    view.rerender(<Harness detailCursor={7} listed={listed} load={load} remoteThread={detail} resources={null} />);
+    expect(modelLabel(view)).toHaveTextContent("Catalog model · High");
+    expect(accessLabel(view)).toHaveTextContent("Read only");
+    view.rerender(<Harness detailCursor={8} listed={listed} load={load} remoteThread={detail} resources={null} />);
+    expect(modelLabel(view)).toHaveTextContent("sol · Medium");
+    expect(accessLabel(view)).toHaveTextContent("Workspace");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("keeps the listed name when newer detail confirms the same model without a label", () => {
+    const listed = {
+      cursor: 7, model: "gpt-6.2-astra", modelLabel: "GPT-6.2-Astra",
+      effort: "medium", permissions: ":read-only",
+    };
+    const detail = thread({ model: listed.model, effort: "high", permissions: ":workspace" }, codexAgent);
+    const view = render(<Harness detailCursor={8} listed={listed} remoteThread={detail} resources={null} />);
+    expect(modelLabel(view)).toHaveTextContent("GPT-6.2-Astra · High");
+    expect(accessLabel(view)).toHaveTextContent("Workspace");
+  });
+
+  it("shows the listed effective access before history without loading controls or choosing a profile", async () => {
+    const load = jest.fn();
+    const listed = {
+      cursor: 5, model: "m", modelLabel: "Model M", effort: "high", permissions: undefined,
+      accessPolicy: { sandboxPolicy: "workspaceWrite", approvalPolicy: "on-request" } as const,
+    };
+    const view = render(<Harness listed={listed} load={load} remoteThread={null} resources={null} />);
+    expect(modelLabel(view)).toHaveTextContent("Model M · High");
+    expect(accessLabel(view)).toHaveTextContent("Workspace · Ask");
+    const detail = thread({ model: "m", effort: "high", permissions: "custom-profile" }, codexAgent);
+    view.rerender(<Harness detailCursor={6} listed={listed} load={load} remoteThread={detail} resources={null} />);
+    expect(accessLabel(view)).toHaveTextContent("custom-profile");
+    await act(async () => { await Promise.resolve(); });
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("updates a cached access profile when a newer listing supplies only permissions", () => {
+    const detail = thread({ model: "sol", effort: "medium", permissions: ":workspace" }, codexAgent);
+    const listed = { cursor: 8, model: null, modelLabel: null, effort: null, permissions: ":read-only" };
+    const view = render(<Harness detailCursor={7} listed={listed} remoteThread={detail} resources={null} />);
+    expect(modelLabel(view)).toHaveTextContent("sol · Medium");
+    expect(accessLabel(view)).toHaveTextContent("Read only");
+  });
+
   it("shows the thread's server access, not a stale local preference", async () => {
     const resources = resourcesWith(multiProvider);
     const remoteThread = thread(

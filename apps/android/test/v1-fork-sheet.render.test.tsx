@@ -91,7 +91,7 @@ function Conversation(props: {
   readonly thread: unknown;
 }) {
   const picker = useForkTargetPicker("scope");
-  const readOffer = () => forkOffer(props.thread, props.settings, catalog);
+  const readOffer = (receive: (offer: ReturnType<typeof forkOffer>) => void) => receive(forkOffer(props.thread, props.settings, catalog));
   const timeline = useThreadTimelineActions(
     undefined,
     (turnId) => {

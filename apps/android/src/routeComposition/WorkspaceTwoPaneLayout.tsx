@@ -53,7 +53,7 @@ type WorkspaceTwoPaneLayoutProps = {
 /**
  * Places the catalog and the destination from the frame's pane motion. At rest Yoga lays them out
  * in one row: the catalog at its relative sidebar width and the destination beside it, or over the
- * frame. While panes move the destination lies absolutely, slides by translation and the catalog
+ * frame. While panes move the destination lies absolutely, slides by its left edge and the catalog
  * only dims, so neither relayouts its content per frame. Callers retain navigation, lifetime,
  * interaction and surface ownership.
  */

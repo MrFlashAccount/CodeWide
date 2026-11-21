@@ -119,11 +119,11 @@ it("hides tokens before cost, preserves Changes and time, and restores details w
       nativeEvent: { layout: { width, height: 16, x: 0, y: 0 } },
     });
   layout("turn-footer", 400);
-  layout("turn-footer-primary-segment", 70);
+  layout("turn-footer-metadata", 70);
   layout("turn-footer-tokens-segment", 100);
   layout("turn-footer-cost-segment", 60);
   layout("turn-footer-changes-segment", 70);
-  layout("turn-footer-time-segment", 50);
+  layout("turn-footer-time", 50);
   expect(result.getByText("815K tokens")).toBeVisible();
   expect(result.getByText("$1.20")).toBeVisible();
   layout("turn-footer", 280);

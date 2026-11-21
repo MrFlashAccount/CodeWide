@@ -510,6 +510,89 @@ async fn a_provider_reconnect_resolves_only_its_own_user_requests() -> TestResul
 }
 
 #[tokio::test]
+async fn thread_list_names_models_before_open_and_follows_native_catalog_pages() -> TestResult {
+    fn answer(request: &Value) -> Value {
+        match request["method"].as_str() {
+            Some("thread/list") => {
+                let mut result = default_answer(request);
+                result["result"]["data"][0]["model"] = json!("model-alias");
+                result["result"]["data"][1]["model"] = json!("model-one");
+                result
+            }
+            Some("model/list") => {
+                let (data, next) = if request["params"]["includeHidden"] != true {
+                    (
+                        json!([{"id":"change", "model":"model-alias", "displayName":"Renamed"}]),
+                        Some("continue"),
+                    )
+                } else if request["params"]["cursor"] == "second" {
+                    (
+                        json!([{"id":"model-alias","model":"backend-two","displayName":"Model Two"}]),
+                        None,
+                    )
+                } else {
+                    (
+                        json!([{"id":"one","model":"model-one","displayName":"Model One"}]),
+                        Some("second"),
+                    )
+                };
+                json!({"result":{"data":data,"nextCursor":next}})
+            }
+            _ => default_answer(request),
+        }
+    }
+    let mut harness = Harness::start(answer, |_| Vec::new()).await?;
+    let list = harness
+        .rpc("initial", "thread/list", json!({"limit":10}))
+        .await?;
+    assert_eq!(list["result"]["data"][0]["codewideModelLabel"], "Model Two");
+    assert_eq!(list["result"]["data"][1]["codewideModelLabel"], "Model One");
+    let menu = harness
+        .rpc("picker", "model/list", json!({"limit":1}))
+        .await?;
+    assert_eq!(menu["result"]["nextCursor"], "continue");
+    let next = harness
+        .rpc("again", "thread/list", json!({"limit":10}))
+        .await?;
+    assert_eq!(next["result"]["data"][0]["codewideModelLabel"], "Renamed");
+    assert_eq!(next["result"]["data"][1]["codewideModelLabel"], "Model One");
+    let methods = harness.observed_methods();
+    // Two pages of initial names, then only the user's explicit picker request.
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|s| s.as_str() == "model/list")
+            .count(),
+        3
+    );
+    harness.stop();
+    Ok(())
+}
+
+#[tokio::test]
+async fn unavailable_model_catalog_still_serves_threads_without_inventing_a_label() -> TestResult {
+    fn answer(request: &Value) -> Value {
+        if request["method"] == "model/list" {
+            return json!({"error":{"code":-32_000,"message":"catalog unavailable"}});
+        }
+        let mut response = default_answer(request);
+        if request["method"] == "thread/list" {
+            response["result"]["data"][0]["model"] = json!("unknown-model");
+        }
+        response
+    }
+    let mut harness = Harness::start(answer, |_| Vec::new()).await?;
+    let list = harness
+        .rpc("list", "thread/list", json!({"limit":10}))
+        .await?;
+    let row = &list["result"]["data"][0];
+    assert_eq!(row["model"], "unknown-model");
+    assert!(row.get("codewideModelLabel").is_none());
+    harness.stop();
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_list_merges_non_primary_rows_inside_the_lead_window() -> TestResult {
     let mut harness = Harness::start(default_answer, |_| Vec::new()).await?;
     {

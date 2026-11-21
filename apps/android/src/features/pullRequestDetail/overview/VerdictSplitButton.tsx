@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
 import {
   colors,
+  controlHitSlop,
   controlSize,
   iconSize,
   radii,
@@ -14,6 +15,7 @@ import {
 import { ActionMenu } from "../../../ui/ActionMenu";
 import { AppText as Text } from "../../../ui/Typography";
 
+const MENU_TRIGGER_SIZE = { height: controlSize.compact, width: controlSize.compact - spacing.xs };
 const PRESSED_OPACITY = 0.72;
 /** The segment divider on the filled button: a hint of the label color, not a second outline. */
 const FILLED_DIVIDER_OPACITY = 0.24;
@@ -44,6 +46,7 @@ export function VerdictSplitButton({
         accessibilityHint="Opens Submit review"
         accessibilityLabel={`Review: ${lead.label}`}
         accessibilityRole="button"
+        hitSlop={controlHitSlop.compact}
         onPress={() => {
           onOpenReview(lead.actionId);
         }}
@@ -89,14 +92,16 @@ function VerdictMenu({
         label: verdict.label,
       }))}
       onSelect={onSelect}
+      triggerSize={MENU_TRIGGER_SIZE}
     >
       <Pressable
         accessibilityLabel="Verdict"
         accessibilityRole="button"
+        hitSlop={controlHitSlop.compact}
         style={({ pressed }) => [styles.toggle, pressed && styles.pressed]}
         testID="pull-request-verdict-menu"
       >
-        <Ionicons color={iconColor} name="chevron-down" size={iconSize.inline} />
+        <Ionicons color={iconColor} name="chevron-down" size={iconSize.indicator} />
       </Pressable>
     </ActionMenu>
   );
@@ -120,7 +125,7 @@ const styles = StyleSheet.create({
     borderColor: colors.primary,
   },
   label: {
-    ...typeScale.body,
+    ...typeScale.label,
     fontWeight: typeWeight.medium,
   },
   labelDanger: {
@@ -131,10 +136,11 @@ const styles = StyleSheet.create({
   },
   main: {
     alignItems: "center",
-    height: controlSize.regular,
+    flexShrink: 1,
+    height: controlSize.compact,
     justifyContent: "center",
     minWidth: 0,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.sm,
   },
   pressed: {
     opacity: PRESSED_OPACITY,
@@ -146,15 +152,16 @@ const styles = StyleSheet.create({
   split: {
     alignItems: "center",
     alignSelf: "flex-start",
-    borderRadius: radii.medium,
-    borderWidth: 1,
+    borderRadius: radii.small,
+    borderWidth: StyleSheet.hairlineWidth,
     flexDirection: "row",
+    maxWidth: "100%",
     overflow: "hidden",
   },
   toggle: {
     alignItems: "center",
-    height: controlSize.regular,
+    height: controlSize.compact,
     justifyContent: "center",
-    width: controlSize.touch,
+    width: MENU_TRIGGER_SIZE.width,
   },
 });

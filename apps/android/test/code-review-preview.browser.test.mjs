@@ -11,8 +11,8 @@ after(async () => {
   await browser?.close();
 });
 
-async function openReview() {
-  const page = await browser.newPage({ viewport: { width: 420, height: 780 } });
+async function openReview({ hasTouch = false } = {}) {
+  const page = await browser.newPage({ hasTouch, viewport: { width: 420, height: 780 } });
   await page.addInitScript(() => {
     window.reviewEvents = [];
     window.ReactNativeWebView = {
@@ -227,14 +227,16 @@ test("keeps final session files in the tree without cumulative step counts", asy
   const page = await openReview();
   try {
     await send(page, "workspace", {
-      files: [{
-        path: "file.ts",
-        treePath: "file.ts",
-        status: "added",
-        additions: 12,
-        deletions: 5,
-        countsAreNet: false,
-      }],
+      files: [
+        {
+          path: "file.ts",
+          treePath: "file.ts",
+          status: "added",
+          additions: 12,
+          deletions: 5,
+          countsAreNet: false,
+        },
+      ],
       revision: "final-session-file",
       selectedPath: "file.ts",
       sidebarOpen: true,
@@ -242,7 +244,9 @@ test("keeps final session files in the tree without cumulative step counts", asy
     });
     await expect(page.locator('button[data-item-path="file.ts"]')).toBeVisible();
     await expect(page.getByText("+12 −5", { exact: true })).toHaveCount(0);
-  } finally { await page.close(); }
+  } finally {
+    await page.close();
+  }
 });
 
 test("renders every recorded edit even when no complete current file exists", async () => {
@@ -283,6 +287,76 @@ test("renders every recorded edit even when no complete current file exists", as
     );
     await send(page, "settings", { mode: "source", wrapLines: false });
     await expect(page.getByText("No source content", { exact: true })).toBeVisible();
+  } finally {
+    await page.close();
+  }
+});
+
+test("shows an unreadable recorded patch verbatim alongside working diffs", async () => {
+  const page = await openReview();
+  try {
+    // Two deletions and two context lines, but the recorded header only counts the context.
+    const raw = "@@ -12,2 +12,3 @@\n context\n-old\n-older\n+<b>new</b>  \n end\n";
+    const malformed = { kind: "update", diff: raw };
+    const valid = patch("beforeOtherEdit", "afterOtherEdit");
+    const addedLine = page.getByText("afterOtherEdit", { exact: true });
+    const show = async (requestId, patches) => {
+      await send(page, "document", {
+        requestId,
+        document: { path: "file.ts", source: "", revision: String(requestId), patches },
+      });
+    };
+    const expectWorkingLine = async (requestId) => {
+      await addedLine.click();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            (id) =>
+              window.reviewEvents.some(
+                (event) =>
+                  event.type === "lineTap" && event.requestId === id && event.reference.line === 20,
+              ),
+            requestId,
+          ),
+        )
+        .toBe(true);
+    };
+    await send(page, "settings", { mode: "unified", wrapLines: false });
+    await show(1, [valid]);
+    await expect(addedLine).toBeVisible();
+
+    await show(2, [malformed, valid]);
+    const rawText = page.locator("pre").filter({ hasText: "<b>new</b>" });
+    await expect(rawText).toBeVisible();
+    assert.equal(await rawText.textContent(), raw);
+    await expect(rawText).toHaveCSS("white-space", "pre");
+    await rawText.click();
+    assert.equal(
+      await page.evaluate(() => window.reviewEvents.some((e) => e.type === "lineTap")),
+      false,
+    );
+    await expectWorkingLine(2);
+
+    await send(page, "settings", { mode: "split", wrapLines: true });
+    await show(3, [malformed]);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.reviewEvents.some((e) => e.type === "rendered" && e.requestId === 3),
+        ),
+      )
+      .toBe(true);
+    assert.equal(await rawText.textContent(), raw);
+    await expect(rawText).toHaveCSS("white-space", "pre-wrap");
+    await expect(addedLine).toHaveCount(0);
+
+    await show(4, [valid]);
+    await expect(rawText).toHaveCount(0);
+    await expectWorkingLine(4);
+    assert.equal(
+      await page.evaluate(() => window.reviewEvents.some((e) => e.type === "error")),
+      false,
+    );
   } finally {
     await page.close();
   }
@@ -641,11 +715,12 @@ test("keeps file navigation available in the mobile sheet and beside a pending d
       "a long name occupies the same single row as a short name",
     );
     await update({
-      files: items.map((file) =>
-        file === items[2] ? { ...file, review: { drafts: 2, viewed: true } } : file,
-      ),
+      files: items.map((file) => (file === items[2] ? { ...file, review: { drafts: 2 } } : file)),
     });
-    await expect(longName).toContainText("✎2 ✓");
+    await expect(longName).toContainText("+1");
+    await expect(longName).toContainText("−1");
+    await expect(longName).toContainText("✎2");
+    await expect(longName).not.toContainText("✓");
     await dialog.getByRole("treeitem", { name: "tests / ui" }).click();
     await expect(duplicate).toHaveCount(0);
     const filter = dialog.getByRole("searchbox", { name: "Filter changed files" });
@@ -674,7 +749,11 @@ test("keeps file navigation available in the mobile sheet and beside a pending d
     await expect(filter).toHaveValue("index");
     await expect(dialog.getByText("Loading file…")).toHaveCount(0);
     await expect(page.locator("#preview-panel").getByText("Loading file…")).toBeVisible();
-    for (const [width, expected] of [[740, 320], [1200, 408], [1600, 480]]) {
+    for (const [width, expected] of [
+      [740, 320],
+      [1200, 408],
+      [1600, 480],
+    ]) {
       await page.setViewportSize({ width, height: 650 });
       const tree = await dialog.boundingBox();
       const diff = await page.locator("#preview-panel").boundingBox();
@@ -685,6 +764,276 @@ test("keeps file navigation available in the mobile sheet and beside a pending d
     await update({ sidebarOpen: false });
     await expect(dialog).toHaveCount(0);
     assert.equal((await page.locator("#preview-panel").boundingBox()).x, 0);
+  } finally {
+    await page.close();
+  }
+});
+
+test("keeps the picker header and last file inside the native viewport as the keyboard resizes it", async () => {
+  const page = await openReview();
+  try {
+    const cdp = await page.context().newCDPSession(page);
+    // The native host has already excluded the three-button navigation bar.
+    await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: { bottom: 48 } });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const entries = Array.from({ length: 250 }, (_, index) => {
+      const path = `file-${String(index).padStart(3, "0")}.ts`;
+      return { ...files[0], path, treePath: path };
+    });
+    const workspace = {
+      compact: true,
+      sidebarOpen: true,
+      files: entries,
+      revision: "long",
+      selectedPath: entries[0].path,
+    };
+    await send(page, "workspace", workspace);
+    const search = page.getByRole("searchbox");
+    const first = page.getByRole("treeitem", { name: entries[0].path });
+    const last = page.getByRole("treeitem", { name: entries.at(-1).path });
+    for (const expanded of [false, true]) {
+      if (expanded) {
+        await page.getByRole("button", { name: "Expand file picker" }).click();
+      }
+      await search.focus();
+      for (const height of [780, 440, 780]) {
+        await page.setViewportSize({ width: 420, height });
+        const before = await search.boundingBox();
+        await page.mouse.move(200, height - 70);
+        await page.mouse.wheel(0, -15000);
+        await expect(first).toBeInViewport();
+        await page.mouse.wheel(0, 900);
+        await expect(first).not.toBeInViewport();
+        await expect(last).not.toBeInViewport();
+        await expect
+          .poll(() =>
+            page.getByRole("treeitem").evaluateAll((rows) =>
+              rows.some((row) => {
+                const { top, bottom } = row.getBoundingClientRect();
+                return top <= innerHeight - 1 && bottom > innerHeight - 1;
+              }),
+            ),
+          )
+          .toBe(true);
+        await page.mouse.wheel(0, 15000);
+        await expect(last).toBeInViewport({ ratio: 0.99 });
+        await expect
+          .poll(async () => {
+            const row = await last.boundingBox();
+            const spaceAfterLast = height - (row.y + row.height);
+            return Math.abs(spaceAfterLast - row.height);
+          })
+          .toBeLessThanOrEqual(1);
+        assert.deepEqual(await search.boundingBox(), before);
+        await expect(search).toBeInViewport({ ratio: 1 });
+        await expect(search).toBeFocused();
+      }
+    }
+    await search.fill(entries[0].path);
+    await expect(first).toBeInViewport({ ratio: 1 });
+    await expect(page.getByRole("treeitem")).toHaveCount(1);
+    await search.fill("");
+    await page.setViewportSize({ width: 900, height: 650 });
+    await send(page, "workspace", { ...workspace, compact: false });
+    await page.mouse.move(100, 550);
+    await page.mouse.wheel(0, 15000);
+    await expect(last).toBeInViewport({ ratio: 0.99 });
+    const row = await last.boundingBox();
+    assert.ok(Math.abs(row.y + row.height - 650) <= 1);
+  } finally {
+    await page.close();
+  }
+});
+
+test("carries release velocity through dismissal and keeps the modal until it leaves the screen", async () => {
+  const page = await openReview();
+  try {
+    const workspace = {
+      files,
+      revision: "swipe",
+      compact: true,
+      sidebarOpen: true,
+      selectedPath: files[0].path,
+    };
+    const panel = page.locator("#tree-panel");
+    const grip = page.locator("#file-grip");
+    const input = await page.context().newCDPSession(page);
+    const viewport = page.viewportSize();
+    // Drive trusted pointer events with explicit hardware timestamps: both gestures
+    // travel the same distance, and only the time between samples changes.
+    async function swipe(duration) {
+      const box = await grip.boundingBox();
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      const end = Date.now() / 1000;
+      const start = end - duration / 1000;
+      const touch = (type, dy, timestamp) =>
+        input.send("Input.dispatchTouchEvent", {
+          type,
+          touchPoints: type === "touchEnd" ? [] : [{ x, y: y + dy }],
+          timestamp,
+        });
+      await touch("touchStart", 0, start);
+      await touch("touchMove", 10, (start + end) / 2);
+      await touch("touchMove", 20, end - 0.001);
+      await touch("touchEnd", 20, end);
+    }
+    await send(page, "workspace", workspace);
+    await expect(panel).toHaveCSS("transform", "none");
+    await swipe(500);
+    await expect(panel).toHaveCSS("transform", "none");
+    assert.equal(await panel.evaluate((node) => node.matches(":modal")), true);
+    assert.equal(
+      await page.evaluate(() => window.reviewEvents.filter((e) => e.type === "filesOpen").length),
+      0,
+    );
+
+    await panel.evaluate((node) => {
+      const grip = node.querySelector("#file-grip");
+      const top = () => node.getBoundingClientRect().top;
+      window.sheetTrace = [];
+      grip.addEventListener(
+        "pointerup",
+        () => {
+          window.sheetTrace.push(top());
+          function frame() {
+            if (node.open) {
+              window.sheetTrace.push(top());
+              requestAnimationFrame(frame);
+            }
+          }
+          requestAnimationFrame(frame);
+        },
+        { once: true },
+      );
+      grip.addEventListener("lostpointercapture", () => window.sheetTrace.push(top()), {
+        once: true,
+      });
+    });
+    await swipe(25);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.reviewEvents.filter((e) => e.type === "filesOpen").length),
+      )
+      .toBe(1);
+    // The native owner's acknowledgement must not close the dialog mid-flight.
+    await send(page, "workspace", { ...workspace, sidebarOpen: false });
+    await expect(panel).toBeHidden();
+    const positions = await page.evaluate(() => window.sheetTrace);
+    assert.ok(positions.length > 3);
+    assert.ok(positions[0] > viewport.height * 0.4 + 15, "starts at the finger's release position");
+    assert.ok(positions.at(-1) >= viewport.height - 2, "travels to the lower edge before closing");
+    assert.ok(
+      positions.every((y, i) => i === 0 || y >= positions[i - 1] - 1),
+      "never jumps back to the open detent",
+    );
+  } finally {
+    await page.close();
+  }
+});
+
+test("uses app touch and keyboard focus styles in the picker, including Pierre's shadow tree", async () => {
+  const page = await openReview({ hasTouch: true });
+  try {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const workspace = {
+      files,
+      revision: "focus",
+      compact: true,
+      sidebarOpen: true,
+      selectedPath: files[0].path,
+    };
+    await send(page, "workspace", workspace);
+    const panel = page.locator("#tree-panel");
+    const grip = page.locator("#file-grip");
+    const close = page.locator("#close-files");
+    const row = panel.getByRole("treeitem", { name: files[0].path });
+    await expect(row).toHaveCSS("-webkit-tap-highlight-color", "rgba(0, 0, 0, 0)");
+    await expect(grip).toHaveCSS("-webkit-tap-highlight-color", "rgba(0, 0, 0, 0)");
+    await expect(panel).toHaveCSS("transform", "none");
+    await grip.tap();
+    await expect(grip).toHaveAttribute("aria-expanded", "true");
+    await expect(grip).toHaveCSS("outline-style", "none");
+    await send(page, "workspace", { ...workspace, sidebarOpen: false });
+    await send(page, "workspace", workspace);
+    await page.keyboard.press("Tab");
+    await expect(grip).toBeFocused();
+    await expect(grip).toHaveCSS("outline-style", "solid");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await expect(close).toBeFocused();
+    await expect(close).toHaveCSS("outline-style", "solid");
+    await send(page, "workspace", { ...workspace, sidebarOpen: false });
+    assert.equal(await panel.evaluate((node) => node.open), false);
+  } finally {
+    await page.close();
+  }
+});
+
+test("can reopen a closing picker and fold it into a sidebar during motion", async () => {
+  const page = await openReview();
+  try {
+    const state = {
+      files,
+      revision: "resize",
+      compact: true,
+      sidebarOpen: true,
+      selectedPath: files[0].path,
+    };
+    const panel = page.locator("#tree-panel");
+    await send(page, "workspace", state);
+    await expect(panel).toHaveCSS("transform", "none");
+    const short = await panel.boundingBox();
+    await send(page, "workspace", { ...state, sidebarOpen: false });
+    await expect.poll(async () => (await panel.boundingBox())?.y ?? 0).toBeGreaterThan(short.y + 1);
+    await send(page, "workspace", state);
+    await expect(panel).toHaveCSS("transform", "none");
+    assert.equal((await panel.boundingBox()).y, short.y);
+    await page.locator("#file-grip").press("Enter");
+    await expect(page.locator("#file-grip")).toHaveAttribute("aria-expanded", "true");
+    await page.setViewportSize({ width: 740, height: 650 });
+    await send(page, "workspace", { ...state, compact: false });
+    await expect(panel).toHaveCSS("transform", "none");
+    await expect(page.getByRole("searchbox")).toBeVisible();
+    assert.equal(await panel.evaluate((node) => node.matches(":modal")), false);
+    assert.equal((await panel.boundingBox()).height, 650);
+  } finally {
+    await page.close();
+  }
+});
+
+test("a running file search reveals matches arriving on a later page", async () => {
+  const page = await openReview();
+  try {
+    const workspace = {
+      files,
+      filesComplete: false,
+      revision: "first",
+      selectedPath: "file.ts",
+      compact: true,
+      sidebarOpen: true,
+    };
+    await send(page, "workspace", workspace);
+    const search = page.locator("#file-search");
+    await search.fill("needle");
+    await expect(page.getByText("No matches in the files loaded so far")).toBeVisible();
+    const path = "src/needle.ts";
+    await send(page, "workspace", {
+      ...workspace,
+      filesComplete: true,
+      revision: "next",
+      files: [...files, { ...files[0], path, treePath: path }],
+    });
+    await expect(search).toHaveValue("needle");
+    await expect(page.locator("#no-matches")).toBeHidden();
+    await page.locator('button[data-item-path="src/needle.ts"]').click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.reviewEvents.filter((event) => event.type === "fileSelect").at(-1)?.path,
+        ),
+      )
+      .toBe(path);
   } finally {
     await page.close();
   }

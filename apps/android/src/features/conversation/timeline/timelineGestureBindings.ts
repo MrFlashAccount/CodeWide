@@ -20,7 +20,7 @@ export function useTimelineGestureBindings(props: TimelineViewportProps) {
   const onScrollBeginDrag = useEvent<
     NonNullable<ThreadTimelineListProps<TimelineItem>["onScrollBeginDrag"]>
   >(({ nativeEvent }) => {
-    props.setTimelineGestureActive(true);
+    props.gestureActive$.set(true);
     if (props.fullscreenScrollOwnership.isCovered()) {
       return;
     }
@@ -93,7 +93,7 @@ export function useTimelineGestureBindings(props: TimelineViewportProps) {
   const onScrollEndDrag = useEvent<
     NonNullable<ThreadTimelineListProps<TimelineItem>["onScrollEndDrag"]>
   >(({ nativeEvent }) => {
-    props.setTimelineGestureActive(false);
+    props.gestureActive$.set(false);
     if (props.fullscreenScrollOwnership.isCovered()) {
       return;
     }
@@ -142,13 +142,13 @@ export function useTimelineGestureBindings(props: TimelineViewportProps) {
   const onMomentumScrollBegin = useEvent<
     NonNullable<ThreadTimelineListProps<TimelineItem>["onMomentumScrollBegin"]>
   >(() => {
-    props.setTimelineGestureActive(true);
+    props.gestureActive$.set(true);
     props.cancelScheduledPaginationTrim();
   });
   const onMomentumScrollEnd = useEvent<
     NonNullable<ThreadTimelineListProps<TimelineItem>["onMomentumScrollEnd"]>
   >(({ nativeEvent }) => {
-    props.setTimelineGestureActive(false);
+    props.gestureActive$.set(false);
     if (props.fullscreenScrollOwnership.isCovered()) {
       return;
     }

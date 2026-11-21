@@ -1,7 +1,15 @@
+import { useSelector } from "@legendapp/state/react";
+
+import { PaneBody } from "../../../ui/PaneBody";
 import { useState } from "react";
 import { StyleSheet, View } from "react-native";
 
-import type { PullRequestFile } from "../../../data/forgeMutationContract";
+import { useAndroidBackHandler } from "../../../ui/use-android-back-handler";
+import type { DraftPut } from "../../../data/reviewDraftPuts";
+import { FileCommentForm } from "./FileCommentForm";
+import { HeadFileView } from "./HeadFileView";
+import { ChangesHeaderActions } from "./ChangesHeaderActions";
+import { useDiffDisplay, type DiffDisplay } from "./diffDisplay";
 import type { DraftId } from "../../../data/reviewContract";
 import { useEvent } from "../../../react/useEvent";
 import { colors, layoutSize, radii, spacing } from "../../../theme";
@@ -11,13 +19,19 @@ import { LineCommentFrame } from "../../review/comments/LineCommentFrame";
 import type { CodeReviewLineReference } from "../../review/comments/reviewComment";
 import { CardNote } from "../overview/CardHeader";
 import { overviewStyles } from "../overview/overview.styles";
-import { ChangesToolbar, type ToolbarFile } from "./ChangesToolbar";
-import { viewedSummary } from "./changesPresentation";
+import { ChangesToolbar } from "./ChangesToolbar";
 import { FilesView } from "./FilesView";
 import { PullRequestGuide } from "./PullRequestGuide";
 import { ReviewOutcome } from "./ReviewOutcome";
 import { ReviewSubmitControl } from "./ReviewSubmitControl";
 import type { PullRequestChangesProps } from "./changesContract";
+import {
+  useFileMenu,
+  useFileReading,
+  useFileComment,
+  canFloat,
+  acceptReadingBack,
+} from "./fileReading";
 import { useChangesData, type ChangesData } from "./useChangesData";
 import { useDraftComposer, type DraftComposer } from "./useDraftComposer";
 import { useSubmitReview } from "./useSubmitReview";
@@ -25,19 +39,25 @@ import { useSubmitReview } from "./useSubmitReview";
 /**
  * Changes: one IDE-style toolbar over Files (tree + diff) or Guide, companion
  * drafts with their axes and the one line composer docked under the diff above
- * the keyboard; Submit lives in the toolbar so the code keeps the screen. Files, drafts and guide are
+ * the keyboard. Review floats beside chat while reading. Files, drafts and guide are
  * progressive resources; already published data stays visible while they
  * refresh, and a new draft shows the moment it is sent.
  */
 export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.Element {
   const { connectionId, model, overview } = props;
   const dialog = useAppDialog();
-  const data = useChangesData(props);
-  const agentThread = props.agentThread;
+  const [width, setWidth] = useState(0);
+  const besideDiff = width >= TREE_BESIDE_DIFF_MIN_WIDTH;
+  // The tree opens by itself only where it leaves the diff a readable width.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const sidebar = useSelector(() => model.filesPanelOpen.get());
+  const filesOpen = isFileListOpen(besideDiff, sidebar, pickerOpen);
+  const data = useChangesData(props, filesOpen);
+  const display = useDiffDisplay();
   const composer = useDraftComposer({
     capabilities: props.reviewCapabilities,
     connectionId,
-    files: data.page === null ? [] : data.page.files,
+    files: data.files,
     headRevision: overview.headRevision,
     source: data.source,
   });
@@ -48,18 +68,12 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
         dialog.error("Could not send to the agent", error);
       });
   });
-  const agentTitle = agentThread === null ? null : agentThread.title;
   const { result, submit } = useSubmitReview({
     capabilities: props.capabilities,
     drafts: data.drafts,
     onStale: props.onStale,
     target: data.target,
   });
-  const [width, setWidth] = useState(0);
-  const besideDiff = width >= TREE_BESIDE_DIFF_MIN_WIDTH;
-  // The tree opens by itself only where it leaves the diff a readable width.
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const filesOpen = isFileListOpen(besideDiff, data.filesPanelOpen, pickerOpen);
   const setFilesOpen = useEvent((open: boolean) => {
     if (besideDiff) {
       model.filesPanelOpen.set(open);
@@ -67,6 +81,34 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
       setPickerOpen(open);
     }
   });
+  const { closeFileComment, commentOnFile, fileComment, onLinePress, restorePut } = useFileComment(
+    props,
+    data,
+    composer,
+  );
+  const reading = useFileReading(props, data);
+  useAndroidBackHandler(
+    acceptReadingBack(reading.back, composer, fileComment),
+    reading.backToFiles,
+  );
+  const fileMenu = useFileMenu({ commentOnFile, data, props, viewSource: reading.viewSource });
+  const floating = canFloat({
+    comment: fileComment,
+    line: composer.line,
+    pickerOpen,
+    source: reading.sourceFile,
+  });
+  const reviewControl = (
+    <ReviewSubmitControl
+      bothTargetTitle={data.agentTitle}
+      drafts={data.drafts}
+      host={props.host}
+      offline={props.offline}
+      result={result}
+      submit={submit}
+      verdicts={props.verdicts}
+    />
+  );
   return (
     <View
       onLayout={(event) => {
@@ -79,72 +121,60 @@ export function PullRequestChanges(props: PullRequestChangesProps): React.JSX.El
       style={styles.fill}
       testID="pull-request-changes"
     >
-      <LineCommentFrame
-        composer={
-          composer.line === null
-            ? null
-            : {
-                drafts: composer.drafts,
-                onClose: composer.close,
-                onSubmit: composer.add,
-                submitLabel: composer.editing ? "Save comment" : "Add to review",
-                target: composer.line,
-                voice: props.voiceRuntime,
-              }
-        }
-      >
+      <LineCommentFrame composer={lineFrame(composer, props.voiceRuntime)}>
         {props.renderAppBar(
-          data.view === "guide" ? "Review guide" : "Files changed",
-          <ReviewSubmitControl
-            bothTargetTitle={agentTitle}
-            drafts={data.drafts}
-            host={props.host}
-            offline={props.offline}
-            result={result}
-            submit={submit}
-            verdicts={props.verdicts}
+          reading.title,
+          <ChangesHeaderActions
+            data={data}
+            display={display.value}
+            onSelect={display.select}
+            screen={props}
           />,
+          reading.back,
         )}
-        <ChangesToolbar
-          file={toolbarFile(props, data)}
-          filesOpen={filesOpen}
-          host={props.host}
-          onFiles={() => {
-            if (data.view === "guide") {
-              model.changesView.set("files");
-            } else {
+        {reading.files ? (
+          <ChangesToolbar
+            actions={reading.actions}
+            extra={fileMenu}
+            file={data.selected}
+            filesOpen={filesOpen}
+            onFiles={() => {
               setFilesOpen(!filesOpen);
-            }
-          }}
-          onRun={props.onRun}
-          summary={data.page === null ? "" : viewedSummary(data.page.files)}
-          tablet={besideDiff}
-          view={data.view}
-        />
+            }}
+            onRun={props.onRun}
+            scrollPath={display.value.scrollPath}
+            tablet={besideDiff}
+          />
+        ) : null}
         {result === null ? null : <ReviewOutcome host={props.host} result={result} />}
-        <ChangesBody
-          besideDiff={besideDiff}
-          composer={composer}
-          data={data}
-          filesOpen={filesOpen}
-          onLinePress={composer.tapLine}
-          onSendToAgent={sendToAgent}
-          props={props}
-          setFilesOpen={setFilesOpen}
-        />
+        {reading.sourceFile === null ? (
+          <ChangesBody
+            besideDiff={besideDiff}
+            composer={composer}
+            data={data}
+            display={display.value}
+            filesOpen={filesOpen}
+            onLinePress={onLinePress}
+            onSendToAgent={sendToAgent}
+            props={props}
+            restorePut={restorePut}
+            setFilesOpen={setFilesOpen}
+          />
+        ) : (
+          <HeadFileView display={display.value} file={reading.sourceFile} source={data.headFiles} />
+        )}
       </LineCommentFrame>
-      {visibleFloatingActions(composer, pickerOpen, props.floatingActions)}
+      {fileComment !== null && (
+        <FileCommentForm
+          close={closeFileComment}
+          key={fileComment.path}
+          screen={props}
+          target={fileComment}
+        />
+      )}
+      {floating ? props.floatingActions(reviewControl) : null}
     </View>
   );
-}
-
-/** Keep the linked-chat shortcut clear of the file sheet and the line composer's Send button. */
-function visibleFloatingActions(
-  composer: DraftComposer,
-  pickerOpen: boolean,
-  actions: React.ReactNode,
-): React.ReactNode {
-  return composer.line === null && !pickerOpen ? actions : null;
 }
 
 /**
@@ -155,19 +185,23 @@ function ChangesBody({
   besideDiff,
   composer,
   data,
+  display,
   filesOpen,
   onLinePress,
   onSendToAgent,
   props,
+  restorePut,
   setFilesOpen,
 }: {
   readonly besideDiff: boolean;
   readonly composer: DraftComposer;
   readonly data: ChangesData;
+  readonly display: DiffDisplay;
   readonly filesOpen: boolean;
   readonly onLinePress: (reference: CodeReviewLineReference) => void;
   readonly onSendToAgent: (draftIds: readonly DraftId[]) => void;
   readonly props: PullRequestChangesProps;
+  readonly restorePut: (put: DraftPut) => void;
   readonly setFilesOpen: (open: boolean) => void;
 }): React.JSX.Element {
   const { connectionId, model, overview } = props;
@@ -191,11 +225,12 @@ function ChangesBody({
     return <ChangesSkeleton />;
   }
   return (
-    <>
+    <PaneBody>
       {data.view === "files" ? (
         <FilesView
           besideDiff={besideDiff}
           composerLine={composer.line}
+          display={display}
           draftPuts={data.draftPuts}
           drafts={data.drafts}
           filesOpen={filesOpen}
@@ -208,19 +243,9 @@ function ChangesBody({
           }}
           onDiscardPut={composer.discard}
           onEditDraft={composer.edit}
-          onEditPut={composer.restore}
+          onEditPut={restorePut}
           onFilesOpenChange={setFilesOpen}
-          onGuide={() => {
-            model.changesView.set("guide");
-          }}
           onLinePress={onLinePress}
-          onLoadMore={
-            page.nextCursor === null
-              ? null
-              : () => {
-                  props.forge.loadMoreFiles(data.target).catch(() => undefined);
-                }
-          }
           onReanchor={composer.startReanchor}
           onSelect={(path) => {
             model.selectedPath.set(path);
@@ -234,6 +259,7 @@ function ChangesBody({
           }}
           page={page}
           selected={data.selected}
+          treeFailure={data.treeFailure}
         />
       ) : null}
       {data.view === "guide" ? (
@@ -243,6 +269,7 @@ function ChangesBody({
           composerLine={composer.line}
           connectionId={connectionId}
           describeThread={props.describeThread}
+          display={display}
           draftPuts={data.draftPuts}
           drafts={data.drafts}
           files={page.files}
@@ -255,33 +282,21 @@ function ChangesBody({
           source={data.source}
         />
       ) : null}
-    </>
+    </PaneBody>
   );
 }
 
-/** The selected file with its viewed toggle, actions and previous/next neighbours. */
-function toolbarFile(props: PullRequestChangesProps, data: ChangesData): ToolbarFile | null {
-  const { page, selected } = data;
-  if (page === null || selected === null) {
-    return null;
-  }
-  const index = page.files.indexOf(selected);
-  const select = (file: PullRequestFile | undefined): (() => void) | null =>
-    file === undefined
-      ? null
-      : () => {
-          props.model.selectedPath.set(file.path);
-        };
-  return {
-    actions: props.fileActions.get(selected.path) ?? [],
-    file: selected,
-    next: select(page.files[index + 1]),
-    previous: select(page.files[index - 1]),
-    toggleViewed: () => {
-      data.toggleViewed(selected);
-    },
-    viewedPending: data.viewedPending.has(selected.path),
-  };
+function lineFrame(composer: DraftComposer, voice: PullRequestChangesProps["voiceRuntime"]) {
+  return composer.line === null
+    ? null
+    : {
+        drafts: composer.drafts,
+        onClose: composer.close,
+        onSubmit: composer.add,
+        submitLabel: composer.editing ? "Save comment" : "Add to review",
+        target: composer.line,
+        voice: voice,
+      };
 }
 
 /** Tree column (248dp) plus a diff of roughly 80 code columns. */

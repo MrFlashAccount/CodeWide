@@ -107,9 +107,17 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
     }),
     ...submitReviewMenuItem(props.tab, data.verdictChoice, openReview),
   ];
-  const appBar = (section: string | null, trailing: React.ReactNode): React.JSX.Element => (
+  const appBar = (
+    section: string | null,
+    trailing?: React.ReactNode,
+    backToFiles?: () => void,
+  ): React.JSX.Element => (
     <PullRequestAppBar
-      back={backFor(props)}
+      back={
+        backToFiles !== undefined
+          ? { kind: "nested", label: "Back to files", run: backToFiles }
+          : backFor(props)
+      }
       extra={extra}
       icon={data.providerIcon}
       onRun={(action) => {
@@ -124,7 +132,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
   const getTransferAccess = useEvent(async (forceRefresh = false) =>
     props.capabilities.transferAccess(props.connectionId, forceRefresh),
   );
-  const floatingActions = (
+  const floatingActions = (review?: React.ReactNode) => (
     <FloatingActions
       agentThread={data.agentThread}
       conversation={data.conversation}
@@ -132,6 +140,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
       isThreadUnread={props.isThreadUnread}
       onComment={data.writes.comment}
       onOpenChat={openReviewChat}
+      review={review}
     />
   );
   return (
@@ -143,7 +152,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
     >
       {/* The pane the screen is placed in paints its surface (ThreePanelsContext); none here. */}
       <View style={styles.screen} testID="pull-request-screen">
-        {props.tab === "overview" ? appBar(null, null) : null}
+        {props.tab === "overview" ? appBar(null) : null}
         {props.tab === "overview" ? (
           <OverviewPane
             capabilities={props.capabilities}
@@ -163,6 +172,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
         ) : (
           <PullRequestChanges
             agentThread={data.agentThread}
+            attachFile={props.navigation.attachFile}
             capabilities={props.capabilities}
             connectionId={props.connectionId}
             describeThread={(threadId) => threadTitle(props.describeThread, threadId)}
@@ -194,7 +204,7 @@ export function PullRequestScreen(props: PullRequestScreenProps): React.JSX.Elem
             onSubmit={actions.submitInput}
           />
         )}
-        {props.tab === "overview" ? floatingActions : null}
+        {props.tab === "overview" ? floatingActions() : null}
       </View>
     </PrivateImageAccessProvider>
   );

@@ -1,5 +1,6 @@
 import type { Thread } from "@codewide/codex-protocol/v0.155.1/v2";
 import { normalizeStoredThreadAgent, type ThreadAgent } from "./threadAgent";
+import { storedThreadCatalogControls, type ThreadCatalogControls } from "./threadCatalogControls";
 import { validPinCursor } from "./threadPinState";
 import { unknownRecord } from "./unknownRecord";
 
@@ -14,6 +15,8 @@ export type StoredThreadSummary = {
   agentNickname?: string | null;
   agentRole?: string | null;
   archived: boolean;
+  /** Optional in older persisted summaries. */
+  catalogControls?: ThreadCatalogControls | null;
   /** A terminal turn cannot reopen question attention through late item replay. */
   closedQuestionTurnId?: string | null;
   /**
@@ -70,6 +73,7 @@ export type StoredThreadSummary = {
 export function normalizeStoredThreadSummary(row: StoredThreadSummary): StoredThreadSummary {
   return {
     ...row,
+    catalogControls: storedThreadCatalogControls(row.catalogControls),
     codewideAgent: normalizeStoredThreadAgent(row.codewideAgent),
     deleteCommandId: row.deleteCommandId ?? null,
     firstUnreadAgentTurnId:

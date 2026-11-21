@@ -178,9 +178,12 @@ function ThreadPullRequestPaneContent({
   const openPullRequest = useEvent((): void => {
     navigation.openPullRequest(connectionId, pullRequest);
   });
+  const openAttachedDraft = useEvent(() => {
+    navigation.openPullRequest(connectionId, pullRequest, true);
+  });
   const openReviewChat = useEvent((reviewThread: ThreadId | null): void => {
     if (reviewThread === null) {
-      openPullRequest();
+      navigation.openPullRequest(connectionId, pullRequest, true);
     } else {
       openThread(reviewThread);
     }
@@ -212,6 +215,7 @@ function ThreadPullRequestPaneContent({
           openReviewChat,
           openThread,
         }}
+        openAttachedDraft={openAttachedDraft}
         pullRequest={pullRequest}
         tab={changesView === null ? "overview" : "changes"}
       />

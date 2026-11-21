@@ -85,7 +85,7 @@ function leftPaneGeometry(
       return {
         catalogOpacity: 1,
         catalogWidth: sidebar,
-        detailWidth: frameWidth - sidebar,
+        detailWidth: Math.max(0, frameWidth - sidebar),
         detailX: sidebar,
       };
     case "covered":
@@ -111,32 +111,6 @@ function leftPaneGeometry(
   return { catalogOpacity: 1, catalogWidth: frameWidth, detailWidth: frameWidth, detailX: 0 };
 }
 
-type RightPaneGeometry = Pick<PaneGeometry, "centerClipWidth" | "rightWidth" | "rightX">;
-
-/** The center surface and the right pane inside the destination. */
-function rightPaneGeometry(
-  right: PaneArrangement["right"],
-  detailX: number,
-  detailWidth: number,
-): RightPaneGeometry {
-  "worklet";
-  const share = detailWidth / CENTER_RIGHT_SHARES;
-  switch (right) {
-    case "beside":
-      return {
-        centerClipWidth: detailWidth - share,
-        rightWidth: share,
-        rightX: detailX + detailWidth - share,
-      };
-    case "cover":
-      return { centerClipWidth: detailWidth, rightWidth: detailWidth, rightX: detailX };
-    case "offscreen":
-      break;
-  }
-  // Past the trailing edge at its beside width, so it slides back in without reflowing.
-  return { centerClipWidth: detailWidth, rightWidth: share, rightX: detailX + detailWidth };
-}
-
 // Worklets capture helper values during module initialization, so dependencies must come first.
 /**
  * The settled geometry of `arrangement` in a frame `frameWidth` wide: exactly what Yoga lays out
@@ -146,33 +120,36 @@ export function paneGeometry(arrangement: PaneArrangement, frameWidth: number): 
   "worklet";
   const sidebar = arrangement.sidebar ? sidebarWidth(frameWidth) : 0;
   const left = leftPaneGeometry(arrangement.left, sidebar, frameWidth);
-  const right = rightPaneGeometry(arrangement.right, left.detailX, left.detailWidth);
-  // Settled, every pane shows its whole content box.
+  // The two dividers partition the visible frame. A pane can keep its reading layout
+  // under a neighbour or offscreen even when neither of its edges is visible.
+  const detailVisibleWidth = Math.max(0, frameWidth - left.detailX);
+  const beside = arrangement.right === "beside";
+  const covered = arrangement.right === "cover";
+  const share = left.detailWidth / CENTER_RIGHT_SHARES;
+  const rightWidth = covered ? left.detailWidth : share;
+  const rightVisibleWidth =
+    arrangement.right === "offscreen" ? 0 : Math.min(detailVisibleWidth, rightWidth);
+  const centerClipWidth = detailVisibleWidth - rightVisibleWidth;
   return {
     catalogOpacity: left.catalogOpacity,
-    catalogVisibleWidth: left.catalogWidth,
+    catalogVisibleWidth: Math.min(left.detailX, frameWidth),
     catalogWidth: left.catalogWidth,
-    centerClipWidth: right.centerClipWidth,
+    centerClipWidth,
     centerLeftRadius: arrangement.centerLeftRadius,
     centerRightRadius: arrangement.centerRightRadius,
-    centerWidth: right.centerClipWidth,
-    detailVisibleWidth: left.detailWidth,
+    centerWidth: beside || (covered && arrangement.sidebar) ? share : left.detailWidth,
+    detailVisibleWidth,
     detailWidth: left.detailWidth,
     detailX: left.detailX,
-    rightVisibleWidth: right.rightWidth,
-    rightWidth: right.rightWidth,
-    rightX: right.rightX,
+    rightVisibleWidth,
+    rightWidth,
+    rightX: left.detailX + centerClipWidth,
   };
 }
 
 function mix(from: number, to: number, progress: number): number {
   "worklet";
   return from + (to - from) * progress;
-}
-
-function mixWidth(from: number, to: number, progress: number): number {
-  "worklet";
-  return Math.max(0, mix(from, to, progress));
 }
 
 /**
@@ -186,39 +163,69 @@ export function interpolatePaneGeometry(
   progress: number,
 ): PaneGeometry {
   "worklet";
+  // A spring can overshoot; two adjoining panes must still share one on-screen edge.
+  const fraction = Math.max(0, Math.min(1, progress));
   return {
-    catalogOpacity: Math.min(1, Math.max(0, mix(from.catalogOpacity, to.catalogOpacity, progress))),
-    catalogVisibleWidth: mixWidth(from.catalogVisibleWidth, to.catalogVisibleWidth, progress),
+    catalogOpacity: mix(from.catalogOpacity, to.catalogOpacity, fraction),
+    catalogVisibleWidth: mix(from.catalogVisibleWidth, to.catalogVisibleWidth, fraction),
     catalogWidth: Math.max(from.catalogWidth, to.catalogWidth),
-    centerClipWidth: mixWidth(from.centerClipWidth, to.centerClipWidth, progress),
-    centerLeftRadius: Math.max(0, mix(from.centerLeftRadius, to.centerLeftRadius, progress)),
-    centerRightRadius: Math.max(0, mix(from.centerRightRadius, to.centerRightRadius, progress)),
+    centerClipWidth: mix(from.centerClipWidth, to.centerClipWidth, fraction),
+    centerLeftRadius: mix(from.centerLeftRadius, to.centerLeftRadius, fraction),
+    centerRightRadius: mix(from.centerRightRadius, to.centerRightRadius, fraction),
     centerWidth: Math.max(from.centerWidth, to.centerWidth),
-    detailVisibleWidth: mixWidth(from.detailVisibleWidth, to.detailVisibleWidth, progress),
+    detailVisibleWidth: mix(from.detailVisibleWidth, to.detailVisibleWidth, fraction),
     detailWidth: Math.max(from.detailWidth, to.detailWidth),
-    detailX: mix(from.detailX, to.detailX, progress),
-    rightVisibleWidth: mixWidth(from.rightVisibleWidth, to.rightVisibleWidth, progress),
+    detailX: mix(from.detailX, to.detailX, fraction),
+    rightVisibleWidth: mix(from.rightVisibleWidth, to.rightVisibleWidth, fraction),
     rightWidth: Math.max(from.rightWidth, to.rightWidth),
-    rightX: mix(from.rightX, to.rightX, progress),
+    rightX: mix(from.rightX, to.rightX, fraction),
   };
 }
 
-/**
- * How far `box`'s content extends past the pane's visible trailing edge: the layout width it
- * holds while panes move minus the width it shows now; `0` once settled. Pane chrome gives up
- * this much of its trailing side, so it lays out to exactly the width the pane shows.
- */
-export function paneChromeInset(pane: PaneGeometry, box: PaneBox): number {
+/** Width allocated to the mounted content even when the pane is covered or offscreen. */
+function paneLayoutWidth(pane: PaneGeometry, box: PaneBox): number {
   "worklet";
   switch (box) {
     case "catalog":
-      return Math.max(0, pane.catalogWidth - pane.catalogVisibleWidth);
+      return pane.catalogWidth;
     case "center":
-      return Math.max(0, pane.centerWidth - pane.centerClipWidth);
+      return pane.centerWidth;
     case "destination":
-      return Math.max(0, pane.detailWidth - pane.detailVisibleWidth);
+      return pane.detailWidth;
     case "right":
       break;
   }
-  return Math.max(0, pane.rightWidth - pane.rightVisibleWidth);
+  return pane.rightWidth;
+}
+
+/** Width of the part of one pane that is being revealed by the frame. */
+function paneVisibleWidth(pane: PaneGeometry, box: PaneBox): number {
+  "worklet";
+  switch (box) {
+    case "catalog":
+      return pane.catalogVisibleWidth;
+    case "center":
+      return pane.centerClipWidth;
+    case "destination":
+      return pane.detailVisibleWidth;
+    case "right":
+      break;
+  }
+  return pane.rightVisibleWidth;
+}
+
+/** How much of the retained layout lies beyond the moving pane edge. */
+export function paneChromeInset(pane: PaneGeometry, box: PaneBox): number {
+  "worklet";
+  return Math.max(0, paneLayoutWidth(pane, box) - paneVisibleWidth(pane, box));
+}
+
+/** Signed trailing inset that lays the body out at its target width inside the moving viewport. */
+export function snapshotBodyMargin(
+  current: PaneGeometry,
+  target: PaneGeometry,
+  box: PaneBox,
+): number {
+  "worklet";
+  return paneVisibleWidth(current, box) - paneLayoutWidth(target, box);
 }

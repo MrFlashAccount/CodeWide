@@ -1,3 +1,4 @@
+import type { PullRequestScreenProps } from "../pullRequestScreenContract";
 import type { Observable } from "@legendapp/state";
 
 import type { ActionDescriptor } from "../../../data/forgeActionCatalog";
@@ -16,12 +17,13 @@ export type PullRequestChangesProps = {
     readonly threadId: ThreadId;
     readonly title: string;
   } | null;
+  readonly attachFile?: PullRequestScreenProps["navigation"]["attachFile"];
   readonly capabilities: PullRequestDetailWorkspaceCapabilities;
   readonly connectionId: string;
   readonly describeThread: (threadId: ThreadId) => string;
   readonly fileActions: ReadonlyMap<string, readonly ActionDescriptor[]>;
-  readonly floatingActions: React.ReactNode;
-  readonly forge: Pick<ForgeResources, "fileContent" | "files" | "loadMoreFiles">;
+  readonly floatingActions: (review: React.ReactNode) => React.ReactNode;
+  readonly forge: Pick<ForgeResources, "fileContent" | "files">;
   readonly host: string;
   readonly model: Observable<PullRequestScreenState>;
   readonly nowMs: number;
@@ -31,8 +33,12 @@ export type PullRequestChangesProps = {
   readonly overview: PullRequestOverview;
   /** Capabilities the PR account's plugin declares; empty until the accounts snapshot loads. */
   readonly providerCapabilities: readonly string[];
-  /** The PR app bar titled with this route's `section` and carrying `trailing` controls. */
-  readonly renderAppBar: (section: string, trailing: React.ReactNode) => React.JSX.Element;
+  /** The PR app bar titled with this route's section. */
+  readonly renderAppBar: (
+    section: string,
+    trailing: React.ReactNode,
+    backToFiles?: () => void,
+  ) => React.JSX.Element;
   readonly review: Pick<ReviewResources, "drafts" | "guide">;
   readonly reviewCapabilities: ReviewTargetCapabilities;
   readonly tablet: boolean;

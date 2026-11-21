@@ -16,9 +16,6 @@ function runtime() {
       throw new Error("no authenticated session");
     },
     refreshSubagents: async () => undefined,
-    loadTurnControls: async () => {
-      throw new Error("no controls");
-    },
     transferAccess: async () => {
       throw new Error("no transfer authority");
     },
@@ -138,9 +135,6 @@ describe("V1 shared thread sync lifetime", () => {
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion
       getSession: () => session as RpcClient,
       getSummaries: () => summaries,
-      loadTurnControls: async () => {
-        throw new Error("no controls");
-      },
       readInvalidationArchived: () => undefined,
       refreshSubagents: async () => undefined,
       refreshThreadCatalog: async () => undefined,
@@ -198,9 +192,6 @@ function interestRuntime(options: {
     getDetails: () => details,
     getSession: options.getSession,
     getSummaries: () => null,
-    loadTurnControls: async () => {
-      throw new Error("no controls");
-    },
     readInvalidationArchived: () => undefined,
     refreshSubagents: async () => undefined,
     refreshThreadCatalog: async () => undefined,

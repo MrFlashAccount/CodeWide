@@ -68,7 +68,10 @@ export type ForgeResources = {
   readonly conversation: ForgeQueryResource<OverviewParams, ConversationPage>;
   /** One whole head file of a plugin declaring `forge.fileContent@1`; read once per head. */
   readonly fileContent: ForgeQueryResource<FileContentParams, PullRequestFileContent>;
-  readonly files: ForgeQueryResource<FilesParams, PullRequestFilesPage>;
+  readonly files: ForgeQueryResource<
+    FilesParams & { readonly cursor?: string },
+    PullRequestFilesPage
+  >;
   readonly lists: ForgeQueryResource<ListParams, PullRequestListPage>;
   /** Resolves once an accounts snapshot exists (read now if none); never rejects. */
   readonly loadAccounts: (connectionId: string) => Promise<void>;
@@ -76,8 +79,6 @@ export type ForgeResources = {
   readonly loadMoreActivity: (params: OverviewParams) => Promise<void>;
   /** Appends the next conversation page, if any. */
   readonly loadMoreConversation: (params: OverviewParams) => Promise<void>;
-  /** Appends the next files page, if any. */
-  readonly loadMoreFiles: (params: FilesParams) => Promise<void>;
   /** Appends the next list page, if any. */
   readonly loadMoreList: (params: ListParams) => Promise<void>;
   readonly mutations: ForgeMutationQueue;
@@ -191,7 +192,10 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
       ),
       "files page",
     );
-  const files = createForgeQueryResource<FilesParams, PullRequestFilesPage>({
+  const files = createForgeQueryResource<
+    FilesParams & { readonly cursor?: string },
+    PullRequestFilesPage
+  >({
     client: queryClient,
     keyOf: (params) => [
       "forge",
@@ -199,8 +203,9 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
       params.connectionId,
       params.pullRequest,
       params.headRevision,
+      ...(params.cursor === undefined ? [] : [params.cursor]),
     ],
-    load: async (params) => readFiles(params, null),
+    load: async (params) => readFiles(params, params.cursor ?? null),
   });
   const fileContent = createImmutableForgeQueryResource<FileContentParams, PullRequestFileContent>({
     client: queryClient,
@@ -338,14 +343,6 @@ export function createForgeResources(authority: ForgeReadAuthority): ForgeResour
           openIssuesBlockMerge: current.openIssuesBlockMerge,
         }),
         readNext: async (cursor) => readConversation(params, cursor),
-      }),
-    loadMoreFiles: async (params) =>
-      appendPage(files, params, {
-        merge: (current, next) => ({
-          ...next,
-          files: [...current.files, ...next.files],
-        }),
-        readNext: async (cursor) => readFiles(params, cursor),
       }),
     loadMoreList: async (params) =>
       appendPage(lists, params, {

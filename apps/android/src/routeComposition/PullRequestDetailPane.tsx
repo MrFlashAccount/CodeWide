@@ -1,5 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, useLayoutEffect, useRef } from "react";
+import { attachReviewFile } from "./attachReviewFile";
+import { useAppDialog } from "../ui/AppDialog";
 
+import type { ReviewChatWorkspaceCandidate } from "../data/forgeMutationContract";
 import type { ThreadId } from "../data/reviewContract";
 import { forgeResources, reviewResources } from "../data/forgeRuntime";
 import { PullRequestScreen } from "../features/pullRequestDetail/PullRequestScreen";
@@ -20,6 +23,7 @@ export type PullRequestDetailPaneProps = {
   readonly initialChangesView: PullRequestScreenProps["initialChangesView"];
   readonly isThreadUnread: PullRequestScreenProps["isThreadUnread"];
   readonly navigation: PullRequestScreenProps["navigation"];
+  readonly openAttachedDraft: (candidates: readonly ReviewChatWorkspaceCandidate[]) => void;
   readonly pullRequest: PullRequestScreenProps["pullRequest"];
   readonly tab: PullRequestTab;
 };
@@ -45,6 +49,45 @@ export function PullRequestDetailPane(props: PullRequestDetailPaneProps): React.
     leaveFullscreen();
     props.navigation.openThread(threadId);
   });
+  const dialog = useAppDialog();
+  const attachmentAttempt = useRef<symbol | null>(null);
+  useLayoutEffect(
+    () => () => {
+      attachmentAttempt.current = null;
+    },
+    [props.connectionId, props.pullRequest],
+  );
+  const attachFile = useEvent<NonNullable<PullRequestScreenProps["navigation"]["attachFile"]>>(
+    (file, head) => {
+      if (attachmentAttempt.current !== null) {
+        return;
+      }
+      const attempt = Symbol("attach review file");
+      attachmentAttempt.current = attempt;
+      void attachReviewFile(props, file, head)
+        .then((opening) => {
+          if (attachmentAttempt.current !== attempt) {
+            return;
+          }
+          if (opening.kind === "ready") {
+            openReviewChat(opening.threadId);
+          } else {
+            leaveFullscreen();
+            props.openAttachedDraft(opening.candidates);
+          }
+        })
+        .catch((error: unknown) => {
+          if (attachmentAttempt.current === attempt) {
+            dialog.error("Could not attach file", error);
+          }
+        })
+        .finally(() => {
+          if (attachmentAttempt.current === attempt) {
+            attachmentAttempt.current = null;
+          }
+        });
+    },
+  );
   const resources = useWorkspaceRuntime().resources;
   const startRemote = useEvent<NonNullable<AppVoiceInputRuntime["startRemote"]>>(
     async (listener, options) =>
@@ -74,6 +117,7 @@ export function PullRequestDetailPane(props: PullRequestDetailPaneProps): React.
         isThreadUnread={props.isThreadUnread}
         navigation={{
           ...props.navigation,
+          attachFile,
           openReviewChat,
           openThread,
         }}

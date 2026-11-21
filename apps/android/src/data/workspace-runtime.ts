@@ -643,7 +643,6 @@ const workspaceThreadSync = createThreadSyncRuntime({
   getDetails: () => workspaceRuntime.snapshot.threadDetails,
   getSession: (connectionId) => workspaceRuntime.supervisor?.session(connectionId),
   getSummaries: () => workspaceRuntime.snapshot.threadSummaries,
-  loadTurnControls: async (connectionId, cwd) => loadTurnControls(connectionId, cwd),
   readInvalidationArchived: (key) => workspaceCatalog.readInvalidationArchived(key),
   refreshSubagents: async (connectionId, threadId) =>
     workspaceCatalog.refreshSubagents(connectionId, threadId),

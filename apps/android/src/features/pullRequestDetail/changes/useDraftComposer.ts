@@ -78,6 +78,9 @@ export function useDraftComposer({
     };
   };
   const openEdit = useEvent((draft: DraftComment, body: string) => {
+    if (draft.anchor.kind === "file") {
+      return;
+    }
     const texts = createLineCommentDrafts(windowId + ":" + draft.id);
     const target = {
       line: draft.anchor.startLine,
@@ -140,6 +143,9 @@ export function useDraftComposer({
   });
   const restore = useEvent((put: DraftPut): void => {
     const { anchor } = put.draft;
+    if (anchor.kind === "file") {
+      return;
+    }
     const target = { line: anchor.startLine, path: anchor.path, side: anchor.side };
     capabilities.dismissDraftPut(put.operationId);
     setEdited(null);

@@ -25,6 +25,7 @@ use super::{
     interest::{INTEREST_CLOSE_CODE, SharedInterest, accept_hello_interest},
     send_json,
 };
+use crate::agent::permission_profiles::ProfileObservations;
 use crate::{
     agent::{
         client_wire::{gateway::ClientWireGateway, results},
@@ -57,9 +58,17 @@ pub(super) struct RowFeed {
 }
 
 impl RowFeed {
-    pub(super) fn new(gateway: Arc<ClientWireGateway>, store: Arc<IndexStore>) -> Self {
+    pub(super) fn new(
+        gateway: Arc<ClientWireGateway>,
+        store: Arc<IndexStore>,
+        profiles: Arc<ProfileObservations>,
+    ) -> Self {
         let rows = ThreadListRows::default();
-        let decorator = ListRowDecorator { gateway, store };
+        let decorator = ListRowDecorator {
+            gateway,
+            store,
+            profiles,
+        };
         let materializer = Materializer::new(rows.clone(), Arc::new(decorator.clone()));
         Self {
             rows,
@@ -209,7 +218,7 @@ pub(super) fn test_feed(store: &Arc<IndexStore>) -> RowFeed {
         Arc::new(ProviderRegistry::single(provider)),
         Arc::new(BindingStore::new(store.clone())),
     ));
-    RowFeed::new(gateway, store.clone())
+    RowFeed::new(gateway, store.clone(), Arc::default())
 }
 
 /// Decorates single rows; cheap to clone.
@@ -217,6 +226,7 @@ pub(super) fn test_feed(store: &Arc<IndexStore>) -> RowFeed {
 struct ListRowDecorator {
     gateway: Arc<ClientWireGateway>,
     store: Arc<IndexStore>,
+    profiles: Arc<ProfileObservations>,
 }
 
 impl ListRowDecorator {
@@ -276,7 +286,44 @@ impl ListRowDecorator {
                 .map_err(|error| error.to_string())?;
             thread_pins::annotate(row, pin);
         }
+        self.annotate_controls(row);
         lineage::annotate_thread(&self.store, row).map_err(|error| error.to_string())
+    }
+
+    // This decoration reads only resident provider data. Listing never resumes a thread.
+    fn annotate_controls(&self, row: &mut Value) {
+        let registry = self.gateway.registry();
+        let provider = match row
+            .pointer("/codewideAgent/provider")
+            .and_then(Value::as_str)
+        {
+            None => registry.lead(),
+            Some(id) => {
+                let Some(provider) = registry
+                    .enabled()
+                    .find(|p| p.descriptor().id.as_str() == id)
+                else {
+                    return;
+                };
+                provider
+            }
+        };
+        if let Some(label) = row
+            .get("model")
+            .and_then(Value::as_str)
+            .and_then(|model| provider.model_names()?.label(model))
+        {
+            row["codewideModelLabel"] = Value::String(label);
+        }
+        // Neutral list rows already carry the profile from their current provider settings.
+        if row.get("codewidePermissions").is_none()
+            && let Some(profile) = row
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| self.profiles.display_name(&provider.descriptor().id, id))
+        {
+            row["codewidePermissions"] = Value::String(profile);
+        }
     }
 
     async fn read_thread(&self, thread_id: &str) -> Result<RowRead, String> {

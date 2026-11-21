@@ -24,7 +24,7 @@ import { NativeCodeBlock } from "../../../rendering/NativeCodeBlock";
 import { usePrivateFileAccessScope } from "../../../rendering/use-private-image-uri";
 import { useEvent } from "../../../react/useEvent";
 import { formatEstimatedTurnCost } from "../../../turn-cost";
-import { compactNumber, formatDuration } from "../../../ui/number-format";
+import { compactNumber, formatDuration, formatLocaleNumber } from "../../../ui/number-format";
 import { TOKEN_SYMBOL } from "../../../ui/token-display";
 import { AppText as Text } from "../../../ui/Typography";
 import { WaveText } from "../../../ui/WaveText";
@@ -213,14 +213,17 @@ export function OutputFootprintMetric({ footprint }: { footprint: ActivityFootpr
   const costUsd = footprint.estimatedInputCostUsd;
   const label =
     costUsd === null
-      ? `Estimated command output footprint ${footprint.estimatedTokens.toLocaleString()} tokens`
-      : `Estimated command output footprint ${footprint.estimatedTokens.toLocaleString()} tokens, ${formatEstimatedTurnCost(costUsd)} API-equivalent input cost`;
+      ? `Estimated command output footprint ${formatLocaleNumber(footprint.estimatedTokens)} tokens`
+      : `Estimated command output footprint ${formatLocaleNumber(footprint.estimatedTokens)} tokens, ${formatEstimatedTurnCost(costUsd)} API-equivalent input cost`;
   const value = `≈${TOKEN_SYMBOL}${compactNumber(footprint.estimatedTokens)}${costUsd === null ? "" : ` · ≈${formatEstimatedTurnCost(costUsd)}`}`;
   return (
-    <View accessibilityLabel={label} accessible style={styles.outputFootprintMetric}>
-      <Text numberOfLines={1} style={styles.outputFootprintMetricText}>
-        {value}
-      </Text>
-    </View>
+    <Text
+      accessibilityLabel={label}
+      accessible
+      numberOfLines={1}
+      style={styles.outputFootprintMetric}
+    >
+      {value}
+    </Text>
   );
 }

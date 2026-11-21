@@ -94,6 +94,8 @@ const styles = StyleSheet.create({
     color: colors.primary,
   },
   group: {
+    borderTopColor: colors.borderSoft,
+    borderTopWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
   },
   label: {

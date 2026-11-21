@@ -5,7 +5,7 @@ import Animated, { useAnimatedStyle } from "react-native-reanimated";
 
 /**
  * Sizes the Android chat viewport to the same visible edge as its sticky composer.
- * Layout lets LegendList retain its tail or reading anchor even if the IME skips frames.
+ * The list measures the visible height for reading anchors, including when the IME skips frames.
  */
 export function TimelineKeyboardViewport({
   children,

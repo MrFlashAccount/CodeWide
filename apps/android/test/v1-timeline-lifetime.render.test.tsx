@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react-native";
 import {
   COMPLETE_STATIC_THREAD_HISTORY,
+  useThreadHistoryController,
   type ThreadHistoryViewport,
 } from "../src/data/use-thread-history-controller";
 import {
@@ -209,4 +210,28 @@ it("marks each opened thread read once after its initial list draw", () => {
   hook.rerender("second");
   act(() => hook.result.current.actions.commitInitialTimelineLoad());
   expect(markThreadReadOnOpen).toHaveBeenCalledTimes(2);
+});
+
+it("does not probe older history to fill a short viewport after the cursor is exhausted", async () => {
+  const pullRange = jest.fn(async () => false);
+  const putState = jest.fn();
+  const hook = renderHook(() => useThreadHistoryController({
+    bounds: { containsBeginning: true, containsLatest: true, completeTurnHeaders: true },
+    connectionId: "server",
+    enabled: true,
+    historyEpoch: 0,
+    pullRange,
+    putState,
+    readHistoryCursor: () => null,
+    readRangeRevision: () => 1,
+    readState: () => ({ error: null, historyEpoch: 0, nextCursor: null, status: "ready" }),
+    threadId: "short-thread",
+    trimRange: async () => false,
+  }));
+  await act(async () => {
+    await hook.result.current.reportViewport(600, 120);
+    await hook.result.current.loadOlder();
+  });
+  expect(pullRange).not.toHaveBeenCalled();
+  expect(putState).not.toHaveBeenCalled();
 });

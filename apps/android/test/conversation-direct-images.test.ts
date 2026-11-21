@@ -24,6 +24,7 @@ import { cachedDirectImage } from "../src/native/attachment-cache/cached-transfe
 import {
   PrivateImageAccessProvider,
   usePrivateImageUri,
+  usePrivateAssetUri,
 } from "../src/rendering/use-private-image-uri";
 import type { GetTransferAccess } from "../src/data/private-transfer";
 
@@ -459,5 +460,38 @@ describe("identity-keyed disk cache lookup", () => {
     lease?.release();
     storage.files.delete("image");
     expect(await reopened.acquireExisting("image")).toBeNull();
+  });
+});
+
+describe("private image resource ownership", () => {
+  it("shares equivalent thumbnails and reloads on replacement, connection, variant and retry", async () => {
+    const materialize = vi.mocked(materializePrivateAsset);
+    materialize.mockReset();
+    materialize.mockImplementation(async () => ({ headers: {}, uri: `file:///test/${materialize.mock.calls.length}` }));
+    type Props = { path: string; scope: string; variant: "preview" | "detail"; revision: number };
+    function Image({ path, revision, variant }: Props) {
+      const image = usePrivateAssetUri({ kind: "path", path }, { revision, variant });
+      return createElement("image-result", { uri: image.uri });
+    }
+    function view(props: Props) {
+      return createElement(PrivateImageAccessProvider, { scope: props.scope, children: createElement(Image, props) });
+    }
+    const initial: Props = { path: "/first.png", scope: "image-owner-A", variant: "preview", revision: 0 };
+    let tree: ReturnType<typeof create>;
+    await act(async () => { tree = create(view(initial)); });
+    const show = async (props: Props, sequence: number) => {
+      await act(async () => tree.update(view(props)));
+      expect(tree.root.findByType("image-result").props.uri).toBe(`file:///test/${sequence}`);
+      expect(materialize).toHaveBeenCalledTimes(sequence);
+    };
+    await show(initial, 1);
+    const replacement = { ...initial, path: "/other.png" };
+    await show(replacement, 2);
+    const otherConnection = { ...replacement, scope: "image-owner-B" };
+    await show(otherConnection, 3);
+    const detail = { ...otherConnection, variant: "detail" as const };
+    await show(detail, 4);
+    await show({ ...detail, revision: 1 }, 5);
+    await act(async () => tree.unmount());
   });
 });

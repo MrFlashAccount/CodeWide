@@ -1,15 +1,13 @@
 import { useSelector } from "@legendapp/state/react";
-import { useState } from "react";
 
 import type { PullRequestFile, PullRequestFilesPage } from "../../../data/forgeMutationContract";
 import { useForgeQuery } from "../../../data/forgeQueryResource";
 import { remoteValue } from "../../../data/forgeRemoteValue";
 import type { DraftComment } from "../../../data/reviewDraftContract";
 import { useDraftPuts, type DraftPut } from "../../../data/reviewDraftPuts";
-import { useEvent } from "../../../react/useEvent";
-import { useAppDialog } from "../../../ui/AppDialog";
 import type { PullRequestChangesProps } from "./changesContract";
-import { firstPageFailure, type FilesFailure } from "./filesFailure";
+import type { FilesFailure } from "./filesFailure";
+import { useFilePages } from "./useFilePages";
 import type { PullRequestTarget } from "../workspaceCapabilities";
 import type { HeadFileSource } from "./headFileViews";
 
@@ -19,13 +17,13 @@ const NO_DRAFTS: readonly DraftComment[] = [];
 
 /** Files, drafts, the selected file and the viewed toggle of the Changes tab. */
 export type ChangesData = {
+  readonly agentTitle: string | null;
   /** New drafts sent but not in the drafts snapshot yet: being saved, or refused. */
   readonly draftPuts: readonly DraftPut[];
   readonly drafts: readonly DraftComment[];
+  readonly files: readonly PullRequestFile[];
   /** Why the first files page could not be read; `null` while it loads or once shown. */
   readonly filesFailure: FilesFailure | null;
-  /** The user's file tree choice; `null` follows the form factor. */
-  readonly filesPanelOpen: boolean | null;
   /** Where whole head files of the current head are read from. */
   readonly headFiles: HeadFileSource;
   readonly page: PullRequestFilesPage | null;
@@ -35,9 +33,9 @@ export type ChangesData = {
     readonly pullRequest: PullRequestTarget["pullRequest"];
   };
   readonly target: PullRequestTarget;
-  readonly toggleViewed: (file: PullRequestFile) => void;
+  /** Failed continuation with the already loaded files still available. */
+  readonly treeFailure: FilesFailure | null;
   readonly view: "files" | "guide";
-  readonly viewedPending: ReadonlySet<string>;
 };
 
 /**
@@ -48,9 +46,8 @@ export type ChangesData = {
  * is an explicit forge write with its own pending state; a failure keeps the
  * previous mark.
  */
-export function useChangesData(props: PullRequestChangesProps): ChangesData {
+export function useChangesData(props: PullRequestChangesProps, filesOpen: boolean): ChangesData {
   const { connectionId, forge, model, overview, review } = props;
-  const dialog = useAppDialog();
   const target: PullRequestTarget = {
     connectionId,
     headRevision: overview.headRevision,
@@ -60,35 +57,24 @@ export function useChangesData(props: PullRequestChangesProps): ChangesData {
     kind: "pullRequest" as const,
     pullRequest: overview.pullRequest,
   };
-  const files = useForgeQuery(forge.files, target);
   const drafts = useForgeQuery(review.drafts, { connectionId, source });
   const saved = remoteValue(drafts)?.drafts ?? NO_DRAFTS;
   const draftPuts = useDraftPuts(review.drafts.client, { connectionId, source }, saved);
   const view = useSelector(() => model.changesView.get());
   const selectedPath = useSelector(() => model.selectedPath.get());
-  const filesPanelOpen = useSelector(() => model.filesPanelOpen.get());
-  const [viewedPending, setViewedPending] = useState<ReadonlySet<string>>(new Set());
-  const page = remoteValue(files);
-  const selected = page?.files.find((file) => file.path === selectedPath) ?? page?.files[0] ?? null;
-  const retryFiles = useEvent((): void => {
-    forge.files.refresh(target).catch(() => undefined);
+  const { filesFailure, page, treeFailure } = useFilePages(forge.files, target, {
+    open: filesOpen || view === "guide",
+    selectedPath,
   });
-  const toggleViewed = useEvent((file: PullRequestFile): void => {
-    setViewedPending((current) => new Set([...current, file.path]));
-    props.capabilities
-      .setViewed(target, file.path, !file.viewed.viewed)
-      .catch((error: unknown) => {
-        dialog.error("Could not change the viewed mark", error);
-      })
-      .finally(() => {
-        setViewedPending((current) => new Set([...current].filter((path) => path !== file.path)));
-      });
-  });
+  const loadedFiles = page?.files ?? [];
+  const selected = selectedFile(loadedFiles, selectedPath);
+
   return {
+    agentTitle: props.agentThread?.title ?? null,
     draftPuts,
     drafts: saved,
-    filesFailure: firstPageFailure(files, retryFiles),
-    filesPanelOpen,
+    files: loadedFiles,
+    filesFailure,
     headFiles: {
       capable: props.providerCapabilities.includes(FILE_CONTENT_CAPABILITY),
       resource: forge.fileContent,
@@ -98,8 +84,14 @@ export function useChangesData(props: PullRequestChangesProps): ChangesData {
     selected,
     source,
     target,
-    toggleViewed,
+    treeFailure,
     view,
-    viewedPending,
   };
+}
+
+function selectedFile(
+  files: readonly PullRequestFile[],
+  path: string | null,
+): PullRequestFile | null {
+  return files.find((file) => file.path === path) ?? files[0] ?? null;
 }

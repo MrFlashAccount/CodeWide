@@ -41,6 +41,7 @@ export function CodeReviewEditor({
   onLinePress,
   selectedPath,
   selectedReference,
+  showLineNumbers = true,
   sidebarOpen,
   wrapLines,
 }: CodeReviewEditorProps) {
@@ -132,7 +133,7 @@ export function CodeReviewEditor({
                       }}
                       style={[styles.line, selected && styles.lineSelected]}
                     >
-                      <Text style={styles.lineNumber}>{lineNumber}</Text>
+                      {showLineNumbers && <Text style={styles.lineNumber}>{lineNumber}</Text>}
                       <Text selectable style={[styles.code, wrapLines && styles.codeWrapped]}>
                         {line === "" ? " " : line}
                       </Text>

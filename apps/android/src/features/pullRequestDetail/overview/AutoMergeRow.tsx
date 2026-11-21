@@ -8,9 +8,8 @@ import { AppText as Text } from "../../../ui/Typography";
 import { overviewStyles as styles } from "./overview.styles";
 
 /**
- * Auto-merge switch. It never writes on tap alone: the runner asks first, then
- * the switch shows the requested state disabled with its label shimmering in
- * place until the forge answers; a refusal restores the forge's state.
+ * Auto-merge switch. During the write it shows the requested state with its
+ * label shimmering. A refusal restores the forge's state.
  */
 export function AutoMergeRow({
   action,

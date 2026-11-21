@@ -1,0 +1,21 @@
+gradle.beforeProject { p ->
+  if (p.path == ':app' && p.rootProject.name == 'CodeWide') {
+    p.layout.buildDirectory.set(new File(System.getenv('CW_NATIVE_LIST_DIR'), 'app-build'))
+    p.plugins.withId('com.android.application') {
+      p.dependencies.add('implementation', 'androidx.recyclerview:recyclerview:1.3.0')
+      p.extensions.getByName('androidComponents').finalizeDsl { android ->
+        def nativeStudy = new File(System.getenv('CW_NATIVE_LIST_DIR'), 'java').canonicalFile
+        android.sourceSets.getByName('main').java.setSrcDirs([nativeStudy])
+        android.sourceSets.getByName('main').kotlin.setSrcDirs([nativeStudy])
+        android.buildTypes.preview.signingConfig = android.signingConfigs.debug
+      }
+    }
+  }
+}
+gradle.beforeProject { p ->
+  if (p.path == ':app' && p.rootProject.name == 'CodeWide') {
+    p.tasks.configureEach { task ->
+      if(task.name=='createBundlePreviewJsAndAssets' || task.name=='createPreviewUpdatesResources') task.outputs.upToDateWhen { false }
+    }
+  }
+}

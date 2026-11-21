@@ -16,21 +16,31 @@ import { threadSelectionKey } from "../services/threads/threadRouteParams";
  */
 export function usePullRequestNavigation(): {
   readonly navigateToLinkedThread: (connectionId: string, threadId: ThreadId) => void;
-  readonly openPullRequest: (connectionId: string, pullRequest: PullRequestKey) => void;
+  readonly openPullRequest: (
+    connectionId: string,
+    pullRequest: PullRequestKey,
+    composeReview?: boolean,
+  ) => void;
 } {
   const router = useRouter();
   const pathname = usePathname();
-  const openPullRequest = useEvent((connectionId: string, pullRequest: PullRequestKey): void => {
-    const href = {
-      params: { connectionId, pullRequestKey: pullRequest },
-      pathname: "/pulls/[connectionId]/[pullRequestKey]",
-    } as const;
-    if (pathname.startsWith("/pulls/")) {
-      router.dismissTo(href);
-    } else {
-      router.push(href);
-    }
-  });
+  const openPullRequest = useEvent(
+    (connectionId: string, pullRequest: PullRequestKey, composeReview = false): void => {
+      const href = {
+        params: {
+          connectionId,
+          pullRequestKey: pullRequest,
+          ...(composeReview ? { composeReview: "1" } : {}),
+        },
+        pathname: "/pulls/[connectionId]/[pullRequestKey]",
+      } as const;
+      if (pathname.startsWith("/pulls/")) {
+        router.dismissTo(href);
+      } else {
+        router.push(href);
+      }
+    },
+  );
   const navigateToLinkedThread = useEvent((connectionId: string, threadId: ThreadId): void => {
     router.navigate({
       params: { connectionId, threadId },

@@ -1,4 +1,5 @@
 import type { MainThreadReadCapabilities } from "../mainThreadReadCapabilities";
+import { useThreadReadingPosition } from "./threadReadingPosition";
 import { useHistoryAnchorState } from "./historyAnchor";
 import { useTimelineSearchState } from "./timelineSearch";
 import { useTimelineJumpState } from "./timelineJump";
@@ -22,11 +23,12 @@ export function useConversationTimelineState({
   const timelineViewportStateBinding = useTimelineViewportState(composerScope);
   const unreadReceiptStateBinding = useUnreadReceiptState(composerScope);
   const timelineJumpStateBinding = useTimelineJumpState(composerScope);
+  const reading = useThreadReadingPosition(draftConnectionId, draftThreadId);
   const historyAnchorStateBinding = useHistoryAnchorState(
     composerScope,
     draftConnectionId,
     draftThreadId,
-    readInputs.saveScrollOffset,
+    reading?.session.save ?? readInputs.saveScrollOffset,
   );
   return {
     historyAnchorStateBinding,

@@ -99,14 +99,22 @@ function layOut(arrangement: PaneArrangement, frameWidth: number, pointScaleFact
   frame.setHeight(800);
   frame.calculateLayout(frameWidth, 800);
   const detailX = destination.getComputedLeft();
+  const rightX = detailX + right.getComputedLeft();
   const layout = {
+    catalogVisibleWidth: Math.min(catalog.getComputedWidth(), detailX),
     catalogWidth: catalog.getComputedWidth(),
-    centerClipWidth: centerClip.getComputedWidth(),
+    centerClipWidth: Math.min(
+      centerClip.getComputedWidth(),
+      frameWidth - detailX,
+      rightX - detailX,
+    ),
     centerWidth: centerContent.getComputedWidth(),
+    detailVisibleWidth: Math.min(destination.getComputedWidth(), frameWidth - detailX),
     detailWidth: destination.getComputedWidth(),
     detailX,
+    rightVisibleWidth: Math.min(right.getComputedWidth(), frameWidth - rightX),
     rightWidth: right.getComputedWidth(),
-    rightX: detailX + right.getComputedLeft(),
+    rightX,
   };
   frame.freeRecursive();
   config.free();

@@ -4,7 +4,6 @@ import { dockCounts } from "../changes/dockCounts";
 import { ReviewOutcome, type SubmitResult } from "../changes/ReviewOutcome";
 import { SubmitReviewSheet } from "../changes/SubmitReviewSheet";
 import type { VerdictChoice } from "./verdictChoice";
-import { VerdictSplitButton } from "./VerdictSplitButton";
 
 /** Everything Details needs to offer Submit review; the screen owns the data and the sheet state. */
 export type DetailsReviewProps = {
@@ -27,27 +26,16 @@ export type DetailsReviewProps = {
 };
 
 /**
- * Submit review on Details: the verdict split button when the viewer has a real choice, the last
- * Submit's outcome, and the same Submit review sheet as Changes, opened with the chosen verdict.
+ * The last Submit outcome and the sheet opened from the Details verdict button or menu.
  * The sheet stays the only trigger that publishes a verdict.
  */
 export function DetailsReview(props: DetailsReviewProps): React.JSX.Element | null {
-  const { choice } = props;
   const verdict = props.verdicts.find((item) => item.actionId === props.openVerdictId) ?? null;
-  const button =
-    choice.kind === "prominent" ? (
-      <VerdictSplitButton
-        lead={choice.lead}
-        onOpenReview={props.onOpen}
-        verdicts={choice.verdicts}
-      />
-    ) : null;
-  if (button === null && props.result === null && verdict === null) {
+  if (props.result === null && verdict === null) {
     return null;
   }
   return (
     <>
-      {button}
       {props.result === null ? null : <ReviewOutcome host={props.host} result={props.result} />}
       {verdict === null ? null : (
         <SubmitReviewSheet

@@ -11,6 +11,7 @@ import {
   centerContentFrame,
   currentChromeInset,
   destinationFrame,
+  landedViewportMaxWidth,
   rightFrame,
 } from "../src/routeComposition/paneFrames";
 import {
@@ -145,19 +146,14 @@ describe("settled geometry of every pane combination", () => {
     expect(pane.detailX).toBe(expectedDetailX);
     expect(pane.catalogOpacity).toBe(left === "covered" ? COVERED_CATALOG_OPACITY : 1);
     expect(pane.catalogWidth).toBe(left === "beside" || left === "covered" ? SIDEBAR : FRAME);
-    if (right === "beside") {
-      // Center and right split the destination equally and share one edge.
-      expect(pane.centerClipWidth).toBe(pane.rightWidth);
-      expect(pane.centerClipWidth + pane.rightWidth).toBe(pane.detailWidth);
-      expect(pane.rightX).toBe(pane.detailX + pane.centerClipWidth);
-    } else if (right === "cover") {
-      expect(pane.rightX).toBe(pane.detailX);
-      expect(pane.rightWidth).toBe(pane.detailWidth);
-    } else {
-      expect(pane.rightX).toBeGreaterThanOrEqual(FRAME);
-      expect(pane.centerClipWidth).toBe(pane.detailWidth);
-    }
-    expect(pane.centerWidth).toBe(pane.centerClipWidth);
+    const visibleDetail = FRAME - expectedDetailX;
+    const visibleRight =
+      right === "cover" ? visibleDetail : right === "beside" ? visibleDetail / 2 : 0;
+    expect(pane.detailVisibleWidth).toBe(visibleDetail);
+    expect(pane.catalogVisibleWidth).toBe(expectedDetailX);
+    expect(pane.rightVisibleWidth).toBe(visibleRight);
+    expect(pane.centerClipWidth).toBe(visibleDetail - visibleRight);
+    expect(pane.rightX).toBe(FRAME - visibleRight);
     expect(pane.centerLeftRadius).toBe(target.centerLeftRadius);
     expect(pane.centerRightRadius).toBe(target.centerRightRadius);
   });
@@ -208,12 +204,34 @@ describe("settled panes belong to Yoga", () => {
           }
         }
       }
-      expect(settled.destination.transform).toEqual([{ translateX: 0 }]);
-      expect(settled.right.transform).toEqual([{ translateX: 0 }]);
     },
   );
 
-  it("gives up no chrome width at rest", () => {
+  it("keeps the landed reading width across late native Stack layouts, then follows the screen", () => {
+    const state = motionState({
+      from: paneGeometry(arrangement("covered", "offscreen"), FRAME),
+      moving: false,
+      progress: 1,
+      to: arrangement("beside", "offscreen"),
+    });
+    const split = FRAME - SIDEBAR;
+    const viewWidth = (screen: number, frame: number) => {
+      const max = landedViewportMaxWidth(state, frame, screen);
+      return typeof max === "number" ? Math.min(screen, max) : screen;
+    };
+    expect([FRAME, FRAME - 20, split].map((screen) => viewWidth(screen, FRAME))).toEqual([
+      split,
+      split,
+      split,
+    ]);
+    expect(landedViewportMaxWidth(state, FRAME, split)).toBe("100%");
+    expect(landedViewportMaxWidth(state, FRAME, split + 0.25)).toBe("100%");
+    expect(viewWidth(FRAME, FRAME + 0.0001)).toBeCloseTo(split);
+    expect(viewWidth(1100, 1600)).toBe(1100);
+    expect(landedViewportMaxWidth(state, 0, FRAME)).toBe("100%");
+  });
+
+  it("keeps only the covered catalog chrome collapsed in a settled center and right split", () => {
     const state = motionState({
       frameWidth: 700,
       from: paneGeometry(arrangement("beside", "offscreen"), 2400),
@@ -221,7 +239,8 @@ describe("settled panes belong to Yoga", () => {
       progress: 0.3,
       to: arrangement("covered", "beside"),
     });
-    for (const box of ["catalog", "center", "destination", "right"] as const) {
+    expect(currentChromeInset(state, "catalog")).toBe("100%");
+    for (const box of ["center", "destination", "right"] as const) {
       expect(currentChromeInset(state, box)).toBe(0);
     }
   });
@@ -282,6 +301,35 @@ describe("one progress derives every pane property", () => {
     }
   });
 
+  it("reveals the center header from zero at the PR divider, including after a reversal", () => {
+    const split = arrangement("covered", "beside");
+    const full = arrangement("covered", "cover");
+    const state = motionState({
+      from: paneGeometry(full, FRAME),
+      moving: true,
+      progress: 0,
+      to: split,
+    });
+    for (const progress of [0, 0.25, 0.5, 0.75, 1, 1.01]) {
+      state.progress.set(progress);
+      const pane = movingPaneGeometry(state);
+      const edge = (Math.min(progress, 1) * FRAME) / 2;
+      expect(currentChromeInset(state, "center")).toBeCloseTo(pane.centerWidth - edge);
+      expect(pane.centerClipWidth).toBeCloseTo(edge);
+      expect(pane.rightX).toBeCloseTo(edge);
+      expect(pane.rightVisibleWidth).toBeCloseTo(FRAME - edge);
+    }
+    state.progress.set(0.5);
+    state.from.set(movingPaneGeometry(state));
+    state.arrangement.set(full);
+    state.progress.set(0);
+    expect(movingPaneGeometry(state).centerClipWidth).toBe(FRAME / 4);
+    state.progress.set(0.5);
+    expect(movingPaneGeometry(state).centerClipWidth).toBe(FRAME / 8);
+    state.progress.set(1);
+    expect(movingPaneGeometry(state).centerClipWidth).toBe(0);
+  });
+
   it("frames every moving pane box in explicit pixels from the one progress", () => {
     const from = paneGeometry(arrangement("beside", "offscreen"), FRAME);
     const to = arrangement("covered", "beside");
@@ -305,14 +353,12 @@ describe("one progress derives every pane property", () => {
         borderBottomLeftRadius: pane.centerLeftRadius,
         borderTopLeftRadius: pane.centerLeftRadius,
         flexGrow: 0,
-        left: 0,
+        left: pane.detailX,
         position: "absolute",
-        transform: [{ translateX: pane.detailX }],
         width: pane.detailWidth,
       },
       right: {
-        left: 0,
-        transform: [{ translateX: pane.rightX - pane.detailX }],
+        left: pane.rightX - pane.detailX,
         width: pane.rightWidth,
       },
     });

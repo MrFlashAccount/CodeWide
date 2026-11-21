@@ -360,8 +360,12 @@ impl ReviewService {
     /// Where the anchor's hunk starts at the draft's revision, so a moved
     /// hunk can carry the anchor. The anchor's hunk must exist there.
     async fn anchor_origin(&self, draft: &DraftInput) -> Result<Option<HunkOrigin>, ReviewError> {
-        let Some(hunk) = &draft.anchor.hunk else {
-            return Ok(None);
+        let hunk = match &draft.anchor {
+            drafts::DraftAnchor::Line { hunk: None, .. } => return Ok(None),
+            drafts::DraftAnchor::Line {
+                hunk: Some(hunk), ..
+            } => Some(hunk),
+            drafts::DraftAnchor::File { .. } => None,
         };
         let source = &draft.revision.source;
         let catalog = match self.cached_catalog(source, &draft.revision.revision) {
@@ -373,6 +377,19 @@ impl ReviewService {
                 json!({"revision": catalog.revision}),
             ));
         }
+        let Some(hunk) = hunk else {
+            return if catalog
+                .files
+                .iter()
+                .any(|file| file.path == draft.anchor.path())
+            {
+                Ok(None)
+            } else {
+                Err(ReviewError::Invalid(
+                    "file is absent from the reviewed revision".into(),
+                ))
+            };
+        };
         catalog
             .files
             .iter()
@@ -587,19 +604,34 @@ fn comment_inputs(description: &str, drafts: &[&DraftComment]) -> Vec<String> {
     use std::fmt::Write as _;
     let mut text = format!("Review comments on {description}:\n");
     for (index, draft) in drafts.iter().enumerate() {
-        let side = match draft.anchor.side {
-            drafts::Side::New => "new",
-            drafts::Side::Old => "old",
-        };
-        let _ = write!(
-            text,
-            "\n{}. {} lines {}-{} ({side} side):\n{}\n",
-            index + 1,
-            draft.anchor.path,
-            draft.anchor.start_line,
-            draft.anchor.end_line,
-            draft.body
-        );
+        match &draft.anchor {
+            drafts::DraftAnchor::File { path, .. } => {
+                let _ = writeln!(
+                    text,
+                    "\n{}. {path} (whole file):\n{}",
+                    index + 1,
+                    draft.body
+                );
+            }
+            drafts::DraftAnchor::Line {
+                path,
+                side,
+                start_line,
+                end_line,
+                ..
+            } => {
+                let side = match side {
+                    drafts::Side::New => "new",
+                    drafts::Side::Old => "old",
+                };
+                let _ = writeln!(
+                    text,
+                    "\n{}. {path} lines {start_line}-{end_line} ({side} side):\n{}",
+                    index + 1,
+                    draft.body
+                );
+            }
+        }
     }
     vec![text]
 }

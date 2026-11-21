@@ -44,6 +44,7 @@ import {
 } from "./ContentReviewHost";
 import { useDocumentDownload, type DocumentPreviewRequest } from "./DocumentPreviewHost";
 import { MediaPreviewTopBar } from "./MediaPreviewChrome";
+import { InlineVideoPoster } from "./InlineVideoPoster";
 import {
   mediaPreviewButtonStyle,
   useMediaChrome,
@@ -164,7 +165,9 @@ export function MessageVideoPreview(props: MessageVideoPreviewProps): React.JSX.
       {resource.value === null ? (
         <ActivityIndicator color={colors.textMuted} />
       ) : (
-        <InlineVideoSurface key={revision} source={resource.value} />
+        <InlineVideoPoster key={resource.value.uri} uri={resource.value.uri}>
+          <InlineVideoSurface source={resource.value} />
+        </InlineVideoPoster>
       )}
       <View pointerEvents="none" style={styles.messagePreviewShade} />
       <View pointerEvents="none" style={styles.messagePlayButton}>
@@ -368,8 +371,10 @@ function useVideoResource({
   readonly source: PrivateAssetSource;
 }) {
   const key = `attachment-video:${scope}:${privateAssetCacheKey(source)}`;
-  return useEphemeralAsyncResource<VideoSource>(key, revision, async (_publish, signal) =>
-    materializePrivateAsset(source, { getAccess, signal }),
+  return useEphemeralAsyncResource<Awaited<ReturnType<typeof materializePrivateAsset>>>(
+    key,
+    revision,
+    async (_publish, signal) => materializePrivateAsset(source, { getAccess, signal }),
   );
 }
 

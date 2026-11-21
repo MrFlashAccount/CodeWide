@@ -65,6 +65,7 @@ it("keeps its anchor mounted and forwards open, dismissal, live data and body ac
     );
   }
   const result = render(<Example value="10 tokens" width={300} />);
+  expect(result.queryByTestId("compose-menu")).toBeNull();
   expect(result.queryByText("10 tokens")).toBeNull();
   fireEvent.press(result.getByLabelText("Open usage"));
   layOutContentMenus(result);
@@ -79,6 +80,8 @@ it("keeps its anchor mounted and forwards open, dismissal, live data and body ac
   expect(result.getByText("20 tokens")).toBeVisible();
   fireEvent(result.getByTestId("compose-menu"), "dismissRequest");
   expect(result.queryByText("20 tokens")).toBeNull();
+  fireEvent.press(result.getByLabelText("Open usage"));
+  expect(result.getByText("20 tokens")).toBeVisible();
   expect(mounted).toHaveBeenCalledTimes(1);
 });
 
@@ -124,7 +127,7 @@ it("sizes the popup to its laid-out body between its height bounds and opens onc
 it("lays out its trigger in React Native beside the native host, which only covers its box", () => {
   const view = render(
     <AppPopover
-      open={false}
+      open
       onOpenChange={() => undefined}
       width={300}
       anchorStyle={{ maxWidth: "50%" }}

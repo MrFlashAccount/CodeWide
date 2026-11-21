@@ -178,6 +178,7 @@ impl ForgePlugin for Fixtures {
                 capability::DIFF,
                 capability::ACTIONS,
                 capability::REVIEW,
+                capability::FILE_REVIEW,
                 capability::CHECKS,
                 capability::SCENARIO_CONTEXT,
             ];

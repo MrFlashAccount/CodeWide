@@ -1,4 +1,7 @@
 import { useContext, type ReactNode } from "react";
+import { PaneBodyModeContext, PaneBodyPlacementContext } from "../ui/paneBodyTransition";
+import { PaneMotionContext, type PaneMotionState } from "./paneMotion";
+import { interpolatePaneGeometry, paneGeometry, snapshotBodyMargin } from "./paneGeometry";
 import { useDerivedValue } from "react-native-reanimated";
 
 import { SurfaceToneProvider } from "../ui/surfaceTone";
@@ -47,10 +50,43 @@ export function ThreePanelsPane({
     geometry === null ? 0 : currentChromeInset(geometry, box),
   );
   const tone = PANE_TONE[pane];
+  const mode = useContext(PaneBodyModeContext);
+  const surface = <SurfaceToneProvider value={tone}>{children}</SurfaceToneProvider>;
   return (
     <ThreePanelsContext.Provider value={{ chrome, chromeInset, neighbour, pane, tone, variant }}>
-      <SurfaceToneProvider value={tone}>{children}</SurfaceToneProvider>
+      {mode === "snapshot" && geometry !== null ? (
+        <SnapshotPlacement box={box} geometry={geometry}>
+          {surface}
+        </SnapshotPlacement>
+      ) : (
+        surface
+      )}
     </ThreePanelsContext.Provider>
+  );
+}
+
+function SnapshotPlacement({
+  box,
+  children,
+  geometry,
+}: {
+  readonly box: PaneBox;
+  readonly children: ReactNode;
+  readonly geometry: PaneMotionState;
+}): React.JSX.Element {
+  const { subscribeCapture } = useContext(PaneMotionContext);
+  const finalMargin = useDerivedValue(() => {
+    if (!geometry.moving.get()) {
+      return 0;
+    }
+    const from = geometry.from.get();
+    const to = paneGeometry(geometry.arrangement.get(), geometry.frameWidth.get());
+    return snapshotBodyMargin(interpolatePaneGeometry(from, to, geometry.progress.get()), to, box);
+  });
+  return (
+    <PaneBodyPlacementContext.Provider value={{ finalMargin, subscribeCapture }}>
+      {children}
+    </PaneBodyPlacementContext.Provider>
   );
 }
 

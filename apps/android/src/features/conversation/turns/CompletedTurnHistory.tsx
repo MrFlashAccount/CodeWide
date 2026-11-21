@@ -76,6 +76,10 @@ function SheetCollapsedTurnActivity(props: CollapsedTurnActivityProps) {
 }
 
 export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
+  return turnHasHistory(props.item) ? <ExpandableTurnHistory {...props} /> : null;
+}
+
+function ExpandableTurnHistory(props: CompletedTurnHistoryProps) {
   const rawTurn = props.item.turn;
   const [expanded, setExpanded] = usePersistentExpansion(
     `${props.item.key}:completed-history`,
@@ -111,10 +115,6 @@ export function CompletedTurnHistory(props: CompletedTurnHistoryProps) {
         setLoading(false);
       });
   };
-  // An empty history is never drawn: nothing counted or recorded.
-  if (!turnHasHistory(props.item)) {
-    return null;
-  }
   return (
     <TurnActivity
       compactHeader

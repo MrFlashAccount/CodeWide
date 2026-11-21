@@ -1,7 +1,7 @@
 import type { DimensionValue } from "react-native";
 
 import { SIDEBAR_FRAME_SHARE, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "../ui/sidebarDimensions";
-import type { PaneArrangement } from "./paneGeometry";
+import type { PaneArrangement, PaneBox } from "./paneGeometry";
 import { COVERED_CATALOG_OPACITY } from "./paneMotionSpec";
 
 /**
@@ -27,7 +27,6 @@ export type DestinationFrame = {
   readonly flexGrow: number;
   readonly left: DimensionValue;
   readonly position: "absolute" | "relative";
-  readonly transform: readonly [{ readonly translateX: number }];
   readonly width: DimensionValue;
 };
 
@@ -43,12 +42,34 @@ export type CenterContentFrame = { readonly width: DimensionValue };
 /** The right pane, positioned relative to the destination that holds it. */
 export type RightFrame = {
   readonly left: DimensionValue;
-  readonly transform: readonly [{ readonly translateX: number }];
   readonly width: DimensionValue;
 };
 
 const FULL = "100%";
 const HALF = "50%";
+
+/** The visible tablet chrome stays collapsed while its reading layout is parked offscreen. */
+export function restChromeInset(arrangement: PaneArrangement, box: PaneBox): 0 | "100%" {
+  "worklet";
+  if (!arrangement.sidebar) {
+    return 0;
+  }
+  if (box === "catalog") {
+    return arrangement.left === "covered" ? FULL : 0;
+  }
+  if (arrangement.left === "alone") {
+    return FULL;
+  }
+  switch (box) {
+    case "center":
+      return arrangement.right === "cover" ? FULL : 0;
+    case "right":
+      return arrangement.right === "offscreen" ? FULL : 0;
+    case "destination":
+      break;
+  }
+  return 0;
+}
 
 /** The catalog, first in the frame's row: at its relative sidebar width or across the frame. */
 export function restCatalogFrame(arrangement: PaneArrangement): CatalogFrame {
@@ -78,7 +99,6 @@ export function restDestinationFrame(arrangement: PaneArrangement): DestinationF
         flexGrow: 1,
         left: 0,
         position: "relative",
-        transform: [{ translateX: 0 }],
         width: "auto",
       };
     case "alone":
@@ -89,7 +109,6 @@ export function restDestinationFrame(arrangement: PaneArrangement): DestinationF
         flexGrow: 0,
         left: FULL,
         position: "absolute",
-        transform: [{ translateX: 0 }],
         width: FULL,
       };
     case "covered":
@@ -102,18 +121,20 @@ export function restDestinationFrame(arrangement: PaneArrangement): DestinationF
     flexGrow: 0,
     left: 0,
     position: "absolute",
-    transform: [{ translateX: 0 }],
     width: FULL,
   };
 }
 
-/** The center surface: half the destination beside the right pane, otherwise all of it. */
+/** The covered tablet center keeps its split reading width beneath the opaque right pane. */
 export function restCenterClipFrame(arrangement: PaneArrangement): CenterClipFrame {
   "worklet";
   return {
     borderBottomRightRadius: arrangement.centerRightRadius,
     borderTopRightRadius: arrangement.centerRightRadius,
-    width: arrangement.right === "beside" ? HALF : FULL,
+    width:
+      arrangement.right === "beside" || (arrangement.right === "cover" && arrangement.sidebar)
+        ? HALF
+        : FULL,
   };
 }
 
@@ -125,11 +146,11 @@ export function restRightFrame(arrangement: PaneArrangement): RightFrame {
   "worklet";
   switch (arrangement.right) {
     case "beside":
-      return { left: HALF, transform: [{ translateX: 0 }], width: HALF };
+      return { left: arrangement.left === "alone" ? 0 : HALF, width: HALF };
     case "cover":
-      return { left: 0, transform: [{ translateX: 0 }], width: FULL };
+      return { left: 0, width: FULL };
     case "offscreen":
       break;
   }
-  return { left: FULL, transform: [{ translateX: 0 }], width: HALF };
+  return { left: arrangement.left === "alone" ? 0 : FULL, width: HALF };
 }

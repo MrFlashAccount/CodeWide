@@ -24,7 +24,6 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   turnGroup: { gap: spacing.xxs },
-  userMessageBlock: { minWidth: 0 },
   userMessageContent: {
     gap: spacing.compact,
     minWidth: 0,

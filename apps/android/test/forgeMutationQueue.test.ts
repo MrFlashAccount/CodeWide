@@ -87,48 +87,56 @@ describe("durable Forge mutation queue", () => {
     client.unmount();
   });
 
-  it("restores a paused mutation and replays its exact envelope", async () => {
-    const memory = createMemoryQueryPersister();
-    const firstClient = new QueryClient();
-    firstClient.mount();
-    const firstRpc = vi.fn(async () => ({ ok: true }));
-    registerForgeMutationDefaults({ authority: rpcAuthority(firstRpc), client: firstClient });
-    const firstPersistence = persistForgeQueryClient(firstClient, memory.persister);
-    await firstPersistence.restored;
-    const firstQueue = createForgeMutationQueue({
-      client: firstClient,
-      restored: firstPersistence.restored,
-    });
-    onlineManager.setOnline(false);
-    const original = request();
-    void firstQueue.execute(original, (value) => value);
-    await vi.waitFor(() => {
-      expect(memory.read()).not.toBeNull();
-    });
-    firstPersistence.stop();
+  it.each(["current", "before file drafts"])(
+    "restores a paused mutation from %s and replays its exact envelope",
+    async (version) => {
+      const memory = createMemoryQueryPersister();
+      const firstClient = new QueryClient();
+      firstClient.mount();
+      const firstRpc = vi.fn(async () => ({ ok: true }));
+      registerForgeMutationDefaults({ authority: rpcAuthority(firstRpc), client: firstClient });
+      const firstPersistence = persistForgeQueryClient(firstClient, memory.persister);
+      await firstPersistence.restored;
+      const firstQueue = createForgeMutationQueue({
+        client: firstClient,
+        restored: firstPersistence.restored,
+      });
+      onlineManager.setOnline(false);
+      const original = request();
+      void firstQueue.execute(original, (value) => value);
+      await vi.waitFor(() => {
+        expect(memory.read()).not.toBeNull();
+      });
+      firstPersistence.stop();
+      if (version === "before file drafts") {
+        const snapshot = await memory.persister.restoreClient();
+        if (snapshot === undefined) throw new Error("Missing persisted mutation");
+        memory.overwrite(JSON.stringify({ ...snapshot, buster: "forge-query-cache-7ea41d187db7" }));
+      }
 
-    const restartedClient = new QueryClient();
-    restartedClient.mount();
-    const restartedRpc = vi.fn(async () => ({ ok: true }));
-    registerForgeMutationDefaults({
-      authority: rpcAuthority(restartedRpc),
-      client: restartedClient,
-    });
-    const restartedPersistence = persistForgeQueryClient(restartedClient, memory.persister);
-    const restartedQueue = createForgeMutationQueue({
-      client: restartedClient,
-      restored: restartedPersistence.restored,
-    });
-    await restartedPersistence.restored;
-    expect(restartedQueue.pending()).toStrictEqual([original]);
+      const restartedClient = new QueryClient();
+      restartedClient.mount();
+      const restartedRpc = vi.fn(async () => ({ ok: true }));
+      registerForgeMutationDefaults({
+        authority: rpcAuthority(restartedRpc),
+        client: restartedClient,
+      });
+      const restartedPersistence = persistForgeQueryClient(restartedClient, memory.persister);
+      const restartedQueue = createForgeMutationQueue({
+        client: restartedClient,
+        restored: restartedPersistence.restored,
+      });
+      await restartedPersistence.restored;
+      expect(restartedQueue.pending()).toStrictEqual([original]);
 
-    onlineManager.setOnline(true);
+      onlineManager.setOnline(true);
 
-    await vi.waitFor(() => {
-      expect(restartedRpc).toHaveBeenCalledWith(original.method, original.params);
-    });
-    restartedPersistence.stop();
-    firstClient.unmount();
-    restartedClient.unmount();
-  });
+      await vi.waitFor(() => {
+        expect(restartedRpc).toHaveBeenCalledWith(original.method, original.params);
+      });
+      restartedPersistence.stop();
+      firstClient.unmount();
+      restartedClient.unmount();
+    },
+  );
 });

@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useEffect, useRef } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import Svg, { Path, Rect } from "react-native-svg";
+import { SidebarToggle } from "../../../ui/SidebarToggle";
 
 import { colors, controlSize, iconSize, spacing, typeScale, typeWeight } from "../../../theme";
 import { AppText as Text } from "../../../ui/AppText";
@@ -75,31 +75,6 @@ function FilePicker({
         {name}
       </Text>
       <Ionicons color={colors.textMuted} name="chevron-down" size={iconSize.inline} />
-    </Pressable>
-  );
-}
-
-function SidebarToggle({ onToggle, open }: ToggleProps): React.JSX.Element {
-  return (
-    <Pressable
-      accessibilityLabel={open ? "Hide file list" : "Show file list"}
-      accessibilityRole="button"
-      accessibilityState={{ expanded: open }}
-      android_ripple={ripple}
-      onPress={onToggle}
-      style={styles.button}
-    >
-      <Svg
-        fill="none"
-        height={iconSize.action}
-        stroke={colors.text}
-        strokeWidth={2}
-        viewBox="0 0 24 24"
-        width={iconSize.action}
-      >
-        <Rect height={16} rx={2} width={19} x={2.5} y={4} />
-        <Path d="M9 4v16" />
-      </Svg>
     </Pressable>
   );
 }

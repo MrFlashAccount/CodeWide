@@ -1,5 +1,8 @@
+import { RpcResponseError } from "@codewide/sync-client";
 import { act, fireEvent, within } from "@testing-library/react-native";
+import * as Clipboard from "expo-clipboard";
 import type { ReactNode } from "react";
+import { Linking, Share } from "react-native";
 
 import { ActionMenu } from "../src/ui/ActionMenu";
 import { action, overview91 } from "./fixtures/forgeWireFixtures";
@@ -9,7 +12,7 @@ import {
   type Capabilities,
   type WireOverview,
 } from "./fixtures/pullRequestDetailsHarness";
-import { resetAppDialog } from "./mocks/AppDialog";
+import { getAppDialogRequest, resetAppDialog } from "./mocks/AppDialog";
 
 // Details places the plugin's actions where they act: Checks section actions (Start CI) in the
 // Status section's Checks row, the verdict group as a split button that only opens Submit review,
@@ -89,6 +92,38 @@ function pendingRun(): Capabilities["runAction"] {
   );
 }
 
+it.each([false, true])(
+  "runs the plain auto-merge switch directly from state %s and restores it on refusal",
+  async (on) => {
+    const actionId = on ? "disableAutoMerge" : "enableAutoMerge";
+    const runAction = jest
+      .fn<ReturnType<Capabilities["runAction"]>, Parameters<Capabilities["runAction"]>>()
+      .mockRejectedValue(new RpcResponseError(-32_083, "Auto-merge refused by Arcanum"));
+    const view = await renderDetails({
+      capabilityOverrides: { runAction },
+      overview: withActions(overview91, [
+        action(actionId, {
+          confirm: "none",
+          group: "merge",
+          kind: "autoMerge",
+          label: "Auto-merge",
+          toggle: { on },
+        }),
+      ]),
+    });
+    fireEvent(view.getByLabelText("Auto-merge"), "valueChange", !on);
+    expect(getAppDialogRequest()).toBeNull();
+    expect(runAction).toHaveBeenCalledTimes(1);
+    expect(runAction.mock.calls[0]?.[1]).toMatchObject({
+      actionId,
+      confirmation: "none",
+      input: null,
+    });
+    await view.findByText(/Auto-merge refused by Arcanum/u);
+    expect(view.getByLabelText("Auto-merge")).toHaveProp("on", on);
+  },
+);
+
 describe("Checks section actions", () => {
   it("puts Start CI in the Checks row, never in the header row, and runs it from there", async () => {
     const runAction = pendingRun();
@@ -103,9 +138,7 @@ describe("Checks section actions", () => {
       "1 failing, 6 successful",
     );
     const start = within(checks).getByTestId("catalog-action-startCi");
-    expect(
-      within(view.getByTestId("pull-request-action-row")).queryByTestId("catalog-action-startCi"),
-    ).toBeNull();
+    expect(view.getAllByTestId("catalog-action-startCi")).toHaveLength(1);
 
     fireEvent.press(start);
     expect(runAction.mock.calls.map(([, request]) => request.actionId)).toEqual(["startCi"]);
@@ -146,6 +179,52 @@ describe("Checks section actions", () => {
 });
 
 describe("app bar menu", () => {
+  it("places a forge action back in the header when the pane grows enough to fit it", async () => {
+    const ready = action("ready", { label: "Ready for review" });
+    const view = await renderDetails({ overview: withActions(overview91, [ready]) });
+    const header = view.getByTestId("pull-request-work-header");
+    const resize = (width: number) =>
+      fireEvent(header, "layout", { nativeEvent: { layout: { width } } });
+
+    resize(1);
+    expect(view.queryByTestId("pull-request-action-row")).toBeNull();
+    resize(420);
+    expect(within(header).getByLabelText("Ready for review")).toBeOnTheScreen();
+    resize(1);
+    fireEvent.press(view.getByLabelText("Pull request menu"));
+    expect(view.getByLabelText("Pull request menu: Ready for review")).toBeOnTheScreen();
+  });
+
+  it("copies, shares and opens an Arcanum PR on its declared web host when the account uses its API host", async () => {
+    const webUrl = "https://a.yandex-team.ru/review/91";
+    const copy = jest.spyOn(Clipboard, "setStringAsync").mockResolvedValue(true);
+    const share = jest.spyOn(Share, "share").mockResolvedValue({ action: "sharedAction" });
+    const open = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const { view } = renderScreen({
+      overview: withActions(overview91, [], {
+        account: {
+          ...overview91.account,
+          account: "arcanum:arcanum.yandex.net:reviewer",
+          host: "arcanum.yandex.net",
+          login: "reviewer",
+          pluginId: "arcanum",
+        },
+        repository: "arc_vcs",
+        webUrl,
+      }),
+    });
+    const trigger = await view.findByLabelText("Pull request menu");
+    fireEvent.press(trigger);
+    fireEvent.press(await view.findByLabelText("Pull request menu: Open in Arcanum"));
+    expect(open).toHaveBeenCalledWith(webUrl);
+    fireEvent.press(trigger);
+    fireEvent.press(view.getByLabelText("Pull request menu: Share"));
+    expect(share).toHaveBeenCalledWith(expect.objectContaining({ message: webUrl }));
+    fireEvent.press(trigger);
+    fireEvent.press(view.getByLabelText("Pull request menu: Copy link"));
+    expect(copy).toHaveBeenCalledWith(webUrl);
+  });
+
   it("shows single-tap copy and share actions and an icon for each PR menu entry", async () => {
     const view = await renderDetails({});
     fireEvent.press(await view.findByLabelText("Pull request menu"));
