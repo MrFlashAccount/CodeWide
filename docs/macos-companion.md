@@ -184,10 +184,40 @@ apps/companion-macos/scripts/build-app.sh
 apps/companion-macos/scripts/build-dmg.sh 0.1.0
 ```
 
-## Plugins are still two separate decisions
+## Forge plugin helper
 
-The existing VCS provider contract (Git/Arc executables using framed JSON-RPC)
-is not a general Companion plugin API. This slice does not expose either one in
-the menu app. Product work must first decide whether “plugin” means selecting a
-VCS provider or introducing a new arbitrary Companion extension contract; the
-two must not share a configuration surface by accident.
+The macOS companion runs forge pull requests like Linux does. The built-in
+GitHub forge plugin ships inside the app as
+`CodeWide.app/Contents/Helpers/codewide-forge-github`:
+
+- the release build compiles it for arm64 and x86_64, joins them with `lipo`
+  and signs the helper with the app identity before the app is signed;
+- `validate-boundaries.sh` allows exactly this helper; the bundle still
+  contains no `codewide-companion` CLI helper;
+- `companion-swift-ffi` passes `Contents/Helpers` as the bundled plugin
+  directory in the runtime config, and the core resolves `bundled:github`
+  there at every spawn; the built-in VCS provider `bundled:git` resolves
+  against the same directory, but the app does not ship `codewide-vcs-git`,
+  so it is listed as unavailable on macOS;
+- a Sparkle update replaces the helper with the bundle; `update-e2e.sh` proves
+  that the helper's reported version changes with the update.
+
+The plugin resolves its credentials on the host and never returns a token to
+the core. `gh` (GitHub) and `arc` (Arcanum) must be on the LaunchAgent's
+`PATH` for the plugin to find them; when they are not found, Android onboarding
+shows the install or `PATH` instructions. Pasted GitHub tokens are kept by the
+plugin in its own `0700` secrets directory under the companion state directory.
+
+There is no CLI on macOS. External forge plugins are registered in
+`forge-plugins.json` in the companion state directory
+(`~/Library/Application Support/CodeWide/Companion/`), and providers are
+enabled or disabled from the Android Accounts sheet. The plugin contract,
+registration and conformance are in [Forge plugins](forge-plugins.md).
+
+## Plugin contracts stay separate
+
+The VCS provider contract (Git/Arc executables, [VCS providers](vcs-plugins.md))
+and the forge plugin contract ([Forge plugins](forge-plugins.md)) are two
+separate plugin APIs with separate registries (`vcs-plugins.json`,
+`forge-plugins.json`). They share framing rules, not a configuration surface.
+Neither is a general Companion extension API, and the menu app exposes neither.

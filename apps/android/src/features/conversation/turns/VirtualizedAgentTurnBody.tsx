@@ -1,3 +1,4 @@
+import { useConstant } from "../../../react/useConstant";
 import type { RenderBlock } from "@codewide/renderers";
 import type { ReactElement } from "react";
 import { View } from "react-native";
@@ -9,11 +10,14 @@ import { BubbleContent } from "../../../rendering/Bubble";
 import { ContentReviewComments } from "../../../rendering/ContentReviewHost";
 import { MessageAttachmentCard } from "../../../rendering/MessageAttachmentCard";
 import { MessageAttachmentGrid } from "../../../rendering/MessageAttachmentTile";
+import { MessageVideoGallery } from "../../../rendering/MessageVideoGallery";
+import { isAttachmentVideo } from "../../../rendering/videoPreview";
 import { RichMarkdownDocumentBlockView } from "../../../rendering/RichMarkdown";
 import { RichMarkdownPremeasurementBoundary } from "../../../rendering/RichMarkdownPremeasurementProvider";
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
 import { StreamingRevealSurface } from "../../../rendering/StreamingRevealSurface";
 import { AppText as Text } from "../../../ui/Typography";
+import { completeMarkdownStyles } from "../../../rendering/CompleteMarkdown.styles";
 import { styles as markdownStyles } from "../content/AgentResponseMarkdown.styles";
 import { AgentResponseMarkdown } from "../content/AgentResponseMarkdown";
 import { ThinkingStatus } from "../protocol/ThinkingStatus";
@@ -33,7 +37,9 @@ type VirtualizedAgentTurnBodyProps = {
   compact: boolean;
   forceExpanded: boolean;
   getTransferAccess: TurnTimelineItemProps["getTransferAccess"];
+  latestAgentRef?: TurnTimelineItemProps["latestAgentRef"];
   onFixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
+  onLatestAgentLayout?: TurnTimelineItemProps["onLatestAgentLayout"];
   onLoadItems: TurnTimelineItemProps["onLoadItems"];
   parts: readonly VirtualizedTurnPart[];
   placement: VirtualizedTurnPlacement;
@@ -45,7 +51,13 @@ type VirtualizedAgentTurnBodyProps = {
 export function VirtualizedAgentTurnBody(props: VirtualizedAgentTurnBodyProps): ReactElement {
   return (
     <ArtifactImageReferences.Provider value={artifactImageReferences(props.presentation.artifacts)}>
-      <BubbleContent>
+      <BubbleContent
+        collapsable={props.latestAgentRef === undefined && props.onLatestAgentLayout === undefined}
+        {...(props.latestAgentRef === undefined ? {} : { ref: props.latestAgentRef })}
+        {...(props.onLatestAgentLayout === undefined
+          ? {}
+          : { onLayout: props.onLatestAgentLayout })}
+      >
         {isLeadingSlice(props.placement) ? <VirtualizedTurnLead {...props} /> : null}
         <VirtualizedTurnParts {...props} />
         {isTrailingSlice(props.placement) ? <VirtualizedTurnTail {...props} /> : null}
@@ -194,6 +206,8 @@ function VirtualizedMarkdownGroup({
   presentation: ReturnType<typeof projectTurnPresentation>;
 }): ReactElement | null {
   const first = parts[0];
+  // A completed row needs no streaming paint host. Keep the host if it already owns live text.
+  const mountedStreaming = useConstant(() => first?.streaming === true);
   if (first === undefined) {
     return null;
   }
@@ -203,8 +217,8 @@ function VirtualizedMarkdownGroup({
     <RichMarkdownPremeasurementBoundary>
       <View
         style={[
-          markdownStyles.agentMarkdownDocument,
-          presentation.agentBubbleFill && markdownStyles.agentMarkdownDocumentFill,
+          completeMarkdownStyles.document,
+          presentation.agentBubbleFill && completeMarkdownStyles.documentFill,
           !isTrailingSlice(placement) && markdownStyles.virtualizedMarkdownBlockGap,
         ]}
       >
@@ -212,6 +226,7 @@ function VirtualizedMarkdownGroup({
           <RichMarkdownDocumentBlockView
             animateStreaming={part.streaming && animateNew}
             block={part.block}
+            completedChat={!part.streaming && presentation.rawTurn.status !== "inProgress"}
             key={part.block.key}
             {...(reviewTarget === null ? {} : { reviewTarget })}
           />
@@ -222,6 +237,9 @@ function VirtualizedMarkdownGroup({
   );
   const itemId = first.response.raw.id;
   const message = renderSearchMessage(itemId, content);
+  if (!mountedStreaming && !first.streaming) {
+    return message;
+  }
   return (
     <StreamingRevealSurface
       animateNew={first.streaming && animateNew}
@@ -319,7 +337,6 @@ function renderActivityPart(
     return (
       <CollapsedTurnActivity
         compact={props.compact}
-        forceExpanded={props.forceExpanded}
         indexes={part.indexes}
         item={props.turn}
         key={part.key}
@@ -336,7 +353,6 @@ function renderActivityPart(
     <TurnActivitySegment
       animateNew={props.animateLiveUpdates}
       compact={props.compact}
-      forceExpanded={props.forceExpanded}
       key={part.key}
       part={part}
       turnKey={props.turn.key}
@@ -378,9 +394,19 @@ function AgentArtifacts(props: VirtualizedAgentTurnBodyProps): ReactElement | nu
     return null;
   }
   const images = props.presentation.artifacts.filter((attachment) => attachment.kind === "image");
-  const attachments = props.presentation.artifacts.filter(
-    (attachment) => attachment.kind !== "image",
+  const videos = props.presentation.artifacts.filter((attachment) =>
+    isAttachmentVideo(attachment.name),
   );
+  const attachments = props.presentation.artifacts.filter(
+    (attachment) => attachment.kind !== "image" && !isAttachmentVideo(attachment.name),
+  );
+  const videoCards = videos.map((attachment) => (
+    <MessageAttachmentCard
+      attachment={attachment}
+      key={userMessageAttachmentReference(attachment)}
+      {...(props.getTransferAccess === undefined ? {} : { getAccess: props.getTransferAccess })}
+    />
+  ));
   const cards = attachments.map((attachment) => (
     <MessageAttachmentCard
       attachment={attachment}
@@ -390,12 +416,17 @@ function AgentArtifacts(props: VirtualizedAgentTurnBodyProps): ReactElement | nu
   ));
   return (
     <View style={styles.userMessageContent} testID="agent-artifacts">
-      <UserImageGallery
-        attachments={images}
-        {...(props.getTransferAccess === undefined
-          ? {}
-          : { getTransferAccess: props.getTransferAccess })}
-      />
+      {images.length > 0 && (
+        <UserImageGallery
+          attachments={images}
+          {...(props.getTransferAccess === undefined
+            ? {}
+            : { getTransferAccess: props.getTransferAccess })}
+        />
+      )}
+      {videos.length === 0 ? null : (
+        <MessageVideoGallery style={styles.agentAttachmentGrid}>{videoCards}</MessageVideoGallery>
+      )}
       {attachments.length === 0 ? null : (
         <MessageAttachmentGrid style={styles.agentAttachmentGrid}>{cards}</MessageAttachmentGrid>
       )}

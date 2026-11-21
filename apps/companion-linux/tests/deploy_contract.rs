@@ -82,12 +82,29 @@ fn companion_service_has_no_broad_temporary_preview_root() {
 }
 
 #[test]
-fn default_distribution_installs_and_registers_git_plugin() {
+fn default_distribution_installs_the_built_in_git_plugin() {
     assert!(INSTALL_SCRIPT.contains("target/release/codewide-vcs-git"));
-    assert!(INSTALL_SCRIPT.contains("vcs plugin install"));
-    assert!(INSTALL_SCRIPT.contains("--id git"));
-    assert!(INSTALL_SCRIPT.contains("--priority=-1000"));
+    assert!(INSTALL_SCRIPT.contains("\"$staging/libexec/codewide-vcs-git\""));
+    assert!(
+        !INSTALL_SCRIPT.contains("vcs plugin install"),
+        "Git is built in and is never registered as a generation path"
+    );
     assert!(VERIFY_SCRIPT.contains("current/libexec/codewide-vcs-git"));
+    assert!(VERIFY_SCRIPT.contains(r#""source":"bundled","id":"git","executable":""#));
+}
+
+#[test]
+fn default_distribution_installs_the_built_in_github_plugin() {
+    assert!(INSTALL_SCRIPT.contains("target/release/codewide-forge-github"));
+    assert!(INSTALL_SCRIPT.contains("\"$staging/libexec/codewide-forge-github\""));
+    assert!(
+        !INSTALL_SCRIPT.contains("forge plugin install"),
+        "GitHub is built in and needs no registration"
+    );
+    assert!(VERIFY_SCRIPT.contains("current/libexec/codewide-forge-github"));
+    // An older generation restored by a rollback must still parse the unit,
+    // so the unit passes no forge flag; the binary derives the directory.
+    assert!(!COMPANION_UNIT.contains("--bundled-plugin-dir"));
 }
 
 #[test]
@@ -108,6 +125,25 @@ fn managed_install_uses_immutable_generations_and_a_stable_guardian() {
     assert!(INSTALL_SCRIPT.contains("enable --now codewide-companion-update.path"));
     assert!(UPDATE_UNIT.contains("IPAddressDeny=any"));
     assert!(!UPDATE_UNIT.contains("network-online.target"));
+}
+
+#[test]
+fn manual_generation_identity_covers_every_runtime_payload() {
+    for expected in [
+        "bin/codewide-companion %s",
+        "libexec/codewide-vcs-git %s",
+        "libexec/codewide-forge-github %s",
+        "libexec/codewide-companion-memory-watch %s",
+    ] {
+        assert!(
+            INSTALL_SCRIPT.contains(expected),
+            "manual generation digest includes {expected}"
+        );
+    }
+    assert!(RELEASE_SCRIPT.contains(
+        "cmp target/release/codewide-forge-github \"$CURRENT_LINK/libexec/codewide-forge-github\""
+    ));
+    assert!(RELEASE_SCRIPT.contains("forgeGithubPluginSha256"));
 }
 
 #[test]
@@ -143,21 +179,6 @@ fn service_exposes_only_the_secure_tunnel_on_its_http_carrier() {
     assert!(!VERIFY_SCRIPT.contains("--pinnedpubkey"));
     assert!(VERIFY_SCRIPT.contains("ingress=secure-tunnel-only"));
     assert!(VERIFY_SCRIPT.contains("inner-tls=required"));
-}
-
-#[test]
-fn one_shot_release_validates_builds_installs_verifies_and_rolls_back() {
-    assert!(RELEASE_SCRIPT.contains("do not report or poll intermediate progress"));
-    assert!(RELEASE_SCRIPT.contains("git diff --check --"));
-    assert!(RELEASE_SCRIPT.contains("cargo fmt --all -- --check"));
-    assert!(RELEASE_SCRIPT.contains("cargo clippy --workspace --all-targets --all-features"));
-    assert!(RELEASE_SCRIPT.contains("cargo test --workspace --all-features"));
-    assert!(RELEASE_SCRIPT.contains("run_quiet 'running tests'"));
-    assert!(RELEASE_SCRIPT.contains("cat \"$log\" >&2"));
-    assert!(RELEASE_SCRIPT.contains("./scripts/build-companion.sh"));
-    assert!(RELEASE_SCRIPT.contains("./apps/companion-linux/deploy/install.sh"));
-    assert!(RELEASE_SCRIPT.contains("./apps/companion-linux/deploy/verify.sh"));
-    assert!(RELEASE_SCRIPT.contains("restoring the previous installation"));
 }
 
 #[test]

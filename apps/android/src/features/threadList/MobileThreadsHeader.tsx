@@ -3,24 +3,23 @@ import {
   ThreadListHeaderAction,
   ThreadListHeaderRow,
 } from "../../presentation/navigation/ThreadListHeader";
-import { AppText as Text } from "../../ui/Typography";
 import { serverScopeIncludes } from "../../services/servers/serverScope";
 import { SidebarProjectHeader } from "../projects/SidebarProjectViews";
+import { CatalogTitle } from "../../ui/CatalogTitle";
 import { styles } from "./MobileThreads.styles";
 import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
-import { GlobalVoiceEntryAction } from "./GlobalVoiceEntryAction";
 import { ThreadListSearchRow } from "./ThreadListSearchRow";
 
 type MobileThreadsHeaderProps = Pick<
   MobileThreadsProps,
   | "filter"
-  | "globalVoice"
   | "mode"
   | "onBackToProjects"
   | "onFilterChange"
   | "onManageProjects"
   | "onManageTerminals"
+  | "onOpenDownloads"
   | "onModeChange"
   | "onOpenSearch"
   | "onQueryChange"
@@ -37,13 +36,13 @@ type MobileThreadsHeaderProps = Pick<
 export function MobileThreadsHeader({ props }: { props: MobileThreadsHeaderProps }) {
   const {
     filter,
-    globalVoice,
     mode,
     onBackToProjects,
     onFilterChange,
     onManageProjects,
     onManageTerminals,
     onModeChange,
+    onOpenDownloads,
     onOpenSearch,
     onQueryChange,
     onRefreshAccountRateLimits,
@@ -94,17 +93,12 @@ export function MobileThreadsHeader({ props }: { props: MobileThreadsHeaderProps
               }}
             />
             <View style={styles.mobileIdentity}>
-              <Text numberOfLines={1} style={styles.mobileTitle}>
-                Archived threads
-              </Text>
+              <CatalogTitle layout={styles.mobileTitle}>Archived threads</CatalogTitle>
             </View>
           </View>
         ) : (
-          <Text numberOfLines={1} style={[styles.mobileTitle, styles.mobileTitleGrow]}>
-            Threads
-          </Text>
+          <CatalogTitle layout={[styles.mobileTitle, styles.mobileTitleGrow]}>Threads</CatalogTitle>
         )}
-        <GlobalVoiceEntryAction {...globalVoice} />
         <ThreadFilterMenu
           mode={mode}
           onSelect={onFilterChange}
@@ -121,6 +115,7 @@ export function MobileThreadsHeader({ props }: { props: MobileThreadsHeaderProps
           archived={mode === "archived"}
           onManageProjects={onManageProjects}
           onManageTerminals={onManageTerminals}
+          onOpenDownloads={onOpenDownloads}
           onSettings={onSettings}
           onToggleArchive={() => {
             onQueryChange("");

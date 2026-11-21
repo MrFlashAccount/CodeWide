@@ -5,13 +5,11 @@ import type { ThreadListServer } from "../connections/connectionPresentation";
 import type { ThreadListFilter } from "./threadListFilters";
 import type { SidebarProjectsNavigation, ThreadListMode } from "./threadListModel";
 import type { ThreadListItem } from "./threadListTypes";
-import type { GlobalVoiceControl } from "./GlobalVoiceEntryAction";
 
 /** Thread-list data and navigation actions used by the compact mobile surface. */
 export type MobileThreadsProps = {
   archivedThreads: ThreadListItem[];
   filter: ThreadListFilter;
-  globalVoice: GlobalVoiceControl;
   headerVisible?: boolean;
   initialOffset: number;
   mode: ThreadListMode;
@@ -20,8 +18,8 @@ export type MobileThreadsProps = {
   onLoadMore: () => Promise<boolean>;
   onManageTerminals: () => void;
   onModeChange: (mode: ThreadListMode) => void;
-  onNewThread: () => void;
   onOffsetChange: (offset: number) => void;
+  onOpenDownloads: () => void;
   onOpenSearch: () => void;
   onQueryChange: (query: string) => void;
   onRefreshAccountRateLimits?: () => Promise<unknown>;

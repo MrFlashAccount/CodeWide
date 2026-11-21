@@ -25,6 +25,7 @@ pub static COMPANION: LinuxProduct = LinuxProduct {
     bundle_directory: "codewide-companion-x86_64-unknown-linux-musl",
     payload_executables: &[
         "libexec/codewide-vcs-git",
+        "libexec/codewide-forge-github",
         "libexec/codewide-companion-memory-watch",
     ],
     bootstrap_only: &[

@@ -1,27 +1,52 @@
 import { render } from "@testing-library/react-native";
 import type { ReactNode } from "react";
-import V1NewThreadRoute from "../app/(workspace)/new";
+import V1NewThreadRoute from "../app/(workspace)/(tabs)/(threads)/new";
 import { newChatDefaultServer } from "../src/features/projects/newChatEntry";
 import { newThreadService } from "../src/services/threads/newThreadService";
 import type { ThreadListServer } from "../src/features/connections/connectionPresentation";
 
 const mockResources = {
-  list: { loadedThreadSummaries: [], scopedThreads: [], servers: [], listState: {setThreadListMode: jest.fn()}, selectThread: jest.fn() },
-  connections: [], desktop: false, pendingRequests: [], runtime: {}, recovery: {createUnsupportedFixThread: jest.fn()}, openBrowser: jest.fn(),
+  list: {
+    loadedThreadSummaries: [],
+    scopedThreads: [],
+    servers: [],
+    listState: { setThreadListMode: jest.fn() },
+    selectThread: jest.fn(),
+  },
+  connections: [],
+  desktop: false,
+  pendingRequests: [],
+  runtime: {},
+  recovery: { createUnsupportedFixThread: jest.fn() },
+  openBrowser: jest.fn(),
 };
-jest.mock("../src/services/workspace/workspaceRouteResources", () => ({useWorkspaceRouteResources: () => mockResources}));
-jest.mock("../src/data/workspace-runtime", () => ({workspaceRuntime: {native: false}}));
-jest.mock("../src/features/workspace/createWorkspaceFeatures", () => ({workspaceFeatures: {}}));
-jest.mock("../src/features/workspace/WorkspaceConversationProviders", () => ({WorkspaceConversationProviders: ({children}: {children: ReactNode}) => children}));
+jest.mock("../src/services/workspace/workspaceRouteResources", () => ({
+  useWorkspaceRouteResources: () => mockResources,
+}));
+jest.mock("../src/data/workspace-runtime", () => ({ workspaceRuntime: { native: false } }));
+jest.mock("../src/features/workspace/createWorkspaceFeatures", () => ({ workspaceFeatures: {} }));
+jest.mock("../src/features/workspace/WorkspaceConversationProviders", () => ({
+  WorkspaceConversationProviders: ({ children }: { children: ReactNode }) => children,
+}));
 jest.mock("../src/features/conversation/ConversationWorkspace", () => {
-  const {Text,View} = jest.requireActual<typeof import("react-native")>("react-native");
-  return ({
-  ActiveWorkspaceConversation: ({destination}: {destination: {draft: {id: string, connectionId: string, cwd: string|null}}}) => <View><Text>Chat draft</Text><Text>{destination.draft.connectionId}</Text><Text>{destination.draft.cwd}</Text></View>,
-});
+  const { Text, View } = jest.requireActual<typeof import("react-native")>("react-native");
+  return {
+    ActiveWorkspaceConversation: ({
+      destination,
+    }: {
+      destination: { draft: { id: string; connectionId: string; cwd: string | null } };
+    }) => (
+      <View>
+        <Text>Chat draft</Text>
+        <Text>{destination.draft.connectionId}</Text>
+        <Text>{destination.draft.cwd}</Text>
+      </View>
+    ),
+  };
 });
 const servers: ThreadListServer[] = [
-  {id:"orbit",name:"Orbit",iconId:"desktop",status:"offline"},
-  {id:"lab",name:"Lab",iconId:"cloud",status:"live"},
+  { id: "orbit", name: "Orbit", iconId: "desktop", status: "offline" },
+  { id: "lab", name: "Lab", iconId: "cloud", status: "live" },
 ];
 afterEach(() => newThreadService.dispose());
 

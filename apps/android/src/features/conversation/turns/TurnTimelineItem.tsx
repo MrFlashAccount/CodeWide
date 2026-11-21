@@ -1,7 +1,7 @@
 import { renderAgentTurnBody } from "./AgentTurnBody";
 import { projectTurnPresentation } from "./turnProjection";
 import type { TurnTimelineItemProps } from "./TurnTimelineItem.types";
-import { renderUserTurnBody } from "./UserTurnBody";
+import { UserTurnBody } from "./UserTurnBody";
 /** V1 TurnTimelineItem owner, extracted without changing interaction or resource lifetime. */
 import { projectedTurnMetadata } from "@codewide/sync-client";
 import { useContext } from "react";
@@ -51,8 +51,13 @@ export function TurnTimelineItem({
         {...(onLoadItems === undefined ? {} : { recover: async () => onLoadItems(turn.id) })}
       >
         <View style={styles.turnGroup} testID="turn-group">
-          {presentation.userBlocks.length > 0 &&
-            renderUserTurnBody(turn, presentation.userBlocks, getTransferAccess)}
+          {presentation.userBlocks.length > 0 && (
+            <UserTurnBody
+              getTransferAccess={getTransferAccess}
+              turn={turn}
+              userBlocks={presentation.userBlocks}
+            />
+          )}
           {presentation.leadCompactionBlocks.length > 0 && (
             <PreTurnLifecycleRows
               blocks={presentation.leadCompactionBlocks}

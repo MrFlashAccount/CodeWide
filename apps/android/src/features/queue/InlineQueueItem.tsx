@@ -1,7 +1,8 @@
 import { ActivityIndicator, Pressable, View } from "react-native";
 import { userFacingRemoteError } from "../../data/userFacingRemoteError";
 import { colors, controlHitSlop, spacing } from "../../theme";
-import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
+import type { ActionMenuItem } from "../../ui/ActionMenu";
+import { OverflowMenu } from "../../ui/OverflowMenu";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { AppText as Text } from "../../ui/Typography";
 import { AnimatedQueueBubble } from "./AnimatedQueueBubble";
@@ -191,9 +192,10 @@ export function renderInlineQueueItem(
                 <Text style={styles.actionText}>Steer</Text>
               </Pressable>
             )}
-            <ActionMenu
+            <OverflowMenu
               accessibilityLabel="Queued prompt actions"
               actions={overflowActions}
+              disabled={overlay.busy}
               menuWidth={224}
               onOpenChange={(open) => {
                 overlay.setOpenMenuId((current) =>
@@ -201,16 +203,10 @@ export function renderInlineQueueItem(
                 );
               }}
               onSelect={selectOverflowAction}
-            >
-              <Pressable
-                accessibilityLabel="Queued prompt actions"
-                disabled={overlay.busy}
-                hitSlop={controlHitSlop.regular}
-                style={({ pressed }) => [styles.moreButton, pressed && styles.pressed]}
-              >
-                <InlineIcon color={colors.textMuted} name="ellipsis-vertical" role="label" />
-              </Pressable>
-            </ActionMenu>
+              size="compact"
+              style={styles.moreButton}
+              tone="muted"
+            />
           </View>
         </View>
       )}

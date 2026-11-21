@@ -1,60 +1,134 @@
 import { Ionicons } from "@expo/vector-icons";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { useState } from "react";
+import { Platform, Pressable, View } from "react-native";
 import type { CodeReviewWorkspaceProps } from "./codeReviewContract";
 import { useCodeReviewState } from "./codeReviewState";
 import { styles } from "./CodeReviewWorkspace.styles";
-import { shortPath } from "../resources/reviewLocation";
+import { ReviewFileNavigation } from "./ReviewFileNavigation";
+import { ReviewCommentsSheet } from "./ReviewCommentsSheet";
+import { useEvent } from "../../../react/useEvent";
 
 import { changeScopeDisplay } from "../../../rendering/changeScopeDisplay";
-import { changedFileDisplayPath } from "../../../rendering/changed-file-path";
+
+import { LineCommentFrame } from "../comments/LineCommentFrame";
+import type { CodeReviewComment } from "../comments/reviewComment";
 import { CodeReviewEditor } from "../editor/CodeReviewEditor";
+import type { CodeReviewInlineComment } from "../editor/editorBridge";
 import { colors, iconSize } from "../../../theme";
-import { ActionMenu } from "../../../ui/ActionMenu";
+import { OverflowMenu } from "../../../ui/OverflowMenu";
 import { AppText as Text } from "../../../ui/Typography";
 
-/** Composes file selection, diff viewing, and review-comment submission. */
-export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
-  const { cwd, scopeLabel } = props;
+/**
+ * Composes file selection, diff viewing, and review-comment submission. A line
+ * tap opens the one line composer docked under the diff; adding a comment
+ * closes it at once.
+ */
+export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps): React.JSX.Element {
+  const [notesOpen, setNotesOpen] = useState(false);
   const {
-    addComment,
     attach,
     attachDisabled,
     attaching,
     changes,
     changeScope,
     close,
-    commentDraft,
+    closeComposer,
     comments,
+    commitComment,
     compact,
     document,
     documentStatus,
+    editComment,
+    editing,
     effectiveMode,
     effectiveSelectedPath,
+    lineDrafts,
     loadError,
     loading,
     menuActions,
-    microphoneAccess,
-    pressVoice,
+    retryLoad,
     revealReference,
     reviewFiles,
     scopeLoading,
     selectedReference,
     selectFile,
-    selectionRef,
     selectLine,
     selectMenuAction,
     setComments,
-    setSidebarPreference,
+    setFilesOpen,
     setWorkspaceWidth,
     sidebarOpen,
-    updateCommentDraft,
     vcs,
-    voiceResource,
     workspaceRevision,
     wrapLines,
   } = useCodeReviewState(props);
   const scopeDisplay = changeScopeDisplay(changeScope, vcs);
 
+  const openNotes = useEvent(() => {
+    setNotesOpen(true);
+  });
+  const onEdit = useEvent((comment: CodeReviewComment) => {
+    setNotesOpen(false);
+    editComment(comment);
+  });
+  const onDelete = useEvent((id: string) => {
+    setComments((current) => current.filter((comment) => comment.id !== id));
+  });
+  const index = changes.findIndex((file) => file.path === effectiveSelectedPath);
+  const currentFile = reviewFiles[index];
+  const previous = changes[index - 1];
+  const next = index < 0 ? undefined : changes[index + 1];
+  const goPrevious = useEvent(() => {
+    if (previous !== undefined) {
+      selectFile(previous);
+    }
+  });
+  const goNext = useEvent(() => {
+    if (next !== undefined) {
+      selectFile(next);
+    }
+  });
+  const toggleFiles = useEvent(() => {
+    setFilesOpen(!sidebarOpen);
+  });
+  const sheetOpen = compact && sidebarOpen && Platform.OS !== "web";
+  const options = [
+    ...menuActions,
+    ...(compact && changes.length > 1
+      ? [
+          {
+            disabled: previous === undefined,
+            id: "previous",
+            label: "Previous file",
+            section: "Navigate",
+          },
+          {
+            disabled: next === undefined,
+            id: "next",
+            label: "Next file",
+            section: "Navigate",
+          },
+        ]
+      : []),
+    {
+      description: [props.scopeLabel ?? scopeDisplay.title, vcs?.branch, documentStatus]
+        .filter(Boolean)
+        .join(" · "),
+      disabled: true,
+      id: "file-info",
+      label: currentFile?.treePath ?? "Changes",
+      section: "File",
+    },
+  ];
+  const onAction = useEvent((id: string) => {
+    if (id === "previous") {
+      goPrevious();
+    } else if (id === "next") {
+      goNext();
+    } else {
+      selectMenuAction(id);
+    }
+  });
   return (
     <View
       onLayout={({ nativeEvent }) => {
@@ -63,170 +137,132 @@ export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
       style={styles.root}
       testID="code-review-workspace"
     >
-      <View style={styles.header}>
-        <Pressable accessibilityLabel="Close code review" onPress={close} style={styles.iconButton}>
-          <Ionicons color={colors.text} name="close" size={iconSize.navigation} />
-        </Pressable>
-        <Pressable
-          accessibilityLabel="Toggle files"
-          onPress={() => {
-            setSidebarPreference(!sidebarOpen);
-          }}
-          style={styles.iconButton}
-        >
-          <Ionicons color={colors.text} name="folder-open-outline" size={iconSize.action} />
-        </Pressable>
-        <View style={styles.headerTitle}>
-          <Text ellipsizeMode="middle" numberOfLines={1} style={styles.title}>
-            {effectiveSelectedPath === null
-              ? "Code review"
-              : changedFileDisplayPath(effectiveSelectedPath, cwd, 72)}
-          </Text>
-          <View style={styles.subtitleRow}>
-            {changeScope === "branch" && (
-              <Ionicons color={colors.textMuted} name={scopeDisplay.icon} size={iconSize.inline} />
-            )}
-            <Text numberOfLines={1} style={styles.subtitle}>
-              {scopeLabel ?? scopeDisplay.title} · {changes.length} files · {comments.length}{" "}
-              comments
-            </Text>
-            {documentStatus !== null && (
-              <Text
-                accessibilityLabel={`File status: ${documentStatus}`}
-                numberOfLines={1}
-                style={styles.documentStatus}
-              >
-                · {documentStatus}
-              </Text>
-            )}
-          </View>
-          {changeScope === "uncommitted" && (
-            <Text
-              accessibilityLabel={`Current VCS branch: ${vcs?.branch ?? "unavailable"}`}
-              ellipsizeMode="middle"
-              numberOfLines={1}
-              style={styles.subtitle}
-            >
-              {vcs?.branch === undefined || vcs.branch === null
-                ? "Branch unavailable"
-                : `Branch: ${vcs.branch}`}
-            </Text>
-          )}
-        </View>
-        <ActionMenu
-          accessibilityLabel="Changes options"
-          actions={menuActions}
-          align="end"
-          onSelect={selectMenuAction}
-          placement="bottom"
-        >
-          <Pressable
-            accessibilityLabel="Changes options"
-            disabled={scopeLoading}
-            style={styles.iconButton}
+      <LineCommentFrame
+        composer={
+          selectedReference === null
+            ? null
+            : {
+                drafts: lineDrafts,
+                onClose: closeComposer,
+                onSubmit: commitComment,
+                submitLabel: editing ? "Save comment" : "Add comment",
+                target: selectedReference,
+                voice: props.voiceRuntime,
+              }
+        }
+      >
+        <View>
+          <View
+            accessibilityElementsHidden={sheetOpen}
+            importantForAccessibility={sheetOpen ? "no-hide-descendants" : "auto"}
+            style={styles.chrome}
           >
-            {scopeLoading ? (
-              <ActivityIndicator color={colors.textMuted} size="small" />
-            ) : (
-              <Ionicons color={colors.text} name="ellipsis-vertical" size={iconSize.action} />
-            )}
-          </Pressable>
-        </ActionMenu>
-        <Pressable
-          accessibilityLabel="Attach review"
-          disabled={attachDisabled}
-          onPress={() => void attach()}
-          style={[
-            styles.attachButton,
-            !attachDisabled && styles.attachButtonReady,
-            compact && styles.attachButtonCompact,
-            attachDisabled && styles.disabled,
-          ]}
-        >
-          {attaching ? (
-            <ActivityIndicator color={colors.text} size="small" />
-          ) : (
-            <Ionicons
-              color={attachDisabled ? colors.textDim : colors.text}
-              name="attach"
-              size={iconSize.action}
+            <Pressable
+              accessibilityLabel="Close code review"
+              accessibilityRole="button"
+              onPress={close}
+              style={styles.iconButton}
+            >
+              <Ionicons color={colors.text} name="close" size={iconSize.action} />
+            </Pressable>
+            <ReviewFileNavigation
+              compact={compact}
+              count={changes.length}
+              file={currentFile}
+              index={index}
+              onNext={goNext}
+              onPrevious={goPrevious}
+              onToggle={toggleFiles}
+              open={sidebarOpen}
+            />
+            <View style={styles.right}>
+              <Pressable
+                accessibilityLabel="Review comments"
+                accessibilityRole="button"
+                onPress={openNotes}
+                style={styles.review}
+              >
+                <Ionicons color={colors.text} name="chatbubble-outline" size={iconSize.inline} />
+                <Text style={styles.location}>{comments.length}</Text>
+              </Pressable>
+              <OverflowMenu
+                accessibilityLabel="Changes options"
+                actions={options}
+                align="end"
+                busy={scopeLoading}
+                onSelect={onAction}
+                placement="bottom"
+                size="regular"
+              />
+            </View>
+          </View>
+          {sheetOpen && (
+            <Pressable
+              accessibilityLabel="Dismiss file list"
+              accessibilityRole="button"
+              onPress={toggleFiles}
+              style={styles.sheetBackdrop}
             />
           )}
-          {!compact && (
-            <Text style={styles.attachButtonText}>
-              Attach {comments.length === 0 ? "" : comments.length}
-            </Text>
-          )}
-        </Pressable>
-      </View>
-
-      <View style={styles.workspace}>
-        <View style={styles.editorPane}>
-          <CodeReviewEditor
-            commentDraft={commentDraft}
-            comments={comments}
-            compact={compact}
-            document={document}
-            files={reviewFiles}
-            loadError={loadError}
-            loading={loading}
-            mode={effectiveMode}
-            onCommentDraftChange={updateCommentDraft}
-            onCommentSelectionChange={(selection) => {
-              selectionRef.current = selection;
-            }}
-            onCommentSubmit={addComment}
-            onFileSelect={(path) => {
-              const change = changes.find((candidate) => candidate.path === path);
-              if (change !== undefined) {
-                selectFile(change);
-              }
-            }}
-            onLinePress={selectLine}
-            onVoicePress={(draft, selection) => void pressVoice(draft, selection)}
-            revealReference={selectedReference === null ? revealReference : null}
-            selectedPath={effectiveSelectedPath}
-            selectedReference={selectedReference}
-            sidebarOpen={sidebarOpen}
-            voiceError={voiceResource?.error ?? null}
-            voicePermissionGranted={microphoneAccess.granted}
-            voicePhase={voiceResource?.phase ?? "idle"}
-            voiceRetryAvailable={voiceResource?.retryAvailable ?? false}
-            workspaceRevision={workspaceRevision}
-            wrapLines={wrapLines}
-          />
-          {comments.length > 0 && (
-            <ScrollView
-              contentContainerStyle={styles.commentStripContent}
-              horizontal
-              keyboardShouldPersistTaps="handled"
-              style={styles.commentStrip}
-            >
-              {comments.map((comment) => (
-                <View key={comment.id} style={styles.commentChip}>
-                  <Text numberOfLines={1} style={styles.commentChipLocation}>
-                    {shortPath(comment.path)}:{comment.line}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.commentChipBody}>
-                    {comment.body}
-                  </Text>
-                  <Pressable
-                    accessibilityLabel="Delete comment"
-                    hitSlop={8}
-                    onPress={() => {
-                      setComments((current) =>
-                        current.filter((candidate) => candidate.id !== comment.id),
-                      );
-                    }}
-                  >
-                    <Ionicons color={colors.textDim} name="close-circle" size={iconSize.inline} />
-                  </Pressable>
-                </View>
-              ))}
-            </ScrollView>
-          )}
         </View>
-      </View>
+        <CodeReviewEditor
+          comments={savedInlineComments(comments)}
+          compact={compact}
+          document={document}
+          files={reviewFiles}
+          loadError={loadError}
+          loading={loading}
+          mode={effectiveMode}
+          onCommentPress={(id) => {
+            const note = comments.find((comment) => comment.id === id);
+            if (note !== undefined) {
+              onEdit(note);
+            }
+          }}
+          onFileSelect={(path) => {
+            const change = changes.find((candidate) => candidate.path === path);
+            if (change !== undefined) {
+              selectFile(change);
+            }
+          }}
+          onFilesOpenChange={setFilesOpen}
+          onLinePress={selectLine}
+          onRetryLoad={retryLoad}
+          revealReference={
+            editing ? selectedReference : selectedReference === null ? revealReference : null
+          }
+          selectedPath={effectiveSelectedPath}
+          selectedReference={selectedReference}
+          sidebarOpen={sidebarOpen}
+          workspaceRevision={workspaceRevision}
+          wrapLines={wrapLines}
+        />
+      </LineCommentFrame>
+      {notesOpen && (
+        <ReviewCommentsSheet
+          comments={comments}
+          disabled={attachDisabled || attaching}
+          onAttach={attach}
+          onDelete={onDelete}
+          onEdit={onEdit}
+          onOpenChange={setNotesOpen}
+        />
+      )}
     </View>
   );
+}
+
+/** Local session/VCS comments are saved the moment they are added. */
+function savedInlineComments(
+  comments: readonly CodeReviewComment[],
+): readonly CodeReviewInlineComment[] {
+  return comments.map((comment) => ({
+    body: comment.body,
+    editable: true,
+    id: comment.id,
+    line: comment.line,
+    path: comment.path,
+    side: comment.side,
+    state: "saved" as const,
+  }));
 }

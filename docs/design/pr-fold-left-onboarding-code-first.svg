@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1664" height="1500" viewBox="0 0 1664 1500">
+  <style>
+    text { font-family: Inter, Roboto, Arial, sans-serif; }
+    .screenTitle { fill:#f2f2f2; font-size:30px; font-weight:600; }
+    .hero { fill:#f2f2f2; font-size:31px; font-weight:600; }
+    .body { fill:#b8b8b8; font-size:18px; }
+    .label { fill:#b8b8b8; font-size:16px; font-weight:500; }
+    .small { fill:#858585; font-size:14px; font-weight:500; }
+  </style>
+  <rect width="1664" height="1500" fill="#0f0f0f"/>
+  <text x="30" y="38" fill="#f2f2f2" font-size="24" font-weight="600">00:32  Fri, Oct 23</text><text x="1460" y="38" fill="#f2f2f2" font-size="18">4G+  16%</text>
+  <rect y="52" width="1664" height="40" fill="#0b0b0b"/><circle cx="22" cy="72" r="5" fill="#35c778"/><text x="40" y="78" class="small">76 fps · CPU 25.9% · RSS 491 MB</text>
+  <rect x="560" y="92" width="1104" height="1312" rx="26" fill="#181818"/><line x1="560" y1="92" x2="560" y2="1404" stroke="#242424"/>
+  <text x="28" y="150" class="screenTitle">Pull requests</text>
+  <g transform="translate(174 392)"><circle cx="18" cy="18" r="8" fill="none" stroke="#858585" stroke-width="3"/><circle cx="18" cy="48" r="8" fill="none" stroke="#858585" stroke-width="3"/><circle cx="18" cy="78" r="8" fill="none" stroke="#858585" stroke-width="3"/><path d="M29 18h15c20 0 25 30 55 30h21M29 48h91M29 78h15c20 0 25-30 55-30" fill="none" stroke="#858585" stroke-linecap="round" stroke-width="3"/><rect x="130" y="24" width="54" height="54" rx="11" fill="none" stroke="#f2f2f2" stroke-width="4"/><path d="M145 50l9 9 17-20" fill="none" stroke="#f2f2f2" stroke-linecap="round" stroke-linejoin="round" stroke-width="4"/></g>
+  <text x="280" y="535" class="hero" text-anchor="middle">Your review inbox</text><text x="280" y="579" class="body" text-anchor="middle">Connect a code host to see every</text><text x="280" y="607" class="body" text-anchor="middle">pull request that needs you.</text>
+  <rect x="76" y="654" width="408" height="70" rx="35" fill="#e6e6e6"/><text x="280" y="697" text-anchor="middle" fill="#111" font-size="20" font-weight="600">+  Connect a provider</text>
+  <g transform="translate(110 758)"><path d="M14 0l12 5v9c0 10-7 16-12 19C9 30 2 24 2 14V5z" fill="none" stroke="#858585" stroke-width="2"/><path d="M9 15l4 4 7-8" fill="none" stroke="#858585" stroke-width="2"/><text x="40" y="22" class="label">Credentials stay on your Companion.</text></g>
+
+  <g transform="translate(652 212)">
+    <rect width="912" height="1020" rx="28" fill="#202020" stroke="#2e2e2e" stroke-width="2"/>
+    <rect x="1" y="1" width="910" height="90" rx="27" fill="#242424"/>
+    <circle cx="42" cy="45" r="18" fill="#333"/><rect x="76" y="30" width="252" height="14" rx="7" fill="#b8b8b8" opacity=".58"/><rect x="76" y="54" width="160" height="10" rx="5" fill="#858585" opacity=".32"/>
+    <rect x="700" y="25" width="174" height="42" rx="21" fill="#e6e6e6"/><rect x="746" y="40" width="82" height="11" rx="5" fill="#111" opacity=".82"/>
+
+    <rect x="34" y="124" width="844" height="104" rx="18" fill="#272727"/>
+    <rect x="62" y="151" width="532" height="20" rx="10" fill="#f2f2f2" opacity=".82"/><rect x="62" y="186" width="326" height="12" rx="6" fill="#858585" opacity=".36"/>
+    <circle cx="778" cy="176" r="17" fill="#173526"/><path d="M770 176l6 6 11-13" fill="none" stroke="#35c778" stroke-width="3"/>
+
+    <rect x="34" y="252" width="844" height="54" rx="16" fill="#181818" stroke="#2e2e2e"/>
+    <rect x="62" y="273" width="168" height="12" rx="6" fill="#b8b8b8" opacity=".58"/><text x="762" y="286" fill="#35c778" font-size="13" font-weight="600">+18</text><text x="816" y="286" fill="#f05d65" font-size="13" font-weight="600">−4</text>
+
+    <rect x="34" y="328" width="844" height="624" rx="18" fill="#181818" stroke="#2e2e2e"/>
+    <rect x="34" y="328" width="844" height="54" rx="18" fill="#242424"/>
+    <circle cx="62" cy="355" r="7" fill="#35c778"/><rect x="84" y="348" width="238" height="13" rx="6" fill="#b8b8b8" opacity=".58"/>
+    <g>
+      <rect x="34" y="405" width="844" height="36" fill="#202020"/><text x="58" y="429" fill="#858585" font-size="13">42</text><rect x="94" y="417" width="462" height="10" rx="5" fill="#858585" opacity=".34"/>
+      <rect x="34" y="441" width="844" height="40" fill="#173526" opacity=".82"/><text x="58" y="466" fill="#35c778" font-size="13">43</text><rect x="94" y="454" width="596" height="10" rx="5" fill="#35c778" opacity=".36"/>
+      <rect x="34" y="481" width="844" height="40" fill="#173526" opacity=".72"/><text x="58" y="506" fill="#35c778" font-size="13">44</text><rect x="94" y="494" width="520" height="10" rx="5" fill="#35c778" opacity=".32"/>
+      <rect x="34" y="521" width="844" height="36" fill="#202020"/><text x="58" y="545" fill="#858585" font-size="13">45</text><rect x="94" y="533" width="410" height="10" rx="5" fill="#858585" opacity=".34"/>
+      <rect x="34" y="557" width="844" height="40" fill="#3b2022" opacity=".7"/><text x="58" y="582" fill="#f05d65" font-size="13">46</text><rect x="94" y="570" width="476" height="10" rx="5" fill="#f05d65" opacity=".32"/>
+      <rect x="34" y="597" width="844" height="40" fill="#173526" opacity=".75"/><text x="58" y="622" fill="#35c778" font-size="13">46</text><rect x="94" y="610" width="614" height="10" rx="5" fill="#35c778" opacity=".34"/>
+      <rect x="34" y="637" width="844" height="36" fill="#202020"/><text x="58" y="661" fill="#858585" font-size="13">47</text><rect x="94" y="649" width="338" height="10" rx="5" fill="#858585" opacity=".34"/>
+    </g>
+    <rect x="448" y="692" width="386" height="156" rx="18" fill="#2b2b2b" stroke="#3a3a3a"/>
+    <circle cx="480" cy="727" r="15" fill="#181818"/><rect x="510" y="718" width="136" height="12" rx="6" fill="#b8b8b8" opacity=".58"/><rect x="480" y="756" width="316" height="10" rx="5" fill="#858585" opacity=".34"/><rect x="480" y="781" width="268" height="10" rx="5" fill="#858585" opacity=".25"/>
+    <rect x="692" y="813" width="104" height="25" rx="12" fill="#e6e6e6"/><rect x="718" y="821" width="52" height="9" rx="4" fill="#111" opacity=".8"/>
+    <rect x="34" y="978" width="844" height="1" fill="#333"/>
+  </g>
+  <rect x="22" y="1294" width="516" height="90" rx="45" fill="#181818"/><text x="147" y="1348" text-anchor="middle" class="label">Threads</text><rect x="282" y="1302" width="248" height="74" rx="37" fill="#e6e6e6"/><text x="406" y="1348" text-anchor="middle" fill="#111" font-size="17" font-weight="600">Pull requests</text>
+  <rect y="1404" width="1664" height="96" fill="#0b0b0b"/><circle cx="832" cy="1452" r="10" fill="#f2f2f2"/><rect x="1522" y="1442" width="20" height="20" rx="3" fill="#f2f2f2"/>
+</svg>

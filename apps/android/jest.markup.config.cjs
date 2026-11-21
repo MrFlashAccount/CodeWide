@@ -10,6 +10,7 @@ module.exports = {
     "<rootDir>/test/setup-expo-render-runtime.cjs",
     "react-native-gesture-handler/jestSetup.js",
   ],
+  setupFilesAfterEnv: ["<rootDir>/test/setup-legend-list.cjs"],
   // Render real Markdown/table components; only unrelated platform services remain mocked.
   moduleNameMapper: Object.fromEntries(
     Object.entries(require("./jest.shared.config.cjs").moduleNameMapper).filter(
@@ -37,6 +38,6 @@ module.exports = {
     ],
   },
   transformIgnorePatterns: [
-    "node_modules/(?!.*(?:expo|@expo|@noble[+/]hashes|fractional-indexing|react-native|@native-html|@jsamr|marked|decode-named-character-reference|stringify-entities|character-entities|character-reference|is-alphabetical|is-decimal|is-hexadecimal|is-alphanumerical))",
+    "node_modules/(?!.*(?:expo|@expo|@op-engineering[+/]op-sqlite|@noble[+/]hashes|fractional-indexing|react-native|@native-html|@jsamr|marked|pele|decode-named-character-reference|stringify-entities|character-entities|character-reference|is-alphabetical|is-decimal|is-hexadecimal|is-alphanumerical))",
   ],
 };

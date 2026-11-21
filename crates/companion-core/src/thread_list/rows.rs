@@ -113,11 +113,70 @@ impl FieldChange {
     }
 }
 
+/// Only the fields the composer shows. A settings event can explicitly clear effort or access.
+#[derive(Clone, Debug, PartialEq)]
+struct ListSettingsChange {
+    model: String,
+    label: Option<String>,
+    effort: Option<String>,
+    permissions: Option<String>,
+    access_policy: Option<Value>,
+}
+
+impl ListSettingsChange {
+    fn from_event(payload: &Value) -> Option<Self> {
+        let settings = payload.pointer("/params/threadSettings")?;
+        Some(Self {
+            model: settings.get("model")?.as_str()?.to_owned(),
+            label: settings
+                .get("modelLabel")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            effort: settings
+                .get("effort")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            permissions: crate::agent::client_wire::observe::settings_profile(payload)
+                .map(|(_, profile)| profile.to_owned()),
+            access_policy: settings
+                .pointer("/sandboxPolicy/type")
+                .and_then(Value::as_str)
+                .map(|sandbox| {
+                    let approval = settings["approvalPolicy"].as_str().or_else(|| {
+                        settings["approvalPolicy"]
+                            .get("granular")
+                            .is_some()
+                            .then_some("granular")
+                    });
+                    json!({"sandboxPolicy":sandbox,"approvalPolicy":approval})
+                }),
+        })
+    }
+
+    fn apply(&self, row: &mut Value) -> bool {
+        let mut changed = replace_field(row, "model", Some(Value::from(self.model.as_str())));
+        for (key, value) in [
+            ("reasoningEffort", &self.effort),
+            ("codewideModelLabel", &self.label),
+            ("codewidePermissions", &self.permissions),
+        ] {
+            changed |= replace_field(row, key, Some(Value::from(value.as_deref())));
+        }
+        changed |= replace_field(
+            row,
+            "codewideAccessPolicy",
+            Some(Value::from(self.access_policy.clone())),
+        );
+        changed
+    }
+}
+
 /// The server fields one payload changes.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct RowUpdate {
     status: Option<StatusChange>,
     name: Option<FieldChange>,
+    settings: Option<Box<ListSettingsChange>>,
     archived: Option<bool>,
     /// `(pinned, pinCursor)`.
     pin: Option<(bool, u64)>,
@@ -164,6 +223,11 @@ impl RowEvent {
     /// Whether the catalog hides the thread from now on.
     pub(super) fn is_exclusion(&self) -> bool {
         self.kind == EventKind::Excluded
+    }
+
+    /// Whether the event starts or ends a turn or changes the thread status.
+    pub(super) fn is_lifecycle(&self) -> bool {
+        matches!(&self.kind, EventKind::Update(update) if update.status.is_some())
     }
 
     /// Reduces a journaled payload (patch attached) at `cursor`. `streamed`
@@ -231,6 +295,9 @@ fn row_update(payload: &Value, params: &Map<String, Value>, streamed: Option<Str
             }
             Some("threadInvalidated") if turn_active == Some(false) => {
                 update.status = Some(StatusChange::Retire);
+            }
+            Some("threadSettings") => {
+                update.settings = ListSettingsChange::from_event(payload).map(Box::new);
             }
             Some("threadName") => {
                 update.name = Some(
@@ -309,7 +376,7 @@ impl RowStore {
     }
 
     /// Whether subscribers receive the row: a CLI or VS Code thread, a child
-    /// of another thread, or a non-primary provider's row. Unknown rows are
+    /// of another thread, or a row of a provider without `codex.native`. Unknown rows are
     /// not streamed.
     pub(super) fn streamable(&self, thread_id: &str) -> bool {
         self.rows
@@ -556,8 +623,9 @@ fn attach_meta(row: &mut Value, meta: &ListRowMeta) {
 }
 
 /// The merged `thread/list` rule: a CLI or VS Code thread, a child of
-/// another thread, or any row of a non-primary provider (listed whatever its
-/// `source`, which is `appServer` for neutral providers).
+/// another thread, or any row of a provider without the `codex.native`
+/// surface (merged into the list whatever its `source`, which is
+/// `appServer` for neutral providers).
 fn streamable_value(row: &Value) -> bool {
     row.get("parentThreadId")
         .is_some_and(|parent| !parent.is_null())
@@ -566,7 +634,7 @@ fn streamable_value(row: &Value) -> bool {
             .and_then(Value::as_str)
             .is_some_and(|source| ROW_SOURCE_KINDS.contains(&source))
         || row
-            .pointer("/codewideAgent/primary")
+            .pointer("/codewideAgent/capabilities/codex.native")
             .and_then(Value::as_bool)
             == Some(false)
 }
@@ -608,6 +676,9 @@ fn apply_update(row: &mut StoredRow, update: &RowUpdate, now_secs: i64) -> Optio
             }
         };
         urgent |= replace_field(&mut row.value, "status", next);
+    }
+    if let Some(settings) = &update.settings {
+        urgent |= settings.apply(&mut row.value);
     }
     if let Some(name) = &update.name {
         let name = name.clone().into_option().unwrap_or(Value::Null);

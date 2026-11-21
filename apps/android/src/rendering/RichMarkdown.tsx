@@ -1,4 +1,4 @@
-import type { Nodes, PhrasingContent, RootContent, Table, TableCell } from "mdast";
+import type { ListItem, Nodes, PhrasingContent, RootContent, Table, TableCell } from "mdast";
 import { messageMarkupNodeHtml } from "@codewide/rendering-core/markup";
 import { ArtifactImageReferences } from "./ArtifactImageReferences";
 import {
@@ -48,7 +48,9 @@ import { markdownTableLayout } from "./markdown-table-layout";
 import { useTableViewport } from "./useTableViewport";
 import { markdownNodeIdentity } from "./markdownNodeIdentity";
 import { collectMarkdownImageOrder, type MarkdownImageNode } from "./markdown-image-order";
-import type { MarkdownDocumentBlock } from "./markdown-document-blocks";
+import type { ChatMarkdownBlock } from "./markdownListGroups";
+import { NativeMarkdownTable } from "./NativeMarkdownTable";
+import { NativeMarkdownList } from "./NativeMarkdownList";
 import { AsciiDiagram, MermaidDiagram } from "./MermaidDiagram";
 import { CodeBlock } from "./CodeBlock";
 import { NativeRevealSurface } from "./NativeRevealSurface";
@@ -56,12 +58,13 @@ import { InlineMediaFrame, INLINE_MEDIA_PREVIEW_HEIGHT } from "./InlineMediaFram
 import type { MarkupImageDimensions } from "./markup-image-dimensions";
 import { useContentReview, useContentReviewHighlights } from "./ContentReviewHost";
 import type { ContentReviewTarget } from "./content-review";
+import type { ReviewSelection } from "./ReviewableText.native";
 import { ReviewableText } from "./ReviewableText";
-import { looksLikeAsciiDiagram } from "./ascii-diagram";
+import { isExplicitAsciiDiagram } from "./ascii-diagram";
 import { RichContentWidthProvider, useRichContentWidth } from "./RichContentLayout";
 import { usePrivateImageUri } from "./use-private-image-uri";
 import { NativeMarkup } from "./NativeMarkup";
-import { HighlightSearchText } from "./SearchMessageFocus";
+import { HighlightSearchText, SearchHighlightQuery } from "./SearchMessageFocus";
 import {
   layoutRichMarkdownInline,
   projectMarkdownAlert,
@@ -98,8 +101,6 @@ export function RichMarkdownTextScaleProvider({
 }
 
 /** Applies viewer-local typography without mutating global chat Markdown. */
-// WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
-// oxlint-disable-next-line eslint/complexity
 function Text({
   reviewBlockPath,
   reviewOffset = 0,
@@ -114,51 +115,62 @@ function Text({
   const review = useContext(RichMarkdownReviewContext);
   const premeasuredTextBreakStrategy = useRichMarkdownTextBreakStrategy();
   const resolvedTextBreakStrategy = premeasuredTextBreakStrategy ?? textBreakStrategy;
-  const beginReview = useContentReview();
-  const blockPath =
-    review === null || reviewBlockPath === undefined
-      ? null
-      : `${review.pathPrefix}/${reviewBlockPath}`;
-  const reviewHighlights = useContentReviewHighlights(
-    review?.target.id ?? "",
-    blockPath ?? "",
-    reviewOffset,
-  );
-  const flattened = StyleSheet.flatten(style);
-  const fontSize = typeof flattened.fontSize === "number" ? flattened.fontSize * scale : undefined;
-  const lineHeight =
-    typeof flattened.lineHeight === "number" ? flattened.lineHeight * scale : undefined;
-  const resolvedStyle =
-    scale === 1
-      ? style
-      : [
-          style,
-          {
-            ...(fontSize === undefined ? {} : { fontSize }),
-            ...(lineHeight === undefined ? {} : { lineHeight }),
-          },
-        ];
-  if (review !== null && blockPath !== null) {
+  const resolvedStyle = scale === 1 ? style : scaledMarkdownStyle(style, scale);
+  if (review === null || reviewBlockPath === undefined) {
     return (
-      <ReviewableText
-        {...props}
-        onReviewSelection={(selection) => {
-          beginReview({
-            blockPath,
-            end: reviewOffset + selection.end,
-            kind: "text",
-            quote: selection.text,
-            start: reviewOffset + selection.start,
-            target: review.target,
-          });
-        }}
-        reviewHighlights={reviewHighlights}
-        style={resolvedStyle}
-        textBreakStrategy={resolvedTextBreakStrategy}
-      />
+      <AppText {...props} style={resolvedStyle} textBreakStrategy={resolvedTextBreakStrategy} />
     );
   }
-  return <AppText {...props} style={resolvedStyle} textBreakStrategy={resolvedTextBreakStrategy} />;
+  return (
+    <ReviewBlockText
+      {...props}
+      blockPath={`${review.pathPrefix}/${reviewBlockPath}`}
+      offset={reviewOffset}
+      style={resolvedStyle}
+      target={review.target}
+      textBreakStrategy={resolvedTextBreakStrategy}
+    />
+  );
+}
+
+function scaledMarkdownStyle(style: StyleProp<TextStyle>, scale: number): StyleProp<TextStyle> {
+  const flattened = StyleSheet.flatten(style);
+  return [
+    style,
+    {
+      ...(typeof flattened.fontSize === "number" ? { fontSize: flattened.fontSize * scale } : {}),
+      ...(typeof flattened.lineHeight === "number"
+        ? { lineHeight: flattened.lineHeight * scale }
+        : {}),
+    },
+  ];
+}
+
+function ReviewBlockText({
+  blockPath,
+  offset,
+  target,
+  ...props
+}: ComponentProps<typeof AppText> & {
+  blockPath: string;
+  offset: number;
+  target: ContentReviewTarget;
+}) {
+  const beginReview = useContentReview();
+  const highlights = useContentReviewHighlights(target.id, blockPath, offset);
+  const reviewSelection = useEvent((selection: ReviewSelection) => {
+    beginReview({
+      blockPath,
+      end: offset + selection.end,
+      kind: "text",
+      quote: selection.text,
+      start: offset + selection.start,
+      target,
+    });
+  });
+  return (
+    <ReviewableText {...props} onReviewSelection={reviewSelection} reviewHighlights={highlights} />
+  );
 }
 
 function PremeasuredInlineText({
@@ -173,11 +185,12 @@ function PremeasuredInlineText({
   style: StyleProp<TextStyle>;
 }) {
   const policy = useRichMarkdownPremeasurement();
+  const highlight = useContext(SearchHighlightQuery) !== "";
   const width = useRichContentWidth();
   if (policy === null || width === null) {
     return (
       <Text reviewBlockPath={path} selectable style={style}>
-        {inline(node.children)}
+        {inline(node.children, highlight)}
       </Text>
     );
   }
@@ -185,7 +198,7 @@ function PremeasuredInlineText({
   if (layout.status === "dynamic") {
     return (
       <Text reviewBlockPath={path} selectable style={style}>
-        {inline(node.children)}
+        {inline(node.children, highlight)}
       </Text>
     );
   }
@@ -305,6 +318,7 @@ export function RichMarkdown({
   targetLine?: number;
 }) {
   const plainText = usePerformanceExperiment("plainTextMarkdown");
+  const premeasurement = useRichMarkdownPremeasurement();
   if (plainText) {
     return (
       <RichMarkdownReviewContext.Provider
@@ -327,7 +341,6 @@ export function RichMarkdown({
   }
   // Streaming revisions belong to this mounted view, not the completed-text cache.
   const parsed = parseDiagnosticRichMarkdown(source, !streaming);
-  const imageOrder = collectMarkdownImageOrder(parsed.root);
   if (maxLines !== undefined) {
     return (
       <RichMarkdownReviewContext.Provider
@@ -347,6 +360,26 @@ export function RichMarkdown({
       </RichMarkdownReviewContext.Provider>
     );
   }
+  const first = parsed.root.children[0];
+  if (
+    parsed.root.children.length === 1 &&
+    first?.type === "paragraph" &&
+    first.children.length === 1 &&
+    first.children[0]?.type === "text" &&
+    !parsed.truncated &&
+    targetLine === undefined &&
+    premeasurement === null
+  ) {
+    return (
+      <MarkdownParagraphText
+        nodes={first.children}
+        path={`${reviewPathPrefix}/paragraph-0`}
+        style={styles.paragraph}
+        target={reviewTarget}
+      />
+    );
+  }
+  const imageOrder = collectMarkdownImageOrder(parsed.root);
   const targetBlockIndex =
     targetLine === undefined ? null : richMarkdownBlockIndexAtLine(source, targetLine);
   return (
@@ -396,17 +429,46 @@ export function RichMarkdown({
   );
 }
 
-/** Renders one document viewport item with the same review address as the full renderer. */
-export function RichMarkdownDocumentBlockView({
-  animateStreaming = false,
-  block,
-  reviewTarget,
-}: {
+type DocumentBlockProps = {
   animateStreaming?: boolean;
-  block: MarkdownDocumentBlock;
+  block: ChatMarkdownBlock;
+  completedChat?: boolean;
   reviewTarget?: ContentReviewTarget;
-}) {
+};
+
+/** Renders one document viewport item with the same review address as the full renderer. */
+export function RichMarkdownDocumentBlockView(props: DocumentBlockProps) {
+  const { block, reviewTarget } = props;
   const plainText = usePerformanceExperiment("plainTextMarkdown");
+  const policy = useRichMarkdownPremeasurement();
+  const node = block.node;
+  if (!plainText && policy === null && isInlineTextBlock(node)) {
+    return (
+      <MarkdownParagraphText
+        nodes={node.children}
+        path={`${block.reviewPathPrefix}/${block.path}`}
+        style={
+          node.type === "heading" ? [styles.heading, headingStyle(node.depth)] : styles.paragraph
+        }
+        target={reviewTarget}
+      />
+    );
+  }
+  const content = documentBlockContent(props, plainText);
+  if (block.listGroup === undefined) {
+    return content;
+  }
+  return (
+    <NativeMarkdownList group={block.listGroup} target={reviewTarget}>
+      {content}
+    </NativeMarkdownList>
+  );
+}
+
+function documentBlockContent(
+  { animateStreaming = false, block, completedChat = false, reviewTarget }: DocumentBlockProps,
+  plainText: boolean,
+) {
   return (
     <RichMarkdownRevealContext.Provider value={animateStreaming}>
       <RichMarkdownReviewContext.Provider
@@ -420,9 +482,12 @@ export function RichMarkdownDocumentBlockView({
           <Text reviewBlockPath={block.path} selectable style={styles.paragraph}>
             {plainRichMarkdownRootText(block.node)}
           </Text>
+        ) : completedChat && block.node.type === "table" ? (
+          <MarkdownTable completedChat path={block.path} table={block.node} />
         ) : (
           <BlockNode
-            extensions={{}}
+            extensions={EMPTY_RICH_EXTENSIONS}
+            firstListItem={block.listGroup?.firstItem}
             imageOrder={block.imageOrder}
             node={block.node}
             path={block.path}
@@ -433,15 +498,64 @@ export function RichMarkdownDocumentBlockView({
   );
 }
 
+// Standalone images (including linked images) use the media viewer and its gallery order.
+function isInlineTextBlock(
+  node: RootContent,
+): node is Extract<RootContent, { type: "paragraph" | "heading" }> {
+  if (node.type !== "paragraph") {
+    return node.type === "heading";
+  }
+  if (node.children.length !== 1) {
+    return true;
+  }
+  const only = node.children[0];
+  if (only?.type === "link") {
+    return !singleImage(only.children);
+  }
+  return only?.type !== "image";
+}
+
+function singleImage(nodes: PhrasingContent[]): boolean {
+  return nodes.length === 1 && nodes[0]?.type === "image";
+}
+
+function MarkdownParagraphText({
+  nodes,
+  path,
+  style,
+  target,
+}: {
+  nodes: PhrasingContent[];
+  path: string;
+  style: StyleProp<TextStyle>;
+  target: ContentReviewTarget | undefined;
+}) {
+  const scale = useContext(RichMarkdownTextScaleContext);
+  const highlight = useContext(SearchHighlightQuery) !== "";
+  const resolvedStyle = scale === 1 ? style : scaledMarkdownStyle(style, scale);
+  const children = inline(nodes, highlight);
+  return target === undefined ? (
+    <AppText selectable style={resolvedStyle}>
+      {children}
+    </AppText>
+  ) : (
+    <ReviewBlockText blockPath={path} offset={0} selectable style={resolvedStyle} target={target}>
+      {children}
+    </ReviewBlockText>
+  );
+}
+
 // WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
 // oxlint-disable-next-line eslint/complexity
 function BlockNode({
   extensions,
+  firstListItem = 0,
   imageOrder,
   node,
   path,
 }: {
   extensions: Record<string, RichExtensionRenderer>;
+  firstListItem?: number | undefined;
   imageOrder: WeakMap<MarkdownImageNode, number>;
   node: RootContent;
   path: string;
@@ -560,19 +674,12 @@ function BlockNode({
                   {node.ordered === true ? `${String((node.start ?? 1) + index)}.` : "•"}
                 </Text>
               )}
-              <View style={styles.listBody}>
-                <InsetRichContentWidth inset={richMarkdownGeometry.listInset}>
-                  {item.children.map((child, childIndex) => (
-                    <BlockNode
-                      extensions={extensions}
-                      imageOrder={imageOrder}
-                      key={markdownNodeKey(child)}
-                      node={child}
-                      path={`${path}/item-${String(index)}-${String(childIndex)}`}
-                    />
-                  ))}
-                </InsetRichContentWidth>
-              </View>
+              <MarkdownListBody
+                extensions={extensions}
+                imageOrder={imageOrder}
+                item={item}
+                path={`${path}/item-${String(firstListItem + index)}`}
+              />
             </View>
           ))}
         </View>
@@ -592,7 +699,7 @@ function BlockNode({
           </View>
         );
       }
-      if (looksLikeAsciiDiagram(node.value, node.lang)) {
+      if (isExplicitAsciiDiagram(node.lang)) {
         return (
           <View style={styles.wideBlock}>
             <AsciiDiagram source={node.value} />
@@ -659,6 +766,55 @@ function BlockNode({
     default:
       return null;
   }
+}
+
+/** A one-paragraph list item can be the flex child itself. Rich items still provide the inset width. */
+function MarkdownListBody({
+  extensions,
+  imageOrder,
+  item,
+  path,
+}: {
+  extensions: Record<string, RichExtensionRenderer>;
+  imageOrder: WeakMap<MarkdownImageNode, number>;
+  item: ListItem;
+  path: string;
+}) {
+  const review = useContext(RichMarkdownReviewContext);
+  const policy = useRichMarkdownPremeasurement();
+  const child = onlyListParagraph(item);
+  if (policy === null && child !== null) {
+    return (
+      <MarkdownParagraphText
+        nodes={child.children}
+        path={`${review?.pathPrefix ?? ""}/${path}-0`}
+        style={[styles.paragraph, styles.listBody]}
+        target={review?.target}
+      />
+    );
+  }
+  return (
+    <View style={styles.listBody}>
+      <InsetRichContentWidth inset={richMarkdownGeometry.listInset}>
+        {item.children.map((block, index) => (
+          <BlockNode
+            extensions={extensions}
+            imageOrder={imageOrder}
+            key={markdownNodeKey(block)}
+            node={block}
+            path={`${path}-${String(index)}`}
+          />
+        ))}
+      </InsetRichContentWidth>
+    </View>
+  );
+}
+
+function onlyListParagraph(item: ListItem): Extract<RootContent, { type: "paragraph" }> | null {
+  const child = item.children[0];
+  return item.children.length === 1 && child?.type === "paragraph" && isInlineTextBlock(child)
+    ? child
+    : null;
 }
 
 function MarkupBlock({
@@ -917,12 +1073,20 @@ function MarkdownImage({
   );
 }
 
-function MarkdownTable({ path, table }: { path: string; table: Table }) {
-  const animateStreaming = useContext(RichMarkdownRevealContext);
+function MarkdownTable({
+  completedChat = false,
+  path,
+  table,
+}: {
+  completedChat?: boolean;
+  path: string;
+  table: Table;
+}) {
   const viewport = useTableViewport();
   const columnCount = Math.max(1, ...table.children.map((row) => row.children.length));
   const minimumWidth = viewport.contentWidth;
   const { cellWidth, tableWidth } = markdownTableLayout(minimumWidth, columnCount);
+  const rows = <MarkdownTableRows cellWidth={cellWidth} path={path} table={table} />;
   return (
     <View onLayout={viewport.onLayout} style={[styles.tableViewport, { width: viewport.width }]}>
       <HorizontalScrollView
@@ -936,34 +1100,52 @@ function MarkdownTable({ path, table }: { path: string; table: Table }) {
         style={styles.tableHorizontalScroller}
       >
         <View style={[styles.table, { width: tableWidth }]}>
-          {/* Table rows/cells can lack source offsets; their append-only grid coordinates
-              preserve identity across streaming and resize, including duplicate text. */}
-          {table.children.map((row, rowIndex) => {
-            const content = (
-              <View key={rowIndex} style={[styles.tableRow, rowIndex === 0 && styles.tableHeader]}>
-                {row.children.map((cell, cellIndex) => (
-                  <TableCellView
-                    align={table.align?.[cellIndex] ?? null}
-                    cell={cell}
-                    header={rowIndex === 0}
-                    key={cellIndex}
-                    width={cellWidth}
-                  />
-                ))}
-              </View>
-            );
-            return animateStreaming ? (
-              <NativeRevealSurface key={rowIndex} revealKey={`${path}:row:${String(rowIndex)}`}>
-                {content}
-              </NativeRevealSurface>
-            ) : (
-              content
-            );
-          })}
+          {completedChat ? (
+            <NativeMarkdownTable table={table} width={tableWidth}>
+              {rows}
+            </NativeMarkdownTable>
+          ) : (
+            rows
+          )}
         </View>
       </HorizontalScrollView>
     </View>
   );
+}
+
+function MarkdownTableRows({
+  cellWidth,
+  path,
+  table,
+}: {
+  cellWidth: number;
+  path: string;
+  table: Table;
+}) {
+  const animateStreaming = useContext(RichMarkdownRevealContext);
+  // Append-only coordinates preserve identity for cells without offsets or with duplicate text.
+  return table.children.map((row, rowIndex) => {
+    const content = (
+      <View key={rowIndex} style={[styles.tableRow, rowIndex === 0 && styles.tableHeader]}>
+        {row.children.map((cell, cellIndex) => (
+          <TableCellView
+            align={table.align?.[cellIndex] ?? null}
+            cell={cell}
+            header={rowIndex === 0}
+            key={cellIndex}
+            width={cellWidth}
+          />
+        ))}
+      </View>
+    );
+    return animateStreaming ? (
+      <NativeRevealSurface key={rowIndex} revealKey={`${path}:row:${String(rowIndex)}`}>
+        {content}
+      </NativeRevealSurface>
+    ) : (
+      content
+    );
+  });
 }
 
 function TableCellView({
@@ -977,6 +1159,7 @@ function TableCellView({
   header: boolean;
   width: number;
 }) {
+  const highlight = useContext(SearchHighlightQuery) !== "";
   return (
     <Text
       style={[
@@ -985,13 +1168,16 @@ function TableCellView({
         { textAlign: align ?? "left", width },
       ]}
     >
-      {inline(cell.children)}
+      {inline(cell.children, highlight)}
     </Text>
   );
 }
 
-function inline(nodes: PhrasingContent[], insideLink = false): ReactNode[] {
+function inline(nodes: PhrasingContent[], highlight: boolean, insideLink = false): ReactNode[] {
   return nodes.map((node) => {
+    if (node.type === "text" && !highlight) {
+      return node.value;
+    }
     const key = markdownNodeKey(node);
     switch (node.type) {
       case "text":
@@ -999,29 +1185,29 @@ function inline(nodes: PhrasingContent[], insideLink = false): ReactNode[] {
       case "strong":
         return (
           <Text key={key} style={styles.strong}>
-            {inline(node.children, insideLink)}
+            {inline(node.children, highlight, insideLink)}
           </Text>
         );
       case "emphasis":
         return (
           <Text key={key} style={styles.emphasis}>
-            {inline(node.children, insideLink)}
+            {inline(node.children, highlight, insideLink)}
           </Text>
         );
       case "delete":
         return (
           <Text key={key} style={styles.deleted}>
-            {inline(node.children, insideLink)}
+            {inline(node.children, highlight, insideLink)}
           </Text>
         );
       case "inlineCode":
         return insideLink ? (
           <Text key={key} style={styles.inlineCode}>
-            <HighlightSearchText text={node.value} />
+            {highlightedInlineValue(node.value, highlight)}
           </Text>
         ) : (
           <CopyableInline key={key} style={styles.inlineCode} value={node.value}>
-            <HighlightSearchText text={node.value} />
+            {highlightedInlineValue(node.value, highlight)}
           </CopyableInline>
         );
       case "break":
@@ -1029,7 +1215,7 @@ function inline(nodes: PhrasingContent[], insideLink = false): ReactNode[] {
       case "link": {
         return (
           <MarkdownLink key={key} url={node.url}>
-            {inline(node.children, true)}
+            {inline(node.children, highlight, true)}
           </MarkdownLink>
         );
       }
@@ -1046,7 +1232,7 @@ function inline(nodes: PhrasingContent[], insideLink = false): ReactNode[] {
           </Text>
         );
       case "linkReference":
-        return <Text key={key}>{inline(node.children)}</Text>;
+        return <Text key={key}>{inline(node.children, highlight)}</Text>;
       case "imageReference":
         return (
           <Text key={key} style={styles.secondary}>
@@ -1063,6 +1249,10 @@ function inline(nodes: PhrasingContent[], insideLink = false): ReactNode[] {
         return <Text key={key}>{fallbackText(node)}</Text>;
     }
   });
+}
+
+function highlightedInlineValue(text: string, highlight: boolean): ReactNode {
+  return highlight ? <HighlightSearchText text={text} /> : text;
 }
 
 function markdownNodeKey(node: Nodes): string {
@@ -1180,28 +1370,36 @@ const styles = StyleSheet.create({
     color: colors.accent,
     textDecorationLine: "underline",
   },
+  // A list spans its parent so an item's body has the parent's width to give a
+  // block that takes all of it (a code block scrolls its lines and has no
+  // width of its own); in a bubble the parent's width is still its content's.
   list: {
-    alignSelf: "flex-start",
+    alignSelf: "stretch",
     gap: richMarkdownGeometry.listGap,
     minWidth: 0,
   },
   listBody: {
+    flexGrow: 1,
     flexShrink: 1,
     gap: richMarkdownGeometry.listBodyGap,
     minWidth: 0,
   },
   listMarker: {
     color: colors.textMuted,
+    marginStart: -richMarkdownGeometry.listInset,
     textAlign: "right",
     width: richMarkdownGeometry.listMarkerWidth,
     ...typeScale.body,
   },
   listRow: {
     alignItems: "flex-start",
-    alignSelf: "flex-start",
+    alignSelf: "stretch",
     flexDirection: "row",
     gap: richMarkdownGeometry.listRowGap,
     minWidth: 0,
+    // Reserve the marker gutter during intrinsic text measurement. Both markers hang
+    // into this padding, so the final wrap width also determines the row's height.
+    paddingStart: richMarkdownGeometry.listInset,
   },
   localImageLink: {
     alignItems: "center",
@@ -1272,6 +1470,7 @@ const styles = StyleSheet.create({
   taskMarker: {
     alignItems: "flex-end",
     justifyContent: "center",
+    marginStart: -richMarkdownGeometry.listInset,
     minHeight: typeScale.body.lineHeight,
     width: richMarkdownGeometry.listMarkerWidth,
   },

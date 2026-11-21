@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+import os
+import sys
+
+sys.dont_write_bytecode = True
+from lab import CLI, ENV, SERIAL, verify_avd
+
+verify_avd()
+os.execve(
+    CLI,
+    [str(CLI), *sys.argv[1:], "--platform", "android", "--serial", SERIAL, "--session", "codewide-lab"],
+    ENV,
+)

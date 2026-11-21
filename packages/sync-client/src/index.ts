@@ -6,6 +6,7 @@ export * from "./thread-events";
 export * from "./thread-items";
 export * from "./types";
 export * from "./command-output";
+export * from "./background-commands";
 
 export * from "./question-history";
 

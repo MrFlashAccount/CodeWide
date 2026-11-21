@@ -23,7 +23,7 @@ impl SyncHub {
     #[must_use]
     pub fn new(upstream: UpstreamHandle, store: Arc<IndexStore>, history: HistoryService) -> Self {
         let codex = Arc::new(CodexProvider::new(upstream).with_storage(CodexStorage::new(history)));
-        Self::with_registry(Arc::new(super::codex_only(codex, Vec::new())), store, false)
+        Self::with_registry(Arc::new(super::codex_only(codex)), store, false)
     }
 
     /// Creates an active companion over one App Server with authenticated
@@ -35,7 +35,7 @@ impl SyncHub {
         history: HistoryService,
     ) -> Self {
         let codex = Arc::new(CodexProvider::new(upstream).with_storage(CodexStorage::new(history)));
-        Self::with_registry(Arc::new(super::codex_only(codex, Vec::new())), store, true)
+        Self::with_registry(Arc::new(super::codex_only(codex)), store, true)
     }
 
     /// Installs the companion-owned multi-account scheduler into the Codex

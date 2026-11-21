@@ -1,6 +1,7 @@
 package dev.codewide.app.diagnostics
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.Process
 import android.util.Log
 import dev.codewide.app.BuildConfig
@@ -13,14 +14,19 @@ object NativeDiagnosticRuntime {
   private var journal: DiagnosticJournal? = null
   private var wake: (() -> Unit)? = null
   private var handlingCrash = false
-  private val secrets = mutableSetOf<String>()
+  // Insertion-ordered so the oldest credential is forgotten first; redaction cost per
+  // report must not grow with the number of tokens a long-lived process has minted.
+  private val secrets = LinkedHashSet<String>()
+  private var preferences: SharedPreferences? = null
 
   @Synchronized
   fun install(context: Context) {
     if (journal != null) return
-    journal = DiagnosticJournal(File(context.noBackupFilesDir, "diagnostic-outbox"))
+    preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    journal = DiagnosticJournal(File(context.cacheDir, "diagnostic-outbox"))
+    removeLegacyOutbox(File(context.noBackupFilesDir, "diagnostic-outbox"))
     runCatching { dev.codewide.app.remote.NativeSessionCredentialsStore(context).list() }
-      .getOrDefault(emptyList()).forEach { secrets.add(it.token) }
+      .getOrDefault(emptyList()).forEach { rememberSecret(it.token) }
     val previous = Thread.getDefaultUncaughtExceptionHandler()
     Thread.setDefaultUncaughtExceptionHandler { thread, error ->
       try {
@@ -54,9 +60,40 @@ object NativeDiagnosticRuntime {
   internal fun privateText(value: String): String = DiagnosticPrivacy.text(value, secrets)
 
   @Synchronized
-  internal fun rememberCredential(value: String) { secrets.add(value) }
+  internal fun rememberCredential(value: String) { rememberSecret(value) }
 
-  /** The sync native bridge returns only after the entire report is committed to disk. */
+  private fun rememberSecret(value: String) {
+    secrets.remove(value)
+    secrets.add(value)
+    while (secrets.size > MAX_REMEMBERED_SECRETS) secrets.remove(secrets.first())
+  }
+
+  /**
+   * Earlier builds kept an unbounded outbox in no-backup storage. It may hold a very large
+   * number of files, so it is deleted off the startup path; a failure retries next launch.
+   */
+  private fun removeLegacyOutbox(directory: File) {
+    if (!directory.exists()) return
+    Thread({ directory.deleteRecursively() }, "CodeWideLegacyDiagnostics").apply {
+      isDaemon = true
+      priority = Thread.MIN_PRIORITY
+    }.start()
+  }
+
+  /** True once per distinct retained crash buffer; the same buffer is not queued on every launch. */
+  @Synchronized
+  internal fun claimRetainedCrashLog(digest: String): Boolean {
+    val store = preferences ?: return false
+    if (store.getString(RETAINED_CRASH_LOG_DIGEST, null) == digest) return false
+    store.edit().putString(RETAINED_CRASH_LOG_DIGEST, digest).apply()
+    return true
+  }
+
+  private const val MAX_REMEMBERED_SECRETS = 32
+  private const val PREFERENCES = "codewide_diagnostics"
+  private const val RETAINED_CRASH_LOG_DIGEST = "retainedCrashLogDigest"
+
+  /** Queues one report; a fatal report is committed to disk before the bridge returns. */
   @Synchronized
   fun append(input: JSONObject): Boolean {
     val source = input.getString("source")
@@ -75,7 +112,8 @@ object NativeDiagnosticRuntime {
       .put("message", DiagnosticPrivacy.text(input.optString("message"), this.secrets))
       .put("err", err?.let { DiagnosticPrivacy.error(it, this.secrets) } ?: JSONObject.NULL)
       .put("fields", DiagnosticPrivacy.fields(input.getJSONObject("fields"), this.secrets))
-    outbox().append(report)
+    // Only a fatal report may be the last thing this process writes; the rest are disposable.
+    outbox().append(report, durable = level == "fatal")
     wake?.invoke()
     return true
   }

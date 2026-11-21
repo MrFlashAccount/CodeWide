@@ -40,6 +40,7 @@ import {
   compactCompletedTurnForStorage,
   authoritativeTimelineRowId,
   materializeThreadDetail,
+  mergeBackgroundCommandStates,
   mergePendingTimelineOverlays,
   mergePendingTimelineEntry,
   normalizeConversationTurn,
@@ -63,6 +64,7 @@ import {
   type ThreadDetailRow,
 } from "./thread-detail-projection";
 import { cloneProtocolValue } from "./clone-protocol-value";
+import { resolveAnchoredThreadWindow, windowContainsRequestedTurn } from "./anchoredThreadWindow";
 import { residentThreadWindow } from "./resident-thread-window";
 import { unknownRecord } from "./unknownRecord";
 
@@ -818,7 +820,16 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     // A sealed turn is one immutable fact family: content, metadata and
     // ordinal must all come from the same commit. When reconciliation keeps
     // the previous sealed content, its existing metadata row stays untouched.
-    const metadata = content === previous ? null : projectedTurnMetadata(turn);
+    // Background command states are the exception: they live in the mutable
+    // metadata row, which every write reconciles with the states it carries,
+    // so a read repairs a sealed turn's chip after a lost live event.
+    const metadata = mergeBackgroundCommandStates({
+      authority: input.authority,
+      metadata: content === previous ? null : projectedTurnMetadata(turn),
+      stored:
+        source.get(turnMetaKey(input.connectionId, input.threadId, turn.id))?.turnMetadata ?? null,
+      turn,
+    });
     if (metadata !== null) {
       const row = turnMetaRow(
         input.connectionId,
@@ -1505,6 +1516,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         }
       }
       let historyCursor = metadata.historyCursor;
+      let confirmedOldest = false;
       if (input.direction === "older") {
         const minimum = await detailStorage.loadBoundary(
           input.connectionId,
@@ -1517,16 +1529,25 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         }
         if (!input.hasMore && (minimum === null || base <= minimum.ordinal)) {
           historyCursor = null;
+          confirmedOldest = true;
         }
       }
+      const coverage =
+        input.turns.length === 0 && confirmedOldest
+          ? mergeAdjacentCoverage(metadataCoverage(metadata), {
+              max: anchor.ordinal,
+              min: anchor.ordinal,
+            })
+          : extendAuthoritativeCoverage(metadata, input.turns, ordinals);
       if (
         input.turns.length === 0 &&
         historyCursor === metadata.historyCursor &&
+        coverage.min === metadata.historyCoverageMinOrdinal &&
+        coverage.max === metadata.historyCoverageMaxOrdinal &&
         input.sourceWitness === metadata.historySourceWitness
       ) {
         return { accepted: true, historyEpoch: input.historyEpoch };
       }
-      const coverage = extendAuthoritativeCoverage(metadata, input.turns, ordinals);
       const mutableRepositions: ThreadDetailRow[] = [];
       const sealedMaximum = facts.reduce(
         (maximum, row) =>
@@ -1570,7 +1591,11 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         return rejected();
       }
       const scope = threadChatScope(input.connectionId, input.threadId);
-      rangePersistenceScopes.add(scope);
+      // An empty page can still close the existing oldest turn. With no new
+      // members to admit, publish the committed cursor to the installed window.
+      if (input.turns.length > 0) {
+        rangePersistenceScopes.add(scope);
+      }
       try {
         await commitThreadProjection({
           authority: "authoritative",
@@ -1801,7 +1826,8 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         materializedCache !== null && (materializedCache.turns.length > 0 || coverage.complete)
           ? materializedCache
           : null;
-      hadUsableCachedThread = cachedThread !== null;
+      hadUsableCachedThread =
+        cachedThread !== null && windowContainsRequestedTurn(cachedWindow, request.anchorTurnId);
       // Observing only attaches future live events. Every newly opened window
       // therefore performs one bounded head read even when local coverage is
       // complete: the thread may have moved while another chat was observed or
@@ -1824,9 +1850,18 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
               request,
               requireAuthoritative: true,
             });
-            const refreshedWindow = await writes.run(async () =>
-              readStoredWindow(request, requestedAt),
-            );
+            const refreshedWindow = await resolveAnchoredThreadWindow({
+              isCurrent: () => chat.isCurrentWindow(request, generation),
+              loadOlder: async (cursor, historyEpoch) =>
+                loader.loadOlder({
+                  connectionId: request.connectionId,
+                  cursor,
+                  historyEpoch,
+                  threadId: request.threadId,
+                }),
+              read: async () => writes.run(async () => readStoredWindow(request, requestedAt)),
+              turnId: request.anchorTurnId,
+            });
             const refreshedCoverage = threadWindowCoverage(request, refreshedWindow);
             const refreshedTurnCount = [
               ...refreshedWindow.turnRows,
@@ -1857,7 +1892,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           }
         };
 
-        if (cachedThread !== null && resolvedWindowHasTimelineRows(cachedWindow)) {
+        if (hadUsableCachedThread && resolvedWindowHasTimelineRows(cachedWindow)) {
           // A materializable SQLite window with timeline rows is immediately
           // usable even when its coverage cursor says that an authoritative repair is desirable.
           // Resolve the navigation resource from local data; the background

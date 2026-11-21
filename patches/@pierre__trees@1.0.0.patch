@@ -1,0 +1,14 @@
+diff --git a/dist/render/FileTreeView.js b/dist/render/FileTreeView.js
+index b4c7ee49372580c729bce56f8b16f12f7ffbf14c..46b885e25de240f35dcc028fd94137e1e6587da3 100644
+--- a/dist/render/FileTreeView.js
++++ b/dist/render/FileTreeView.js
+@@ -1286,7 +1286,8 @@ function FileTreeView({ composition, controller, gitStatusByPath, ignoredGitDire
+ 			const nextItemCount = controller.getVisibleCount();
+ 			const nextViewportHeight = getCachedViewportHeight(measuredViewportHeightRef.current, initialViewportHeight);
+ 			const maxScrollTop = Math.max(0, nextItemCount * itemHeight - nextViewportHeight);
+-			if (scrollElement.scrollTop > maxScrollTop) scrollElement.scrollTop = maxScrollTop;
++			// The layout covers rows only. Let the browser bound the physical scroll
++			// position so trailing scroll-container padding remains reachable.
+ 			setLayoutState(computeFileTreeViewLayoutState({
+ 				controller,
+ 				itemHeight,

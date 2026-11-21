@@ -218,9 +218,9 @@ describe("wake turns", () => {
       ["next", "single", true],
     ]);
     // Every turn keeps its own answer outside; nothing folds into a neighbour.
-    expect(
-      slices.every((row) => row.parts.every((part) => part.kind === "markdownBlock")),
-    ).toBe(true);
+    expect(slices.every((row) => row.parts.every((part) => part.kind === "markdownBlock"))).toBe(
+      true,
+    );
     expect(timelineResponseStartRow(rows, "wake")?.key).toBe(timelineRowKey(slices[1]!));
   });
 
@@ -233,11 +233,34 @@ describe("wake turns", () => {
     );
 
     expect(live.slice(0, alone.length)).toEqual(alone);
-    expect(live.at(-1)).toMatchObject({ followsLead: false, kind: "turnSlice", placement: "single" });
+    expect(live.at(-1)).toMatchObject({
+      followsLead: false,
+      kind: "turnSlice",
+      placement: "single",
+    });
   });
 });
 
 describe("feature-flagged conversation rows", () => {
+  it("prepends the confirmed boundary once and preserves response anchors as pages arrive", () => {
+    const first = turnRow("first", "One");
+    const last = turnRow("last", "Two");
+    const items = [first, last];
+    const partial = projectTimelineRows(items, enabled);
+    const complete = { ...enabled, containsBeginning: true };
+    const rows = projectTimelineRows(items, complete);
+    expect(rows[0]).toMatchObject({ kind: "historyBeginning", item: first });
+    expect(rows.slice(1)).toEqual(partial);
+    expect(projectTimelineRows(items, complete)).toBe(rows);
+    const target = timelineResponseStartRow(rows, last.id)!;
+    expect(rows[target.index]).toBe(partial.at(-1));
+    expect(projectTimelineRows(items, { ...complete, threadSearchActive: true }).some(
+      (row) => row.kind === "historyBeginning",
+    )).toBe(false);
+    expect(projectTimelineRows(items, enabled)).toEqual(partial);
+    expect(projectTimelineRows([], complete)).toEqual([]);
+  });
+
   it("uses the measured cold-row mean as the dynamic fallback", () => {
     expect(timelineRowSizeEstimate()).toBe(115);
   });
@@ -274,6 +297,96 @@ describe("feature-flagged conversation rows", () => {
     expect(rows[0]).toMatchObject({ item, kind: "turnSlice", placement: "start" });
     expect(rows.at(-1)).toMatchObject({ item, kind: "turnSlice", placement: "end" });
     expect(new Set(rows.map((row) => row.timelineIndex))).toEqual(new Set([0]));
+  });
+
+  it("keeps numbered items, nested tasks and original review addresses across native groups", () => {
+    const source = Array.from(
+      { length: 10 },
+      (_, i) =>
+        `${String(i + 4)}. Station ${i + 1}\n${" ".repeat(String(i + 4).length + 2)}- [x] Check 😀`,
+    ).join("\n");
+    const items = [turnRow("native-list", source)];
+    const options = { ...enabled, packMarkdown: true, nativeLists: true };
+    const blocks = (rows: ReturnType<typeof projectTimelineRows>) =>
+      rows.flatMap((row) =>
+        row.kind === "turnSlice"
+          ? row.parts.flatMap((part) => (part.kind === "markdownBlock" ? [part.block] : []))
+          : [],
+      );
+    const grouped = blocks(projectTimelineRows(items, options));
+    const lines = grouped.flatMap((block) => block.listGroup?.lines ?? []);
+    expect(grouped.length).toBeGreaterThan(1);
+    expect(lines).toHaveLength(20);
+    for (let i = 0; i < 10; i++) {
+      const path = `segment-0/list-0/item-${i}`;
+      expect(lines[i * 2]).toMatchObject({
+        depth: 0,
+        marker: `${i + 4}.`,
+        body: `Station ${i + 1}`,
+        path: `${path}-0`,
+      });
+      expect(lines[i * 2 + 1]).toMatchObject({
+        depth: 1,
+        marker: "checked",
+        body: "Check 😀",
+        path: `${path}-1/item-0-0`,
+      });
+    }
+    for (const row of grouped) {
+      expect(row.node.type === "list" && row.node.start).toBe((row.listGroup?.firstItem ?? 0) + 4);
+    }
+    const rich = source.replace("Station 9", "[Link](https://example.org)");
+    const oversized = source.replace("Station 9", "x".repeat(3000));
+    for (const untouched of [
+      projectTimelineRows(items, { ...options, nativeLists: false }),
+      projectTimelineRows(items, { ...options, threadSearchActive: true }),
+      projectTimelineRows([turnRow("stream", source, "inProgress")], options),
+      projectTimelineRows([turnRow("rich", rich)], options),
+      projectTimelineRows([turnRow("oversized", oversized)], options),
+    ]) {
+      expect(blocks(untouched)).toHaveLength(1);
+      expect(blocks(untouched)[0]?.listGroup).toBeUndefined();
+    }
+  });
+
+  it("packs nearby text while preserving review addresses, media rows and the response anchor", () => {
+    const item = turnRow(
+      "mixed",
+      "## Heading\n\nShort paragraph.\n\n![Photo](photo.png)\n\n" +
+        "long ".repeat(650) +
+        "\n\nFinal paragraph.",
+    );
+    const original = projectTimelineRows([item], enabled);
+    const packed = projectTimelineRows([item], { ...enabled, packMarkdown: true });
+    const blocks = (rows: typeof packed) =>
+      rows.flatMap((row) =>
+        row.kind === "turnSlice"
+          ? row.parts.flatMap((part) =>
+              part.kind === "markdownBlock"
+                ? [[part.block.reviewPathPrefix, part.block.path, part.block.node]]
+                : [],
+            )
+          : [],
+      );
+    expect(blocks(packed)).toEqual(blocks(original));
+    expect(packed.length).toBeLessThan(original.length);
+    expect(packed.length).toBeGreaterThan(1);
+    for (const row of packed) {
+      if (row.kind !== "turnSlice") continue;
+      for (const part of row.parts) {
+        if (part.kind !== "markdownBlock" || part.block.node.type !== "paragraph") continue;
+        const first = part.block.node.children[0];
+        if (
+          first?.type === "image" ||
+          (first?.type === "text" && first.value.startsWith("long "))
+        ) {
+          expect(row.parts).toHaveLength(1);
+        }
+      }
+    }
+    expect(timelineResponseStartRow(packed, item.id)).toEqual(
+      timelineResponseStartRow(original, item.id),
+    );
   });
 
   it("uses the same model for search and streaming turns", () => {

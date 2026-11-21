@@ -1,4 +1,4 @@
-import { Platform, StyleSheet } from "react-native";
+import { StyleSheet } from "react-native";
 import {
   colors,
   controlSize,
@@ -7,23 +7,10 @@ import {
   spacing,
   touchTarget,
   typeScale,
-  typeWeight,
 } from "../../../theme";
 
+/** The full-screen output frame shared by the content and command output viewers. */
 export const styles = StyleSheet.create({
-  disabled: { opacity: 0.42 },
-  errorText: {
-    color: colors.red,
-    ...typeScale.body,
-  },
-  fullContentCentered: {
-    alignItems: "center",
-    flex: 1,
-    gap: spacing.xs,
-    justifyContent: "center",
-    minHeight: 0,
-    padding: spacing.md,
-  },
   fullContentFooter: {
     alignItems: "center",
     backgroundColor: colors.surface,
@@ -33,11 +20,6 @@ export const styles = StyleSheet.create({
     gap: spacing.sm,
     minHeight: controlSize.touch,
     paddingHorizontal: spacing.sm,
-  },
-  fullContentFooterText: {
-    color: colors.textMuted,
-    flex: 1,
-    ...typeScale.caption,
   },
   fullContentHeader: {
     alignItems: "center",
@@ -55,36 +37,6 @@ export const styles = StyleSheet.create({
     height: controlSize.compact,
     justifyContent: "center",
     width: controlSize.compact,
-  },
-  fullContentHeaderText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  fullContentMarkdown: {
-    padding: spacing.md,
-    paddingBottom: spacing.xl,
-  },
-  fullContentMeta: {
-    color: colors.textMuted,
-    ...typeScale.caption,
-    fontVariant: ["tabular-nums"],
-  },
-  fullContentRawHorizontal: {
-    flexGrow: 0,
-    padding: spacing.sm,
-  },
-  fullContentRawText: {
-    color: "#D3D7DE",
-    ...typeScale.code,
-    fontFamily: Platform.select({
-      android: "monospace",
-      default: "Courier",
-    }),
-  },
-  fullContentTitle: {
-    color: colors.text,
-    ...typeScale.title,
-    fontWeight: typeWeight.semibold,
   },
   fullContentViewer: {
     backgroundColor: colors.background,
@@ -106,55 +58,9 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     width: touchTarget,
   },
-  largeContentActions: {
-    gap: spacing.xxs,
-    minWidth: 0,
-    width: "100%",
-  },
-  largeContentButton: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceRaised,
-    borderRadius: radii.medium,
-    flexDirection: "row",
-    gap: spacing.compact,
-    minHeight: controlSize.compact,
-    minWidth: 0,
-    paddingHorizontal: spacing.xs,
-  },
-  largeContentButtonText: {
-    color: colors.textMuted,
-    flex: 1,
-    minWidth: 0,
-    ...typeScale.label,
-    fontWeight: typeWeight.semibold,
-  },
-  largeContentControl: {
-    gap: spacing.compact,
-    minWidth: 0,
-    paddingTop: spacing.xxs,
-    width: "100%",
-  },
-  largeContentPageButton: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceRaised,
-    borderRadius: radii.medium,
-    height: controlSize.compact,
-    justifyContent: "center",
-    width: controlSize.compact,
-  },
-  largeContentPager: {
-    flexDirection: "row",
-    gap: spacing.xxs,
-    justifyContent: "flex-end",
-  },
   menuNotice: {
     color: colors.textMuted,
     ...typeScale.body,
     paddingVertical: spacing.xs,
-  },
-  pressed: { opacity: 0.68 },
-  turnMetaText: {
-    color: colors.textMuted,
-    ...typeScale.caption,
   },
 });

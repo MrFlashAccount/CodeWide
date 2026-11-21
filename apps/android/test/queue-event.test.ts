@@ -38,6 +38,36 @@ describe("companion queue events", () => {
     expect(parseHostQueueSnapshot({ data: [] })).toBeNull();
   });
 
+  it("drops a model-only notice row without invalidating the rest of the event", () => {
+    const commands = parseHostQueueSnapshot([
+      {
+        commandId: "child-result",
+        remoteThreadId: "thread-1",
+        params: { threadId: "thread-1", input: [{ type: "text", text: "<child agent result>" }] },
+        presentation: "notice",
+        state: "queued",
+        order: 1,
+        createdAt: 10,
+        lastError: null,
+      },
+      { commandId: "future-notice", presentation: "notice" },
+      {
+        commandId: "queued-1",
+        remoteThreadId: "thread-1",
+        params: { threadId: "thread-1", input: [{ type: "text", text: "next" }] },
+        presentation: "queue",
+        state: "queued",
+        order: 2,
+        createdAt: 20,
+        lastError: null,
+      },
+    ]);
+
+    expect(commands?.map(({ commandId, presentation }) => [commandId, presentation])).toEqual([
+      ["queued-1", "queue"],
+    ]);
+  });
+
   it("reconciles only an accepted delivery that still has a local receipt", () => {
     const commands = parseHostQueueSnapshot([
       {

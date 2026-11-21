@@ -55,6 +55,7 @@ export function ReviewableText({
   reviewHighlights?: readonly ContentReviewHighlight[];
 }) {
   const textRef = useRef<ComponentRef<typeof NativeText> | null>(null);
+  const hasAppliedHighlights = useRef(false);
   const generatedId = useId();
   const token = `review-text-${generatedId}`;
   const handleReviewSelection = useEvent(onReviewSelection);
@@ -92,6 +93,11 @@ export function ReviewableText({
   }, [handleReviewSelection, token]);
 
   useLayoutEffect(() => {
+    const hasHighlights = highlightKey !== "";
+    // Native install clears stale spans. Only a previously highlighted registration needs a clear.
+    if (!hasHighlights && !hasAppliedHighlights.current) {
+      return;
+    }
     const nativeModule = contentReviewNativeModule(NativeModules.CodeWideContentReview);
     if (nativeModule?.setHighlights === undefined) {
       return;
@@ -101,6 +107,7 @@ export function ReviewableText({
       return;
     }
     applyReviewHighlights(nativeModule, reactTag);
+    hasAppliedHighlights.current = hasHighlights;
   }, [applyReviewHighlights, highlightKey, token]);
 
   return (

@@ -1,20 +1,28 @@
 //! The Claude session index: tables the Claude adapter derives from Claude's
 //! native session store inside the companion's host index database.
 //!
-//! Every row is a neutral read of one session from Claude's files
-//! (`native::LocalSessions`). The tables are disposable: [`CLAUDE_INDEX_SCHEMA`]
-//! drops them when the companion schema asks for a rebuild or when
-//! [`CLAUDE_INDEX_LOGIC_VERSION`] changes, and the indexer reads every
-//! session again. Thread metadata stays companion state, published through
+//! Turns are never copied. Each session file and sub-agent transcript is a
+//! file of the shared segmented offset index (`agent_index::segment`, tables
+//! [`CLAUDE_SEGMENT_TABLES`]): its turns are byte ranges of Claude's own
+//! file, with the scan state each starts from, the uuids later rows name and
+//! the facts later rows report. What the index derives from a turn when it
+//! changes is its [`TurnDigest`] (preview, sub-agent launches, resources),
+//! kept in the turn summary table; a session row ([`StoredSession`]) keeps
+//! the session's listing facts and the aggregates of its digests.
+//!
+//! The tables are disposable: [`CLAUDE_INDEX_SCHEMA`] drops them when the
+//! companion schema asks for a rebuild or when [`CLAUDE_INDEX_LOGIC_VERSION`]
+//! changes, and the indexer reads every file again from its first byte.
+//! Thread metadata stays companion state, published through
 //! [`HostThreadIndex`], including one row per sub-agent child thread
 //! ([`crate::subagents`]) under its parent, which serves
 //! `companion/threadSubagents/read`.
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
-use agent_core::model::{
-    AgentItem, AgentTurn, AppThreadId, NativeSession, NativeSessionReadResult, TurnOrigin,
-};
+use agent_core::model::{AppThreadId, NativeSession, SubagentStatus};
+use agent_index::{IndexTables, SegmentStore, SegmentTables, TurnRef};
+use agent_resources::data::ResourceData;
 use companion_host::{
     index::{DerivedIndexSchema, META, StoreError, attach_derived, logic_version, table_exists},
     thread_index::{HostThreadIndex, IndexedThreadMetadata},
@@ -26,16 +34,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::warn;
 
-use crate::subagents::{self, ChildThread, IndexedSubagent};
+use crate::{
+    runtime::open_elsewhere::SessionActivity,
+    subagents::{self, IndexedSubagent},
+};
 
 /// Session id → [`StoredSession`].
 const SESSIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("claude_sessions");
-/// `session id \0 ordinal (u32 BE)` → one neutral turn.
-const SESSION_TURNS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("claude_session_turns");
 /// `app thread id \0 session id` → presence.
 const THREAD_SESSIONS: TableDefinition<&[u8], u8> = TableDefinition::new("claude_thread_sessions");
-/// `session id \0 agent id` → the sub-agent's neutral turns.
-const SUBAGENT_TURNS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("claude_subagent_turns");
+/// Copies of neutral turns the index kept before logic version 17; dropped.
+const RETIRED_SESSION_TURNS: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("claude_session_turns");
+const RETIRED_SUBAGENT_TURNS: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("claude_subagent_turns");
 
 const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// Bumped whenever the derived rows change meaning; a change drops them.
@@ -54,8 +66,40 @@ const LOGIC_VERSION_KEY: &str = "claude_index_logic_version";
 /// stayed finished). 10: each sub-agent's own model ([`IndexedSubagent::model`]).
 /// 11: every background agent a report naming several tasks stopped (only
 /// the first one stopped; the others stayed running forever), and a
-/// sub-agent cut off before its answer is interrupted, not completed.
-pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 11;
+/// sub-agent cut off before its answer is interrupted, not completed. 12:
+/// `Monitor` calls and `TaskStop` calls that stopped a shell task are
+/// `command` items (they were generic tool calls). 13: the newest status fact
+/// wins for a resumed sub-agent (an older unreported resume no longer keeps
+/// a later finished run working forever). 14: each sub-agent's recorded
+/// effort ([`IndexedSubagent::effort`]). 15: a background command item
+/// carries its task and state (`background`, which replaced
+/// `backgroundTaskId`), settled by its stored report. 16: that `background`
+/// carries its required `startedAt` (rows an earlier build stored under 15
+/// lack it and fail to decode). 17: turns are byte ranges of Claude's files
+/// on the shared segmented index, indexed from each file's appended tail;
+/// the copies of whole turns (`claude_session_turns`,
+/// `claude_subagent_turns`) are dropped.
+pub const CLAUDE_INDEX_LOGIC_VERSION: u64 = 17;
+
+/// The segmented offset index of Claude's files.
+pub const CLAUDE_SEGMENT_TABLES: SegmentTables = SegmentTables {
+    index: IndexTables {
+        files: "claude_index_files",
+        records: "claude_index_records",
+        turns: "claude_index_turns",
+        turns_by_id: "claude_index_turns_by_id",
+        removed_turns: "claude_index_removed_turns",
+        turn_summaries: "claude_index_turn_digests",
+        content: "claude_index_content",
+        content_by_file: "claude_index_content_by_file",
+        logic_version_key: "claude_segment_logic_version",
+        logic_version: CLAUDE_INDEX_LOGIC_VERSION,
+    },
+    record_keys: "claude_index_record_keys",
+    scan_states: "claude_index_scan_states",
+    turn_states: "claude_index_turn_states",
+    facts: "claude_index_facts",
+};
 
 /// The Claude tables' schema in the host index.
 pub const CLAUDE_INDEX_SCHEMA: ClaudeIndexSchema = ClaudeIndexSchema;
@@ -76,70 +120,103 @@ impl DerivedIndexSchema for ClaudeIndexSchema {
         }
         if rebuild {
             write.delete_table(SESSIONS)?;
-            write.delete_table(SESSION_TURNS)?;
             write.delete_table(THREAD_SESSIONS)?;
-            write.delete_table(SUBAGENT_TURNS)?;
+            write.delete_table(RETIRED_SESSION_TURNS)?;
+            write.delete_table(RETIRED_SUBAGENT_TURNS)?;
         }
         write.open_table(SESSIONS)?;
-        write.open_table(SESSION_TURNS)?;
         write.open_table(THREAD_SESSIONS)?;
-        write.open_table(SUBAGENT_TURNS)?;
-        Ok(())
+        CLAUDE_SEGMENT_TABLES.migrate(write, rebuild)
     }
 
     fn is_current(&self, read: &ReadTransaction) -> Result<bool, StoreError> {
         Ok(
             logic_version(read, LOGIC_VERSION_KEY)? == Some(CLAUDE_INDEX_LOGIC_VERSION)
                 && table_exists(read, THREAD_SESSIONS)?
-                && table_exists(read, SUBAGENT_TURNS)?,
+                && CLAUDE_SEGMENT_TABLES.is_current(read)?,
         )
     }
 }
 
-/// One indexed session.
+/// One sub-agent transcript of a session, as last indexed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredSidecar {
+    pub agent_id: String,
+    pub path: PathBuf,
+    /// The sub-agent that spawned this one; `None` for the main conversation.
+    pub parent_agent_id: Option<String>,
+    pub parent_tool_use_id: Option<String>,
+    /// The newest time any of its rows records.
+    pub updated_at_ms: Option<i64>,
+}
+
+/// One indexed session: its listing facts, where its files are, and the
+/// aggregates of its turn digests.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredSession {
     pub session: NativeSession,
-    /// The session's sub-agents; their turns live in their own table, so a
-    /// session row stays small however much its sub-agents did.
+    /// The session's sub-agents.
     pub subagents: Vec<IndexedSubagent>,
-    pub turn_count: u32,
     /// Whether a person's turn exists (a thread without one is a shell).
-    #[serde(default)]
     pub has_user_turn: bool,
     /// The preview of the session's newest conversation message
     /// ([`crate::preview::newest_message`]); `None` when no turn holds one.
     pub newest_message: Option<String>,
+    /// The session file.
+    pub path: PathBuf,
+    pub sidecars: Vec<StoredSidecar>,
+    /// Whether a Claude process held the session when it was last indexed;
+    /// reads settle unfinished sub-agents with it.
+    pub activity: SessionActivity,
+    /// The turn index hints the session file was scanned with, by the uuid
+    /// each names: a changed one rescans the turn its record lies in.
+    pub hints: BTreeMap<String, String>,
 }
 
 impl StoredSession {
-    /// The row a fresh neutral read of the session is indexed as.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the session has more turns than an ordinal holds.
-    pub fn from_read(read: &NativeSessionReadResult) -> Result<Self, StoreError> {
-        Ok(Self {
-            session: read.session.clone(),
-            subagents: subagents::index(read),
-            turn_count: u32::try_from(read.turns.len())
-                .map_err(|_| StoreError::CorruptedIndex("too many turns in a session".into()))?,
-            has_user_turn: read.turns.iter().any(|turn| {
-                turn.origin == TurnOrigin::User
-                    || turn
-                        .items
-                        .iter()
-                        .any(|item| matches!(item, AgentItem::UserMessage { .. }))
-            }),
-            newest_message: crate::preview::newest_message(&read.turns),
-        })
-    }
-
     #[must_use]
     pub fn app_thread_id(&self) -> &AppThreadId {
         &self.session.app_thread_id
     }
+}
+
+/// One sub-agent launch a turn holds, before later reports settle it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnDigest {
+    /// The spawning tool call.
+    pub item_id: String,
+    pub agent_id: Option<String>,
+    pub description: String,
+    pub agent_type: Option<String>,
+    pub status: SubagentStatus,
+}
+
+/// What the index derives from one turn when its range changes; it never
+/// holds the turn itself.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnDigest {
+    /// The turn id and range the digest was derived from; an open turn's
+    /// range ends at the checkpoint it was read at. A turn that was open
+    /// reads differently once closed (prompts queued after the last message
+    /// count as delivered only to the open one).
+    pub turn_id: String,
+    pub end_offset: u64,
+    pub open: bool,
+    /// The turn's rows hold no entry: it is not shown.
+    pub empty: bool,
+    /// A person's turn (user origin or a user message).
+    pub user_turn: bool,
+    /// The turn's preview message ([`crate::preview::newest_message`]).
+    pub preview: Option<String>,
+    pub started_at: i64,
+    pub completed_at: Option<i64>,
+    pub spawns: Vec<SpawnDigest>,
+    /// The turn's resources (file changes, attachments); `None` when it has none.
+    pub resources: Option<ResourceData>,
 }
 
 /// The size and modification time a change detector observed for a
@@ -150,18 +227,11 @@ pub struct Observation {
     pub last_modified_ms: i64,
 }
 
-/// What [`ClaudeStore::replace_session`] did.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Replaced {
-    /// The session and its turns were already indexed exactly so.
-    Unchanged,
-    Written,
-}
-
 /// The Claude session index over the shared host index database.
 pub struct ClaudeStore {
     database: Arc<Database>,
     threads: Arc<dyn HostThreadIndex>,
+    segments: SegmentStore,
 }
 
 impl ClaudeStore {
@@ -176,7 +246,19 @@ impl ClaudeStore {
         threads: Arc<dyn HostThreadIndex>,
     ) -> Result<Self, StoreError> {
         attach_derived(&database, &CLAUDE_INDEX_SCHEMA)?;
-        Ok(Self { database, threads })
+        let segments =
+            SegmentStore::attach(database.clone(), threads.clone(), CLAUDE_SEGMENT_TABLES)?;
+        Ok(Self {
+            database,
+            threads,
+            segments,
+        })
+    }
+
+    /// The segmented offset index of Claude's files.
+    #[must_use]
+    pub const fn segments(&self) -> &SegmentStore {
+        &self.segments
     }
 
     /// The indexed session.
@@ -222,75 +304,46 @@ impl ClaudeStore {
         }))
     }
 
-    /// Atomically replaces one session's turns with a fresh neutral read. A
-    /// read identical to the indexed one writes nothing.
+    /// Writes one session's row; returns whether it changed. The thread's
+    /// metadata is published to the companion thread index after a change.
     ///
     /// # Errors
     ///
     /// Returns an error when serialization or the index transaction fails.
-    pub fn replace_session(&self, read: &NativeSessionReadResult) -> Result<Replaced, StoreError> {
-        let session_id = read.session.session_id.as_str();
-        let thread = &read.session.app_thread_id;
-        let stored = StoredSession::from_read(read)?;
-        if self.session(session_id)?.as_ref() == Some(&stored)
-            && self.session_turns(session_id)? == read.turns
-            && self.subagents_unchanged(session_id, read)?
-        {
-            return Ok(Replaced::Unchanged);
+    pub fn put_session(&self, stored: &StoredSession) -> Result<bool, StoreError> {
+        let session_id = stored.session.session_id.as_str();
+        let previous = self.session(session_id)?;
+        if previous.as_ref() == Some(stored) {
+            return Ok(false);
         }
-        let encoded_subagents = read
-            .subagents
-            .iter()
-            .map(|subagent| {
-                Ok((
-                    subagent_key(session_id, &subagent.agent_id),
-                    serde_json::to_vec(&subagent.turns)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, StoreError>>()?;
-        let encoded_turns = read
-            .turns
-            .iter()
-            .map(serde_json::to_vec)
-            .collect::<Result<Vec<_>, _>>()?;
-        let encoded = serde_json::to_vec(&stored)?;
+        let encoded = serde_json::to_vec(stored)?;
         let write = self.database.begin_write()?;
         {
-            let mut sessions = write.open_table(SESSIONS)?;
-            let previous = sessions
-                .get(session_id)?
-                .map(|row| serde_json::from_slice::<StoredSession>(row.value()))
-                .transpose()?;
-            sessions.insert(session_id, encoded.as_slice())?;
+            write
+                .open_table(SESSIONS)?
+                .insert(session_id, encoded.as_slice())?;
             let mut threads = write.open_table(THREAD_SESSIONS)?;
-            if let Some(previous) = previous {
+            if let Some(previous) = &previous {
                 threads
                     .remove(thread_session_key(previous.app_thread_id(), session_id).as_slice())?;
             }
-            threads.insert(thread_session_key(thread, session_id).as_slice(), 1)?;
-            let mut turns = write.open_table(SESSION_TURNS)?;
-            let (start, end) = turn_range(session_id);
-            turns.retain_in(start.as_slice()..=end.as_slice(), |_key, _value| false)?;
-            for (ordinal, turn) in encoded_turns.iter().enumerate() {
-                let ordinal = u32::try_from(ordinal).map_err(|_| {
-                    StoreError::CorruptedIndex("too many turns in a session".into())
-                })?;
-                turns.insert(turn_key(session_id, ordinal).as_slice(), turn.as_slice())?;
-            }
-            let mut subagent_turns = write.open_table(SUBAGENT_TURNS)?;
-            let (start, end) = subagent_range(session_id);
-            subagent_turns.retain_in(start.as_slice()..=end.as_slice(), |_key, _value| false)?;
-            for (key, value) in &encoded_subagents {
-                subagent_turns.insert(key.as_slice(), value.as_slice())?;
-            }
+            threads.insert(
+                thread_session_key(stored.app_thread_id(), session_id).as_slice(),
+                1,
+            )?;
         }
         write.commit()?;
-        self.publish_metadata(thread)?;
-        Ok(Replaced::Written)
+        if let Some(previous) =
+            previous.filter(|previous| previous.app_thread_id() != stored.app_thread_id())
+        {
+            self.publish_metadata(previous.app_thread_id())?;
+        }
+        self.publish_metadata(stored.app_thread_id())?;
+        Ok(true)
     }
 
     /// Replaces the listed facts of an indexed session (title, summary,
-    /// `CodeWide` metadata) without re-reading its turns. Returns whether the
+    /// `CodeWide` metadata) without reading its files. Returns whether the
     /// row changed; `false` as well for a session not indexed yet.
     ///
     /// # Errors
@@ -304,14 +357,7 @@ impl ClaudeStore {
             return Ok(false);
         }
         stored.session = session.clone();
-        let encoded = serde_json::to_vec(&stored)?;
-        let write = self.database.begin_write()?;
-        write
-            .open_table(SESSIONS)?
-            .insert(session.session_id.as_str(), encoded.as_slice())?;
-        write.commit()?;
-        self.publish_metadata(&session.app_thread_id)?;
-        Ok(true)
+        self.put_session(&stored)
     }
 
     /// Every indexed session.
@@ -331,34 +377,32 @@ impl ClaudeStore {
             .collect()
     }
 
-    /// Removes a session Claude's store no longer has.
+    /// Removes a session Claude's store no longer has, with everything
+    /// derived from its files.
     ///
     /// # Errors
     ///
     /// Returns an error when the index transaction fails.
     pub fn remove_session(&self, session_id: &str) -> Result<Option<AppThreadId>, StoreError> {
-        let write = self.database.begin_write()?;
-        let removed = {
-            let mut sessions = write.open_table(SESSIONS)?;
-            let previous = sessions
-                .remove(session_id)?
-                .map(|row| serde_json::from_slice::<StoredSession>(row.value()))
-                .transpose()?;
-            if let Some(previous) = &previous {
-                write
-                    .open_table(THREAD_SESSIONS)?
-                    .remove(thread_session_key(previous.app_thread_id(), session_id).as_slice())?;
-            }
-            let mut turns = write.open_table(SESSION_TURNS)?;
-            let (start, end) = turn_range(session_id);
-            turns.retain_in(start.as_slice()..=end.as_slice(), |_key, _value| false)?;
-            let mut subagent_turns = write.open_table(SUBAGENT_TURNS)?;
-            let (start, end) = subagent_range(session_id);
-            subagent_turns.retain_in(start.as_slice()..=end.as_slice(), |_key, _value| false)?;
-            previous.map(|previous| previous.session.app_thread_id)
+        let Some(previous) = self.session(session_id)? else {
+            return Ok(None);
         };
+        self.segments
+            .reset_file(&agent_index::file_id(&previous.path))?;
+        for sidecar in &previous.sidecars {
+            self.segments
+                .reset_file(&agent_index::file_id(&sidecar.path))?;
+        }
+        self.segments.remove_group(&session_group(session_id))?;
+        let write = self.database.begin_write()?;
+        {
+            write.open_table(SESSIONS)?.remove(session_id)?;
+            write
+                .open_table(THREAD_SESSIONS)?
+                .remove(thread_session_key(previous.app_thread_id(), session_id).as_slice())?;
+        }
         write.commit()?;
-        Ok(removed)
+        Ok(Some(previous.session.app_thread_id))
     }
 
     /// The thread's indexed sessions, oldest first.
@@ -390,112 +434,44 @@ impl ClaudeStore {
         Ok(stored)
     }
 
-    /// The thread's complete indexed history: its sessions' turns, oldest
-    /// session first, one turn per id; `None` when no session of the thread
-    /// is indexed.
+    /// The digest of the turn starting at `start_offset` of `file_id`.
     ///
     /// # Errors
     ///
-    /// Returns an error when the index cannot be read or a row is invalid.
-    pub fn thread_turns(&self, thread: &AppThreadId) -> Result<Option<Vec<AgentTurn>>, StoreError> {
-        let sessions = self.thread_sessions(thread)?;
-        if sessions.is_empty() {
-            return Ok(None);
-        }
-        let mut turns: Vec<AgentTurn> = Vec::new();
-        for session in &sessions {
-            for turn in self.session_turns(&session.session.session_id)? {
-                // A turn interrupted by a lost session reappears at the start
-                // of its replacement session under the same id; the later
-                // session's share wins.
-                turns.retain(|earlier| earlier.turn_id != turn.turn_id);
-                turns.push(turn);
-            }
-        }
-        Ok(Some(turns))
-    }
-
-    /// Whether every indexed sub-agent transcript of the session equals the read's.
-    fn subagents_unchanged(
+    /// Returns an error when the index cannot be read or the digest is invalid.
+    pub fn digest(
         &self,
-        session_id: &str,
-        read: &NativeSessionReadResult,
-    ) -> Result<bool, StoreError> {
-        let transaction = self.database.begin_read()?;
-        let table = transaction.open_table(SUBAGENT_TURNS)?;
-        let (start, end) = subagent_range(session_id);
-        let indexed = table.range(start.as_slice()..=end.as_slice())?.count();
-        if indexed != read.subagents.len() {
-            return Ok(false);
-        }
-        for subagent in &read.subagents {
-            let key = subagent_key(session_id, &subagent.agent_id);
-            let Some(row) = table.get(key.as_slice())? else {
-                return Ok(false);
-            };
-            if serde_json::from_slice::<Vec<AgentTurn>>(row.value())? != subagent.turns {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        file_id: &[u8; 32],
+        start_offset: u64,
+    ) -> Result<Option<TurnDigest>, StoreError> {
+        self.segments
+            .index()
+            .turn_summary_state(file_id, start_offset)
     }
 
-    /// The indexed child thread of a sub-agent (`<parent>:agent:<agent id>`);
-    /// `None` for any other id, an unknown agent or a deleted parent.
+    /// Stores the digest of the turn starting at `start_offset`.
     ///
     /// # Errors
     ///
-    /// Returns an error when the index cannot be read or a row is invalid.
-    pub fn child_thread(&self, thread: &AppThreadId) -> Result<Option<ChildThread>, StoreError> {
-        let Some((parent, agent_id)) = subagents::parse_child_thread_id(thread) else {
-            return Ok(None);
-        };
-        let sessions = self.thread_sessions(&parent)?;
-        let chain = sessions.iter().collect::<Vec<_>>();
-        if crate::catalog::is_deleted(&chain) {
-            return Ok(None);
-        }
-        let parent_settings = crate::catalog::thread_settings(&chain);
-        for stored in &sessions {
-            let Some(subagent) = stored
-                .subagents
-                .iter()
-                .find(|subagent| subagent.agent_id == agent_id)
-            else {
-                continue;
-            };
-            let transaction = self.database.begin_read()?;
-            let table = transaction.open_table(SUBAGENT_TURNS)?;
-            let key = subagent_key(&stored.session.session_id, agent_id);
-            let turns = table
-                .get(key.as_slice())?
-                .map(|row| serde_json::from_slice::<Vec<AgentTurn>>(row.value()))
-                .transpose()?
-                .unwrap_or_default();
-            let cwd = thread_cwd(stored);
-            return Ok(Some(ChildThread {
-                thread_id: thread.clone(),
-                parent,
-                cwd,
-                subagent: subagent.clone(),
-                turns,
-                parent_settings,
-            }));
-        }
-        Ok(None)
+    /// Returns an error when the index transaction fails.
+    pub fn put_digest(
+        &self,
+        file_id: &[u8; 32],
+        start_offset: u64,
+        digest: &TurnDigest,
+    ) -> Result<(), StoreError> {
+        self.segments
+            .index()
+            .put_turn_summary_state(file_id, start_offset, digest)
     }
 
-    fn session_turns(&self, session_id: &str) -> Result<Vec<AgentTurn>, StoreError> {
-        let read = self.database.begin_read()?;
-        let table = read.open_table(SESSION_TURNS)?;
-        let (start, end) = turn_range(session_id);
-        table
-            .range(start.as_slice()..=end.as_slice())?
-            .map(|entry| {
-                let (_key, value) = entry?;
-                Ok(serde_json::from_slice(value.value())?)
-            })
-            .collect()
+    /// Every live turn of `file_id`, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the index cannot be read.
+    pub fn file_turns(&self, file_id: &[u8; 32]) -> Result<Vec<TurnRef>, StoreError> {
+        self.segments.index().turns_asc_from(file_id, 0, usize::MAX)
     }
 
     /// Publishes the thread's working directory and times to the companion
@@ -558,8 +534,19 @@ impl ClaudeStore {
     }
 }
 
+/// The group a session's files merge their facts in.
+#[must_use]
+pub fn session_group(session_id: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"claude-session\0");
+    hash.update(session_id.as_bytes());
+    hash.finalize().into()
+}
+
 /// Where a session's turns run: the `CodeWide` thread's directory, else the session's.
-fn thread_cwd(stored: &StoredSession) -> String {
+#[must_use]
+pub fn thread_cwd(stored: &StoredSession) -> String {
     stored
         .session
         .codewide
@@ -569,25 +556,10 @@ fn thread_cwd(stored: &StoredSession) -> String {
         .unwrap_or_default()
 }
 
-fn subagent_key(session_id: &str, agent_id: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(session_id.len() + 1 + agent_id.len());
-    key.extend_from_slice(session_id.as_bytes());
-    key.push(0);
-    key.extend_from_slice(agent_id.as_bytes());
-    key
-}
-
-fn subagent_range(session_id: &str) -> (Vec<u8>, Vec<u8>) {
-    let mut start = session_id.as_bytes().to_vec();
-    start.push(0);
-    let mut end = start.clone();
-    end.push(u8::MAX);
-    (start, end)
-}
-
 /// When the session started; a store without a creation time sorts it by its
 /// last modification.
-fn session_start(session: &NativeSession) -> i64 {
+#[must_use]
+pub fn session_start(session: &NativeSession) -> i64 {
     session.created_at_ms.unwrap_or(session.last_modified_ms)
 }
 
@@ -597,287 +569,4 @@ fn thread_session_key(thread: &AppThreadId, session_id: &str) -> Vec<u8> {
     key.push(0);
     key.extend_from_slice(session_id.as_bytes());
     key
-}
-
-fn turn_key(session_id: &str, ordinal: u32) -> Vec<u8> {
-    let mut key = Vec::with_capacity(session_id.len() + 5);
-    key.extend_from_slice(session_id.as_bytes());
-    key.push(0);
-    key.extend_from_slice(&ordinal.to_be_bytes());
-    key
-}
-
-fn turn_range(session_id: &str) -> (Vec<u8>, Vec<u8>) {
-    (turn_key(session_id, 0), turn_key(session_id, u32::MAX))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_support::{MemoryThreadIndex, session_read};
-
-    fn open(path: &std::path::Path) -> Result<(ClaudeStore, Arc<MemoryThreadIndex>), StoreError> {
-        let database = companion_host::database::open(path, "test")?;
-        let threads = Arc::new(MemoryThreadIndex::default());
-        Ok((ClaudeStore::attach(database, threads.clone())?, threads))
-    }
-
-    /// A session whose first turn spawned `agent` (still running when
-    /// `running`), with the agent's own transcript.
-    fn read_with_subagent(running: bool) -> NativeSessionReadResult {
-        let mut read = session_read("session-s", "thread-s", 30, &["plan"]);
-        let child = "thread-s:agent:a0001";
-        if let Some(turn) = read.turns.first_mut() {
-            turn.items.insert(
-                1,
-                AgentItem::Subagent {
-                    item_id: agent_core::model::ItemId::from_static("toolu_spawn"),
-                    provenance: None,
-                    agent_thread_id: AppThreadId::parse(child),
-                    agent_type: Some("Explore".into()),
-                    background: true,
-                    description: "Check the build".into(),
-                    model: None,
-                    prompt: "Run the build".into(),
-                    result: None,
-                    status: if running {
-                        agent_core::model::SubagentStatus::Running
-                    } else {
-                        agent_core::model::SubagentStatus::Completed
-                    },
-                },
-            );
-        }
-        let mut sub_turn = crate::test_support::turn("agent", "Run the build", 31);
-        if running {
-            sub_turn.status = agent_core::model::TurnStatus::InProgress;
-            sub_turn.completed_at = None;
-        }
-        read.subagents.push(agent_core::model::NativeSubagent {
-            agent_id: "a0001".into(),
-            model: None,
-            parent_agent_id: None,
-            parent_tool_use_id: Some("toolu_spawn".into()),
-            turns: vec![sub_turn],
-        });
-        read
-    }
-
-    #[test]
-    fn sub_agents_are_child_threads_under_their_parent() -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let (store, threads) = open(&directory.path().join("index.redb"))?;
-        let running = read_with_subagent(true);
-        assert_eq!(store.replace_session(&running)?, Replaced::Written);
-        assert_eq!(store.replace_session(&running)?, Replaced::Unchanged);
-
-        let child_id = AppThreadId::from_static("thread-s:agent:a0001");
-        let child = store.child_thread(&child_id)?.ok_or("child thread")?;
-        assert_eq!(child.parent.as_str(), "thread-s");
-        assert_eq!(child.turns.len(), 1);
-        assert!(child.active_turn().is_some());
-        let provider = agent_core::model::ProviderId::from_static("claude");
-        let thread = child.thread(&provider);
-        assert_eq!(thread.name.as_deref(), Some("Check the build"));
-        assert_eq!(
-            thread.spawn,
-            Some(agent_core::model::ThreadSpawn {
-                parent_thread_id: AppThreadId::from_static("thread-s"),
-                agent_nickname: Some("Check the build".into()),
-                agent_role: Some("Explore".into()),
-            })
-        );
-        assert_eq!(thread.status, agent_core::model::ThreadStatus::Active);
-        // The newest conversation message, not the delegated prompt.
-        assert_eq!(thread.preview, "answer to Run the build");
-
-        let row = threads.metadata(child_id.as_str()).ok_or("child row")?;
-        assert_eq!(row.parent_thread_id.as_deref(), Some("thread-s"));
-        assert_eq!(row.agent_nickname.as_deref(), Some("Check the build"));
-        assert_eq!(row.agent_role.as_deref(), Some("Explore"));
-        assert_eq!(row.cwd, "/work/session-s");
-
-        // The agent finished: the same session re-read updates the child.
-        let finished = read_with_subagent(false);
-        assert_eq!(store.replace_session(&finished)?, Replaced::Written);
-        let child = store.child_thread(&child_id)?.ok_or("child thread")?;
-        assert!(child.active_turn().is_none());
-        assert_eq!(
-            child.thread(&provider).status,
-            agent_core::model::ThreadStatus::Idle
-        );
-
-        assert!(
-            store
-                .child_thread(&AppThreadId::from_static("thread-s:agent:unknown"))?
-                .is_none()
-        );
-        assert!(
-            store
-                .child_thread(&AppThreadId::from_static("thread-s"))?
-                .is_none()
-        );
-        store.remove_session("session-s")?;
-        assert!(store.child_thread(&child_id)?.is_none());
-        Ok(())
-    }
-
-    /// The SDK leaves a session's `cwd` unknown when its first `cwd` lies past
-    /// the head it reads (a large first prompt). The `CodeWide` thread names the
-    /// directory anyway, so the thread and its sub-agents still reach the index.
-    #[test]
-    fn a_session_without_its_own_cwd_still_publishes_the_thread_and_its_sub_agents()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let (store, threads) = open(&directory.path().join("index.redb"))?;
-        let mut read = read_with_subagent(true);
-        read.session.cwd = None;
-        read.session.codewide = Some(agent_core::model::NativeSessionCodewide {
-            created_at: 1,
-            cwd: "/work/codewide".into(),
-            origin: agent_core::model::NativeThreadOrigin::Interactive,
-            presence: agent_core::model::NativeThreadPresence::Listed { archived: false },
-            recency_at: None,
-            settings: agent_core::model::ThreadSettings {
-                model: "claude-opus".into(),
-                effort: None,
-                permission_profile: ":workspace".into(),
-                service_tier: None,
-            },
-            title: agent_core::model::NativeTitleOverride::None,
-            updated_at: 2,
-        });
-        assert_eq!(store.replace_session(&read)?, Replaced::Written);
-        let parent = threads.metadata("thread-s").ok_or("parent row")?;
-        assert_eq!(parent.cwd, "/work/codewide");
-        let child = threads
-            .metadata("thread-s:agent:a0001")
-            .ok_or("child row")?;
-        assert_eq!(child.parent_thread_id.as_deref(), Some("thread-s"));
-        assert_eq!(child.cwd, "/work/codewide");
-        Ok(())
-    }
-
-    #[test]
-    fn reindexing_the_same_read_writes_nothing_and_a_new_read_replaces_turns()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let (store, threads) = open(&directory.path().join("index.redb"))?;
-        let thread = AppThreadId::from_static("thread-a");
-        let first = session_read("session-a", "thread-a", 10, &["one", "two"]);
-        assert_eq!(store.replace_session(&first)?, Replaced::Written);
-        assert_eq!(store.replace_session(&first)?, Replaced::Unchanged);
-        assert_eq!(
-            store.thread_turns(&thread)?.map(|turns| turns.len()),
-            Some(2)
-        );
-        assert_eq!(threads.cwd("thread-a").as_deref(), Some("/work/session-a"));
-
-        let grown = session_read("session-a", "thread-a", 20, &["one"]);
-        assert_eq!(store.replace_session(&grown)?, Replaced::Written);
-        let turns = store.thread_turns(&thread)?.ok_or("indexed thread")?;
-        assert_eq!(turns.len(), 1);
-        assert!(store.is_current(
-            "session-a",
-            Observation {
-                file_size: 20,
-                last_modified_ms: 20_000
-            }
-        )?);
-        assert!(!store.is_current(
-            "session-a",
-            Observation {
-                file_size: 10,
-                last_modified_ms: 10_000
-            }
-        )?);
-
-        assert_eq!(store.remove_session("session-a")?, Some(thread.clone()));
-        assert!(store.thread_turns(&thread)?.is_none());
-        assert!(store.session_ids()?.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn a_thread_concatenates_its_sessions_oldest_first() -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let (store, _threads) = open(&directory.path().join("index.redb"))?;
-        store.replace_session(&session_read("late", "chain", 30, &["third"]))?;
-        store.replace_session(&session_read("early", "chain", 10, &["first", "second"]))?;
-        let turns = store
-            .thread_turns(&AppThreadId::from_static("chain"))?
-            .ok_or("indexed chain")?;
-        assert_eq!(
-            turns
-                .iter()
-                .map(|turn| turn.turn_id.as_str())
-                .collect::<Vec<_>>(),
-            ["early-first", "early-second", "late-third"]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn a_replacement_session_supersedes_the_interrupted_turn_of_a_lost_one()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let directory = tempfile::tempdir()?;
-        let (store, _threads) = open(&directory.path().join("index.redb"))?;
-        let mut lost = session_read("lost", "chain", 10, &["one", "two"]);
-        let mut replacement = session_read("replacement", "chain", 20, &["three"]);
-        // The resent prompt keeps the interrupted turn's id.
-        replacement.turns.insert(0, lost.turns[1].clone());
-        lost.turns[1].status = agent_core::model::TurnStatus::Interrupted;
-        store.replace_session(&lost)?;
-        store.replace_session(&replacement)?;
-        let turns = store
-            .thread_turns(&AppThreadId::from_static("chain"))?
-            .ok_or("indexed chain")?;
-        assert_eq!(
-            turns
-                .iter()
-                .map(|turn| (turn.turn_id.as_str(), turn.status))
-                .collect::<Vec<_>>(),
-            [
-                ("lost-one", agent_core::model::TurnStatus::Completed),
-                ("lost-two", agent_core::model::TurnStatus::Completed),
-                (
-                    "replacement-three",
-                    agent_core::model::TurnStatus::Completed
-                ),
-            ]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn a_logic_version_change_rebuilds_only_claude_tables() -> Result<(), Box<dyn std::error::Error>>
-    {
-        const COMPANION: TableDefinition<&str, u64> = TableDefinition::new("companion_table");
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("index.redb");
-        {
-            let (store, _threads) = open(&path)?;
-            store.replace_session(&session_read("session", "thread", 10, &["one"]))?;
-            let write = store.database.begin_write()?;
-            write.open_table(COMPANION)?.insert("kept", 7)?;
-            write
-                .open_table(META)?
-                .insert(LOGIC_VERSION_KEY, CLAUDE_INDEX_LOGIC_VERSION + 1)?;
-            write.commit()?;
-        }
-        let (store, _threads) = open(&path)?;
-        assert!(store.session_ids()?.is_empty());
-        let read = store.database.begin_read()?;
-        assert_eq!(
-            read.open_table(COMPANION)?
-                .get("kept")?
-                .map(|row| row.value()),
-            Some(7)
-        );
-        assert_eq!(
-            logic_version(&read, LOGIC_VERSION_KEY)?,
-            Some(CLAUDE_INDEX_LOGIC_VERSION)
-        );
-        Ok(())
-    }
 }

@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, type ReactNode } from "react";
+import { forwardRef, useImperativeHandle, useLayoutEffect, type ReactNode } from "react";
 import { View } from "react-native";
 
 interface WebViewMockProps {
@@ -23,7 +23,10 @@ interface WebViewMockHandle {
 
 export const WebView = forwardRef<WebViewMockHandle, WebViewMockProps>(
   function WebViewMock(props, ref): React.JSX.Element {
-    latestWebViewProps = props;
+    // Recorded after render, as a mounted native view would see its props.
+    useLayoutEffect(() => {
+      latestWebViewProps = props;
+    });
     useImperativeHandle(ref, () => ({
       goBack: () => undefined,
       goForward: () => undefined,

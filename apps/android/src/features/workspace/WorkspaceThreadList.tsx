@@ -3,7 +3,6 @@ import type { ThreadSidebarProps } from "../threadList/ThreadSidebarContract";
 import type { useThreadListState } from "../threadList/threadListState";
 import type { useThreadSearch } from "../search/threadSearch";
 import { sidebarListState } from "../threadList/SidebarListFeedback";
-import { desktopThreadSidebarWidth } from "../../presentation/layouts/windowLayout";
 /** Binds the shared list capabilities to their desktop or mobile presentation. */
 export function WorkspaceThreadList({
   archivedThreads,
@@ -11,9 +10,7 @@ export function WorkspaceThreadList({
   changeSidebarFilter,
   changeSidebarMode,
   closeSidebarProject,
-  createSidebarThread,
   desktop,
-  globalVoice,
   loadMoreProjectThreads,
   loadMoreThreads,
   mobileRemoteSearchResource,
@@ -22,6 +19,7 @@ export function WorkspaceThreadList({
   mobileVisibleArchivedThreads,
   mobileVisibleThreads,
   normalizedMobileThreadQuery,
+  openDownloads,
   openGlobalSearch,
   openProjects,
   openSettings,
@@ -48,16 +46,13 @@ export function WorkspaceThreadList({
   toggleListThreadPin,
   toggleListThreadRead,
   unarchiveListThread,
-  viewportWidth,
 }: {
   archivedThreads: ThreadSidebarProps["archivedThreads"];
   archiveListThread: ThreadSidebarProps["onArchive"];
   changeSidebarFilter: ThreadSidebarProps["onFilterChange"];
   changeSidebarMode: ThreadSidebarProps["onModeChange"];
   closeSidebarProject: ThreadSidebarProps["onBackToProjects"];
-  createSidebarThread: ThreadSidebarProps["onNewThread"];
   desktop: boolean;
-  globalVoice: ThreadSidebarProps["globalVoice"];
   loadMoreProjectThreads: ThreadSidebarProps["onLoadMoreProject"];
   loadMoreThreads: ThreadSidebarProps["onLoadMore"];
   mobileRemoteSearchResource: ReturnType<typeof useThreadSearch>["mobileRemoteSearchResource"];
@@ -66,6 +61,7 @@ export function WorkspaceThreadList({
   mobileVisibleArchivedThreads: ThreadSidebarProps["archivedThreads"];
   mobileVisibleThreads: ThreadSidebarProps["threads"];
   normalizedMobileThreadQuery: string;
+  openDownloads: () => void;
   openGlobalSearch: ThreadSidebarProps["onOpenSearch"];
   openProjects: () => void;
   openSettings: () => void;
@@ -92,7 +88,6 @@ export function WorkspaceThreadList({
   toggleListThreadPin: ThreadSidebarProps["onTogglePin"];
   toggleListThreadRead: ThreadSidebarProps["onToggleRead"];
   unarchiveListThread: ThreadSidebarProps["onUnarchive"];
-  viewportWidth: number;
 }): React.JSX.Element {
   return (
     <ThreadListFeature
@@ -112,7 +107,6 @@ export function WorkspaceThreadList({
                         mobileRemoteSearchResource.error,
                       ),
                 filter: sidebarFilter,
-                globalVoice,
                 headerVisible: false,
                 initialOffset: mobileThreadOffset.read(sidebarScopeKey),
                 mode: sidebarMode,
@@ -124,10 +118,10 @@ export function WorkspaceThreadList({
                 onManageProjects: openProjects,
                 onManageTerminals: openTerminals,
                 onModeChange: changeSidebarMode,
-                onNewThread: createSidebarThread,
                 onOffsetChange: (offset) => {
                   mobileThreadOffset.write(sidebarScopeKey, offset);
                 },
+                onOpenDownloads: openDownloads,
                 onOpenProject: openSidebarProject,
                 onOpenSearch: openGlobalSearch,
                 onRefreshAccountRateLimits: refreshThreadListAccountRateLimits,
@@ -147,7 +141,6 @@ export function WorkspaceThreadList({
                 serverScope,
                 threadNavigation,
                 threads: serverThreads,
-                width: desktopThreadSidebarWidth(viewportWidth),
               },
             }
           : {
@@ -156,7 +149,6 @@ export function WorkspaceThreadList({
                 archivedThreads: mobileVisibleArchivedThreads,
                 catalogState: sidebarCatalogState,
                 filter: sidebarFilter,
-                globalVoice,
                 headerVisible: false,
                 initialOffset: mobileThreadOffset.read(sidebarScopeKey),
                 mode: sidebarMode,
@@ -168,10 +160,10 @@ export function WorkspaceThreadList({
                 onManageProjects: openProjects,
                 onManageTerminals: openTerminals,
                 onModeChange: changeSidebarMode,
-                onNewThread: createSidebarThread,
                 onOffsetChange: (offset) => {
                   mobileThreadOffset.write(sidebarScopeKey, offset);
                 },
+                onOpenDownloads: openDownloads,
                 onOpenProject: openSidebarProject,
                 onOpenSearch: openGlobalSearch,
                 onQueryChange: setMobileThreadQuery,

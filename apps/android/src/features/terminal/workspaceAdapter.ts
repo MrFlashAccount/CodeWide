@@ -1,7 +1,9 @@
+import { readTerminalCommand } from "../../data/readTerminalCommand";
 import type {
   ThreadBackgroundTerminalsListResponse,
   ThreadBackgroundTerminalsTerminateResponse,
 } from "@codewide/codex-protocol/v0.155.1/v2";
+import { backgroundTaskInvalidationBus } from "../../data/backgroundTaskInvalidationBus";
 import type {
   BackgroundTerminalValue,
   WorkspaceResourceDatabase,
@@ -85,6 +87,7 @@ export function createTerminalWorkspaceAdapter({
       { processId, threadId },
     );
     if (response.terminated) {
+      backgroundTaskInvalidationBus.changed(connectionId, threadId);
       const key = threadResourceKey(connectionId, threadId);
       const current = getResources().backgroundTerminals.get(key);
       if (current !== undefined) {
@@ -100,7 +103,20 @@ export function createTerminalWorkspaceAdapter({
     }
     return response.terminated;
   };
-  return { listBackgroundTerminals, terminateBackgroundTerminal };
+  return {
+    listBackgroundTerminals,
+    readTerminalCommand: async ({ connectionId, itemId, signal, threadId }) => {
+      const session = getSession(connectionId);
+      if (session === undefined) {
+        throw new Error("Connection is not enabled");
+      }
+      return readTerminalCommand(
+        async (method, params) => rpcAfterAttach<unknown>(session, method, params),
+        { itemId, signal, threadId },
+      );
+    },
+    terminateBackgroundTerminal,
+  };
 }
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : "Remote operation failed";

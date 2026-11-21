@@ -1,7 +1,6 @@
 import {
   File as PierreFile,
   FileDiff,
-  processFile,
   type DiffLineAnnotation,
   type FileContents,
   type FileDiffOptions,
@@ -10,22 +9,17 @@ import {
   type OnDiffLineClickProps,
   type OnLineClickProps,
 } from "@pierre/diffs";
-import {
-  FileTree,
-  themeToTreeStyles,
-  type GitStatusEntry,
-  type TreeThemeInput,
-} from "@pierre/trees";
-import { canonicalPatch } from "./canonicalPatch.web";
+import { createFileNavigation, editorElement as requiredElement } from "./fileNavigation.web";
+import { readRecordedPatch, renderRawPatch } from "./recordedPatch.web";
+import { lineReference, patchLineText, sourceLineText } from "./lineText.web";
 import { materializeBeforeSource as reconstructBeforeSource } from "./materializeRecordedDiff.web";
 
 import {
   CODE_REVIEW_BRIDGE_VERSION,
   type CodeReviewClientEvent,
-  type CodeReviewComposerState,
   type CodeReviewDocument,
-  type CodeReviewFileItem,
   type CodeReviewHostCommand,
+  type CodeReviewInlineComment,
   type CodeReviewViewMode,
   type CodeReviewWorkspaceState,
 } from "../editorBridge";
@@ -36,31 +30,22 @@ import {
   LOADING_CHANGE_STATE,
   type CodeReviewEmptyState,
 } from "../editorEmptyState";
-import type { CodeReviewComment, CodeReviewLineReference } from "../../comments/reviewComment";
+import type { CodeReviewLineReference } from "../../comments/reviewComment";
 
-type AnnotationMetadata =
-  | { body: string; id: string; kind: "comment" }
-  | ({ kind: "composer" } & CodeReviewComposerState);
+/** Every annotation is a comment: the line composer is native, never part of the document. */
+type AnnotationMetadata = { readonly comment: CodeReviewInlineComment };
 type CodeReviewClientPayload = CodeReviewClientEvent extends infer Event
   ? Event extends CodeReviewClientEvent
     ? Omit<Event, "version">
     : never
   : never;
-type ComposerEventTargets = {
-  input: HTMLTextAreaElement;
-  reference: CodeReviewLineReference;
-  submit: HTMLButtonElement;
-  voice: HTMLButtonElement;
-};
 
-const FILE_TREE_OVERSCAN = 4;
 const MATERIALIZED_SOURCE_CACHE_LIMIT = 24;
-const MAX_COMPOSER_HEIGHT_PX = 120;
 
 let latestRequestId = 0;
 let latestHostSequence = 0;
 let currentDocument: CodeReviewDocument | null = null;
-let currentComments: readonly CodeReviewComment[] = [];
+let currentComments: readonly CodeReviewInlineComment[] = [];
 let currentWorkspace: CodeReviewWorkspaceState = {
   compact: false,
   files: [],
@@ -68,12 +53,11 @@ let currentWorkspace: CodeReviewWorkspaceState = {
   selectedPath: null,
   sidebarOpen: false,
 };
-let currentComposer: CodeReviewComposerState | null = null;
+/** The line the native composer is open on; highlighted as its anchor. */
+let currentSelection: CodeReviewLineReference | null = null;
 let currentMode: CodeReviewViewMode = "source";
 let wrapLines = false;
-let tree: FileTree | null = null;
-let treePathToFile = new Map<string, CodeReviewFileItem>();
-let selectedTreePath: string | null = null;
+let showLineNumbers = true;
 let fileRenderer: PierreFile<AnnotationMetadata> | null = null;
 let diffRenderer: FileDiff<AnnotationMetadata> | null = null;
 let activeFileRenderer: PierreFile<AnnotationMetadata> | null = null;
@@ -81,108 +65,36 @@ let activeDiffRenderer: FileDiff<AnnotationMetadata> | null = null;
 let pendingRender: { requestId: number; startedAt: number } | null = null;
 let pendingReveal: CodeReviewLineReference | null = null;
 let revealedReference: CodeReviewLineReference | null = null;
-let composerInput: HTMLTextAreaElement | null = null;
 const materializedBefore = new Map<string, string | null>();
 
-const treeTheme = {
-  colors: {
-    "gitDecoration.addedResourceForeground": "#55c58a",
-    "gitDecoration.deletedResourceForeground": "#f0757b",
-    "gitDecoration.modifiedResourceForeground": "#68cdf2",
-    "input.background": "#181a1e",
-    "input.border": "rgba(255,255,255,.12)",
-    "input.foreground": "#f1f3f5",
-    "list.activeSelectionBackground": "#242a33",
-    "list.activeSelectionForeground": "#f1f3f5",
-    "list.focusBackground": "#242a33",
-    "list.focusOutline": "#78a9ff",
-    "scrollbarSlider.background": "rgba(255,255,255,.18)",
-    "sideBar.background": "#101113",
-    "sideBar.border": "rgba(255,255,255,.12)",
-    "sideBar.foreground": "#f1f3f5",
-    "sideBarSectionHeader.foreground": "#8d939c",
-  },
-  name: "codewide-dark",
-  type: "dark",
-} satisfies TreeThemeInput;
-const treeThemeStyles = themeToTreeStyles(treeTheme);
-const TOUCH_FILE_TREE_CSS = `
-@media (hover: none), (pointer: coarse) {
-  [data-type="item"]:hover:not([data-item-selected="true"]) {
-    background-color: var(--trees-bg);
-    --truncate-marker-background-overlay-color: transparent;
-  }
-
-  [data-type="item"][data-item-focused="true"]::before,
-  [data-type="item"]:focus-visible::before {
-    display: none;
-  }
-
-  [data-item-flattened-subitem]:hover {
-    text-decoration: none;
-  }
-
-  :host(:hover) [data-item-section="spacing-item"] {
-    opacity: 0;
-  }
-}
-`;
-
-const treeHost = requiredElement("tree");
 const treeEmptyHost = requiredElement("tree-empty");
 const previewHost = requiredElement("preview");
 const previewEmptyHost = requiredElement("preview-empty");
 const imageHost = requiredElement("image-preview");
 const imageElement = requiredElement("review-image");
-const workspaceHost = requiredElement("workspace");
+
 const fileHost = document.createElement("div");
 const diffHost = document.createElement("div");
 const patchHost = document.createElement("div");
-const patchFallbackLabel = document.createElement("div");
-const patchRenderers: { host: HTMLElement; renderer: FileDiff<AnnotationMetadata> }[] = [];
+type PatchView = {
+  readonly host: HTMLElement;
+  renderer: FileDiff<AnnotationMetadata> | null;
+};
+const patchViews: PatchView[] = [];
 fileHost.className = "pierre-preview-host";
 diffHost.className = "pierre-preview-host";
 patchHost.className = "pierre-preview-host";
 patchHost.hidden = true;
-patchFallbackLabel.className = "review-patch-fallback-label";
-patchFallbackLabel.textContent = "Recorded edits could not be aligned with the current file";
-patchFallbackLabel.hidden = true;
-patchHost.append(patchFallbackLabel);
 previewHost.replaceChildren(fileHost, diffHost, patchHost, imageHost);
 
-// Pierre reports selection changes, not activation of an already selected file.
-// Its row path attribute is the adapter seam for reopening that file on touch.
-treeHost.addEventListener("click", (event) => {
-  if (!currentWorkspace.compact || !currentWorkspace.sidebarOpen) {
-    return;
-  }
-  for (const target of event.composedPath()) {
-    if (!hasElementDataset(target)) {
-      continue;
-    }
-    const path = target.dataset.itemPath;
-    if (path === undefined) {
-      continue;
-    }
-    const file = treePathToFile.get(path);
-    if (file?.path === currentWorkspace.selectedPath) {
-      post({ path: file.path, requestId: latestRequestId, type: "fileSelect" });
-    }
-    return;
-  }
-});
-
-function hasElementDataset(value: EventTarget): value is HTMLElement {
-  return "dataset" in value;
-}
-
-function requiredElement(id: string): HTMLElement {
-  const element = document.getElementById(id);
-  if (element === null) {
-    throw new Error(`Code review element #${id} is missing`);
-  }
-  return element;
-}
+const updateFileNavigation = createFileNavigation(
+  (path) => {
+    post({ path, requestId: latestRequestId, type: "fileSelect" });
+  },
+  (open) => {
+    post({ open, type: "filesOpen" });
+  },
+);
 
 function post(payload: CodeReviewClientPayload): void {
   window.ReactNativeWebView?.postMessage(
@@ -205,12 +117,12 @@ function receiveHostMessage(data: string): void {
     case "document":
       latestRequestId = parsed.payload.requestId;
       currentDocument = parsed.payload.document;
-      currentComposer = null;
       renderCurrentDocument();
       break;
     case "settings":
       currentMode = parsed.payload.mode;
       wrapLines = parsed.payload.wrapLines;
+      showLineNumbers = parsed.payload.showLineNumbers !== false;
       // Pierre skips rendering when the file and annotations are unchanged.
       // Display-only options are not part of that equality check, so settings
       // changes must explicitly invalidate the fast path.
@@ -223,8 +135,9 @@ function receiveHostMessage(data: string): void {
     case "workspace":
       updateWorkspace(parsed.payload);
       break;
-    case "composer":
-      updateComposer(parsed.payload);
+    case "selection":
+      currentSelection = parsed.payload;
+      highlightSelection();
       break;
     case "reveal":
       pendingReveal = parsed.payload;
@@ -260,128 +173,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isHostCommandName(value: string): boolean {
-  return ["document", "settings", "comments", "workspace", "composer", "reveal"].includes(value);
+  return ["document", "settings", "comments", "workspace", "selection", "reveal"].includes(value);
 }
 
 function updateWorkspace(payload: CodeReviewWorkspaceState): void {
-  const pathsChanged = tree === null || payload.revision !== currentWorkspace.revision;
   currentWorkspace = payload;
-  workspaceHost.dataset.compact = payload.compact ? "true" : "false";
-  workspaceHost.dataset.sidebarOpen = payload.sidebarOpen ? "true" : "false";
-  treePathToFile = new Map(payload.files.map((file) => [file.treePath, file]));
-  treeHost.hidden = payload.files.length === 0;
+  updateFileNavigation(payload);
   setEmptyState(treeEmptyHost, payload.files.length === 0 ? EMPTY_CHANGES_TREE_STATE : null);
-  const instance = ensureTree(payload);
-  if (pathsChanged && tree !== null) {
-    instance.resetPaths(payload.files.map((file) => file.treePath));
-    instance.setGitStatus(gitStatus(payload.files));
-  } else {
-    instance.setGitStatus(gitStatus(payload.files));
-  }
-  selectTreeFile(payload.selectedPath, pathsChanged);
   if (currentDocument === null) {
     renderCurrentDocument();
-  }
-}
-
-function ensureTree(payload: CodeReviewWorkspaceState): FileTree {
-  if (tree !== null) {
-    return tree;
-  }
-  tree = new FileTree({
-    density: "compact",
-    flattenEmptyDirectories: true,
-    gitStatus: gitStatus(payload.files),
-    icons: "complete",
-    initialExpansion: "open",
-    paths: payload.files.map((file) => file.treePath),
-    // Pierre recomputes sticky ancestors on every scroll event. The Changes
-    // tree does not need that desktop affordance, and disabling it keeps the
-    // Android WebView scroll path limited to virtual-window updates.
-    fileTreeSearchMode: "expand-matches",
-    onSelectionChange: (selectedPaths) => {
-      const selected = selectedPaths
-        .map((path) => treePathToFile.get(path))
-        .find((file) => file !== undefined);
-      if (selected === undefined) {
-        return;
-      }
-      selectedTreePath = selected.treePath;
-      if (selected.path === currentWorkspace.selectedPath) {
-        return;
-      }
-      post({ path: selected.path, requestId: latestRequestId, type: "fileSelect" });
-    },
-    overscan: FILE_TREE_OVERSCAN,
-    renderRowDecoration: ({ row }) => {
-      const file = treePathToFile.get(row.path);
-      if (file === undefined) {
-        return null;
-      }
-      if (file.sourceOnly === true) {
-        return { parts: [{ color: "#8b949e", text: "Attachment" }], text: "Attachment" };
-      }
-      if (file.countsAreNet === false) {
-        return null;
-      }
-      return {
-        parts: [
-          { color: "#3fb950", text: `+${String(file.additions)}` },
-          { color: "#f85149", text: ` −${String(file.deletions)}` },
-        ],
-        text: `+${String(file.additions)} −${String(file.deletions)}`,
-      };
-    },
-    search: true,
-    stickyFolders: false,
-    unsafeCSS: TOUCH_FILE_TREE_CSS,
-  });
-  tree.render({ containerWrapper: treeHost });
-  const treeContainer = tree.getFileTreeContainer();
-  if (treeContainer !== undefined) {
-    for (const [property, value] of Object.entries(treeThemeStyles)) {
-      treeContainer.style.setProperty(property, value);
-    }
-  }
-  return tree;
-}
-
-function gitStatus(files: readonly CodeReviewFileItem[]): GitStatusEntry[] {
-  return files.map((file) => ({ path: file.treePath, status: file.status }));
-}
-
-function selectTreeFile(path: string | null, scroll: boolean): void {
-  const instance = tree;
-  if (instance === null) {
-    return;
-  }
-  const nextTreePath = treePathForFile(path);
-  if (nextTreePath === selectedTreePath && !scroll) {
-    return;
-  }
-  selectedTreePath = nextTreePath;
-  for (const selected of instance.getSelectedPaths()) {
-    if (selected !== nextTreePath) {
-      instance.getItem(selected)?.deselect();
-    }
-  }
-  if (nextTreePath === null) {
-    return;
-  }
-  selectTreeItem(instance, nextTreePath, scroll);
-}
-
-function treePathForFile(path: string | null): string | null {
-  return currentWorkspace.files.find((file) => file.path === path)?.treePath ?? null;
-}
-
-function selectTreeItem(instance: FileTree, path: string, scroll: boolean): void {
-  const item = instance.getItem(path);
-  if (item?.isSelected() !== true) {
-    item?.select();
-  }
-  if (scroll) {
-    instance.scrollToPath(path, { focus: false, offset: "nearest" });
   }
 }
 
@@ -548,58 +348,78 @@ function renderRecordedPatches(
   mode: Exclude<CodeReviewViewMode, "source">,
   forceRender: boolean,
 ): void {
-  renderRecordedSource(payload, forceRender);
+  fileHost.hidden = true;
   diffHost.hidden = true;
   patchHost.hidden = false;
-  while (patchRenderers.length > payload.patches.length) {
-    const removed = patchRenderers.pop();
-    removed?.renderer.cleanUp();
-    removed?.host.remove();
-  }
+  patchHost.dataset.wrap = String(wrapLines);
+  activeFileRenderer = null;
+  activeDiffRenderer = null;
+  trimRecordedPatchViews(payload.patches.length);
+  const annotations = diffAnnotations(payload);
   for (const [index, patch] of payload.patches.entries()) {
-    const metadata = processFile(canonicalPatch(payload.path, patch), {
-      cacheKey: `${payload.revision}:recorded:${String(index)}`,
-      throwOnError: true,
-    });
-    if (metadata === undefined) {
-      throw new Error("The recorded patch could not be rendered");
+    const view = recordedPatchViewAt(index);
+    const parsed = readRecordedPatch(
+      payload.path,
+      patch,
+      `${payload.revision}:recorded:${String(index)}`,
+    );
+    if (parsed === null) {
+      view.renderer?.cleanUp();
+      view.renderer = null;
+      renderRawPatch(view.host, patch.diff);
+      continue;
     }
-    let entry = patchRenderers.at(index);
-    if (entry === undefined) {
-      const host = document.createElement("section");
-      patchHost.append(host);
-      entry = { host, renderer: new FileDiff<AnnotationMetadata>(diffOptions(mode)) };
-      patchRenderers.push(entry);
+    if (view.renderer === null) {
+      view.host.replaceChildren();
+      view.renderer = new FileDiff<AnnotationMetadata>(diffOptions(mode));
     }
-    const instance = entry.renderer;
+    const instance = view.renderer;
     instance.setOptions({
       ...diffOptions(mode),
-      onLineNumberClick: (event) => {
+      onLineClick: (event) => {
         activeFileRenderer = null;
         activeDiffRenderer = instance;
-        openComposer(referenceForDiffLine(payload.path, event));
+        const side = diffSide(event);
+        selectLine(
+          lineReference({
+            line: event.lineNumber,
+            path: payload.path,
+            side,
+            text: patchLineText(parsed.text, side, event.lineNumber),
+          }),
+        );
       },
     });
-    activeFileRenderer = null;
     activeDiffRenderer = instance;
     instance.render({
-      containerWrapper: entry.host,
-      fileDiff: metadata,
+      containerWrapper: view.host,
+      fileDiff: parsed.metadata,
       forceRender,
-      lineAnnotations: diffAnnotations(payload),
+      lineAnnotations: annotations,
     });
+  }
+  // Plain text renders synchronously and has no Pierre onPostRender callback.
+  if (activeDiffRenderer === null) {
+    finishRender();
   }
 }
 
-function renderRecordedSource(payload: CodeReviewDocument, forceRender: boolean): void {
-  const showSource =
-    payload.fullFileDiff === true && payload.source !== "" && payload.displayState !== "deleted";
-  patchFallbackLabel.hidden = !showSource;
-  if (showSource) {
-    renderSource(payload, forceRender);
-    return;
+function trimRecordedPatchViews(count: number): void {
+  while (patchViews.length > count) {
+    const removed = patchViews.pop();
+    removed?.renderer?.cleanUp();
+    removed?.host.remove();
   }
-  fileHost.hidden = true;
+}
+
+function recordedPatchViewAt(index: number): PatchView {
+  let view = patchViews.at(index);
+  if (view === undefined) {
+    view = { host: document.createElement("section"), renderer: null };
+    patchHost.append(view.host);
+    patchViews.push(view);
+  }
+  return view;
 }
 
 function ensureFileRenderer(): PierreFile<AnnotationMetadata> {
@@ -615,10 +435,18 @@ function ensureDiffRenderer(): FileDiff<AnnotationMetadata> {
 function fileOptions(): FileOptions<AnnotationMetadata> {
   return {
     disableFileHeader: true,
+    disableLineNumbers: !showLineNumbers,
     lineHoverHighlight: "number",
-    onLineNumberClick: (event: OnLineClickProps) => {
+    onLineClick: (event: OnLineClickProps) => {
       if (currentDocument !== null) {
-        openComposer(referenceForFileLine(currentDocument.path, event.lineNumber));
+        selectLine(
+          lineReference({
+            line: event.lineNumber,
+            path: currentDocument.path,
+            side: "new",
+            text: sourceLineText(currentDocument.source, event.lineNumber),
+          }),
+        );
       }
     },
     onPostRender: () => {
@@ -639,13 +467,14 @@ function diffOptions(
     diffIndicators: "bars",
     diffStyle: mode === "split" ? "split" : "unified",
     disableFileHeader: true,
+    disableLineNumbers: !showLineNumbers,
     expandUnchanged: true,
     hunkSeparators: "simple",
     lineDiffType: "word-alt",
     lineHoverHighlight: "number",
-    onLineNumberClick: (event: OnDiffLineClickProps) => {
+    onLineClick: (event: OnDiffLineClickProps) => {
       if (currentDocument !== null) {
-        openComposer(referenceForDiffLine(currentDocument.path, event));
+        selectLine(referenceForDiffLine(currentDocument, event));
       }
     },
     onPostRender: () => {
@@ -655,10 +484,16 @@ function diffOptions(
     renderAnnotation,
     stickyHeader: false,
     themeType: "dark",
+    // WebView 124 crashes when painting Pierre's relative rgb() word backgrounds.
+    unsafeCSS: `:host {
+      --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--review-green) 32%, var(--review-canvas));
+      --diffs-bg-deletion-emphasis-override: color-mix(in srgb, var(--review-red) 32%, var(--review-canvas));
+    }`,
   };
 }
 
 function finishRender(): void {
+  revealPendingLine(activeFileRenderer ?? activeDiffRenderer);
   const pending = pendingRender;
   if (pending === null || pending.requestId !== latestRequestId) {
     return;
@@ -695,69 +530,40 @@ function rememberMaterialized(revision: string, source: string | null): void {
   }
 }
 
-function referenceForFileLine(path: string, line: number): CodeReviewLineReference {
-  return { coordinate: "file", line, path, side: "new" };
-}
-
-function referenceForDiffLine(path: string, event: OnDiffLineClickProps): CodeReviewLineReference {
-  return {
-    coordinate: "file",
+/** A line of the before/after diff, quoting its text from that side's complete file. */
+function referenceForDiffLine(
+  payload: CodeReviewDocument,
+  event: OnDiffLineClickProps,
+): CodeReviewLineReference {
+  const side = diffSide(event);
+  const source = side === "old" ? materializeBeforeSource(payload) : payload.source;
+  return lineReference({
     line: event.lineNumber,
-    path,
-    side: event.annotationSide === "deletions" ? "old" : "new",
-  };
+    path: payload.path,
+    side,
+    text: sourceLineText(source, event.lineNumber),
+  });
 }
 
-function openComposer(reference: CodeReviewLineReference): void {
-  const same = currentComposer !== null && sameReference(currentComposer.reference, reference);
-  currentComposer = {
-    draft: same ? (currentComposer?.draft ?? "") : "",
-    reference,
-    voiceError: null,
-    voicePermissionGranted: false,
-    voicePhase: "idle",
-    voiceRetryAvailable: false,
-  };
-  post({ reference, requestId: latestRequestId, type: "lineTap" });
-  refreshAnnotations();
+function diffSide(event: OnDiffLineClickProps): CodeReviewLineReference["side"] {
+  return event.annotationSide === "deletions" ? "old" : "new";
 }
 
-function updateComposer(payload: CodeReviewComposerState | null): void {
-  const previous = currentComposer;
-  currentComposer = payload;
-  const input = composerInput;
-  if (
-    payload !== null &&
-    previous !== null &&
-    input !== null &&
-    sameReference(payload.reference, previous.reference)
-  ) {
-    updateComposerDraft(input, payload.draft);
-    if (sameComposerPresentation(payload, previous)) {
-      return;
-    }
-  }
-  refreshAnnotations();
-}
-
-function updateComposerDraft(input: HTMLTextAreaElement, draft: string): void {
-  if (input.value === draft) {
+/** A tapped line becomes the composer's anchor at once; the native host then opens its composer. */
+function selectLine(reference: CodeReviewLineReference): void {
+  if (window.getSelection()?.isCollapsed === false) {
     return;
   }
-  input.value = draft;
-  resizeComposerInput(input);
+  currentSelection = reference;
+  post({ reference, requestId: latestRequestId, type: "lineTap" });
+  highlightSelection();
 }
 
-function sameComposerPresentation(
-  left: CodeReviewComposerState,
-  right: CodeReviewComposerState,
-): boolean {
-  return (
-    left.voicePhase === right.voicePhase &&
-    left.voicePermissionGranted === right.voicePermissionGranted &&
-    left.voiceRetryAvailable === right.voiceRetryAvailable &&
-    left.voiceError === right.voiceError
-  );
+function highlightSelection(): void {
+  const active = activeFileRenderer ?? activeDiffRenderer;
+  if (active !== null) {
+    selectPreviewLine(active);
+  }
 }
 
 function refreshAnnotations(): void {
@@ -766,39 +572,45 @@ function refreshAnnotations(): void {
   if (document === null || active === null) {
     return;
   }
-  if (activeFileRenderer !== null) {
-    activeFileRenderer.setLineAnnotations(fileAnnotations(document));
+  if (patchHost.hidden === false) {
+    refreshPatchAnnotations(document);
+  } else {
+    activeFileRenderer?.setLineAnnotations(fileAnnotations(document));
+    activeDiffRenderer?.setLineAnnotations(diffAnnotations(document));
+    active.rerender();
   }
-  if (activeDiffRenderer !== null) {
-    activeDiffRenderer.setLineAnnotations(diffAnnotations(document));
-  }
-  active.rerender();
   selectPreviewLine(active);
 }
 
+function refreshPatchAnnotations(payload: CodeReviewDocument): void {
+  const annotations = diffAnnotations(payload);
+  for (const { renderer } of patchViews) {
+    if (renderer !== null) {
+      renderer.setLineAnnotations(annotations);
+      renderer.rerender();
+    }
+  }
+}
+
+/** Highlights the composer's line, else the last revealed line of this document. */
 function selectPreviewLine(
   instance: PierreFile<AnnotationMetadata> | FileDiff<AnnotationMetadata>,
 ): void {
-  if (currentComposer === null) {
-    const reveal = revealedReference?.path === currentDocument?.path ? revealedReference : null;
-    instance.setSelectedLines(
-      reveal === null
-        ? null
-        : {
-            end: reveal.line,
-            side: reveal.side === "old" ? "deletions" : "additions",
-            start: reveal.line,
-          },
-      { notify: false },
-    );
-    return;
-  }
+  const path = currentDocument?.path;
+  const selected =
+    currentSelection?.path === path
+      ? currentSelection
+      : revealedReference?.path === path
+        ? revealedReference
+        : null;
   instance.setSelectedLines(
-    {
-      end: currentComposer.reference.line,
-      side: currentComposer.reference.side === "old" ? "deletions" : "additions",
-      start: currentComposer.reference.line,
-    },
+    selected === null
+      ? null
+      : {
+          end: selected.line,
+          side: selected.side === "old" ? "deletions" : "additions",
+          start: selected.line,
+        },
     { notify: false },
   );
 }
@@ -810,48 +622,37 @@ function revealPendingLine(
     return;
   }
   const reveal = pendingReveal;
-  pendingReveal = null;
-  instance.setSelectedLines(
-    {
-      end: reveal.line,
-      side: reveal.side === "old" ? "deletions" : "additions",
-      start: reveal.line,
-    },
-    { notify: false },
-  );
   requestAnimationFrame(() => {
-    const host = currentMode === "source" ? fileHost : diffHost;
-    const candidates = host.querySelectorAll<HTMLElement>(
-      `[data-column-number="${String(reveal.line)}"]`,
-    );
-    if (candidates.length === 0) {
+    if (pendingReveal !== reveal || currentDocument?.path !== reveal.path) {
       return;
     }
-    const target =
-      reveal.side === "old" ? candidates.item(0) : candidates.item(candidates.length - 1);
-    target.scrollIntoView({ block: "center", inline: "nearest" });
+    const host =
+      patchHost.hidden === false ? patchHost : currentMode === "source" ? fileHost : diffHost;
+    if (scrollToReference(host, reveal)) {
+      pendingReveal = null;
+    }
   });
+}
+
+function scrollToReference(host: HTMLElement, reveal: CodeReviewLineReference): boolean {
+  const opposite = reveal.side === "old" ? "change-addition" : "change-deletion";
+  const selector = `[data-column-number="${String(reveal.line)}"]:not([data-line-type="${opposite}"])`;
+  for (const content of host.querySelectorAll("diffs-container")) {
+    const target = content.shadowRoot?.querySelector(selector) ?? null;
+    if (target !== null) {
+      target.scrollIntoView({ block: "center", inline: "nearest" });
+      return true;
+    }
+  }
+  return false;
 }
 
 function fileAnnotations(payload: CodeReviewDocument): LineAnnotation<AnnotationMetadata>[] {
   const annotations: LineAnnotation<AnnotationMetadata>[] = [];
   for (const comment of currentComments) {
     if (comment.path === payload.path && comment.side === "new") {
-      annotations.push({
-        lineNumber: comment.line,
-        metadata: { body: comment.body, id: comment.id, kind: "comment" },
-      });
+      annotations.push({ lineNumber: comment.line, metadata: { comment } });
     }
-  }
-  if (
-    currentComposer !== null &&
-    currentComposer.reference.path === payload.path &&
-    currentComposer.reference.side === "new"
-  ) {
-    annotations.push({
-      lineNumber: currentComposer.reference.line,
-      metadata: { kind: "composer", ...currentComposer },
-    });
   }
   return annotations;
 }
@@ -862,202 +663,47 @@ function diffAnnotations(payload: CodeReviewDocument): DiffLineAnnotation<Annota
     if (comment.path === payload.path) {
       annotations.push({
         lineNumber: comment.line,
-        metadata: { body: comment.body, id: comment.id, kind: "comment" },
+        metadata: { comment },
         side: comment.side === "old" ? "deletions" : "additions",
       });
     }
   }
-  if (currentComposer !== null && currentComposer.reference.path === payload.path) {
-    annotations.push({
-      lineNumber: currentComposer.reference.line,
-      metadata: { kind: "composer", ...currentComposer },
-      side: currentComposer.reference.side === "old" ? "deletions" : "additions",
-    });
-  }
   return annotations;
 }
 
+/**
+ * A comment under its line. A pending one keeps its text in place with the
+ * shimmer; a failed one stops shimmering and shows the owner's reason below.
+ */
 function renderAnnotation(
   annotation: LineAnnotation<AnnotationMetadata> | DiffLineAnnotation<AnnotationMetadata>,
-): HTMLElement | undefined {
-  const metadata = annotation.metadata;
-  if (metadata.kind === "comment") {
-    const comment = document.createElement("div");
-    comment.className = "review-comment";
-    comment.textContent = metadata.body;
-    return comment;
+): HTMLElement {
+  const { comment } = annotation.metadata;
+  const root = document.createElement(comment.editable === true ? "button" : "div");
+  if (comment.editable === true) {
+    root.setAttribute("aria-label", "Edit comment: " + comment.body);
+    root.onclick = (event) => {
+      event.stopPropagation();
+      post({ id: comment.id, requestId: latestRequestId, type: "commentTap" });
+    };
   }
-  return createComposer(metadata);
-}
-
-function createComposer(spec: CodeReviewComposerState): HTMLElement {
-  const root = document.createElement("div");
-  root.className = "review-composer";
-  const row = document.createElement("div");
-  row.className = "review-composer-row";
-  const input = createComposerInput(spec.draft);
-  const voice = createVoiceButton(spec);
-  const submit = composerButton("send", "Add line comment");
-  submit.classList.add("is-submit");
-  bindComposerEvents({ input, reference: spec.reference, submit, voice });
-  row.append(input, voice, submit);
-  root.append(row);
-  appendVoiceError(root, spec.voiceError);
-  requestAnimationFrame(() => {
-    resizeComposerInput(input);
-    input.focus({ preventScroll: true });
-    input.setSelectionRange(input.value.length, input.value.length);
-    root.scrollIntoView({ block: "nearest", inline: "nearest" });
-  });
+  root.className = "review-comment";
+  root.dataset.state = comment.state;
+  const body = document.createElement("div");
+  body.className = "review-comment-body";
+  body.textContent = comment.body;
+  root.append(body);
+  if (comment.state === "pending") {
+    root.setAttribute("aria-busy", "true");
+  }
+  if (comment.state === "failed") {
+    const error = document.createElement("div");
+    error.className = "review-comment-error";
+    error.setAttribute("role", "alert");
+    error.textContent = comment.error;
+    root.append(error);
+  }
   return root;
-}
-
-function createComposerInput(draft: string): HTMLTextAreaElement {
-  const input = document.createElement("textarea");
-  composerInput = input;
-  input.className = "review-composer-input";
-  input.placeholder = "Comment on this line…";
-  input.rows = 1;
-  input.value = draft;
-  input.setAttribute("aria-label", "Comment on this line");
-  return input;
-}
-
-function createVoiceButton(spec: CodeReviewComposerState): HTMLButtonElement {
-  const button = composerButton(voiceButtonIcon(spec), voiceButtonLabel(spec));
-  applyVoiceButtonState(button, spec);
-  return button;
-}
-
-function voiceButtonIcon(
-  spec: CodeReviewComposerState,
-): "loading" | "microphone" | "retry" | "stop" {
-  if (spec.voiceRetryAvailable) {
-    return "retry";
-  }
-  if (spec.voicePhase === "starting" || spec.voicePhase === "finishing") {
-    return "loading";
-  }
-  return spec.voicePhase === "idle" ? "microphone" : "stop";
-}
-
-function voiceButtonLabel(spec: CodeReviewComposerState): string {
-  if (spec.voiceRetryAvailable) {
-    return "Retry voice comment";
-  }
-  return spec.voicePhase === "idle" ? "Record voice comment" : "Stop voice comment";
-}
-
-function applyVoiceButtonState(button: HTMLButtonElement, spec: CodeReviewComposerState): void {
-  if (spec.voicePhase !== "idle") {
-    button.classList.add("is-recording");
-  }
-  if (spec.voicePhase === "idle" && !spec.voiceRetryAvailable && !spec.voicePermissionGranted) {
-    button.classList.add("needs-permission");
-    button.setAttribute("aria-label", "Allow microphone access");
-  }
-  if (spec.voicePhase === "starting" || spec.voicePhase === "finishing") {
-    button.classList.add("is-pending");
-  }
-}
-
-function bindComposerEvents({ input, reference, submit, voice }: ComposerEventTargets): void {
-  const syncDraft = () => {
-    if (currentComposer !== null && sameReference(currentComposer.reference, reference)) {
-      currentComposer = { ...currentComposer, draft: input.value };
-    }
-    submit.disabled = input.value.trim() === "";
-    resizeComposerInput(input);
-    post({
-      draft: input.value,
-      reference,
-      requestId: latestRequestId,
-      selectionEnd: input.selectionEnd,
-      selectionStart: input.selectionStart,
-      type: "draftChanged",
-    });
-  };
-  input.addEventListener("input", syncDraft);
-  input.addEventListener("select", syncDraft);
-  input.addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      submit.click();
-    }
-  });
-  voice.addEventListener("click", () => {
-    syncDraft();
-    post({
-      draft: input.value,
-      reference,
-      requestId: latestRequestId,
-      selectionEnd: input.selectionEnd,
-      selectionStart: input.selectionStart,
-      type: "voiceAction",
-    });
-  });
-  submit.addEventListener("click", () => {
-    const draft = input.value.trim();
-    if (draft === "") {
-      return;
-    }
-    post({ draft, reference, requestId: latestRequestId, type: "commentSubmit" });
-    currentComposer = null;
-    composerInput = null;
-    refreshAnnotations();
-  });
-}
-
-function appendVoiceError(root: HTMLElement, message: string | null): void {
-  if (message === null) {
-    return;
-  }
-  const error = document.createElement("div");
-  error.className = "review-composer-error";
-  error.textContent = message;
-  root.append(error);
-}
-
-function resizeComposerInput(input: HTMLTextAreaElement): void {
-  input.style.height = "0";
-  input.style.height = `${String(Math.min(input.scrollHeight, MAX_COMPOSER_HEIGHT_PX))}px`;
-}
-
-function composerButton(
-  icon: "microphone" | "retry" | "send" | "stop" | "loading",
-  label: string,
-): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "review-composer-button";
-  button.setAttribute("aria-label", label);
-  button.innerHTML = composerIcon(icon);
-  return button;
-}
-
-function composerIcon(icon: "microphone" | "retry" | "send" | "stop" | "loading"): string {
-  if (icon === "loading") {
-    return '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-8-8"/></svg>';
-  }
-  if (icon === "send") {
-    return '<svg viewBox="0 0 24 24"><path d="M5 12l7-7 7 7M12 5v14"/></svg>';
-  }
-  if (icon === "retry") {
-    return '<svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0111.8-2.2L20 11M4 13l2.1 4.2A7 7 0 0017.9 15"/></svg>';
-  }
-  if (icon === "stop") {
-    return '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>';
-  }
-  return '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0012 0M12 17v4M9 21h6"/></svg>';
-}
-
-function sameReference(left: CodeReviewLineReference, right: CodeReviewLineReference): boolean {
-  return (
-    left.path === right.path &&
-    left.line === right.line &&
-    left.side === right.side &&
-    (left.coordinate ?? "file") === (right.coordinate ?? "file")
-  );
 }
 
 declare global {
@@ -1080,7 +726,6 @@ function startEditor(): void {
   window.addEventListener("message", receiveWindowMessage);
   document.addEventListener("message", receiveDocumentMessage);
   window.addEventListener("beforeunload", () => {
-    tree?.cleanUp();
     fileRenderer?.cleanUp();
     diffRenderer?.cleanUp();
   });

@@ -109,6 +109,35 @@ class PortForwardInventoryTest {
   }
 
   @Test
+  fun portsBeyondCapacityStayUnforwardedWithoutFailingTheInventory() {
+    val fixture = InventoryFixture()
+    val inventory = (0 until 81).map { index ->
+      PortForwardInventoryEntry(3000 + index, index.toString(16).padStart(64, '0'), "Port $index", true)
+    }
+
+    val failures = fixture.reconcile(inventory)
+
+    assertTrue(failures.isEmpty())
+    assertEquals(64, fixture.store.list().size)
+    assertEquals((3000 until 3064).toList(), fixture.store.list().map { it.remotePort })
+    fixture.reconcile(inventory.drop(1))
+    assertEquals((3001 until 3065).toList(), fixture.store.list().map { it.remotePort }.sorted())
+  }
+
+  @Test
+  fun oneFailingPortNeverStopsTheOthersFromApplying() {
+    val fixture = InventoryFixture(failingPorts = setOf(3000))
+    val failures = fixture.reconcile(listOf(
+      PortForwardInventoryEntry(3000, key, "Broken", true),
+      PortForwardInventoryEntry(3001, "b".repeat(64), "Dev", true),
+    ))
+
+    assertEquals(1, failures.size)
+    assertEquals(listOf(3001), fixture.store.list().map { it.remotePort })
+    assertEquals(1, fixture.running.size)
+  }
+
+  @Test
   fun malformedScanIsRejectedBeforeReconciliation() {
     val row = JSONObject().put("port", 3000).put("forwardingKey", key)
       .put("name", "Dev").put("defaultForwardingEnabled", true)
@@ -133,7 +162,10 @@ class PortForwardInventoryTest {
   }
 }
 
-private class InventoryFixture(val policies: PortForwardPolicies = PortForwardPolicies()) {
+private class InventoryFixture(
+  val policies: PortForwardPolicies = PortForwardPolicies(),
+  private val failingPorts: Set<Int> = emptySet(),
+) {
   val store = NativePortForwardStore()
   val running = mutableSetOf<String>()
   val unavailable = mutableSetOf<String>()
@@ -142,6 +174,7 @@ private class InventoryFixture(val policies: PortForwardPolicies = PortForwardPo
   private val reconciler = PortForwardInventoryReconciler(
     store, policies::preference,
     { connectionId, entry, existing, preference ->
+      check(entry.port !in failingPorts) { "Port forward could not be created" }
       val id = existing?.id ?: "forward-${++sequence}"
       store.upsert(CurrentPortForward(id, connectionId, entry.label, entry.port, null,
         entry.serviceKey, preference, false, 1))

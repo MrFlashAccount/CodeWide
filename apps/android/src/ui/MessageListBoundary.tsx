@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useEvent } from "../react/useEvent";
 import { colors, radii, spacing, touchTarget, typeScale } from "../theme";
+import { surfaceToneCanvasColor, useSurfaceTone } from "./surfaceTone";
 
 const SKELETON_DELAY_MS = 200;
 
@@ -27,8 +28,9 @@ export function MessageListBoundary(props: MessageListBoundaryProps): ReactNode 
   }
   const contentMounted = props.state.status === "positioning" || props.state.status === "ready";
   const contentVisible = props.state.status === "ready";
+  // Transparent: the transcript shows its host's canvas, so a recessed pane has no inner surface.
   return (
-    <View style={styles.boundary}>
+    <View style={styles.boundary} testID="message-list-boundary">
       <View
         accessibilityElementsHidden={!contentVisible}
         importantForAccessibility={contentVisible ? "auto" : "no-hide-descendants"}
@@ -46,6 +48,7 @@ export function MessageListBoundary(props: MessageListBoundaryProps): ReactNode 
 }
 
 function MessageListPending({ contentInsets }: Pick<MessageListBoundaryProps, "contentInsets">) {
+  const canvas = surfaceToneCanvasColor(useSurfaceTone());
   const [visible, setVisible] = useState(false);
   const reveal = useEvent(() => {
     setVisible(true);
@@ -60,7 +63,7 @@ function MessageListPending({ contentInsets }: Pick<MessageListBoundaryProps, "c
   return (
     <View
       accessibilityLabel={visible ? "Loading messages" : undefined}
-      style={styles.pending}
+      style={[styles.pending, { backgroundColor: canvas }]}
       testID="message-list-pending-overlay"
     >
       {visible ? <MessageListSkeleton contentInsets={contentInsets} /> : null}
@@ -131,7 +134,6 @@ const styles = StyleSheet.create({
     width: "88%",
   },
   boundary: {
-    backgroundColor: colors.conversationSurface,
     flex: 1,
   },
   content: {
@@ -159,8 +161,8 @@ const styles = StyleSheet.create({
     borderRadius: radii.small,
     height: spacing.sm,
   },
+  // Opaque in the host's canvas color so the hidden transcript never shows through.
   pending: {
-    backgroundColor: colors.conversationSurface,
     bottom: 0,
     left: 0,
     position: "absolute",

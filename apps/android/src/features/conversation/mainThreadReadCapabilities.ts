@@ -13,6 +13,7 @@ export type MainThreadReadCapabilities = {
   composerState: ThreadUiStateRead;
   currentOutcome: ThreadCurrentOutcome | null;
   currentUsage: TurnUsageProjection | null;
+  detailCursor?: number;
   historyActivityModel: ThreadHistoryModel | null;
   historyActivityResourceId: string | null;
   historyRestoreReady: boolean;

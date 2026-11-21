@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import type { ThreadForkBoundary } from "../../data/thread-fork";
 import { useEvent } from "../../react/useEvent";
 import { useConversationState } from "../../ui/use-conversation-scope";
@@ -26,10 +27,17 @@ export type ForkTargetPicker = {
 /** Binds the sheet to one conversation activation. */
 export function useForkTargetPicker(composerScope: string): ForkTargetPicker {
   const [request, setRequest] = useConversationState<ForkRequest | null>(composerScope, () => null);
+  const generation = useRef(0);
   const openFork = useEvent((boundary: ThreadForkBoundary, readOffer: ReadForkOffer) => {
-    setRequest({ boundary, offer: readOffer() });
+    const current = ++generation.current;
+    readOffer((offer) => {
+      if (generation.current === current) {
+        setRequest({ boundary, offer });
+      }
+    });
   });
   const closeFork = useEvent(() => {
+    generation.current += 1;
     setRequest(null);
   });
   return { closeFork, openFork, request };

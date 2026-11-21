@@ -9,6 +9,7 @@ import type { Observable } from "@legendapp/state";
 import { useSelector } from "@legendapp/state/react";
 import { View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import type { ThreadCatalogControls } from "../../../data/threadCatalogControls";
 import { readThreadAgent } from "../../../data/threadAgent";
 import type { LoadTurnControls, TurnControlsValue } from "../../../data/turn-controls-types";
 import { useTurnControlsRow } from "../../../data/use-workspace-resource-row";
@@ -16,7 +17,11 @@ import type { WorkspaceResourceDatabase } from "../../../data/workspace-resource
 import { useAsyncResource } from "../../../rendering/async-resource-store";
 import { colors, iconSize } from "../../../theme";
 import { InlineIcon } from "../../../ui/InlineIcon";
-import { fastServiceTier, isFastServiceTier } from "../../../ui/modelServiceTier";
+import {
+  fastServiceTier,
+  isFastServiceTier,
+  serviceTiersMatch,
+} from "../../../ui/modelServiceTier";
 import { modelEffortLabel } from "../../../ui/modelEffortPresentation";
 import { ProviderIcon } from "../../../ui/ProviderIcon";
 import { ComposerContextLabel } from "../../../ui/ResourceContextChip";
@@ -40,9 +45,11 @@ import { providerScopedControls } from "./providerScopedControls";
 
 /** Props of the composer's model and access chips. */
 export type ComposerControlChipsProps = {
+  catalogControls?: ThreadCatalogControls | null;
   /** The settings owner's state; `null` on a read-only surface without settings commands. */
   controls$: Observable<ComposerControlsState> | null;
   cwd: string;
+  detailCursor?: number;
   error: string | null;
   load?: LoadTurnControls;
   newChat: boolean;
@@ -81,9 +88,24 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
     resourceId,
     resources,
   } = props;
+  const detailExecution =
+    remoteThread === null || remoteThread === undefined
+      ? null
+      : projectedThreadExecutionSettings(remoteThread);
+  const catalogRow = props.catalogControls ?? null;
+  const listed =
+    !newChat &&
+    catalogRow !== null &&
+    (detailExecution === null || catalogRow.cursor > (props.detailCursor ?? 0))
+      ? catalogRow
+      : null;
+  const serverExecution = displayExecution(listed, detailExecution);
+  const knownThreadModel = serverExecution?.model ?? null;
   const resource = useTurnControlsRow(resources, resourceId);
   useAsyncResource<TurnControlsValue>(
-    load === undefined || resourceId === null ? null : "conversation-turn-controls",
+    load === undefined || resourceId === null || (!newChat && knownThreadModel !== null)
+      ? null
+      : "conversation-turn-controls",
     resourceId ?? "inactive",
     async () => (load === undefined ? EMPTY_TURN_CONTROLS : load(cwd)),
   );
@@ -94,12 +116,10 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
     load !== undefined &&
     (resource === null || (resource.status === "loading" && resource.value === null));
   const refreshing = resource?.status === "loading" || resource?.status === "refreshing";
-  const pending = load !== undefined && (resource === null || refreshing);
+  const pending =
+    load !== undefined &&
+    (newChat ? resource === null || refreshing : (remoteThread ?? null) === null);
   const effectiveError = error ?? resource?.error ?? null;
-  const serverExecution =
-    remoteThread === null || remoteThread === undefined
-      ? null
-      : projectedThreadExecutionSettings(remoteThread);
   const view = newChat
     ? newChatControlsView(controls, {
         effort: props.selectedEffort,
@@ -116,18 +136,20 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
   // The server names the model it runs; a locally chosen model is named by the catalog.
   const serverModelLabel =
     serverExecution !== null && view.model.value === serverExecution.model
-      ? (serverExecution.modelLabel ?? null)
+      ? (serverExecution.modelLabel ??
+        (catalogRow?.model === serverExecution.model ? catalogRow.modelLabel : null))
       : null;
+  const displayedModel = view.model.value;
+  const displayedEffort = view.effort.value;
   const modelLabel =
     serverModelLabel ??
     view.modelEntry?.label ??
-    view.model.value ??
+    displayedModel ??
     (pending ? "Loading model…" : "Model not confirmed");
   const modelNameAndEffort =
-    view.effort.value === null
-      ? modelLabel
-      : `${modelLabel} · ${modelEffortLabel(view.effort.value)}`;
-  const modelProvider = view.modelEntry?.provider ?? null;
+    displayedEffort === null ? modelLabel : `${modelLabel} · ${modelEffortLabel(displayedEffort)}`;
+  const modelProvider =
+    view.modelEntry?.provider ?? readThreadAgent(remoteThread)?.provider ?? null;
   const modelIcon =
     modelProvider === null ? (
       <InlineIcon color={colors.textMuted} name="sparkles-outline" role="label" />
@@ -135,12 +157,28 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
       <ProviderIcon provider={modelProvider} />
     );
   // A choice shimmers until the server answers it.
+  const modelLoading = initialLoading && (newChat || displayedModel === null);
   const modelTextPending =
-    initialLoading || view.model.pending || view.effort.pending || view.serviceTier.pending;
+    modelLoading || view.model.pending || view.effort.pending || view.serviceTier.pending;
   const fastTier = fastServiceTier(view.modelEntry?.serviceTiers);
-  const fast = fastTier !== undefined && isFastServiceTier(view.serviceTier.value, fastTier);
-  const permissionLabel = permissionsDisplayLabel(view.permissions.value, serverExecution, pending);
-  const modelText = initialLoading ? "Loading model…" : modelNameAndEffort;
+  const fast =
+    view.modelEntry === undefined
+      ? serviceTiersMatch("fast", view.serviceTier.value)
+      : fastTier !== undefined && isFastServiceTier(view.serviceTier.value, fastTier);
+  const listedPermission = listed?.permissions ?? null;
+  const access = serverExecution ?? (listed === null ? null : displayAccess(listed, null));
+  const accessKnown =
+    view.permissions.value.kind === "profile" ||
+    listedPermission !== null ||
+    (access?.approvalPolicy ?? null) !== null ||
+    (access?.sandboxPolicy ?? null) !== null;
+  const accessLoading = initialLoading && (newChat || (!accessKnown && pending));
+  const permissionLabel =
+    view.permissions.value.kind === "legacy" && listedPermission !== null
+      ? permissionProfileLabel(listedPermission)
+      : permissionsDisplayLabel(view.permissions.value, access, pending);
+
+  const modelText = modelLoading ? "Loading model…" : modelNameAndEffort;
   const modelTrigger = (
     <>
       {modelIcon}
@@ -152,12 +190,12 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
       {fast && <Ionicons color={colors.text} name="flash" size={iconSize.inline} />}
     </>
   );
-  const permissionsText = initialLoading ? "Loading access…" : permissionLabel;
+  const permissionsText = accessLoading ? "Loading access…" : permissionLabel;
   const permissionsTrigger = (
     <>
       <InlineIcon color={colors.textMuted} name="shield-checkmark-outline" role="label" />
       <ComposerContextLabel
-        loading={initialLoading || view.permissions.pending}
+        loading={accessLoading || view.permissions.pending}
         testID="composer-permissions-label"
         text={permissionsText}
       />
@@ -176,9 +214,9 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
       ) : (
         <ModelThinkingMenu
           accessibilityLabel={
-            initialLoading
+            modelLoading
               ? "Loading model"
-              : `Model and thinking: ${modelLabel}, ${view.effort.value ?? "not specified"}`
+              : `Model and thinking: ${modelLabel}, ${displayedEffort ?? "not specified"}`
           }
           agentScope={modelAgentScope(catalog, newChat)}
           error={effectiveError}
@@ -194,8 +232,8 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
           onOpen={() => {
             onQuickOpen("model-menu");
           }}
-          selectedEffort={view.effort.value}
-          selectedModel={view.model.value}
+          selectedEffort={displayedEffort}
+          selectedModel={displayedModel}
           selectedModelLabel={serverModelLabel}
           selectedPersonality={props.selectedPersonality}
           selectedServiceTier={view.serviceTier.value}
@@ -213,7 +251,7 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
         </View>
       ) : (
         <PermissionsMenu
-          accessibilityLabel={initialLoading ? "Loading access" : `Permissions: ${permissionLabel}`}
+          accessibilityLabel={accessLoading ? "Loading access" : `Permissions: ${permissionLabel}`}
           error={effectiveError}
           loading={initialLoading}
           onClose={() => {
@@ -227,7 +265,9 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
           }}
           onSelectPermissions={props.onSelectPermissions}
           permissions={controls.permissions}
-          selectedPermissions={selectedPermissionProfile(view.permissions.value)}
+          selectedPermissions={
+            selectedPermissionProfile(view.permissions.value) ?? listedPermission
+          }
           serverDefault={view.permissionDefault}
           triggerChildren={permissionsTrigger}
           triggerStyle={styles.composerContextChip}
@@ -240,7 +280,7 @@ export function ComposerControlChips(props: ComposerControlChipsProps) {
 /** The access chip's text. */
 function permissionsDisplayLabel(
   display: ComposerPermissionsDisplay,
-  serverExecution: ProjectedThreadExecutionSettings | null,
+  serverExecution: DisplayAccess | null,
   pending: boolean,
 ): string {
   if (display.kind === "profile") {
@@ -254,4 +294,49 @@ function permissionsDisplayLabel(
       : permissionProfileLabel(display.resolved);
   }
   return executionPermissionsLabel(serverExecution, pending);
+}
+
+/** Uses only fields the newer list row actually knows; older servers omit access entirely. */
+function displayExecution(
+  listed: ThreadCatalogControls | null,
+  detail: ProjectedThreadExecutionSettings | null,
+): ProjectedThreadExecutionSettings | null {
+  if (listed === null) {
+    return detail;
+  }
+  if (listed.model === null) {
+    return detail === null ? null : { ...detail, ...displayAccess(listed, detail) };
+  }
+  const sameModel =
+    detail?.model === listed.model ? detail : { modelLabel: null, serviceTier: undefined };
+  return {
+    ...displayAccess(listed, detail),
+    effort: listed.effort,
+    model: listed.model,
+    modelLabel: listed.modelLabel ?? sameModel.modelLabel ?? null,
+    serviceTier: sameModel.serviceTier,
+  };
+}
+
+type DisplayAccess = Pick<
+  ProjectedThreadExecutionSettings,
+  "approvalPolicy" | "permissions" | "sandboxPolicy"
+>;
+
+function displayAccess(
+  listed: ThreadCatalogControls,
+  detail: ProjectedThreadExecutionSettings | null,
+): DisplayAccess {
+  const policy = listed.accessPolicy ?? null;
+  if (policy !== null) {
+    return { ...policy, permissions: listed.permissions ?? null };
+  }
+  if (listed.permissions === undefined && detail !== null) {
+    return {
+      approvalPolicy: detail.approvalPolicy,
+      permissions: detail.permissions,
+      sandboxPolicy: detail.sandboxPolicy,
+    };
+  }
+  return { approvalPolicy: null, permissions: listed.permissions ?? null, sandboxPolicy: null };
 }

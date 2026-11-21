@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="200%"><feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#000" flood-opacity=".5"/></filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0l10 5-10 5z" fill="#f0f0f0"/></marker>
+  </defs>
+  <style>
+    text { font-family: Inter, Roboto, Arial, sans-serif; }
+    .heading { fill:#f4f4f4; font-size:28px; font-weight:680; }
+    .caption { fill:#9a9a9a; font-size:16px; font-weight:520; }
+    .card-title { fill:#e9e9e9; font-size:17px; font-weight:650; }
+    .line { fill:#858585; }
+  </style>
+  <rect width="1600" height="900" fill="#111"/>
+  <text x="56" y="64" class="heading">Fold illustration motion</text>
+  <text x="56" y="96" class="caption">450 ms · ease-out · 48 dp travel · Reduce Motion: settled frame only</text>
+
+  <rect x="56" y="142" width="700" height="690" rx="28" fill="#171717" stroke="#292929"/>
+  <text x="88" y="190" class="heading">Start · 0 ms</text>
+  <text x="88" y="219" class="caption">Cards begin closer to the stack origin.</text>
+  <g opacity=".42">
+    <g transform="translate(192 344) rotate(-8 140 210)">
+      <rect width="280" height="420" rx="22" fill="#252525" stroke="#424242" stroke-width="2"/>
+      <text x="28" y="48" class="card-title">Overview</text><rect x="28" y="78" width="210" height="10" rx="5" class="line"/><rect x="28" y="105" width="178" height="10" rx="5" class="line"/>
+    </g>
+    <g transform="translate(284 295)">
+      <rect width="300" height="470" rx="24" fill="#2b2b2b" stroke="#484848" stroke-width="2"/>
+      <text x="28" y="48" class="card-title">Changes</text><rect x="28" y="78" width="226" height="10" rx="5" class="line"/><rect x="28" y="105" width="196" height="10" rx="5" class="line"/>
+    </g>
+    <g transform="translate(390 344) rotate(8 140 210)">
+      <rect width="280" height="420" rx="22" fill="#252525" stroke="#424242" stroke-width="2"/>
+      <text x="28" y="48" class="card-title">Guide</text><rect x="28" y="78" width="210" height="10" rx="5" class="line"/><rect x="28" y="105" width="178" height="10" rx="5" class="line"/>
+    </g>
+  </g>
+
+  <rect x="844" y="142" width="700" height="690" rx="28" fill="#171717" stroke="#292929"/>
+  <text x="876" y="190" class="heading">Settled · 450 ms</text>
+  <text x="876" y="219" class="caption">Center rises; side cards fan out symmetrically.</text>
+  <!-- z1: left -->
+  <g transform="translate(932 310) rotate(-8 140 210)" filter="url(#shadow)">
+    <rect width="280" height="420" rx="22" fill="#252525" stroke="#424242" stroke-width="2"/>
+    <text x="28" y="48" class="card-title">Overview</text>
+    <rect x="28" y="78" width="210" height="10" rx="5" class="line"/><rect x="28" y="105" width="178" height="10" rx="5" class="line"/>
+    <rect x="28" y="148" width="224" height="84" rx="14" fill="#1c1c1c"/><rect x="28" y="248" width="224" height="72" rx="14" fill="#1c1c1c"/>
+  </g>
+  <!-- z1: right -->
+  <g transform="translate(1180 310) rotate(8 140 210)" filter="url(#shadow)">
+    <rect width="280" height="420" rx="22" fill="#252525" stroke="#424242" stroke-width="2"/>
+    <text x="28" y="48" class="card-title">Guide</text>
+    <rect x="28" y="78" width="210" height="10" rx="5" class="line"/><rect x="28" y="105" width="178" height="10" rx="5" class="line"/>
+    <rect x="28" y="148" width="224" height="138" rx="14" fill="#1c1c1c"/><rect x="28" y="305" width="66" height="32" rx="16" fill="#3c3c3c"/><rect x="102" y="305" width="88" height="32" rx="16" fill="#ededed"/>
+  </g>
+  <!-- z2: center -->
+  <g transform="translate(1044 247)" filter="url(#shadow)">
+    <rect width="300" height="470" rx="24" fill="#2b2b2b" stroke="#505050" stroke-width="2"/>
+    <text x="28" y="48" class="card-title">Changes</text>
+    <rect x="28" y="78" width="226" height="10" rx="5" class="line"/><rect x="28" y="105" width="196" height="10" rx="5" class="line"/>
+    <rect x="28" y="143" width="82" height="274" rx="14" fill="#222"/>
+    <rect x="126" y="143" width="146" height="274" rx="14" fill="#1b1b1b"/>
+    <rect x="140" y="180" width="118" height="24" fill="#3a1d24"/><rect x="140" y="212" width="118" height="24" fill="#123a24"/><rect x="140" y="244" width="118" height="24" fill="#123a24"/>
+  </g>
+
+  <!-- Motion vectors correspond to 48dp in implementation space. -->
+  <path d="M1000 742L952 694" fill="none" stroke="#f0f0f0" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <text x="896" y="770" class="caption">48 dp outward</text>
+  <path d="M1388 742l48-48" fill="none" stroke="#f0f0f0" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <text x="1360" y="770" class="caption">48 dp outward</text>
+  <path d="M1194 782v-48" fill="none" stroke="#f0f0f0" stroke-width="3" stroke-linecap="round" marker-end="url(#arrow)"/>
+  <text x="1134" y="812" class="caption">48 dp up</text>
+</svg>

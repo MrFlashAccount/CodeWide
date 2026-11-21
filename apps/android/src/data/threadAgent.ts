@@ -2,7 +2,7 @@
  * Validated client view of the Companion's per-thread agent descriptor.
  *
  * A multi-provider Companion attaches `Thread.codewideAgent` (`provider`,
- * `providerName`, `primary`, `capabilities`; see `CodewideAgentThreadExtension` in
+ * `providerName`, `capabilities`, and the deprecated `primary` the client ignores; see `CodewideAgentThreadExtension` in
  * `packages/agent-protocol`) to every thread it projects. The provider is fixed for
  * a thread's life and the capability set decides which features the client
  * offers. A thread without a descriptor comes from a legacy or single-provider
@@ -31,6 +31,7 @@ export type ThreadAgentCapability =
   | "accounts.rateLimits"
   | "backgroundTerminals"
   | "catalog.skillsPlugins"
+  | "codex.native"
   | "goals"
   | "history.threadResources"
   | "input.skillsAndMentions"
@@ -42,8 +43,6 @@ export type ThreadAgentCapability =
 /** Persistable descriptor: the bound provider and its supported capability names. */
 export type ThreadAgent = {
   readonly capabilities: readonly string[];
-  /** Whether the provider is the host's primary provider. */
-  readonly primary: boolean;
   /** `null` only for a malformed descriptor whose provider id is unusable. */
   readonly provider: AgentProviderId | null;
   /** Human-readable provider name, used only as badge text. */
@@ -74,8 +73,8 @@ export function parseAgentProviderId(value: unknown): AgentProviderId | null {
  * Reads a thread-like value's `codewideAgent` extension. Capabilities are a record
  * whose supported entries are `true` or a mode such as `"busy"`; a list of
  * supported names is accepted too. Unknown or `false` entries are unsupported.
- * A descriptor without `primary` is treated as primary and one without
- * a usable `providerName` shows its provider id. Returns `null` (legacy: Codex
+ * The deprecated `primary` flag is ignored. A descriptor without a usable
+ * `providerName` shows its provider id. Returns `null` (legacy: Codex
  * with every capability) only when the descriptor is absent (or `null`); a
  * malformed descriptor yields an agent without capabilities.
  */
@@ -99,7 +98,6 @@ function declaredThreadAgent(descriptor: Record<string, unknown> | null): Thread
   }
   return {
     capabilities,
-    primary: descriptor.primary !== false,
     provider,
     providerName: providerDisplayName(descriptor.providerName) ?? provider,
   };
@@ -110,7 +108,6 @@ function malformedThreadAgent(descriptor: Record<string, unknown> | null): Threa
   const provider = parseAgentProviderId(descriptor?.provider);
   return {
     capabilities: [],
-    primary: descriptor?.primary !== false,
     provider,
     providerName: providerDisplayName(descriptor?.providerName) ?? provider ?? "Agent",
   };
@@ -169,7 +166,6 @@ export function sameThreadAgent(left: ThreadAgent | null, right: ThreadAgent | n
   }
   return (
     left.provider === right.provider &&
-    left.primary === right.primary &&
     left.providerName === right.providerName &&
     left.capabilities.length === right.capabilities.length &&
     left.capabilities.every((capability, index) => capability === right.capabilities[index])

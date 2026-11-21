@@ -60,8 +60,8 @@ fn fixtures() -> PathBuf {
 struct Script {
     entries: Vec<Value>,
     cursor: watch::Sender<usize>,
-    /// Set while a busy start waits for the turn to end; frames after a
-    /// result wait for it.
+    /// Set while a busy start waits for the turn to end; frames after the
+    /// frame that ended the turn wait for it.
     deferred: Mutex<Option<Vec<UserContent>>>,
     gate: Notify,
     gated: std::sync::atomic::AtomicBool,
@@ -70,6 +70,9 @@ struct Script {
     answers: Mutex<Vec<(String, Result<Value, String>)>>,
     opens: Mutex<Vec<QueryOptions>>,
     offers: Mutex<Vec<Offer>>,
+    /// The recorded command uuids in the order they first appear: the n-th
+    /// names the session's n-th offer.
+    commands: Mutex<Vec<String>>,
     next_request: AtomicU64,
     session: std::sync::OnceLock<SessionHandle>,
 }
@@ -228,7 +231,19 @@ async fn feed(
                     continue;
                 }
                 script.advance();
-                if frame["type"] == "result"
+                let frame = with_offer_uuid(&script, frame);
+                if events.send(ProcessEvent::Message(frame)).await.is_err() {
+                    return;
+                }
+                // Like Claude's stdout read by the session: the next frame
+                // is taken only after this one was handled, so a query the
+                // frame closed takes no further frames.
+                script.handled().await;
+                let ended = script
+                    .session
+                    .get()
+                    .is_some_and(|session| session.status().active_turn_id.is_none());
+                if ended
                     && script
                         .deferred
                         .lock()
@@ -237,16 +252,37 @@ async fn feed(
                 {
                     script.gated.store(true, Ordering::SeqCst);
                 }
-                if events.send(ProcessEvent::Message(frame)).await.is_err() {
-                    return;
-                }
-                // Like Claude's stdout read by the session: the next frame
-                // is taken only after this one was handled, so a query the
-                // frame closed takes no further frames.
-                script.handled().await;
             }
         }
     }
+}
+
+/// A recorded `command_lifecycle` names the uuid of the session's offer it
+/// acknowledges: the recording's own uuids differ from the session's.
+fn with_offer_uuid(script: &Script, mut frame: Value) -> Value {
+    let Some(recorded) = frame["command_uuid"].as_str().map(ToOwned::to_owned) else {
+        return frame;
+    };
+    let mut commands = script
+        .commands
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let at = commands
+        .iter()
+        .position(|command| *command == recorded)
+        .unwrap_or_else(|| {
+            commands.push(recorded);
+            commands.len() - 1
+        });
+    if let Some(offer) = script
+        .offers
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(at)
+    {
+        frame["command_uuid"] = json!(offer.uuid);
+    }
+    frame
 }
 
 /// Sends a recorded `permission.request` as `can_use_tool` and waits for
@@ -493,6 +529,7 @@ fn script_of(entries: Vec<Value>) -> Arc<Script> {
         answers: Mutex::new(Vec::new()),
         opens: Mutex::new(Vec::new()),
         offers: Mutex::new(Vec::new()),
+        commands: Mutex::new(Vec::new()),
         next_request: AtomicU64::new(1),
         session: std::sync::OnceLock::new(),
     })
@@ -519,6 +556,7 @@ fn session_deps(
         persistence: Arc::new(MemoryPersistence),
         outputs,
         client_tools: Arc::new(NoClientTools),
+        session_instructions: Arc::default(),
         history: Arc::new(CompletedHistory(completed)),
         rate_limits: Arc::new(NoRateLimits),
         config: SessionConfig {
@@ -709,12 +747,13 @@ fn load(path: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
         .collect()
 }
 
-const TIME_FIELDS: [&str; 5] = [
+const TIME_FIELDS: [&str; 6] = [
     "startedAt",
     "completedAt",
     "durationMs",
     "createdAt",
     "updatedAt",
+    "endedAt",
 ];
 
 /// Blanks the clock's readings: they depend on how often each

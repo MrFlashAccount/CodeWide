@@ -2,11 +2,12 @@
 //! `wire-request-ids-v0` (`keep_temporarily`, owner backend; removed when the
 //! client speaks the neutral protocol).
 //!
-//! - The primary provider's ids are emitted unchanged: the client persists
+//! - The lead provider's ids (the provider speaking the client's native
+//!   wire, Codex) are emitted unchanged: the client persists
 //!   them across restarts.
 //! - Every other provider's ids are emitted as
 //!   `"cw-<provider>:" + JSON(nativeId)`.
-//! - A primary-provider string id that starts with `cw-` is ambiguous and is
+//! - A lead-provider string id that starts with `cw-` is ambiguous and is
 //!   rejected (the caller logs and drops it).
 
 use serde_json::Value;
@@ -17,33 +18,33 @@ const PREFIX: &str = "cw-";
 
 /// Encodes a provider's native id for the client.
 #[must_use]
-pub fn encode(id: &RuntimeRequestId, primary: &ProviderId) -> Value {
-    if &id.provider == primary {
+pub fn encode(id: &RuntimeRequestId, lead: &ProviderId) -> Value {
+    if &id.provider == lead {
         return id.native_id.to_json();
     }
     let native = id.native_id.to_json().to_string();
     Value::String(format!("{PREFIX}{}:{native}", id.provider))
 }
 
-/// Whether a primary-provider id collides with the prefixed namespace.
+/// Whether a lead-provider id collides with the prefixed namespace.
 #[must_use]
-pub fn is_ambiguous_primary_id(id: &Value) -> bool {
+pub fn is_ambiguous_lead_id(id: &Value) -> bool {
     id.as_str().is_some_and(|text| text.starts_with(PREFIX))
 }
 
-/// Decodes a client-wire id. Unprefixed ids belong to the primary provider;
+/// Decodes a client-wire id. Unprefixed ids belong to the lead provider;
 /// a malformed prefixed id decodes to `None`.
 #[must_use]
-pub fn decode(id: &Value, primary: &ProviderId) -> Option<RuntimeRequestId> {
+pub fn decode(id: &Value, lead: &ProviderId) -> Option<RuntimeRequestId> {
     let Some(text) = id.as_str().and_then(|text| text.strip_prefix(PREFIX)) else {
         return NativeRequestId::from_json(id).map(|native_id| RuntimeRequestId {
-            provider: primary.clone(),
+            provider: lead.clone(),
             native_id,
         });
     };
     let (provider, native) = text.split_once(':')?;
     let provider = ProviderId::parse(provider)?;
-    if &provider == primary {
+    if &provider == lead {
         return None;
     }
     let native: Value = serde_json::from_str(native).ok()?;
@@ -64,16 +65,16 @@ mod tests {
     }
 
     #[test]
-    fn primary_ids_pass_through_and_other_ids_are_namespaced() -> Result<(), &'static str> {
+    fn lead_ids_pass_through_and_other_ids_are_namespaced() -> Result<(), &'static str> {
         let codex = provider("codex")?;
         let claude = provider("claude")?;
         for native in [json!(7), json!("abc")] {
-            let primary_id = RuntimeRequestId {
+            let lead_id = RuntimeRequestId {
                 provider: codex.clone(),
                 native_id: NativeRequestId::from_json(&native).ok_or("native")?,
             };
-            assert_eq!(encode(&primary_id, &codex), native);
-            assert_eq!(decode(&native, &codex), Some(primary_id));
+            assert_eq!(encode(&lead_id, &codex), native);
+            assert_eq!(decode(&native, &codex), Some(lead_id));
 
             let claude_id = RuntimeRequestId {
                 provider: claude.clone(),
@@ -114,8 +115,8 @@ mod tests {
     #[test]
     fn malformed_and_ambiguous_ids_are_rejected() -> Result<(), &'static str> {
         let codex = provider("codex")?;
-        assert!(is_ambiguous_primary_id(&json!("cw-anything")));
-        assert!(!is_ambiguous_primary_id(&json!(3)));
+        assert!(is_ambiguous_lead_id(&json!("cw-anything")));
+        assert!(!is_ambiguous_lead_id(&json!(3)));
         assert_eq!(decode(&json!("cw-claude"), &codex), None);
         assert_eq!(decode(&json!("cw-claude:{bad"), &codex), None);
         assert_eq!(decode(&json!("cw-codex:1"), &codex), None);

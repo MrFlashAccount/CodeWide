@@ -4,17 +4,6 @@ import { colors, controlSize, spacing, typeScale, typeTracking, typeWeight } fro
 const PRESSED_OPACITY = 0.72;
 
 export const styles = StyleSheet.create({
-  backgroundTaskButton: {
-    alignItems: "center",
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    gap: spacing.xs,
-    minHeight: controlSize.compact,
-  },
-  backgroundTaskLabel: {
-    color: colors.textMuted,
-    ...typeScale.label,
-  },
   commandActivitySection: {
     gap: spacing.xxs,
     maxWidth: "100%",
@@ -45,11 +34,8 @@ export const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
   },
   outputFootprintMetric: {
-    flexShrink: 0,
-    justifyContent: "center",
-  },
-  outputFootprintMetricText: {
     color: colors.textDim,
+    flexShrink: 0,
     ...typeScale.caption,
     fontVariant: ["tabular-nums"],
   },

@@ -5,4 +5,5 @@ export type SheetPerformanceSurface =
   | "folders"
   | "ports"
   | "skills"
-  | "settings";
+  | "settings"
+  | "pull-request-filters";

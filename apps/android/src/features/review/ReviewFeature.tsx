@@ -7,18 +7,31 @@ import {
 import type { AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
 
 /** Bind the mounted conversation's review session without owning the shared selection host. */
-export function useReviewFeature(
-  composerScope: string,
-  contentReviewAttachmentId: string | null,
-  remoteThread: Thread | null | undefined,
-  appVoiceInputRuntime: AppVoiceInputRuntime,
-  voiceController: VoiceInputController | null,
-  onStartVoiceTranscription: ContentReviewRuntime["startVoice"],
-  attachContentReview: ContentReviewRuntime["attach"],
-) {
+export function useReviewFeature({
+  appVoiceInputRuntime,
+  attachContentReview,
+  composerScope,
+  contentReviewAttachmentId,
+  onStartVoiceTranscription,
+  remoteThread,
+  removeContentReviewAttachment,
+  voiceController,
+}: {
+  readonly appVoiceInputRuntime: AppVoiceInputRuntime;
+  readonly attachContentReview: ContentReviewRuntime["attach"];
+  readonly composerScope: string;
+  readonly contentReviewAttachmentId: string | null;
+  readonly onStartVoiceTranscription: ContentReviewRuntime["startVoice"];
+  readonly remoteThread: Thread | null | undefined;
+  readonly removeContentReviewAttachment?: ContentReviewRuntime["removeAttachment"];
+  readonly voiceController: VoiceInputController | null;
+}): void {
   useContentReviewRuntime({
     attach: attachContentReview,
     attachmentId: contentReviewAttachmentId,
+    ...(removeContentReviewAttachment === undefined
+      ? {}
+      : { removeAttachment: removeContentReviewAttachment }),
     resources: appVoiceInputRuntime.resources,
     thread: remoteThread ?? null,
     voiceController,

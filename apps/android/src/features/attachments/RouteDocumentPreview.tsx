@@ -1,7 +1,5 @@
-import {
-  isAttachmentVideo,
-  RouteAttachmentVideoPreview,
-} from "../../rendering/AttachmentVideoPreview";
+import { RouteAttachmentVideoPreview } from "../../rendering/AttachmentVideoPreview";
+import { isAttachmentVideo } from "../../rendering/videoPreview";
 import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
 import { RouteDownloadDocument } from "./RouteDownloadDocument";
 import { RouteImageDocumentPreview } from "./RouteImageDocumentPreview";

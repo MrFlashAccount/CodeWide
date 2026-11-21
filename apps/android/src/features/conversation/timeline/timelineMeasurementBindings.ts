@@ -12,8 +12,15 @@ import type { TimelineViewportProps } from "./TimelineViewportContract";
 /** Synchronizes existing viewport lifetime callbacks without owning history state. */
 export function useTimelineMeasurementBindings(
   props: TimelineViewportProps,
-  onGeometryChanged: () => void,
-  prepareInitialReveal: () => Promise<void>,
+  {
+    measureWidth,
+    onGeometryChanged,
+    prepareInitialReveal,
+  }: {
+    readonly measureWidth: (width: number) => void;
+    readonly onGeometryChanged: () => void;
+    readonly prepareInitialReveal: () => Promise<void>;
+  },
 ) {
   const { timelineContentHeightRef, timelineViewportHeightRef } = props;
   const readinessRef = useRef<
@@ -71,6 +78,7 @@ export function useTimelineMeasurementBindings(
   });
   const onLayout = useEvent<NonNullable<ThreadTimelineListProps<TimelineItem>["onLayout"]>>(
     ({ nativeEvent }) => {
+      measureWidth(nativeEvent.layout.width);
       timelineViewportHeightRef.current = nativeEvent.layout.height;
       onGeometryChanged();
       props.reportHistoryViewport();

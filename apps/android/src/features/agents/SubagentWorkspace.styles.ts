@@ -63,12 +63,31 @@ export const styles = StyleSheet.create({
     color: colors.text,
     ...typeScale.title,
   },
+  hiddenPane: { display: "none" },
   iconButton: {
     alignItems: "center",
     borderRadius: radii.large,
     height: touchTarget,
     justifyContent: "center",
     width: touchTarget,
+  },
+  lineageBoundary: {
+    height: spacing.xs,
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+  },
+  lineageBoundaryRule: {
+    backgroundColor: colors.border,
+    height: StyleSheet.hairlineWidth,
+  },
+  lineageSection: {
+    height: threadListLayout.sectionHeight,
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+  },
+  lineageSectionLabel: {
+    color: colors.textDim,
+    ...typeScale.label,
   },
   listContent: { paddingBottom: spacing.md },
   master: {

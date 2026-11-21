@@ -3,7 +3,11 @@ import { act, render } from "@testing-library/react-native";
 import { useLayoutEffect, type Dispatch, type SetStateAction } from "react";
 import { Text, View } from "react-native";
 
-import { useConversationCleanup, useConversationRef, useConversationState } from "../src/ui/use-conversation-scope";
+import {
+  useConversationCleanup,
+  useConversationRef,
+  useConversationState,
+} from "../src/ui/use-conversation-scope";
 import { useConversationOwner, type ConversationOwner } from "../src/ui/use-conversation-owner";
 import {
   useComposerSession,
@@ -38,11 +42,18 @@ function Probe(props: ProbeProps) {
     props.handles.push({ setSearch, owner, scroll, composer: composer.capture() });
   });
   useConversationCleanup(props.scope, () => props.disposed(props.scope, scroll.current, search));
-  return <View><StableChrome mounted={props.mounted} /><Text>{`${props.scope}:${search}`}</Text></View>;
+  return (
+    <View>
+      <StableChrome mounted={props.mounted} />
+      <Text>{`${props.scope}:${search}`}</Text>
+    </View>
+  );
 }
 
 function StableChrome(props: { mounted(): void }) {
-  useLayoutEffect(() => { props.mounted(); }, [props.mounted]);
+  useLayoutEffect(() => {
+    props.mounted();
+  }, [props.mounted]);
   return <Text>Composer shell</Text>;
 }
 
@@ -51,9 +62,14 @@ describe("persistent conversation shell", () => {
     const handles: ProbeHandle[] = [];
     const mounted = jest.fn();
     const disposed = jest.fn();
-    const view = render(<Probe scope="a" handles={handles} mounted={mounted} disposed={disposed} />);
+    const view = render(
+      <Probe scope="a" handles={handles} mounted={mounted} disposed={disposed} />,
+    );
     const first = handles.at(-1)!;
-    act(() => { first.setSearch("needle"); first.scroll.current = 123; });
+    act(() => {
+      first.setSearch("needle");
+      first.scroll.current = 123;
+    });
     expect(view.getByText("a:needle")).toBeTruthy();
     view.rerender(<Probe scope="b" handles={handles} mounted={mounted} disposed={disposed} />);
     expect(view.getByText("b:")).toBeTruthy();
@@ -77,7 +93,9 @@ describe("persistent conversation shell", () => {
     const handles: ProbeHandle[] = [];
     const mounted = jest.fn();
     const disposed = jest.fn();
-    const view = render(<Probe scope="a" handles={handles} mounted={mounted} disposed={disposed} />);
+    const view = render(
+      <Probe scope="a" handles={handles} mounted={mounted} disposed={disposed} />,
+    );
     const first = handles.at(-1)!;
     view.rerender(<Probe scope="b" handles={handles} mounted={mounted} disposed={disposed} />);
     const second = handles.at(-1)!;

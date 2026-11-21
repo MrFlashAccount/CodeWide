@@ -36,7 +36,31 @@
                 "usedPercent": null,
                 "windowDurationMins": null
               }
-            ]
+            ],
+            "resets": {
+              "eligible": true,
+              "ineligibleReason": null,
+              "availableCount": 2,
+              "grants": [
+                {
+                  "id": "grant_one",
+                  "label": "Weekly reset",
+                  "kind": "weekly",
+                  "resetsLeft": 2,
+                  "resetsTotal": 3,
+                  "startsAt": 1759276800,
+                  "expiresAt": 1761955200,
+                  "paused": false,
+                  "usableNow": true,
+                  "useRequiresLimit": true,
+                  "clears": ["five_hour", "seven_day"],
+                  "unavailableReason": null
+                }
+              ],
+              "nextGrantId": "grant_one",
+              "weeklyResetsAt": 1760227200,
+              "cooldownUntil": null
+            }
           }
         }
       }

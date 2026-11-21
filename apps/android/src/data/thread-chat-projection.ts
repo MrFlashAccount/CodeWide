@@ -29,6 +29,7 @@ export type {
 export type ProjectedThreadChatWindow = {
   currentOutcome: ThreadCurrentOutcome | null;
   currentUsage: TurnUsageProjection | null;
+  detailCursor: number;
   queuedPrompts: QueuedPrompt[];
   remoteLiveTurns: Thread["turns"];
   remoteSealedTurns: Thread["turns"];
@@ -120,6 +121,7 @@ export function projectThreadChatWindow(
     return {
       currentOutcome: null,
       currentUsage: null,
+      detailCursor: 0,
       queuedPrompts,
       remoteLiveTurns: [],
       remoteSealedTurns: [],
@@ -166,9 +168,11 @@ export function projectThreadChatWindow(
       view.snapshot.latestSealedOrdinal === null ||
       (residentMaximum !== null && residentMaximum >= view.snapshot.latestSealedOrdinal),
   });
+  const metadata = view.liveRows.find((row) => row.kind === "thread");
   return {
-    currentOutcome: view.liveRows.find((row) => row.kind === "thread")?.currentOutcome ?? null,
-    currentUsage: view.liveRows.find((row) => row.kind === "thread")?.currentUsage?.usage ?? null,
+    currentOutcome: metadata?.currentOutcome ?? null,
+    currentUsage: metadata?.currentUsage?.usage ?? null,
+    detailCursor: metadata?.projectionCursor ?? 0,
     queuedPrompts,
     remoteLiveTurns: partitions.live,
     remoteSealedTurns: partitions.sealed,

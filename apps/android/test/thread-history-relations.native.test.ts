@@ -1,3 +1,4 @@
+import { threadWindowHistoryBounds } from "../src/data/threadWindowHistoryBounds";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -980,6 +981,39 @@ describe("relational thread history", () => {
       });
       await details.close();
       await storage.close();
+    },
+  );
+
+  it.each([{ ids: [] }, { ids: ["oldest"] }])(
+    "publishes the boundary with its oldest visible turn for a terminal page %j",
+    async ({ ids }) => {
+      const details = mountedThreadDetailDatabase();
+      try {
+        await details.prepare();
+        await details.importThreadSnapshot(
+          "server", { ...thread(), turns: [turn("anchor")] }, "initial", "older",
+        );
+        await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
+        const installed = () => {
+          const snapshot = details.chat.window$("server", "thread").peek();
+          return { ...details.readWindowRows(snapshot), snapshot };
+        };
+        expect(threadWindowHistoryBounds(installed()).containsBeginning).toBe(false);
+        const page = await details.prependTurnsBefore(
+          "server", "thread", 0, "anchor", ids.map((id) => turn(id)),
+          false, "checkpoint", () => true, undefined,
+        );
+        expect(page.accepted).toBe(true);
+        if (ids.length > 0) {
+          expect(threadWindowHistoryBounds(installed()).containsBeginning).toBe(false);
+          await expect(details.pullRange("server", "thread", "older")).resolves.toBe(true);
+        }
+        const window = installed();
+        expect(window.turnRows.map((row) => row.remoteTurnId)).toEqual(["anchor", ...ids]);
+        expect(threadWindowHistoryBounds(window).containsBeginning).toBe(true);
+      } finally {
+        await details.close();
+      }
     },
   );
 

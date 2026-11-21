@@ -83,10 +83,15 @@ it("publishes pin/unpin acknowledgements to mounted management and sidebar consu
         >
           <Text>Toggle</Text>
         </Pressable>
-        <Pressable accessibilityLabel="Unpin first project" onPress={() => {
-          const project = sidebar.pinnedSidebarProjects[0];
-          if (project !== undefined) void sidebar.sidebarProjectActions.unpin(project);
-        }}><Text>Unpin</Text></Pressable>
+        <Pressable
+          accessibilityLabel="Unpin first project"
+          onPress={() => {
+            const project = sidebar.pinnedSidebarProjects[0];
+            if (project !== undefined) void sidebar.sidebarProjectActions.unpin(project);
+          }}
+        >
+          <Text>Unpin</Text>
+        </Pressable>
         <Text testID="sidebar-pins">
           {sidebar.pinnedSidebarProjects.map((project) => project.name).join(",")}
         </Text>

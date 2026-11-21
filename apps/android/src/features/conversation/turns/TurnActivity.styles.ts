@@ -2,16 +2,6 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, spacing, typeScale, typeWeight } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  activityChevronSlot: {
-    alignItems: "center",
-    flexShrink: 0,
-    justifyContent: "center",
-  },
-  activityIconSlot: {
-    alignItems: "center",
-    flexShrink: 0,
-    justifyContent: "center",
-  },
   bubbleNestedActivity: { marginTop: 0 },
   bubbleNestedActivityList: {
     paddingBottom: 0,

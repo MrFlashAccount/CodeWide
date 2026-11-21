@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1500" viewBox="0 0 720 1500">
+  <style>
+    text { font-family: Inter, Roboto, Arial, sans-serif; }
+    .title { fill:#f4f4f4; font-size:30px; font-weight:680; }
+    .hero { fill:#f4f4f4; font-size:34px; font-weight:680; }
+    .body { fill:#b1b1b1; font-size:19px; font-weight:440; }
+    .small { fill:#898989; font-size:15px; font-weight:520; }
+  </style>
+  <rect width="720" height="1500" fill="#0d0d0d"/>
+  <text x="28" y="42" fill="#f1f1f1" font-size="22" font-weight="620">00:32  Fri, Oct 23</text>
+  <text x="628" y="42" fill="#f1f1f1" font-size="17">16%</text>
+  <rect y="58" width="720" height="40" fill="#090909"/>
+  <circle cx="22" cy="78" r="5" fill="#35c778"/>
+  <text x="40" y="84" class="small">76 fps · CPU 25.9% · RSS 491 MB</text>
+  <text x="28" y="160" class="title">Pull requests</text>
+
+  <!-- Deliberately no illustration on compact/mobile. -->
+  <g transform="translate(58 526)">
+    <text x="302" y="0" class="hero" text-anchor="middle">Your review inbox</text>
+    <text x="302" y="48" class="body" text-anchor="middle">Connect a code host to review changes,</text>
+    <text x="302" y="78" class="body" text-anchor="middle">work with agents, and ship from one place.</text>
+    <rect x="0" y="136" width="604" height="72" rx="36" fill="#ededed"/>
+    <text x="302" y="180" fill="#111" font-size="20" font-weight="680" text-anchor="middle">+  Connect a provider</text>
+    <g transform="translate(132 247)">
+      <path d="M14 0l12 5v9c0 10-7 16-12 19C9 30 2 24 2 14V5z" fill="none" stroke="#7f7f7f" stroke-width="2"/>
+      <path d="M9 15l4 4 7-8" fill="none" stroke="#7f7f7f" stroke-width="2"/>
+      <text x="40" y="22" class="small">Credentials stay on your Companion.</text>
+    </g>
+  </g>
+
+  <rect x="22" y="1326" width="676" height="92" rx="46" fill="#171717"/>
+  <rect x="356" y="1336" width="332" height="72" rx="36" fill="#ededed"/>
+  <text x="189" y="1380" fill="#8b8b8b" font-size="18" font-weight="580" text-anchor="middle">Threads</text>
+  <text x="522" y="1380" fill="#111" font-size="18" font-weight="680" text-anchor="middle">Pull requests</text>
+  <circle cx="360" cy="1462" r="9" fill="#f0f0f0"/>
+</svg>

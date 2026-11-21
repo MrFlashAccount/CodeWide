@@ -1,18 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { AttachmentDiskCache, ATTACHMENT_CACHE_BYTES, type AttachmentStorage, type CachedAttachment } from "../src/native/attachment-cache/disk-cache";
-import { attachmentMetadata, cachedResponseHeaders } from "../src/native/attachment-cache/http-metadata";
+import {
+  AttachmentDiskCache,
+  ATTACHMENT_CACHE_BYTES,
+  type AttachmentStorage,
+  type CachedAttachment,
+} from "../src/native/attachment-cache/disk-cache";
+import {
+  attachmentMetadata,
+  cachedResponseHeaders,
+} from "../src/native/attachment-cache/http-metadata";
 
 class Storage implements AttachmentStorage {
   readonly files = new Map<string, string>();
   readonly records = new Map<string, CachedAttachment>();
-  async restore() { return [...this.records.values()]; }
-  async exists(key: string, bytes: number) { return this.files.get(key)?.length === bytes; }
+  async restore() {
+    return [...this.records.values()];
+  }
+  async exists(key: string, bytes: number) {
+    return this.files.get(key)?.length === bytes;
+  }
   async touch(entry: CachedAttachment) {
     // Capture the durable metadata snapshot, independent of subsequent in-memory touches.
     this.records.set(entry.key, { ...entry });
   }
-  async remove(key: string) { this.files.delete(key); this.records.delete(key); }
-  uri(key: string) { return `file:///cache/${key}`; }
+  async remove(key: string) {
+    this.files.delete(key);
+    this.records.delete(key);
+  }
+  uri(key: string) {
+    return `file:///cache/${key}`;
+  }
 }
 
 function fixture(limit: number) {
@@ -21,9 +38,14 @@ function fixture(limit: number) {
   let downloads = 0;
   const cache = new AttachmentDiskCache(storage, () => ++clock, limit);
   return {
-    storage, cache, downloads: () => downloads,
+    storage,
+    cache,
+    downloads: () => downloads,
     load(key: string, body: string) {
-      return cache.acquire(key, { bytes: body.length, scopeKey: undefined }, async () => { downloads += 1; storage.files.set(key, body); });
+      return cache.acquire(key, { bytes: body.length, scopeKey: undefined }, async () => {
+        downloads += 1;
+        storage.files.set(key, body);
+      });
     },
   };
 }
@@ -37,7 +59,13 @@ describe("attachment disk budget", () => {
     const f = fixture(12);
     (await f.load("document", "# Hello"))?.release();
     const restarted = new AttachmentDiskCache(f.storage, () => 10, 12);
-    const lease = await restarted.acquire("document", { bytes: 7, scopeKey: undefined }, async () => { throw new Error("must use disk"); });
+    const lease = await restarted.acquire(
+      "document",
+      { bytes: 7, scopeKey: undefined },
+      async () => {
+        throw new Error("must use disk");
+      },
+    );
     expect(lease?.uri).toBe("file:///cache/document");
     expect(f.storage.files.get("document")).toBe("# Hello");
     lease?.release();
@@ -73,7 +101,12 @@ describe("attachment disk budget", () => {
     const start = Promise.withResolvers<void>();
     const finish = Promise.withResolvers<void>();
     let writes = 0;
-    const write = async () => { writes += 1; start.resolve(); await finish.promise; f.storage.files.set("a", "123456"); };
+    const write = async () => {
+      writes += 1;
+      start.resolve();
+      await finish.promise;
+      f.storage.files.set("a", "123456");
+    };
     const first = f.cache.acquire("a", { bytes: 6, scopeKey: undefined }, write);
     await start.promise;
     const second = f.cache.acquire("a", { bytes: 6, scopeKey: undefined }, write);
@@ -90,7 +123,12 @@ describe("attachment disk budget", () => {
 
   it("does not retain failed writes and admits a retry", async () => {
     const f = fixture(6);
-    await expect(f.cache.acquire("a", { bytes: 6, scopeKey: undefined }, async () => { f.storage.files.set("a", "12"); throw new Error("interrupted"); })).rejects.toThrow("interrupted");
+    await expect(
+      f.cache.acquire("a", { bytes: 6, scopeKey: undefined }, async () => {
+        f.storage.files.set("a", "12");
+        throw new Error("interrupted");
+      }),
+    ).rejects.toThrow("interrupted");
     expect(f.storage.files.has("a")).toBe(false);
     (await f.load("a", "123456"))?.release();
     expect(f.storage.files.get("a")).toBe("123456");
@@ -109,15 +147,23 @@ describe("attachment disk budget", () => {
   it("deletes one server's files and legacy unowned files while preserving other servers", async () => {
     const f = fixture(40);
     const load = (key: string, scopeKey?: string) =>
-      f.cache.acquire(key, { bytes: 3, scopeKey }, async () => { f.storage.files.set(key, "abc"); });
+      f.cache.acquire(key, { bytes: 3, scopeKey }, async () => {
+        f.storage.files.set(key, "abc");
+      });
     (await load("removed", "server-a"))?.release();
     (await load("kept", "server-b"))?.release();
     (await load("legacy"))?.release();
     const restarted = new AttachmentDiskCache(f.storage, () => 10, 40);
     await restarted.deleteScope("server-a");
     expect([...f.storage.files.keys()]).toEqual(["kept"]);
-    expect(await restarted.acquire("removed", { bytes: 3, scopeKey: "server-a" }, async () => { throw new Error("resurrected"); })).toBeNull();
-    const kept = await restarted.acquire("kept", { bytes: 3, scopeKey: "server-b" }, async () => { throw new Error("redownloaded"); });
+    expect(
+      await restarted.acquire("removed", { bytes: 3, scopeKey: "server-a" }, async () => {
+        throw new Error("resurrected");
+      }),
+    ).toBeNull();
+    const kept = await restarted.acquire("kept", { bytes: 3, scopeKey: "server-b" }, async () => {
+      throw new Error("redownloaded");
+    });
     expect(kept?.uri).toBe("file:///cache/kept");
     kept?.release();
   });
@@ -143,7 +189,11 @@ describe("attachment disk budget", () => {
 
 describe("attachment freshness and byte ranges", () => {
   it("requires a revision and preserves UTF-8 byte range semantics", () => {
-    const headers = new Headers({ "content-length": "50", "content-type": "text/markdown", "x-content-sha256": "a".repeat(64) });
+    const headers = new Headers({
+      "content-length": "50",
+      "content-type": "text/markdown",
+      "x-content-sha256": "a".repeat(64),
+    });
     const metadata = attachmentMetadata(headers, "bytes=10-99");
     expect(metadata).toMatchObject({ bytes: 40, start: 10, totalBytes: 50 });
     if (metadata === null) throw new Error("missing metadata");
@@ -170,7 +220,10 @@ import { AttachmentResponse } from "../src/native/attachment-cache/attachment-re
 describe("cached response body contract", () => {
   it("decodes UTF-8 and lets a clone consume the same bytes independently", async () => {
     const body = new TextEncoder().encode('{"title":"Привет 👋"}').buffer;
-    const response = new AttachmentResponse(body, { status: 200, headers: { "content-type": "application/json" } });
+    const response = new AttachmentResponse(body, {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
     const clone = response.clone();
     expect(await response.json()).toEqual({ title: "Привет 👋" });
     expect(response.bodyUsed).toBe(true);

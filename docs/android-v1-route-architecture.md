@@ -1,7 +1,8 @@
 # Android V1 route architecture
 
-Status: **implemented and repository-validated on 2026-09-15**. Implementation baseline:
-`368f4699a19c3f9c3edd1875739c799720dc7095`.
+Status: **approved normative target for retained workspace tabs**. This document defines the
+required end state; it does not claim that the implementation or its validation is complete. Factual
+implementation and gate evidence belongs in [the migration ledger](android-v1-route-migration.md).
 
 This document is the current V1 application-navigation contract. The earlier feature extraction
 remains the source ownership foundation, while Expo Router now owns application destinations and
@@ -9,7 +10,9 @@ Back history. V1 uses `connectionId`; it does not adopt V2 `savedServerId` termi
 
 ## Ownership model
 
-- `app/(workspace)/**` owns destination screens and layouts with unversioned public paths.
+- `app/(workspace)/(tabs)/**` owns one URL-invisible parent Tabs navigator. Its
+  `(threads)/**` and `(pull-requests)/**` children own retained nested Stacks and destination
+  screens. Settings, browser and drawing remain direct children of `app/(workspace)/**`.
 - `src/routeComposition/**` owns workspace composition, Router operations and application Back behavior. Helpers stay outside `app/` so Expo cannot publish them as destinations.
 - `src/services/**` owns cross-route resources, validated identity, commands and bounded ephemeral
   sessions. Services render no UI.
@@ -29,50 +32,94 @@ The persistent shell is split by cohesive responsibility; helper modules below l
 - `WorkspaceRouteModel.ts` validates the current thread URL and adapts Router commands;
 - `WorkspaceRouteComposition.tsx` binds workspace resources and route intents;
 - `WorkspaceRouteThreadList.tsx` adapts route resources to the shared thread-list widget;
-- `WorkspaceShell.tsx` owns the persistent responsive chrome, providers and inner `Stack`.
+- `WorkspaceShell.tsx` owns the persistent providers and root `Stack`; it registers `(tabs)` and
+  root surfaces without interpreting a catalog or mirroring tab selection.
+- `WorkspaceTabsRouteLayout.tsx` owns the standard parent Tabs policy, retained descriptors,
+  inactive-scene isolation, one shared floating bar and its presentation claim.
+- `ThreadsWorkspaceRouteLayout.tsx` and `PullRequestsWorkspaceRouteLayout.tsx` each compose one
+  nested Stack, its real catalog descriptor and detail slot around `WorkspaceTwoPaneLayout`.
+- `WorkspaceTwoPaneLayout.tsx` owns responsive width, placement and animation only. It owns no
+  Router state, product mode or feature lifecycle.
+- `workspaceThreadsRouteState.ts` is the single topology adapter for project targeting and Search
+  retention. It references the retained Threads navigation state; it does not copy Router state.
 
 `CodeWideScreen`, `WorkspaceScreen`, `WorkspaceOverlays`, `ThreadNavigationModel` and
 `features/navigation/**` no longer exist. There is no second selected-destination state.
 
-## Implemented route tree
+## Normative route tree
 
 ```text
 app/(workspace)/
-├── _layout.tsx
-├── (lists)/
-│   ├── _layout.tsx                                fixed mobile header and nested content Stack
-│   ├── index.tsx                                  /; mobile All list
-│   └── project/[sessionId].tsx                    /project/:sessionId; opaque project session
-├── new/
-│   ├── _layout.tsx
-│   ├── index.tsx                                  /new
-│   ├── controls/{model,permissions,skills}.tsx
-│   ├── content/[sessionId].tsx
-│   └── documents/[sessionId].tsx
-├── search.tsx                                     /search; mobile stack screen, desktop list pane when no chat is selected
-├── projects/
-│   ├── index.tsx
-│   └── add/[connectionId].tsx
+├── _layout.tsx                                    runtime and root overlay Stack; registers (tabs)
+├── (tabs)/
+│   ├── _layout.tsx                                parent JS Tabs; backBehavior = history
+│   ├── (threads)/
+│   │   ├── _layout.tsx                            retained Threads Stack; anchor = (lists)
+│   │   ├── (lists)/**                             / and /project/:sessionId
+│   │   ├── new/**                                 /new and Threads-owned draft destinations
+│   │   ├── search.tsx                             /search
+│   │   ├── projects/**                            /projects and /projects/add/**
+│   │   └── threads/[connectionId]/[threadId]/**   canonical conversation and child destinations
+│   └── (pull-requests)/
+│       ├── _layout.tsx                            retained Pull requests Stack; anchor = pulls/index
+│       └── pulls/
+│           ├── index.tsx                          /pulls; real catalog descriptor
+│           └── [connectionId]/[pullRequestKey]/
+│               ├── index.tsx                      canonical Details URL
+│               └── changes.tsx                    canonical Changes URL
 ├── settings/
 │   ├── index.tsx
 │   └── servers/new/index.tsx
 ├── browser/[sessionId].tsx
-├── drawing/[sessionId].tsx
-└── threads/[connectionId]/[threadId]/
-    ├── _layout.tsx
-    ├── index.tsx
-    ├── agents/{index,[agentThreadId]}.tsx            fullscreen workspace; detail path compatibility
-    ├── attachments/index.tsx
-    ├── changes/{index,turns/[turnId]}.tsx
-    ├── controls/{model,permissions,skills}.tsx
-    ├── content/[sessionId].tsx
-    ├── documents/[sessionId].tsx
-    └── {goal,ports,queue,review,runtime,terminal}.tsx
+└── drawing/[sessionId].tsx
 ```
 
-The workspace index owns `/` directly; `/legacy`, `/pair`, `/thread` compatibility entries redirect there. The `(workspace)` group preserves the mounted layout without contributing a URL segment. V1 owns the
-original process deep links. The V2 route groups and generation chooser were removed;
-see [the retirement audit](android-v2-retirement.md).
+Parenthesized groups do not contribute URL segments. The workspace index still owns `/` publicly;
+`/legacy`, `/pair` and `/thread` compatibility entries redirect there. V1 owns the original process
+deep links. The V2 route groups and generation chooser remain retired; see
+[the retirement audit](android-v2-retirement.md).
+
+### Anchor and generated-parent contract
+
+- `app/(workspace)/_layout.tsx` registers `(tabs)` plus root settings, browser and drawing surfaces.
+- `app/(workspace)/(tabs)/_layout.tsx` owns one standard JS Tabs navigator with route records named
+  exactly `(threads)` and `(pull-requests)` and `backBehavior="history"`.
+- `app/(workspace)/(tabs)/(threads)/_layout.tsx` exports `anchor: "(lists)"` and
+  `initialRouteName: "(lists)"`.
+- `app/(workspace)/(tabs)/(pull-requests)/_layout.tsx` exports `anchor: "pulls/index"` and
+  `initialRouteName: "pulls/index"`.
+- Route groups add no URL segments. Shared root overlays use the Router history of the active tab
+  that pushed them; cold direct entry keeps stable-parent recovery without synthesizing another tab.
+
+The production Expo-generated tree must resolve these exact parent chains:
+
+- `/` → `(workspace)` → `(tabs)` → `(threads)` → `(lists)` → `index`;
+- `/projects` → `(workspace)` → `(tabs)` → `(threads)` → `[(lists), projects/index]`;
+- `/pulls` → `(workspace)` → `(tabs)` → `(pull-requests)` → `[pulls/index]`;
+- `/pulls/:connectionId/:pullRequestKey` → `(workspace)` → `(tabs)` → `(pull-requests)` →
+  `[pulls/index, pulls/[connectionId]/[pullRequestKey]/index]`;
+- `/pulls/:connectionId/:pullRequestKey/changes` has the same Pull requests catalog parent, ends in
+  `changes` and retains the sibling Threads tab state;
+- `/threads/:connectionId/:threadId` → `(workspace)` → `(tabs)` → `(threads)` →
+  `[(lists), threads/[connectionId]/[threadId]]`.
+
+### Router-owned records
+
+- `TabNavigationState` is the only active-tab and tab-history record. It retains both tab route
+  records and each nested Stack state; there is no selected-mode store or synthetic snapshot.
+- Catalog mapping is exact: `(threads)` maps to `threads`, and `(pull-requests)` maps to
+  `pullRequests`. Numeric index may select the active route record but never defines this mapping.
+- The Pull request detail Stack owns the validated `{connectionId, pullRequestKey}` route record.
+  Switching tabs preserves that record, route key and canonical Details or Changes URL.
+- Details and Changes are canonical sibling route variants. The selected tab is not a domain entity
+  and is not mirrored in React, Legend State or `pullRequestScreenModel`.
+- Router history owns overlay parentage. Projects exists only inside `(threads)`; shared root
+  overlays return to the subtree that pushed them.
+- `WorkspaceTwoPaneLayout` owns a transient presentation value only. Width changes emit no Router
+  action.
+- Companion and data owners continue to resolve the canonical linked review thread. Route
+  composition chooses wide local presentation or compact canonical Threads-tab navigation without
+  copying conversation data.
 
 ## Route semantics
 
@@ -89,6 +136,10 @@ see [the retirement audit](android-v2-retirement.md).
 | Open a search result | `push` from Search; clear the session parameter on a selected wide origin first | Back returns to the retained search query/results on compact layouts; closing wide Search keeps the selected result and removes its search parameter. |
 | Open browser, drawing, content or document | `push` with an opaque session id and fullscreen modal presentation                                            | private resources and callbacks stay in bounded services; root modals carry the owning thread identity                                           |
 | Navigate within a WebView                  | widget-owned history                                                                                          | page history stays separate from application navigation                                                                                          |
+| Switch catalog mode (Threads / Pull requests) | map the mode to the exact tab route name, emit cancelable `tabPress`, then dispatch standard tab navigation | both nested Stacks stay mounted; focus and tab history change without replacing either public URL state |
+| Open a pull request | push the canonical Details URL | the real `/pulls` descriptor remains the Router-owned catalog parent and the local Suspense boundary owns loading feedback |
+| Reselect the active catalog | emit cancelable `tabPress`; use the nested Stack listener | detail pops to its catalog root; root reselect is a no-op and canceled activation dispatches nothing |
+| Open a linked thread from a PR | wide: keep canonical conversation inside the PR route; compact: ensure, prepare, then navigate the canonical Threads href through parent Tabs | the PR Stack stays retained, the canonical thread opens in Threads, and error/cancel stays in the PR route |
 
 Main-thread navigation publishes immediately and retains cached content or the local skeleton while
 history hydrates progressively. It does not use a Transition. Subagent selection continues through
@@ -109,6 +160,57 @@ Every conversation surface, including the read-only subagent workspace, consumes
 thread window through `projectThreadChatWindow`. That projector is the single owner of merging
 immutable sealed history with the mutable active head; nested routes do not rematerialize database
 rows through a separate path.
+
+## Pull requests routes
+
+Feature ownership is in
+[V1 feature architecture](android-v1-feature-architecture.md#approved-pull-requests-extension);
+the companion contract is in [Forge plugins](forge-plugins.md).
+
+- `PullRequestsWorkspaceRouteLayout` owns the real `pulls/index` descriptor, Pull request pane
+  controller and responsive catalog/detail assembly. It does not render the shared bar or import
+  the parent Tabs owner, Threads route layout or descriptor.
+- `pulls/index.tsx` renders `features/pullRequests`: onboarding while the connection has no
+  connected account, the PR list otherwise. It is the real anchored route, not content manually
+  constructed outside the descriptor.
+- `pulls/[connectionId]/[pullRequestKey]/{index,changes}.tsx` renders `features/pullRequestDetail`.
+  `pullRequestKey` is the companion-issued opaque `PullRequestKey`; route params accept it as an
+  opaque nonempty string and brand it, and Android never parses it. Details/Changes selection is
+  canonical URL state; the feature receives it as a route prop and does not mirror it. Back dismisses
+  either tab to `/pulls`.
+- `routeComposition/pullRequestNavigation.ts` owns the navigation intent only: it publishes the
+  canonical PR destination immediately. The screen's local Suspense boundary reads the process-owned
+  overview resource and owns its stable skeleton; navigation never owns or waits on that Promise.
+- Compact linked-chat navigation reuses the established observer, IME-dismissal, timing and
+  canonical-identity preparation before navigating the canonical Threads href through parent Tabs.
+  It must not use `router.replace`, `dismissTo`, `navigation.reset` or manually assembled navigation
+  state. Cancel and failure retain the PR route; wide linked chat remains local to the mounted PR
+  route and reuses the canonical conversation surface.
+- Pull request composition publishes no presentation claim. Wide linked chat is the PR route's
+  right pane, and the shared pane frame covers the catalog while any right pane is open, so the
+  catalog and a right pane are never visible together (see `routeComposition/CONTEXT.md`).
+  Wide-to-compact preserves chat identity and emits no Router action.
+- Features emit typed navigation intents; `features/pullRequests` and
+  `features/pullRequestDetail` reach each other only through these intents.
+
+`/projects` and `/projects/add/**` exist only under `(tabs)/(threads)`. They are transparent native-stack
+routes that render nothing in the pane: the covered destination (for example New Chat) stays mounted
+and visible below them, and their surface is a native `AppSheet` window bound to route focus, so it
+covers the whole application like every other sheet. A sheet-presented route must never draw its
+backdrop or sheet surface as React content of its screen: the Threads Stack is placed inside the
+center pane by `ThreadsWorkspacePaneLayout`, so screen content is clipped to that pane on wide
+layouts. Native sheet dismissal (Back, outside tap, swipe) closes the route through Router history;
+losing focus to a pushed child route hides the sheet without navigating.
+Because these routes belong to Threads, the Pull requests review chat (existing chat and draft)
+never pushes `/projects`: it presents the same Manage Projects and Add project sheets locally
+through `LocalProjectManagement`, so the tab, the PR route and its chat stay as they were.
+
+Compatibility is explicit: the existing public URLs are permanent Router-owned surfaces.
+`WorkspacePaneLayout`, `WorkspaceScreenLayout`, `projectWorkspaceRoutes`,
+`WorkspaceRouteProjection` and `PullRequestsCatalogPane` are deleted in the structural slice. No
+temporary re-export, alias, dual route tree or compatibility wrapper may preserve them.
+The former physical `(workspace)/(threads)` and `(workspace)/(pull-requests)` group paths and child
+catalog-replace helpers are also deleted atomically when the groups move beneath `(tabs)`.
 
 ## Global Voice non-route boundary
 
@@ -173,7 +275,8 @@ documentation during design:
 
 ## Shared project-list stack
 
-All and project content at both widths render in the `(lists)` native stack. `WorkspaceListStack` keeps
+All and project content at both widths render in the `(tabs)/(threads)/(lists)` native stack.
+`WorkspaceListStack` keeps
 one `ThreadListHeader` above the navigator. Root/project transitions retain that exact header,
 Search action and Orb instance; only the title/breadcrumb and selected controls change. The content
 scenes omit their own headers. The scene container clips animated content below the shared header.
@@ -208,7 +311,7 @@ resize reproductions, alternatives and the proposed acceptance contract.
 
 ## Root recovery after version-prefix removal
 
-The real Expo route parser resolves `/` to `(workspace)/(lists)/index` and anchors direct thread
+The real Expo route parser resolves `/` to `(workspace)/(tabs)/(threads)/(lists)/index` and anchors direct thread
 links above that list. Returning from a thread targets the workspace navigator, preserving
 its list-group entry and selecting its index. Tests exercise Expo's actual parser, action targeting and stack reducer;
 render tests separately verify that recovery reveals the thread list.
@@ -246,16 +349,76 @@ were used for this fix.
 
 ## Adaptive catalog placement
 
-`WorkspacePaneLayout` uses Expo Stack `layout` to render the `(lists)` descriptor in one stable
-pane, and `screenLayout` to leave only a placeholder for that entry inside the detail native
-stack. Thus the list navigator and header mount once; window width changes pane geometry only.
-The native list entry remains in application history, so Back from a conversation reveals its
-current project. Deep-link anchors and native detail/overlay navigation remain Expo-owned.
+`WorkspaceTabsRouteLayout` renders the two child descriptors through one standard JS Tabs
+navigator. Each child layout renders its anchored catalog's real descriptor exactly once and
+supplies catalog/detail slots to `WorkspaceTwoPaneLayout`. The shared layout only computes
+responsive placement and animation; changing width does not mutate Router state or remount a second
+catalog. Child layouts may both import this geometry primitive, but they must not import each other.
 
-`workspaceProjectNavigation` reads the catalog state below the workspace, including Expo's
-runtime root wrapper, and targets native PUSH/REPLACE/POP_TO_TOP actions to that navigator.
+`WorkspaceTabSceneIsolation` is authoritative in both BottomTabView paths. Active scenes use
+`display: "flex"`, `pointerEvents="auto"`, `accessibilityElementsHidden={false}`,
+`importantForAccessibility="auto"` and `aria-hidden={false}`. Inactive scenes remain mounted but
+use `display: "none"`, `pointerEvents="none"`, `accessibilityElementsHidden`,
+`importantForAccessibility="no-hide-descendants"` and `aria-hidden`. Native
+`Screen(activityState=0)` is not sufficient because the bundled plain-`View` fallback does not use
+that state. `unmountOnBlur` and `popToTopOnBlur` are not set.
+
+The native catalog entry remains in its nested Stack history. Back pops only the active Stack before
+TabRouter consumes deduplicated tab history; after tab history is exhausted, Back bubbles to the
+workspace root and Android. Active-tab reselect emits cancelable `tabPress`, pops detail to its
+catalog root and is a no-op at root. Direct deep links anchor the correct tab and nested Stack.
+
+`workspaceThreadsRouteState` finds `(workspace) -> (tabs) -> (threads)` by exact names and returns
+`unavailable | ready` with the existing state reference. `workspaceProjectNavigation` uses it to
+find direct child `(lists)` and target native PUSH/REPLACE/POP_TO_TOP actions to that navigator.
 PUSH and REPLACE do not focus the parent, allowing wide project browsing to preserve the open
 conversation. There is no independent navigation container or local project-selection mirror.
 The shared header remains outside list Suspense and native animation. Both widths use the
 application's native fade plus short horizontal travel. Project data remains in bounded route
 sessions, not URLs; an open project route retains its session while a chat or search covers it.
+
+Search-session retention traverses the active indexes inside the retained Threads chain, from the
+deepest route to its parents, and validates the first `globalSearchSessionId`. Tab blur cannot release
+that lease; explicit Search close and workspace teardown can. Existing route-session capacity,
+expiry and overflow-only-while-mounted policy does not change.
+
+The one `CatalogModeBarHost` remains an absolute overlay in the parent Tabs content box. Its
+geometry is binding: `left = catalogModeBarHorizontalInset`,
+`bottom = catalogModeBarBottomInset`,
+`width = (desktop ? desktopThreadSidebarWidth(viewportWidth) : viewportWidth) - 2 * catalogModeBarHorizontalInset`,
+and `zIndex = 20`. Existing `catalogModeBarContentInset` and `catalogModeBarFabBottom` continue to
+protect lists and FABs. The geometry component knows no route names.
+
+Reacticx provenance is explicit. `vendor/reacticx/src/components/organisms/masked-tab-bar/**` is the
+source of truth and records the selected-activation patch in `vendor/reacticx/UPSTREAM.md`.
+`scripts/sync-reacticx-components.mjs` deterministically generates only
+`src/vendor/reacticx/masked-tab-bar.js`; direct edits to that output are forbidden.
+`src/vendor/reacticx/masked-tab-bar.d.ts` is maintained and type-checked separately.
+
+## Dependency, verification and rollback contract
+
+- Route groups may import route-composition owners and feature public surfaces. Features, data,
+  services, components and native code must not import route modules.
+- `WorkspaceTabsRouteLayout` may import child layout entrypoints and public feature capabilities.
+  Child layouts, features, data and services must not import the parent `(tabs)` layout or bar owner.
+- `WorkspaceTwoPaneLayout` must not import Expo Router, route layouts, `CatalogMode`, Pull request or
+  Threads features, or route-name constants. It accepts rendered slots and presentation values only.
+- The Threads and Pull requests layouts must not import each other. `features/pullRequests` and
+  `features/pullRequestDetail` remain mutually forbidden and meet only through typed route intents.
+- Catalog activation and compact linked-chat handoff use the parent Tabs navigator. They do not use
+  `router.replace`, `dismissTo`, `navigation.reset` or manually assembled binary state. Projects is
+  registered only under `(tabs)/(threads)`.
+- Production-tree checks must prove the six parent chains above, unchanged public paths, Back and
+  reselect order, retained route keys, canonical Details/Changes URLs, compact linked-thread
+  identity, one bar and the exact inactive-scene properties. A separate screens-disabled test must
+  prove the plain-`View` fallback. Source checks must prove retired paths/helpers are absent and the
+  Reacticx source/generated/type boundary is deterministic.
+- `pnpm validate:android:v1` and `pnpm --filter @codewide/android compile:android` are required
+  handoff gates. Passing them is repository evidence, not physical-device proof; native Back,
+  TalkBack traversal, native detach, fold/unfold and modal ordering remain unverified until exercised
+  on a device.
+- Roll back the complete route-tree/layout/tests/docs slice if a public URL or exact parent chain
+  changes, a nested Stack loses state, an inactive scene stays interactive, tab mapping is wrong, a
+  duplicate bar appears, source/generated Reacticx diverges, a runtime owner remounts, or either
+  required gate fails. Rollback returns the previous route tree, child bar ownership and these docs
+  atomically; do not keep a dual tree, compatibility wrapper or partial parent Tabs migration.

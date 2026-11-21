@@ -20,7 +20,7 @@ fn non_lead(rows: &[(&str, i64)]) -> (Arc<FakeProvider>, WireProvider) {
     let wire = WireProvider {
         descriptor: fake.descriptor(),
         capabilities: fake.capabilities(),
-        primary_id: ProviderId::from_static("codex"),
+        lead_id: ProviderId::from_static("codex"),
         multi_provider: true,
     };
     (fake, wire)
@@ -179,7 +179,7 @@ async fn a_terminal_session_without_recency_is_merged_with_its_update_time_as_or
         let wire = WireProvider {
             descriptor: fake.descriptor(),
             capabilities: fake.capabilities(),
-            primary_id: ProviderId::from_static("codex"),
+            lead_id: ProviderId::from_static("codex"),
             multi_provider: true,
         };
         (fake, wire)

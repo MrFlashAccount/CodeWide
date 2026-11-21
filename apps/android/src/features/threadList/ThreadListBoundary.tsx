@@ -1,15 +1,32 @@
 import { Ionicons } from "@expo/vector-icons";
-import { ActivityIndicator, View } from "react-native";
+import type { ReactElement } from "react";
+import { View } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ThreadListBoundary.styles";
 
 /** Whole-screen suspension must never use the delayed empty-row feedback. */
 export function ThreadListSuspenseFallback() {
+  return <ThreadListSkeleton />;
+}
+
+const SKELETON_ROWS = ["first", "second", "third", "fourth", "fifth", "sixth"] as const;
+
+/** Row-shaped placeholder while no authoritative catalog snapshot is available. */
+export function ThreadListSkeleton(): ReactElement {
   return (
-    <View accessibilityLiveRegion="polite" style={styles.threadListEmpty}>
-      <ActivityIndicator accessibilityLabel="Loading threads" color={colors.accent} />
-      <Text style={styles.threadListEmptyText}>Loading threads…</Text>
+    <View
+      accessibilityLabel="Loading threads"
+      accessibilityState={{ busy: true }}
+      style={styles.threadListSkeleton}
+      testID="thread-list-skeleton"
+    >
+      {SKELETON_ROWS.map((row) => (
+        <View key={row} style={styles.threadListSkeletonRow}>
+          <View style={styles.threadListSkeletonTitle} />
+          <View style={styles.threadListSkeletonPreview} />
+        </View>
+      ))}
     </View>
   );
 }

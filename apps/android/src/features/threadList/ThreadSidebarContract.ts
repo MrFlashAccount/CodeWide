@@ -5,13 +5,11 @@ import type { ThreadListServer } from "../connections/connectionPresentation";
 import type { ThreadListFilter } from "./threadListFilters";
 import type { SidebarProjectsNavigation, ThreadListMode } from "./threadListModel";
 import type { ThreadListItem } from "./threadListTypes";
-import type { GlobalVoiceControl } from "./GlobalVoiceEntryAction";
 
 /** Thread-list state, layout, and actions used by the desktop sidebar. */
 export type ThreadSidebarProps = {
   archivedThreads: ThreadListItem[];
   filter: ThreadListFilter;
-  globalVoice: GlobalVoiceControl;
   headerVisible?: boolean;
   initialOffset: number;
   mode: ThreadListMode;
@@ -20,8 +18,8 @@ export type ThreadSidebarProps = {
   onLoadMore: () => Promise<boolean>;
   onManageTerminals: () => void;
   onModeChange: (mode: ThreadListMode) => void;
-  onNewThread: () => void;
   onOffsetChange: (offset: number) => void;
+  onOpenDownloads: () => void;
   onOpenSearch: () => void;
   onRefreshAccountRateLimits?: () => Promise<unknown>;
   onSelectServer: (scope: ServerScope) => void;
@@ -35,5 +33,4 @@ export type ThreadSidebarProps = {
   serverScope: ServerScope;
   threadNavigation: ThreadListNavigation;
   threads: ThreadListItem[];
-  width: number;
 } & SidebarProjectsNavigation;

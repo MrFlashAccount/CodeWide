@@ -5,6 +5,7 @@ import {
   currentAsyncQuestions,
   hasAsyncQuestions,
 } from "./questionLifecycle";
+import { readThreadCatalogControls } from "./threadCatalogControls";
 import { readThreadAgent } from "./threadAgent";
 import { unknownRecord } from "./unknownRecord";
 import { isThread } from "./thread-cursor-sync";
@@ -61,6 +62,11 @@ export function threadSummaryDescendantKeys(
   rootThreadId: string,
 ): Set<string> {
   const keys = new Set<string>();
+  for (const row of rows) {
+    if (row.subagentRootThreadId === rootThreadId) {
+      keys.add(threadSummaryKey(row.connectionId, row.remoteThreadId));
+    }
+  }
   for (const row of threadSummaryDescendants(rows, rootThreadId)) {
     keys.add(threadSummaryKey(row.connectionId, row.remoteThreadId));
   }
@@ -81,6 +87,7 @@ export function projectThreadSummarySnapshot(
   return {
     agentNickname: thread.agentNickname,
     agentRole: thread.agentRole,
+    catalogControls: previous?.catalogControls ?? readThreadCatalogControls(thread),
     connectionId,
     name: thread.name,
     parentThreadId: thread.parentThreadId ?? null,
@@ -117,6 +124,7 @@ export function projectThreadSummarySnapshot(
     recencyAt: thread.recencyAt,
     skippedQuestions: previous?.skippedQuestions ?? null,
     status: normalizeThreadStatus(thread.status),
+    subagentRootThreadId: previous?.subagentRootThreadId ?? null,
     submittedQuestions: previous?.submittedQuestions ?? null,
     unread: previous?.unread ?? 0,
     updatedAt: thread.updatedAt,

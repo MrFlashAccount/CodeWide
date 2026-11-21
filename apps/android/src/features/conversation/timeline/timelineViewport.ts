@@ -1,3 +1,4 @@
+import { observable } from "@legendapp/state";
 import { useRef, useState } from "react";
 import type { View } from "react-native";
 import type { ThreadTimelineListRef } from "../../../rendering/ThreadTimelineList";
@@ -60,13 +61,11 @@ export function useTimelineViewportState(composerScope: string) {
 
   const [timelineDidLoad, setTimelineDidLoad] = useConversationState(composerScope, () => false);
 
-  const [timelineGestureActive, setTimelineGestureActive] = useConversationState(
-    composerScope,
-    () => false,
-  );
+  const [gestureActive$] = useConversationState(composerScope, () => observable(false));
   return {
     bottomChromeHeight,
     bottomChromeMeasured,
+    gestureActive$,
     jumpVisibility,
     lastTimelineOffsetYRef,
     paginationEdgeLockRef,
@@ -75,10 +74,8 @@ export function useTimelineViewportState(composerScope: string) {
     scrollGestureStartedAtRef,
     scrollOffsetRef,
     setTimelineDidLoad,
-    setTimelineGestureActive,
     timelineContentHeightRef,
     timelineDidLoad,
-    timelineGestureActive,
     timelineRef,
     timelineViewportHeightRef,
     timelineViewportRef,

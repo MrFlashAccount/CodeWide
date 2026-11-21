@@ -1,9 +1,12 @@
+import type { ReactNode } from "react";
 import type { ThreadListServer } from "../connections/connectionPresentation";
 import type { ThreadListItem } from "../threadList/threadListTypes";
 /** Qualified capabilities consumed by the conversation owner in conversation composition. */
 export type ConversationSurfaceCapabilities = {
   compact: boolean;
   cwd: string;
+  /** A hosted draft's notice under its project control; `null` elsewhere. */
+  draftNotice: ReactNode;
   firstUnreadAgentTurnId: string | null;
   newChat: boolean;
   onBack: (() => void) | undefined;

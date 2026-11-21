@@ -181,6 +181,15 @@ const fileChange = obj({
   movePath: nullable(str),
   path: str,
 });
+/** A background command's state: only an ended one carries `endedAt`, only an exit an `exitCode`. */
+const backgroundTask = { description: nullable(str), startedAt: int, taskId: str };
+const backgroundCommand = tagged("status", {
+  completed: { ...backgroundTask, endedAt: int, exitCode: nullable(int) },
+  failed: { ...backgroundTask, endedAt: int, exitCode: nullable(int) },
+  running: backgroundTask,
+  stopped: { ...backgroundTask, endedAt: int },
+  unknown: backgroundTask,
+});
 const provenance = optional(obj({ nativeThreadId: str, provider: str }));
 /** Adds the optional `provenance` field to every variant. */
 const withProvenance = (
@@ -218,7 +227,7 @@ const taggedItem = tagged(
     agentMessage: { itemId: str, phase: literal("commentary", "final"), text: str },
     capabilityItem: { capability: str, itemId: str, kind: str, payload: json },
     command: {
-      backgroundTaskId: optional(str),
+      background: optional(backgroundCommand),
       command: str,
       cwd: str,
       durationMs: nullable(int),
@@ -373,6 +382,7 @@ const nativeSession = obj({
 
 const nativeSubagent = obj({
   agentId: str,
+  effort: optional(str),
   model: optional(str),
   parentAgentId: nullable(str),
   parentToolUseId: nullable(str),
@@ -469,6 +479,8 @@ export const checkEvent: Check = tagged("type", {
 
 const clientTools = optional(arr(obj({ description: str, inputSchema: json, name: str })));
 
+const turnStartResult = tagged("type", { busy: { activeTurnId: str }, started: { turnId: str } });
+
 const sortWindow = obj({
   lower: nullable(int),
   lowerInclusive: bool,
@@ -483,7 +495,33 @@ const providerAccount: Check = obj({
   label: nullable(str),
 });
 
+const providerRateLimitResets: Check = obj({
+  availableCount: int,
+  cooldownUntil: nullable(int),
+  eligible: bool,
+  grants: arr(
+    obj({
+      clears: arr(str),
+      expiresAt: nullable(int),
+      id: str,
+      kind: literal("session", "weekly", "full", "other"),
+      label: str,
+      paused: bool,
+      resetsLeft: int,
+      resetsTotal: int,
+      startsAt: nullable(int),
+      unavailableReason: nullable(str),
+      usableNow: bool,
+      useRequiresLimit: bool,
+    }),
+  ),
+  ineligibleReason: nullable(str),
+  nextGrantId: nullable(str),
+  weeklyResetsAt: nullable(int),
+});
+
 const providerRateLimits: Check = obj({
+  resets: optional(providerRateLimitResets),
   updatedAt: int,
   windows: arr(
     obj({
@@ -564,6 +602,17 @@ const operationChecks: Readonly<
       text: str,
     }),
   },
+  "thread.backgroundTasks.list": {
+    params: obj({ appThreadId: str }),
+    result: obj({
+      tasks: arr(
+        tagged("kind", {
+          task: { background: backgroundCommand, command: str, itemId: str, turnId: str },
+          terminal: { command: str, itemId: str, processId: str },
+        }),
+      ),
+    }),
+  },
   "thread.compact": { params: obj({ appThreadId: str }), result: emptyObject },
   "thread.create": {
     params: obj({ appThreadId: nullable(str), clientTools, cwd: str, settings }),
@@ -622,6 +671,10 @@ const operationChecks: Readonly<
     }),
     result: obj({ thread: nullable(thread) }),
   },
+  "turn.continue": {
+    params: obj({ appThreadId: str }),
+    result: turnStartResult,
+  },
   "turn.interrupt": {
     params: obj({ appThreadId: str, turnId: nullable(str) }),
     result: emptyObject,
@@ -633,7 +686,7 @@ const operationChecks: Readonly<
       clientTools,
       input: arr(userContent),
     }),
-    result: tagged("type", { busy: { activeTurnId: str }, started: { turnId: str } }),
+    result: turnStartResult,
   },
   "turn.steer": {
     params: obj({

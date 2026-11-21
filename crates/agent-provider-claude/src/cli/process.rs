@@ -28,7 +28,7 @@ use tokio::{
 use super::{
     command::QueryOptions,
     protocol::{
-        ControlRequest, Inbound, Priority, classify_line, control_request_line,
+        Author, ControlRequest, Inbound, Priority, classify_line, control_request_line,
         control_response_line, initialize_request, usage_request, user_message_line,
     },
 };
@@ -65,6 +65,10 @@ pub enum ProcessError {
     Timeout,
     #[error("Claude process has ended")]
     Ended,
+    /// The `initialize` answer has no `session_state`: this `claude` cannot
+    /// report when its turn ends.
+    #[error("Claude Code {version} does not report its session state")]
+    Unsupported { version: String },
 }
 
 /// Waiters for the answers to the companion's requests; `None` once the
@@ -103,6 +107,9 @@ impl ClaudeProcess {
             // Sessions CodeWide drives are recorded as programmatic, as under
             // the Agent SDK, so they never pass for a person's own sessions.
             .env("CLAUDE_CODE_ENTRYPOINT", "sdk-ts")
+            // Claude reports whether it works (`session_state_changed`):
+            // the session ends a turn on Claude's own `idle`.
+            .env("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "1")
             .kill_on_drop(true);
         let mut child = command.spawn()?;
         let stdin = child.stdin.take();
@@ -194,8 +201,9 @@ impl ClaudeProcess {
         content: &Value,
         uuid: Option<&str>,
         priority: Priority,
+        author: Author,
     ) -> Result<(), ProcessError> {
-        self.write_line(&user_message_line(content, uuid, priority))
+        self.write_line(&user_message_line(content, uuid, priority, author))
             .await
     }
 

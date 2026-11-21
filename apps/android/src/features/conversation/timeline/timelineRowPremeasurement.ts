@@ -1,6 +1,7 @@
 import { performanceExperimentEnabled } from "../../../data/performance-experiments";
 import type { TimelineFixedSizeFallbackReason } from "../../../data/timelineScrollDiagnosticContract";
 import { artifactImageReferences } from "../../../rendering/ArtifactImageReferences";
+import { isAttachmentVideo, MESSAGE_VIDEO_PREVIEW_HEIGHT } from "../../../rendering/videoPreview";
 import {
   estimateDynamicRichMarkdownBlock,
   measureRichMarkdownBlock,
@@ -17,6 +18,7 @@ import { TIMELINE_ROW_FALLBACK_ESTIMATE, type TimelineRow } from "./timelineRows
 const TIMELINE_ROW_GEOMETRY_VERSION = 4;
 const TIMELINE_ROW_GEOMETRY_CACHE_LIMIT = 8;
 const HORIZONTAL_SIDES = 2;
+const VERTICAL_SIDES = 2;
 const MINIMUM_FONT_SCALE = 0.1;
 const TIMELINE_ITEM_MAX_WIDTH = 880;
 const AGENT_BUBBLE_HORIZONTAL_CHROME = spacing.md * HORIZONTAL_SIDES + controlSize.compact;
@@ -205,7 +207,7 @@ function dynamicPresentationReason(
   if (isLeadingPlacement(row.placement) && presentation.preTurnBlocks.length > 0) {
     return "leading-activity";
   }
-  if (drawsMidTurnReports(row, presentation)) {
+  if (row.trailingTasks.length > 0) {
     return "composite-row";
   }
   // WHY: Exact hints are lifetime-fixed sizes in LegendList. Expansion lives inside
@@ -237,6 +239,14 @@ function exactTimelineRowSize(options: {
       rowOuterVerticalChrome(row, geometry, fontScale) +
       trailingFooterHeight(row, fontScale),
     geometry.density,
+  );
+}
+
+/** One caption line plus its vertical padding. Native layout measures wrapping and font scale. */
+export function historyBeginningSizeEstimate(fontScale: number): number {
+  return (
+    spacing.md * VERTICAL_SIDES +
+    typeScale.caption.lineHeight * Math.min(fontScale, APP_MAX_FONT_SIZE_MULTIPLIER)
   );
 }
 
@@ -334,7 +344,14 @@ function estimatedTurnSliceSize(options: {
       collapsedCompletedHistoryHeight(row, presentation, fontScale);
   }
   if (isTrailingPlacement(row.placement)) {
-    bodyHeight += presentation.artifacts.length * controlSize.regular;
+    const hasVideoPreview = presentation.artifacts.some((artifact) =>
+      isAttachmentVideo(artifact.name),
+    );
+    const compactArtifacts = presentation.artifacts.filter(
+      (artifact) => !isAttachmentVideo(artifact.name),
+    );
+    bodyHeight += compactArtifacts.length * controlSize.regular;
+    bodyHeight += hasVideoPreview ? MESSAGE_VIDEO_PREVIEW_HEIGHT + spacing.compact : 0;
     bodyHeight += presentation.showEmptyResponsePlaceholder
       ? typeScale.label.lineHeight * fontScale
       : 0;
@@ -351,10 +368,13 @@ function estimatedTurnSliceSize(options: {
 }
 
 function estimateStandaloneTimelineItem(
-  row: Extract<TimelineRow, { kind: "item" }>,
+  row: Extract<TimelineRow, { kind: "item" | "historyBeginning" }>,
   geometry: TimelineRowMeasurementGeometry,
   dimensions: { readonly contentWidth: number; readonly fontScale: number },
 ): number {
+  if (row.kind === "historyBeginning") {
+    return historyBeginningSizeEstimate(dimensions.fontScale);
+  }
   const item = row.item;
   if (item.kind === "meta") {
     return roundToPhysicalPixel(
@@ -472,18 +492,6 @@ function rowOuterVerticalChrome(
 
 function isStreamingPart(part: VirtualizedTurnPart): boolean {
   return part.kind === "markdownBlock" && part.streaming;
-}
-
-/** A person's turn draws reports that arrived during its answer below the bubble. */
-function drawsMidTurnReports(
-  row: MeasurableTimelineRow,
-  presentation: ReturnType<typeof projectTurnPresentation>,
-): boolean {
-  return (
-    isTrailingPlacement(row.placement) &&
-    presentation.userBlocks.length > 0 &&
-    presentation.taskNotifications.midTurn.length > 0
-  );
 }
 
 function isLeadingPlacement(placement: VirtualizedTurnPlacement): boolean {

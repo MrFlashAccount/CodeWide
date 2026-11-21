@@ -146,6 +146,21 @@ describe("server rows racing pages and events", () => {
     database.close();
   });
 
+  it("reopens catalog settings and replaces access when the provider clears it", async () => {
+    const first = await open();
+    const policy = { sandboxPolicy: "readOnly", approvalPolicy: "on-request" };
+    const page = { ...row("chat", { cursor: 12 }), model: "m", reasoningEffort: "high", codewideModelLabel: "Model M", codewidePermissions: ":read-only", codewideAccessPolicy: policy };
+    await first.page([page]);
+    first.database.close();
+    const next = await open(2);
+    expect((await next.database.get("server", "chat"))?.catalogControls).toEqual({
+      accessPolicy: policy, cursor: 12, effort: "high", model: "m", modelLabel: "Model M", permissions: ":read-only",
+    });
+    await next.push([{ ...page, ...row("chat", { cursor: 15 }), model: "other", codewideModelLabel: null, codewidePermissions: null, codewideAccessPolicy: null }]);
+    expect((await next.database.get("server", "chat"))?.catalogControls).toMatchObject({ accessPolicy: null, cursor: 15, model: "other", permissions: null });
+    next.database.close();
+  });
+
   it("keeps a push newer than a page that was read before it", async () => {
     const { database, page, push } = await open();
     await push([row("chat", { cursor: 25 }, { preview: "Pushed", status: { type: "active", activeFlags: [] } })]);

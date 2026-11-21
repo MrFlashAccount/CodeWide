@@ -62,13 +62,15 @@ export function SubagentConversation({
   workspaceResources,
 }: SubagentConversationProps) {
   const { compact, connectionId, onBack, onOpenSubagent, thread } = view;
+  const threadListItem = subagentThreadListItem(view.summary, thread, connectionId);
   const routeNavigation = useConversationRouteNavigation();
   const scope = `${connectionId}\u0000${thread.id}`;
   const viewport = useTimelineViewportState(scope);
   const overlayState = useOverlayScrollState();
+  const historyViewport = { ...COMPLETE_STATIC_THREAD_HISTORY, ...view.historyBounds };
   const pagination = usePaginationTrim({
     fullscreenScrollOwnership: overlayState.fullscreenScrollOwnership,
-    historyViewport: COMPLETE_STATIC_THREAD_HISTORY,
+    historyViewport,
     paginationEdgeLockRef: viewport.paginationEdgeLockRef,
     paginationTrimTimerRef: viewport.paginationTrimTimerRef,
   });
@@ -109,9 +111,17 @@ export function SubagentConversation({
     remoteThread: thread,
     setChangesPreferences,
   });
-  useReviewFeature(scope, null, thread, appVoiceInputRuntime, null, undefined, async () => {
-    await Promise.resolve();
-    return null;
+  useReviewFeature({
+    appVoiceInputRuntime,
+    attachContentReview: async () => {
+      await Promise.resolve();
+      return null;
+    },
+    composerScope: scope,
+    contentReviewAttachmentId: null,
+    onStartVoiceTranscription: undefined,
+    remoteThread: thread,
+    voiceController: null,
   });
   const openTimelineDocument = useEvent(
     (request: Parameters<typeof routeNavigation.openDocument>[0]) => {
@@ -138,6 +148,7 @@ export function SubagentConversation({
       void refresh?.(thread.id).catch(() => undefined);
       routeNavigation.openAgents({
         initialThreadId,
+        parentLabel: threadListItem.title,
         parentThreadId: thread.id,
         summaries: children,
       });
@@ -178,6 +189,8 @@ export function SubagentConversation({
       }
       getStableTransferAccess={getStableTransferAccess}
       getTransferAccess={getTransferAccess}
+      headerSubtitle={view.parentBreadcrumb}
+      historyViewport={historyViewport}
       onBack={onBack}
       onFixUnsupportedBlock={fixUnsupportedBlock}
       onOpenSubagentThread={onOpenSubagent}
@@ -190,7 +203,7 @@ export function SubagentConversation({
       remoteThread={thread}
       reviewContent={<ContentReviewComposer targetPrefix="agent-response:" />}
       server={server}
-      thread={subagentThreadListItem(view.summary, thread, connectionId)}
+      thread={threadListItem}
       viewport={viewport}
     />
   );

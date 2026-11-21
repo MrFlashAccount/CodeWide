@@ -247,7 +247,13 @@ fn locate(
     }
     let name = format!("{}.{RECORD_EXTENSION}", location.session_id);
     if let Some(cwd) = location.cwd {
-        let real = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+        // The project directory is named after the resolved working directory;
+        // a mount known to be hung is not entered, its spelling is used.
+        let real = if workspace_io::WorkspaceIo::shared().is_unavailable(cwd) {
+            cwd.to_path_buf()
+        } else {
+            std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf())
+        };
         let path = projects_root
             .join(project_dir_name(&real.to_string_lossy()))
             .join(&name);

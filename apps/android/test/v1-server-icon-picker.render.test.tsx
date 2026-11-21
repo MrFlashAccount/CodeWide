@@ -18,6 +18,7 @@ jest.mock("@expo/ui/jetpack-compose", () => {
 });
 
 jest.mock("@expo/ui/jetpack-compose/modifiers", () => ({
+  fillMaxSize: () => ({ fillMaxSize: true }),
   height: (value: number) => ({ height: value }),
   width: (value: number) => ({ width: value }),
 }));

@@ -1,9 +1,5 @@
 import { StyleSheet } from "react-native";
-import {
-  filterIconButtonDotLayout,
-  filterIconButtonPressed,
-} from "../../presentation/input/filterIconButtonLayout";
-import { searchFieldLayout } from "../../presentation/input/searchLayout";
+import { filterIconButtonDotLayout } from "../../presentation/input/filterIconButtonLayout";
 import { threadListLayout } from "../../ui/thread-list-layout";
 import { colors, controlSize, menuContentInset, radii, spacing, typeScale } from "../../theme";
 
@@ -25,14 +21,6 @@ export const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
     textAlign: "right",
   },
-  clearButton: {
-    alignItems: "center",
-    borderRadius: radii.large,
-    flexShrink: 0,
-    height: controlSize.regular,
-    justifyContent: "center",
-    width: controlSize.regular,
-  },
   empty: {
     gap: spacing.sm,
     padding: spacing.md,
@@ -53,24 +41,8 @@ export const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: menuContentInset,
   },
-  header: {
-    alignItems: "center",
-    flex: 1,
-    flexDirection: "row",
-    gap: spacing.optical,
-    minWidth: 0,
-  },
   highlight: {
     backgroundColor: colors.warningContainer,
-    color: colors.text,
-  },
-  iconButtonPressed: filterIconButtonPressed,
-  input: {
-    flex: 1,
-    height: controlSize.regular,
-    minWidth: 0,
-    padding: 0,
-    ...typeScale.body,
     color: colors.text,
   },
   label: {
@@ -132,12 +104,6 @@ export const styles = StyleSheet.create({
   root: {
     flex: 1,
     minHeight: 0,
-  },
-  searchBar: {
-    ...searchFieldLayout,
-    flex: 1,
-    height: controlSize.regular,
-    minWidth: 0,
   },
   title: {
     ...typeScale.body,

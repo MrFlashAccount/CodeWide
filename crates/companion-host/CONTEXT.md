@@ -6,12 +6,12 @@ Narrow host infrastructure contracts that `companion-core` hands to provider ada
 
 ## Module jobs
 
-- `database.rs` — redb opening with the companion page-cache budget and cache metrics.
+- `database.rs` — redb opening with the companion page-cache budget and cache metrics; `open_owned` / `share` for a caller that maintains a database alone before sharing it, and `compact_if_sparse`: when at least half of the file and at least 256 MiB are free (after a migration dropped large derived tables), the database is compacted and the file shrinks to its live pages, with the sizes and duration logged. redb compacts through ordinary commits, so a compaction cut short leaves a consistent file and the next open finishes it.
 - `index.rs` — `StoreError` of the companion index, its `META` table and `DerivedIndexSchema`: tables an adapter derives from its own sources inside the index database, migrated by `IndexStore::open_with` in the index's opening transaction.
 - `thread_index.rs` — `IndexedThreadMetadata`, `ThreadPinSnapshot`, `HostThreadIndex` (metadata writes, subagent tree, pins; implemented by `IndexStore`) and `ThreadMetadataSource` (an adapter's lookup of threads the index does not know yet).
 - `content.rs` — `CanonicalContentSource`: content an adapter proves from its canonical sources, asked by the private content service before its own bytes.
-- `files.rs`, `vcs.rs` — `PreviewFiles` (implemented by `FileService`) and `WorkspaceVcs` with the VCS value model (implemented by `VcsService`), used by thread resources.
-- `activity_metrics.rs` — companion-owned activity counters on client-wire items, shared by sync ingest and stored-history projection.
+- `files.rs`, `vcs.rs` — `PreviewFiles` (implemented by `FileService`) and `WorkspaceVcs` with the VCS value model (implemented by `VcsService`), used by thread resources. The VCS value model includes the `vcs.remotes@1` and `workspace.*` results, so the Git provider crate (`crates/vcs-git`) shares it without depending on `companion-core`.
+- `activity_metrics.rs` — companion-owned activity counters on client-wire items, shared by sync ingest and stored-history projection. Turn plans participate in Activity; the aggregate turn diff is footer-owned and never counted as an Activity step.
 - `wire_items.rs` — CodeWide's own client-wire item type names (`codewideTaskNotification`), defined once for the wire projector and every reader of the item.
 
 ## Boundary

@@ -411,3 +411,125 @@ async fn relay_pair_echo(headers: HeaderMap, Json(command): Json<Value>) -> Json
     assert_eq!(command["invitation"]["version"], 4);
     Json(json!({"configured": true, "enabled": true}))
 }
+
+#[tokio::test]
+async fn forge_cli_registers_external_plugins() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let registry = directory.path().join("forge-plugins.json");
+    let plugin = directory.path().join("arcanum-plugin");
+    std::fs::write(&plugin, "#!/bin/sh\nexit 0\n")?;
+    std::fs::set_permissions(&plugin, std::fs::Permissions::from_mode(0o755))?;
+    let cli = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_codewide-companion"))
+            .args(args)
+            .output()
+    };
+    let registry_arg = registry.to_str().ok_or("utf8")?;
+    let plugin_arg = plugin.to_str().ok_or("utf8")?;
+    let installed = cli(&[
+        "forge",
+        "plugin",
+        "install",
+        "--id",
+        "arcanum",
+        "--executable",
+        plugin_arg,
+        "--registry",
+        registry_arg,
+    ])
+    .await?;
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let built_in = cli(&[
+        "forge",
+        "plugin",
+        "install",
+        "--id",
+        "github",
+        "--executable",
+        plugin_arg,
+        "--registry",
+        registry_arg,
+    ])
+    .await?;
+    assert!(
+        !built_in.status.success(),
+        "a built-in id cannot be replaced"
+    );
+    let listed = cli(&["forge", "plugin", "list", "--registry", registry_arg]).await?;
+    let listed: Value = serde_json::from_slice(&listed.stdout)?;
+    assert_eq!(listed[0]["id"], "arcanum");
+    let removed = cli(&[
+        "forge",
+        "plugin",
+        "remove",
+        "arcanum",
+        "--registry",
+        registry_arg,
+    ])
+    .await?;
+    let removed: Value = serde_json::from_slice(&removed.stdout)?;
+    assert_eq!(removed["removed"], true);
+    Ok(())
+}
+
+#[tokio::test]
+async fn forge_cli_toggles_providers_through_local_control()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let cli = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_codewide-companion"))
+            .args(args)
+            .output()
+    };
+    let endpoint = directory.path().join("control.sock");
+    let token_file = directory.path().join("host.token");
+    std::fs::write(&token_file, format!("{ADMIN_TOKEN}\n"))?;
+    std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600))?;
+    let listener = UnixListener::bind(&endpoint)?;
+    let router = Router::new().route(
+        "/v1/forge/providers/{plugin_id}",
+        axum::routing::patch(
+            |axum::extract::Path(plugin_id): axum::extract::Path<String>,
+             headers: HeaderMap,
+             Json(body): Json<Value>| async move {
+                let authorized = headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    == Some(&format!("Bearer {ADMIN_TOKEN}") as &str);
+                Json(json!({"pluginId": plugin_id, "body": body, "authorized": authorized}))
+            },
+        ),
+    );
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    let endpoint_arg = endpoint.to_str().ok_or("utf8")?;
+    let token_arg = token_file.to_str().ok_or("utf8")?;
+    let disabled = cli(&[
+        "forge",
+        "provider",
+        "disable",
+        "github",
+        "--control-endpoint",
+        endpoint_arg,
+        "--token-file",
+        token_arg,
+    ])
+    .await?;
+    server.abort();
+    assert!(
+        disabled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&disabled.stderr)
+    );
+    let disabled: Value = serde_json::from_slice(&disabled.stdout)?;
+    assert_eq!(
+        disabled,
+        json!({"pluginId": "github", "body": {"enabled": false}, "authorized": true})
+    );
+    Ok(())
+}

@@ -651,6 +651,14 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
     func health() throws  -> FfiRuntimeHealth
 
     /**
+     * Returns Companion's application-owned HTTP proxy settings.
+     *
+     * # Errors
+     * Returns an adapter error when the settings cannot be encoded.
+     */
+    func httpProxySettingsJson() throws  -> String
+
+    /**
      * Consumes a Relay invitation and starts its outbound adapter.
      * # Errors
      * Returns an adapter error for invalid input, trust, or network failure.
@@ -694,6 +702,15 @@ public protocol CoreHostProtocol: AnyObject, Sendable {
      * Returns an adapter error when the durable registry cannot be updated.
      */
     func revokeDevice(deviceId: String) throws  -> Bool
+
+    /**
+     * Validates and stores Companion's application-owned HTTP proxy settings.
+     * The macOS runtime restarts after this call so new requests use them.
+     *
+     * # Errors
+     * Returns an adapter error when the payload is invalid or cannot be saved.
+     */
+    func setHttpProxySettingsJson(settingsJson: String) throws  -> String
 
     /**
      * Enables or disables the configured Relay adapter.
@@ -760,9 +777,10 @@ open class CoreHost: CoreHostProtocol, @unchecked Sendable {
      * migrated, exclusively locked, or durably checkpointed.
      *
      * `app_build` and `source_revision` identify the installed bundle for
-     * remote updates.
+     * remote updates. `bundled_plugin_directory` is the app's
+     * `Contents/Helpers`, which holds the built-in forge plugins.
      */
-public convenience init(stateDirectory: String, codexHome: String, appVersion: String, appBuild: String, sourceRevision: String, hostVersion: String, computerName: String, listenAddress: String)throws  {
+public convenience init(stateDirectory: String, codexHome: String, appVersion: String, appBuild: String, sourceRevision: String, hostVersion: String, computerName: String, listenAddress: String, bundledPluginDirectory: String)throws  {
     let handle =
         try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
         uniffiCallStatus in
@@ -774,7 +792,8 @@ public convenience init(stateDirectory: String, codexHome: String, appVersion: S
         FfiConverterString.lower(sourceRevision),
         FfiConverterString.lower(hostVersion),
         FfiConverterString.lower(computerName),
-        FfiConverterString.lower(listenAddress),uniffiCallStatus
+        FfiConverterString.lower(listenAddress),
+        FfiConverterString.lower(bundledPluginDirectory),uniffiCallStatus
     )
 }
     self.init(unsafeFromHandle: handle)
@@ -964,6 +983,21 @@ open func health()throws  -> FfiRuntimeHealth  {
 }
 
     /**
+     * Returns Companion's application-owned HTTP proxy settings.
+     *
+     * # Errors
+     * Returns an adapter error when the settings cannot be encoded.
+     */
+open func httpProxySettingsJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_http_proxy_settings_json(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+
+    /**
      * Consumes a Relay invitation and starts its outbound adapter.
      * # Errors
      * Returns an adapter error for invalid input, trust, or network failure.
@@ -1051,6 +1085,23 @@ open func revokeDevice(deviceId: String)throws  -> Bool  {
     uniffi_companion_swift_ffi_fn_method_corehost_revoke_device(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(deviceId),uniffiCallStatus
+    )
+})
+}
+
+    /**
+     * Validates and stores Companion's application-owned HTTP proxy settings.
+     * The macOS runtime restarts after this call so new requests use them.
+     *
+     * # Errors
+     * Returns an adapter error when the payload is invalid or cannot be saved.
+     */
+open func setHttpProxySettingsJson(settingsJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCompanionFfiError_lift) {
+        uniffiCallStatus in
+    uniffi_companion_swift_ffi_fn_method_corehost_set_http_proxy_settings_json(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(settingsJson),uniffiCallStatus
     )
 })
 }
@@ -2066,6 +2117,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_health() != 9536) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_http_proxy_settings_json() != 17424) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_pair_relay() != 64584) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -2084,13 +2138,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_companion_swift_ffi_checksum_method_corehost_revoke_device() != 29457) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_companion_swift_ffi_checksum_method_corehost_set_http_proxy_settings_json() != 39136) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_set_relay_enabled() != 8464) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_companion_swift_ffi_checksum_method_corehost_start_app_server() != 22333) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 40899) {
+    if (uniffi_companion_swift_ffi_checksum_constructor_corehost_new() != 20583) {
         return InitializationResult.apiChecksumMismatch
     }
 

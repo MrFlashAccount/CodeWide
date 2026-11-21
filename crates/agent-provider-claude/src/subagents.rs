@@ -9,8 +9,8 @@
 //! `subagent` item and `companion/threadSubagents/read`.
 
 use agent_core::model::{
-    AgentItem, AgentThread, AgentTurn, AppThreadId, NativeSessionReadResult, ProviderId,
-    SubagentStatus, ThreadOrigin, ThreadSettings, ThreadSpawn, ThreadStatus, TurnStatus,
+    AgentThread, AppThreadId, ProviderId, ThreadOrigin, ThreadSettings, ThreadSpawn, ThreadStatus,
+    TurnId,
 };
 use companion_host::thread_index::IndexedThreadMetadata;
 use serde::{Deserialize, Serialize};
@@ -56,74 +56,10 @@ pub struct IndexedSubagent {
     /// records none.
     #[serde(default)]
     pub model: Option<String>,
-}
-
-struct Spawn<'a> {
-    description: &'a str,
-    agent_type: Option<&'a str>,
-    status: SubagentStatus,
-}
-
-/// The spawning `subagent` item with id `tool_use_id` in any of `turns`.
-fn find_spawn<'a>(
-    turns: impl Iterator<Item = &'a AgentTurn>,
-    tool_use_id: &str,
-) -> Option<Spawn<'a>> {
-    turns
-        .flat_map(|turn| turn.items.iter())
-        .find_map(|item| match item {
-            AgentItem::Subagent {
-                item_id,
-                description,
-                agent_type,
-                status,
-                ..
-            } if item_id.as_str() == tool_use_id => Some(Spawn {
-                description,
-                agent_type: agent_type.as_deref(),
-                status: *status,
-            }),
-            _ => None,
-        })
-}
-
-/// The index facts of every sub-agent of a fresh session read, in the read's order.
-#[must_use]
-pub fn index(read: &NativeSessionReadResult) -> Vec<IndexedSubagent> {
-    read.subagents
-        .iter()
-        .map(|subagent| {
-            let all_turns = || {
-                read.turns
-                    .iter()
-                    .chain(read.subagents.iter().flat_map(|other| other.turns.iter()))
-            };
-            let spawn = subagent
-                .parent_tool_use_id
-                .as_deref()
-                .and_then(|tool_use_id| find_spawn(all_turns(), tool_use_id));
-            let last = subagent.turns.last();
-            IndexedSubagent {
-                agent_id: subagent.agent_id.clone(),
-                parent_agent_id: subagent.parent_agent_id.clone(),
-                parent_tool_use_id: subagent.parent_tool_use_id.clone(),
-                description: spawn
-                    .as_ref()
-                    .map(|spawn| spawn.description.to_owned())
-                    .filter(|description| !description.is_empty()),
-                agent_type: spawn
-                    .as_ref()
-                    .and_then(|spawn| spawn.agent_type.map(ToOwned::to_owned)),
-                started_at: subagent.turns.first().map(|turn| turn.started_at),
-                updated_at: last.map(|turn| turn.completed_at.unwrap_or(turn.started_at)),
-                running: spawn
-                    .as_ref()
-                    .is_some_and(|spawn| spawn.status == SubagentStatus::Running)
-                    || last.is_some_and(|turn| turn.status == TurnStatus::InProgress),
-                model: subagent.model.clone(),
-            }
-        })
-        .collect()
+    /// The reasoning effort recorded on that same answer; `None` when it
+    /// records none.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 /// Whether two indexed sub-agent sets of one session list differently: an
@@ -155,7 +91,10 @@ pub struct ChildThread {
     pub parent: AppThreadId,
     pub cwd: String,
     pub subagent: IndexedSubagent,
-    pub turns: Vec<AgentTurn>,
+    /// The preview of its newest turn ([`crate::preview::newest_message`]).
+    pub preview: Option<String>,
+    /// The id of its newest turn while that turn still runs.
+    pub active_turn_id: Option<TurnId>,
     /// The parent thread's settings, as its own thread reports them
     /// (`catalog::thread_settings`).
     pub parent_settings: ThreadSettings,
@@ -172,7 +111,7 @@ impl ChildThread {
             cwd: self.cwd.clone(),
             name: self.subagent.description.clone(),
             // The newest conversation message, as every thread's list preview.
-            preview: crate::preview::newest_message(&self.turns).unwrap_or_default(),
+            preview: self.preview.clone().unwrap_or_default(),
             created_at,
             updated_at: self.subagent.updated_at.unwrap_or(created_at),
             recency_at: None,
@@ -197,9 +136,13 @@ impl ChildThread {
     /// permission mode, and its transcript records no mode of its own. Its
     /// model is the one its transcript last answered with (an agent
     /// definition may pin another model than the parent's), else the
-    /// parent's. Effort and service tier are not reported: the transcript
-    /// records neither and the adapter supports no service tier, so the
-    /// parent's values would be a guess.
+    /// parent's. Its effort is the one recorded on that answer: Claude Code
+    /// resolves it per sub-agent (an explicit `effort` of the spawning
+    /// `Agent` call, else the agent definition's, else the session's effort
+    /// for the agent's model, which a model without effort support drops and
+    /// an experiment may lower), so the parent's effort is never substituted
+    /// and an unrecorded one stays unknown. Service tier is not reported: the
+    /// adapter supports none.
     fn settings(&self) -> ThreadSettings {
         ThreadSettings {
             model: self
@@ -207,7 +150,7 @@ impl ChildThread {
                 .model
                 .clone()
                 .unwrap_or_else(|| self.parent_settings.model.clone()),
-            effort: None,
+            effort: self.subagent.effort.clone(),
             permission_profile: self.parent_settings.permission_profile.clone(),
             service_tier: None,
         }
@@ -225,10 +168,8 @@ impl ChildThread {
 
     /// The turn still running in the transcript, if any.
     #[must_use]
-    pub fn active_turn(&self) -> Option<&AgentTurn> {
-        self.turns
-            .last()
-            .filter(|turn| turn.status == TurnStatus::InProgress)
+    pub const fn active_turn_id(&self) -> Option<&TurnId> {
+        self.active_turn_id.as_ref()
     }
 }
 
@@ -310,6 +251,7 @@ mod tests {
             updated_at: Some(updated_at),
             running,
             model: None,
+            effort: None,
         };
         let working = [subagent("a1", true, 20)];
         assert!(listed_differently(&[], &working));
@@ -334,6 +276,7 @@ mod tests {
             updated_at: Some(20),
             running: true,
             model: model.map(Into::into),
+            effort: None,
         };
         assert!(!listed_differently(
             &[subagent(None)],
@@ -342,6 +285,14 @@ mod tests {
     }
 
     fn child(model: Option<&str>, parent_settings: ThreadSettings) -> ChildThread {
+        child_with_effort(model, None, parent_settings)
+    }
+
+    fn child_with_effort(
+        model: Option<&str>,
+        effort: Option<&str>,
+        parent_settings: ThreadSettings,
+    ) -> ChildThread {
         let parent = AppThreadId::from_static("5f0c2a1e-3b4d-4e6f-8a9b-0c1d2e3f4a5b");
         ChildThread {
             thread_id: child_thread_id(&parent, "a1").unwrap_or_else(|| parent.clone()),
@@ -357,8 +308,10 @@ mod tests {
                 updated_at: Some(20),
                 running: false,
                 model: model.map(Into::into),
+                effort: effort.map(Into::into),
             },
-            turns: Vec::new(),
+            preview: None,
+            active_turn_id: None,
             parent_settings,
         }
     }
@@ -390,6 +343,32 @@ mod tests {
     }
 
     #[test]
+    fn a_child_reports_the_effort_its_transcript_recorded_not_its_parents() {
+        let provider = ProviderId::from_static("claude");
+        // `full_access_parent` runs at `high`; the sub-agent ran at `low`
+        // (an explicit `Agent` effort or its definition's).
+        let settings =
+            child_with_effort(Some("claude-opus-5-5"), Some("low"), full_access_parent())
+                .thread(&provider)
+                .settings;
+        assert_eq!(settings.effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn a_child_whose_transcript_records_no_effort_reports_none() {
+        let provider = ProviderId::from_static("claude");
+        let settings = child_with_effort(
+            Some("claude-haiku-4-5-20251001"),
+            None,
+            full_access_parent(),
+        )
+        .thread(&provider)
+        .settings;
+        assert_eq!(settings.model, "claude-haiku-4-5-20251001");
+        assert_eq!(settings.effort, None);
+    }
+
+    #[test]
     fn a_child_whose_transcript_records_no_model_reports_its_parents() {
         let provider = ProviderId::from_static("claude");
         let settings = child(None, full_access_parent()).thread(&provider).settings;
@@ -410,6 +389,7 @@ mod tests {
             updated_at: Some(20),
             running,
             model: None,
+            effort: None,
         };
         for running in [true, false] {
             let row = thread_metadata(&parent, "/repo", 1, &subagent(running));

@@ -1,13 +1,15 @@
 import { StyleSheet } from "react-native";
-import { colors, typeScale, typeWeight } from "../../theme";
+import { catalogModeBarContentInset } from "../../presentation/layouts/catalogModeBarGeometry";
+import { colors } from "../../theme";
 
 export const styles = StyleSheet.create({
+  floatingBarContent: {
+    paddingBottom: catalogModeBarContentInset,
+  },
+  // Layout only; `CatalogTitle` owns the typography shared by every catalog.
   serverTitle: {
-    color: colors.text,
     flex: 1,
     minWidth: 0,
-    ...typeScale.title,
-    fontWeight: typeWeight.semibold,
   },
   threadListContentSurface: {
     flex: 1,
@@ -19,12 +21,10 @@ export const styles = StyleSheet.create({
     zIndex: 1,
   },
   threadListSuspended: { flex: 1 },
+  // Fills the catalog pane, whose box the pane frame sizes.
   threadSidebar: {
     backgroundColor: colors.threadListSurface,
     flex: 1,
-    flexShrink: 0,
-    maxWidth: 480,
-    minWidth: 280,
     overflow: "hidden",
   },
 });

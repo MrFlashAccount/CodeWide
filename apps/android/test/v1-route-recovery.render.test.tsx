@@ -24,6 +24,7 @@ it("shows a loading surface immediately when the thread list suspends and then r
     </View>,
   );
   expect(view.getByLabelText("Loading threads")).toBeVisible();
+  expect(view.getByTestId("thread-list-skeleton")).toBeVisible();
   await act(async () => {
     pending.resolve("Thread list ready");
     await pending.promise;

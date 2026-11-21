@@ -29,6 +29,16 @@ const OPEN_TAG: &str = "<task-notification>";
 const CLOSE_TAG: &str = "</task-notification>";
 const RESULT_OPEN: &str = "<result>";
 const RESULT_CLOSE: &str = "</result>";
+/// The prefix of the pseudo task id Claude adds to its aggregate report of
+/// the tasks a previous process left unfinished
+/// (`__orphan_summary__:shell`): it names the summary, not a task.
+const SUMMARY_TASK_ID_PREFIX: &str = "__orphan_summary__:";
+
+/// Whether `task_id` names a task (not Claude's summary pseudo id).
+fn is_task_id(task_id: &str) -> bool {
+    !task_id.starts_with(SUMMARY_TASK_ID_PREFIX)
+}
+
 /// The largest integer a JSON number carries exactly (2^53 - 1).
 const MAX_EXACT_INTEGER: i64 = 9_007_199_254_740_991;
 
@@ -162,6 +172,7 @@ fn stored_reports(notification: &StoredNotification<'_>) -> Vec<TaskReport> {
         .elements("task-id")
         .into_iter()
         .filter_map(|task_id| non_empty(Some(task_id)))
+        .filter(|task_id| is_task_id(task_id))
         .collect();
     let tool_use_id = if task_ids.len() == 1 {
         non_empty(notification.element("tool-use-id"))
@@ -206,10 +217,11 @@ fn frame_count(usage: Option<&JsonRecord>, name: &str) -> Option<i64> {
         .and_then(exact_count)
 }
 
-/// A live `task_notification` frame's report; `None` without a task id.
+/// A live `task_notification` frame's report; `None` without a task id
+/// or for Claude's summary pseudo id.
 #[must_use]
 pub fn live_task_report(frame: &JsonRecord) -> Option<TaskReport> {
-    let task_id = str_of(frame, "task_id")?;
+    let task_id = str_of(frame, "task_id").filter(|task_id| is_task_id(task_id))?;
     let usage = record_of(frame, "usage");
     Some(TaskReport {
         task_id: task_id.to_owned(),
@@ -295,6 +307,48 @@ mod tests {
                 ("btest0001", Some("completed"), Some("ok"), None, None),
             ]
         );
+    }
+
+    /// The report Claude stores when it resumes a session whose previous
+    /// process died with background commands running: one notification for
+    /// every such task, plus a pseudo id naming the summary itself.
+    #[test]
+    fn an_orphan_summary_reports_its_tasks_and_never_its_pseudo_id() {
+        let reports = stored_task_reports(
+            "<task-notification>\n<task-id>bkweufyo6</task-id>\n<task-id>b0a7y9mpq</task-id>\n<task-id>__orphan_summary__:shell</task-id>\n<status>stopped</status>\n<summary>2 background shell command tasks didn't finish before the previous session ended. Task ids: bkweufyo6, b0a7y9mpq.</summary>\n<note>No completion record was found for them in the previous session.</note>\n</task-notification>",
+        );
+        assert_eq!(
+            reports
+                .iter()
+                .map(|report| (
+                    report.task_id.as_str(),
+                    crate::transcript::task_notifications::reported_status(report)
+                ))
+                .collect::<Vec<_>>(),
+            [
+                ("bkweufyo6", agent_core::model::TaskNotificationStatus::Lost),
+                ("b0a7y9mpq", agent_core::model::TaskNotificationStatus::Lost),
+            ]
+        );
+    }
+
+    /// What `claude` 2.1.319 emits live for the same resume: one frame per
+    /// orphaned task (never one for the summary).
+    #[test]
+    fn a_live_orphan_report_is_lost_and_a_summary_frame_is_no_report()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let frame = |task_id: &str| {
+            json!({"type": "system", "subtype": "task_notification", "task_id": task_id,
+                "tool_use_id": "toolu_1", "status": "stopped", "output_file": "",
+                "summary": "Orphaned by a previous Claude Code process exit and reported in an aggregate summary."})
+        };
+        let task = frame("bkweufyo6");
+        let live = live_task_report(task.as_object().ok_or("frame")?)
+            .map(|report| crate::transcript::task_notifications::reported_status(&report));
+        assert_eq!(live, Some(agent_core::model::TaskNotificationStatus::Lost));
+        let summary = frame("__orphan_summary__:shell");
+        assert!(live_task_report(summary.as_object().ok_or("frame")?).is_none());
+        Ok(())
     }
 
     #[test]

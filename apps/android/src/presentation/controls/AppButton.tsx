@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -9,6 +9,7 @@ import {
 } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
+import { TextShimmer } from "../../ui/TextShimmer";
 import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../theme";
 
 type AppButtonVariant = "danger" | "danger-soft" | "ghost" | "outline" | "primary" | "secondary";
@@ -17,6 +18,8 @@ interface AppButtonProps extends Omit<PressableProps, "children" | "disabled" | 
   readonly children: ReactNode;
   readonly isDisabled?: boolean;
   readonly isIconOnly?: boolean;
+  /** A text label shimmers in place while its operation is pending; geometry never changes. */
+  readonly pending?: boolean;
   readonly size?: "sm" | "md";
   readonly style?: StyleProp<ViewStyle>;
   readonly variant?: AppButtonVariant;
@@ -40,6 +43,7 @@ export function AppButton(props: AppButtonProps): React.JSX.Element {
     children,
     isDisabled = false,
     isIconOnly = false,
+    pending = false,
     size = "md",
     style,
     variant = "primary",
@@ -54,23 +58,57 @@ export function AppButton(props: AppButtonProps): React.JSX.Element {
     setPressed(false);
     pressableProps.onPressOut?.(event);
   });
-  const textChild = typeof children === "string" || typeof children === "number";
   return (
     <Pressable
       {...pressableProps}
       accessibilityRole={pressableProps.accessibilityRole ?? "button"}
-      accessibilityState={{ ...pressableProps.accessibilityState, disabled: isDisabled }}
+      accessibilityState={buttonAccessibilityState(
+        pressableProps.accessibilityState,
+        pending,
+        isDisabled,
+      )}
       disabled={isDisabled}
       onPressIn={pressIn}
       onPressOut={pressOut}
       style={buttonStyle({ isDisabled, isIconOnly, pressed, size, style, variant })}
     >
-      {textChild ? (
-        <Text style={[styles.label, buttonLabelStyles[variant]]}>{children}</Text>
-      ) : (
-        children
-      )}
+      <ButtonContent pending={pending} variant={variant}>
+        {children}
+      </ButtonContent>
     </Pressable>
+  );
+}
+
+/** A pending button is busy; callers may still mark it busy themselves. */
+function buttonAccessibilityState(
+  state: PressableProps["accessibilityState"],
+  pending: boolean,
+  disabled: boolean,
+): PressableProps["accessibilityState"] {
+  return { ...state, busy: pending || state?.busy, disabled };
+}
+
+/** A text child gets the variant's label style and shimmers in place while pending. */
+function ButtonContent({
+  children,
+  pending,
+  variant,
+}: {
+  readonly children: ReactNode;
+  readonly pending: boolean;
+  readonly variant: AppButtonVariant;
+}): ReactNode {
+  const label = useRef<Text>(null);
+  if (typeof children !== "string" && typeof children !== "number") {
+    return children;
+  }
+  return (
+    <>
+      <Text ref={label} style={[styles.label, buttonLabelStyles[variant]]}>
+        {children}
+      </Text>
+      <TextShimmer shimmering={pending} target={label} />
+    </>
   );
 }
 

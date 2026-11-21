@@ -11,7 +11,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
     draftServers.length > 1
       ? draftServers.find((server) => server.id === props.draftConnectionId)
       : undefined;
-  const timelineContent = (
+  const timelineContent = props.threadTimelineBinding.withTimelineResources(
     <TimelineViewport
       awayFromLatest={props.timelineState.historyAnchorStateBinding.awayFromLatest}
       awayFromLatestRef={props.timelineState.historyAnchorStateBinding.awayFromLatestRef}
@@ -32,8 +32,10 @@ export function createConversationTimelineContent(props: CreateConversationTimel
           historyActivityModel={props.historyActivityModel}
           historyActivityResourceId={props.historyActivityResourceId}
           newChat={props.timelineRead.newChat}
+          notice={props.draftNotice}
           onChangeWorkspaceMode={props.projectsInputs.onChangeWorkspaceMode}
           openProjectPicker={props.composerProjectSelectionBinding.openProjectPicker}
+          projectRequirement={props.projectsInputs.projectRequirement}
           server={draftServer}
           threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
           workspaceMode={props.workspaceMode}
@@ -68,6 +70,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       }
       fullscreenCovered={props.overlayScrollStateBinding.fullscreenCovered}
       fullscreenScrollOwnership={props.overlayScrollStateBinding.fullscreenScrollOwnership}
+      gestureActive$={props.timelineState.timelineViewportStateBinding.gestureActive$}
       historyViewport={props.historyViewport}
       inlineQueueExpanded={props.queueVisibilityBinding.inlineQueueExpanded}
       jumpVisibility={props.timelineState.timelineViewportStateBinding.jumpVisibility}
@@ -105,9 +108,6 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       scrollOffsetRef={props.timelineState.timelineViewportStateBinding.scrollOffsetRef}
       searchMessageItemId={props.timelineRead.searchMessageItemId}
       setAwayFromLatest={props.timelineState.historyAnchorStateBinding.setAwayFromLatest}
-      setTimelineGestureActive={
-        props.timelineState.timelineViewportStateBinding.setTimelineGestureActive
-      }
       threadSearch={props.timelineState.timelineSearchStateBinding.threadSearch}
       threadSearchActive={props.timelineRead.timelineSearchProjectionBinding.threadSearchActive}
       threadSearchMatch={props.timelineState.timelineSearchStateBinding.threadSearchMatch}
@@ -126,7 +126,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       timelineViewportRef={props.timelineState.timelineViewportStateBinding.timelineViewportRef}
       trimPaginationWindow={props.paginationTrimBinding.trimPaginationWindow}
       windowLayout={props.windowLayout}
-    />
+    />,
   );
   const timelineSurface = (
     <ConversationTimelineSurface
@@ -138,6 +138,7 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       draftConnectionId={props.draftConnectionId}
       draftThreadId={props.draftThreadId}
       fullscreenCovered={props.overlayScrollStateBinding.fullscreenCovered}
+      gestureActive$={props.timelineState.timelineViewportStateBinding.gestureActive$}
       historyActivityModel={props.historyActivityModel}
       historyActivityResourceId={props.historyActivityResourceId}
       historyViewport={props.historyViewport}
@@ -154,7 +155,6 @@ export function createConversationTimelineContent(props: CreateConversationTimel
       timeline={props.timelineRead.conversationTimelineBinding.timeline}
       timelineContent={timelineContent}
       timelineDidLoad={props.timelineState.timelineViewportStateBinding.timelineDidLoad}
-      timelineGestureActive={props.timelineState.timelineViewportStateBinding.timelineGestureActive}
       timelineModelReady={props.timelineRead.timelineModelReady}
       timelinePositioned={props.timelineRead.timelinePositioned}
       timelineViewportRef={props.timelineState.timelineViewportStateBinding.timelineViewportRef}

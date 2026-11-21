@@ -1,17 +1,17 @@
 /** V1 AgentResponseMarkdown owner, extracted without changing interaction or resource lifetime. */
 import type { RenderBlock } from "@codewide/renderers";
-import { projectCompleteMarkdown, projectMarkdownStream } from "@codewide/rendering-core";
-import { Fragment } from "react";
+import { projectMarkdownStream } from "@codewide/rendering-core";
 import { ActivityIndicator, View } from "react-native";
 import { readPrivateAssetText, type TransferAccess } from "../../../data/private-transfer";
 import { useAsyncResource } from "../../../rendering/async-resource-store";
+import { CompleteMarkdown } from "../../../rendering/CompleteMarkdown";
+import { completeMarkdownStyles } from "../../../rendering/CompleteMarkdown.styles";
 import type { ContentReviewTarget } from "../../../rendering/content-review";
 import { ContentReviewComments } from "../../../rendering/ContentReviewHost";
 import { richMarkdownLayout } from "../../../rendering/rich-markdown-layout";
 import { occurrenceKey, textFingerprint } from "../../../rendering/listKey";
 import { RichMarkdown } from "../../../rendering/RichMarkdown";
 import { SearchMessage } from "../../../rendering/SearchMessageFocus";
-import { StreamingRevealSurface } from "../../../rendering/StreamingRevealSurface";
 import { usePrivateFileAccessScope } from "../../../rendering/use-private-image-uri";
 import { colors } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
@@ -98,14 +98,17 @@ export function AgentResponseMarkdown({
   const fill =
     richMarkdownLayout(block.body ?? "") === "fill" ||
     segments.some((segment) => richMarkdownLayout(segment) === "fill");
-  const documentStyle = [styles.agentMarkdownDocument, fill && styles.agentMarkdownDocumentFill];
+  const documentStyle = [
+    completeMarkdownStyles.document,
+    fill && completeMarkdownStyles.documentFill,
+  ];
   const segmentOccurrences = new Map<string, number>();
 
   if (reference === null || segments.length === 0) {
     return (
       <View onLayout={onVisibilityLayout} ref={visibilityRef} style={documentStyle}>
         <SearchMessage itemId={block.raw.id}>
-          <CompleteAgentMarkdown reviewTarget={reviewTarget} source={block.body ?? ""} />
+          <CompleteMarkdown reviewTarget={reviewTarget} source={block.body ?? ""} />
         </SearchMessage>
         {loading && (
           <ActivityIndicator
@@ -149,45 +152,4 @@ export function AgentResponseMarkdown({
 
 function markdownSegmentsWeight(segments: string[]): number {
   return segments.reduce((bytes, segment) => bytes + segment.length * 2, 0);
-}
-
-export function CompleteAgentMarkdown({
-  reviewTarget,
-  source,
-  streamKey,
-}: {
-  reviewTarget?: ContentReviewTarget;
-  source: string;
-  streamKey?: string;
-}) {
-  const segments = projectCompleteMarkdown(source);
-  const fill = richMarkdownLayout(source) === "fill";
-  const segmentOccurrences = new Map<string, number>();
-  return (
-    <View style={[styles.agentMarkdownDocument, fill && styles.agentMarkdownDocumentFill]}>
-      {segments.map((segment, index) => {
-        const key = occurrenceKey(segmentOccurrences, textFingerprint(segment));
-        const content = (
-          <RichMarkdown
-            source={segment}
-            {...(reviewTarget === undefined
-              ? {}
-              : { reviewPathPrefix: `segment-${String(index)}`, reviewTarget })}
-          />
-        );
-        return streamKey === undefined ? (
-          <Fragment key={key}>{content}</Fragment>
-        ) : (
-          <StreamingRevealSurface
-            animateNew={false}
-            key={key}
-            streamKey={index === 0 ? streamKey : `${streamKey}:${String(index)}`}
-          >
-            {content}
-          </StreamingRevealSurface>
-        );
-      })}
-      {reviewTarget !== undefined && <ContentReviewComments targetId={reviewTarget.id} />}
-    </View>
-  );
 }

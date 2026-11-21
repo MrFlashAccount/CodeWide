@@ -2,6 +2,7 @@ import type { RenderBlock } from "@codewide/renderers";
 import { projectedTurnMetadata } from "@codewide/sync-client";
 import { Ionicons } from "@expo/vector-icons";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
+import type { ReactElement } from "react";
 import { StyleSheet, View } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import { MarkdownLocalLinkProvider } from "../../../rendering/MarkdownLinkHandler";
@@ -27,6 +28,13 @@ import { timelineRowItem, type TimelineRow } from "./timelineRows";
 export function useThreadTimeline(props: UseThreadTimelineProps) {
   const requestPrompt = props.requestPrompt?.node ?? null;
   const renderTimelineItem = ({ item: timelineRow }: LegendListRenderItemProps<TimelineRow>) => {
+    if (timelineRow.kind === "historyBeginning") {
+      return (
+        <Text style={styles.historyBeginning} testID="history-beginning">
+          You’re at the beginning of this conversation
+        </Text>
+      );
+    }
     const item = timelineRowItem(timelineRow);
     const boundaryKey =
       timelineRow.kind === "turnSlice" || timelineRow.kind === "turnLead"
@@ -92,133 +100,125 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
             resetKey={boundaryKey}
             scope="bubble"
           >
-            <MarkdownLocalLinkProvider onOpen={props.openThreadDocumentLink}>
-              <PrivateImageAccessProvider
-                scope={props.composerScope}
-                {...(props.getTransferAccess === undefined
-                  ? {}
-                  : { getAccess: props.getStableTransferAccess })}
-              >
-                <View
-                  style={[styles.timelineItem, !props.timelineCompact && styles.timelineItemWide]}
-                >
-                  {item.kind === "turn" && timelineRow.kind === "item" && (
-                    <TurnTimelineItem
-                      agentDateLabel={dateLabels?.agent ?? null}
-                      animateLiveUpdates={props.animateLiveUpdates}
-                      compact={props.timelineCompact}
-                      forceExpanded={props.threadSearchActive}
-                      requestPrompt={item.turn.status === "inProgress" ? requestPrompt : null}
-                      turn={item}
-                      usage={usage}
-                      {...(props.getTransferAccess === undefined
-                        ? {}
-                        : { getTransferAccess: props.getStableTransferAccess })}
-                      {...(props.onFixUnsupportedBlock === undefined
-                        ? {}
-                        : { onFixUnsupportedBlock: props.fixUnsupportedBlock })}
-                      {...(props.onFork === undefined
-                        ? {}
-                        : { onForkThroughTurn: props.forkThroughTurn })}
-                      {...(props.onLoadTurnItems === undefined
-                        ? {}
-                        : { onLoadItems: props.loadStableTurnItems })}
-                      {...(item.id === props.latestUnreadAgentTurnId
-                        ? {
-                            latestAgentRef: props.setLatestUnreadAgentNode,
-                            onLatestAgentLayout: props.scheduleUnreadAgentVisibilityCheck,
-                          }
-                        : {})}
-                    />
-                  )}
-                  {timelineRow.kind === "turnLead" && virtualizedPresentation !== null && (
-                    <VirtualizedTurnLeadItem
-                      notifications={timelineRow.notifications}
-                      presentation={virtualizedPresentation}
-                      turn={timelineRow.item}
-                      {...(props.getTransferAccess === undefined
-                        ? {}
-                        : { getTransferAccess: props.getStableTransferAccess })}
-                      {...(props.onFixUnsupportedBlock === undefined
-                        ? {}
-                        : { onFixUnsupportedBlock: props.fixUnsupportedBlock })}
-                    />
-                  )}
-                  {timelineRow.kind === "turnSlice" && virtualizedPresentation !== null && (
-                    <VirtualizedTurnTimelineItem
-                      agentDateLabel={dateLabels?.agent ?? null}
-                      animateLiveUpdates={props.animateLiveUpdates}
-                      compact={props.timelineCompact}
-                      followsLead={timelineRow.followsLead}
-                      forceExpanded={props.threadSearchActive}
-                      parts={timelineRow.parts}
-                      placement={timelineRow.placement}
-                      presentation={virtualizedPresentation}
-                      requestPrompt={
-                        timelineRow.item.turn.status === "inProgress" ? requestPrompt : null
+            <View style={[styles.timelineItem, !props.timelineCompact && styles.timelineItemWide]}>
+              {item.kind === "turn" && timelineRow.kind === "item" && (
+                <TurnTimelineItem
+                  agentDateLabel={dateLabels?.agent ?? null}
+                  animateLiveUpdates={props.animateLiveUpdates}
+                  compact={props.timelineCompact}
+                  forceExpanded={props.threadSearchActive}
+                  requestPrompt={item.turn.status === "inProgress" ? requestPrompt : null}
+                  turn={item}
+                  usage={usage}
+                  {...(props.getTransferAccess === undefined
+                    ? {}
+                    : { getTransferAccess: props.getStableTransferAccess })}
+                  {...(props.onFixUnsupportedBlock === undefined
+                    ? {}
+                    : { onFixUnsupportedBlock: props.fixUnsupportedBlock })}
+                  {...(props.onFork === undefined
+                    ? {}
+                    : { onForkThroughTurn: props.forkThroughTurn })}
+                  {...(props.onLoadTurnItems === undefined
+                    ? {}
+                    : { onLoadItems: props.loadStableTurnItems })}
+                  {...(item.id === props.latestUnreadAgentTurnId
+                    ? {
+                        latestAgentRef: props.setLatestUnreadAgentNode,
+                        onLatestAgentLayout: props.scheduleUnreadAgentVisibilityCheck,
                       }
-                      turn={timelineRow.item}
-                      usage={usage}
-                      {...(props.getTransferAccess === undefined
-                        ? {}
-                        : { getTransferAccess: props.getStableTransferAccess })}
-                      {...(props.onFixUnsupportedBlock === undefined
-                        ? {}
-                        : { onFixUnsupportedBlock: props.fixUnsupportedBlock })}
-                      {...(props.onFork === undefined
-                        ? {}
-                        : { onForkThroughTurn: props.forkThroughTurn })}
-                      {...(props.onLoadTurnItems === undefined
-                        ? {}
-                        : { onLoadItems: props.loadStableTurnItems })}
-                      {...(ownsUnreadVisibility
-                        ? {
-                            latestAgentRef: props.setLatestUnreadAgentNode,
-                            onLatestAgentLayout: props.scheduleUnreadAgentVisibilityCheck,
-                          }
-                        : {})}
-                    />
-                  )}
-                  {item.kind === "optimistic" && (
-                    <OptimisticTurn
-                      item={item}
-                      {...(props.onRetryFailedMessage === undefined
-                        ? {}
-                        : { onRetry: props.onRetryFailedMessage })}
-                      {...(props.getTransferAccess === undefined
-                        ? {}
-                        : { getTransferAccess: props.getTransferAccess })}
-                    />
-                  )}
-                  {item.kind === "meta" && (
-                    <View style={styles.turnMeta}>
-                      <Ionicons
-                        color={
-                          item.status === "failed"
-                            ? colors.red
-                            : item.status === "inProgress"
-                              ? colors.amber
-                              : colors.green
-                        }
-                        name={
-                          item.status === "failed"
-                            ? "close"
-                            : item.status === "interrupted"
-                              ? "stop"
-                              : item.status === "inProgress"
-                                ? "ellipsis-horizontal"
-                                : "checkmark"
-                        }
-                        size={iconSize.inline}
-                      />
-                      <Text style={styles.turnMetaText}>
-                        {formatTurnMeta(item.status, item.durationMs, item.completedAt)}
-                      </Text>
-                    </View>
-                  )}
+                    : {})}
+                />
+              )}
+              {timelineRow.kind === "turnLead" && virtualizedPresentation !== null && (
+                <VirtualizedTurnLeadItem
+                  notifications={timelineRow.notifications}
+                  presentation={virtualizedPresentation}
+                  turn={timelineRow.item}
+                  {...(props.getTransferAccess === undefined
+                    ? {}
+                    : { getTransferAccess: props.getStableTransferAccess })}
+                  {...(props.onFixUnsupportedBlock === undefined
+                    ? {}
+                    : { onFixUnsupportedBlock: props.fixUnsupportedBlock })}
+                />
+              )}
+              {timelineRow.kind === "turnSlice" && virtualizedPresentation !== null && (
+                <VirtualizedTurnTimelineItem
+                  agentDateLabel={dateLabels?.agent ?? null}
+                  animateLiveUpdates={props.animateLiveUpdates}
+                  compact={props.timelineCompact}
+                  followsLead={timelineRow.followsLead}
+                  forceExpanded={props.threadSearchActive}
+                  parts={timelineRow.parts}
+                  placement={timelineRow.placement}
+                  presentation={virtualizedPresentation}
+                  requestPrompt={
+                    timelineRow.item.turn.status === "inProgress" ? requestPrompt : null
+                  }
+                  trailingTasks={timelineRow.trailingTasks}
+                  turn={timelineRow.item}
+                  usage={usage}
+                  {...(props.getTransferAccess === undefined
+                    ? {}
+                    : { getTransferAccess: props.getStableTransferAccess })}
+                  {...(props.onFixUnsupportedBlock === undefined
+                    ? {}
+                    : { onFixUnsupportedBlock: props.fixUnsupportedBlock })}
+                  {...(props.onFork === undefined
+                    ? {}
+                    : { onForkThroughTurn: props.forkThroughTurn })}
+                  {...(props.onLoadTurnItems === undefined
+                    ? {}
+                    : { onLoadItems: props.loadStableTurnItems })}
+                  {...(ownsUnreadVisibility
+                    ? {
+                        latestAgentRef: props.setLatestUnreadAgentNode,
+                        onLatestAgentLayout: props.scheduleUnreadAgentVisibilityCheck,
+                      }
+                    : {})}
+                />
+              )}
+              {item.kind === "optimistic" && (
+                <OptimisticTurn
+                  item={item}
+                  {...(props.onRetryFailedMessage === undefined
+                    ? {}
+                    : { onRetry: props.onRetryFailedMessage })}
+                  {...(props.getTransferAccess === undefined
+                    ? {}
+                    : { getTransferAccess: props.getTransferAccess })}
+                />
+              )}
+              {item.kind === "meta" && (
+                <View style={styles.turnMeta}>
+                  <Ionicons
+                    color={
+                      item.status === "failed"
+                        ? colors.red
+                        : item.status === "inProgress"
+                          ? colors.amber
+                          : colors.green
+                    }
+                    name={
+                      item.status === "failed"
+                        ? "close"
+                        : item.status === "interrupted"
+                          ? "stop"
+                          : item.status === "inProgress"
+                            ? // WHY: in-progress turn status glyph, not a menu trigger.
+                              // oxlint-disable-next-line codewide-v1/overflow-menu-trigger
+                              "ellipsis-horizontal"
+                            : "checkmark"
+                    }
+                    size={iconSize.inline}
+                  />
+                  <Text style={styles.turnMetaText}>
+                    {formatTurnMeta(item.status, item.durationMs, item.completedAt)}
+                  </Text>
                 </View>
-              </PrivateImageAccessProvider>
-            </MarkdownLocalLinkProvider>
+              )}
+            </View>
           </RecoverableRenderBoundary>
         </View>
       </SearchMessageFocus.Provider>
@@ -257,10 +257,30 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
   };
   // Inputs of `renderTimelineItem` that no row object carries; the list re-renders rows when it changes.
   const renderTimelineItemRevision = props.requestPrompt?.revision ?? "";
-  return { renderTimelineItem, renderTimelineItemRevision };
+  function withTimelineResources(list: ReactElement): ReactElement {
+    return (
+      <MarkdownLocalLinkProvider onOpen={props.openThreadDocumentLink}>
+        <PrivateImageAccessProvider
+          scope={props.composerScope}
+          {...(props.getTransferAccess === undefined
+            ? {}
+            : { getAccess: props.getStableTransferAccess })}
+        >
+          {list}
+        </PrivateImageAccessProvider>
+      </MarkdownLocalLinkProvider>
+    );
+  }
+  return { renderTimelineItem, renderTimelineItemRevision, withTimelineResources };
 }
 
 const styles = StyleSheet.create({
+  historyBeginning: {
+    color: colors.textDim,
+    ...typeScale.caption,
+    paddingVertical: spacing.md,
+    textAlign: "center",
+  },
   timelineItem: {
     alignSelf: "center",
     maxWidth: 880,

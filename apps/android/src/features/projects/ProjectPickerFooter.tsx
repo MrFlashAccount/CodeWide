@@ -86,6 +86,33 @@ function ProjectFolderEntry({
   return entry;
 }
 
+/** Commits the explicit choice; pending, its label shimmers in place. */
+function ConfirmChoice({
+  label,
+  props,
+  state,
+}: {
+  readonly label: string;
+  readonly props: ScopedProjectPickerProps;
+  readonly state: ProjectPickerSession;
+}): React.JSX.Element {
+  const confirm = useEvent(() => {
+    state.confirmSelection().catch(() => undefined);
+  });
+  return (
+    <Button
+      accessibilityLabel={label}
+      isDisabled={props.busy || state.selected === null}
+      onPress={confirm}
+      variant="primary"
+    >
+      <Text shimmering={props.busy} style={styles.primaryActionLabel}>
+        {label}
+      </Text>
+    </Button>
+  );
+}
+
 /** Keeps the directory action stable while local or remote selection is pending. */
 export function ProjectPickerFooter({
   props,
@@ -103,7 +130,10 @@ export function ProjectPickerFooter({
   return (
     <View style={styles.footerStatus}>
       <ProjectFolderEntry props={props} state={state} />
-      {props.busy ? (
+      {props.confirmation === undefined ? null : (
+        <ConfirmChoice label={props.confirmation.actionLabel} props={props} state={state} />
+      )}
+      {props.busy && props.confirmation === undefined ? (
         <Text shimmering style={styles.stateText}>
           Choose project
         </Text>

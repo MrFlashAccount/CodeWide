@@ -6,6 +6,23 @@ import {
   globalSupervisorThreadStartParams,
 } from "../src/data/globalSupervisorThreadProfile";
 
+const names = [
+  "startTask",
+  "listActiveWork",
+  "findChat",
+  "inspectChat",
+  "listChatAttachments",
+  "interruptChat",
+  "listChats",
+  "readChat",
+  "readChatAttachment",
+  "respondToRequest",
+  "setSpokenAttention",
+  "followChat",
+  "sendText",
+  "unfollowChat",
+];
+
 describe("Global Supervisor thread profile", () => {
   it("greets without announcing the configured assistant identity", () => {
     const prompt = globalSupervisorActivationGreetingPrompt();
@@ -27,7 +44,7 @@ describe("Global Supervisor thread profile", () => {
       "Important completion, blocker, failure, and user-decision events from all visible chats",
     );
     expect(params.developerInstructions).toContain(
-      "never poll listChats, inspectChat, or readChat for status",
+      "never poll codewide_list_chats, codewide_inspect_chat, or codewide_read_chat for status",
     );
     expect(params.developerInstructions).toContain("never infer approval");
     expect(params.developerInstructions).toContain(
@@ -39,21 +56,25 @@ describe("Global Supervisor thread profile", () => {
     expect(params.developerInstructions).toContain("Do not create separate work for trivial tasks");
     expect(params.developerInstructions).not.toContain("Use only");
     expect(params.dynamicTools?.map((tool) => tool.type === "function" && tool.name)).toEqual([
-      "startTask",
-      "listActiveWork",
-      "findChat",
-      "inspectChat",
-      "listChatAttachments",
-      "interruptChat",
-      "listChats",
-      "readChat",
-      "readChatAttachment",
-      "respondToRequest",
-      "setSpokenAttention",
-      "followChat",
-      "sendText",
-      "unfollowChat",
+      "codewide_start_task",
+      "codewide_list_active_work",
+      "codewide_find_chat",
+      "codewide_inspect_chat",
+      "codewide_list_chat_attachments",
+      "codewide_interrupt_chat",
+      "codewide_list_chats",
+      "codewide_read_chat",
+      "codewide_read_chat_attachment",
+      "codewide_respond_to_request",
+      "codewide_set_spoken_attention",
+      "codewide_follow_chat",
+      "codewide_send_text",
+      "codewide_unfollow_chat",
     ]);
+    // Realtime reuses these instructions on threads that still declare the legacy names.
+    for (const legacy of names) {
+      expect(params.developerInstructions).toContain(` as ${legacy}`);
+    }
     expect(params).toMatchObject({
       historyMode: "paginated",
       threadSource: "supervisor-source",

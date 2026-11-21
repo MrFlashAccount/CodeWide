@@ -21,9 +21,17 @@ import React, { useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ScrollView, Text, View } from "react-native";
 import { LegendList } from "@legendapp/list/react-native";
+import { ThreadTimelineList } from "./src/rendering/ThreadTimelineList";
 
 const rows = Array.from({ length: 40 }, (_, index) => ({ id: String(index) }));
-const bridge = { currentOffset: null, resets: 0, commits: [], commands: [], performance: [], sizeHintCalls: {} };
+function ProbeRow({ item }) {
+  useLayoutEffect(() => {
+    if (item === rows[0]) bridge.mountedOrigin = true;
+  }, [item]);
+  return <View style={{ height: 100 }}><Text>{item.id}</Text></View>;
+}
+
+const bridge = { mountedOrigin: false, currentOffset: null, resets: 0, commits: [], commands: [], performance: [], sizeHintCalls: {} };
 
 function getItemSizeHint(item) {
   bridge.sizeHintCalls[item.id] = (bridge.sizeHintCalls[item.id] ?? 0) + 1;
@@ -63,6 +71,7 @@ function Probe() {
   const unread = window.probeOptions.unread || conversation > 0;
   window.probe = {
     hydrate: () => setData(rows),
+    scrollToOrigin: () => list.current.scrollToOffset({ animated: false, offset: 0 }),
     newConversation: () => {
       setPositioned(false);
       setConversation(value => value + 1);
@@ -74,6 +83,7 @@ function Probe() {
     snapshot: () => {
       const scroller = document.querySelector('[data-testid="native-offset-probe"]');
       return {
+        mountedOrigin: bridge.mountedOrigin,
         commits: bridge.commits,
         commands: bridge.commands,
         performance: bridge.performance,
@@ -97,7 +107,7 @@ function Probe() {
       getItemSizeHint={window.probeOptions.perItemEstimate ? getItemSizeHint : undefined}
       estimatedListSize={{ height: 360, width: 420 }}
       extraData={revision}
-      initialScrollAtEnd={!positioned && !unread}
+      initialScrollAtEnd={!positioned && !unread && (!window.probeOptions.delayedTarget || data.length > 0)}
       onScrollDiagnostic={window.probeOptions.observe === false ? undefined : event => {
         if (window.probeOptions.throwObserver) throw new Error("Diagnostic failure");
         if (event.phase === "calculate" || event.phase === "size-batch") {
@@ -113,11 +123,47 @@ function Probe() {
       recycleItems={false}
       ref={list}
       renderScrollComponent={NativeOffsetScrollView}
+      renderItem={({ item }) => <ProbeRow item={item} />}
+    />
+  </View>;
+}
+// RN Web supplies scrolling and layout, but doesn't dispatch Android's drag lifecycle.
+function KeyboardProbeScrollView({ onScrollBeginDrag, onScrollEndDrag, ...props }) {
+  return <NativeOffsetScrollView {...props}
+    onPointerDown={onScrollBeginDrag}
+    onPointerUp={onScrollEndDrag}
+  />;
+}
+
+function KeyboardProbe() {
+  const list = useRef(null);
+  const [keyboard, setKeyboard] = useState({ height: 0, progress: 0 });
+  const [positioned, setPositioned] = useState(false);
+  window.atTail = () => list.current?.isWithinEndThreshold();
+  window.setIme = setKeyboard;
+  window.ime = keyboard;
+  return <View style={{ height: 1932, width: 420 }}>
+    <ThreadTimelineList
+      ref={list}
+      data={rows}
+      renderRevision="keyboard"
+      initialScrollAtEnd={!positioned}
+      onReady={() => setPositioned(true)}
+      maintainVisibleContentPosition
+      maintainScrollAtEnd
+      maintainScrollAtEndThreshold={0.02}
+      keyboardLiftBehavior="always"
+      keyboardOffset={109}
+      itemSizeEstimate={100}
+      overscanDistance={200}
+      keyExtractor={item => item.id}
+      scrollEventThrottle={16}
+      renderScrollComponent={KeyboardProbeScrollView}
       renderItem={({ item }) => <View style={{ height: 100 }}><Text>{item.id}</Text></View>}
     />
   </View>;
 }
-createRoot(document.getElementById("root")).render(<Probe />);
+createRoot(document.getElementById("root")).render(window.probeOptions.keyboard ? <KeyboardProbe /> : <Probe />);
 `,
       loader: "tsx",
       resolveDir: fileURLToPath(new URL("../", import.meta.url)),
@@ -127,6 +173,28 @@ createRoot(document.getElementById("root")).render(<Probe />);
       {
         name: "android-platform-with-dom-layout",
         setup(builder) {
+          builder.onResolve({ filter: /^(react-native-keyboard-controller|react-native-reanimated|@legendapp\/list\/keyboard)$/ }, ({ path }) => ({ path, namespace: "ime" }));
+          const imeModules = {
+            "react-native-keyboard-controller": `
+              const reanimated = {
+                height: { get: () => -window.ime.height },
+                progress: { get: () => window.ime.progress },
+              };
+              export const useKeyboardContext = () => ({ reanimated });`,
+            "react-native-reanimated": `
+              import { View, ScrollView } from "react-native";
+              import { useRef } from "react";
+              export default { View, ScrollView, createAnimatedComponent: Component => Component };
+              export const useAnimatedStyle = read => read();
+              export const useAnimatedRef = () => useRef(null);
+              export const useSharedValue = value => useRef({ value }).current;
+              export const useScrollViewOffset = () => {};`,
+            "@legendapp/list/keyboard": 'export { LegendList as KeyboardAwareLegendList } from "@legendapp/list/react-native";',
+          };
+          builder.onLoad({ filter: /.*/, namespace: "ime" }, ({ path }) => ({
+            contents: imeModules[path],
+            resolveDir: fileURLToPath(new URL("../", import.meta.url)),
+          }));
           builder.onResolve({ filter: /^react-native$/ }, () => ({
             path: "native",
             namespace: "probe",
@@ -134,6 +202,8 @@ createRoot(document.getElementById("root")).render(<Probe />);
           builder.onLoad({ filter: /.*/, namespace: "probe" }, () => ({
             contents: `export * from "react-native-web";
 import { Platform as WebPlatform } from "react-native-web";
+// The probe supplies its own ScrollView. Mounting an Android-only host would bypass that boundary.
+export const requireNativeComponent = name => () => { throw new Error("Unexpected native host: " + name); };
 export const Platform = { ...WebPlatform, OS: "android", select: values => values.android ?? values.native ?? values.default };`,
             resolveDir: fileURLToPath(new URL("../", import.meta.url)),
           }));
@@ -162,6 +232,80 @@ after(async () => {
 });
 
 for (const extension of ["js", "mjs"]) {
+  test(`${extension}: opening at the tail of delayed history mounts the origin only when visited`, async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent('<div id="root"></div>');
+      await page.evaluate(() => {
+        window.probeOptions = { empty: true, delayedTarget: true };
+        window.nativeFabricUIManager = {};
+      });
+      await page.addScriptTag({ content: scripts.get(extension) });
+      await expect.poll(() => page.evaluate(() => window.probe?.snapshot().ready)).toBe(true);
+      await page.evaluate(() => window.probe.hydrate());
+      await expect.poll(() => page.evaluate(() => window.probe.snapshot().scroll)).toBeGreaterThan(0);
+      await expect.poll(() => page.evaluate(() => window.probe.snapshot().distance)).toBeLessThanOrEqual(1);
+      assert.equal(await page.evaluate(() => window.probe.snapshot().mountedOrigin), false);
+      await page.evaluate(() => {
+        window.probe.releaseBootstrap();
+        window.probe.scrollToOrigin();
+      });
+      await expect.poll(() => page.evaluate(() => window.probe.snapshot().mountedOrigin)).toBe(true);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test(`${extension}: Android transcript keeps the tail or reading position on terminal-only IME updates`, async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setContent('<div id="root"></div>');
+      await page.evaluate(() => { window.probeOptions = { keyboard: true }; window.nativeFabricUIManager = {}; });
+      await page.addScriptTag({ content: scripts.get(extension) });
+      const list = page.getByTestId("native-offset-probe");
+      const distance = () => list.evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop);
+      const height = () => list.evaluate(el => el.clientHeight);
+      const offset = () => list.evaluate(el => el.scrollTop);
+      const ime = (height, progress = height > 0 ? 1 : 0) =>
+        page.evaluate(value => window.setIme(value), { height, progress });
+      await expect.poll(height).toBe(1932);
+      await expect.poll(distance).toBe(0);
+      await ime(923);
+      await expect.poll(height).toBe(1118);
+      await expect.poll(distance).toBe(0);
+      // Scroll into history before dismissing. A valid reading offset survives both transitions.
+      await list.dispatchEvent("pointerdown");
+      await list.evaluate(el => { el.scrollTop = 900; });
+      await expect.poll(offset).toBe(900);
+      await expect.poll(() => page.evaluate(() => window.atTail())).toBe(false);
+      await list.dispatchEvent("pointerup");
+      await ime(0);
+      await expect.poll(height).toBe(1932);
+      await expect.poll(offset).toBe(900);
+      await ime(923);
+      await expect.poll(height).toBe(1118);
+      await expect.poll(offset).toBe(900);
+      // Manually reach the open keyboard's end; hiding it must clamp to the new end.
+      await list.dispatchEvent("pointerdown");
+      await list.evaluate(el => { el.scrollTop = el.scrollHeight; });
+      await expect.poll(distance).toBe(0);
+      await expect.poll(() => page.evaluate(() => window.atTail())).toBe(true);
+      await list.dispatchEvent("pointerup");
+      await ime(0);
+      await expect.poll(height).toBe(1932);
+      await expect.poll(distance).toBe(0);
+      // Reverse a half-open gesture. The composer and viewport consume the same progress.
+      await ime(461.5, 0.5);
+      await expect.poll(height).toBe(1525);
+      await expect.poll(distance).toBe(0);
+      await ime(0);
+      await expect.poll(height).toBe(1932);
+      await expect.poll(distance).toBe(0);
+    } finally {
+      await page.close();
+    }
+  });
+
   test(`${extension}: one per-item hint resolves exact and estimated row positions`, async () => {
     const page = await browser.newPage();
     try {

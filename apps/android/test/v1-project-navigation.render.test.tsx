@@ -1,4 +1,3 @@
-import { LegendList } from "@legendapp/list/react-native";
 import { act, render, renderHook, waitFor } from "@testing-library/react-native";
 import { KeyboardController } from "react-native-keyboard-controller";
 
@@ -15,6 +14,7 @@ import {
 } from "../src/services/threads/threadRouteParams";
 import { useThreadNavigationService } from "../src/services/threads/threadNavigationService";
 import { useConversationOwner } from "../src/ui/use-conversation-owner";
+import { AppList } from "../src/ui/AppList";
 
 function pending() {
   let resolve: () => void = () => undefined;
@@ -150,13 +150,13 @@ it("replaces an already loaded project immediately after a pin acknowledgement",
   expect(result.current.projectsByConnection[connectionId]).toEqual([updated]);
 });
 
-it("invalidates the recycled management list when a pin acknowledgement changes rows", () => {
+it("updates the management list when a pin acknowledgement changes rows", () => {
   const view = render(
     <SidebarProjectsSheet {...projectManagementProps} projects={[managedProject]} />,
   );
-  const initialList = view.UNSAFE_getByType(LegendList);
-  const initialVersion = initialList.props.dataVersion;
-  expect(initialList.props.extraData).toBe(initialVersion);
+  const initialList = view.UNSAFE_getByType(AppList);
+  expect(initialList.props.virtualized).toBe(true);
+  expect(view.getByText("Recent")).toBeVisible();
 
   view.rerender(
     <SidebarProjectsSheet
@@ -166,10 +166,7 @@ it("invalidates the recycled management list when a pin acknowledgement changes 
   );
 
   expect(view.getByText("Pinned")).toBeVisible();
-  const pinnedList = view.UNSAFE_getByType(LegendList);
-  const pinnedVersion = pinnedList.props.dataVersion;
-  expect(pinnedVersion).not.toBe(initialVersion);
-  expect(pinnedList.props.extraData).toBe(pinnedVersion);
+  expect(view.queryByText("Recent")).toBeNull();
 
   view.rerender(
     <SidebarProjectsSheet
@@ -188,9 +185,11 @@ it("invalidates the recycled management list when a pin acknowledgement changes 
   );
 
   expect(view.getByText("Added")).toBeVisible();
-  const addedList = view.UNSAFE_getByType(LegendList);
-  expect(addedList.props.dataVersion).not.toBe(pinnedVersion);
-  expect(addedList.props.extraData).toBe(addedList.props.dataVersion);
+  expect(
+    view
+      .UNSAFE_getByType(AppList)
+      .props.data.filter((item: { kind: string }) => item.kind === "project"),
+  ).toHaveLength(2);
 });
 
 it("publishes the qualified route before observer hydration settles and keeps stable intents", async () => {

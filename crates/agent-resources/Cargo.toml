@@ -9,6 +9,7 @@ description = "Thread resource projection and reads shared by CodeWide provider 
 [dependencies]
 agent-core = { path = "../agent-core" }
 companion-host = { path = "../companion-host" }
+workspace-io = { path = "../workspace-io" }
 async-trait = "0.1.89"
 futures-util = "0.3.31"
 hex = "0.4.3"

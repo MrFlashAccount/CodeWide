@@ -144,16 +144,68 @@ pub struct ResultFrame {
     /// Cumulative per-model totals of the query; empty when the result carries none.
     pub model_usage: Vec<ModelTotals>,
     pub num_turns: i64,
-    /// `origin.kind` (`task-notification`, `peer`, ...) or `None` for a user turn.
-    pub origin: Option<String>,
     pub result: Option<String>,
     pub subtype: String,
     pub terminal_reason: Option<String>,
     pub user_message_uuids: Vec<String>,
 }
 
+/// Whether Claude works (`session_state_changed`, emitted under
+/// `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS`). `Idle` follows the last result
+/// once Claude holds nothing: no queued message and no background agent
+/// (Claude stays `running` while one works, between its turns too).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionState {
+    Idle,
+    Running,
+    /// Waiting for an answer to one of Claude's requests.
+    RequiresAction,
+}
+
+impl SessionState {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "idle" => Some(Self::Idle),
+            "running" => Some(Self::Running),
+            "requires_action" => Some(Self::RequiresAction),
+            _ => None,
+        }
+    }
+}
+
+/// Where Claude is with one user message the companion wrote
+/// (`command_lifecycle`, under `--replay-user-messages`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandState {
+    Queued,
+    /// Claude's turn took the message.
+    Started,
+    /// The turn that took the message ended.
+    Completed,
+    Cancelled,
+}
+
+impl CommandState {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "queued" => Some(Self::Queued),
+            "started" => Some(Self::Started),
+            "completed" => Some(Self::Completed),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClaudeFrame {
+    /// Claude's session state changed.
+    SessionState(SessionState),
+    /// A user message of the companion moved on in Claude's queue.
+    CommandLifecycle {
+        command_uuid: String,
+        state: CommandState,
+    },
     Init {
         mcp_servers: Vec<String>,
         session_id: Option<String>,
@@ -343,6 +395,12 @@ fn system_frame(value: &JsonRecord) -> ClaudeFrame {
         "status" => ClaudeFrame::Other {
             kind: "system:status".into(),
         },
+        "session_state_changed" => match str_of(value, "state").and_then(SessionState::parse) {
+            Some(state) => ClaudeFrame::SessionState(state),
+            None => ClaudeFrame::Other {
+                kind: "system:session_state_changed".into(),
+            },
+        },
         "background_tasks_changed" => ClaudeFrame::BackgroundTasks {
             count: arr_of(value, "tasks").len(),
         },
@@ -486,8 +544,6 @@ fn result_frame(value: &JsonRecord) -> ClaudeFrame {
         main_loop_usage: request_figures(value.get("usage")),
         model_usage: model_usage(value.get("modelUsage")),
         num_turns: int_of(value, "num_turns").unwrap_or(0),
-        origin: record_of(value, "origin")
-            .map(|origin| str_of(origin, "kind").unwrap_or("unknown").to_owned()),
         result: str_of(value, "result").map(ToOwned::to_owned),
         subtype: str_of(value, "subtype").unwrap_or("unknown").to_owned(),
         terminal_reason: str_of(value, "terminal_reason").map(ToOwned::to_owned),
@@ -511,8 +567,25 @@ pub fn classify_frame(value: &Value) -> ClaudeFrame {
 pub fn classify_message(message: &JsonRecord) -> ClaudeFrame {
     match str_of(message, "type").unwrap_or("unknown") {
         "assistant" => assistant_frame(message),
+        // The echo of a message the companion wrote (`--replay-user-messages`):
+        // the companion has it already, and `command_lifecycle` acknowledges it.
+        "user" if is_true(message, "isReplay") => ClaudeFrame::Other {
+            kind: "user:replay".into(),
+        },
         "user" => user_frame(message),
         "result" => result_frame(message),
+        "command_lifecycle" => match (
+            str_of(message, "command_uuid"),
+            str_of(message, "state").and_then(CommandState::parse),
+        ) {
+            (Some(command_uuid), Some(state)) => ClaudeFrame::CommandLifecycle {
+                command_uuid: command_uuid.to_owned(),
+                state,
+            },
+            _ => ClaudeFrame::Other {
+                kind: "command_lifecycle".into(),
+            },
+        },
         "system" => system_frame(message),
         "stream_event" => ClaudeFrame::Stream {
             event: stream_event(message.get("event")),

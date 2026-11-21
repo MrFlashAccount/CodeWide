@@ -32,6 +32,13 @@ export const styles = StyleSheet.create({
     flexShrink: 0,
     ...typeScale.label,
   },
+  /**
+   * A pill takes at most half of its line's width; Yoga resolves the share
+   * against the line in the same layout pass as the pill's content.
+   */
+  pillBound: {
+    maxWidth: "50%",
+  },
   pressed: {
     opacity: PRESSED_OPACITY,
   },
@@ -73,9 +80,5 @@ export const styles = StyleSheet.create({
     minHeight: controlSize.compact,
     paddingLeft: spacing.xxs,
     paddingRight: spacing.sm,
-  },
-  /** An unmeasured row holds the pill's height so measuring it moves nothing. */
-  unmeasuredLine: {
-    minHeight: controlSize.compact + spacing.xxs + spacing.xxs,
   },
 });

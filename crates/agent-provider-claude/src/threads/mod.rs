@@ -26,6 +26,7 @@
 mod background_task_ops;
 mod errors;
 pub mod history;
+mod history_files;
 mod live_prompts;
 mod outputs;
 pub mod projection;

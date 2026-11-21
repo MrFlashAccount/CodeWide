@@ -31,6 +31,19 @@ impl CatalogNames {
         table
     }
 
+    /// Records names from a provider page without discarding names on other pages.
+    pub fn extend<'a>(&self, names: impl IntoIterator<Item = (&'a str, &'a str)>) {
+        let mut current = self
+            .names
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        current.extend(
+            names
+                .into_iter()
+                .map(|(model, name)| (normalize_model(model), name.to_owned())),
+        );
+    }
+
     /// Replaces the whole table, as the provider's latest catalog states it.
     pub fn replace(&self, names: impl IntoIterator<Item = (String, String)>) {
         let names = names

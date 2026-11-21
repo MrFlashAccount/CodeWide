@@ -123,11 +123,7 @@ export const styles = StyleSheet.create({
     minWidth: 0,
   },
   moreButton: {
-    alignItems: "center",
-    height: controlSize.compact,
-    justifyContent: "center",
     marginRight: -spacing.xxs,
-    width: controlSize.compact,
   },
   overlay: {
     bottom: 0,

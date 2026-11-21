@@ -9,7 +9,6 @@ import { ThreadResourceContextChips } from "../src/features/changes/ThreadResour
 import type { ChangesPreferences } from "../src/features/changes/changePresentation";
 import { threadAgentActions } from "../src/features/conversation/threadAgentActions";
 import { colors } from "../src/theme";
-import { getAppDialogRequest, resetAppDialog } from "./mocks/AppDialog";
 
 const SCOPES: ThreadChangeScope[] = ["session", "uncommitted", "branch"];
 
@@ -20,7 +19,13 @@ function preferences(scope: ThreadChangeScope): ChangesPreferences {
 it("reloads and displays the selected Changes scope without remounting", async () => {
   const model = createThreadResourcesModel();
   const calls: Array<ThreadChangeScope | undefined> = [];
-  const load = async (scope?: ThreadChangeScope): Promise<ThreadResourcesValue> => {
+  const load = async (
+    scope?: ThreadChangeScope,
+    kind?: "all" | "changes" | "attachments",
+  ): Promise<ThreadResourcesValue> => {
+    if (kind === "attachments") {
+      throw new Error("Thread rollout was not found");
+    }
     calls.push(scope);
     const value: ThreadResourcesValue = {
       attachments: [],
@@ -107,7 +112,13 @@ it("reloads and displays the selected Changes scope without remounting", async (
 it("does not send a restored scope until this provider advertises it", async () => {
   const model = createThreadResourcesModel();
   const calls: Array<ThreadChangeScope | undefined> = [];
-  const load = async (scope?: ThreadChangeScope): Promise<ThreadResourcesValue> => {
+  const load = async (
+    scope?: ThreadChangeScope,
+    kind?: "all" | "changes" | "attachments",
+  ): Promise<ThreadResourcesValue> => {
+    if (kind === "attachments") {
+      throw new Error("Thread rollout was not found");
+    }
     calls.push(scope);
     const value: ThreadResourcesValue = {
       attachments: [],
@@ -162,7 +173,7 @@ it("does not send a restored scope until this provider advertises it", async () 
 });
 
 it("keeps a failed Changes chip visible and red without hiding healthy attachments", () => {
-  resetAppDialog();
+  const open = jest.fn();
   const model = createThreadResourcesModel();
   model.put({
     connectionId: "server",
@@ -198,9 +209,9 @@ it("keeps a failed Changes chip visible and red without hiding healthy attachmen
     <ThreadResourceContextChips
       load={async () => new Promise<ThreadResourcesValue>(() => undefined)}
       model={model}
-      onOpen={jest.fn()}
+      onOpen={open}
       onPreferencesChange={jest.fn()}
-      preferences={preferences("uncommitted")}
+      preferences={preferences("session")}
       resourceId={"server\u0000thread"}
       revision="live"
     />,
@@ -213,10 +224,7 @@ it("keeps a failed Changes chip visible and red without hiding healthy attachmen
   expect(view.getByText("Changes unavailable")).toHaveStyle({ color: colors.red });
   expect(view.getByRole("button", { name: "Attachments · 1" })).toBeVisible();
   fireEvent.press(changes);
-  expect(getAppDialogRequest()).toMatchObject({
-    message: "Arc plugin rejected the change scope",
-    title: "Changes unavailable",
-  });
+  expect(open).toHaveBeenCalledWith("changes");
 });
 
 it("offers the repository scopes in the Changes chip of a Claude thread", async () => {
@@ -231,7 +239,13 @@ it("offers the repository scopes in the Changes chip of a Claude thread", async 
   };
   const model = createThreadResourcesModel();
   const calls: Array<ThreadChangeScope | undefined> = [];
-  const loadThreadResources = async (scope?: ThreadChangeScope): Promise<ThreadResourcesValue> => {
+  const loadThreadResources = async (
+    scope?: ThreadChangeScope,
+    kind?: "all" | "changes" | "attachments",
+  ): Promise<ThreadResourcesValue> => {
+    if (kind === "attachments") {
+      throw new Error("Thread rollout was not found");
+    }
     calls.push(scope);
     // `companion/threadChanges/read` of a Claude thread whose cwd is a git repository.
     const value: ThreadResourcesValue = {

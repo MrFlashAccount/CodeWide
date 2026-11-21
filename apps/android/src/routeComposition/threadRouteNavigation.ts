@@ -7,7 +7,10 @@ import { contentRouteSessions } from "../services/content/contentRouteSession";
 import { documentRouteService } from "../services/documents/documentRouteService";
 import { agentRouteSessions } from "../services/agents/agentRouteSession";
 import { attachmentRouteSessions } from "../services/attachments/attachmentRouteSession";
-import { drawingRouteSessions } from "../services/drawing/drawingRouteSession";
+import {
+  drawingRouteSessions,
+  type DrawingRouteRequest,
+} from "../services/drawing/drawingRouteSession";
 import { terminalRouteSessions } from "../services/terminal/terminalRouteSession";
 import { taskOutputRouteSessions } from "../services/backgroundTasks/taskOutputRouteSession";
 import { useEvent } from "../react/useEvent";
@@ -26,6 +29,31 @@ const TOOL_PATHS = {
   runtime: "/threads/[connectionId]/[threadId]/runtime",
   skills: "/threads/[connectionId]/[threadId]/controls/skills",
 } as const;
+
+/**
+ * Presents a drawing as the workspace root's modal route. It sits above both catalog tabs, so
+ * opening it never switches tabs and closing it returns to whichever destination opened it.
+ */
+export function pushDrawingRoute(
+  router: ReturnType<typeof useRouter>,
+  {
+    owner,
+    request,
+    routeParams,
+  }: {
+    readonly owner: ReturnType<typeof threadRouteSessionOwner>;
+    readonly request: DrawingRouteRequest;
+    readonly routeParams: Readonly<Record<string, string>>;
+  },
+): void {
+  const result = drawingRouteSessions.open(owner, request);
+  if (result.status === "admitted") {
+    router.push({
+      params: { ...routeParams, sessionId: result.session.id },
+      pathname: "/drawing/[sessionId]",
+    });
+  }
+}
 
 /** Owns stable thread-child route intents exposed through the conversation context. */
 export function useThreadRouteNavigation(
@@ -91,13 +119,7 @@ export function useThreadRouteNavigation(
     });
   });
   const openDrawing = useEvent<ConversationRouteNavigation["openDrawing"]>((request) => {
-    const result = drawingRouteSessions.open(owner, request);
-    if (result.status === "admitted") {
-      router.push({
-        params: { ...routeParams, sessionId: result.session.id },
-        pathname: "/drawing/[sessionId]",
-      });
-    }
+    pushDrawingRoute(router, { owner, request, routeParams });
   });
   const openTerminal = useEvent<ConversationRouteNavigation["openTerminal"]>((request) => {
     const session = terminalRouteSessions.open(owner, request);
