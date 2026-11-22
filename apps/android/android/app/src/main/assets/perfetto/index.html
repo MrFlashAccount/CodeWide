@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="color-scheme" content="dark">
+  <title>Perfetto UI</title>
+  <style>
+    html, body { margin: 0; background: #0f0f0f; color: #f2f2f2; color-scheme: dark; font: 14px Roboto, sans-serif; }
+    body { --track-shell-width: 180px; --details-content-height: 240px; }
+    @media (max-width: 600px) { body { --track-shell-width: 120px; --details-content-height: 190px; } }
+    @media (max-height: 520px) { body { --details-content-height: 120px; } }
+    #boot { margin: 24px; }
+  </style>
+</head>
+<body>
+  <div id="boot">Opening trace…</div>
+  <script>
+    // WebViews with postTask but without yield still need a task boundary to draw slice tracks.
+    if (globalThis.scheduler && typeof scheduler.yield !== 'function') {
+      scheduler.yield = () => new Promise(resolve => setTimeout(resolve, 0));
+    }
+    // Seed the pinned UI's own setting before its first paint, including canvas colors.
+    const preferences = JSON.parse(localStorage.getItem('perfettoSettings') || '{}');
+    localStorage.setItem('perfettoSettings', JSON.stringify({...preferences, theme: 'dark', analyticsEnable: false}));
+    const commands = [{id: 'dev.perfetto.ExpandTracksByRegex', args: ['^dev\\.codexremote\\.app(?:\\.[a-z]+)? [0-9]+$', 'name']}];
+    if (!location.hash) {
+      const args = new URLSearchParams({mode: 'embedded', hideStatusbar: 'true', url: location.origin + '/attachment/trace.perfetto-trace', startupCommands: JSON.stringify(commands)});
+      history.replaceState(null, '', '#!/?' + args);
+    }
+    for (const query of ['(max-width: 600px)', '(max-height: 520px)']) {
+      matchMedia(query).addEventListener('change', () => window.postMessage('RELOAD-CSS-CONSTANTS', location.origin));
+    }
+    function failed() {
+      const boot = document.querySelector('#boot');
+      if (boot) boot.textContent = 'Could not open Perfetto UI. Close the preview and try again.';
+    }
+    window.addEventListener('error', failed);
+    window.addEventListener('unhandledrejection', failed);
+  </script>
+  <script src="/ui/frontend_bundle.js" onerror="failed()"></script>
+</body>
+</html>

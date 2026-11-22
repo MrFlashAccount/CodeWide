@@ -4,6 +4,7 @@ import { StyleSheet, Text, View } from "react-native";
 import * as Reanimated from "react-native-reanimated";
 
 import { ConversationEmptyState } from "../src/features/conversation/ConversationEmptyState";
+import { V1_TWO_PANE_MIN_WIDTH } from "../src/native/window-layout";
 import { ThreadListHeaderRow } from "../src/presentation/navigation/ThreadListHeader";
 import {
   catalogFrame,
@@ -172,7 +173,8 @@ describe("settled panes belong to Yoga", () => {
     value === "auto" ||
     (typeof value === "string" && /^\d+%$/u.test(value)) ||
     value === SIDEBAR_MIN_WIDTH ||
-    value === SIDEBAR_MAX_WIDTH;
+    value === SIDEBAR_MAX_WIDTH ||
+    value === V1_TWO_PANE_MIN_WIDTH - sidebarWidth(V1_TWO_PANE_MIN_WIDTH);
 
   it.each(COMBINATIONS)(
     "lays out left %s with right %s without pixels from a measurement",
@@ -354,6 +356,7 @@ describe("one progress derives every pane property", () => {
         borderTopLeftRadius: pane.centerLeftRadius,
         flexGrow: 0,
         left: pane.detailX,
+        minWidth: 0,
         position: "absolute",
         width: pane.detailWidth,
       },

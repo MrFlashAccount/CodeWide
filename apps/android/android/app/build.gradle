@@ -4,6 +4,7 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 apply plugin: "androidx.baselineprofile"
+apply from: "perfetto.gradle"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 def releaseStoreFile = System.getenv("CODEWIDE_RELEASE_STORE_FILE")

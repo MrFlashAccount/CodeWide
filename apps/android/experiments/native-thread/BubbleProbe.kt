@@ -56,6 +56,9 @@ internal class BubbleProbe(private val activity: Activity) {
     return view is ViewGroup && (0 until view.childCount).any { hitsTitle(view.getChildAt(it),x,y) }
   }
 
+  private var fingerprint = ""
+  private var captureLine = false
+
   private fun visibleText(text: TextView): Boolean {
     val layout = text.layout ?: return false
     if (text.text.isNullOrBlank() || !text.getGlobalVisibleRect(box) || !box.intersect(region)) return false
@@ -68,7 +71,13 @@ internal class BubbleProbe(private val activity: Activity) {
       lineRect.set(x+floor(layout.getLineLeft(line)).toInt(), y+layout.getLineTop(line),
         x+ceil(layout.getLineRight(line)).toInt(), y+layout.getLineBottom(line))
       if (layout.getLineEnd(line)>layout.getLineStart(line) && lineRect.intersect(box) &&
-          (bubbles.isEmpty() || bubbles.any { Rect.intersects(it,lineRect) })) return true
+          (bubbles.isEmpty() || bubbles.any { Rect.intersects(it,lineRect) })) {
+        if (captureLine) {
+          val body = text.text.subSequence(layout.getLineStart(line), layout.getLineEnd(line)).toString()
+          fingerprint = "cw.prose.line.${body.hashCode()}.${y+layout.getLineTop(line)}"
+        }
+        return true
+      }
     }
     return false
   }
@@ -91,16 +100,21 @@ internal class BubbleProbe(private val activity: Activity) {
       if (ancestor.visibility != View.VISIBLE || ancestor.alpha <= .02f) return null
       ancestor = ancestor.parent as? View
     }
-    if (!view.getGlobalVisibleRect(region) || !region.intersect(0,root.height/4,root.width,root.height*3/4)) return null
-    val range = id(view) == "lab-probe-range"
+    captureLine = id(view) == "lab-probe-prose"
+    val minY = if (captureLine) 0 else root.height / 4
+    if (!view.getGlobalVisibleRect(region) || !region.intersect(0,minY,root.width,root.height*3/4)) return null
+    val range = captureLine || id(view) == "lab-probe-range"
     bubbles.clear()
     if (!range) {
       collectBubbles(view)
       if (bubbles.isEmpty()) return null
     }
     if (!hasText(view)) return null
+    if (captureLine) mark(fingerprint)
     return if (range) "cw.lab.range.ink" else "cw.bubble.ink"
   }
+
+  fun hasVisibleBubble(): Boolean = targets.any { marker(it) != null }
 
   fun arm(event: MotionEvent) {
     if (!hitsTitle(root,event.rawX.toInt(),event.rawY.toInt())) return

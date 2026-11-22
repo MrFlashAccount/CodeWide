@@ -56,6 +56,7 @@ export function DestinationViewport({
   const bounds = useAnimatedStyle(() => ({ maxWidth: maxWidth.get() }));
   return (
     <View
+      nativeID="codewide-destination-viewport"
       onLayout={onLayout}
       style={[styles.viewport, v1WorkspaceShellStyles.paneFrame]}
       testID={testID}

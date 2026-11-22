@@ -1,0 +1,46 @@
+import groovy.json.JsonSlurper
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+
+// This is the official UI service-worker manifest from the pinned release.
+def version = "v59.1-491832c0d"
+def manifest = file("perfetto/manifest.json")
+def output = layout.buildDirectory.dir("generated/perfetto-ui/${version}")
+android.sourceSets.main.assets.srcDir(output)
+
+tasks.register("preparePerfettoUi") {
+    inputs.file(manifest)
+    inputs.property("version", version)
+    outputs.dir(output)
+    doLast {
+        def directory = new File(output.get().asFile, "perfetto/ui")
+        def resources = new JsonSlurper().parse(manifest).resources
+        def digest = { file ->
+            def hash = MessageDigest.getInstance("SHA-256")
+            file.withInputStream { input ->
+                def buffer = new byte[65536]
+                int count
+                while ((count = input.read(buffer)) != -1) hash.update(buffer, 0, count)
+            }
+            return "sha256-" + hash.digest().encodeBase64().toString()
+        }
+        resources.each { path, integrity ->
+            def target = new File(directory, path)
+            if (target.isFile() && digest(target) == integrity) return
+            target.parentFile.mkdirs()
+            def temp = File.createTempFile("perfetto-", ".download", target.parentFile)
+            try {
+                def connection = new URI("https://ui.perfetto.dev/${version}/${path}").toURL().openConnection()
+                connection.connectTimeout = 15000
+                connection.readTimeout = 60000
+                connection.inputStream.withCloseable { input -> temp.withOutputStream { it << input } }
+                if (digest(temp) != integrity) throw new GradleException("Perfetto UI checksum mismatch: ${path}")
+                Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            } finally {
+                temp.delete()
+            }
+        }
+    }
+}
+tasks.named("preBuild").configure { dependsOn("preparePerfettoUi") }

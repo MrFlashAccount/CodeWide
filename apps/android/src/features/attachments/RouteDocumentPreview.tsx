@@ -1,6 +1,6 @@
 import { RouteAttachmentVideoPreview } from "../../rendering/AttachmentVideoPreview";
 import { isAttachmentVideo } from "../../rendering/videoPreview";
-import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
+import { PerfettoDocument, type DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
 import { RouteDownloadDocument } from "./RouteDownloadDocument";
 import { RouteImageDocumentPreview } from "./RouteImageDocumentPreview";
 import { RouteTextDocumentPreview } from "./RouteTextDocumentPreview";
@@ -15,6 +15,9 @@ export function RouteDocumentPreview({
   readonly onOpenDocument: (request: DocumentPreviewRequest) => void;
   readonly request: DocumentPreviewRequest;
 }): React.JSX.Element {
+  if (request.kind === "perfetto") {
+    return <PerfettoDocument onClose={onClose} request={request} />;
+  }
   if (isAttachmentVideo(request.name)) {
     if (request.source === undefined) {
       return (

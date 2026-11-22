@@ -1,6 +1,12 @@
 import type { DimensionValue } from "react-native";
 
-import { SIDEBAR_FRAME_SHARE, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "../ui/sidebarDimensions";
+import { V1_TWO_PANE_MIN_WIDTH } from "../native/window-layout";
+import {
+  sidebarWidth,
+  SIDEBAR_FRAME_SHARE,
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+} from "../ui/sidebarDimensions";
 import type { PaneArrangement, PaneBox } from "./paneGeometry";
 import { COVERED_CATALOG_OPACITY } from "./paneMotionSpec";
 
@@ -26,6 +32,7 @@ export type DestinationFrame = {
   readonly borderTopLeftRadius: number;
   readonly flexGrow: number;
   readonly left: DimensionValue;
+  readonly minWidth: number;
   readonly position: "absolute" | "relative";
   readonly width: DimensionValue;
 };
@@ -47,6 +54,9 @@ export type RightFrame = {
 
 const FULL = "100%";
 const HALF = "50%";
+// Keep the reading surface viable while the UI thread still places it beside the catalog
+// in a window that has already folded. Clear the bound in the same style that stacks it.
+const MIN_BESIDE_WIDTH = V1_TWO_PANE_MIN_WIDTH - sidebarWidth(V1_TWO_PANE_MIN_WIDTH);
 
 /** The visible tablet chrome stays collapsed while its reading layout is parked offscreen. */
 export function restChromeInset(arrangement: PaneArrangement, box: PaneBox): 0 | "100%" {
@@ -98,6 +108,7 @@ export function restDestinationFrame(arrangement: PaneArrangement): DestinationF
         borderTopLeftRadius: radius,
         flexGrow: 1,
         left: 0,
+        minWidth: MIN_BESIDE_WIDTH,
         position: "relative",
         width: "auto",
       };
@@ -108,6 +119,7 @@ export function restDestinationFrame(arrangement: PaneArrangement): DestinationF
         borderTopLeftRadius: radius,
         flexGrow: 0,
         left: FULL,
+        minWidth: 0,
         position: "absolute",
         width: FULL,
       };
@@ -120,6 +132,7 @@ export function restDestinationFrame(arrangement: PaneArrangement): DestinationF
     borderTopLeftRadius: radius,
     flexGrow: 0,
     left: 0,
+    minWidth: 0,
     position: "absolute",
     width: FULL,
   };

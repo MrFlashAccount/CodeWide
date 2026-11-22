@@ -48,6 +48,7 @@ export function destinationFrame(state: PaneMotionState): DestinationFrame {
     borderTopLeftRadius: pane.centerLeftRadius,
     flexGrow: 0,
     left: pane.detailX,
+    minWidth: 0,
     position: "absolute",
     width: pane.detailWidth,
   };

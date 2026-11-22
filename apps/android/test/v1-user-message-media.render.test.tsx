@@ -1,6 +1,6 @@
 import { DownloadManagerProvider } from "../src/data/DownloadManagerProvider";
 import { createTestDownloadManager } from "./downloads.fixture";
-import { render, waitFor } from "@testing-library/react-native";
+import { fireEvent, render, waitFor } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { UserMessageContent } from "../src/features/conversation/turns/UserMessageContent";
@@ -8,6 +8,8 @@ import { ImagePreviewHost } from "../src/rendering/ImagePreviewHost";
 import { DocumentPreviewHost } from "../src/rendering/DocumentPreviewHost";
 import { AppFullscreenOverlayProvider } from "../src/ui/AppFullscreenOverlay";
 import { AppNoticeProvider } from "../src/ui/AppNotice";
+import { MessageAttachmentCard } from "../src/rendering/MessageAttachmentCard";
+import { ThreadCodeDocumentContext } from "../src/rendering/ThreadCodeDocumentContext";
 import { urlTransport } from "../src/native/urlTransport";
 
 // Native private-file downloads are outside this layout test; retain the real
@@ -91,5 +93,44 @@ it("shows an attached SVG in the image gallery", async () => {
   await waitFor(() => {
     expect(view.getByTestId("user-image-gallery")).toBeTruthy();
     expect(view.getByLabelText("Open Image drawing.svg")).toBeTruthy();
+  });
+});
+
+it("opens a trace card in its owning conversation with the original scoped file", () => {
+  const open = jest.fn();
+  const access = async () => ({
+    authorization: "fixture",
+    baseUrl: "https://example.test",
+    transport: urlTransport,
+  });
+  const view = render(
+    <DownloadManagerProvider manager={createTestDownloadManager()}>
+      <AppNoticeProvider>
+        <AppFullscreenOverlayProvider>
+          <ImagePreviewHost>
+            <DocumentPreviewHost>
+              <ThreadCodeDocumentContext.Provider value={open}>
+                <MessageAttachmentCard
+                  attachment={{
+                    kind: "file",
+                    name: "capture.pftrace",
+                    source: { type: "scoped", rootId: "attachments", path: "uploads/opaque" },
+                  }}
+                  getAccess={access}
+                />
+              </ThreadCodeDocumentContext.Provider>
+            </DocumentPreviewHost>
+          </ImagePreviewHost>
+        </AppFullscreenOverlayProvider>
+      </AppNoticeProvider>
+    </DownloadManagerProvider>,
+  );
+  fireEvent.press(view.getByLabelText("Open capture.pftrace"));
+  expect(open).toHaveBeenCalledWith({
+    getTransferAccess: access,
+    kind: "perfetto",
+    name: "capture.pftrace",
+    path: "uploads/opaque",
+    source: { kind: "scoped", rootId: "attachments", path: "uploads/opaque" },
   });
 });

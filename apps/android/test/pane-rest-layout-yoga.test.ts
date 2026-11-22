@@ -85,7 +85,6 @@ function layOut(arrangement: PaneArrangement, frameWidth: number, pointScaleFact
       bottom: 0,
       flexBasis: 0,
       flexShrink: 1,
-      minWidth: 0,
       top: 0,
       ...restDestinationFrame(arrangement),
     },
@@ -169,5 +168,12 @@ describe("Yoga lays out the resting panes exactly where a motion ends", () => {
     // new measurement for the settled panes to fill it.
     expect(layOut(beside, 900, 1)).toMatchObject({ catalogWidth: 320, detailWidth: 580 });
     expect(layOut(beside, 1300, 1)).toMatchObject({ catalogWidth: 442, detailWidth: 858 });
+    // Folding updates the window before the pane arrangement. Long text must keep a readable
+    // layout width throughout that handoff; on the cover it then fills the single pane.
+    const coverWidth = 411;
+    expect(layOut(beside, coverWidth, 1).centerWidth).toBeGreaterThanOrEqual(400);
+    expect(layOut({ ...beside, left: "under", sidebar: false }, coverWidth, 1).centerWidth).toBe(
+      coverWidth,
+    );
   });
 });

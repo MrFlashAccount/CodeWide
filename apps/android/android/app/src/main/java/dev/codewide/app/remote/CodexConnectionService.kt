@@ -648,7 +648,7 @@ class CodexConnectionService : Service() {
     private var outboxDrainRunning = false
     private var outboxWakeRunnable: Runnable? = null
     private var startupTelemetrySent = false
-    private var splashExitTelemetrySent = false
+    private var firstFrameTelemetrySent = false
     private val activeThreads = ConcurrentHashMap.newKeySet<String>()
     private val pendingApprovals = ConcurrentHashMap.newKeySet<String>()
     private val outboxLifecycleWake = NativeOutboxLifecycleWake(
@@ -1409,18 +1409,13 @@ class CodexConnectionService : Service() {
           tags = mapOf("startKind" to "cold"),
         ))
       }
-      val exit = timing.splashExit ?: return
-      if (splashExitTelemetrySent) return
-      splashExitTelemetrySent = true
+      val firstFrameMs = timing.applicationEntryToFirstFrameMs ?: return
+      if (firstFrameTelemetrySent) return
+      firstFrameTelemetrySent = true
       emitTelemetry(NativeTelemetryMetric(
-        "app.splash_removed",
-        values = mapOf(
-          "contentToExitMs" to exit.contentToExitMs,
-          "animationStartDelayMs" to exit.animationStartDelayMs,
-          "animationDurationMs" to exit.animationDurationMs,
-          "applicationEntryToSplashRemovedMs" to exit.applicationEntryToSplashRemovedMs,
-        ),
-        tags = mapOf("startKind" to "cold", "outcome" to if (exit.cancelled) "cancelled" else "completed"),
+        "app.first_frame_committed",
+        values = mapOf("applicationEntryToFirstFrameMs" to firstFrameMs),
+        tags = mapOf("startKind" to "cold"),
       ))
     }
 

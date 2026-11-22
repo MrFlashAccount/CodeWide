@@ -33,7 +33,7 @@ internal class TimelineScrollIncidents(private val capacity: Int = 12) {
     if (elapsed !in 0..300 || point.viewportHeightPx <= 0 ||
       abs(point.contentHeightPx - previous.contentHeightPx) > 1 ||
       abs(point.viewportHeightPx - previous.viewportHeightPx) > 1 ||
-      previous.offsetPx - point.offsetPx < point.viewportHeightPx / 2
+      2 * abs(point.offsetPx.toLong() - previous.offsetPx) < point.viewportHeightPx
     ) return false
     val frames = captureStack()
     val source = scrollSource(frames)

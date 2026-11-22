@@ -22,12 +22,7 @@ import {
   layoutSize,
   radii,
 } from "../theme";
-import {
-  privateAssetCacheKey,
-  readPrivateAssetText,
-  type GetTransferAccess,
-  type PrivateAssetSource,
-} from "../data/private-transfer";
+import { privateAssetCacheKey, readPrivateAssetText } from "../data/private-transfer";
 import { documentReadingWidth, type DocumentLayoutMode } from "../data/user-preferences";
 import { useDownloadManager } from "../data/downloadManagerContext";
 import type { DownloadSettlement } from "../data/downloadManager";
@@ -49,9 +44,11 @@ import {
   remoteDocumentDirectory,
   resolvePreviewableDocumentLink,
   type DocumentPreviewKind,
+  type DocumentPreviewRequest,
 } from "./document-preview";
 import { MarkdownLocalLinkProvider } from "./MarkdownLinkHandler";
 import { useImagePreview } from "./ImagePreviewHost";
+import { PerfettoPreview } from "./PerfettoPreview";
 import { materializePrivateAsset } from "./private-asset";
 import { RichMarkdownTextScaleProvider } from "./RichMarkdown";
 import type { ContentReviewTarget } from "./content-review";
@@ -64,18 +61,7 @@ import {
   useDiagramPreviewViewportController,
 } from "./DiagramPreviewViewport";
 
-type DocumentPreviewRequestBase = {
-  column?: number;
-  getTransferAccess: GetTransferAccess;
-  line?: number;
-  name: string;
-  path: string;
-  source?: PrivateAssetSource;
-};
-
-export type DocumentPreviewRequest = {
-  [Kind in DocumentPreviewKind]: DocumentPreviewRequestBase & { readonly kind: Kind };
-}[DocumentPreviewKind];
+export type { DocumentPreviewRequest } from "./document-preview";
 
 /** Only host paths and configured roots have a direct download route. */
 function documentDownloadSource(request: DocumentPreviewRequest): DownloadSource | null {
@@ -267,6 +253,12 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }): Reac
           });
           return;
         }
+        if (currentRequest.kind === "perfetto") {
+          fullscreen.present(({ close }) => (
+            <PerfettoDocument onClose={close} request={currentRequest} />
+          ));
+          return;
+        }
         if (currentRequest.kind === "image") {
           beginImagePreviewLoad(currentRequest, revision, fullscreen);
           return;
@@ -285,6 +277,27 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }): Reac
     <DocumentPreviewContext.Provider value={{ download: downloadFile, open }}>
       {children}
     </DocumentPreviewContext.Provider>
+  );
+}
+
+/** Binds the native trace surface to the existing private-download capability. */
+export function PerfettoDocument({
+  onClose,
+  request,
+}: {
+  readonly onClose: () => void;
+  readonly request: Extract<DocumentPreviewRequest, { readonly kind: "perfetto" }>;
+}): React.JSX.Element {
+  const download = useDocumentDownload();
+  const save = useEvent((): void => {
+    void download(request).catch(() => undefined);
+  });
+  return (
+    <PerfettoPreview
+      onClose={onClose}
+      onDownload={documentDownloadSource(request) === null ? null : save}
+      request={request}
+    />
   );
 }
 

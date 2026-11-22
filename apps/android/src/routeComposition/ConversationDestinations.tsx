@@ -129,12 +129,14 @@ export function AttachmentsDestination({
     resources.list.loadedThreadSummaries.find(
       (thread) => thread.connectionId === connectionId && thread.remoteThreadId === threadId,
     )?.cwd ?? "/workspace";
+  const resourceId = threadResourceKey(connectionId, threadId);
   return (
     <ThreadAttachmentsRoute
       cwd={cwd}
       getTransferAccess={async (forceRefresh = false) =>
         features.attachments.transferAccess(connectionId, forceRefresh)
       }
+      key={resourceId}
       model={resources.runtime.resources?.threadResources ?? null}
       onClose={onClose}
       onOpenBrowser={resources.openBrowser}
@@ -143,7 +145,7 @@ export function AttachmentsDestination({
       onReload={async () =>
         features.changes.loadThreadResources(connectionId, threadId, undefined, "attachments")
       }
-      resourceId={threadResourceKey(connectionId, threadId)}
+      resourceId={resourceId}
       revision={
         resources.connections.find((connection) => connection.id === connectionId)?.state ??
         "offline"

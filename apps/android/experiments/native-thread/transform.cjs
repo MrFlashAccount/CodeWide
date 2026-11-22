@@ -1,5 +1,7 @@
 const fs = require("node:fs");
 const crypto = require("node:crypto");
+const openingWindow =
+  process.env.CW_LAB_OPENING_WINDOW === "1" ? require("./openingWindowTransform.cjs") : null;
 const upper = require(process.env.CW_UPSTREAM_BABEL);
 const version = crypto.createHash("sha256").update(fs.readFileSync(__filename)).digest("hex");
 function replaceOnce(s, a, b) {
@@ -9,7 +11,7 @@ function replaceOnce(s, a, b) {
 }
 module.exports = {
   ...upper,
-  getCacheKey: (...args) => upper.getCacheKey(...args) + version,
+  getCacheKey: (...args) => upper.getCacheKey(...args) + version + (openingWindow?.version ?? ""),
   transform(args) {
     if (
       /\/turns\/(PreTurnLifecycleRows|CompletedTurnHistory|ActiveTurnActivity)\.tsx$/.test(
@@ -25,7 +27,8 @@ module.exports = {
     }
     if (!args.filename.endsWith("/timeline/TimelineViewportView.tsx")) return upper.transform(args);
     let src =
-      'import {studyViewport} from "../../../../experiments/native-thread/Study";\n' + args.src;
+      'import {studyViewport} from "../../../../experiments/native-thread/Study";\n' +
+      (openingWindow ? openingWindow.openingWindowSource(args.src, replaceOnce) : args.src);
     src = replaceOnce(
       src,
       "  return (\n    <RichMarkdownPremeasurementProvider",

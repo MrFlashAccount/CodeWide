@@ -4,11 +4,12 @@ import {
   type ThreadTimelineListProps,
 } from "../../../rendering/ThreadTimelineList";
 import { RichMarkdownPremeasurementProvider } from "../../../rendering/RichMarkdownPremeasurementProvider";
+import { ChatTableWidthContext } from "../../../rendering/chatTableWidth";
 import { timelineRowPremeasurementEnabled$ } from "../../../data/timelineRowPremeasurementPreference";
 import { useSelector } from "@legendapp/state/react";
 import { useEvent } from "../../../react/useEvent";
 import { useLayoutEffect, useRef, type ReactElement } from "react";
-import { observablePrimitive } from "@legendapp/state";
+import { computed, observablePrimitive } from "@legendapp/state";
 import { useConstant } from "../../../react/useConstant";
 import { usePaneBodyMode } from "../../../ui/paneBodyTransition";
 import {
@@ -251,7 +252,7 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
       {props.footerContent}
     </>
   );
-  return (
+  const content = (
     <RichMarkdownPremeasurementProvider
       enabled={rowPremeasurementEnabled}
       fontScale={props.windowLayout.fontScale}
@@ -330,19 +331,22 @@ export function TimelineViewport(props: TimelineViewportProps): ReactElement {
       />
     </RichMarkdownPremeasurementProvider>
   );
+  return (
+    <ChatTableWidthContext.Provider value={bodyWidth.tableWidth$}>
+      {content}
+    </ChatTableWidthContext.Provider>
+  );
 }
 
 function useTimelineBodyWidth(windowWidth: number, premeasured: boolean) {
   const resizing = usePaneBodyMode() !== "fixed";
   const width$ = useConstant(() => observablePrimitive(0));
-  // Only the opt-in exact Markdown layout subscribes. Native rows already measure themselves.
   const markdown = useSelector(() => (resizing && premeasured ? width$.get() : windowWidth));
+  const tableWidth$ = useConstant(() => computed(() => timelineMarkdownContentWidth(width$.get())));
   const measure = useEvent((width: number) => {
-    if (resizing) {
-      width$.set(width);
-    }
+    width$.set(width);
   });
-  return { markdown, measure };
+  return { markdown, measure, tableWidth$ };
 }
 
 function timelineInitialIndex(

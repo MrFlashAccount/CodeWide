@@ -8,6 +8,7 @@ import { useEvent } from "../react/useEvent";
 import { useAndroidBackHandler } from "../ui/use-android-back-handler";
 import { PaneMotionProvider } from "./PaneMotionProvider";
 import { usePaneMotionState, usePaneRearrangement } from "./paneMotion";
+import { paneGeometry } from "./paneGeometry";
 import {
   createWorkspacePaneOwner,
   placeFramePresentation,
@@ -37,7 +38,7 @@ type WorkspacePaneFrameProps = {
   /** Actions the left (catalog) pane supports; none by default. */
   readonly leftCapabilities?: WorkspacePaneCapabilities;
   readonly presentation: WorkspaceFramePresentation;
-  /** For diagnostics only; Yoga sizes the panes from the frame itself. */
+  /** Window width for diagnostics and verifying a display handoff; Yoga sizes the panes. */
   readonly viewportWidth: number;
 };
 
@@ -84,10 +85,9 @@ function WorkspacePaneFrameContent({
   }, [catalogFocused, catalogStatus, desktop, viewportWidth]);
   const placed = placeFramePresentation(presentation, visibility);
   const frameRef = useAnimatedRef<View>();
-  const geometry = usePaneMotionState(
-    resolvePaneArrangement({ presentation: placed, rightPresent, visibility }),
-    frameRef,
-  );
+  const arrangement = resolvePaneArrangement({ presentation: placed, rightPresent, visibility });
+  const geometry = usePaneMotionState(arrangement, frameRef);
+  const target = paneGeometry(arrangement, viewportWidth);
   usePaneMotionFrameProbe(geometry.moving);
   const catalogAccessible = isCatalogAccessible(placed, desktop, catalogFocused);
   const centerHidden = placed.kind === "wideCatalogExpanded";
@@ -131,6 +131,12 @@ function WorkspacePaneFrameContent({
         frameStyle={v1WorkspaceShellStyles.paneFrame}
         geometry={geometry}
         presentation={placed}
+        resizeTarget={{
+          catalog: placed.kind === "detailOnly" ? 0 : target.catalogWidth,
+          destination: placed.kind === "catalogOnly" ? 0 : target.detailWidth,
+          left: target.detailX,
+          window: viewportWidth,
+        }}
         testID="v1-workspace-pane-frame"
       />
     </WorkspacePanesContext.Provider>

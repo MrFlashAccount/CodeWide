@@ -39,10 +39,10 @@ internal data class NativeStartupTiming(
   val applicationEntryToContentMs: Double,
   val activityToContentMs: Double,
   val applicationReadyToContentMs: Double,
-  val splashExit: SplashExitTiming?,
+  val applicationEntryToFirstFrameMs: Double?,
 )
 
-/** Retains cold-start timings until a connection can forward them, including splash removal. */
+/** Retains cold-start timings until a connection can forward them. */
 internal object NativeStartupTrace {
   private val applicationEntryAtNanos = SystemClock.elapsedRealtimeNanos()
   private var applicationStartedAtNanos = applicationEntryAtNanos
@@ -50,8 +50,7 @@ internal object NativeStartupTrace {
   private var activityStartedAtNanos: Long? = null
   private var contentAppearedAtNanos: Long? = null
   private var markerRegistered = false
-  private var splashExitTrace: SplashExitTrace? = null
-  private var splashExitTiming: SplashExitTiming? = null
+  private var firstFrameCommittedAtNanos: Long? = null
 
   @Synchronized
   fun markApplicationStarted() {
@@ -85,22 +84,11 @@ internal object NativeStartupTrace {
     return timing(contentAt)
   }
 
-  @Synchronized
-  fun markSplashExitRequested() {
-    if (splashExitTrace == null) splashExitTrace = SplashExitTrace(SystemClock.elapsedRealtimeNanos())
-  }
-
-  @Synchronized
-  fun markSplashAnimationStarted() {
-    if (splashExitTiming == null) splashExitTrace?.started(SystemClock.elapsedRealtimeNanos())
-  }
-
-  fun markSplashRemoved(cancelled: Boolean) {
+  fun markFirstFrameCommitted() {
     val timing = synchronized(this) {
-      if (splashExitTiming != null) return
+      if (firstFrameCommittedAtNanos != null) return
+      firstFrameCommittedAtNanos = SystemClock.elapsedRealtimeNanos()
       val contentAt = contentAppearedAtNanos ?: return
-      val trace = splashExitTrace ?: return
-      splashExitTiming = trace.finish(contentAt, applicationEntryAtNanos, SystemClock.elapsedRealtimeNanos(), cancelled)
       timing(contentAt)
     }
     CodexConnectionService.instance?.publishStartupTiming(timing)
@@ -121,7 +109,7 @@ internal object NativeStartupTrace {
       applicationEntryToContentMs = durationMilliseconds(applicationEntryAtNanos, contentAtNanos),
       activityToContentMs = durationMilliseconds(activityAt, contentAtNanos),
       applicationReadyToContentMs = durationMilliseconds(applicationReadyAtNanos, contentAtNanos),
-      splashExit = splashExitTiming,
+      applicationEntryToFirstFrameMs = firstFrameCommittedAtNanos?.let { durationMilliseconds(applicationEntryAtNanos, it) },
     )
   }
 

@@ -3,6 +3,7 @@ import { useLiveQuery } from "@tanstack/react-db";
 import { createContext, type ReactNode, use, useContext, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Pressable, StyleSheet, View } from "react-native";
 
+import { startupSurfaceProps } from "../boot/startupSplash";
 import {
   APP_LOCK_PREFERENCE_ID,
   decodeAppLockPreferences,
@@ -158,7 +159,12 @@ function LockedSurface({
   onUnlock?: () => void;
 }) {
   return (
-    <View accessibilityLabel="CodeWide is locked" style={styles.root} testID="app-lock-screen">
+    <View
+      accessibilityLabel="CodeWide is locked"
+      {...startupSurfaceProps}
+      style={styles.root}
+      testID="app-lock-screen"
+    >
       <View style={styles.icon}>
         <Ionicons color={colors.text} name="lock-closed" size={iconSize.illustration} />
       </View>

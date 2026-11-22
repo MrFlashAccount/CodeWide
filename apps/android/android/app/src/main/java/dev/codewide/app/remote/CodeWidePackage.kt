@@ -5,6 +5,8 @@ import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.ViewManager
 import dev.codewide.app.rendering.NativeCodeBlockManager
+import dev.codewide.app.rendering.WorkspaceResizeCheckpointManager
+import dev.codewide.app.perfetto.PerfettoTimelineManager
 import dev.codewide.app.rendering.MarkdownTableManager
 import dev.codewide.app.rendering.VideoPosterManager
 import dev.codewide.app.rendering.MarkdownListManager
@@ -46,6 +48,8 @@ class CodeWidePackage : ReactPackage {
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
     listOf(
       NativeCodeBlockManager(),
+      WorkspaceResizeCheckpointManager(),
+      PerfettoTimelineManager(),
       MarkdownListManager(),
       MarkdownTableManager(),
       VideoPosterManager(),

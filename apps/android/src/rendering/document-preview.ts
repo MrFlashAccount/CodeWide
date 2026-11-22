@@ -5,7 +5,22 @@ import {
   isMarkdownFile,
 } from "@codewide/file-types";
 
-export type DocumentPreviewKind = "markdown" | "text" | "html" | "image" | "download";
+import type { GetTransferAccess, PrivateAssetSource } from "../data/private-transfer";
+
+export type DocumentPreviewKind = "markdown" | "text" | "html" | "image" | "perfetto" | "download";
+
+type DocumentPreviewRequestBase = {
+  column?: number;
+  getTransferAccess: GetTransferAccess;
+  line?: number;
+  name: string;
+  path: string;
+  source?: PrivateAssetSource;
+};
+
+export type DocumentPreviewRequest = {
+  [Kind in DocumentPreviewKind]: DocumentPreviewRequestBase & { readonly kind: Kind };
+}[DocumentPreviewKind];
 
 export type DocumentPreviewSurface = "fullscreen" | "image-viewer" | "download";
 
@@ -15,7 +30,7 @@ export function documentPreviewSurface(kind: DocumentPreviewKind): DocumentPrevi
   if (kind === "image") {
     return "image-viewer";
   }
-  if (kind === "html" || kind === "markdown" || kind === "text") {
+  if (kind === "perfetto" || kind === "html" || kind === "markdown" || kind === "text") {
     return "fullscreen";
   }
   return "download";
@@ -85,6 +100,15 @@ export function markdownLineTarget(
 
 export function previewableDocumentKind(name: string, path: string): DocumentPreviewKind | null {
   const candidates = [name, path].map((candidate) => parseTextDocumentLocation(candidate).path);
+  if (
+    candidates.some((candidate) =>
+      /\.(?:perfetto-trace|pftrace|perfetto)(?:\.gz)?$/iu.test(
+        candidate.split(/[?#]/u, 1)[0] ?? "",
+      ),
+    )
+  ) {
+    return "perfetto";
+  }
   if (candidates.some(isMarkdownFile)) {
     return "markdown";
   }

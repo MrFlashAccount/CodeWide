@@ -8,6 +8,10 @@ import {
 } from "react-native";
 import Reanimated, { useAnimatedStyle, type AnimatedRef } from "react-native-reanimated";
 
+import {
+  WorkspaceResizeCheckpoint,
+  type WorkspaceResizeTarget,
+} from "../native/WorkspaceResizeCheckpoint";
 import { catalogFrame, destinationFrame } from "./paneFrames";
 import type { PaneMotionState } from "./paneMotion";
 
@@ -47,6 +51,7 @@ type WorkspaceTwoPaneLayoutProps = {
   /** The frame's one pane motion; every pane frame below derives from it. */
   readonly geometry: PaneMotionState;
   readonly presentation: WorkspaceTwoPanePresentation;
+  readonly resizeTarget: WorkspaceResizeTarget;
   readonly testID?: string;
 };
 
@@ -67,6 +72,7 @@ export function WorkspaceTwoPaneLayout({
   frameStyle,
   geometry,
   presentation,
+  resizeTarget,
   testID,
 }: WorkspaceTwoPaneLayoutProps): React.JSX.Element {
   const catalogStyle = useAnimatedStyle(() => catalogFrame(geometry));
@@ -91,6 +97,7 @@ export function WorkspaceTwoPaneLayout({
       >
         {detail}
       </Reanimated.View>
+      <WorkspaceResizeCheckpoint target={resizeTarget} />
     </Reanimated.View>
   );
 }
@@ -105,7 +112,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     flexBasis: 0,
     flexShrink: 1,
-    minWidth: 0,
     top: 0,
   },
   frame: {

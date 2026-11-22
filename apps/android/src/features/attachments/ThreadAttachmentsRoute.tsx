@@ -1,3 +1,5 @@
+import { observable, type Observable } from "@legendapp/state";
+import { useSelector } from "@legendapp/state/react";
 import { Ionicons } from "@expo/vector-icons";
 import { ActivityIndicator, View } from "react-native";
 import type { ThreadResourcesModel } from "../../data/thread-resources-model";
@@ -6,11 +8,14 @@ import type { ThreadAttachmentResource } from "../../data/thread-resource-types"
 import { useThreadResources } from "../../data/use-thread-resources";
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
+import { useConstant } from "../../react/useConstant";
+import { useEvent } from "../../react/useEvent";
 import { colors, iconSize } from "../../theme";
 import { AppList } from "../../ui/AppList";
 import { useAppListItemState } from "../../ui/appListItemContext";
 import { AppSheet, AppSheetScrollView } from "../../ui/AppSheet";
 import { AppText as Text } from "../../ui/Typography";
+import { AttachmentSearchField } from "./AttachmentSearchField";
 import { styles } from "./AttachmentsFeature.styles";
 import { ThreadAttachmentResourceRow } from "./ThreadAttachmentResourceRow";
 import { useAttachmentRouteActions } from "./threadAttachmentRouteActions";
@@ -51,6 +56,12 @@ export function ThreadAttachmentsRoute({
   readonly revision: string;
   readonly visible: boolean;
 }): React.JSX.Element {
+  const query$ = useConstant(() => observable(""));
+  const handleOpenChange = useEvent((open: boolean) => {
+    if (!open) {
+      onClose();
+    }
+  });
   const resource = useThreadResources(model, resourceId, onReload, { revision });
   const { attachments, error, pending, ready } = attachmentRouteState(resource);
   const openAttachment = useAttachmentRouteActions({
@@ -64,17 +75,15 @@ export function ThreadAttachmentsRoute({
     <AppSheet
       contentProps={ATTACHMENTS_SHEET_PROPS}
       isOpen={visible}
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
-      }}
+      onOpenChange={handleOpenChange}
     >
       <AttachmentRouteHeader count={attachments.length} loading={pending && !ready} />
+      <AttachmentSearchField query$={query$} />
       <AttachmentRouteList
         attachments={attachments}
         error={error}
         onOpenAttachment={openAttachment}
+        query$={query$}
         ready={ready}
       />
     </AppSheet>
@@ -106,22 +115,35 @@ function AttachmentRouteList({
   attachments,
   error,
   onOpenAttachment,
+  query$,
   ready,
 }: {
   readonly attachments: readonly ThreadAttachmentResource[];
   readonly error: string | null;
   readonly onOpenAttachment: (attachment: ThreadAttachmentResource) => void;
+  readonly query$: Observable<string>;
   readonly ready: boolean;
 }): React.JSX.Element {
-  if (attachments.length === 0 && ready) {
-    return <Text style={styles.menuNotice}>No attachments in this thread.</Text>;
-  }
+  const query = useSelector(() => query$.get().trim().toLowerCase());
+  const matches =
+    query === ""
+      ? attachments
+      : attachments.filter(
+          (item) =>
+            item.name.toLowerCase().includes(query) ||
+            item.path?.toLowerCase().includes(query) === true,
+        );
+  const emptyMessage =
+    attachments.length === 0 ? "No attachments in this thread." : "No matching attachments.";
   return (
     <>
       {error === null ? null : <Text style={styles.errorText}>{error}</Text>}
       <AppList
         contentContainerStyle={styles.threadResourcesContent}
-        data={attachments}
+        data={matches}
+        empty={
+          ready && error === null ? <Text style={styles.menuNotice}>{emptyMessage}</Text> : null
+        }
         keyboardShouldPersistTaps="handled"
         keyExtractor={(attachment) => attachment.key}
         renderItem={({ item }) => (

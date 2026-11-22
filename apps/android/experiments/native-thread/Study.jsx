@@ -17,6 +17,7 @@ import { markdownTableLayout } from "../../src/rendering/markdown-table-layout";
 import { richMarkdownGeometry as geometry } from "../../src/rendering/richMarkdownGeometry";
 import { useEvent } from "../../src/react/useEvent";
 
+import { ProseStudy } from "./ProseStudy";
 import { hostedTimeline } from "./HostedTimeline";
 
 const Probe = requireNativeComponent("CodeWideLabProbe");
@@ -29,15 +30,36 @@ const mode =
 // An isolated range deliberately excludes message chrome. Both arms read exactly the same
 // projected blocks. The full-thread arms use the actual conversation renderer for every row.
 export function studyViewport(standard, props, timelineRows) {
-  const range = /^(native|reference)-(list|paragraph|table)$/.test(mode);
+  const range =
+    mode.startsWith("prose-") || /^(native|reference)-(list|paragraph|table)$/.test(mode);
   return (
-    <Probe style={styles.fill} testID={range ? "lab-probe-range" : "lab-probe-mixed"}>
+    <Probe
+      style={styles.fill}
+      testID={
+        mode.startsWith("prose-")
+          ? "lab-probe-prose"
+          : range
+            ? "lab-probe-range"
+            : "lab-probe-mixed"
+      }
+    >
       {viewport(standard, props, timelineRows)}
     </Probe>
   );
 }
 
 function viewport(standard, props, timelineRows) {
+  const prose = /^prose-(reference|native)-(plain|rich)$/.exec(mode);
+  if (prose)
+    return (
+      <ProseStudy
+        key={props.composerScope}
+        arm={prose[1]}
+        kind={prose[2]}
+        props={props}
+        rows={timelineRows}
+      />
+    );
   if (mode === "stock") return standard;
   if (mode === "hosted-mixed") return hostedTimeline(standard, props);
   if (mode === "mixed-audit") {

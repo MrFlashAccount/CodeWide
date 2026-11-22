@@ -1,6 +1,7 @@
 import { Stack } from "expo-router";
 import { View } from "react-native";
 
+import { startupSurfaceProps } from "../boot/startupSplash";
 import { workspaceRuntime } from "../data/workspace-runtime";
 import { BrowserWorkspaceHost } from "../features/browser/BrowserWorkspaceHost";
 import { BrowserTabsNavigationContext } from "../features/browser/BrowserTabsNavigationContext";
@@ -57,6 +58,7 @@ function V1WorkspaceChrome(props: WorkspaceShellProps): React.JSX.Element {
       resources={resources.runtime.resources}
     >
       <View
+        {...startupSurfaceProps}
         style={[
           styles.root,
           {

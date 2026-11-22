@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, View } from "react-native";
+import { startupSurfaceProps } from "../../boot/startupSplash";
 import { colors, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 
@@ -15,7 +16,7 @@ export function RouteUnavailable({
   readonly title: string;
 }): React.JSX.Element {
   return (
-    <View accessibilityLiveRegion="polite" style={styles.root}>
+    <View accessibilityLiveRegion="polite" {...startupSurfaceProps} style={styles.root}>
       <Text accessibilityRole="header" style={styles.title}>
         {title}
       </Text>

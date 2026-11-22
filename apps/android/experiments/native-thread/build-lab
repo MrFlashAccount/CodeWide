@@ -22,8 +22,10 @@ def insert(path, needle, addition):
 
 insert(package/'remote/CodeWideModule.kt', 'override fun getConstants(): MutableMap<String, Any> = mutableMapOf(',
        '\n    "threadLabMode" to java.io.File(reactApplicationContext.cacheDir, "thread-lab-mode").let { if (it.isFile) it.readText().trim() else "stock" },')
+insert(package/'remote/CodeWidePackage.kt', '      CodeWideModule(reactContext),',
+       '\n      dev.codewide.app.rendering.LabProseModule(reactContext),\n      dev.codewide.app.LabOpeningWindowModule(reactContext),')
 insert(package/'remote/CodeWidePackage.kt', '      MarkdownListManager(),',
-       '\n      dev.codewide.app.rendering.LabTranscriptManager(),\n      dev.codewide.app.rendering.HostedTranscriptManager(),\n      dev.codewide.app.TranscriptProbeManager(),')
+       '\n      dev.codewide.app.rendering.LabTranscriptManager(),\n      dev.codewide.app.rendering.LabProseManager(),\n      dev.codewide.app.rendering.HostedTranscriptManager(),\n      dev.codewide.app.TranscriptProbeManager(),')
 insert(package/'MainActivity.kt', 'class MainActivity : ReactActivity() {', '''
   private val perfettoBubble by lazy { BubbleProbe(this) }
   override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
@@ -31,10 +33,11 @@ insert(package/'MainActivity.kt', 'class MainActivity : ReactActivity() {', '''
     return super.dispatchTouchEvent(event)
   }
 ''')
-for name in ['HostedTranscriptManager.kt','LabTranscriptManager.kt']:
+for name in ['HostedTranscriptManager.kt','LabTranscriptManager.kt','LabProse.kt']:
     shutil.copy(here/name, package/'rendering'/name)
 shutil.copy(here/'BubbleProbe.kt',package)
-env = dict(os.environ, CW_ROOT=str(repo), CW_NATIVE_LIST_DIR=str(lab), NODE_ENV='production')
+shutil.copy(here/'LabOpeningWindowModule.kt',package)
+env = dict(os.environ, CW_ROOT=str(repo), CW_LAB_OPENING_WINDOW='1', CW_NATIVE_LIST_DIR=str(lab), NODE_ENV='production')
 env['NODE_OPTIONS'] = (env.get('NODE_OPTIONS', '') + ' --require=' + str(here/'preload.cjs')).strip()
 if 'ANDROID_HOME' not in env:
     default = Path.home()/'.local/share/codewide-toolchains/android-sdk'

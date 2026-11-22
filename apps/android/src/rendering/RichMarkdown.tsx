@@ -61,7 +61,9 @@ import type { ContentReviewTarget } from "./content-review";
 import type { ReviewSelection } from "./ReviewableText.native";
 import { ReviewableText } from "./ReviewableText";
 import { isExplicitAsciiDiagram } from "./ascii-diagram";
+import { ChatTableWidthContext } from "./chatTableWidth";
 import { RichContentWidthProvider, useRichContentWidth } from "./RichContentLayout";
+import { useSelector } from "@legendapp/state/react";
 import { usePrivateImageUri } from "./use-private-image-uri";
 import { NativeMarkup } from "./NativeMarkup";
 import { HighlightSearchText, SearchHighlightQuery } from "./SearchMessageFocus";
@@ -394,7 +396,13 @@ export function RichMarkdown({
             const path = `${node.type}-${String(index)}`;
             const key = markdownNodeKey(node);
             const block = (
-              <BlockNode extensions={extensions} imageOrder={imageOrder} node={node} path={path} />
+              <BlockNode
+                documentRoot
+                extensions={extensions}
+                imageOrder={imageOrder}
+                node={node}
+                path={path}
+              />
             );
             return index === targetBlockIndex && onTargetLayout !== undefined ? (
               <View
@@ -408,6 +416,7 @@ export function RichMarkdown({
               </View>
             ) : (
               <BlockNode
+                documentRoot
                 extensions={extensions}
                 imageOrder={imageOrder}
                 key={key}
@@ -483,9 +492,10 @@ function documentBlockContent(
             {plainRichMarkdownRootText(block.node)}
           </Text>
         ) : completedChat && block.node.type === "table" ? (
-          <MarkdownTable completedChat path={block.path} table={block.node} />
+          <MarkdownTable completedChat documentRoot path={block.path} table={block.node} />
         ) : (
           <BlockNode
+            documentRoot
             extensions={EMPTY_RICH_EXTENSIONS}
             firstListItem={block.listGroup?.firstItem}
             imageOrder={block.imageOrder}
@@ -548,12 +558,14 @@ function MarkdownParagraphText({
 // WHY: This V1 render boundary owns one existing decision tree and its local state ordering; splitting it would risk changing visible behavior.
 // oxlint-disable-next-line eslint/complexity
 function BlockNode({
+  documentRoot = false,
   extensions,
   firstListItem = 0,
   imageOrder,
   node,
   path,
 }: {
+  documentRoot?: boolean;
   extensions: Record<string, RichExtensionRenderer>;
   firstListItem?: number | undefined;
   imageOrder: WeakMap<MarkdownImageNode, number>;
@@ -715,7 +727,7 @@ function BlockNode({
       return <CopyableCodeBlock language={language} value={node.value} />;
     }
     case "table":
-      return <MarkdownTable path={path} table={node} />;
+      return <MarkdownTable documentRoot={documentRoot} path={path} table={node} />;
     case "thematicBreak":
       return <View style={styles.rule} />;
     case "html":
@@ -1075,14 +1087,19 @@ function MarkdownImage({
 
 function MarkdownTable({
   completedChat = false,
+  documentRoot,
   path,
   table,
 }: {
   completedChat?: boolean;
+  documentRoot: boolean;
   path: string;
   table: Table;
 }) {
-  const viewport = useTableViewport();
+  const chatWidth$ = useContext(ChatTableWidthContext);
+  // A recycled top-level chat table already has its pane allocation before its first onLayout.
+  const initialWidth = useSelector(() => (documentRoot ? (chatWidth$?.get() ?? 0) : 0));
+  const viewport = useTableViewport(initialWidth);
   const columnCount = Math.max(1, ...table.children.map((row) => row.children.length));
   const minimumWidth = viewport.contentWidth;
   const { cellWidth, tableWidth } = markdownTableLayout(minimumWidth, columnCount);

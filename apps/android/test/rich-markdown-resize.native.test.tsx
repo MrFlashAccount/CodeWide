@@ -1,4 +1,5 @@
-import { fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
+import { observablePrimitive } from "@legendapp/state";
 import { Platform, View, StyleSheet, Text } from "react-native";
 import { MarkdownDocumentView } from "../src/rendering/MarkdownDocumentView";
 import { productFonts } from "../src/ui/product-fonts";
@@ -7,6 +8,7 @@ import { NativeMarkup } from "../src/rendering/NativeMarkup";
 import { markdownDocumentBlocks } from "../src/rendering/markdown-document-blocks";
 import { SearchHighlightQuery } from "../src/rendering/SearchMessageFocus";
 import { RichMarkdown, RichMarkdownDocumentBlockView } from "../src/rendering/RichMarkdown";
+import { ChatTableWidthContext } from "../src/rendering/chatTableWidth";
 import { RichContentWidthProvider } from "../src/rendering/RichContentLayout";
 import {
   RichMarkdownPremeasurementBoundary,
@@ -296,6 +298,35 @@ it("keeps inline formatting in completed chat tables", () => {
   expect(view.getByText("Alpha")).toHaveStyle({ fontFamily: productFonts.semibold });
 });
 
+it.each(["block", "document"] as const)("lays out recycled %s chat tables at the pane width on their first frame", (kind) => {
+  const markdown = source.replace("Alpha", "**Alpha**");
+  const [block] = markdownDocumentBlocks([markdown]);
+  if (!block) throw new Error("Missing formatted table");
+  const width$ = observablePrimitive<number | null>(559.6);
+  const table = (generation: number) => (
+    <ChatTableWidthContext.Provider value={width$}>
+      <View>
+        {kind === "block" ? (
+          <RichMarkdownDocumentBlockView key={generation} block={block} completedChat />
+        ) : (
+          <RichMarkdown key={generation} source={markdown} />
+        )}
+      </View>
+    </ChatTableWidthContext.Provider>
+  );
+  const view = render(table(0));
+  for (const [width, generation] of [[559.6, 0], [559.6, 1], [360, 1], [360, 2]] as const) {
+    act(() => {
+      width$.set(width);
+    });
+    view.rerender(table(generation));
+    expect(view.getByText("Value")).toHaveStyle({ width: Math.ceil(width) / 2 });
+  }
+  const viewport = view.UNSAFE_getAllByType(View).find((node) => node.props.onLayout);
+  if (!viewport) throw new Error("Table viewport missing");
+  fireEvent(viewport, "layout", { nativeEvent: { layout: { x: 0, y: 0, width: 344, height: 80 } } });
+  expect(view.getByText("Value")).toHaveStyle({ width: 172 });
+});
 
 it("honors the existing line layout inside a premeasured chat boundary", () => {
   const [block] = markdownDocumentBlocks([source]);

@@ -55,6 +55,19 @@ describe("document preview", () => {
     expect(remoteFileKind("archive.zip", "/repo/archive.zip")).toBe("download");
   });
 
+  it("opens a Perfetto attachment or host link in the viewer and preserves other binary downloads", () => {
+    expect(remoteFileKind("capture.PERFETTO-TRACE", "/assets/opaque")).toBe("perfetto");
+    expect(remoteFileKind("capture", "https://example.test/open.pftrace.gz?download=1")).toBe(
+      "perfetto",
+    );
+    expect(resolvePreviewableDocumentLink("./open.pftrace", "/work")).toMatchObject({
+      kind: "perfetto",
+      path: "/work/open.pftrace",
+    });
+    expect(documentPreviewSurface("perfetto")).toBe("fullscreen");
+    expect(remoteFileKind("report.pb", "/work/report.pb")).toBe("download");
+  });
+
   it("uses a distinct presentation surface for each file strategy", () => {
     expect(documentPreviewSurface("image")).toBe("image-viewer");
     expect(documentPreviewSurface("html")).toBe("fullscreen");
